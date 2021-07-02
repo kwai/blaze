@@ -1,0 +1,17 @@
+[package]
+name = "datafusion-jni"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# datafusion-ext = { path = "../datafusion-ext" }
+
+[build-dependencies]
+flapigen = "0.6.0-pre7"
+bindgen = { version = "0.57.0"}
+
+[lib]
+crate_type = ["cdylib"]
+name = "datafusion_jni_lib"

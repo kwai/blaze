@@ -20,4 +20,5 @@ members = [
     "hdfs-rs",
     "datafusion-hdfs",
     "datafusion-ext",
+    "datafusion-jni",
 ]

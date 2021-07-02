@@ -6,3 +6,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# see https://cxx.rs for a tutorial, reference material, and example code.
+cxx = "1.0"
+
+[build-dependencies]
+cxx-build = "1.0"
