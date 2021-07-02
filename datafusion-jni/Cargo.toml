@@ -7,10 +7,9 @@ edition = "2018"
 
 [dependencies]
 # datafusion-ext = { path = "../datafusion-ext" }
+jni = "0.19.0"
 
 [build-dependencies]
-flapigen = "0.6.0-pre7"
-bindgen = { version = "0.57.0"}
 
 [lib]
 crate_type = ["cdylib"]
