@@ -12,26 +12,24 @@ use jni::objects::{JClass, JString};
 // lifetime checker won't let us.
 use jni::sys::jbyteArray;
 
+use ballista_core::task_runner::run_task;
+
 // This keeps Rust from "mangling" the name and making it unique for this
 // crate.
 #[no_mangle]
 pub extern "system" fn Java_com_kwai_sod_NativeRun_callNative(
     env: JNIEnv,
     _class: JClass,
-    stage_desc: jbyteArray,
-    input_paths: JString,
-    output_dir: JString,
-    output_name: JString,
+    task: jbyteArray,
+    executor_id: JString,
+    work_dir: JString,
+    file_name: JString,
 ) -> jbyteArray {
+    let task = env.convert_byte_array(task).unwrap();
+    let executor_id: String = env.get_string(executor_id).unwrap().into();
+    let work_dir: String = env.get_string(work_dir).unwrap().into();
+    let file_name: String = env.get_string(file_name).unwrap().into();
 
-    let _stage_desc = env.convert_byte_array(stage_desc).unwrap();
-    let _input_paths: String = env.get_string(input_paths).unwrap().into();
-    let _output_dir: String = env.get_string(output_dir).unwrap().into();
-    let _output_name: String = env.get_string(output_name).unwrap().into();
-
-
-
-    let buf = [1; 20];
-    let output = env.byte_array_from_slice(&buf).unwrap();
-    output
+    let buf = run_task(task, executor_id, work_dir, file_name);
+    env.byte_array_from_slice(&buf).unwrap()
 }
