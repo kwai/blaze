@@ -20,9 +20,7 @@
 # Blaze
 
 
-## For devs
-
-
+## For devs who works on hdfs-rs
 
 ```shell
 git submodule init
