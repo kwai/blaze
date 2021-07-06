@@ -19,6 +19,6 @@
 members = [
     "hdfs-rs",
     "datafusion-hdfs",
-    "ballista-core",
+    "datafusion-ext",
     "datafusion-jni",
 ]

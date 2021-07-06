@@ -15,12 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-fn main() -> Result<(), String> {
-    // for use in docker build where file changes can be wonky
-    println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
+#![allow(unused_imports)]
 
-    println!("cargo:rerun-if-changed=proto/ballista.proto");
-    tonic_build::configure()
-        .compile(&["proto/ballista.proto"], &["proto"])
-        .map_err(|e| format!("protobuf compilation failed: {}", e))
-}
+pub mod shuffle_writer;
+pub mod task_runner;

@@ -12,7 +12,8 @@ use jni::objects::{JClass, JString};
 // lifetime checker won't let us.
 use jni::sys::jbyteArray;
 
-use ballista_core::task_runner::run_task;
+use datafusion_ext::task_runner::run_task;
+use tokio::runtime::Runtime;
 
 // This keeps Rust from "mangling" the name and making it unique for this
 // crate.
@@ -30,6 +31,9 @@ pub extern "system" fn Java_com_kwai_sod_NativeRun_callNative(
     let work_dir: String = env.get_string(work_dir).unwrap().into();
     let file_name: String = env.get_string(file_name).unwrap().into();
 
-    let buf = run_task(task, executor_id, work_dir, file_name);
+    let rt = Runtime::new().unwrap();
+    let buf_fut = run_task(task, executor_id, work_dir, file_name);
+    let buf = rt.block_on(buf_fut).unwrap();
+
     env.byte_array_from_slice(&buf).unwrap()
 }

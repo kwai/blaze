@@ -16,15 +16,35 @@
 # under the License.
 
 [package]
-name = "datafusion-hdfs"
+name = "datafusion-ext"
 version = "0.1.0"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+
+[features]
+simd = ["datafusion/simd"]
+
 [dependencies]
-# see https://cxx.rs for a tutorial, reference material, and example code.
-cxx = "1.0"
+ballista-core = { git = "https://github.com/apache/arrow-datafusion.git" }
+datafusion = { git = "https://github.com/apache/arrow-datafusion.git" }
+ahash = "0.7"
+async-trait = "0.1.36"
+futures = "0.3"
+log = "0.4"
+prost = "0.7"
+serde = {version = "1", features = ["derive"]}
+sqlparser = "0.9.0"
+tokio = "1.0"
+tonic = "0.4"
+uuid = { version = "0.8", features = ["v4"] }
+hashbrown = "0.11"
+arrow = { version = "4.4.0" }
+arrow-flight = { version = "4.4.0"  }
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
-cxx-build = "1.0"
+tonic-build = { version = "0.4" }

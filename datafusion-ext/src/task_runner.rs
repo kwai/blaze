@@ -15,15 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::execution_plans::ShuffleWriterExec;
-use crate::utils;
+use crate::shuffle_writer::ShuffleWriterExec;
 use arrow::record_batch::RecordBatch;
+use ballista_core::error::Result;
+use ballista_core::utils;
 use datafusion::physical_plan::ExecutionPlan;
 use log::{debug, info};
+use prost::Message;
+use std::any::type_name;
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use crate::{
+use ballista_core::{
     error,
     error::BallistaError,
     serde::protobuf::{
@@ -32,6 +35,17 @@ use crate::{
 };
 
 pub async fn run_task(
+    task: Vec<u8>,
+    executor_id: String,
+    work_dir: String,
+    file_name: String,
+) -> Result<Vec<u8>> {
+    let task: TaskDefinition = decode_protobuf(&task).unwrap();
+    let status = run_task_inner(task, executor_id, work_dir, file_name).await;
+    encode_protobuf(&status)
+}
+
+async fn run_task_inner(
     task: TaskDefinition,
     executor_id: String,
     work_dir: String,
@@ -45,21 +59,35 @@ pub async fn run_task(
     info!("Received task {}", task_id_log);
     let plan: Arc<dyn ExecutionPlan> = (&task.plan.unwrap()).try_into().unwrap();
 
-    let status = tokio::spawn(async move {
-        let execution_result = execute_partition(
-            task_id.job_id.clone(),
-            task_id.stage_id as usize,
-            work_dir,
-            file_name,
-            task_id.partition_id as usize,
-            plan,
-        )
-        .await;
-        info!("Done with task {}", task_id_log);
-        debug!("Statistics: {:?}", execution_result);
-        as_task_status(execution_result.map(|_| ()), executor_id, task_id)
-    });
-    status.await.unwrap()
+    let execution_result = execute_partition(
+        task_id.job_id.clone(),
+        task_id.stage_id as usize,
+        work_dir,
+        file_name,
+        task_id.partition_id as usize,
+        plan,
+    )
+    .await;
+    info!("Done with task {}", task_id_log);
+    debug!("Statistics: {:?}", execution_result);
+    as_task_status(execution_result.map(|_| ()), executor_id, task_id)
+}
+
+async fn execute_partition(
+    job_id: String,
+    stage_id: usize,
+    work_dir: String,
+    file_name: String,
+    part: usize,
+    plan: Arc<dyn ExecutionPlan>,
+) -> Result<RecordBatch> {
+    let exec =
+        ShuffleWriterExec::try_new(job_id, stage_id, plan, work_dir, file_name, None)?;
+    let mut stream = exec.execute(part).await?;
+    let batches = utils::collect_stream(&mut stream).await?;
+    // the output should be a single batch containing metadata (path and statistics)
+    assert!(batches.len() == 1);
+    Ok(batches[0].clone())
 }
 
 fn as_task_status(
@@ -91,19 +119,24 @@ fn as_task_status(
     }
 }
 
-async fn execute_partition(
-    job_id: String,
-    stage_id: usize,
-    work_dir: String,
-    file_name: String,
-    part: usize,
-    plan: Arc<dyn ExecutionPlan>,
-) -> Result<RecordBatch, BallistaError> {
-    let exec =
-        ShuffleWriterExec::try_new(job_id, stage_id, plan, work_dir, file_name, None)?;
-    let mut stream = exec.execute(part).await?;
-    let batches = utils::collect_stream(&mut stream).await?;
-    // the output should be a single batch containing metadata (path and statistics)
-    assert!(batches.len() == 1);
-    Ok(batches[0].clone())
+fn decode_protobuf<T: Message + Default>(bytes: &[u8]) -> Result<T> {
+    T::decode(bytes).map_err(|e| {
+        BallistaError::Internal(format!(
+            "Could not deserialize {}: {}",
+            type_name::<T>(),
+            e
+        ))
+    })
+}
+
+fn encode_protobuf<T: Message + Default>(msg: &T) -> Result<Vec<u8>> {
+    let mut value: Vec<u8> = Vec::with_capacity(msg.encoded_len());
+    msg.encode(&mut value).map_err(|e| {
+        BallistaError::Internal(format!(
+            "Could not serialize {}: {}",
+            type_name::<T>(),
+            e
+        ))
+    })?;
+    Ok(value)
 }
