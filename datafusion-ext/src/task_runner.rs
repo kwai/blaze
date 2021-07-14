@@ -18,7 +18,11 @@
 use crate::shuffle_writer::ShuffleWriterExec;
 use arrow::record_batch::RecordBatch;
 use ballista_core::error::Result;
+use ballista_core::serde::protobuf;
 use ballista_core::utils;
+use datafusion::arrow::datatypes::Schema;
+use datafusion::physical_plan::empty::EmptyExec;
+use datafusion::physical_plan::limit::LocalLimitExec;
 use datafusion::physical_plan::ExecutionPlan;
 use log::{debug, info};
 use prost::Message;
@@ -56,8 +60,19 @@ async fn run_task_inner(
         "{}/{}/{}",
         task_id.job_id, task_id.stage_id, task_id.partition_id
     );
-    info!("Received task {}", task_id_log);
-    let plan: Arc<dyn ExecutionPlan> = (&task.plan.unwrap()).try_into().unwrap();
+    println!("Received task {}", task_id_log);
+
+    let fake_plan = Arc::new(LocalLimitExec::new(
+        Arc::new(EmptyExec::new(false, Arc::new(Schema::empty()))),
+        25,
+    ));
+
+    let proto: protobuf::PhysicalPlanNode = (*fake_plan).try_into().unwrap();
+    let b = (&proto).try_into();
+
+    println!("{:?}", b);
+    let plan: Arc<dyn ExecutionPlan> = b.unwrap();
+    println!("The task plan tree :{:?}", plan);
 
     let execution_result = execute_partition(
         task_id.job_id.clone(),
@@ -139,4 +154,78 @@ fn encode_protobuf<T: Message + Default>(msg: &T) -> Result<Vec<u8>> {
         ))
     })?;
     Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{convert::TryInto, sync::Arc};
+
+    use ballista_core::error::Result;
+    use ballista_core::serde::protobuf;
+    use datafusion::{
+        arrow::{
+            compute::kernels::sort::SortOptions,
+            datatypes::{DataType, Field, Schema},
+        },
+        logical_plan::{JoinType, Operator},
+        physical_plan::{
+            empty::EmptyExec,
+            expressions::{binary, col, lit, InListExpr, NotExpr},
+            expressions::{Avg, Column, PhysicalSortExpr},
+            filter::FilterExec,
+            hash_aggregate::{AggregateMode, HashAggregateExec},
+            hash_join::{HashJoinExec, PartitionMode},
+            limit::{GlobalLimitExec, LocalLimitExec},
+            sort::SortExec,
+            AggregateExpr, ColumnarValue, Distribution, ExecutionPlan, Partitioning,
+            PhysicalExpr,
+        },
+        scalar::ScalarValue,
+    };
+
+    fn roundtrip_test(exec_plan: Arc<dyn ExecutionPlan>) -> Result<()> {
+        let proto: protobuf::PhysicalPlanNode = exec_plan.clone().try_into()?;
+        let result_exec_plan: Arc<dyn ExecutionPlan> = (&proto).try_into()?;
+        eprintln!("{:?}", proto);
+        assert_eq!(
+            format!("{:?}", exec_plan),
+            format!("{:?}", result_exec_plan)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    fn roundtrip_hash_join() -> Result<()> {
+        let field_a = Field::new("col", DataType::Int64, false);
+        let schema_left = Schema::new(vec![field_a.clone()]);
+        let schema_right = Schema::new(vec![field_a]);
+        let on = vec![(
+            Column::new("col", schema_left.index_of("col")?),
+            Column::new("col", schema_right.index_of("col")?),
+        )];
+
+        let schema_left = Arc::new(schema_left);
+        let schema_right = Arc::new(schema_right);
+        for join_type in &[
+            JoinType::Inner,
+            JoinType::Left,
+            JoinType::Right,
+            JoinType::Full,
+            JoinType::Anti,
+            JoinType::Semi,
+        ] {
+            for partition_mode in
+                &[PartitionMode::Partitioned, PartitionMode::CollectLeft]
+            {
+                roundtrip_test(Arc::new(HashJoinExec::try_new(
+                    Arc::new(EmptyExec::new(false, schema_left.clone())),
+                    Arc::new(EmptyExec::new(false, schema_right.clone())),
+                    on.clone(),
+                    &join_type,
+                    *partition_mode,
+                )?))?;
+            }
+        }
+        Ok(())
+    }
 }

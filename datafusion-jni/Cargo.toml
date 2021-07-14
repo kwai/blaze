@@ -27,6 +27,7 @@ jni = "0.19.0"
 datafusion-ext = { path = "../datafusion-ext" }
 tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread", "sync"] }
 tonic = "0.4"
+conquer-once = "0.3.2"
 
 [lib]
 crate_type = ["cdylib"]

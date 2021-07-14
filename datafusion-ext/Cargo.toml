@@ -27,8 +27,8 @@ edition = "2018"
 simd = ["datafusion/simd"]
 
 [dependencies]
-ballista-core = { git = "https://github.com/apache/arrow-datafusion.git" }
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git" }
+ballista-core = { git = "https://github.com/apache/arrow-datafusion.git", rev = "fd50dd808213e219559ccd142bcb88f2194ff4a5" }
+datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "fd50dd808213e219559ccd142bcb88f2194ff4a5" }
 ahash = "0.7"
 async-trait = "0.1.36"
 futures = "0.3"
