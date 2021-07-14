@@ -62,16 +62,14 @@ async fn run_task_inner(
     );
     println!("Received task {}", task_id_log);
 
-    let fake_plan = Arc::new(LocalLimitExec::new(
+    let fake_plan: Arc<dyn ExecutionPlan> = Arc::new(LocalLimitExec::new(
         Arc::new(EmptyExec::new(false, Arc::new(Schema::empty()))),
         25,
     ));
 
-    let proto: protobuf::PhysicalPlanNode = (*fake_plan).try_into().unwrap();
-    let b = (&proto).try_into();
+    let proto: protobuf::PhysicalPlanNode = fake_plan.try_into().unwrap();
+    let plan: Arc<dyn ExecutionPlan> = (&proto).try_into().unwrap();
 
-    println!("{:?}", b);
-    let plan: Arc<dyn ExecutionPlan> = b.unwrap();
     println!("The task plan tree :{:?}", plan);
 
     let execution_result = execute_partition(
@@ -194,7 +192,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test]
     fn roundtrip_hash_join() -> Result<()> {
         let field_a = Field::new("col", DataType::Int64, false);
         let schema_left = Schema::new(vec![field_a.clone()]);
