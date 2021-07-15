@@ -28,7 +28,15 @@ datafusion-ext = { path = "../datafusion-ext" }
 tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread", "sync"] }
 tonic = "0.4"
 conquer-once = "0.3.2"
+snmalloc-rs = {version = "0.2", optional = true, features= ["cache-friendly"] }
+log = "0.4"
+env_logger = "0.9"
 
 [lib]
 crate_type = ["cdylib"]
 name = "datafusion_jni_lib"
+
+[features]
+default = []
+simd = ["datafusion-ext/simd"]
+snmalloc = ["snmalloc-rs"]

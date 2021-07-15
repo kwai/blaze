@@ -60,9 +60,9 @@ async fn run_task_inner(
         "{}/{}/{}",
         task_id.job_id, task_id.stage_id, task_id.partition_id
     );
-    println!("Received task {}", task_id_log);
+    info!("Received task {}", task_id_log);
     let plan = (&task.plan.unwrap()).try_into().unwrap();
-    println!("The task plan tree :{:?}", plan);
+    debug!("The task plan tree :{:?}", plan);
 
     let execution_result = execute_partition(
         task_id.job_id.clone(),

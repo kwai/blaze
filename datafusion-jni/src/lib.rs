@@ -35,6 +35,11 @@ use datafusion_ext::task_runner::run_task;
 use tokio::runtime::Runtime;
 
 static RUNTIME: OnceCell<Runtime> = OnceCell::uninit();
+static LOGGER: OnceCell<()> = OnceCell::uninit();
+
+#[cfg(feature = "snmalloc")]
+#[global_allocator]
+static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
 // This keeps Rust from "mangling" the name and making it unique for this
 // crate.
@@ -47,6 +52,7 @@ pub extern "system" fn Java_com_kwai_sod_NativeRun_callNative(
     work_dir: JString,
     file_name: JString,
 ) -> jbyteArray {
+    LOGGER.get_or_init(|| env_logger::init());
     let task = env.convert_byte_array(task).unwrap();
     let executor_id: String = env.get_string(executor_id).unwrap().into();
     let work_dir: String = env.get_string(work_dir).unwrap().into();
