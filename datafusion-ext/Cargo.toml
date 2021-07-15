@@ -37,7 +37,7 @@ prost = "0.7"
 serde = {version = "1", features = ["derive"]}
 sqlparser = "0.9.0"
 tokio = "1.0"
-tonic = "0.4"
+tonic = "0.5"
 uuid = { version = "0.8", features = ["v4"] }
 hashbrown = "0.11"
 arrow = { version = "4.4.0" }
@@ -47,4 +47,4 @@ arrow-flight = { version = "4.4.0"  }
 tempfile = "3"
 
 [build-dependencies]
-tonic-build = { version = "0.4" }
+tonic-build = { version = "0.5" }

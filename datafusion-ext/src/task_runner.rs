@@ -61,15 +61,7 @@ async fn run_task_inner(
         task_id.job_id, task_id.stage_id, task_id.partition_id
     );
     println!("Received task {}", task_id_log);
-
-    let fake_plan: Arc<dyn ExecutionPlan> = Arc::new(LocalLimitExec::new(
-        Arc::new(EmptyExec::new(false, Arc::new(Schema::empty()))),
-        25,
-    ));
-
-    let proto: protobuf::PhysicalPlanNode = fake_plan.try_into().unwrap();
-    let plan: Arc<dyn ExecutionPlan> = (&proto).try_into().unwrap();
-
+    let plan = (&task.plan.unwrap()).try_into().unwrap();
     println!("The task plan tree :{:?}", plan);
 
     let execution_result = execute_partition(
