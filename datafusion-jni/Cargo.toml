@@ -37,6 +37,5 @@ crate_type = ["cdylib"]
 name = "datafusion_jni_lib"
 
 [features]
-default = []
 simd = ["datafusion-ext/simd"]
 snmalloc = ["snmalloc-rs"]

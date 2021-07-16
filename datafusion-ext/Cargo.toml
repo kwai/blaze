@@ -23,9 +23,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = []
 simd = ["datafusion/simd"]
-snmalloc = ["snmalloc-rs"]
 
 [dependencies]
 ballista-core = { git = "https://github.com/apache/arrow-datafusion.git", rev = "fd50dd808213e219559ccd142bcb88f2194ff4a5" }
@@ -43,7 +41,6 @@ uuid = { version = "0.8", features = ["v4"] }
 hashbrown = "0.11"
 arrow = { version = "4.4.0" }
 arrow-flight = { version = "4.4.0"  }
-snmalloc-rs = {version = "0.2", optional = true, features= ["cache-friendly"] }
 
 [dev-dependencies]
 tempfile = "3"
