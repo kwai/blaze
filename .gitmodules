@@ -1,3 +1,0 @@
-[submodule "hdfs-rs/libhdfs3"]
-	path = hdfs-rs/libhdfs3
-	url = https://github.com/ClickHouse-Extras/libhdfs3
