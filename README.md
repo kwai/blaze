@@ -18,11 +18,3 @@
 -->
 
 # Blaze
-
-
-## For devs who works on hdfs-rs
-
-```shell
-git submodule init
-git submodule update
-```
