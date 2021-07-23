@@ -52,7 +52,7 @@ pub extern "system" fn Java_com_kwai_sod_NativeRun_callNative(
     work_dir: JString,
     file_name: JString,
 ) -> jbyteArray {
-    LOGGER.get_or_init(|| env_logger::init());
+    LOGGER.get_or_init(env_logger::init);
     let task = env.convert_byte_array(task).unwrap();
     let executor_id: String = env.get_string(executor_id).unwrap().into();
     let work_dir: String = env.get_string(work_dir).unwrap().into();
