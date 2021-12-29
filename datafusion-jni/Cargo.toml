@@ -18,18 +18,18 @@
 [package]
 name = "datafusion-jni"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 jni = "0.19.0"
 datafusion-ext = { path = "../datafusion-ext" }
-tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread", "sync"] }
-tonic = "0.4"
+tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread", "sync", "fs"] }
+tonic = "0.6"
 conquer-once = "0.3.2"
 snmalloc-rs = {version = "0.2", optional = true, features= ["cache-friendly"] }
-log = "0.4"
+log = "^0.4"
 env_logger = "0.9"
 
 [lib]

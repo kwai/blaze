@@ -20,3 +20,13 @@ members = [
     "datafusion-ext",
     "datafusion-jni",
 ]
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+# If you want to try your local work of arrow-df instead of directly from github,
+# uncomment the patch below and adjust the paths accordingly.
+# [patch.'https://github.com/blaze-init/arrow-datafusion.git']
+# datafusion = { path = "/Users/shenyijie/code/arrow-datafusion/datafusion" }
+# ballista-core = { path = "/Users/shenyijie/code/arrow-datafusion/ballista/rust/core" }

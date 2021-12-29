@@ -30,11 +30,12 @@ use std::any::type_name;
 use std::convert::TryInto;
 use std::sync::Arc;
 
+use ballista_core::serde::protobuf::PartitionId;
 use ballista_core::{
     error,
     error::BallistaError,
     serde::protobuf::{
-        task_status, CompletedTask, FailedTask, PartitionId, TaskDefinition, TaskStatus,
+        task_status, CompletedTask, FailedTask, TaskDefinition, TaskStatus,
     },
 };
 
@@ -107,6 +108,7 @@ fn as_task_status(
                 partition_id: Some(task_id),
                 status: Some(task_status::Status::Completed(CompletedTask {
                     executor_id,
+                    partitions: vec![],
                 })),
             }
         }
@@ -213,6 +215,7 @@ mod tests {
                     on.clone(),
                     &join_type,
                     *partition_mode,
+                    &false,
                 )?))?;
             }
         }

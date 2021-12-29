@@ -18,7 +18,7 @@
 [package]
 name = "datafusion-ext"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,24 +26,25 @@ edition = "2018"
 simd = ["datafusion/simd"]
 
 [dependencies]
-ballista-core = { git = "https://github.com/apache/arrow-datafusion.git", rev = "afe29bd3c6322db88936d5936db58ad1fb5c9ae2" }
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "afe29bd3c6322db88936d5936db58ad1fb5c9ae2" }
+ballista-core = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "df-6.0-arrow2-0.8" }
+datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "df-6.0-arrow2-0.8" }
 ahash = "0.7"
-async-trait = "0.1.36"
+async-trait = "0.1"
 futures = "0.3"
-log = "0.4"
-prost = "0.7"
+log = "^0.4"
+prost = "0.9"
 serde = {version = "1", features = ["derive"]}
-sqlparser = "0.9.0"
-tokio = "1.0"
-tonic = "0.5"
+sqlparser = "0.13"
+tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread", "sync", "fs"] }
+tokio-stream = "0.1"
+tonic = "0.6"
 uuid = { version = "0.8", features = ["v4"] }
 hashbrown = "0.11"
-arrow = { version = "5.0.0" }
-arrow-flight = { version = "5.0.0"  }
+arrow-format = { version = "0.3", features = ["flight-data", "flight-service"] }
+arrow = { package = "arrow2", version="0.8", features = ["io_ipc", "io_flight"] }
 
 [dev-dependencies]
 tempfile = "3"
 
 [build-dependencies]
-tonic-build = { version = "0.5" }
+tonic-build = { version = "0.6" }
