@@ -10,8 +10,8 @@ Principles:
 
 ## Shuffle File Format
 
-- Two shuffle files for each task's shuffle write: one data file (of '.data' postfix) and one index file (of '.index' postfix).
-- Task's shuffle write file of file name 'shuffle_${shuffle_id}_${map_id}_0'.
+- Two shuffle files for each task's shuffle write: one data file (of `.data` postfix) and one index file (of `.index` postfix).
+- Task's shuffle write file of file name `shuffle_${shuffle_id}_${map_id}_0`.
 
 ### Data file
 
