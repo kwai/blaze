@@ -17,5 +17,6 @@
 
 #![allow(unused_imports)]
 
+pub mod shuffle_reader;
 pub mod shuffle_writer;
 pub mod task_runner;
