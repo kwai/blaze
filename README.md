@@ -18,3 +18,7 @@
 -->
 
 # Blaze
+
+## For developers
+
+- [Architectural Overview](./dev/doc/architectural_overview.md)
