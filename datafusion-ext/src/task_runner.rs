@@ -18,11 +18,7 @@
 use crate::shuffle_writer::ShuffleWriterExec;
 use arrow::record_batch::RecordBatch;
 use ballista_core::error::Result;
-use ballista_core::serde::protobuf;
 use ballista_core::utils;
-use datafusion::arrow::datatypes::Schema;
-use datafusion::physical_plan::empty::EmptyExec;
-use datafusion::physical_plan::limit::LocalLimitExec;
 use datafusion::physical_plan::ExecutionPlan;
 use log::{debug, info};
 use prost::Message;

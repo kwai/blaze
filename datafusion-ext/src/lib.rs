@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![allow(unused_imports)]
-
 pub mod shuffle_reader;
 pub mod shuffle_writer;
 pub mod task_runner;

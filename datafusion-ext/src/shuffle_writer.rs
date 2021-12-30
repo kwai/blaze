@@ -21,9 +21,9 @@
 //! will use the ShuffleReaderExec to read these results.
 
 use std::fs::File;
-use std::iter::{FromIterator, Iterator};
+use std::iter::Iterator;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use std::{any::Any, pin::Pin};
 
@@ -39,7 +39,6 @@ use datafusion::arrow::array::*;
 use datafusion::arrow::compute::aggregate::estimated_bytes_size;
 use datafusion::arrow::compute::take;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::arrow::io::ipc::read::FileReader;
 use datafusion::arrow::io::ipc::write::FileWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
@@ -47,17 +46,12 @@ use datafusion::physical_plan::hash_utils::create_hashes;
 use datafusion::physical_plan::metrics::{
     self, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
 };
-use datafusion::physical_plan::repartition::RepartitionExec;
-use datafusion::physical_plan::Partitioning::RoundRobinBatch;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Metric, Partitioning, RecordBatchStream, Statistics,
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, Statistics,
 };
 use futures::StreamExt;
-use hashbrown::HashMap;
 use log::{debug, info};
-use std::cell::RefCell;
 use std::io::BufWriter;
-use uuid::Uuid;
 
 /// ShuffleWriterExec represents a section of a query plan that has consistent partitioning and
 /// can be executed as one unit with each partition being executed in parallel. The output of each

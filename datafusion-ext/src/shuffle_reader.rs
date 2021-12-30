@@ -15,22 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow::error::{ArrowError, Result as ArrowResult};
+use arrow::error::Result as ArrowResult;
 use datafusion::error::{DataFusionError, Result};
 use std::any::Any;
-use std::cell::RefCell;
-use std::fmt::{Debug, Formatter};
-use std::fs::{self, File, Metadata};
+use std::fmt::Debug;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 
 use arrow::datatypes::SchemaRef;
 use arrow::io::ipc::read::{
     read_file_segment_metadata, FileMetadata as IPCMeta, FileReader as IPCReader,
-    FileReader,
 };
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::physical_plan::common::AbortOnDropSingle;
 use datafusion::physical_plan::{
     ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
@@ -40,7 +36,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 
 pub trait ReadSeek: Read + Seek {}
@@ -161,7 +156,7 @@ impl Stream for ShuffleReaderStream {
                         let end = block.offset + block.length;
                         match block.content {
                             Content::File(f) => {
-                                let f = BufReader::new(File::open(f).unwrap());
+                                let f = BufReader::new(std::fs::File::open(f).unwrap());
                                 let r = MultiIPCReader::new(f, start, end).unwrap();
                                 self.as_mut().batch_iter = Box::new(r);
                             }
