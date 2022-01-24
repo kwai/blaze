@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use ballista_core::execution_plans::ShuffleReaderExec;
 use ballista_core::serde::protobuf::TaskDefinition;
-use datafusion::arrow::io::ipc::write::{StreamWriter, WriteOptions};
+use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::file_format::ParquetExec;
@@ -90,7 +90,7 @@ pub fn blaze_call_native(
 
         let mut buf: Vec<u8> = vec![];
         let mut buf_writer = BufWriter::new(&mut buf);
-        let mut arrow_writer = StreamWriter::try_new(&mut buf_writer, &*schema, WriteOptions::default()).unwrap();
+        let mut arrow_writer = StreamWriter::try_new(&mut buf_writer, &*schema).unwrap();
 
         info!("Writing IPC");
         let mut num_rows_total = 0;
@@ -99,7 +99,7 @@ pub fn blaze_call_native(
             arrow_writer.write(record_batch).expect("Error writing IPC");
         }
         arrow_writer.finish().expect("Error finishing arrow writer");
-        let buf_writer = arrow_writer.into_inner();
+        let buf_writer = arrow_writer.into_inner().unwrap();
         info!("Writing IPC finished: rows={}, bytes={}", num_rows_total, buf_writer.get_ref().len());
 
         info!("Invoking IPC data consumer");

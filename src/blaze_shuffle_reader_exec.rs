@@ -26,11 +26,10 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
-use arrow::io::ipc::read::FileReader;
-use arrow::io::ipc::read::read_file_metadata;
-use arrow::record_batch::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::error::Result as ArrowResult;
+use datafusion::arrow::ipc::reader::FileReader;
+use datafusion::arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
@@ -158,7 +157,7 @@ impl ShuffleReaderStream {
             self.arrow_file_reader = None;
             return Ok(false);
         }
-        let mut jni_next_seekable_byte_channel = || -> JniResult<bool> {
+        let mut jni_next_seekable_byte_channel = || -> JniResult<()> {
             let env: &JNIEnv = &Util::jni_env_clone(&self.jvm.attach_current_thread_permanently()?);
             self.seekable_byte_channel = env.call_method_unchecked(
                 self.seekable_byte_channels,
@@ -166,19 +165,15 @@ impl ShuffleReaderStream {
                 JavaClasses::get().cJavaList.method_get_ret.clone(),
                 &[JValue::Int(self.seekable_byte_channels_pos as i32)],
             )?.l()?;
-            return Ok(true);
+            return Ok(());
         };
 
-        if jni_next_seekable_byte_channel().map_err(|_|
-            Util::wrap_default_data_fusion_io_error("JNI error: ShuffleReaderStream.jni_next_seekable_byte_channel"))?
-        {
-            let mut seekable_byte_channel_reader =
-                SeekableByteChannelReader(Util::jvm_clone(&self.jvm), self.seekable_byte_channel);
-            let metadata = read_file_metadata(&mut seekable_byte_channel_reader)?;
-            println!("Metadata: {:?}", metadata);
-            self.arrow_file_reader = Some(FileReader::new(seekable_byte_channel_reader, metadata, None));
-            self.seekable_byte_channels_pos += 1;
-        }
+        jni_next_seekable_byte_channel().map_err(|_|
+            Util::wrap_default_data_fusion_io_error("JNI error: ShuffleReaderStream.jni_next_seekable_byte_channel"))?;
+        let seekable_byte_channel_reader =
+            SeekableByteChannelReader(Util::jvm_clone(&self.jvm), self.seekable_byte_channel);
+        self.arrow_file_reader = Some(FileReader::try_new(seekable_byte_channel_reader)?);
+        self.seekable_byte_channels_pos += 1;
         return Ok(true);
     }
 
@@ -203,14 +198,13 @@ impl ShuffleReaderStream {
                 JavaClasses::get().cScalaTuple2.method_2_ret.clone(),
                 &[],
             )?.l()?;
-            let next_seekable_byte_channels = env.call_static_method_unchecked(
+
+            self.seekable_byte_channels = env.call_static_method_unchecked(
                 JavaClasses::get().cSparkBlazeConverters.class,
                 JavaClasses::get().cSparkBlazeConverters.method_read_managed_buffer_to_segment_byte_channels_as_java.clone(),
                 JavaClasses::get().cSparkBlazeConverters.method_read_managed_buffer_to_segment_byte_channels_as_java_ret.clone(),
                 &[JValue::Object(next_managed_buffer)],
             )?.l()?;
-
-            self.seekable_byte_channels = next_seekable_byte_channels;
             self.seekable_byte_channels_len = env.call_method_unchecked(
                 self.seekable_byte_channels,
                 JavaClasses::get().cJavaList.method_size.clone(),
@@ -290,7 +284,6 @@ impl Seek for SeekableByteChannelReader {
                         JavaClasses::get().cJavaNioSeekableByteChannel.method_position_set_ret.clone(),
                         &[JValue::Long(position as i64)],
                     )?;
-                    println!("SEEK!: {}", position);
                     return Ok(position);
                 }
 
@@ -309,7 +302,6 @@ impl Seek for SeekableByteChannelReader {
                         JavaClasses::get().cJavaNioSeekableByteChannel.method_position_set_ret.clone(),
                         &[JValue::Long(position as i64)],
                     )?;
-                    println!("SEEK!: {}", position);
                     return Ok(position);
                 }
 
