@@ -1,3 +1,5 @@
+#![feature(trait_upcasting)]
+
 #[macro_use] extern crate log;
 #[macro_use] extern crate timed;
 extern crate async_trait;

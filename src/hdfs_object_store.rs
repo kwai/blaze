@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use datafusion::datasource::object_store::FileMeta;
-use datafusion::datasource::object_store::ReadSeek;
 use datafusion::datasource::object_store::FileMetaStream;
 use datafusion::datasource::object_store::ListEntryStream;
 use datafusion::datasource::object_store::ObjectReader;
@@ -30,6 +29,8 @@ use tokio::runtime::Runtime;
 use crate::DFResult;
 use crate::jni_bridge::JavaClasses;
 use crate::util::Util;
+
+trait ReadSeek: Read + Seek {}
 
 pub struct HDFSSingleFileObjectStore {
     pub jvm: JavaVM,
@@ -65,7 +66,7 @@ impl Debug for HDFSSingleFileObjectStore {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ObjectStore for HDFSSingleFileObjectStore {
     async fn list_file(&self, prefix: &str) -> DFResult<FileMetaStream> {
         info!("HDFSSingleFileStore.list_file: {}", prefix);
@@ -148,10 +149,27 @@ struct HDFSObjectReader {
 #[async_trait]
 impl ObjectReader for HDFSObjectReader {
     async fn chunk_reader(&self, _start: u64, _length: usize) -> DFResult<Box<dyn AsyncRead>> {
-        DFResult::Err(DataFusionError::NotImplemented("HDFSObjectReader::chunk_reader not supported".to_owned()))
+        unimplemented!()
     }
 
-    fn sync_reader(&self) -> DFResult<Box<dyn ReadSeek + Send + Sync>> {
+    fn sync_reader(&self) -> DFResult<Box<dyn Read + Send + Sync>> {
+        return Ok(self.get_seekable_reader()?);
+    }
+
+    fn sync_chunk_reader(&self, start: u64, _length: usize) -> DFResult<Box<dyn Read + Send + Sync>> {
+        return Ok(self.get_seekable_reader().and_then(|mut reader| {
+            reader.seek(SeekFrom::Start(start))?;
+            Ok(reader)
+        })?);
+    }
+
+    fn length(&self) -> u64 {
+        self.file.size
+    }
+}
+
+impl HDFSObjectReader {
+    fn get_seekable_reader(&self) -> DFResult<Box<dyn ReadSeek + Send + Sync>> {
         return self.object_store.tokio_runtime.lock().unwrap().block_on(async {
             let reader_jni = || -> JniResult<Box<dyn ReadSeek + Send + Sync>>{
                 let env = Util::jni_env_clone(&self.object_store.jvm.attach_current_thread_permanently()?);
@@ -183,20 +201,6 @@ impl ObjectReader for HDFSObjectReader {
             };
             return reader_jni().map_err(Util::wrap_default_data_fusion_io_error);
         });
-    }
-
-    fn sync_chunk_reader(&self, start: u64, _length: usize) -> DFResult<Box<dyn Read + Send + Sync>> {
-        unsafe {
-            std::mem::transmute(
-                self.sync_reader().and_then(|mut reader| {
-                    reader.seek(SeekFrom::Start(start))?;
-                    Ok(reader)
-                }))
-        }
-    }
-
-    fn length(&self) -> u64 {
-        self.file.size
     }
 }
 
