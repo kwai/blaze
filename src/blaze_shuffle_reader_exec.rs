@@ -159,6 +159,7 @@ struct ShuffleReaderStream {
     arrow_file_reader: Option<FileReader<SeekableByteChannelReader>>,
 }
 unsafe impl Sync for ShuffleReaderStream {} // safety: buffers is safe to be shared
+#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for ShuffleReaderStream {}
 
 impl ShuffleReaderStream {
