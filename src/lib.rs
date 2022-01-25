@@ -4,15 +4,6 @@
 extern crate log;
 #[macro_use]
 extern crate timed;
-extern crate async_trait;
-extern crate ballista_core;
-extern crate datafusion;
-extern crate env_logger;
-extern crate futures;
-extern crate jni;
-extern crate prost;
-extern crate tokio;
-extern crate tokio_stream;
 
 pub use std::io::Error as IoError;
 pub use std::io::ErrorKind as IoErrorKind;
