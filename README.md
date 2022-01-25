@@ -19,6 +19,8 @@
 
 # Blaze
 
+[![Build Status](https://travis-ci.org/blaze-init/blaze-rs.svg?branch=master)](https://travis-ci.org/blaze-init/blaze-rs)
+
 ## For developers
 
 - [Architectural Overview](./dev/doc/architectural_overview.md)
