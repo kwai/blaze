@@ -34,6 +34,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::RecordBatchStream;
@@ -57,7 +58,7 @@ pub struct BlazeShuffleReaderExec {
 
 impl Debug for BlazeShuffleReaderExec {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "BlazeShuffleReaderExec")
+        write!(f, "BlazeShuffleReaderExec: job_id={}", self.job_id)
     }
 }
 
@@ -136,6 +137,10 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
             schema,
             buffers,
         )))
+    }
+
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 
     fn statistics(&self) -> Statistics {

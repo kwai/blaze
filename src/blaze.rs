@@ -71,7 +71,7 @@ pub fn blaze_call_native(
     // use the default one here as placeholder now.
     let runtime = Arc::new(RuntimeEnv::default());
 
-    info!("Executing plan");
+    info!("Executing plan:\n{}", datafusion::physical_plan::displayable(execution_plan.as_ref()).indent());
     let sync_tokio_runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
