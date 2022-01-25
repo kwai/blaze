@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 use std::fmt::Formatter;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -29,8 +29,6 @@ use tokio::runtime::Runtime;
 use crate::jni_bridge::JavaClasses;
 use crate::util::Util;
 use crate::DFResult;
-
-trait ReadSeek: Read + Seek {}
 
 pub struct HDFSSingleFileObjectStore {
     pub jvm: JavaVM,
@@ -184,7 +182,7 @@ impl ObjectReader for HDFSObjectReader {
     }
 
     fn sync_reader(&self) -> DFResult<Box<dyn Read + Send + Sync>> {
-        return Ok(self.get_seekable_reader()?);
+        self.get_reader(0)
     }
 
     fn sync_chunk_reader(
@@ -192,10 +190,7 @@ impl ObjectReader for HDFSObjectReader {
         start: u64,
         _length: usize,
     ) -> DFResult<Box<dyn Read + Send + Sync>> {
-        return Ok(self.get_seekable_reader().and_then(|mut reader| {
-            reader.seek(SeekFrom::Start(start))?;
-            Ok(reader)
-        })?);
+        self.get_reader(start)
     }
 
     fn length(&self) -> u64 {
@@ -204,14 +199,14 @@ impl ObjectReader for HDFSObjectReader {
 }
 
 impl HDFSObjectReader {
-    fn get_seekable_reader(&self) -> DFResult<Box<dyn ReadSeek + Send + Sync>> {
+    fn get_reader(&self, start: u64) -> DFResult<Box<dyn Read + Send + Sync>> {
         return self
             .object_store
             .tokio_runtime
             .lock()
             .unwrap()
             .block_on(async {
-                let reader_jni = || -> JniResult<Box<dyn ReadSeek + Send + Sync>> {
+                let reader_jni = || -> JniResult<Box<dyn Read + Send + Sync>> {
                     let env = Util::jni_env_clone(
                         &self.object_store.jvm.attach_current_thread_permanently()?,
                     );
@@ -246,7 +241,7 @@ impl HDFSObjectReader {
                     let reader = Box::new(HDFSFileReader::try_new(
                         self.object_store.clone(),
                         hdfs_input_stream,
-                        self.file.size,
+                        start,
                     ));
                     Ok(reader)
                 };
@@ -258,7 +253,6 @@ impl HDFSObjectReader {
 struct HDFSFileReader {
     pub object_store: HDFSSingleFileObjectStore,
     pub hdfs_input_stream: JObject<'static>,
-    pub file_size: u64,
     pub pos: u64,
 }
 unsafe impl Send for HDFSFileReader {}
@@ -268,13 +262,12 @@ impl HDFSFileReader {
     pub fn try_new(
         object_store: HDFSSingleFileObjectStore,
         hdfs_input_stream: JObject<'static>,
-        file_size: u64,
+        pos: u64,
     ) -> HDFSFileReader {
         HDFSFileReader {
             object_store,
             hdfs_input_stream,
-            file_size,
-            pos: 0,
+            pos,
         }
     }
 }
@@ -289,6 +282,18 @@ impl Read for HDFSFileReader {
             .block_on(async {
                 let env = &self.object_store.jvm.attach_current_thread_permanently()?;
                 let buf = env.new_direct_byte_buffer(buf)?;
+
+                if self.pos != 0 {
+                    env.call_method_unchecked(
+                        self.hdfs_input_stream,
+                        JavaClasses::get().cHadoopFSDataInputStream.method_seek,
+                        JavaClasses::get()
+                            .cHadoopFSDataInputStream
+                            .method_seek_ret
+                            .clone(),
+                        &[JValue::Long(self.pos as i64)],
+                    )?;
+                }
 
                 let read_size = env
                     .call_method_unchecked(
@@ -310,39 +315,3 @@ impl Read for HDFSFileReader {
             });
     }
 }
-impl Seek for HDFSFileReader {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        let seek_absolutely = |pos: u64| -> std::io::Result<u64> {
-            return self
-                .object_store
-                .tokio_runtime
-                .lock()
-                .unwrap()
-                .block_on(async {
-                    let env =
-                        &self.object_store.jvm.attach_current_thread_permanently()?;
-                    env.call_method_unchecked(
-                        self.hdfs_input_stream,
-                        JavaClasses::get().cHadoopFSDataInputStream.method_seek,
-                        JavaClasses::get()
-                            .cHadoopFSDataInputStream
-                            .method_seek_ret
-                            .clone(),
-                        &[JValue::Long(pos as i64)],
-                    )?;
-                    Ok(pos)
-                })
-                .map_err(|err: JniError| {
-                    std::io::Error::new(std::io::ErrorKind::Other, err)
-                });
-        };
-
-        match pos {
-            SeekFrom::Start(start) => self.pos = start,
-            SeekFrom::End(offset) => self.pos = self.file_size - (-offset) as u64,
-            SeekFrom::Current(offset) => self.pos += offset as u64,
-        }
-        seek_absolutely(self.pos)
-    }
-}
-impl ReadSeek for HDFSFileReader {}

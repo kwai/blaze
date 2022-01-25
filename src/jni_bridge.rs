@@ -23,6 +23,7 @@ pub struct JavaClasses<'a> {
     pub cSparkBlazeConverters: SparkBlazeConverters<'a>,
 }
 
+#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl<'a> Send for JavaClasses<'a> {} // safety: see JavaClasses::init()
 unsafe impl<'a> Sync for JavaClasses<'a> {}
 

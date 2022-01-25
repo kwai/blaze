@@ -1,5 +1,3 @@
-#![feature(trait_upcasting)]
-
 #[macro_use]
 extern crate log;
 #[macro_use]
