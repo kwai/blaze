@@ -19,7 +19,17 @@
 
 # Blaze
 
+The blaze-rs project aims to provide Spark with a high-performance, low-cost native execution layer.
+
+We seek to solve a series of performance bottlenecks in the current JVM-based Task execution of Spark SQL,
+such as high fluctuations in performance due to GC, high memory overhead, and inability to accelerate computation directly with SIMD instructions.
+
+This repo is under active development and is not ready for production (or even development) use, but stay tuned for updates! ☺️
+
 [![Build Status](https://travis-ci.org/blaze-init/blaze-rs.svg?branch=master)](https://travis-ci.org/blaze-init/blaze-rs)
+
+## Overview
+
 
 ## For developers
 
