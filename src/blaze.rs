@@ -9,6 +9,9 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::file_format::FileScanConfig;
 use datafusion::physical_plan::file_format::ParquetExec;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::file_format::PhysicalPlanConfig;
+use datafusion::physical_plan::sort::SortExec;
+use jni::JNIEnv;
 use jni::objects::JByteBuffer;
 use jni::objects::JObject;
 use jni::objects::JValue;
@@ -71,7 +74,10 @@ pub fn blaze_call_native(
     // use the default one here as placeholder now.
     let runtime = Arc::new(RuntimeEnv::default());
 
-    info!("Executing plan");
+    // set all SortExec preserve_partitioning to true, because all partitioning is done is spark side
+    let execution_plan = set_sort_plan_preserve_partitioning(execution_plan.clone());
+
+    info!("Executing plan:\n{}", datafusion::physical_plan::displayable(execution_plan.as_ref()).indent());
     let sync_tokio_runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
@@ -204,6 +210,24 @@ fn replace_shuffle_reader(
                 schema: shuffle_reader_exec.schema(),
             });
         return blaze_shuffle_reader;
+    }
+    if children.is_empty() {
+        return plan;
+    }
+    return plan.with_new_children(children).unwrap();
+}
+
+fn set_sort_plan_preserve_partitioning(plan: Arc<dyn ExecutionPlan>) -> Arc<dyn ExecutionPlan> {
+    let children = plan.children().iter()
+        .map(|child| set_sort_plan_preserve_partitioning(child.clone()))
+        .collect::<Vec<_>>();
+
+    if let Some(sort_exec) = plan.as_any().downcast_ref::<SortExec>() {
+        return Arc::new(SortExec::new_with_partitioning(
+            sort_exec.expr().to_vec(),
+            sort_exec.input().clone(),
+            true,
+        ));
     }
     if children.is_empty() {
         return plan;
