@@ -20,6 +20,14 @@ tempfile = "3.3.0"
 timed = "0.2.1"
 tokio = "1.15.0"
 tokio-stream = "0.1.8"
+proc-macro2 = "1.0.36"
 
 [profile.dev]
 overflow-checks = false
+
+[patch.crates-io]
+arrow = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
+arrow-flight = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
+parquet = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
+ballista-core = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "bz_master"}
+datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "bz_master"}

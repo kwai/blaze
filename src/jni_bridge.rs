@@ -1,5 +1,4 @@
 use jni::errors::Result as JniResult;
-use jni::JNIEnv;
 use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -7,6 +6,7 @@ use jni::objects::JObject;
 use jni::objects::JStaticMethodID;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
+use jni::JNIEnv;
 
 #[allow(non_snake_case)]
 pub struct JavaClasses<'a> {
@@ -30,9 +30,8 @@ unsafe impl<'a> Sync for JavaClasses<'a> {}
 //   All jclasses and jmethodids are implemented in raw pointers and can be
 //   safely initialized to zero (null)
 //
-static mut JNI_JAVA_CLASSES: [u8; std::mem::size_of::<JavaClasses>()] = {
-    [0; std::mem::size_of::<JavaClasses>()]
-};
+static mut JNI_JAVA_CLASSES: [u8; std::mem::size_of::<JavaClasses>()] =
+    [0; std::mem::size_of::<JavaClasses>()];
 
 impl JavaClasses<'static> {
     pub fn init(env: &JNIEnv<'static>) -> JniResult<()> {
@@ -60,7 +59,8 @@ impl JavaClasses<'static> {
     }
 
     pub fn get() -> &'static JavaClasses<'static> {
-        return unsafe { // safety: see JavaClasses::init()
+        return unsafe {
+            // safety: see JavaClasses::init()
             let jni_java_classes = JNI_JAVA_CLASSES.as_ptr() as *const JavaClasses;
             &*jni_java_classes
         };
@@ -81,10 +81,22 @@ impl<'a> JniBridge<'a> {
         let class = env.find_class(Self::SIG_TYPE)?;
         Ok(JniBridge {
             class,
-            method_get_hdfs_file_system: env.get_static_method_id(class, "getHDFSFileSystem", "()Lorg/apache/hadoop/fs/FileSystem;")?,
-            method_get_hdfs_file_system_ret: JavaType::Object(HadoopFileSystem::SIG_TYPE.to_owned()),
-            method_get_resource: env.get_static_method_id(class, "getResource", "(Ljava/lang/String;)Ljava/lang/Object;")?,
-            method_get_resource_ret: JavaType::Object(HadoopFileSystem::SIG_TYPE.to_owned()),
+            method_get_hdfs_file_system: env.get_static_method_id(
+                class,
+                "getHDFSFileSystem",
+                "()Lorg/apache/hadoop/fs/FileSystem;",
+            )?,
+            method_get_hdfs_file_system_ret: JavaType::Object(
+                HadoopFileSystem::SIG_TYPE.to_owned(),
+            ),
+            method_get_resource: env.get_static_method_id(
+                class,
+                "getResource",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+            )?,
+            method_get_resource_ret: JavaType::Object(
+                HadoopFileSystem::SIG_TYPE.to_owned(),
+            ),
         })
     }
 }
@@ -107,7 +119,11 @@ impl<'a> JavaNioSeekableByteChannel<'a> {
             class,
             method_read: env.get_method_id(class, "read", "(Ljava/nio/ByteBuffer;)I")?,
             method_read_ret: JavaType::Primitive(Primitive::Int),
-            method_position_set: env.get_method_id(class, "position", "(J)Ljava/nio/channels/SeekableByteChannel;")?,
+            method_position_set: env.get_method_id(
+                class,
+                "position",
+                "(J)Ljava/nio/channels/SeekableByteChannel;",
+            )?,
             method_position_set_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
             method_size: env.get_method_id(class, "size", "()J")?,
             method_size_ret: JavaType::Primitive(Primitive::Long),
@@ -129,10 +145,22 @@ impl<'a> HadoopFileSystem<'a> {
         let class = env.find_class(Self::SIG_TYPE)?;
         Ok(HadoopFileSystem {
             class,
-            method_get_file_status: env.get_method_id(class, "getFileStatus", "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FileStatus;")?,
-            method_get_file_status_ret: JavaType::Object(HadoopFileStatus::SIG_TYPE.to_owned()),
-            method_open: env.get_method_id(class, "open", "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataInputStream;")?,
-            method_open_ret: JavaType::Object(HadoopFSDataInputStream::SIG_TYPE.to_owned()),
+            method_get_file_status: env.get_method_id(
+                class,
+                "getFileStatus",
+                "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FileStatus;",
+            )?,
+            method_get_file_status_ret: JavaType::Object(
+                HadoopFileStatus::SIG_TYPE.to_owned(),
+            ),
+            method_open: env.get_method_id(
+                class,
+                "open",
+                "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataInputStream;",
+            )?,
+            method_open_ret: JavaType::Object(
+                HadoopFSDataInputStream::SIG_TYPE.to_owned(),
+            ),
         })
     }
 }
@@ -271,8 +299,14 @@ impl<'a> SparkManagedBuffer<'a> {
         let class = env.find_class(Self::SIG_TYPE)?;
         Ok(SparkManagedBuffer {
             class,
-            method_nio_byte_buffer: env.get_method_id(class, "nioByteBuffer", "()Ljava/nio/ByteBuffer;")?,
-            method_nio_byte_buffer_ret: JavaType::Object("java/nio/ByteBuffer".to_owned()),
+            method_nio_byte_buffer: env.get_method_id(
+                class,
+                "nioByteBuffer",
+                "()Ljava/nio/ByteBuffer;",
+            )?,
+            method_nio_byte_buffer_ret: JavaType::Object(
+                "java/nio/ByteBuffer".to_owned(),
+            ),
         })
     }
 }
@@ -289,8 +323,8 @@ impl<'a> SparkBlazeConverters<'a> {
         let class = env.find_class(Self::SIG_TYPE)?;
         Ok(SparkBlazeConverters {
             class,
-            method_read_managed_buffer_to_segment_byte_channels_as_java:
-                env.get_static_method_id(
+            method_read_managed_buffer_to_segment_byte_channels_as_java: env
+                .get_static_method_id(
                     class,
                     "readManagedBufferToSegmentByteChannelsAsJava",
                     "(Lorg/apache/spark/network/buffer/ManagedBuffer;)Ljava/util/List;",
@@ -312,12 +346,16 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     if let Err(err) = std::panic::catch_unwind(|| {
         crate::blaze::blaze_call_native(&env, taskDefinition, ipcRecordBatchDataConsumer);
     }) {
-        env.throw_new("java/lang/RuntimeException", if let Some(msg) = err.downcast_ref::<String>() {
-            &msg
-        } else if let Some(msg) = err.downcast_ref::<&str>() {
-            msg
-        } else {
-            "Unknown blaze-rs exception"
-        }).unwrap();
+        env.throw_new(
+            "java/lang/RuntimeException",
+            if let Some(msg) = err.downcast_ref::<String>() {
+                &msg
+            } else if let Some(msg) = err.downcast_ref::<&str>() {
+                msg
+            } else {
+                "Unknown blaze-rs exception"
+            },
+        )
+        .unwrap();
     }
 }
