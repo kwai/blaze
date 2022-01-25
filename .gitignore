@@ -44,18 +44,6 @@ build.ninja
 perf.data
 perf.data.old
 
-cpp/.idea/
-.clangd/
-cpp/.clangd/
-cpp/apidoc/xml/
-docs/example.gz
-docs/example1.dat
-docs/example3.dat
-python/.eggs/
-python/doc/
-# Egg metadata
-*.egg-info
-
 .vscode
 .idea/
 .pytest_cache/
@@ -68,14 +56,7 @@ docker_cache
 
 site/
 
-# R files
-**/.Rproj.user
-**/*.Rcheck/
-**/.Rhistory
-.Rproj.user
-
 # macOS
-cpp/Brewfile.lock.json
 .DS_Store
 
 # docker volumes used for caching
@@ -90,4 +71,3 @@ rusty-tags.vi
 .flatbuffers/
 
 .vscode
-venv/*
