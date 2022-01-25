@@ -59,11 +59,11 @@ impl JavaClasses<'static> {
     }
 
     pub fn get() -> &'static JavaClasses<'static> {
-        return unsafe {
+        unsafe {
             // safety: see JavaClasses::init()
             let jni_java_classes = JNI_JAVA_CLASSES.as_ptr() as *const JavaClasses;
             &*jni_java_classes
-        };
+        }
     }
 }
 
@@ -349,7 +349,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         env.throw_new(
             "java/lang/RuntimeException",
             if let Some(msg) = err.downcast_ref::<String>() {
-                &msg
+                msg
             } else if let Some(msg) = err.downcast_ref::<&str>() {
                 msg
             } else {

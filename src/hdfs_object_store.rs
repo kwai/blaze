@@ -76,11 +76,8 @@ impl ObjectStore for HDFSSingleFileObjectStore {
 
                 let fs = env
                     .call_static_method_unchecked(
-                        JavaClasses::get().cJniBridge.class.clone(),
-                        JavaClasses::get()
-                            .cJniBridge
-                            .method_get_hdfs_file_system
-                            .clone(),
+                        JavaClasses::get().cJniBridge.class,
+                        JavaClasses::get().cJniBridge.method_get_hdfs_file_system,
                         JavaClasses::get()
                             .cJniBridge
                             .method_get_hdfs_file_system_ret
@@ -90,23 +87,20 @@ impl ObjectStore for HDFSSingleFileObjectStore {
                     .l()?;
 
                 let path = env.new_object_unchecked(
-                    JavaClasses::get().cHadoopPath.class.clone(),
-                    JavaClasses::get().cHadoopPath.ctor.clone(),
+                    JavaClasses::get().cHadoopPath.class,
+                    JavaClasses::get().cHadoopPath.ctor,
                     &[JValue::Object(env.new_string(prefix)?.into())],
                 )?;
 
                 let file_status = env
                     .call_method_unchecked(
                         fs,
-                        JavaClasses::get()
-                            .cHadoopFileSystem
-                            .method_get_file_status
-                            .clone(),
+                        JavaClasses::get().cHadoopFileSystem.method_get_file_status,
                         JavaClasses::get()
                             .cHadoopFileSystem
                             .method_get_file_status_ret
                             .clone(),
-                        &[JValue::Object(path.into())],
+                        &[JValue::Object(path)],
                     )?
                     .l()?;
 
@@ -116,10 +110,7 @@ impl ObjectStore for HDFSSingleFileObjectStore {
                         size: env
                             .call_method_unchecked(
                                 file_status,
-                                JavaClasses::get()
-                                    .cHadoopFileStatus
-                                    .method_get_len
-                                    .clone(),
+                                JavaClasses::get().cHadoopFileStatus.method_get_len,
                                 JavaClasses::get()
                                     .cHadoopFileStatus
                                     .method_get_len_ret
@@ -146,15 +137,15 @@ impl ObjectStore for HDFSSingleFileObjectStore {
                             self_mut.ended = true;
                             return Poll::Ready(Some(Ok(self_mut.file_meta.clone())));
                         }
-                        return Poll::Ready(None);
+                        Poll::Ready(None)
                     }
                 }
-                return Ok(Box::pin(HDFSSingleFileMetaStream {
+                Ok(Box::pin(HDFSSingleFileMetaStream {
                     file_meta,
                     ended: false,
-                }));
+                }))
             };
-            return list_file_impl().map_err(Util::wrap_default_data_fusion_io_error);
+            list_file_impl().map_err(Util::wrap_default_data_fusion_io_error)
         });
     }
 
@@ -170,10 +161,10 @@ impl ObjectStore for HDFSSingleFileObjectStore {
 
     fn file_reader(&self, file: SizedFile) -> DFResult<Arc<dyn ObjectReader>> {
         info!("HDFSSingleFileStore.file_reader: {:?}", file);
-        return Ok(Arc::new(HDFSObjectReader {
+        Ok(Arc::new(HDFSObjectReader {
             object_store: self.clone(),
             file,
-        }));
+        }))
     }
 }
 
@@ -227,11 +218,8 @@ impl HDFSObjectReader {
 
                     let fs = env
                         .call_static_method_unchecked(
-                            JavaClasses::get().cJniBridge.class.clone(),
-                            JavaClasses::get()
-                                .cJniBridge
-                                .method_get_hdfs_file_system
-                                .clone(),
+                            JavaClasses::get().cJniBridge.class,
+                            JavaClasses::get().cJniBridge.method_get_hdfs_file_system,
                             JavaClasses::get()
                                 .cJniBridge
                                 .method_get_hdfs_file_system_ret
@@ -241,15 +229,15 @@ impl HDFSObjectReader {
                         .l()?;
 
                     let path = env.new_object_unchecked(
-                        JavaClasses::get().cHadoopPath.class.clone(),
-                        JavaClasses::get().cHadoopPath.ctor.clone(),
+                        JavaClasses::get().cHadoopPath.class,
+                        JavaClasses::get().cHadoopPath.ctor,
                         &[JValue::Object(env.new_string(&self.file.path)?.into())],
                     )?;
 
                     let hdfs_input_stream = env
                         .call_method_unchecked(
                             fs,
-                            JavaClasses::get().cHadoopFileSystem.method_open.clone(),
+                            JavaClasses::get().cHadoopFileSystem.method_open,
                             JavaClasses::get().cHadoopFileSystem.method_open_ret.clone(),
                             &[JValue::Object(path)],
                         )?
@@ -262,7 +250,7 @@ impl HDFSObjectReader {
                     ));
                     Ok(reader)
                 };
-                return reader_jni().map_err(Util::wrap_default_data_fusion_io_error);
+                reader_jni().map_err(Util::wrap_default_data_fusion_io_error)
             });
     }
 }
@@ -305,10 +293,7 @@ impl Read for HDFSFileReader {
                 let read_size = env
                     .call_method_unchecked(
                         self.hdfs_input_stream,
-                        JavaClasses::get()
-                            .cHadoopFSDataInputStream
-                            .method_read
-                            .clone(),
+                        JavaClasses::get().cHadoopFSDataInputStream.method_read,
                         JavaClasses::get()
                             .cHadoopFSDataInputStream
                             .method_read_ret
@@ -338,10 +323,7 @@ impl Seek for HDFSFileReader {
                         &self.object_store.jvm.attach_current_thread_permanently()?;
                     env.call_method_unchecked(
                         self.hdfs_input_stream,
-                        JavaClasses::get()
-                            .cHadoopFSDataInputStream
-                            .method_seek
-                            .clone(),
+                        JavaClasses::get().cHadoopFSDataInputStream.method_seek,
                         JavaClasses::get()
                             .cHadoopFSDataInputStream
                             .method_seek_ret
@@ -360,7 +342,7 @@ impl Seek for HDFSFileReader {
             SeekFrom::End(offset) => self.pos = self.file_size - (-offset) as u64,
             SeekFrom::Current(offset) => self.pos += offset as u64,
         }
-        return seek_absolutely(self.pos);
+        seek_absolutely(self.pos)
     }
 }
 impl ReadSeek for HDFSFileReader {}

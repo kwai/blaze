@@ -8,8 +8,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::file_format::FileScanConfig;
 use datafusion::physical_plan::file_format::ParquetExec;
-use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::sorts::sort::SortExec;
+use datafusion::physical_plan::ExecutionPlan;
 use jni::objects::JByteBuffer;
 use jni::objects::JObject;
 use jni::objects::JValue;
@@ -75,14 +75,17 @@ pub fn blaze_call_native(
     // set all SortExec preserve_partitioning to true, because all partitioning is done is spark side
     let execution_plan = set_sort_plan_preserve_partitioning(execution_plan.clone());
 
-    info!("Executing plan:\n{}", datafusion::physical_plan::displayable(execution_plan.as_ref()).indent());
+    info!(
+        "Executing plan:\n{}",
+        datafusion::physical_plan::displayable(execution_plan.as_ref()).indent()
+    );
     let sync_tokio_runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let record_batch_stream = sync_tokio_runtime
         .block_on(execution_plan.execute(task_id.partition_id as usize, runtime))
         .expect("Error executing plan");
-    let schema = record_batch_stream.schema().clone();
+    let schema = record_batch_stream.schema();
 
     let record_batches: Vec<RecordBatch> = sync_tokio_runtime
         .block_on(datafusion::physical_plan::common::collect(
@@ -215,8 +218,12 @@ fn replace_shuffle_reader(
     return plan.with_new_children(children).unwrap();
 }
 
-fn set_sort_plan_preserve_partitioning(plan: Arc<dyn ExecutionPlan>) -> Arc<dyn ExecutionPlan> {
-    let children = plan.children().iter()
+fn set_sort_plan_preserve_partitioning(
+    plan: Arc<dyn ExecutionPlan>,
+) -> Arc<dyn ExecutionPlan> {
+    let children = plan
+        .children()
+        .iter()
         .map(|child| set_sort_plan_preserve_partitioning(child.clone()))
         .collect::<Vec<_>>();
 
