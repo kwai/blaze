@@ -23,6 +23,7 @@ use jni::errors::Error as JniError;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
+use log::info;
 use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 

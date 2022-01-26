@@ -1,7 +1,5 @@
-use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
-use jni::objects::JObject;
 use jni::objects::JStaticMethodID;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
@@ -342,30 +340,5 @@ impl<'a> SparkBlazeConverters<'a> {
             method_read_managed_buffer_to_segment_byte_channels_as_java_ret:
                 JavaType::Object(JavaList::SIG_TYPE.to_owned()),
         })
-    }
-}
-
-#[allow(non_snake_case)]
-#[no_mangle]
-pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
-    env: JNIEnv,
-    _: JClass,
-    taskDefinition: JByteBuffer,
-    ipcRecordBatchDataConsumer: JObject,
-) {
-    if let Err(err) = std::panic::catch_unwind(|| {
-        crate::blaze::blaze_call_native(&env, taskDefinition, ipcRecordBatchDataConsumer);
-    }) {
-        env.throw_new(
-            "java/lang/RuntimeException",
-            if let Some(msg) = err.downcast_ref::<String>() {
-                msg
-            } else if let Some(msg) = err.downcast_ref::<&str>() {
-                msg
-            } else {
-                "Unknown blaze-rs exception"
-            },
-        )
-        .unwrap();
     }
 }
