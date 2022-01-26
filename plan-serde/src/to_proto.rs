@@ -35,7 +35,9 @@ use datafusion::physical_plan::projection::ProjectionExec;
 use datafusion::physical_plan::sorts::sort::SortExec;
 use datafusion::physical_plan::{cross_join::CrossJoinExec, ColumnStatistics};
 use datafusion::physical_plan::{
-    expressions::{CaseExpr, InListExpr, IsNotNullExpr, IsNullExpr, NegativeExpr, NotExpr},
+    expressions::{
+        CaseExpr, InListExpr, IsNotNullExpr, IsNullExpr, NegativeExpr, NotExpr,
+    },
     Statistics,
 };
 use datafusion::physical_plan::{
@@ -43,7 +45,9 @@ use datafusion::physical_plan::{
     file_format::ParquetExec,
 };
 use datafusion::physical_plan::{file_format::AvroExec, filter::FilterExec};
-use datafusion::physical_plan::{file_format::FileScanConfig, hash_aggregate::AggregateMode};
+use datafusion::physical_plan::{
+    file_format::FileScanConfig, hash_aggregate::AggregateMode,
+};
 use datafusion::{
     datasource::PartitionedFile, physical_plan::coalesce_batches::CoalesceBatchesExec,
 };
@@ -58,7 +62,9 @@ use datafusion::physical_plan::{AggregateExpr, ExecutionPlan, PhysicalExpr};
 use datafusion::physical_plan::hash_aggregate::HashAggregateExec;
 use protobuf::physical_plan_node::PhysicalPlanType;
 
-use crate::execution_plans::{ShuffleReaderExec, ShuffleWriterExec, UnresolvedShuffleExec};
+use crate::execution_plans::{
+    ShuffleReaderExec, ShuffleWriterExec, UnresolvedShuffleExec,
+};
 use crate::protobuf::repartition_exec_node::PartitionMethod;
 use crate::{byte_to_string, protobuf, PlanSerDeError};
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
@@ -99,7 +105,8 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
                 ))),
             })
         } else if let Some(limit) = plan.downcast_ref::<GlobalLimitExec>() {
-            let input: protobuf::PhysicalPlanNode = limit.input().to_owned().try_into()?;
+            let input: protobuf::PhysicalPlanNode =
+                limit.input().to_owned().try_into()?;
             Ok(protobuf::PhysicalPlanNode {
                 physical_plan_type: Some(PhysicalPlanType::GlobalLimit(Box::new(
                     protobuf::GlobalLimitExecNode {
@@ -109,7 +116,8 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
                 ))),
             })
         } else if let Some(limit) = plan.downcast_ref::<LocalLimitExec>() {
-            let input: protobuf::PhysicalPlanNode = limit.input().to_owned().try_into()?;
+            let input: protobuf::PhysicalPlanNode =
+                limit.input().to_owned().try_into()?;
             Ok(protobuf::PhysicalPlanNode {
                 physical_plan_type: Some(PhysicalPlanType::LocalLimit(Box::new(
                     protobuf::LocalLimitExecNode {
@@ -193,7 +201,9 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
             let agg_mode = match exec.mode() {
                 AggregateMode::Partial => protobuf::AggregateMode::Partial,
                 AggregateMode::Final => protobuf::AggregateMode::Final,
-                AggregateMode::FinalPartitioned => protobuf::AggregateMode::FinalPartitioned,
+                AggregateMode::FinalPartitioned => {
+                    protobuf::AggregateMode::FinalPartitioned
+                }
             };
             let input_schema = exec.input_schema();
             let input: protobuf::PhysicalPlanNode = exec.input().to_owned().try_into()?;
@@ -213,12 +223,15 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
         } else if let Some(empty) = plan.downcast_ref::<EmptyExec>() {
             let schema = empty.schema().as_ref().into();
             Ok(protobuf::PhysicalPlanNode {
-                physical_plan_type: Some(PhysicalPlanType::Empty(protobuf::EmptyExecNode {
-                    produce_one_row: empty.produce_one_row(),
-                    schema: Some(schema),
-                })),
+                physical_plan_type: Some(PhysicalPlanType::Empty(
+                    protobuf::EmptyExecNode {
+                        produce_one_row: empty.produce_one_row(),
+                        schema: Some(schema),
+                    },
+                )),
             })
-        } else if let Some(coalesce_batches) = plan.downcast_ref::<CoalesceBatchesExec>() {
+        } else if let Some(coalesce_batches) = plan.downcast_ref::<CoalesceBatchesExec>()
+        {
             let input: protobuf::PhysicalPlanNode =
                 coalesce_batches.input().to_owned().try_into()?;
             Ok(protobuf::PhysicalPlanNode {
@@ -231,11 +244,13 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
             })
         } else if let Some(exec) = plan.downcast_ref::<CsvExec>() {
             Ok(protobuf::PhysicalPlanNode {
-                physical_plan_type: Some(PhysicalPlanType::CsvScan(protobuf::CsvScanExecNode {
-                    base_conf: Some(exec.base_config().try_into()?),
-                    has_header: exec.has_header(),
-                    delimiter: byte_to_string(exec.delimiter())?,
-                })),
+                physical_plan_type: Some(PhysicalPlanType::CsvScan(
+                    protobuf::CsvScanExecNode {
+                        base_conf: Some(exec.base_config().try_into()?),
+                        has_header: exec.has_header(),
+                        delimiter: byte_to_string(exec.delimiter())?,
+                    },
+                )),
             })
         } else if let Some(exec) = plan.downcast_ref::<ParquetExec>() {
             Ok(protobuf::PhysicalPlanNode {
@@ -248,9 +263,11 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
             })
         } else if let Some(exec) = plan.downcast_ref::<AvroExec>() {
             Ok(protobuf::PhysicalPlanNode {
-                physical_plan_type: Some(PhysicalPlanType::AvroScan(protobuf::AvroScanExecNode {
-                    base_conf: Some(exec.base_config().try_into()?),
-                })),
+                physical_plan_type: Some(PhysicalPlanType::AvroScan(
+                    protobuf::AvroScanExecNode {
+                        base_conf: Some(exec.base_config().try_into()?),
+                    },
+                )),
             })
         } else if let Some(exec) = plan.downcast_ref::<ShuffleReaderExec>() {
             Ok(protobuf::PhysicalPlanNode {
@@ -310,7 +327,9 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
                         nulls_first: expr.options.nulls_first,
                     });
                     Ok(protobuf::PhysicalExprNode {
-                        expr_type: Some(protobuf::physical_expr_node::ExprType::Sort(sort_expr)),
+                        expr_type: Some(protobuf::physical_expr_node::ExprType::Sort(
+                            sort_expr,
+                        )),
                     })
                 })
                 .collect::<Result<Vec<_>, Self::Error>>()?;
@@ -323,7 +342,8 @@ impl TryInto<protobuf::PhysicalPlanNode> for Arc<dyn ExecutionPlan> {
                 ))),
             })
         } else if let Some(exec) = plan.downcast_ref::<ShuffleWriterExec>() {
-            let input: protobuf::PhysicalPlanNode = exec.children()[0].to_owned().try_into()?;
+            let input: protobuf::PhysicalPlanNode =
+                exec.children()[0].to_owned().try_into()?;
             // note that we use shuffle_output_partitioning() rather than output_partitioning()
             // to get the true output partitioning
             let output_partitioning = match exec.shuffle_output_partitioning() {
@@ -439,34 +459,41 @@ impl TryFrom<Arc<dyn PhysicalExpr>> for protobuf::PhysicalExprNode {
             })
         } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
             Ok(protobuf::PhysicalExprNode {
-                expr_type: Some(protobuf::physical_expr_node::ExprType::Case(Box::new(
-                    protobuf::PhysicalCaseNode {
-                        expr: expr
-                            .expr()
-                            .as_ref()
-                            .map(|exp| exp.clone().try_into().map(Box::new))
-                            .transpose()?,
-                        when_then_expr: expr
-                            .when_then_expr()
-                            .iter()
-                            .map(|(when_expr, then_expr)| {
-                                try_parse_when_then_expr(when_expr, then_expr)
-                            })
-                            .collect::<Result<Vec<protobuf::PhysicalWhenThen>, Self::Error>>()?,
-                        else_expr: expr
-                            .else_expr()
-                            .map(|a| a.clone().try_into().map(Box::new))
-                            .transpose()?,
-                    },
-                ))),
+                expr_type: Some(
+                    protobuf::physical_expr_node::ExprType::Case(
+                        Box::new(
+                            protobuf::PhysicalCaseNode {
+                                expr: expr
+                                    .expr()
+                                    .as_ref()
+                                    .map(|exp| exp.clone().try_into().map(Box::new))
+                                    .transpose()?,
+                                when_then_expr: expr
+                                    .when_then_expr()
+                                    .iter()
+                                    .map(|(when_expr, then_expr)| {
+                                        try_parse_when_then_expr(when_expr, then_expr)
+                                    })
+                                    .collect::<Result<
+                                        Vec<protobuf::PhysicalWhenThen>,
+                                        Self::Error,
+                                    >>()?,
+                                else_expr: expr
+                                    .else_expr()
+                                    .map(|a| a.clone().try_into().map(Box::new))
+                                    .transpose()?,
+                            },
+                        ),
+                    ),
+                ),
             })
         } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
             Ok(protobuf::PhysicalExprNode {
-                expr_type: Some(protobuf::physical_expr_node::ExprType::NotExpr(Box::new(
-                    protobuf::PhysicalNot {
+                expr_type: Some(protobuf::physical_expr_node::ExprType::NotExpr(
+                    Box::new(protobuf::PhysicalNot {
                         expr: Some(Box::new(expr.arg().to_owned().try_into()?)),
-                    },
-                ))),
+                    }),
+                )),
             })
         } else if let Some(expr) = expr.downcast_ref::<IsNullExpr>() {
             Ok(protobuf::PhysicalExprNode {
@@ -486,25 +513,32 @@ impl TryFrom<Arc<dyn PhysicalExpr>> for protobuf::PhysicalExprNode {
             })
         } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
             Ok(protobuf::PhysicalExprNode {
-                expr_type: Some(protobuf::physical_expr_node::ExprType::InList(Box::new(
-                    protobuf::PhysicalInListNode {
-                        expr: Some(Box::new(expr.expr().to_owned().try_into()?)),
-                        list: expr
-                            .list()
-                            .iter()
-                            .map(|a| a.clone().try_into())
-                            .collect::<Result<Vec<protobuf::PhysicalExprNode>, Self::Error>>()?,
-                        negated: expr.negated(),
-                    },
-                ))),
+                expr_type: Some(
+                    protobuf::physical_expr_node::ExprType::InList(
+                        Box::new(
+                            protobuf::PhysicalInListNode {
+                                expr: Some(Box::new(expr.expr().to_owned().try_into()?)),
+                                list: expr
+                                    .list()
+                                    .iter()
+                                    .map(|a| a.clone().try_into())
+                                    .collect::<Result<
+                                    Vec<protobuf::PhysicalExprNode>,
+                                    Self::Error,
+                                >>()?,
+                                negated: expr.negated(),
+                            },
+                        ),
+                    ),
+                ),
             })
         } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
             Ok(protobuf::PhysicalExprNode {
-                expr_type: Some(protobuf::physical_expr_node::ExprType::Negative(Box::new(
-                    protobuf::PhysicalNegativeNode {
+                expr_type: Some(protobuf::physical_expr_node::ExprType::Negative(
+                    Box::new(protobuf::PhysicalNegativeNode {
                         expr: Some(Box::new(expr.arg().to_owned().try_into()?)),
-                    },
-                ))),
+                    }),
+                )),
             })
         } else if let Some(lit) = expr.downcast_ref::<Literal>() {
             Ok(protobuf::PhysicalExprNode {
@@ -523,15 +557,16 @@ impl TryFrom<Arc<dyn PhysicalExpr>> for protobuf::PhysicalExprNode {
             })
         } else if let Some(cast) = expr.downcast_ref::<TryCastExpr>() {
             Ok(protobuf::PhysicalExprNode {
-                expr_type: Some(protobuf::physical_expr_node::ExprType::TryCast(Box::new(
-                    protobuf::PhysicalTryCastNode {
+                expr_type: Some(protobuf::physical_expr_node::ExprType::TryCast(
+                    Box::new(protobuf::PhysicalTryCastNode {
                         expr: Some(Box::new(cast.expr().clone().try_into()?)),
                         arrow_type: Some(cast.cast_type().into()),
-                    },
-                ))),
+                    }),
+                )),
             })
         } else if let Some(expr) = expr.downcast_ref::<ScalarFunctionExpr>() {
-            let fun: BuiltinScalarFunction = BuiltinScalarFunction::from_str(expr.name())?;
+            let fun: BuiltinScalarFunction =
+                BuiltinScalarFunction::from_str(expr.name())?;
             let fun: protobuf::ScalarFunction = (&fun).try_into()?;
             let args: Vec<protobuf::PhysicalExprNode> = expr
                 .args()
@@ -630,7 +665,9 @@ impl From<&Statistics> for protobuf::Statistics {
 
 impl TryFrom<&FileScanConfig> for protobuf::FileScanExecConf {
     type Error = PlanSerDeError;
-    fn try_from(conf: &FileScanConfig) -> Result<protobuf::FileScanExecConf, Self::Error> {
+    fn try_from(
+        conf: &FileScanConfig,
+    ) -> Result<protobuf::FileScanExecConf, Self::Error> {
         let file_groups = conf
             .file_groups
             .iter()
@@ -680,15 +717,15 @@ impl From<&DataType> for protobuf::arrow_type::ArrowTypeEnum {
             }
             DataType::Date32 => ArrowTypeEnum::Date32(EmptyMessage {}),
             DataType::Date64 => ArrowTypeEnum::Date64(EmptyMessage {}),
-            DataType::Time32(time_unit) => {
-                ArrowTypeEnum::Time32(protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32)
-            }
-            DataType::Time64(time_unit) => {
-                ArrowTypeEnum::Time64(protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32)
-            }
-            DataType::Duration(time_unit) => {
-                ArrowTypeEnum::Duration(protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32)
-            }
+            DataType::Time32(time_unit) => ArrowTypeEnum::Time32(
+                protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32,
+            ),
+            DataType::Time64(time_unit) => ArrowTypeEnum::Time64(
+                protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32,
+            ),
+            DataType::Duration(time_unit) => ArrowTypeEnum::Duration(
+                protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32,
+            ),
             DataType::Interval(interval_unit) => ArrowTypeEnum::Interval(
                 protobuf::IntervalUnit::from_arrow_interval_unit(interval_unit) as i32,
             ),
@@ -706,9 +743,11 @@ impl From<&DataType> for protobuf::arrow_type::ArrowTypeEnum {
                     list_size: *size,
                 }))
             }
-            DataType::LargeList(item_type) => ArrowTypeEnum::LargeList(Box::new(protobuf::List {
-                field_type: Some(Box::new(item_type.as_ref().into())),
-            })),
+            DataType::LargeList(item_type) => {
+                ArrowTypeEnum::LargeList(Box::new(protobuf::List {
+                    field_type: Some(Box::new(item_type.as_ref().into())),
+                }))
+            }
             DataType::Struct(struct_fields) => ArrowTypeEnum::Struct(protobuf::Struct {
                 sub_field_types: struct_fields
                     .iter()
@@ -734,10 +773,12 @@ impl From<&DataType> for protobuf::arrow_type::ArrowTypeEnum {
                     value: Some(Box::new(value_type.as_ref().into())),
                 }))
             }
-            DataType::Decimal(whole, fractional) => ArrowTypeEnum::Decimal(protobuf::Decimal {
-                whole: *whole as u64,
-                fractional: *fractional as u64,
-            }),
+            DataType::Decimal(whole, fractional) => {
+                ArrowTypeEnum::Decimal(protobuf::Decimal {
+                    whole: *whole as u64,
+                    fractional: *fractional as u64,
+                })
+            }
             DataType::Map(_, _) => {
                 unimplemented!("Ballista does not yet support Map data type")
             }

@@ -87,7 +87,8 @@ impl ExecutionPlan for UnresolvedShuffleExec {
         _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         Err(DataFusionError::Plan(
-            "Ballista UnresolvedShuffleExec does not support with_new_children()".to_owned(),
+            "Ballista UnresolvedShuffleExec does not support with_new_children()"
+                .to_owned(),
         ))
     }
 
@@ -101,7 +102,11 @@ impl ExecutionPlan for UnresolvedShuffleExec {
         ))
     }
 
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt_as(
+        &self,
+        t: DisplayFormatType,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
         match t {
             DisplayFormatType::Default => {
                 write!(f, "UnresolvedShuffleExec")

@@ -86,7 +86,11 @@ impl ExecutionPlan for ShuffleReaderExec {
         todo!()
     }
 
-    fn fmt_as(&self, _t: DisplayFormatType, _f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt_as(
+        &self,
+        _t: DisplayFormatType,
+        _f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
         todo!()
     }
 

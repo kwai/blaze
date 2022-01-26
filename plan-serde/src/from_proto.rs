@@ -21,7 +21,9 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use crate::error::PlanSerDeError;
-use crate::execution_plans::{ShuffleReaderExec, ShuffleWriterExec, UnresolvedShuffleExec};
+use crate::execution_plans::{
+    ShuffleReaderExec, ShuffleWriterExec, UnresolvedShuffleExec,
+};
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::repartition_exec_node::PartitionMethod;
@@ -33,12 +35,16 @@ use datafusion::catalog::catalog::{CatalogList, MemoryCatalogList};
 use datafusion::datasource::object_store::local::LocalFileSystem;
 use datafusion::datasource::object_store::{FileMeta, ObjectStoreRegistry, SizedFile};
 use datafusion::datasource::PartitionedFile;
-use datafusion::execution::context::{ExecutionConfig, ExecutionContextState, ExecutionProps};
+use datafusion::execution::context::{
+    ExecutionConfig, ExecutionContextState, ExecutionProps,
+};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_plan::window_frames::WindowFrame;
 use datafusion::physical_plan::aggregates::create_aggregate_expr;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
-use datafusion::physical_plan::file_format::{AvroExec, CsvExec, FileScanConfig, ParquetExec};
+use datafusion::physical_plan::file_format::{
+    AvroExec, CsvExec, FileScanConfig, ParquetExec,
+};
 use datafusion::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
 use datafusion::physical_plan::hash_join::PartitionMode;
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
@@ -49,8 +55,9 @@ use datafusion::physical_plan::{
     cross_join::CrossJoinExec,
     empty::EmptyExec,
     expressions::{
-        BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal,
-        NegativeExpr, NotExpr, PhysicalSortExpr, TryCastExpr, DEFAULT_DATAFUSION_CAST_OPTIONS,
+        BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr,
+        Literal, NegativeExpr, NotExpr, PhysicalSortExpr, TryCastExpr,
+        DEFAULT_DATAFUSION_CAST_OPTIONS,
     },
     filter::FilterExec,
     functions::{self, BuiltinScalarFunction, ScalarFunctionExpr},
@@ -76,13 +83,15 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
         })?;
         match plan {
             PhysicalPlanType::Projection(projection) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(projection.input)?;
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(projection.input)?;
                 let exprs = projection
                     .expr
                     .iter()
                     .zip(projection.expr_name.iter())
                     .map(|(expr, name)| Ok((expr.try_into()?, name.to_string())))
-                    .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>()?;
+                    .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>(
+                    )?;
                 Ok(Arc::new(ProjectionExec::try_new(exprs, input)?))
             }
             PhysicalPlanType::Filter(filter) => {
@@ -92,7 +101,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .as_ref()
                     .ok_or_else(|| {
                         PlanSerDeError::General(
-                            "filter (FilterExecNode) in PhysicalPlanNode is missing.".to_owned(),
+                            "filter (FilterExecNode) in PhysicalPlanNode is missing."
+                                .to_owned(),
                         )
                     })?
                     .try_into()?;
@@ -114,7 +124,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 scan.base_conf.as_ref().unwrap().try_into()?,
             ))),
             PhysicalPlanType::CoalesceBatches(coalesce_batches) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(coalesce_batches.input)?;
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(coalesce_batches.input)?;
                 Ok(Arc::new(CoalesceBatchesExec::new(
                     input,
                     coalesce_batches.target_batch_size as usize,
@@ -136,19 +147,26 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
 
                         Ok(Arc::new(RepartitionExec::try_new(
                             input,
-                            Partitioning::Hash(expr, hash_part.partition_count.try_into().unwrap()),
+                            Partitioning::Hash(
+                                expr,
+                                hash_part.partition_count.try_into().unwrap(),
+                            ),
                         )?))
                     }
                     Some(PartitionMethod::RoundRobin(partition_count)) => {
                         Ok(Arc::new(RepartitionExec::try_new(
                             input,
-                            Partitioning::RoundRobinBatch(partition_count.try_into().unwrap()),
+                            Partitioning::RoundRobinBatch(
+                                partition_count.try_into().unwrap(),
+                            ),
                         )?))
                     }
                     Some(PartitionMethod::Unknown(partition_count)) => {
                         Ok(Arc::new(RepartitionExec::try_new(
                             input,
-                            Partitioning::UnknownPartitioning(partition_count.try_into().unwrap()),
+                            Partitioning::UnknownPartitioning(
+                                partition_count.try_into().unwrap(),
+                            ),
                         )?))
                     }
                     _ => Err(PlanSerDeError::General(
@@ -165,7 +183,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(LocalLimitExec::new(input, limit.limit as usize)))
             }
             PhysicalPlanType::Window(window_agg) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(window_agg.input)?;
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(window_agg.input)?;
                 let input_schema = window_agg
                     .input_schema
                     .as_ref()
@@ -175,7 +194,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         )
                     })?
                     .clone();
-                let physical_schema: SchemaRef = SchemaRef::new((&input_schema).try_into()?);
+                let physical_schema: SchemaRef =
+                    SchemaRef::new((&input_schema).try_into()?);
 
                 let physical_window_expr: Vec<Arc<dyn WindowExpr>> = window_agg
                     .window_expr
@@ -210,7 +230,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::HashAggregate(hash_agg) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(hash_agg.input)?;
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(hash_agg.input)?;
                 let mode = protobuf::AggregateMode::from_i32(hash_agg.mode).ok_or_else(|| {
                     proto_error(format!(
                         "Received a HashAggregateNode message with unknown AggregateMode {}",
@@ -220,13 +241,17 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let agg_mode: AggregateMode = match mode {
                     protobuf::AggregateMode::Partial => AggregateMode::Partial,
                     protobuf::AggregateMode::Final => AggregateMode::Final,
-                    protobuf::AggregateMode::FinalPartitioned => AggregateMode::FinalPartitioned,
+                    protobuf::AggregateMode::FinalPartitioned => {
+                        AggregateMode::FinalPartitioned
+                    }
                 };
                 let group = hash_agg
                     .group_expr
                     .iter()
                     .zip(hash_agg.group_expr_name.iter())
-                    .map(|(expr, name)| expr.try_into().map(|expr| (expr, name.to_string())))
+                    .map(|(expr, name)| {
+                        expr.try_into().map(|expr| (expr, name.to_string()))
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let input_schema = hash_agg
@@ -238,7 +263,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         )
                     })?
                     .clone();
-                let physical_schema: SchemaRef = SchemaRef::new((&input_schema).try_into()?);
+                let physical_schema: SchemaRef =
+                    SchemaRef::new((&input_schema).try_into()?);
 
                 let physical_aggr_expr: Vec<Arc<dyn AggregateExpr>> = hash_agg
                     .aggr_expr
@@ -252,13 +278,17 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         match expr_type {
                             ExprType::AggregateExpr(agg_node) => {
                                 let aggr_function =
-                                    protobuf::AggregateFunction::from_i32(agg_node.aggr_function)
-                                        .ok_or_else(|| {
-                                        proto_error(format!(
+                                    protobuf::AggregateFunction::from_i32(
+                                        agg_node.aggr_function,
+                                    )
+                                    .ok_or_else(
+                                        || {
+                                            proto_error(format!(
                                             "Received an unknown aggregate function: {}",
                                             agg_node.aggr_function
                                         ))
-                                    })?;
+                                        },
+                                    )?;
 
                                 Ok(create_aggregate_expr(
                                     &aggr_function.into(),
@@ -269,7 +299,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 )?)
                             }
                             _ => Err(PlanSerDeError::General(
-                                "Invalid aggregate  expression for HashAggregateExec".to_string(),
+                                "Invalid aggregate  expression for HashAggregateExec"
+                                    .to_string(),
                             )),
                         }
                     })
@@ -285,7 +316,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::HashJoin(hashjoin) => {
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.left)?;
-                let right: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.right)?;
+                let right: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(hashjoin.right)?;
                 let on: Vec<(Column, Column)> = hashjoin
                     .on
                     .iter()
@@ -295,21 +327,22 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         Ok((left, right))
                     })
                     .collect::<Result<_, Self::Error>>()?;
-                let join_type =
-                    protobuf::JoinType::from_i32(hashjoin.join_type).ok_or_else(|| {
+                let join_type = protobuf::JoinType::from_i32(hashjoin.join_type)
+                    .ok_or_else(|| {
                         proto_error(format!(
                             "Received a HashJoinNode message with unknown JoinType {}",
                             hashjoin.join_type
                         ))
                     })?;
 
-                let partition_mode = protobuf::PartitionMode::from_i32(hashjoin.partition_mode)
-                    .ok_or_else(|| {
-                        proto_error(format!(
-                            "Received a HashJoinNode message with unknown PartitionMode {}",
-                            hashjoin.partition_mode
-                        ))
-                    })?;
+                let partition_mode =
+                    protobuf::PartitionMode::from_i32(hashjoin.partition_mode)
+                        .ok_or_else(|| {
+                            proto_error(format!(
+                        "Received a HashJoinNode message with unknown PartitionMode {}",
+                        hashjoin.partition_mode
+                    ))
+                        })?;
                 let partition_mode = match partition_mode {
                     protobuf::PartitionMode::CollectLeft => PartitionMode::CollectLeft,
                     protobuf::PartitionMode::Partitioned => PartitionMode::Partitioned,
@@ -325,14 +358,17 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::CrossJoin(crossjoin) => {
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(crossjoin.left)?;
-                let right: Arc<dyn ExecutionPlan> = convert_box_required!(crossjoin.right)?;
+                let right: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(crossjoin.right)?;
                 Ok(Arc::new(CrossJoinExec::try_new(left, right)?))
             }
             PhysicalPlanType::ShuffleWriter(shuffle_writer) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(shuffle_writer.input)?;
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(shuffle_writer.input)?;
 
-                let output_partitioning =
-                    parse_protobuf_hash_partitioning(shuffle_writer.output_partitioning.as_ref())?;
+                let output_partitioning = parse_protobuf_hash_partitioning(
+                    shuffle_writer.output_partitioning.as_ref(),
+                )?;
 
                 Ok(Arc::new(ShuffleWriterExec::try_new(
                     shuffle_writer.job_id.clone(),
@@ -396,8 +432,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(UnresolvedShuffleExec {
                     stage_id: unresolved_shuffle.stage_id as usize,
                     schema,
-                    input_partition_count: unresolved_shuffle.input_partition_count as usize,
-                    output_partition_count: unresolved_shuffle.output_partition_count as usize,
+                    input_partition_count: unresolved_shuffle.input_partition_count
+                        as usize,
+                    output_partition_count: unresolved_shuffle.output_partition_count
+                        as usize,
                 }))
             }
         }
@@ -469,7 +507,9 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
                 let pcol: Column = c.into();
                 Arc::new(pcol)
             }
-            ExprType::Literal(scalar) => Arc::new(Literal::new(convert_required!(scalar.value)?)),
+            ExprType::Literal(scalar) => {
+                Arc::new(Literal::new(convert_required!(scalar.value)?))
+            }
             ExprType::BinaryExpr(binary_expr) => Arc::new(BinaryExpr::new(
                 convert_box_required!(&binary_expr.l)?,
                 from_proto_binary_op(&binary_expr.op)?,
@@ -477,7 +517,8 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
             )),
             ExprType::AggregateExpr(_) => {
                 return Err(PlanSerDeError::General(
-                    "Cannot convert aggregate expr node to physical expression".to_owned(),
+                    "Cannot convert aggregate expr node to physical expression"
+                        .to_owned(),
                 ));
             }
             ExprType::WindowExpr(_) => {
@@ -490,12 +531,18 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
                     "Cannot convert sort expr node to physical expression".to_owned(),
                 ));
             }
-            ExprType::IsNullExpr(e) => Arc::new(IsNullExpr::new(convert_box_required!(e.expr)?)),
+            ExprType::IsNullExpr(e) => {
+                Arc::new(IsNullExpr::new(convert_box_required!(e.expr)?))
+            }
             ExprType::IsNotNullExpr(e) => {
                 Arc::new(IsNotNullExpr::new(convert_box_required!(e.expr)?))
             }
-            ExprType::NotExpr(e) => Arc::new(NotExpr::new(convert_box_required!(e.expr)?)),
-            ExprType::Negative(e) => Arc::new(NegativeExpr::new(convert_box_required!(e.expr)?)),
+            ExprType::NotExpr(e) => {
+                Arc::new(NotExpr::new(convert_box_required!(e.expr)?))
+            }
+            ExprType::Negative(e) => {
+                Arc::new(NegativeExpr::new(convert_box_required!(e.expr)?))
+            }
             ExprType::InList(e) => Arc::new(InListExpr::new(
                 convert_box_required!(e.expr)?,
                 e.list
@@ -531,9 +578,12 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
                 convert_required!(e.arrow_type)?,
             )),
             ExprType::ScalarFunction(e) => {
-                let scalar_function =
-                    protobuf::ScalarFunction::from_i32(e.fun).ok_or_else(|| {
-                        proto_error(format!("Received an unknown scalar function: {}", e.fun,))
+                let scalar_function = protobuf::ScalarFunction::from_i32(e.fun)
+                    .ok_or_else(|| {
+                        proto_error(format!(
+                            "Received an unknown scalar function: {}",
+                            e.fun,
+                        ))
                     })?;
 
                 let args = e
@@ -542,7 +592,8 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
                     .map(|x| x.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
 
-                let catalog_list = Arc::new(MemoryCatalogList::new()) as Arc<dyn CatalogList>;
+                let catalog_list =
+                    Arc::new(MemoryCatalogList::new()) as Arc<dyn CatalogList>;
 
                 let ctx_state = ExecutionContextState {
                     catalog_list,
@@ -555,8 +606,10 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
                     runtime_env: Arc::new(RuntimeEnv::default()),
                 };
 
-                let fun_expr =
-                    functions::create_physical_fun(&(&scalar_function).into(), &ctx_state)?;
+                let fun_expr = functions::create_physical_fun(
+                    &(&scalar_function).into(),
+                    &ctx_state,
+                )?;
 
                 Arc::new(ScalarFunctionExpr::new(
                     &e.name,
@@ -589,12 +642,13 @@ impl TryFrom<&protobuf::physical_window_expr_node::WindowFunction> for WindowFun
                 Ok(WindowFunction::AggregateFunction(f.into()))
             }
             protobuf::physical_window_expr_node::WindowFunction::BuiltInFunction(n) => {
-                let f = protobuf::BuiltInWindowFunction::from_i32(*n).ok_or_else(|| {
-                    proto_error(format!(
-                        "Received an unknown window builtin function: {}",
-                        n
-                    ))
-                })?;
+                let f =
+                    protobuf::BuiltInWindowFunction::from_i32(*n).ok_or_else(|| {
+                        proto_error(format!(
+                            "Received an unknown window builtin function: {}",
+                            n
+                        ))
+                    })?;
 
                 Ok(WindowFunction::BuiltInWindowFunction(f.into()))
             }
