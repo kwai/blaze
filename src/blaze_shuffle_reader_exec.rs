@@ -31,8 +31,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::ipc::reader::FileReader;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::error::DataFusionError;
-use datafusion::error::Result;
+use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
@@ -44,32 +43,14 @@ use futures::Stream;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
-use jni::JNIEnv;
-use jni::JavaVM;
 
 use crate::jni_bridge::JavaClasses;
 use crate::util::Util;
 
+#[derive(Debug, Clone)]
 pub struct BlazeShuffleReaderExec {
-    pub jvm: JavaVM,
     pub job_id: String,
     pub schema: SchemaRef,
-}
-
-impl Debug for BlazeShuffleReaderExec {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "BlazeShuffleReaderExec: job_id={}", self.job_id)
-    }
-}
-
-impl Clone for BlazeShuffleReaderExec {
-    fn clone(&self) -> Self {
-        Self {
-            jvm: Util::jvm_clone(&self.jvm),
-            job_id: self.job_id.clone(),
-            schema: self.schema.clone(),
-        }
-    }
 }
 
 #[async_trait]
@@ -105,7 +86,7 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
         _runtime: Arc<RuntimeEnv>,
     ) -> Result<SendableRecordBatchStream> {
         let jni_get_buffers = || -> JniResult<JObject<'static>> {
-            let env = Util::jni_env_clone(&self.jvm.attach_current_thread_permanently()?);
+            let env = JavaClasses::get_thread_jnienv();
             let resource_key = format!("ShuffleReader.buffers:{}", self.job_id);
             info!(
                 "Shuffle reader FetchIterator resource key: {}",
@@ -125,18 +106,10 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
             info!("FetchIterator: {:?}", buffers);
             Ok(buffers)
         };
-        let buffers = jni_get_buffers().map_err(|_| {
-            Util::wrap_default_data_fusion_io_error(
-                "JNI error: BlazeShuffleReaderExec.execute.jni_get_buffers",
-            )
-        })?;
+        let buffers = Util::to_datafusion_external_result(jni_get_buffers())?;
         let schema = self.schema.clone();
 
-        Ok(Box::pin(ShuffleReaderStream::new(
-            Util::jvm_clone(&self.jvm),
-            schema,
-            buffers,
-        )))
+        Ok(Box::pin(ShuffleReaderStream::new(schema, buffers)))
     }
 
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
@@ -149,7 +122,6 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
 }
 
 struct ShuffleReaderStream {
-    jvm: JavaVM,
     schema: SchemaRef,
     buffers: JObject<'static>,
     seekable_byte_channels: JObject<'static>,
@@ -163,13 +135,8 @@ unsafe impl Sync for ShuffleReaderStream {} // safety: buffers is safe to be sha
 unsafe impl Send for ShuffleReaderStream {}
 
 impl ShuffleReaderStream {
-    pub fn new(
-        jvm: JavaVM,
-        schema: SchemaRef,
-        buffers: JObject<'static>,
-    ) -> ShuffleReaderStream {
+    pub fn new(schema: SchemaRef, buffers: JObject<'static>) -> ShuffleReaderStream {
         ShuffleReaderStream {
-            jvm,
             schema,
             buffers,
             seekable_byte_channels: JObject::null(),
@@ -189,8 +156,7 @@ impl ShuffleReaderStream {
             return Ok(false);
         }
         let mut jni_next_seekable_byte_channel = || -> JniResult<()> {
-            let env: &JNIEnv =
-                &Util::jni_env_clone(&self.jvm.attach_current_thread_permanently()?);
+            let env = JavaClasses::get_thread_jnienv();
             self.seekable_byte_channel = env
                 .call_method_unchecked(
                     self.seekable_byte_channels,
@@ -201,16 +167,10 @@ impl ShuffleReaderStream {
                 .l()?;
             Ok(())
         };
+        Util::to_datafusion_external_result(jni_next_seekable_byte_channel())?;
 
-        jni_next_seekable_byte_channel().map_err(|_| {
-            Util::wrap_default_data_fusion_io_error(
-                "JNI error: ShuffleReaderStream.jni_next_seekable_byte_channel",
-            )
-        })?;
-        let seekable_byte_channel_reader = SeekableByteChannelReader(
-            Util::jvm_clone(&self.jvm),
-            self.seekable_byte_channel,
-        );
+        let seekable_byte_channel_reader =
+            SeekableByteChannelReader(self.seekable_byte_channel);
         self.arrow_file_reader = Some(FileReader::try_new(seekable_byte_channel_reader)?);
         self.seekable_byte_channels_pos += 1;
         Ok(true)
@@ -224,8 +184,7 @@ impl ShuffleReaderStream {
             return Ok(false);
         }
         let mut jni_next_seekable_byte_channels = || -> JniResult<bool> {
-            let env: &JNIEnv =
-                &Util::jni_env_clone(&self.jvm.attach_current_thread_permanently()?);
+            let env = JavaClasses::get_thread_jnienv();
             let next = env
                 .call_method_unchecked(
                     self.buffers,
@@ -267,17 +226,12 @@ impl ShuffleReaderStream {
             self.seekable_byte_channels_pos = 0;
             Ok(true)
         };
-        jni_next_seekable_byte_channels().map_err(|_| {
-            Util::wrap_default_data_fusion_io_error(
-                "JNI error: ShuffleReaderStream.jni_next_seekable_byte_channels",
-            )
-        })
+        Util::to_datafusion_external_result(jni_next_seekable_byte_channels())
     }
 
     fn buffers_has_next(&self) -> Result<bool> {
         let jni_buffers_has_next = || -> JniResult<bool> {
-            let env: &JNIEnv =
-                &Util::jni_env_clone(&self.jvm.attach_current_thread_permanently()?);
+            let env = JavaClasses::get_thread_jnienv();
             return env
                 .call_method_unchecked(
                     self.buffers,
@@ -290,11 +244,7 @@ impl ShuffleReaderStream {
                 )?
                 .z();
         };
-        jni_buffers_has_next().map_err(|_| {
-            Util::wrap_default_data_fusion_io_error(
-                "JNI error: ShuffleReaderStream.jni_buffers_has_next",
-            )
-        })
+        Util::to_datafusion_external_result(jni_buffers_has_next())
     }
 }
 
@@ -324,14 +274,14 @@ impl RecordBatchStream for ShuffleReaderStream {
     }
 }
 
-struct SeekableByteChannelReader(JavaVM, JObject<'static>);
+struct SeekableByteChannelReader(JObject<'static>);
 impl Read for SeekableByteChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let mut jni_read = || -> JniResult<usize> {
-            let env = &Util::jni_env_clone(&self.0.attach_current_thread_permanently()?);
+            let env = JavaClasses::get_thread_jnienv();
             return Ok(env
                 .call_method_unchecked(
-                    self.1,
+                    self.0,
                     JavaClasses::get().cJavaNioSeekableByteChannel.method_read,
                     JavaClasses::get()
                         .cJavaNioSeekableByteChannel
@@ -352,11 +302,11 @@ impl Read for SeekableByteChannelReader {
 impl Seek for SeekableByteChannelReader {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let jni_seek = || -> JniResult<u64> {
-            let env = &Util::jni_env_clone(&self.0.attach_current_thread_permanently()?);
+            let env = JavaClasses::get_thread_jnienv();
             match pos {
                 SeekFrom::Start(position) => {
                     env.call_method_unchecked(
-                        self.1,
+                        self.0,
                         JavaClasses::get()
                             .cJavaNioSeekableByteChannel
                             .method_position_set,
@@ -372,7 +322,7 @@ impl Seek for SeekableByteChannelReader {
                 SeekFrom::End(offset) => {
                     let size = env
                         .call_method_unchecked(
-                            self.1,
+                            self.0,
                             JavaClasses::get().cJavaNioSeekableByteChannel.method_size,
                             JavaClasses::get()
                                 .cJavaNioSeekableByteChannel
@@ -384,7 +334,7 @@ impl Seek for SeekableByteChannelReader {
 
                     let position = size + offset as u64;
                     env.call_method_unchecked(
-                        self.1,
+                        self.0,
                         JavaClasses::get()
                             .cJavaNioSeekableByteChannel
                             .method_position_set,

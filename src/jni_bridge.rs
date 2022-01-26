@@ -1,4 +1,3 @@
-use jni::errors::Result as JniResult;
 use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -7,9 +6,11 @@ use jni::objects::JStaticMethodID;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
+use jni::{errors::Result as JniResult, JavaVM};
 
 #[allow(non_snake_case)]
 pub struct JavaClasses<'a> {
+    pub jvm: JavaVM,
     pub cJniBridge: JniBridge<'a>,
     pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
     pub cHadoopFileSystem: HadoopFileSystem<'a>,
@@ -35,19 +36,20 @@ static mut JNI_JAVA_CLASSES: [u8; std::mem::size_of::<JavaClasses>()] =
     [0; std::mem::size_of::<JavaClasses>()];
 
 impl JavaClasses<'static> {
-    pub fn init(env: &JNIEnv<'static>) -> JniResult<()> {
+    pub fn init(env: &JNIEnv) -> JniResult<()> {
         let initialized_java_classes = JavaClasses {
-            cJniBridge: JniBridge::new(env).unwrap(),
-            cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env).unwrap(),
-            cHadoopFileSystem: HadoopFileSystem::new(env).unwrap(),
-            cHadoopPath: HadoopPath::new(env).unwrap(),
-            cHadoopFileStatus: HadoopFileStatus::new(env).unwrap(),
-            cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env).unwrap(),
-            cJavaList: JavaList::new(env).unwrap(),
-            cScalaIterator: ScalaIterator::new(env).unwrap(),
-            cScalaTuple2: ScalaTuple2::new(env).unwrap(),
-            cSparkManagedBuffer: SparkManagedBuffer::new(env).unwrap(),
-            cSparkBlazeConverters: SparkBlazeConverters::new(env).unwrap(),
+            jvm: env.get_java_vm()?,
+            cJniBridge: JniBridge::new(env)?,
+            cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
+            cHadoopFileSystem: HadoopFileSystem::new(env)?,
+            cHadoopPath: HadoopPath::new(env)?,
+            cHadoopFileStatus: HadoopFileStatus::new(env)?,
+            cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env)?,
+            cJavaList: JavaList::new(env)?,
+            cScalaIterator: ScalaIterator::new(env)?,
+            cScalaTuple2: ScalaTuple2::new(env)?,
+            cSparkManagedBuffer: SparkManagedBuffer::new(env)?,
+            cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
         };
         unsafe {
             // safety:
@@ -65,6 +67,13 @@ impl JavaClasses<'static> {
             let jni_java_classes = JNI_JAVA_CLASSES.as_ptr() as *const JavaClasses;
             &*jni_java_classes
         }
+    }
+
+    pub fn get_thread_jnienv() -> JNIEnv<'static> {
+        JavaClasses::get()
+            .jvm
+            .attach_current_thread_permanently()
+            .unwrap()
     }
 }
 

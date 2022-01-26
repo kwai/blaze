@@ -19,7 +19,6 @@ use crate::execution_plan_transformer::replace_parquet_scan_object_store;
 use crate::execution_plan_transformer::replace_shuffle_reader;
 use crate::execution_plan_transformer::set_sort_plan_preserve_partitioning;
 use crate::jni_bridge::JavaClasses;
-use crate::util::Util;
 
 #[timed(duration(printer = "info!"))]
 pub fn blaze_call_native(
@@ -33,8 +32,8 @@ pub fn blaze_call_native(
     info!("Blaze native computing started");
 
     info!("Initializing JavaClasses");
-    let env = Util::jni_env_clone(env);
-    JavaClasses::init(&env).expect("Error initializing JavaClasses");
+    JavaClasses::init(env).expect("Error initializing JavaClasses");
+    let env = JavaClasses::get_thread_jnienv();
     info!("Initializing JavaClasses succeeded");
 
     info!("Decoding task definition");
@@ -59,11 +58,10 @@ pub fn blaze_call_native(
     );
 
     // replace LocalObjectStore to HDFSObjectStore in parquet scan
-    let execution_plan = replace_parquet_scan_object_store(execution_plan.clone(), &env);
+    let execution_plan = replace_parquet_scan_object_store(execution_plan.clone());
 
     // replace ShuffleReaderExec with BlazeShuffleReaderExec
-    let execution_plan =
-        replace_shuffle_reader(execution_plan.clone(), &env, &task_id.job_id);
+    let execution_plan = replace_shuffle_reader(execution_plan.clone(), &task_id.job_id);
 
     // replace blaze extension exprs
     let execution_plan = replace_blaze_extension_exprs(execution_plan.clone());
