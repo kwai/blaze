@@ -1,4 +1,3 @@
-use ballista_core::execution_plans::ShuffleReaderExec;
 use datafusion::logical_plan::Operator;
 use datafusion::physical_plan::expressions::{
     BinaryExpr, CaseExpr, CastExpr, InListExpr, IsNotNullExpr, IsNullExpr, NegativeExpr,
@@ -14,6 +13,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::PhysicalExpr;
 use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
 use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
+use plan_serde::execution_plans::ShuffleReaderExec;
 use std::sync::Arc;
 
 pub fn replace_parquet_scan_object_store(
