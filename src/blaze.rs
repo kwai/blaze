@@ -7,6 +7,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::ExecutionPlan;
 use jni::objects::JByteBuffer;
+use jni::objects::JClass;
 use jni::objects::JObject;
 use jni::objects::JValue;
 use jni::signature::JavaType;
@@ -18,9 +19,40 @@ use crate::execution_plan_transformer::replace_blaze_extension_exprs;
 use crate::execution_plan_transformer::replace_parquet_scan_object_store;
 use crate::execution_plan_transformer::replace_shuffle_reader;
 use crate::execution_plan_transformer::set_sort_plan_preserve_partitioning;
-use crate::jni_bridge::JavaClasses;
+use datafusion_ext::jni_bridge::JavaClasses;
+use log::info;
 
-#[timed(duration(printer = "info!"))]
+#[allow(non_snake_case)]
+#[no_mangle]
+pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
+    env: JNIEnv,
+    _: JClass,
+    taskDefinition: JByteBuffer,
+    ipcRecordBatchDataConsumer: JObject,
+) {
+    let start_time = std::time::Instant::now();
+    if let Err(err) = std::panic::catch_unwind(|| {
+        crate::blaze::blaze_call_native(&env, taskDefinition, ipcRecordBatchDataConsumer);
+    }) {
+        env.throw_new(
+            "java/lang/RuntimeException",
+            if let Some(msg) = err.downcast_ref::<String>() {
+                msg
+            } else if let Some(msg) = err.downcast_ref::<&str>() {
+                msg
+            } else {
+                "Unknown blaze-rs exception"
+            },
+        )
+        .unwrap();
+    }
+    let duration = std::time::Instant::now().duration_since(start_time);
+    info!(
+        "blaze_call_native() time cost: {} sec",
+        duration.as_secs_f64()
+    );
+}
+
 pub fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JByteBuffer,

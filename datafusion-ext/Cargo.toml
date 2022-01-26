@@ -1,26 +1,21 @@
 [package]
-name = "blaze-rs"
-version = "0.1.2"
+name = "datafusion-ext"
+version = "0.1.0"
 edition = "2021"
 
-[lib]
-crate-type = ["cdylib"]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ballista-core = "0.6.0"
+ahash = "0.7.6"
+async-trait = "0.1.52"
 datafusion = "6.0.0"
-datafusion-ext = { path = "datafusion-ext" }
-env_logger = "0.9.0"
+futures = "0.3.19"
 jni = "0.19.0"
 log = "0.4.14"
-prost = "0.9.0"
 tokio = "1.15.0"
+tokio-stream = "0.1.8"
 
 [patch.crates-io]
-ballista-core = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "bz_master"}
 datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "bz_master"}
 arrow = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
 parquet = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
-
-[profile.dev]
-overflow-checks = false

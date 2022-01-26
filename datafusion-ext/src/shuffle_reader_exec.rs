@@ -43,6 +43,7 @@ use futures::Stream;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
+use log::info;
 
 use crate::jni_bridge::JavaClasses;
 use crate::util::Util;

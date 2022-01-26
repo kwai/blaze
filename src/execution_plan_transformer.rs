@@ -1,5 +1,3 @@
-use crate::blaze_shuffle_reader_exec::BlazeShuffleReaderExec;
-use crate::hdfs_object_store::HDFSSingleFileObjectStore;
 use ballista_core::execution_plans::ShuffleReaderExec;
 use datafusion::logical_plan::Operator;
 use datafusion::physical_plan::expressions::{
@@ -14,6 +12,8 @@ use datafusion::physical_plan::projection::ProjectionExec;
 use datafusion::physical_plan::sorts::sort::SortExec;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::PhysicalExpr;
+use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
+use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
 use std::sync::Arc;
 
 pub fn replace_parquet_scan_object_store(
