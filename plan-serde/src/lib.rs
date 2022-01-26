@@ -36,7 +36,6 @@ pub mod protobuf {
 pub mod error;
 pub mod execution_plans;
 pub mod from_proto;
-pub mod to_proto;
 
 pub(crate) fn proto_error<S: Into<String>>(message: S) -> PlanSerDeError {
     PlanSerDeError::General(message.into())
@@ -734,6 +733,101 @@ impl From<&DataType> for protobuf::ArrowType {
     }
 }
 
+impl From<&DataType> for protobuf::arrow_type::ArrowTypeEnum {
+    fn from(val: &DataType) -> protobuf::arrow_type::ArrowTypeEnum {
+        use protobuf::arrow_type::ArrowTypeEnum;
+        use protobuf::EmptyMessage;
+        match val {
+            DataType::Null => ArrowTypeEnum::None(EmptyMessage {}),
+            DataType::Boolean => ArrowTypeEnum::Bool(EmptyMessage {}),
+            DataType::Int8 => ArrowTypeEnum::Int8(EmptyMessage {}),
+            DataType::Int16 => ArrowTypeEnum::Int16(EmptyMessage {}),
+            DataType::Int32 => ArrowTypeEnum::Int32(EmptyMessage {}),
+            DataType::Int64 => ArrowTypeEnum::Int64(EmptyMessage {}),
+            DataType::UInt8 => ArrowTypeEnum::Uint8(EmptyMessage {}),
+            DataType::UInt16 => ArrowTypeEnum::Uint16(EmptyMessage {}),
+            DataType::UInt32 => ArrowTypeEnum::Uint32(EmptyMessage {}),
+            DataType::UInt64 => ArrowTypeEnum::Uint64(EmptyMessage {}),
+            DataType::Float16 => ArrowTypeEnum::Float16(EmptyMessage {}),
+            DataType::Float32 => ArrowTypeEnum::Float32(EmptyMessage {}),
+            DataType::Float64 => ArrowTypeEnum::Float64(EmptyMessage {}),
+            DataType::Timestamp(time_unit, timezone) => {
+                ArrowTypeEnum::Timestamp(protobuf::Timestamp {
+                    time_unit: protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32,
+                    timezone: timezone.to_owned().unwrap_or_else(String::new),
+                })
+            }
+            DataType::Date32 => ArrowTypeEnum::Date32(EmptyMessage {}),
+            DataType::Date64 => ArrowTypeEnum::Date64(EmptyMessage {}),
+            DataType::Time32(time_unit) => ArrowTypeEnum::Time32(
+                protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32,
+            ),
+            DataType::Time64(time_unit) => ArrowTypeEnum::Time64(
+                protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32,
+            ),
+            DataType::Duration(time_unit) => ArrowTypeEnum::Duration(
+                protobuf::TimeUnit::from_arrow_time_unit(time_unit) as i32,
+            ),
+            DataType::Interval(interval_unit) => ArrowTypeEnum::Interval(
+                protobuf::IntervalUnit::from_arrow_interval_unit(interval_unit) as i32,
+            ),
+            DataType::Binary => ArrowTypeEnum::Binary(EmptyMessage {}),
+            DataType::FixedSizeBinary(size) => ArrowTypeEnum::FixedSizeBinary(*size),
+            DataType::LargeBinary => ArrowTypeEnum::LargeBinary(EmptyMessage {}),
+            DataType::Utf8 => ArrowTypeEnum::Utf8(EmptyMessage {}),
+            DataType::LargeUtf8 => ArrowTypeEnum::LargeUtf8(EmptyMessage {}),
+            DataType::List(item_type) => ArrowTypeEnum::List(Box::new(protobuf::List {
+                field_type: Some(Box::new(item_type.as_ref().into())),
+            })),
+            DataType::FixedSizeList(item_type, size) => {
+                ArrowTypeEnum::FixedSizeList(Box::new(protobuf::FixedSizeList {
+                    field_type: Some(Box::new(item_type.as_ref().into())),
+                    list_size: *size,
+                }))
+            }
+            DataType::LargeList(item_type) => {
+                ArrowTypeEnum::LargeList(Box::new(protobuf::List {
+                    field_type: Some(Box::new(item_type.as_ref().into())),
+                }))
+            }
+            DataType::Struct(struct_fields) => ArrowTypeEnum::Struct(protobuf::Struct {
+                sub_field_types: struct_fields
+                    .iter()
+                    .map(|field| field.into())
+                    .collect::<Vec<_>>(),
+            }),
+            DataType::Union(union_types, union_mode) => {
+                let union_mode = match union_mode {
+                    UnionMode::Sparse => protobuf::UnionMode::Sparse,
+                    UnionMode::Dense => protobuf::UnionMode::Dense,
+                };
+                ArrowTypeEnum::Union(protobuf::Union {
+                    union_types: union_types
+                        .iter()
+                        .map(|field| field.into())
+                        .collect::<Vec<_>>(),
+                    union_mode: union_mode.into(),
+                })
+            }
+            DataType::Dictionary(key_type, value_type) => {
+                ArrowTypeEnum::Dictionary(Box::new(protobuf::Dictionary {
+                    key: Some(Box::new(key_type.as_ref().into())),
+                    value: Some(Box::new(value_type.as_ref().into())),
+                }))
+            }
+            DataType::Decimal(whole, fractional) => {
+                ArrowTypeEnum::Decimal(protobuf::Decimal {
+                    whole: *whole as u64,
+                    fractional: *fractional as u64,
+                })
+            }
+            DataType::Map(_, _) => {
+                unimplemented!("Ballista does not yet support Map data type")
+            }
+        }
+    }
+}
+
 impl TryInto<DataType> for &protobuf::ArrowType {
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<DataType, Self::Error> {
@@ -1355,200 +1449,9 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
     }
 }
 
-fn byte_to_string(b: u8) -> Result<String, PlanSerDeError> {
-    let b = &[b];
-    let b = std::str::from_utf8(b)
-        .map_err(|_| PlanSerDeError::General("Invalid CSV delimiter".to_owned()))?;
-    Ok(b.to_owned())
-}
-
 fn str_to_byte(s: &str) -> Result<u8, PlanSerDeError> {
     if s.len() != 1 {
         return Err(PlanSerDeError::General("Invalid CSV delimiter".to_owned()));
     }
     Ok(s.as_bytes()[0])
-}
-
-#[cfg(test)]
-mod roundtrip_tests {
-    use std::{convert::TryInto, sync::Arc};
-
-    use datafusion::physical_plan::sorts::sort::SortExec;
-    use datafusion::{
-        arrow::{
-            compute::kernels::sort::SortOptions,
-            datatypes::{DataType, Field, Schema},
-        },
-        logical_plan::{JoinType, Operator},
-        physical_plan::{
-            empty::EmptyExec,
-            expressions::{binary, col, lit, InListExpr, NotExpr},
-            expressions::{Avg, Column, PhysicalSortExpr},
-            filter::FilterExec,
-            hash_aggregate::{AggregateMode, HashAggregateExec},
-            hash_join::{HashJoinExec, PartitionMode},
-            limit::{GlobalLimitExec, LocalLimitExec},
-            AggregateExpr, ExecutionPlan, Partitioning, PhysicalExpr,
-        },
-        scalar::ScalarValue,
-    };
-
-    use crate::error::Result;
-    use crate::execution_plans::ShuffleWriterExec;
-    use crate::protobuf;
-
-    fn roundtrip_test(exec_plan: Arc<dyn ExecutionPlan>) -> Result<()> {
-        let proto: protobuf::PhysicalPlanNode = exec_plan.clone().try_into()?;
-        let result_exec_plan: Arc<dyn ExecutionPlan> = (&proto).try_into()?;
-        assert_eq!(
-            format!("{:?}", exec_plan),
-            format!("{:?}", result_exec_plan)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn roundtrip_empty() -> Result<()> {
-        roundtrip_test(Arc::new(EmptyExec::new(false, Arc::new(Schema::empty()))))
-    }
-
-    #[test]
-    fn roundtrip_local_limit() -> Result<()> {
-        roundtrip_test(Arc::new(LocalLimitExec::new(
-            Arc::new(EmptyExec::new(false, Arc::new(Schema::empty()))),
-            25,
-        )))
-    }
-
-    #[test]
-    fn roundtrip_global_limit() -> Result<()> {
-        roundtrip_test(Arc::new(GlobalLimitExec::new(
-            Arc::new(EmptyExec::new(false, Arc::new(Schema::empty()))),
-            25,
-        )))
-    }
-
-    #[test]
-    fn roundtrip_hash_join() -> Result<()> {
-        let field_a = Field::new("col", DataType::Int64, false);
-        let schema_left = Schema::new(vec![field_a.clone()]);
-        let schema_right = Schema::new(vec![field_a]);
-        let on = vec![(
-            Column::new("col", schema_left.index_of("col")?),
-            Column::new("col", schema_right.index_of("col")?),
-        )];
-
-        let schema_left = Arc::new(schema_left);
-        let schema_right = Arc::new(schema_right);
-        for join_type in &[
-            JoinType::Inner,
-            JoinType::Left,
-            JoinType::Right,
-            JoinType::Full,
-            JoinType::Anti,
-            JoinType::Semi,
-        ] {
-            for partition_mode in
-                &[PartitionMode::Partitioned, PartitionMode::CollectLeft]
-            {
-                roundtrip_test(Arc::new(HashJoinExec::try_new(
-                    Arc::new(EmptyExec::new(false, schema_left.clone())),
-                    Arc::new(EmptyExec::new(false, schema_right.clone())),
-                    on.clone(),
-                    join_type,
-                    *partition_mode,
-                    &false,
-                )?))?;
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn rountrip_hash_aggregate() -> Result<()> {
-        let field_a = Field::new("a", DataType::Int64, false);
-        let field_b = Field::new("b", DataType::Int64, false);
-        let schema = Arc::new(Schema::new(vec![field_a, field_b]));
-
-        let groups: Vec<(Arc<dyn PhysicalExpr>, String)> =
-            vec![(col("a", &schema)?, "unused".to_string())];
-
-        let aggregates: Vec<Arc<dyn AggregateExpr>> = vec![Arc::new(Avg::new(
-            col("b", &schema)?,
-            "AVG(b)".to_string(),
-            DataType::Float64,
-        ))];
-
-        roundtrip_test(Arc::new(HashAggregateExec::try_new(
-            AggregateMode::Final,
-            groups.clone(),
-            aggregates.clone(),
-            Arc::new(EmptyExec::new(false, schema.clone())),
-            schema,
-        )?))
-    }
-
-    #[test]
-    fn roundtrip_filter_with_not_and_in_list() -> Result<()> {
-        let field_a = Field::new("a", DataType::Boolean, false);
-        let field_b = Field::new("b", DataType::Int64, false);
-        let field_c = Field::new("c", DataType::Int64, false);
-        let schema = Arc::new(Schema::new(vec![field_a, field_b, field_c]));
-        let not = Arc::new(NotExpr::new(col("a", &schema)?));
-        let in_list = Arc::new(InListExpr::new(
-            col("b", &schema)?,
-            vec![
-                lit(ScalarValue::Int64(Some(1))),
-                lit(ScalarValue::Int64(Some(2))),
-            ],
-            false,
-        ));
-        let and = binary(not, Operator::And, in_list, &schema)?;
-        roundtrip_test(Arc::new(FilterExec::try_new(
-            and,
-            Arc::new(EmptyExec::new(false, schema.clone())),
-        )?))
-    }
-
-    #[test]
-    fn roundtrip_sort() -> Result<()> {
-        let field_a = Field::new("a", DataType::Boolean, false);
-        let field_b = Field::new("b", DataType::Int64, false);
-        let schema = Arc::new(Schema::new(vec![field_a, field_b]));
-        let sort_exprs = vec![
-            PhysicalSortExpr {
-                expr: col("a", &schema)?,
-                options: SortOptions {
-                    descending: true,
-                    nulls_first: false,
-                },
-            },
-            PhysicalSortExpr {
-                expr: col("b", &schema)?,
-                options: SortOptions {
-                    descending: false,
-                    nulls_first: true,
-                },
-            },
-        ];
-        roundtrip_test(Arc::new(SortExec::try_new(
-            sort_exprs,
-            Arc::new(EmptyExec::new(false, schema)),
-        )?))
-    }
-
-    #[test]
-    fn roundtrip_shuffle_writer() -> Result<()> {
-        let field_a = Field::new("a", DataType::Int64, false);
-        let field_b = Field::new("b", DataType::Int64, false);
-        let schema = Arc::new(Schema::new(vec![field_a, field_b]));
-
-        roundtrip_test(Arc::new(ShuffleWriterExec::try_new(
-            "job123".to_string(),
-            123,
-            Arc::new(EmptyExec::new(false, schema)),
-            "".to_string(),
-            Some(Partitioning::Hash(vec![Arc::new(Column::new("a", 0))], 4)),
-        )?))
-    }
 }
