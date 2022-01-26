@@ -11,6 +11,7 @@ pub use datafusion::error::Result as DFResult;
 mod batch_buffer;
 mod blaze;
 mod blaze_shuffle_reader_exec;
+mod execution_plan_transformer;
 mod hdfs_object_store;
 mod jni_bridge;
 mod shuffle_writer_exec;

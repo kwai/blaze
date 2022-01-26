@@ -1,14 +1,10 @@
 use std::io::BufWriter;
 use std::sync::Arc;
 
-use ballista_core::execution_plans::ShuffleReaderExec;
 use ballista_core::serde::protobuf::TaskDefinition;
 use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::physical_plan::file_format::FileScanConfig;
-use datafusion::physical_plan::file_format::ParquetExec;
-use datafusion::physical_plan::sorts::sort::SortExec;
 use datafusion::physical_plan::ExecutionPlan;
 use jni::objects::JByteBuffer;
 use jni::objects::JObject;
@@ -18,8 +14,10 @@ use jni::signature::Primitive;
 use jni::JNIEnv;
 use prost::Message;
 
-use crate::blaze_shuffle_reader_exec::BlazeShuffleReaderExec;
-use crate::hdfs_object_store::HDFSSingleFileObjectStore;
+use crate::execution_plan_transformer::replace_blaze_extension_exprs;
+use crate::execution_plan_transformer::replace_parquet_scan_object_store;
+use crate::execution_plan_transformer::replace_shuffle_reader;
+use crate::execution_plan_transformer::set_sort_plan_preserve_partitioning;
 use crate::jni_bridge::JavaClasses;
 use crate::util::Util;
 
@@ -66,6 +64,9 @@ pub fn blaze_call_native(
     // replace ShuffleReaderExec with BlazeShuffleReaderExec
     let execution_plan =
         replace_shuffle_reader(execution_plan.clone(), &env, &task_id.job_id);
+
+    // replace blaze extension exprs
+    let execution_plan = replace_blaze_extension_exprs(execution_plan.clone());
 
     // we can pass down shuffle dirs as well as max memory threshold by creating RuntimeEnv with
     // specific RuntimeConfig.
@@ -164,78 +165,4 @@ pub fn blaze_call_native(
         info!("Invoking IPC data consumer succeeded");
     }
     info!("Blaze native computing finished");
-}
-
-fn replace_parquet_scan_object_store(
-    plan: Arc<dyn ExecutionPlan>,
-    env: &JNIEnv,
-) -> Arc<dyn ExecutionPlan> {
-    let children = plan
-        .children()
-        .iter()
-        .map(|child| replace_parquet_scan_object_store(child.clone(), env))
-        .collect::<Vec<_>>();
-
-    if let Some(parquet_exec) = plan.as_any().downcast_ref::<ParquetExec>() {
-        let parquet_scan_base_config = unsafe {
-            // safety: bypass visiblity of FileScanConfig
-            &mut *std::mem::transmute::<*const FileScanConfig, *mut FileScanConfig>(
-                parquet_exec.base_config() as *const FileScanConfig,
-            )
-        };
-        parquet_scan_base_config.object_store =
-            Arc::new(HDFSSingleFileObjectStore::new(env.get_java_vm().unwrap()));
-    }
-    if children.is_empty() {
-        return plan;
-    }
-    return plan.with_new_children(children).unwrap();
-}
-
-fn replace_shuffle_reader(
-    plan: Arc<dyn ExecutionPlan>,
-    env: &JNIEnv,
-    job_id: &str,
-) -> Arc<dyn ExecutionPlan> {
-    let children = plan
-        .children()
-        .iter()
-        .map(|child| replace_shuffle_reader(child.clone(), env, job_id))
-        .collect::<Vec<_>>();
-
-    if let Some(shuffle_reader_exec) = plan.as_any().downcast_ref::<ShuffleReaderExec>() {
-        let blaze_shuffle_reader: Arc<dyn ExecutionPlan> =
-            Arc::new(BlazeShuffleReaderExec {
-                jvm: env.get_java_vm().unwrap(),
-                job_id: job_id.to_owned(),
-                schema: shuffle_reader_exec.schema(),
-            });
-        return blaze_shuffle_reader;
-    }
-    if children.is_empty() {
-        return plan;
-    }
-    return plan.with_new_children(children).unwrap();
-}
-
-fn set_sort_plan_preserve_partitioning(
-    plan: Arc<dyn ExecutionPlan>,
-) -> Arc<dyn ExecutionPlan> {
-    let children = plan
-        .children()
-        .iter()
-        .map(|child| set_sort_plan_preserve_partitioning(child.clone()))
-        .collect::<Vec<_>>();
-
-    if let Some(sort_exec) = plan.as_any().downcast_ref::<SortExec>() {
-        return Arc::new(SortExec::new_with_partitioning(
-            sort_exec.expr().to_vec(),
-            sort_exec.input().clone(),
-            true,
-        ));
-    }
-    if children.is_empty() {
-        return plan;
-    }
-    return plan.with_new_children(children).unwrap();
 }
