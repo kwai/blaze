@@ -16,43 +16,32 @@ use datafusion::datasource::object_store::ObjectReader;
 use datafusion::datasource::object_store::ObjectStore;
 use datafusion::datasource::object_store::SizedFile;
 use datafusion::error::DataFusionError;
+use datafusion::error::Result;
 use futures::AsyncRead;
 use futures::Stream;
 use jni::errors::Error as JniError;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
-use jni::JavaVM;
 use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 
 use crate::jni_bridge::JavaClasses;
 use crate::util::Util;
-use crate::DFResult;
 
+#[derive(Clone)]
 pub struct HDFSSingleFileObjectStore {
-    pub jvm: JavaVM,
     pub tokio_runtime: Arc<Mutex<Runtime>>,
 }
 
-impl Clone for HDFSSingleFileObjectStore {
-    fn clone(&self) -> Self {
-        HDFSSingleFileObjectStore {
-            jvm: Util::jvm_clone(&self.jvm),
-            tokio_runtime: self.tokio_runtime.clone(),
-        }
-    }
-}
-
 impl HDFSSingleFileObjectStore {
-    pub fn new(jvm: JavaVM) -> Self {
+    pub fn new() -> Self {
         let tokio_runtime = Builder::new_multi_thread()
             .worker_threads(1) // single thread
             .thread_keep_alive(Duration::from_nanos(u64::MAX))
             .build()
             .unwrap();
         HDFSSingleFileObjectStore {
-            jvm,
             tokio_runtime: Arc::new(Mutex::new(tokio_runtime)),
         }
     }
@@ -66,12 +55,11 @@ impl Debug for HDFSSingleFileObjectStore {
 
 #[async_trait::async_trait]
 impl ObjectStore for HDFSSingleFileObjectStore {
-    async fn list_file(&self, prefix: &str) -> DFResult<FileMetaStream> {
+    async fn list_file(&self, prefix: &str) -> Result<FileMetaStream> {
         info!("HDFSSingleFileStore.list_file: {}", prefix);
         return self.tokio_runtime.lock().unwrap().block_on(async {
             let list_file_impl = || -> JniResult<FileMetaStream> {
-                let env = self.jvm.attach_current_thread_permanently()?;
-
+                let env = JavaClasses::get_thread_jnienv();
                 let fs = env
                     .call_static_method_unchecked(
                         JavaClasses::get().cJniBridge.class,
@@ -125,11 +113,11 @@ impl ObjectStore for HDFSSingleFileObjectStore {
                     ended: bool,
                 }
                 impl Stream for HDFSSingleFileMetaStream {
-                    type Item = DFResult<FileMeta>;
+                    type Item = Result<FileMeta>;
                     fn poll_next(
                         self: Pin<&mut Self>,
                         _cx: &mut Context<'_>,
-                    ) -> Poll<Option<DFResult<FileMeta>>> {
+                    ) -> Poll<Option<Result<FileMeta>>> {
                         let self_mut = self.get_mut();
                         if !self_mut.ended {
                             self_mut.ended = true;
@@ -143,7 +131,7 @@ impl ObjectStore for HDFSSingleFileObjectStore {
                     ended: false,
                 }))
             };
-            list_file_impl().map_err(Util::wrap_default_data_fusion_io_error)
+            Util::to_datafusion_external_result(list_file_impl())
         });
     }
 
@@ -151,13 +139,13 @@ impl ObjectStore for HDFSSingleFileObjectStore {
         &self,
         _prefix: &str,
         _delimiter: Option<String>,
-    ) -> DFResult<ListEntryStream> {
-        DFResult::Err(DataFusionError::NotImplemented(
+    ) -> Result<ListEntryStream> {
+        Result::Err(DataFusionError::NotImplemented(
             "HDFSSingleFileObjectStore::list_dir not supported".to_owned(),
         ))
     }
 
-    fn file_reader(&self, file: SizedFile) -> DFResult<Arc<dyn ObjectReader>> {
+    fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
         info!("HDFSSingleFileStore.file_reader: {:?}", file);
         Ok(Arc::new(HDFSObjectReader {
             object_store: self.clone(),
@@ -177,11 +165,11 @@ impl ObjectReader for HDFSObjectReader {
         &self,
         _start: u64,
         _length: usize,
-    ) -> DFResult<Box<dyn AsyncRead>> {
+    ) -> Result<Box<dyn AsyncRead>> {
         unimplemented!()
     }
 
-    fn sync_reader(&self) -> DFResult<Box<dyn Read + Send + Sync>> {
+    fn sync_reader(&self) -> Result<Box<dyn Read + Send + Sync>> {
         self.get_reader(0)
     }
 
@@ -189,7 +177,7 @@ impl ObjectReader for HDFSObjectReader {
         &self,
         start: u64,
         _length: usize,
-    ) -> DFResult<Box<dyn Read + Send + Sync>> {
+    ) -> Result<Box<dyn Read + Send + Sync>> {
         self.get_reader(start)
     }
 
@@ -199,7 +187,7 @@ impl ObjectReader for HDFSObjectReader {
 }
 
 impl HDFSObjectReader {
-    fn get_reader(&self, start: u64) -> DFResult<Box<dyn Read + Send + Sync>> {
+    fn get_reader(&self, start: u64) -> Result<Box<dyn Read + Send + Sync>> {
         return self
             .object_store
             .tokio_runtime
@@ -207,10 +195,7 @@ impl HDFSObjectReader {
             .unwrap()
             .block_on(async {
                 let reader_jni = || -> JniResult<Box<dyn Read + Send + Sync>> {
-                    let env = Util::jni_env_clone(
-                        &self.object_store.jvm.attach_current_thread_permanently()?,
-                    );
-
+                    let env = JavaClasses::get_thread_jnienv();
                     let fs = env
                         .call_static_method_unchecked(
                             JavaClasses::get().cJniBridge.class,
@@ -245,7 +230,7 @@ impl HDFSObjectReader {
                     ));
                     Ok(reader)
                 };
-                reader_jni().map_err(Util::wrap_default_data_fusion_io_error)
+                Util::to_datafusion_external_result(reader_jni())
             });
     }
 }
@@ -280,9 +265,8 @@ impl Read for HDFSFileReader {
             .lock()
             .unwrap()
             .block_on(async {
-                let env = &self.object_store.jvm.attach_current_thread_permanently()?;
+                let env = JavaClasses::get_thread_jnienv();
                 let buf = env.new_direct_byte_buffer(buf)?;
-
                 if self.pos != 0 {
                     env.call_method_unchecked(
                         self.hdfs_input_stream,
