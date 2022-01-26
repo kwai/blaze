@@ -1,7 +1,6 @@
 use std::io::BufWriter;
 use std::sync::Arc;
 
-use ballista_core::serde::protobuf::TaskDefinition;
 use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::runtime_env::RuntimeEnv;
@@ -13,6 +12,7 @@ use jni::objects::JValue;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
+use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 
 use crate::execution_plan_transformer::replace_blaze_extension_exprs;

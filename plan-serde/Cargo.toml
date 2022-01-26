@@ -1,0 +1,23 @@
+[package]
+name = "plan-serde"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+prost = "0.9"
+tonic = "0.6"
+datafusion = "6.0.0"
+log = "0.4.14"
+async-trait = "0.1.36"
+chrono = { version = "0.4", default-features = false }
+
+
+[build-dependencies]
+tonic-build = { version = "0.6" }
+
+
+[patch.crates-io]
+arrow = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
+datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "bz_master"}
