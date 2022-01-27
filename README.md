@@ -19,7 +19,7 @@
 
 # Blaze
 
-[![test](https://github.com/blaze-init/blaze-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/blaze-init/blaze-rs/actions/workflows/Build.yml)
+[![test](https://github.com/blaze-init/blaze-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/blaze-init/blaze-rs/actions/workflows/rust.yml)
 [![codecov](https://codecov.io/gh/blaze-init/blaze-rs/branch/master/graph/badge.svg?token=T0J6196MLB)](https://codecov.io/gh/blaze-init/blaze-rs)
 
 The blaze-rs project aims to provide Spark with a high-performance, low-cost native execution layer.
