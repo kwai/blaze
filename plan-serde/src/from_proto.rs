@@ -21,9 +21,7 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use crate::error::PlanSerDeError;
-use crate::execution_plans::{
-    ShuffleReaderExec, ShuffleWriterExec, UnresolvedShuffleExec,
-};
+use crate::execution_plans::{ShuffleWriterExec, UnresolvedShuffleExec};
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::repartition_exec_node::PartitionMethod;
@@ -32,7 +30,6 @@ use crate::{from_proto_binary_op, proto_error, str_to_byte};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::catalog::catalog::{CatalogList, MemoryCatalogList};
-use datafusion::datasource::object_store::local::LocalFileSystem;
 use datafusion::datasource::object_store::{FileMeta, ObjectStoreRegistry, SizedFile};
 use datafusion::datasource::PartitionedFile;
 use datafusion::execution::context::{
@@ -70,6 +67,8 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::{
     AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
 };
+use datafusion_ext::global_object_store_registry;
+use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
 
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
     type Error = PlanSerDeError;
@@ -380,7 +379,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
                 let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
-                let shuffle_reader = ShuffleReaderExec::try_new(schema)?;
+                let shuffle_reader = BlazeShuffleReaderExec {
+                    schema,
+                    job_id: datafusion_ext::get_job_id(),
+                };
                 Ok(Arc::new(shuffle_reader))
             }
             PhysicalPlanType::Empty(empty) => {
@@ -425,7 +427,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(Arc::new(SortExec::try_new(exprs, input)?))
+                // always preserve partitioning
+                Ok(Arc::new(SortExec::new_with_partitioning(
+                    exprs, input, true,
+                )))
             }
             PhysicalPlanType::Unresolved(unresolved_shuffle) => {
                 let schema = Arc::new(convert_required!(unresolved_shuffle.schema)?);
@@ -764,7 +769,17 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         let statistics = convert_required!(self.statistics)?;
 
         Ok(FileScanConfig {
-            object_store: Arc::new(LocalFileSystem {}),
+            // use datafusion_ext::global_object_store_registry to get object score
+            // decide object store scheme using first input file
+            object_store: global_object_store_registry()
+                .get_by_uri(
+                    self.file_groups
+                        .get(0)
+                        .and_then(|file_group| file_group.files.get(0))
+                        .and_then(|file| Some(file.path.as_ref()))
+                        .unwrap_or("default"),
+                )?
+                .0,
             file_schema: schema,
             file_groups: self
                 .file_groups

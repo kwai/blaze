@@ -91,6 +91,7 @@ pub(crate) fn from_proto_binary_op(op: &str) -> Result<Operator, PlanSerDeError>
         "Modulo" => Ok(Operator::Modulo),
         "Like" => Ok(Operator::Like),
         "NotLike" => Ok(Operator::NotLike),
+        "Modulo" => Ok(Operator::Modulo),
         other => Err(proto_error(format!(
             "Unsupported binary operator '{:?}'",
             other
