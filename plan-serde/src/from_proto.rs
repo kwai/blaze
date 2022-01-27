@@ -21,9 +21,7 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use crate::error::PlanSerDeError;
-use crate::execution_plans::{
-    ShuffleWriterExec, UnresolvedShuffleExec,
-};
+use crate::execution_plans::{ShuffleWriterExec, UnresolvedShuffleExec};
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::repartition_exec_node::PartitionMethod;
@@ -430,7 +428,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 // always preserve partitioning
-                Ok(Arc::new(SortExec::new_with_partitioning(exprs, input, true)))
+                Ok(Arc::new(SortExec::new_with_partitioning(
+                    exprs, input, true,
+                )))
             }
             PhysicalPlanType::Unresolved(unresolved_shuffle) => {
                 let schema = Arc::new(convert_required!(unresolved_shuffle.schema)?);
@@ -771,12 +771,15 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         Ok(FileScanConfig {
             // use datafusion_ext::global_object_store_registry to get object score
             // decide object store scheme using first input file
-            object_store: global_object_store_registry().get_by_uri(
-                self.file_groups
-                    .get(0)
-                    .and_then(|file_group| file_group.files.get(0))
-                    .and_then(|file| Some(file.path.as_ref()))
-                    .unwrap_or("default"))?.0,
+            object_store: global_object_store_registry()
+                .get_by_uri(
+                    self.file_groups
+                        .get(0)
+                        .and_then(|file_group| file_group.files.get(0))
+                        .and_then(|file| Some(file.path.as_ref()))
+                        .unwrap_or("default"),
+                )?
+                .0,
             file_schema: schema,
             file_groups: self
                 .file_groups
