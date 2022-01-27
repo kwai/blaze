@@ -6,12 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-prost = "0.9"
-tonic = "0.6"
-datafusion = "6.0.0"
-log = "0.4.14"
 async-trait = "0.1.36"
 chrono = { version = "0.4", default-features = false }
+datafusion = "6.0.0"
+datafusion-ext = { path = "../datafusion-ext" }
+log = "0.4.14"
+prost = "0.9"
+tonic = "0.6"
 
 
 [build-dependencies]

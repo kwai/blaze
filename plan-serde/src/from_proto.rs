@@ -32,7 +32,6 @@ use crate::{from_proto_binary_op, proto_error, str_to_byte};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::catalog::catalog::{CatalogList, MemoryCatalogList};
-use datafusion::datasource::object_store::local::LocalFileSystem;
 use datafusion::datasource::object_store::{FileMeta, ObjectStoreRegistry, SizedFile};
 use datafusion::datasource::PartitionedFile;
 use datafusion::execution::context::{
@@ -70,6 +69,7 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::{
     AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
 };
+use datafusion_ext::global_object_store_registry;
 
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
     type Error = PlanSerDeError;
@@ -764,7 +764,14 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         let statistics = convert_required!(self.statistics)?;
 
         Ok(FileScanConfig {
-            object_store: Arc::new(LocalFileSystem {}),
+            // use datafusion_ext::global_object_store_registry to get object score
+            // decide object store scheme using first input file
+            object_store: global_object_store_registry().get_by_uri(
+                self.file_groups
+                    .get(0)
+                    .and_then(|file_group| file_group.files.get(0))
+                    .and_then(|file| Some(file.path.as_ref()))
+                    .unwrap_or("default"))?.0,
             file_schema: schema,
             file_groups: self
                 .file_groups

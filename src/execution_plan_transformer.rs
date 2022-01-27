@@ -3,37 +3,15 @@ use datafusion::physical_plan::expressions::{
     BinaryExpr, CaseExpr, CastExpr, InListExpr, IsNotNullExpr, IsNullExpr, NegativeExpr,
     NotExpr, PhysicalSortExpr, TryCastExpr, DEFAULT_DATAFUSION_CAST_OPTIONS,
 };
-use datafusion::physical_plan::file_format::FileScanConfig;
-use datafusion::physical_plan::file_format::ParquetExec;
 use datafusion::physical_plan::filter::FilterExec;
 use datafusion::physical_plan::functions::ScalarFunctionExpr;
 use datafusion::physical_plan::projection::ProjectionExec;
 use datafusion::physical_plan::sorts::sort::SortExec;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::PhysicalExpr;
-use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
 use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
 use plan_serde::execution_plans::ShuffleReaderExec;
 use std::sync::Arc;
-
-pub fn replace_parquet_scan_object_store(
-    plan: Arc<dyn ExecutionPlan>,
-) -> Arc<dyn ExecutionPlan> {
-    transform_up_execution_plan(plan, &|plan| {
-        if let Some(exec) = plan.as_any().downcast_ref::<ParquetExec>() {
-            let parquet_scan_base_config = unsafe {
-                // safety: bypass visiblity of FileScanConfig
-                &mut *std::mem::transmute::<*const FileScanConfig, *mut FileScanConfig>(
-                    exec.base_config() as *const FileScanConfig,
-                )
-            };
-            parquet_scan_base_config.object_store =
-                Arc::new(HDFSSingleFileObjectStore::new());
-            return plan;
-        }
-        plan
-    })
-}
 
 pub fn replace_shuffle_reader(
     plan: Arc<dyn ExecutionPlan>,

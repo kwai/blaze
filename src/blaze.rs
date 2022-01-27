@@ -16,7 +16,6 @@ use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 
 use crate::execution_plan_transformer::replace_blaze_extension_exprs;
-use crate::execution_plan_transformer::replace_parquet_scan_object_store;
 use crate::execution_plan_transformer::replace_shuffle_reader;
 use crate::execution_plan_transformer::set_sort_plan_preserve_partitioning;
 use datafusion_ext::jni_bridge::JavaClasses;
@@ -88,9 +87,6 @@ pub fn blaze_call_native(
         "Creating native execution plan succeeded: task_id={:?}",
         task_id
     );
-
-    // replace LocalObjectStore to HDFSObjectStore in parquet scan
-    let execution_plan = replace_parquet_scan_object_store(execution_plan.clone());
 
     // replace ShuffleReaderExec with BlazeShuffleReaderExec
     let execution_plan = replace_shuffle_reader(execution_plan.clone(), &task_id.job_id);
