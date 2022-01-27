@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use crate::error::PlanSerDeError;
 use crate::execution_plans::{
-    ShuffleReaderExec, ShuffleWriterExec, UnresolvedShuffleExec,
+    ShuffleWriterExec, UnresolvedShuffleExec,
 };
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
@@ -70,6 +70,7 @@ use datafusion::physical_plan::{
     AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
 };
 use datafusion_ext::global_object_store_registry;
+use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
 
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
     type Error = PlanSerDeError;
@@ -380,7 +381,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
                 let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
-                let shuffle_reader = ShuffleReaderExec::try_new(schema)?;
+                let shuffle_reader = BlazeShuffleReaderExec {
+                    schema,
+                    job_id: datafusion_ext::get_job_id(),
+                };
                 Ok(Arc::new(shuffle_reader))
             }
             PhysicalPlanType::Empty(empty) => {

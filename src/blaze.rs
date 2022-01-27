@@ -16,7 +16,6 @@ use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 
 use crate::execution_plan_transformer::replace_blaze_extension_exprs;
-use crate::execution_plan_transformer::replace_shuffle_reader;
 use datafusion_ext::jni_bridge::JavaClasses;
 use log::info;
 
@@ -79,6 +78,8 @@ pub fn blaze_call_native(
     let task_id = task_definition
         .task_id
         .expect("Missing task_definition.task_id");
+    datafusion_ext::set_job_id(&task_id.job_id);
+
     let plan = &task_definition.plan.expect("Missing task_definition.plan");
     let execution_plan: Arc<dyn ExecutionPlan> =
         plan.try_into().expect("Error converting to ExecutionPlan");
@@ -86,9 +87,6 @@ pub fn blaze_call_native(
         "Creating native execution plan succeeded: task_id={:?}",
         task_id
     );
-
-    // replace ShuffleReaderExec with BlazeShuffleReaderExec
-    let execution_plan = replace_shuffle_reader(execution_plan.clone(), &task_id.job_id);
 
     // replace blaze extension exprs
     let execution_plan = replace_blaze_extension_exprs(execution_plan.clone());

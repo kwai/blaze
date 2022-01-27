@@ -9,24 +9,7 @@ use datafusion::physical_plan::projection::ProjectionExec;
 use datafusion::physical_plan::sorts::sort::SortExec;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::PhysicalExpr;
-use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
-use plan_serde::execution_plans::ShuffleReaderExec;
 use std::sync::Arc;
-
-pub fn replace_shuffle_reader(
-    plan: Arc<dyn ExecutionPlan>,
-    job_id: &str,
-) -> Arc<dyn ExecutionPlan> {
-    transform_up_execution_plan(plan, &|plan| {
-        if let Some(exec) = plan.as_any().downcast_ref::<ShuffleReaderExec>() {
-            return Arc::new(BlazeShuffleReaderExec {
-                job_id: job_id.to_owned(),
-                schema: exec.schema(),
-            });
-        }
-        plan
-    })
-}
 
 pub fn replace_blaze_extension_exprs(
     plan: Arc<dyn ExecutionPlan>,
