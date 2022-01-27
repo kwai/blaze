@@ -48,9 +48,10 @@ use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::task;
+use tempfile::NamedTempFile;
 
 #[derive(Default)]
 struct PartitionBuffer {
@@ -82,7 +83,7 @@ impl PartitionBuffer {
 }
 
 struct SpillInfo {
-    path: String,
+    file: NamedTempFile,
     offsets: Vec<u64>,
 }
 
@@ -149,7 +150,6 @@ struct ShuffleRepartitioner {
     runtime: Arc<RuntimeEnv>,
     _metrics: AggregatedMetricsSet,
     inner_metrics: BaselineMetrics,
-    used: AtomicUsize,
     random: RandomState,
 }
 
@@ -175,7 +175,6 @@ impl ShuffleRepartitioner {
             runtime,
             _metrics,
             inner_metrics,
-            used: AtomicUsize::new(0),
             random: RandomState::with_seeds(0, 0, 0, 0),
         }
     }
@@ -186,7 +185,7 @@ impl ShuffleRepartitioner {
         // as we encountered in this batch, thus the memory consumption is `rough`.
         let size = batch_byte_size(&input);
         self.try_grow(size).await?;
-        self.used.fetch_add(size, Ordering::SeqCst);
+        self.inner_metrics.mem_used().add(size);
 
         let random_state = self.random.clone();
         let num_output_partitions = self.num_output_partitions;
@@ -298,7 +297,7 @@ impl ShuffleRepartitioner {
 
             let mut spill_files = vec![];
             for s in &output_spills {
-                let reader = File::open(&s.path)?;
+                let reader = File::open(&s.file.path())?;
                 spill_files.push(reader);
             }
 
@@ -349,7 +348,7 @@ impl ShuffleRepartitioner {
             Ok::<(), DataFusionError>(())
         })
         .await;
-        self.used.store(0, Ordering::SeqCst);
+        self.inner_metrics.mem_used().set(0);
 
         if let Err(e) = res {
             return Err(DataFusionError::Execution(format!(
@@ -379,7 +378,7 @@ impl ShuffleRepartitioner {
     }
 
     fn used(&self) -> usize {
-        self.used.load(Ordering::SeqCst)
+        self.inner_metrics.mem_used().value()
     }
 
     fn spilled_bytes(&self) -> usize {
@@ -395,7 +394,7 @@ impl ShuffleRepartitioner {
 async fn spill_into(
     buffered_partitions: &mut Vec<PartitionBuffer>,
     schema: SchemaRef,
-    path: &str,
+    path: &Path,
     num_output_partitions: usize,
 ) -> Result<Vec<u64>> {
     let mut output_batches: Vec<Vec<RecordBatch>> = vec![vec![]; num_output_partitions];
@@ -486,24 +485,24 @@ impl MemoryConsumer for ShuffleRepartitioner {
             return Ok(0);
         }
 
-        let path = self.runtime.disk_manager.create_tmp_file()?;
+        let spillfile = self.runtime.disk_manager.create_tmp_file()?;
         let offsets = spill_into(
             &mut *buffered_partitions,
             self.schema.clone(),
-            path.as_str(),
+            spillfile.path(),
             self.num_output_partitions,
         )
         .await?;
 
         let mut spills = self.spills.lock().await;
-        let freed = self.used.swap(0, Ordering::SeqCst);
+        let freed = self.inner_metrics.mem_used().set(0);
         self.inner_metrics.record_spill(freed);
-        spills.push(SpillInfo { path, offsets });
+        spills.push(SpillInfo { file: spillfile, offsets });
         Ok(freed)
     }
 
     fn mem_used(&self) -> usize {
-        self.used.load(Ordering::SeqCst)
+        self.inner_metrics.mem_used().value()
     }
 }
 

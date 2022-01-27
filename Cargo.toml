@@ -17,9 +17,9 @@ datafusion-ext = { path = "datafusion-ext" }
 plan-serde = { path = "plan-serde" }
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "bz_master"}
-arrow = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
-parquet = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
+datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "bf715773e66734af87a02845242a1bc48ded8d0f"}
+arrow = { git = "https://github.com/apache/arrow-rs.git", rev = "731e132489b99cd688f884642cf20de52aed24d0" }
+parquet = { git = "https://github.com/apache/arrow-rs.git", rev = "731e132489b99cd688f884642cf20de52aed24d0" }
 
 [profile.dev]
 overflow-checks = false

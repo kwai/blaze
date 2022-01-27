@@ -64,7 +64,9 @@ site/
 
 # Rust
 target
-Cargo.lock
+# Binaries should have Cargo.lock
+# https://doc.rust-lang.org/cargo/faq.html#why-do-binaries-have-cargolock-in-version-control-but-not-libraries
+# Cargo.lock
 
 rusty-tags.vi
 .history
