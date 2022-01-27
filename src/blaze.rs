@@ -17,7 +17,6 @@ use prost::Message;
 
 use crate::execution_plan_transformer::replace_blaze_extension_exprs;
 use crate::execution_plan_transformer::replace_shuffle_reader;
-use crate::execution_plan_transformer::set_sort_plan_preserve_partitioning;
 use datafusion_ext::jni_bridge::JavaClasses;
 use log::info;
 
@@ -98,9 +97,6 @@ pub fn blaze_call_native(
     // specific RuntimeConfig.
     // use the default one here as placeholder now.
     let runtime = Arc::new(RuntimeEnv::default());
-
-    // set all SortExec preserve_partitioning to true, because all partitioning is done is spark side
-    let execution_plan = set_sort_plan_preserve_partitioning(execution_plan.clone());
 
     info!(
         "Executing plan:\n{}",

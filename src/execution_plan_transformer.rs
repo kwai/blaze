@@ -28,21 +28,6 @@ pub fn replace_shuffle_reader(
     })
 }
 
-pub fn set_sort_plan_preserve_partitioning(
-    plan: Arc<dyn ExecutionPlan>,
-) -> Arc<dyn ExecutionPlan> {
-    transform_up_execution_plan(plan, &|plan| {
-        if let Some(exec) = plan.as_any().downcast_ref::<SortExec>() {
-            return Arc::new(SortExec::new_with_partitioning(
-                exec.expr().to_vec(),
-                exec.input().clone(),
-                true,
-            ));
-        }
-        plan
-    })
-}
-
 pub fn replace_blaze_extension_exprs(
     plan: Arc<dyn ExecutionPlan>,
 ) -> Arc<dyn ExecutionPlan> {
@@ -74,7 +59,11 @@ pub fn replace_blaze_extension_exprs(
                     options: expr.options,
                 })
                 .collect::<Vec<_>>();
-            return Arc::new(SortExec::try_new(expr, exec.input().clone()).unwrap());
+            return Arc::new(SortExec::new_with_partitioning(
+                expr,
+                exec.input().clone(),
+                true,
+            ));
         }
         plan
     })
