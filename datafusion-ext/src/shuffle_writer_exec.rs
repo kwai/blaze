@@ -50,8 +50,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::task;
 use tempfile::NamedTempFile;
+use tokio::task;
 
 #[derive(Default)]
 struct PartitionBuffer {
@@ -497,7 +497,10 @@ impl MemoryConsumer for ShuffleRepartitioner {
         let mut spills = self.spills.lock().await;
         let freed = self.inner_metrics.mem_used().set(0);
         self.inner_metrics.record_spill(freed);
-        spills.push(SpillInfo { file: spillfile, offsets });
+        spills.push(SpillInfo {
+            file: spillfile,
+            offsets,
+        });
         Ok(freed)
     }
 
