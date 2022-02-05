@@ -16,9 +16,11 @@ pub struct JavaClasses<'a> {
     pub cHadoopFileStatus: HadoopFileStatus<'a>,
     pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
     pub cJavaList: JavaList<'a>,
+    pub cJavaMap: JavaMap<'a>,
     pub cScalaIterator: ScalaIterator<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
     pub cSparkManagedBuffer: SparkManagedBuffer<'a>,
+    pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkBlazeConverters: SparkBlazeConverters<'a>,
 }
 
@@ -44,9 +46,11 @@ impl JavaClasses<'static> {
             cHadoopFileStatus: HadoopFileStatus::new(env)?,
             cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env)?,
             cJavaList: JavaList::new(env)?,
+            cJavaMap: JavaMap::new(env)?,
             cScalaIterator: ScalaIterator::new(env)?,
             cScalaTuple2: ScalaTuple2::new(env)?,
             cSparkManagedBuffer: SparkManagedBuffer::new(env)?,
+            cSparkSQLMetric: SparkSQLMetric::new(env)?,
             cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
         };
         unsafe {
@@ -251,6 +255,36 @@ impl<'a> JavaList<'a> {
     }
 }
 
+pub struct JavaMap<'a> {
+    pub class: JClass<'a>,
+    pub method_get: JMethodID<'a>,
+    pub method_get_ret: JavaType,
+    pub method_put: JMethodID<'a>,
+    pub method_put_ret: JavaType,
+}
+impl<'a> JavaMap<'a> {
+    pub const SIG_TYPE: &'static str = "java/util/Map";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaMap<'a>> {
+        let class = env.find_class(Self::SIG_TYPE)?;
+        Ok(JavaMap {
+            class,
+            method_get: env
+                .get_method_id(class, "get", "(Ljava/lang/Object;)Ljava/lang/Object;")
+                .unwrap(),
+            method_get_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_put: env
+                .get_method_id(
+                    class,
+                    "put",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+                )
+                .unwrap(),
+            method_put_ret: JavaType::Primitive(Primitive::Void),
+        })
+    }
+}
+
 pub struct ScalaIterator<'a> {
     pub class: JClass<'a>,
     pub method_has_next: JMethodID<'a>,
@@ -315,6 +349,24 @@ impl<'a> SparkManagedBuffer<'a> {
             method_nio_byte_buffer_ret: JavaType::Object(
                 "java/nio/ByteBuffer".to_owned(),
             ),
+        })
+    }
+}
+
+pub struct SparkSQLMetric<'a> {
+    pub class: JClass<'a>,
+    pub method_add: JMethodID<'a>,
+    pub method_add_ret: JavaType,
+}
+impl<'a> SparkSQLMetric<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/metric/SQLMetric";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkSQLMetric<'a>> {
+        let class = env.find_class(Self::SIG_TYPE)?;
+        Ok(SparkSQLMetric {
+            class,
+            method_add: env.get_method_id(class, "add", "(J)V")?,
+            method_add_ret: JavaType::Primitive(Primitive::Void),
         })
     }
 }
