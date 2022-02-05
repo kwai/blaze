@@ -24,11 +24,17 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
     taskDefinition: JByteBuffer,
+    sparkMetrics: JObject,
     ipcRecordBatchDataConsumer: JObject,
 ) {
     let start_time = std::time::Instant::now();
     if let Err(err) = std::panic::catch_unwind(|| {
-        blaze_call_native(&env, taskDefinition, ipcRecordBatchDataConsumer);
+        blaze_call_native(
+            &env,
+            taskDefinition,
+            sparkMetrics,
+            ipcRecordBatchDataConsumer,
+        );
     }) {
         env.throw_new(
             "java/lang/RuntimeException",
@@ -52,6 +58,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 pub fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JByteBuffer,
+    spark_metrics: JObject,
     ipc_record_batch_data_consumer: JObject,
 ) {
     let _env_logger_init = env_logger::try_init_from_env(
@@ -110,7 +117,9 @@ pub fn blaze_call_native(
         ))
         .expect("Error collecting record batches");
     info!("Executing plan finished");
-    for metric in execution_plan.metrics().unwrap_or_default().iter() {
+
+    let metrics = execution_plan.metrics().unwrap_or_default();
+    for metric in metrics.iter() {
         info!(
             " -> metrics (partition={}): {}: {}",
             metric.partition().unwrap_or_default(),
@@ -122,6 +131,32 @@ pub fn blaze_call_native(
         .into_iter() // retain non-empty record batches
         .filter(|record_batch| record_batch.num_rows() > 0)
         .collect::<Vec<_>>();
+
+    // update spark metrics
+    for metric in metrics.iter() {
+        let sql_metric = env
+            .call_method_unchecked(
+                spark_metrics,
+                JavaClasses::get().cJavaMap.method_get,
+                JavaClasses::get().cJavaMap.method_get_ret.clone(),
+                &[JValue::Object(
+                    env.new_string(metric.value().name()).unwrap().into(),
+                )],
+            )
+            .unwrap()
+            .l()
+            .unwrap();
+
+        if !sql_metric.is_null() {
+            env.call_method_unchecked(
+                sql_metric,
+                JavaClasses::get().cSparkSQLMetric.method_add,
+                JavaClasses::get().cSparkSQLMetric.method_add_ret.clone(),
+                &[JValue::Long(metric.value().as_usize() as i64)],
+            )
+            .unwrap();
+        }
+    }
 
     let consumer_class = env.find_class("java/util/function/Consumer").unwrap();
     let consumer_accept_method = env
