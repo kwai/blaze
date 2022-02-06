@@ -33,6 +33,9 @@ use datafusion::arrow::ipc::reader::FileReader;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
+use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
@@ -52,6 +55,16 @@ use crate::util::Util;
 pub struct BlazeShuffleReaderExec {
     pub job_id: String,
     pub schema: SchemaRef,
+    pub metrics: ExecutionPlanMetricsSet,
+}
+impl BlazeShuffleReaderExec {
+    pub fn new(job_id: String, schema: SchemaRef) -> BlazeShuffleReaderExec {
+        BlazeShuffleReaderExec {
+            job_id,
+            schema,
+            metrics: ExecutionPlanMetricsSet::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -109,8 +122,12 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
         };
         let buffers = Util::to_datafusion_external_result(jni_get_buffers())?;
         let schema = self.schema.clone();
-
-        Ok(Box::pin(ShuffleReaderStream::new(schema, buffers)))
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
+        Ok(Box::pin(ShuffleReaderStream::new(
+            schema,
+            buffers,
+            baseline_metrics,
+        )))
     }
 
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
@@ -119,6 +136,10 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
 
     fn statistics(&self) -> Statistics {
         Statistics::default()
+    }
+
+    fn metrics(&self) -> Option<MetricsSet> {
+        Some(self.metrics.clone_inner())
     }
 }
 
@@ -130,13 +151,18 @@ struct ShuffleReaderStream {
     seekable_byte_channels_pos: usize,
     seekable_byte_channel: JObject<'static>,
     arrow_file_reader: Option<FileReader<SeekableByteChannelReader>>,
+    baseline_metrics: BaselineMetrics,
 }
 unsafe impl Sync for ShuffleReaderStream {} // safety: buffers is safe to be shared
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for ShuffleReaderStream {}
 
 impl ShuffleReaderStream {
-    pub fn new(schema: SchemaRef, buffers: JObject<'static>) -> ShuffleReaderStream {
+    pub fn new(
+        schema: SchemaRef,
+        buffers: JObject<'static>,
+        baseline_metrics: BaselineMetrics,
+    ) -> ShuffleReaderStream {
         ShuffleReaderStream {
             schema,
             buffers,
@@ -145,6 +171,7 @@ impl ShuffleReaderStream {
             seekable_byte_channels_pos: 0,
             seekable_byte_channel: JObject::null(),
             arrow_file_reader: None,
+            baseline_metrics,
         }
     }
 
@@ -258,7 +285,9 @@ impl Stream for ShuffleReaderStream {
     ) -> Poll<Option<Self::Item>> {
         if let Some(arrow_file_reader) = &mut self.arrow_file_reader {
             if let Some(record_batch) = arrow_file_reader.next() {
-                return Poll::Ready(Some(record_batch));
+                return self
+                    .baseline_metrics
+                    .record_poll(Poll::Ready(Some(record_batch)));
             }
         }
 

@@ -1,3 +1,9 @@
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use datafusion::datasource::object_store::ObjectStoreRegistry;
+use hdfs_object_store::HDFSSingleFileObjectStore;
+
 pub mod hdfs_object_store; // note: can be changed to priv once plan transforming is removed
 pub mod jni_bridge;
 pub mod shuffle_reader_exec;
@@ -5,11 +11,6 @@ pub mod shuffle_writer_exec;
 pub mod util;
 
 mod batch_buffer;
-
-use datafusion::datasource::object_store::ObjectStoreRegistry;
-use hdfs_object_store::HDFSSingleFileObjectStore;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 lazy_static::lazy_static! {
     static ref OBJECT_STORE_REGISTRY: ObjectStoreRegistry = {

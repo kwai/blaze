@@ -1,9 +1,10 @@
+use std::sync::Arc;
+
 use datafusion::arrow::array::make_builder;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
-use std::sync::Arc;
 
 pub struct MutableRecordBatch {
     pub(crate) arrays: Vec<Box<dyn ArrayBuilder>>,
