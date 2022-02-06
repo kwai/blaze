@@ -17,41 +17,55 @@
 
 //! Defines the External shuffle repartition plan
 
-use crate::batch_buffer::MutableRecordBatch;
+use std::any::Any;
+use std::fmt;
+use std::fmt::Debug;
+use std::fmt::Formatter;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
+
 use ahash::RandomState;
 use async_trait::async_trait;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::take;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use datafusion::arrow::datatypes::DataType;
+use datafusion::arrow::datatypes::Field;
+use datafusion::arrow::datatypes::Schema;
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::ipc::writer::FileWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::memory_manager::{
-    ConsumerType, MemoryConsumer, MemoryConsumerId, MemoryManager,
-};
+use datafusion::execution::memory_manager::ConsumerType;
+use datafusion::execution::memory_manager::MemoryConsumer;
+use datafusion::execution::memory_manager::MemoryConsumerId;
+use datafusion::execution::memory_manager::MemoryManager;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::from_slice::FromSlice;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::hash_utils::create_hashes;
 use datafusion::physical_plan::memory::MemoryStream;
-use datafusion::physical_plan::metrics::{
-    AggregatedMetricsSet, BaselineMetrics, MetricsSet,
-};
-use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
-};
+use datafusion::physical_plan::metrics::AggregatedMetricsSet;
+use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::DisplayFormatType;
+use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::Partitioning;
+use datafusion::physical_plan::SendableRecordBatchStream;
+use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::StreamExt;
 use log::info;
-use std::any::Any;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::task;
+
+use crate::batch_buffer::MutableRecordBatch;
 
 #[derive(Default)]
 struct PartitionBuffer {

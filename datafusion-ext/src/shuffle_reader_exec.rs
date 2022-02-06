@@ -27,11 +27,14 @@ use std::task::Context;
 use std::task::Poll;
 
 use async_trait::async_trait;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::ipc::reader::FileReader;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
@@ -39,10 +42,6 @@ use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::RecordBatchStream;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
-use datafusion::{
-    arrow::datatypes::SchemaRef,
-    physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet},
-};
 use futures::Stream;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;

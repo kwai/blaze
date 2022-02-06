@@ -5,6 +5,8 @@ use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion_ext::jni_bridge::JavaClasses;
+use jni::errors::Result as JniResult;
 use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JObject;
@@ -12,11 +14,9 @@ use jni::objects::JValue;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
+use log::info;
 use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
-
-use datafusion_ext::jni_bridge::JavaClasses;
-use log::info;
 
 #[allow(non_snake_case)]
 #[no_mangle]
@@ -24,17 +24,12 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
     taskDefinition: JByteBuffer,
-    sparkMetrics: JObject,
+    metricNode: JObject,
     ipcRecordBatchDataConsumer: JObject,
 ) {
     let start_time = std::time::Instant::now();
     if let Err(err) = std::panic::catch_unwind(|| {
-        blaze_call_native(
-            &env,
-            taskDefinition,
-            sparkMetrics,
-            ipcRecordBatchDataConsumer,
-        );
+        blaze_call_native(&env, taskDefinition, metricNode, ipcRecordBatchDataConsumer);
     }) {
         env.throw_new(
             "java/lang/RuntimeException",
@@ -58,7 +53,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 pub fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JByteBuffer,
-    spark_metrics: JObject,
+    metric_node: JObject,
     ipc_record_batch_data_consumer: JObject,
 ) {
     let _env_logger_init = env_logger::try_init_from_env(
@@ -116,47 +111,15 @@ pub fn blaze_call_native(
             record_batch_stream,
         ))
         .expect("Error collecting record batches");
-    info!("Executing plan finished");
 
-    let metrics = execution_plan.metrics().unwrap_or_default();
-    for metric in metrics.iter() {
-        info!(
-            " -> metrics (partition={}): {}: {}",
-            metric.partition().unwrap_or_default(),
-            metric.value().name(),
-            metric.value()
-        )
-    }
+    info!("Executing plan finished");
     let record_batches = record_batches
         .into_iter() // retain non-empty record batches
         .filter(|record_batch| record_batch.num_rows() > 0)
         .collect::<Vec<_>>();
 
     // update spark metrics
-    for metric in metrics.iter() {
-        let sql_metric = env
-            .call_method_unchecked(
-                spark_metrics,
-                JavaClasses::get().cJavaMap.method_get,
-                JavaClasses::get().cJavaMap.method_get_ret.clone(),
-                &[JValue::Object(
-                    env.new_string(metric.value().name()).unwrap().into(),
-                )],
-            )
-            .unwrap()
-            .l()
-            .unwrap();
-
-        if !sql_metric.is_null() {
-            env.call_method_unchecked(
-                sql_metric,
-                JavaClasses::get().cSparkSQLMetric.method_add,
-                JavaClasses::get().cSparkSQLMetric.method_add_ret.clone(),
-                &[JValue::Long(metric.value().as_usize() as i64)],
-            )
-            .unwrap();
-        }
-    }
+    update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
 
     let consumer_class = env.find_class("java/util/function/Consumer").unwrap();
     let consumer_accept_method = env
@@ -216,4 +179,43 @@ pub fn blaze_call_native(
         info!("Invoking IPC data consumer succeeded");
     }
     info!("Blaze native computing finished");
+}
+
+fn update_spark_metric_node(
+    env: &JNIEnv,
+    metric_node: JObject,
+    execution_plan: Arc<dyn ExecutionPlan>,
+) -> JniResult<()> {
+    // update current node
+    for metric in execution_plan.metrics().unwrap_or_default().iter() {
+        let name = metric.value().name();
+        let value = metric.value().as_usize();
+
+        env.call_method_unchecked(
+            metric_node,
+            JavaClasses::get().cSparkMetricNode.method_add,
+            JavaClasses::get().cSparkMetricNode.method_add_ret.clone(),
+            &[
+                JValue::Object(env.new_string(name)?.into()),
+                JValue::Long(value as i64),
+            ],
+        )?;
+    }
+
+    // update children nodes
+    for (i, child_plan) in execution_plan.children().iter().enumerate() {
+        let child_metric_node = env
+            .call_method_unchecked(
+                metric_node,
+                JavaClasses::get().cSparkMetricNode.method_get_child,
+                JavaClasses::get()
+                    .cSparkMetricNode
+                    .method_get_child_ret
+                    .clone(),
+                &[JValue::Int(i as i32)],
+            )?
+            .l()?;
+        update_spark_metric_node(env, child_metric_node, child_plan.clone())?;
+    }
+    Ok(())
 }

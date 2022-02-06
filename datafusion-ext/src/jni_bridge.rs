@@ -1,10 +1,11 @@
+use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
 use jni::objects::JStaticMethodID;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
-use jni::{errors::Result as JniResult, JavaVM};
+use jni::JavaVM;
 
 #[allow(non_snake_case)]
 pub struct JavaClasses<'a> {
@@ -22,6 +23,7 @@ pub struct JavaClasses<'a> {
     pub cSparkManagedBuffer: SparkManagedBuffer<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkBlazeConverters: SparkBlazeConverters<'a>,
+    pub cSparkMetricNode: SparkMetricNode<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -52,6 +54,7 @@ impl JavaClasses<'static> {
             cSparkManagedBuffer: SparkManagedBuffer::new(env)?,
             cSparkSQLMetric: SparkSQLMetric::new(env)?,
             cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
+            cSparkMetricNode: SparkMetricNode::new(env)?,
         };
         unsafe {
             // safety:
@@ -391,6 +394,36 @@ impl<'a> SparkBlazeConverters<'a> {
                 )?,
             method_read_managed_buffer_to_segment_byte_channels_as_java_ret:
                 JavaType::Object(JavaList::SIG_TYPE.to_owned()),
+        })
+    }
+}
+
+pub struct SparkMetricNode<'a> {
+    pub class: JClass<'a>,
+    pub method_get_child: JMethodID<'a>,
+    pub method_get_child_ret: JavaType,
+    pub method_add: JMethodID<'a>,
+    pub method_add_ret: JavaType,
+}
+impl<'a> SparkMetricNode<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/MetricNode";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkMetricNode<'a>> {
+        let class = env.find_class(Self::SIG_TYPE).unwrap();
+        Ok(SparkMetricNode {
+            class,
+            method_get_child: env
+                .get_method_id(
+                    class,
+                    "getChild",
+                    "(I)Lorg/apache/spark/sql/blaze/MetricNode;",
+                )
+                .unwrap(),
+            method_get_child_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
+            method_add: env
+                .get_method_id(class, "add", "(Ljava/lang/String;J)V")
+                .unwrap(),
+            method_add_ret: JavaType::Primitive(Primitive::Void),
         })
     }
 }
