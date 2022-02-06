@@ -1,5 +1,6 @@
 use std::io::BufWriter;
 use std::sync::Arc;
+use std::time::Instant;
 
 use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -56,6 +57,7 @@ pub fn blaze_call_native(
     metric_node: JObject,
     ipc_record_batch_data_consumer: JObject,
 ) {
+    let start_time = std::time::Instant::now();
     let _env_logger_init = env_logger::try_init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
@@ -154,6 +156,14 @@ pub fn blaze_call_native(
             num_rows_total,
             buf_writer.get_ref().len()
         );
+        update_extra_metrics(
+            &env,
+            metric_node,
+            start_time,
+            num_rows_total,
+            buf_writer.get_ref().len(),
+        )
+        .unwrap();
 
         info!("Invoking IPC data consumer");
         let byte_buffer = env
@@ -168,6 +178,8 @@ pub fn blaze_call_native(
         .expect("Error invoking IPC data consumer");
         info!("Invoking IPC data consumer succeeded");
     } else {
+        update_extra_metrics(&env, metric_node, start_time, 0, 0).unwrap();
+
         info!("Invoking IPC data consumer (with null result)");
         env.call_method_unchecked(
             ipc_record_batch_data_consumer,
@@ -188,17 +200,11 @@ fn update_spark_metric_node(
 ) -> JniResult<()> {
     // update current node
     for metric in execution_plan.metrics().unwrap_or_default().iter() {
-        let name = metric.value().name();
-        let value = metric.value().as_usize();
-
-        env.call_method_unchecked(
+        update_metric(
+            env,
             metric_node,
-            JavaClasses::get().cSparkMetricNode.method_add,
-            JavaClasses::get().cSparkMetricNode.method_add_ret.clone(),
-            &[
-                JValue::Object(env.new_string(name)?.into()),
-                JValue::Long(value as i64),
-            ],
+            metric.value().name(),
+            metric.value().as_usize() as i64,
         )?;
     }
 
@@ -217,5 +223,52 @@ fn update_spark_metric_node(
             .l()?;
         update_spark_metric_node(env, child_metric_node, child_plan.clone())?;
     }
+    Ok(())
+}
+
+fn update_extra_metrics(
+    env: &JNIEnv,
+    metric_node: JObject,
+    start_time: Instant,
+    num_ipc_rows: usize,
+    num_ipc_bytes: usize,
+) -> JniResult<()> {
+    let duration = std::time::Instant::now().duration_since(start_time);
+    update_metric(
+        env,
+        metric_node,
+        "blaze_output_ipc_rows",
+        num_ipc_rows as i64,
+    )?;
+    update_metric(
+        env,
+        metric_node,
+        "blaze_output_ipc_bytes",
+        num_ipc_bytes as i64,
+    )?;
+    update_metric(
+        env,
+        metric_node,
+        "blaze_exec_time",
+        duration.as_nanos() as i64,
+    )?;
+    Ok(())
+}
+
+fn update_metric(
+    env: &JNIEnv,
+    metric_node: JObject,
+    metric_name: &str,
+    metric_value: i64,
+) -> JniResult<()> {
+    env.call_method_unchecked(
+        metric_node,
+        JavaClasses::get().cSparkMetricNode.method_add,
+        JavaClasses::get().cSparkMetricNode.method_add_ret.clone(),
+        &[
+            JValue::Object(env.new_string(metric_name)?.into()),
+            JValue::Long(metric_value),
+        ],
+    )?;
     Ok(())
 }
