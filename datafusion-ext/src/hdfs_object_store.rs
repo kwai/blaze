@@ -28,6 +28,9 @@ use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 
 use crate::jni_bridge::JavaClasses;
+use crate::jni_bridge_call_method;
+use crate::jni_bridge_call_static_method;
+use crate::jni_bridge_new_object;
 use crate::util::Util;
 
 #[derive(Clone)]
@@ -61,50 +64,32 @@ impl ObjectStore for HDFSSingleFileObjectStore {
         return self.tokio_runtime.lock().unwrap().block_on(async {
             let list_file_impl = || -> JniResult<FileMetaStream> {
                 let env = JavaClasses::get_thread_jnienv();
-                let fs = env
-                    .call_static_method_unchecked(
-                        JavaClasses::get().cJniBridge.class,
-                        JavaClasses::get().cJniBridge.method_get_hdfs_file_system,
-                        JavaClasses::get()
-                            .cJniBridge
-                            .method_get_hdfs_file_system_ret
-                            .clone(),
-                        &[],
-                    )?
-                    .l()?;
+                let fs =
+                    jni_bridge_call_static_method!(env, JniBridge.getHDFSFileSystem)?
+                        .l()?;
 
-                let path = env.new_object_unchecked(
-                    JavaClasses::get().cHadoopPath.class,
-                    JavaClasses::get().cHadoopPath.ctor,
-                    &[JValue::Object(env.new_string(prefix)?.into())],
+                let path = jni_bridge_new_object!(
+                    env,
+                    HadoopPath,
+                    JValue::Object(env.new_string(prefix)?.into())
                 )?;
 
-                let file_status = env
-                    .call_method_unchecked(
-                        fs,
-                        JavaClasses::get().cHadoopFileSystem.method_get_file_status,
-                        JavaClasses::get()
-                            .cHadoopFileSystem
-                            .method_get_file_status_ret
-                            .clone(),
-                        &[JValue::Object(path)],
-                    )?
-                    .l()?;
+                let file_status = jni_bridge_call_method!(
+                    env,
+                    HadoopFileSystem.getFileStatus,
+                    fs,
+                    JValue::Object(path)
+                )?
+                .l()?;
+
+                let file_size =
+                    jni_bridge_call_method!(env, HadoopFileStatus.getLen, file_status)?
+                        .j()? as u64;
 
                 let file_meta = FileMeta {
                     sized_file: SizedFile {
                         path: prefix.to_owned(),
-                        size: env
-                            .call_method_unchecked(
-                                file_status,
-                                JavaClasses::get().cHadoopFileStatus.method_get_len,
-                                JavaClasses::get()
-                                    .cHadoopFileStatus
-                                    .method_get_len_ret
-                                    .clone(),
-                                &[],
-                            )?
-                            .j()? as u64,
+                        size: file_size,
                     },
                     last_modified: None,
                 };
@@ -197,32 +182,23 @@ impl HDFSObjectReader {
             .block_on(async {
                 let reader_jni = || -> JniResult<Box<dyn Read + Send + Sync>> {
                     let env = JavaClasses::get_thread_jnienv();
-                    let fs = env
-                        .call_static_method_unchecked(
-                            JavaClasses::get().cJniBridge.class,
-                            JavaClasses::get().cJniBridge.method_get_hdfs_file_system,
-                            JavaClasses::get()
-                                .cJniBridge
-                                .method_get_hdfs_file_system_ret
-                                .clone(),
-                            &[],
-                        )?
-                        .l()?;
+                    let fs =
+                        jni_bridge_call_static_method!(env, JniBridge.getHDFSFileSystem)?
+                            .l()?;
 
-                    let path = env.new_object_unchecked(
-                        JavaClasses::get().cHadoopPath.class,
-                        JavaClasses::get().cHadoopPath.ctor,
-                        &[JValue::Object(env.new_string(&self.file.path)?.into())],
+                    let path = jni_bridge_new_object!(
+                        env,
+                        HadoopPath,
+                        JValue::Object(env.new_string(&self.file.path)?.into())
                     )?;
 
-                    let hdfs_input_stream = env
-                        .call_method_unchecked(
-                            fs,
-                            JavaClasses::get().cHadoopFileSystem.method_open,
-                            JavaClasses::get().cHadoopFileSystem.method_open_ret.clone(),
-                            &[JValue::Object(path)],
-                        )?
-                        .l()?;
+                    let hdfs_input_stream = jni_bridge_call_method!(
+                        env,
+                        HadoopFileSystem.open,
+                        fs,
+                        JValue::Object(path)
+                    )?
+                    .l()?;
 
                     let reader = Box::new(HDFSFileReader::try_new(
                         self.object_store.clone(),
@@ -241,6 +217,7 @@ struct HDFSFileReader {
     pub hdfs_input_stream: JObject<'static>,
     pub pos: u64,
 }
+
 unsafe impl Send for HDFSFileReader {}
 unsafe impl Sync for HDFSFileReader {}
 
@@ -269,28 +246,21 @@ impl Read for HDFSFileReader {
                 let env = JavaClasses::get_thread_jnienv();
                 let buf = env.new_direct_byte_buffer(buf)?;
                 if self.pos != 0 {
-                    env.call_method_unchecked(
+                    jni_bridge_call_method!(
+                        env,
+                        HadoopFSDataInputStream.seek,
                         self.hdfs_input_stream,
-                        JavaClasses::get().cHadoopFSDataInputStream.method_seek,
-                        JavaClasses::get()
-                            .cHadoopFSDataInputStream
-                            .method_seek_ret
-                            .clone(),
-                        &[JValue::Long(self.pos as i64)],
+                        JValue::Long(self.pos as i64)
                     )?;
                 }
 
-                let read_size = env
-                    .call_method_unchecked(
-                        self.hdfs_input_stream,
-                        JavaClasses::get().cHadoopFSDataInputStream.method_read,
-                        JavaClasses::get()
-                            .cHadoopFSDataInputStream
-                            .method_read_ret
-                            .clone(),
-                        &[JValue::Object(buf.into())],
-                    )?
-                    .i()? as usize;
+                let read_size = jni_bridge_call_method!(
+                    env,
+                    HadoopFSDataInputStream.read,
+                    self.hdfs_input_stream,
+                    JValue::Object(buf.into())
+                )?
+                .i()? as usize;
 
                 self.pos += read_size as u64;
                 Ok(read_size)
