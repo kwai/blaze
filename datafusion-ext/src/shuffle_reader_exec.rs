@@ -49,6 +49,8 @@ use jni::objects::JValue;
 use log::info;
 
 use crate::jni_bridge::JavaClasses;
+use crate::jni_bridge_call_method;
+use crate::jni_bridge_call_static_method;
 use crate::util::Util;
 
 #[derive(Debug, Clone)]
@@ -106,17 +108,12 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
                 "Shuffle reader FetchIterator resource key: {}",
                 &resource_key
             );
-            let buffers = env
-                .call_static_method_unchecked(
-                    JavaClasses::get().cJniBridge.class,
-                    JavaClasses::get().cJniBridge.method_get_resource,
-                    JavaClasses::get()
-                        .cJniBridge
-                        .method_get_resource_ret
-                        .clone(),
-                    &[JValue::Object(env.new_string(resource_key)?.into())],
-                )?
-                .l()?;
+            let buffers = jni_bridge_call_static_method!(
+                env,
+                JniBridge.getResource,
+                JValue::Object(env.new_string(resource_key)?.into())
+            )?
+            .l()?;
             info!("FetchIterator: {:?}", buffers);
             Ok(buffers)
         };
@@ -185,14 +182,13 @@ impl ShuffleReaderStream {
         }
         let mut jni_next_seekable_byte_channel = || -> JniResult<()> {
             let env = JavaClasses::get_thread_jnienv();
-            self.seekable_byte_channel = env
-                .call_method_unchecked(
-                    self.seekable_byte_channels,
-                    JavaClasses::get().cJavaList.method_get,
-                    JavaClasses::get().cJavaList.method_get_ret.clone(),
-                    &[JValue::Int(self.seekable_byte_channels_pos as i32)],
-                )?
-                .l()?;
+            self.seekable_byte_channel = jni_bridge_call_method!(
+                env,
+                JavaList.get,
+                self.seekable_byte_channels,
+                JValue::Int(self.seekable_byte_channels_pos as i32)
+            )?
+            .l()?;
             Ok(())
         };
         Util::to_datafusion_external_result(jni_next_seekable_byte_channel())?;
@@ -213,44 +209,20 @@ impl ShuffleReaderStream {
         }
         let mut jni_next_seekable_byte_channels = || -> JniResult<bool> {
             let env = JavaClasses::get_thread_jnienv();
-            let next = env
-                .call_method_unchecked(
-                    self.buffers,
-                    JavaClasses::get().cScalaIterator.method_next,
-                    JavaClasses::get().cScalaIterator.method_next_ret.clone(),
-                    &[],
-                )?
-                .l()?;
-            let next_managed_buffer = env
-                .call_method_unchecked(
-                    next,
-                    JavaClasses::get().cScalaTuple2.method_2,
-                    JavaClasses::get().cScalaTuple2.method_2_ret.clone(),
-                    &[],
-                )?
-                .l()?;
+            let next =
+                jni_bridge_call_method!(env, ScalaIterator.next, self.buffers)?.l()?;
+            let next_managed_buffer =
+                jni_bridge_call_method!(env, ScalaTuple2._2, next)?.l()?;
 
-            self.seekable_byte_channels = env
-                .call_static_method_unchecked(
-                    JavaClasses::get().cSparkBlazeConverters.class,
-                    JavaClasses::get()
-                        .cSparkBlazeConverters
-                        .method_read_managed_buffer_to_segment_byte_channels_as_java,
-                    JavaClasses::get()
-                        .cSparkBlazeConverters
-                        .method_read_managed_buffer_to_segment_byte_channels_as_java_ret
-                        .clone(),
-                    &[JValue::Object(next_managed_buffer)],
-                )?
-                .l()?;
-            self.seekable_byte_channels_len = env
-                .call_method_unchecked(
-                    self.seekable_byte_channels,
-                    JavaClasses::get().cJavaList.method_size,
-                    JavaClasses::get().cJavaList.method_size_ret.clone(),
-                    &[],
-                )?
-                .i()? as usize;
+            self.seekable_byte_channels = jni_bridge_call_static_method!(
+                env,
+                SparkBlazeConverters.readManagedBufferToSegmentByteChannelsAsJava,
+                JValue::Object(next_managed_buffer)
+            )?
+            .l()?;
+            self.seekable_byte_channels_len =
+                jni_bridge_call_method!(env, JavaList.size, self.seekable_byte_channels)?
+                    .i()? as usize;
             self.seekable_byte_channels_pos = 0;
             Ok(true)
         };
@@ -260,16 +232,7 @@ impl ShuffleReaderStream {
     fn buffers_has_next(&self) -> Result<bool> {
         let jni_buffers_has_next = || -> JniResult<bool> {
             let env = JavaClasses::get_thread_jnienv();
-            return env
-                .call_method_unchecked(
-                    self.buffers,
-                    JavaClasses::get().cScalaIterator.method_has_next,
-                    JavaClasses::get()
-                        .cScalaIterator
-                        .method_has_next_ret
-                        .clone(),
-                    &[],
-                )?
+            return jni_bridge_call_method!(env, ScalaIterator.hasNext, self.buffers)?
                 .z();
         };
         Util::to_datafusion_external_result(jni_buffers_has_next())
@@ -309,17 +272,13 @@ impl Read for SeekableByteChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let mut jni_read = || -> JniResult<usize> {
             let env = JavaClasses::get_thread_jnienv();
-            return Ok(env
-                .call_method_unchecked(
-                    self.0,
-                    JavaClasses::get().cJavaNioSeekableByteChannel.method_read,
-                    JavaClasses::get()
-                        .cJavaNioSeekableByteChannel
-                        .method_read_ret
-                        .clone(),
-                    &[JValue::Object(env.new_direct_byte_buffer(buf)?.into())],
-                )?
-                .i()? as usize);
+            return Ok(jni_bridge_call_method!(
+                env,
+                JavaNioSeekableByteChannel.read,
+                self.0,
+                JValue::Object(env.new_direct_byte_buffer(buf)?.into())
+            )?
+            .i()? as usize);
         };
         jni_read().map_err(|_| {
             std::io::Error::new(
@@ -335,44 +294,28 @@ impl Seek for SeekableByteChannelReader {
             let env = JavaClasses::get_thread_jnienv();
             match pos {
                 SeekFrom::Start(position) => {
-                    env.call_method_unchecked(
+                    jni_bridge_call_method!(
+                        env,
+                        JavaNioSeekableByteChannel.setPosition,
                         self.0,
-                        JavaClasses::get()
-                            .cJavaNioSeekableByteChannel
-                            .method_position_set,
-                        JavaClasses::get()
-                            .cJavaNioSeekableByteChannel
-                            .method_position_set_ret
-                            .clone(),
-                        &[JValue::Long(position as i64)],
+                        JValue::Long(position as i64)
                     )?;
                     Ok(position)
                 }
 
                 SeekFrom::End(offset) => {
-                    let size = env
-                        .call_method_unchecked(
-                            self.0,
-                            JavaClasses::get().cJavaNioSeekableByteChannel.method_size,
-                            JavaClasses::get()
-                                .cJavaNioSeekableByteChannel
-                                .method_size_ret
-                                .clone(),
-                            &[],
-                        )?
-                        .j()? as u64;
-
+                    let size = jni_bridge_call_method!(
+                        env,
+                        JavaNioSeekableByteChannel.size,
+                        self.0
+                    )?
+                    .j()? as u64;
                     let position = size + offset as u64;
-                    env.call_method_unchecked(
+                    jni_bridge_call_method!(
+                        env,
+                        JavaNioSeekableByteChannel.setPosition,
                         self.0,
-                        JavaClasses::get()
-                            .cJavaNioSeekableByteChannel
-                            .method_position_set,
-                        JavaClasses::get()
-                            .cJavaNioSeekableByteChannel
-                            .method_position_set_ret
-                            .clone(),
-                        &[JValue::Long(position as i64)],
+                        JValue::Long(position as i64)
                     )?;
                     Ok(position)
                 }

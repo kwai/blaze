@@ -7,13 +7,12 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_ext::jni_bridge::JavaClasses;
+use datafusion_ext::jni_bridge_call_method;
 use jni::errors::Result as JniResult;
 use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JObject;
 use jni::objects::JValue;
-use jni::signature::JavaType;
-use jni::signature::Primitive;
 use jni::JNIEnv;
 use log::info;
 use plan_serde::protobuf::TaskDefinition;
@@ -123,11 +122,6 @@ pub fn blaze_call_native(
     // update spark metrics
     update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
 
-    let consumer_class = env.find_class("java/util/function/Consumer").unwrap();
-    let consumer_accept_method = env
-        .get_method_id(consumer_class, "accept", "(Ljava/lang/Object;)V")
-        .unwrap();
-
     if !record_batches.is_empty() {
         info!("Result schema:");
         for field in schema.fields() {
@@ -169,11 +163,11 @@ pub fn blaze_call_native(
         let byte_buffer = env
             .new_direct_byte_buffer(buf_writer.get_mut())
             .expect("Error creating ByteBuffer");
-        env.call_method_unchecked(
+        jni_bridge_call_method!(
+            env,
+            JavaConsumer.accept,
             ipc_record_batch_data_consumer,
-            consumer_accept_method,
-            JavaType::Primitive(Primitive::Void),
-            &[JValue::Object(byte_buffer.into())],
+            JValue::Object(byte_buffer.into())
         )
         .expect("Error invoking IPC data consumer");
         info!("Invoking IPC data consumer succeeded");
@@ -181,11 +175,11 @@ pub fn blaze_call_native(
         update_extra_metrics(&env, metric_node, start_time, 0, 0).unwrap();
 
         info!("Invoking IPC data consumer (with null result)");
-        env.call_method_unchecked(
+        jni_bridge_call_method!(
+            env,
+            JavaConsumer.accept,
             ipc_record_batch_data_consumer,
-            consumer_accept_method,
-            JavaType::Primitive(Primitive::Void),
-            &[JValue::Object(JObject::null())],
+            JValue::Object(JObject::null())
         )
         .expect("Error invoking IPC data consumer");
         info!("Invoking IPC data consumer succeeded");
@@ -199,28 +193,26 @@ fn update_spark_metric_node(
     execution_plan: Arc<dyn ExecutionPlan>,
 ) -> JniResult<()> {
     // update current node
-    for metric in execution_plan.metrics().unwrap_or_default().iter() {
-        update_metric(
-            env,
-            metric_node,
-            metric.value().name(),
-            metric.value().as_usize() as i64,
-        )?;
-    }
+    update_metrics(
+        env,
+        metric_node,
+        &execution_plan
+            .metrics()
+            .unwrap_or_default()
+            .iter()
+            .map(|m| (m.value().name(), m.value().as_usize() as i64))
+            .collect::<Vec<_>>(),
+    )?;
 
     // update children nodes
     for (i, child_plan) in execution_plan.children().iter().enumerate() {
-        let child_metric_node = env
-            .call_method_unchecked(
-                metric_node,
-                JavaClasses::get().cSparkMetricNode.method_get_child,
-                JavaClasses::get()
-                    .cSparkMetricNode
-                    .method_get_child_ret
-                    .clone(),
-                &[JValue::Int(i as i32)],
-            )?
-            .l()?;
+        let child_metric_node = jni_bridge_call_method!(
+            env,
+            SparkMetricNode.getChild,
+            metric_node,
+            JValue::Int(i as i32)
+        )?
+        .l()?;
         update_spark_metric_node(env, child_metric_node, child_plan.clone())?;
     }
     Ok(())
@@ -233,42 +225,31 @@ fn update_extra_metrics(
     num_ipc_rows: usize,
     num_ipc_bytes: usize,
 ) -> JniResult<()> {
-    let duration = std::time::Instant::now().duration_since(start_time);
-    update_metric(
+    let duration_ns = Instant::now().duration_since(start_time).as_nanos();
+    update_metrics(
         env,
         metric_node,
-        "blaze_output_ipc_rows",
-        num_ipc_rows as i64,
-    )?;
-    update_metric(
-        env,
-        metric_node,
-        "blaze_output_ipc_bytes",
-        num_ipc_bytes as i64,
-    )?;
-    update_metric(
-        env,
-        metric_node,
-        "blaze_exec_time",
-        duration.as_nanos() as i64,
-    )?;
-    Ok(())
+        &[
+            ("blaze_output_ipc_rows", num_ipc_rows as i64),
+            ("blaze_output_ipc_bytes", num_ipc_bytes as i64),
+            ("blaze_exec_time", duration_ns as i64),
+        ],
+    )
 }
 
-fn update_metric(
+fn update_metrics(
     env: &JNIEnv,
     metric_node: JObject,
-    metric_name: &str,
-    metric_value: i64,
+    metric_values: &[(&str, i64)],
 ) -> JniResult<()> {
-    env.call_method_unchecked(
-        metric_node,
-        JavaClasses::get().cSparkMetricNode.method_add,
-        JavaClasses::get().cSparkMetricNode.method_add_ret.clone(),
-        &[
-            JValue::Object(env.new_string(metric_name)?.into()),
-            JValue::Long(metric_value),
-        ],
-    )?;
+    for &(name, value) in metric_values {
+        jni_bridge_call_method!(
+            env,
+            SparkMetricNode.add,
+            metric_node,
+            JValue::Object(env.new_string(name)?.into()),
+            JValue::Long(value)
+        )?;
+    }
     Ok(())
 }
