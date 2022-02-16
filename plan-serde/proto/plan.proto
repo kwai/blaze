@@ -371,12 +371,9 @@ message HashAggregateExecNode {
 }
 
 message ShuffleWriterExecNode {
-  //TODO it seems redundant to provide job and stage id here since we also have them
-  // in the TaskDefinition that wraps this plan
-  string job_id = 1;
-  uint32 stage_id = 2;
-  PhysicalPlanNode input = 3;
-  PhysicalHashRepartition output_partitioning = 4;
+  PhysicalPlanNode input = 1;
+  PhysicalHashRepartition output_partitioning = 2;
+  uint32 shuffleId = 3;
 }
 
 message ShuffleReaderExecNode {

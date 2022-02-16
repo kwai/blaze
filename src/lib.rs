@@ -31,17 +31,19 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     if let Err(err) = std::panic::catch_unwind(|| {
         blaze_call_native(&env, taskDefinition, metricNode, ipcRecordBatchDataConsumer);
     }) {
-        env.throw_new(
-            "java/lang/RuntimeException",
-            if let Some(msg) = err.downcast_ref::<String>() {
-                msg
-            } else if let Some(msg) = err.downcast_ref::<&str>() {
-                msg
-            } else {
-                "Unknown blaze-rs exception"
-            },
-        )
-        .unwrap();
+        if !env.exception_check().unwrap() {
+            env.throw_new(
+                "java/lang/RuntimeException",
+                if let Some(msg) = err.downcast_ref::<String>() {
+                    msg
+                } else if let Some(msg) = err.downcast_ref::<&str>() {
+                    msg
+                } else {
+                    "Unknown blaze-rs exception"
+                },
+            )
+            .unwrap();
+        }
     }
     let duration = std::time::Instant::now().duration_since(start_time);
     info!(

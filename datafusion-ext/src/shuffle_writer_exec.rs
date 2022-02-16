@@ -61,11 +61,15 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::StreamExt;
+use jni::{errors::Result as JniResult, objects::JValue};
 use log::info;
 use tempfile::NamedTempFile;
 use tokio::task;
 
-use crate::batch_buffer::MutableRecordBatch;
+use crate::{
+    batch_buffer::MutableRecordBatch, jni_bridge::JavaClasses, jni_bridge_call_method,
+    jni_bridge_call_static_method, util::Util,
+};
 
 #[derive(Default)]
 struct PartitionBuffer {
@@ -182,7 +186,11 @@ impl ShuffleRepartitioner {
             id: MemoryConsumerId::new(partition_id),
             shuffle_id,
             schema,
-            buffered_partitions: Mutex::new(Default::default()),
+            buffered_partitions: Mutex::new(
+                (0..num_output_partitions)
+                    .map(|_| Default::default())
+                    .collect::<Vec<_>>(),
+            ),
             spills: Mutex::new(vec![]),
             partitioning,
             num_output_partitions,
@@ -281,10 +289,12 @@ impl ShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<SendableRecordBatchStream> {
-        let partition = self.partition_id();
         let num_output_partitions = self.num_output_partitions;
-        let data_file = format!("shuffle_{}_{}_0.data", self.shuffle_id, partition);
-        let index_file = format!("shuffle_{}_{}_0.index", self.shuffle_id, partition);
+        let (data_file, index_file) = self.get_data_index_file_path()?;
+        info!(
+            "shuffle write using data file: {}, index file: {}",
+            &data_file, &index_file
+        );
 
         let mut buffered_partitions = self.buffered_partitions.lock().await;
         let mut output_batches: Vec<Vec<RecordBatch>> =
@@ -301,75 +311,67 @@ impl ShuffleRepartitioner {
         let data_file_clone = data_file.clone();
         let index_file_clone = index_file.clone();
         let input_schema = self.schema.clone();
-        let res = task::spawn_blocking(move || {
-            let mut offset: u64 = 0;
-            let mut offsets = vec![0; num_output_partitions + 1];
-            let mut output_data = OpenOptions::new()
-                .read(true)
-                .append(true)
-                .open(data_file_clone)?;
 
-            let mut spill_files = vec![];
-            for s in &output_spills {
-                let reader = File::open(&s.file.path())?;
-                spill_files.push(reader);
-            }
+        Util::to_datafusion_external_result(
+            task::spawn_blocking(move || {
+                let mut offset: u64 = 0;
+                let mut offsets = vec![0; num_output_partitions + 1];
+                let mut output_data = File::create(data_file_clone)?;
 
-            for i in 0..num_output_partitions {
-                offsets[i] = offset;
-                let partition_start = output_data.seek(SeekFrom::Current(0))?;
-
-                // write in-mem batches first if any
-                let in_mem_batches = &output_batches[i];
-                if !in_mem_batches.is_empty() {
-                    let mut file_writer =
-                        FileWriter::try_new(output_data, input_schema.as_ref())?;
-                    for batch in in_mem_batches {
-                        file_writer.write(batch)?;
-                    }
-                    file_writer.finish()?;
-
-                    output_data = file_writer.into_inner()?;
-                    let partition_end = output_data.seek(SeekFrom::Current(0))?;
-                    let ipc_length: u64 = partition_end - partition_start;
-                    output_data.write_all(&ipc_length.to_le_bytes()[..])?;
-                    output_data.flush()?;
-                    offset = ipc_length + 8;
+                let mut spill_files = vec![];
+                for s in &output_spills {
+                    let reader = File::open(&s.file.path())?;
+                    spill_files.push(reader);
                 }
 
-                // append partition in each spills
-                for s in 0..output_spills.len() {
-                    let spill = &output_spills[s];
-                    let length = spill.offsets[i + 1] - spill.offsets[i];
-                    if length > 0 {
-                        let mut reader = &spill_files[s];
-                        reader.seek(SeekFrom::Start(spill.offsets[i]))?;
-                        let mut take = reader.take(length);
-                        std::io::copy(&mut take, &mut output_data)?;
+                for i in 0..num_output_partitions {
+                    offsets[i] = offset;
+                    let partition_start = output_data.seek(SeekFrom::Current(0))?;
+
+                    // write in-mem batches first if any
+                    let in_mem_batches = &output_batches[i];
+                    if !in_mem_batches.is_empty() {
+                        let mut file_writer =
+                            FileWriter::try_new(output_data, input_schema.as_ref())?;
+                        for batch in in_mem_batches {
+                            file_writer.write(batch)?;
+                        }
+                        file_writer.finish()?;
+
+                        output_data = file_writer.into_inner()?;
+                        let partition_end = output_data.seek(SeekFrom::Current(0))?;
+                        let ipc_length: u64 = partition_end - partition_start;
+                        output_data.write_all(&ipc_length.to_le_bytes()[..])?;
                         output_data.flush()?;
+                        offset = partition_start + ipc_length + 8;
                     }
-                    offset += length;
+
+                    // append partition in each spills
+                    for s in 0..output_spills.len() {
+                        let spill = &output_spills[s];
+                        let length = spill.offsets[i + 1] - spill.offsets[i];
+                        if length > 0 {
+                            let mut reader = &spill_files[s];
+                            reader.seek(SeekFrom::Start(spill.offsets[i]))?;
+                            let mut take = reader.take(length);
+                            std::io::copy(&mut take, &mut output_data)?;
+                            output_data.flush()?;
+                        }
+                        offset += length;
+                    }
                 }
-            }
-            // add one extra offset at last to ease partition length computation
-            offsets[num_output_partitions] = offset;
-
-            let mut output_index = File::create(index_file_clone)?;
-            for offset in offsets {
-                output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
-            }
-            output_index.flush()?;
-            Ok::<(), DataFusionError>(())
-        })
-        .await;
+                // add one extra offset at last to ease partition length computation
+                offsets[num_output_partitions] = offset;
+                let mut output_index = File::create(index_file_clone)?;
+                for offset in offsets {
+                    output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+                }
+                output_index.flush()?;
+                Ok::<(), DataFusionError>(())
+            })
+            .await,
+        )??;
         self.inner_metrics.mem_used().set(0);
-
-        if let Err(e) = res {
-            return Err(DataFusionError::Execution(format!(
-                "Error occurred while writing shuffle output {}",
-                e
-            )));
-        };
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("data", DataType::Utf8, false),
@@ -401,6 +403,34 @@ impl ShuffleRepartitioner {
 
     fn spill_count(&self) -> usize {
         self.inner_metrics.spill_count().value()
+    }
+
+    fn get_data_index_file_path(&self) -> Result<(String, String)> {
+        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
+            let env = JavaClasses::get_thread_jnienv();
+            let shuffle_manager =
+                jni_bridge_call_static_method!(env, JniBridge.getShuffleManager)?.l()?;
+            let shuffle_block_resolver = jni_bridge_call_method!(
+                env,
+                SparkShuffleManager.shuffleBlockResolver,
+                shuffle_manager
+            )?
+            .l()?;
+            let data_file = jni_bridge_call_method!(
+                env,
+                SparkIndexShuffleBlockResolver.getDataFile,
+                shuffle_block_resolver,
+                JValue::Int(self.shuffle_id as i32),
+                JValue::Long(self.partition_id() as i64)
+            )?
+            .l()?;
+            let data_file_path =
+                jni_bridge_call_method!(env, JavaFile.getPath, data_file)?.l()?;
+
+            let data_file_path: String = env.get_string(data_file_path.into())?.into();
+            let index_file_path: String = data_file_path.replace(".data", ".index");
+            JniResult::Ok((data_file_path + ".tmp", index_file_path + ".tmp"))
+        }))
     }
 }
 

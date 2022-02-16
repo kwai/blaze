@@ -101,7 +101,7 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
         _partition: usize,
         _runtime: Arc<RuntimeEnv>,
     ) -> Result<SendableRecordBatchStream> {
-        let jni_get_buffers = || -> JniResult<JObject<'static>> {
+        let buffers = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
             let resource_key = format!("ShuffleReader.buffers:{}", self.job_id);
             info!(
@@ -111,13 +111,12 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
             let buffers = jni_bridge_call_static_method!(
                 env,
                 JniBridge.getResource,
-                JValue::Object(env.new_string(resource_key)?.into())
+                JValue::Object(env.new_string(&resource_key)?.into())
             )?
             .l()?;
             info!("FetchIterator: {:?}", buffers);
-            Ok(buffers)
-        };
-        let buffers = Util::to_datafusion_external_result(jni_get_buffers())?;
+            JniResult::Ok(buffers)
+        }))?;
         let schema = self.schema.clone();
         let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
         Ok(Box::pin(ShuffleReaderStream::new(
@@ -173,14 +172,15 @@ impl ShuffleReaderStream {
     }
 
     fn next_seekable_byte_channel(&mut self) -> Result<bool> {
-        if self.seekable_byte_channels_pos == self.seekable_byte_channels_len
-            && !self.next_seekable_byte_channels()?
-        {
-            self.seekable_byte_channel = JObject::null();
-            self.arrow_file_reader = None;
-            return Ok(false);
+        while self.seekable_byte_channels_pos == self.seekable_byte_channels_len {
+            if !self.next_seekable_byte_channels()? {
+                self.seekable_byte_channel = JObject::null();
+                self.arrow_file_reader = None;
+                return Ok(false);
+            }
         }
-        let mut jni_next_seekable_byte_channel = || -> JniResult<()> {
+
+        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
             self.seekable_byte_channel = jni_bridge_call_method!(
                 env,
@@ -189,9 +189,8 @@ impl ShuffleReaderStream {
                 JValue::Int(self.seekable_byte_channels_pos as i32)
             )?
             .l()?;
-            Ok(())
-        };
-        Util::to_datafusion_external_result(jni_next_seekable_byte_channel())?;
+            JniResult::Ok(())
+        }))?;
 
         let seekable_byte_channel_reader =
             SeekableByteChannelReader(self.seekable_byte_channel);
@@ -207,7 +206,7 @@ impl ShuffleReaderStream {
             self.seekable_byte_channels_pos = 0;
             return Ok(false);
         }
-        let mut jni_next_seekable_byte_channels = || -> JniResult<bool> {
+        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
             let next =
                 jni_bridge_call_method!(env, ScalaIterator.next, self.buffers)?.l()?;
@@ -224,18 +223,16 @@ impl ShuffleReaderStream {
                 jni_bridge_call_method!(env, JavaList.size, self.seekable_byte_channels)?
                     .i()? as usize;
             self.seekable_byte_channels_pos = 0;
-            Ok(true)
-        };
-        Util::to_datafusion_external_result(jni_next_seekable_byte_channels())
+            JniResult::Ok(true)
+        }))
     }
 
     fn buffers_has_next(&self) -> Result<bool> {
-        let jni_buffers_has_next = || -> JniResult<bool> {
+        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
             return jni_bridge_call_method!(env, ScalaIterator.hasNext, self.buffers)?
                 .z();
-        };
-        Util::to_datafusion_external_result(jni_buffers_has_next())
+        }))
     }
 }
 
@@ -270,64 +267,68 @@ impl RecordBatchStream for ShuffleReaderStream {
 struct SeekableByteChannelReader(JObject<'static>);
 impl Read for SeekableByteChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut jni_read = || -> JniResult<usize> {
-            let env = JavaClasses::get_thread_jnienv();
-            return Ok(jni_bridge_call_method!(
-                env,
-                JavaNioSeekableByteChannel.read,
-                self.0,
-                JValue::Object(env.new_direct_byte_buffer(buf)?.into())
-            )?
-            .i()? as usize);
-        };
-        jni_read().map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "JNI error: SeekableByteChannelReader.jni_read",
-            )
-        })
+        Ok(())
+            .and_then(|_| {
+                let env = JavaClasses::get_thread_jnienv();
+                return JniResult::Ok(
+                    jni_bridge_call_method!(
+                        env,
+                        JavaNioSeekableByteChannel.read,
+                        self.0,
+                        JValue::Object(env.new_direct_byte_buffer(buf)?.into())
+                    )?
+                    .i()? as usize,
+                );
+            })
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "JNI error: SeekableByteChannelReader.jni_read",
+                )
+            })
     }
 }
 impl Seek for SeekableByteChannelReader {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        let jni_seek = || -> JniResult<u64> {
-            let env = JavaClasses::get_thread_jnienv();
-            match pos {
-                SeekFrom::Start(position) => {
-                    jni_bridge_call_method!(
-                        env,
-                        JavaNioSeekableByteChannel.setPosition,
-                        self.0,
-                        JValue::Long(position as i64)
-                    )?;
-                    Ok(position)
-                }
+        Ok(())
+            .and_then(|_| {
+                let env = JavaClasses::get_thread_jnienv();
+                match pos {
+                    SeekFrom::Start(position) => {
+                        jni_bridge_call_method!(
+                            env,
+                            JavaNioSeekableByteChannel.setPosition,
+                            self.0,
+                            JValue::Long(position as i64)
+                        )?;
+                        JniResult::Ok(position)
+                    }
 
-                SeekFrom::End(offset) => {
-                    let size = jni_bridge_call_method!(
-                        env,
-                        JavaNioSeekableByteChannel.size,
-                        self.0
-                    )?
-                    .j()? as u64;
-                    let position = size + offset as u64;
-                    jni_bridge_call_method!(
-                        env,
-                        JavaNioSeekableByteChannel.setPosition,
-                        self.0,
-                        JValue::Long(position as i64)
-                    )?;
-                    Ok(position)
-                }
+                    SeekFrom::End(offset) => {
+                        let size = jni_bridge_call_method!(
+                            env,
+                            JavaNioSeekableByteChannel.size,
+                            self.0
+                        )?
+                        .j()? as u64;
+                        let position = size + offset as u64;
+                        jni_bridge_call_method!(
+                            env,
+                            JavaNioSeekableByteChannel.setPosition,
+                            self.0,
+                            JValue::Long(position as i64)
+                        )?;
+                        JniResult::Ok(position)
+                    }
 
-                SeekFrom::Current(_) => unimplemented!(),
-            }
-        };
-        jni_seek().map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "JNI error: SeekableByteChannelReader.jni_seek",
-            )
-        })
+                    SeekFrom::Current(_) => unimplemented!(),
+                }
+            })
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "JNI error: SeekableByteChannelReader.jni_seek",
+                )
+            })
     }
 }

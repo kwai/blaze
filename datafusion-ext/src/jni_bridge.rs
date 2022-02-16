@@ -9,37 +9,46 @@ use jni::JavaVM;
 
 #[macro_export]
 macro_rules! jni_bridge_new_object {
-    ($env:expr, $clsname:ident $(, $args:expr)*) => {
+    ($env:expr, $clsname:ident $(, $args:expr)*) => {{
+        // log::info!("jni_bridge_new_object!({}, {:?})", stringify!($clsname), &[$($args,)*]);
         $env.new_object_unchecked(
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
             &[$($args,)*],
         )
-    }
+    }}
 }
 
 #[macro_export]
 macro_rules! jni_bridge_call_method {
-    ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {
+    ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {{
+        // log::info!("jni_bridge_call_method!({}.{}, {:?})",
+        //     stringify!($clsname),
+        //     stringify!($method),
+        //     &[$($args,)*] as &[JValue]);
         $env.call_method_unchecked(
             $obj,
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
             &[$($args,)*],
         )
-    }
+    }}
 }
 
 #[macro_export]
 macro_rules! jni_bridge_call_static_method {
-    ($env:expr, $clsname:ident . $method:ident $(, $args:expr)*) => {
+    ($env:expr, $clsname:ident . $method:ident $(, $args:expr)*) => {{
+        // log::info!("jni_bridge_call_static_method!({}.{}, {:?})",
+        //     stringify!($clsname),
+        //     stringify!($method),
+        //     &[$($args,)*] as &[JValue]);
         $env.call_static_method_unchecked(
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
             &[$($args,)*],
         )
-    }
+    }}
 }
 
 #[allow(non_snake_case)]
@@ -50,6 +59,7 @@ pub struct JavaClasses<'a> {
     pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
+    pub cJavaFile: JavaFile<'a>,
     pub cJavaConsumer: JavaConsumer<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
@@ -61,6 +71,8 @@ pub struct JavaClasses<'a> {
     pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
 
     pub cSparkManagedBuffer: SparkManagedBuffer<'a>,
+    pub cSparkShuffleManager: SparkShuffleManager<'a>,
+    pub cSparkIndexShuffleBlockResolver: SparkIndexShuffleBlockResolver<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkBlazeConverters: SparkBlazeConverters<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
@@ -86,6 +98,7 @@ impl JavaClasses<'static> {
             cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
             cJavaList: JavaList::new(env)?,
             cJavaMap: JavaMap::new(env)?,
+            cJavaFile: JavaFile::new(env)?,
             cJavaConsumer: JavaConsumer::new(env)?,
 
             cScalaIterator: ScalaIterator::new(env)?,
@@ -97,6 +110,8 @@ impl JavaClasses<'static> {
             cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env)?,
 
             cSparkManagedBuffer: SparkManagedBuffer::new(env)?,
+            cSparkShuffleManager: SparkShuffleManager::new(env)?,
+            cSparkIndexShuffleBlockResolver: SparkIndexShuffleBlockResolver::new(env)?,
             cSparkSQLMetric: SparkSQLMetric::new(env)?,
             cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
             cSparkMetricNode: SparkMetricNode::new(env)?,
@@ -132,6 +147,8 @@ pub struct JniBridge<'a> {
     pub class: JClass<'a>,
     pub method_getHDFSFileSystem: JStaticMethodID<'a>,
     pub method_getHDFSFileSystem_ret: JavaType,
+    pub method_getShuffleManager: JStaticMethodID<'a>,
+    pub method_getShuffleManager_ret: JavaType,
     pub method_getResource: JStaticMethodID<'a>,
     pub method_getResource_ret: JavaType,
 }
@@ -149,6 +166,14 @@ impl<'a> JniBridge<'a> {
             )?,
             method_getHDFSFileSystem_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
+            ),
+            method_getShuffleManager: env.get_static_method_id(
+                class,
+                "getShuffleManager",
+                "()Lorg/apache/spark/shuffle/ShuffleManager;",
+            )?,
+            method_getShuffleManager_ret: JavaType::Object(
+                "org/apache/spark/shuffle/ShuffleManager".to_owned(),
             ),
             method_getResource: env.get_static_method_id(
                 class,
@@ -243,6 +268,29 @@ impl<'a> JavaMap<'a> {
                 )
                 .unwrap(),
             method_put_ret: JavaType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JavaFile<'a> {
+    pub class: JClass<'a>,
+    pub method_getPath: JMethodID<'a>,
+    pub method_getPath_ret: JavaType,
+}
+impl<'a> JavaFile<'a> {
+    pub const SIG_TYPE: &'static str = "java/io/File";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaFile<'a>> {
+        let class = env.find_class(Self::SIG_TYPE)?;
+        Ok(JavaFile {
+            class,
+            method_getPath: env.get_method_id(
+                class,
+                "getPath",
+                "()Ljava/lang/String;",
+            )?,
+            method_getPath_ret: JavaType::Object("java/lang/String".to_owned()),
         })
     }
 }
@@ -390,6 +438,8 @@ pub struct HadoopFSDataInputStream<'a> {
     pub method_seek_ret: JavaType,
     pub method_read: JMethodID<'a>,
     pub method_read_ret: JavaType,
+    pub method_close: JMethodID<'a>,
+    pub method_close_ret: JavaType,
 }
 impl<'a> HadoopFSDataInputStream<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FSDataInputStream";
@@ -399,9 +449,60 @@ impl<'a> HadoopFSDataInputStream<'a> {
         Ok(HadoopFSDataInputStream {
             class,
             method_seek: env.get_method_id(class, "seek", "(J)V")?,
-            method_seek_ret: JavaType::Primitive(Primitive::Long),
+            method_seek_ret: JavaType::Primitive(Primitive::Void),
             method_read: env.get_method_id(class, "read", "(Ljava/nio/ByteBuffer;)I")?,
             method_read_ret: JavaType::Primitive(Primitive::Int),
+            method_close: env.get_method_id(class, "close", "()V")?,
+            method_close_ret: JavaType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkShuffleManager<'a> {
+    pub class: JClass<'a>,
+    pub method_shuffleBlockResolver: JMethodID<'a>,
+    pub method_shuffleBlockResolver_ret: JavaType,
+}
+impl<'a> SparkShuffleManager<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/shuffle/ShuffleManager";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkShuffleManager<'a>> {
+        let class = env.find_class(Self::SIG_TYPE)?;
+        Ok(SparkShuffleManager {
+            class,
+            method_shuffleBlockResolver: env.get_method_id(
+                class,
+                "shuffleBlockResolver",
+                "()Lorg/apache/spark/shuffle/ShuffleBlockResolver;",
+            )?,
+            method_shuffleBlockResolver_ret: JavaType::Object(
+                SparkIndexShuffleBlockResolver::SIG_TYPE.to_owned(),
+            ),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkIndexShuffleBlockResolver<'a> {
+    pub class: JClass<'a>,
+    pub method_getDataFile: JMethodID<'a>,
+    pub method_getDataFile_ret: JavaType,
+}
+impl<'a> SparkIndexShuffleBlockResolver<'a> {
+    pub const SIG_TYPE: &'static str =
+        "org/apache/spark/shuffle/IndexShuffleBlockResolver";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkIndexShuffleBlockResolver<'a>> {
+        let class = env.find_class(Self::SIG_TYPE)?;
+        Ok(SparkIndexShuffleBlockResolver {
+            class,
+            method_getDataFile: env.get_method_id(
+                class,
+                "getDataFile",
+                "(IJ)Ljava/io/File;",
+            )?,
+            method_getDataFile_ret: JavaType::Object(JavaFile::SIG_TYPE.to_owned()),
         })
     }
 }
