@@ -21,7 +21,7 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use crate::error::PlanSerDeError;
-use crate::execution_plans::{ShuffleWriterExec, UnresolvedShuffleExec};
+use crate::execution_plans::UnresolvedShuffleExec;
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::repartition_exec_node::PartitionMethod;
@@ -69,6 +69,7 @@ use datafusion::physical_plan::{
 };
 use datafusion_ext::global_object_store_registry;
 use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
+use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
     type Error = PlanSerDeError;
@@ -370,11 +371,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?;
 
                 Ok(Arc::new(ShuffleWriterExec::try_new(
-                    shuffle_writer.job_id.clone(),
-                    shuffle_writer.stage_id as usize,
                     input,
-                    "".to_string(), // this is intentional but hacky - the executor will fill this in
-                    output_partitioning,
+                    output_partitioning.unwrap(),
+                    shuffle_writer.shuffle_id as usize,
                 )?))
             }
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
