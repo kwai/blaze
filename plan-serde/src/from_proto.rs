@@ -21,7 +21,6 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use crate::error::PlanSerDeError;
-use crate::execution_plans::UnresolvedShuffleExec;
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::repartition_exec_node::PartitionMethod;
@@ -429,16 +428,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     exprs, input, true,
                 )))
             }
-            PhysicalPlanType::Unresolved(unresolved_shuffle) => {
-                let schema = Arc::new(convert_required!(unresolved_shuffle.schema)?);
-                Ok(Arc::new(UnresolvedShuffleExec {
-                    stage_id: unresolved_shuffle.stage_id as usize,
-                    schema,
-                    input_partition_count: unresolved_shuffle.input_partition_count
-                        as usize,
-                    output_partition_count: unresolved_shuffle.output_partition_count
-                        as usize,
-                }))
+            PhysicalPlanType::Unresolved(_unresolved_shuffle) => {
+                unreachable!()
             }
         }
     }
