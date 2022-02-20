@@ -54,14 +54,14 @@ use crate::jni_bridge_call_static_method;
 use crate::util::Util;
 
 #[derive(Debug, Clone)]
-pub struct BlazeShuffleReaderExec {
+pub struct ShuffleReaderExec {
     pub job_id: String,
     pub schema: SchemaRef,
     pub metrics: ExecutionPlanMetricsSet,
 }
-impl BlazeShuffleReaderExec {
-    pub fn new(job_id: String, schema: SchemaRef) -> BlazeShuffleReaderExec {
-        BlazeShuffleReaderExec {
+impl ShuffleReaderExec {
+    pub fn new(job_id: String, schema: SchemaRef) -> ShuffleReaderExec {
+        ShuffleReaderExec {
             job_id,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
@@ -70,7 +70,7 @@ impl BlazeShuffleReaderExec {
 }
 
 #[async_trait]
-impl ExecutionPlan for BlazeShuffleReaderExec {
+impl ExecutionPlan for ShuffleReaderExec {
     fn as_any(&self) -> &dyn Any {
         self
     }
