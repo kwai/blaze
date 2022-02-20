@@ -34,7 +34,6 @@ pub mod protobuf {
 }
 
 pub mod error;
-pub mod execution_plans;
 pub mod from_proto;
 
 pub(crate) fn proto_error<S: Into<String>>(message: S) -> PlanSerDeError {
