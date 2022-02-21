@@ -215,6 +215,7 @@ enum ScalarFunction {
   LN = 34;
   TOTIMESTAMPMILLIS = 35;
   DIGEST = 36;
+  STARTS_WITH = 1001;
 }
 
 message PhysicalScalarFunctionNode {
