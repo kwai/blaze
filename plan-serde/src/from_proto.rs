@@ -63,7 +63,7 @@ use datafusion::physical_plan::{
     AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
 };
 use datafusion_ext::global_object_store_registry;
-use datafusion_ext::shuffle_reader_exec::BlazeShuffleReaderExec;
+use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
@@ -374,7 +374,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
                 let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
                 let shuffle_reader =
-                    BlazeShuffleReaderExec::new(datafusion_ext::get_job_id(), schema);
+                    ShuffleReaderExec::new(datafusion_ext::get_job_id(), schema);
                 Ok(Arc::new(shuffle_reader))
             }
             PhysicalPlanType::Empty(empty) => {
