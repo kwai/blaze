@@ -38,6 +38,7 @@ use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::RecordBatchStream;
 use datafusion::physical_plan::SendableRecordBatchStream;
@@ -83,6 +84,10 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
         Partitioning::UnknownPartitioning(1)
     }
 
+    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
+        None
+    }
+
     fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
         vec![]
     }
@@ -126,16 +131,16 @@ impl ExecutionPlan for BlazeShuffleReaderExec {
         )))
     }
 
+    fn metrics(&self) -> Option<MetricsSet> {
+        Some(self.metrics.clone_inner())
+    }
+
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
 
     fn statistics(&self) -> Statistics {
         Statistics::default()
-    }
-
-    fn metrics(&self) -> Option<MetricsSet> {
-        Some(self.metrics.clone_inner())
     }
 }
 

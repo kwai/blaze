@@ -51,11 +51,12 @@ use datafusion::from_slice::FromSlice;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::hash_utils::create_hashes;
 use datafusion::physical_plan::memory::MemoryStream;
-use datafusion::physical_plan::metrics::AggregatedMetricsSet;
+use datafusion::physical_plan::metrics::CompositeMetricsSet;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
@@ -166,8 +167,8 @@ struct ShuffleRepartitioner {
     partitioning: Partitioning,
     num_output_partitions: usize,
     runtime: Arc<RuntimeEnv>,
-    _metrics: AggregatedMetricsSet,
-    inner_metrics: BaselineMetrics,
+    _metrics_set: CompositeMetricsSet,
+    metrics: BaselineMetrics,
     random: RandomState,
 }
 
@@ -177,11 +178,11 @@ impl ShuffleRepartitioner {
         shuffle_id: usize,
         schema: SchemaRef,
         partitioning: Partitioning,
-        _metrics: AggregatedMetricsSet,
+        metrics_set: CompositeMetricsSet,
         runtime: Arc<RuntimeEnv>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
-        let inner_metrics = _metrics.new_intermediate_baseline(partition_id);
+        let metrics = metrics_set.new_intermediate_baseline(partition_id);
         Self {
             id: MemoryConsumerId::new(partition_id),
             shuffle_id,
@@ -195,8 +196,8 @@ impl ShuffleRepartitioner {
             partitioning,
             num_output_partitions,
             runtime,
-            _metrics,
-            inner_metrics,
+            _metrics_set: metrics_set,
+            metrics,
             random: RandomState::with_seeds(0, 0, 0, 0),
         }
     }
@@ -207,11 +208,11 @@ impl ShuffleRepartitioner {
         // as we encountered in this batch, thus the memory consumption is `rough`.
         let size = batch_byte_size(&input);
         self.try_grow(size).await?;
-        self.inner_metrics.mem_used().add(size);
+        self.metrics.mem_used().add(size);
 
         let random_state = self.random.clone();
         let num_output_partitions = self.num_output_partitions;
-        let shuffle_batch_size = self.runtime.batch_size() / 16;
+        let shuffle_batch_size = self.runtime.batch_size();
         match &self.partitioning {
             Partitioning::Hash(exprs, _) => {
                 let hashes_buf = &mut vec![];
@@ -371,7 +372,7 @@ impl ShuffleRepartitioner {
             })
             .await,
         )??;
-        self.inner_metrics.mem_used().set(0);
+        self.metrics.mem_used().set(0);
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("data", DataType::Utf8, false),
@@ -394,15 +395,15 @@ impl ShuffleRepartitioner {
     }
 
     fn used(&self) -> usize {
-        self.inner_metrics.mem_used().value()
+        self.metrics.mem_used().value()
     }
 
     fn spilled_bytes(&self) -> usize {
-        self.inner_metrics.spilled_bytes().value()
+        self.metrics.spilled_bytes().value()
     }
 
     fn spill_count(&self) -> usize {
-        self.inner_metrics.spill_count().value()
+        self.metrics.spill_count().value()
     }
 
     fn get_data_index_file_path(&self) -> Result<(String, String)> {
@@ -539,8 +540,8 @@ impl MemoryConsumer for ShuffleRepartitioner {
         .await?;
 
         let mut spills = self.spills.lock().await;
-        let freed = self.inner_metrics.mem_used().set(0);
-        self.inner_metrics.record_spill(freed);
+        let freed = self.metrics.mem_used().set(0);
+        self.metrics.record_spill(freed);
         spills.push(SpillInfo {
             file: spillfile,
             offsets,
@@ -549,7 +550,7 @@ impl MemoryConsumer for ShuffleRepartitioner {
     }
 
     fn mem_used(&self) -> usize {
-        self.inner_metrics.mem_used().value()
+        self.metrics.mem_used().value()
     }
 }
 
@@ -564,7 +565,7 @@ pub struct ShuffleWriterExec {
     /// the shuffle id this map belongs to
     shuffle_id: usize,
     /// Containing all metrics set created during sort
-    all_metrics: AggregatedMetricsSet,
+    all_metrics: CompositeMetricsSet,
 }
 
 #[async_trait]
@@ -581,6 +582,10 @@ impl ExecutionPlan for ShuffleWriterExec {
 
     fn output_partitioning(&self) -> Partitioning {
         self.partitioning.clone()
+    }
+
+    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
+        None
     }
 
     fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
@@ -651,7 +656,7 @@ impl ShuffleWriterExec {
         Ok(ShuffleWriterExec {
             input,
             partitioning,
-            all_metrics: AggregatedMetricsSet::new(),
+            all_metrics: CompositeMetricsSet::new(),
             shuffle_id,
         })
     }
@@ -662,19 +667,19 @@ pub async fn external_shuffle(
     partition_id: usize,
     shuffle_id: usize,
     partitioning: Partitioning,
-    metrics: AggregatedMetricsSet,
+    metrics_set: CompositeMetricsSet,
     runtime: Arc<RuntimeEnv>,
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
-    let repartitioner = Arc::new(ShuffleRepartitioner::new(
+    let repartitioner = ShuffleRepartitioner::new(
         partition_id,
         shuffle_id,
         schema.clone(),
         partitioning,
-        metrics,
+        metrics_set,
         runtime.clone(),
-    ));
-    runtime.register_consumer(&(repartitioner.clone() as Arc<dyn MemoryConsumer>));
+    );
+    runtime.register_requester(repartitioner.id());
 
     while let Some(batch) = input.next().await {
         let batch = batch?;

@@ -28,13 +28,11 @@ use crate::{convert_box_required, convert_required, into_required, protobuf};
 use crate::{from_proto_binary_op, proto_error, str_to_byte};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::catalog::catalog::{CatalogList, MemoryCatalogList};
-use datafusion::datasource::object_store::{FileMeta, ObjectStoreRegistry, SizedFile};
+use datafusion::datasource::object_store::{FileMeta, SizedFile};
 use datafusion::datasource::PartitionedFile;
 use datafusion::execution::context::{
-    ExecutionConfig, ExecutionContextState, ExecutionProps,
+    ExecutionProps,
 };
-use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_plan::window_frames::WindowFrame;
 use datafusion::physical_plan::aggregates::create_aggregate_expr;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
@@ -585,23 +583,10 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
                     .map(|x| x.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
 
-                let catalog_list =
-                    Arc::new(MemoryCatalogList::new()) as Arc<dyn CatalogList>;
-
-                let ctx_state = ExecutionContextState {
-                    catalog_list,
-                    scalar_functions: Default::default(),
-                    var_provider: Default::default(),
-                    aggregate_functions: Default::default(),
-                    config: ExecutionConfig::new(),
-                    execution_props: ExecutionProps::new(),
-                    object_store_registry: Arc::new(ObjectStoreRegistry::new()),
-                    runtime_env: Arc::new(RuntimeEnv::default()),
-                };
-
+                let execution_props = ExecutionProps::new();
                 let fun_expr = functions::create_physical_fun(
                     &(&scalar_function).into(),
-                    &ctx_state,
+                    &execution_props,
                 )?;
 
                 Arc::new(ScalarFunctionExpr::new(

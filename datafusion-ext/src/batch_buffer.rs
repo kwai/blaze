@@ -9,7 +9,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 pub struct MutableRecordBatch {
     pub(crate) arrays: Vec<Box<dyn ArrayBuilder>>,
     target_batch_size: usize,
-    slots_available: usize,
+    current_size: usize,
     schema: Arc<Schema>,
 }
 
@@ -19,7 +19,7 @@ impl MutableRecordBatch {
         Self {
             arrays,
             target_batch_size,
-            slots_available: target_batch_size,
+            current_size: 0,
             schema,
         }
     }
@@ -33,18 +33,17 @@ impl MutableRecordBatch {
 
     pub fn output(&mut self) -> ArrowResult<RecordBatch> {
         let result = make_batch(self.schema.clone(), self.arrays.drain(..).collect());
-        self.slots_available = self.target_batch_size;
+        self.current_size = 0;
         result
     }
 
     pub fn append(&mut self, size: usize) {
-        assert!(size <= self.slots_available);
-        self.slots_available -= size;
+        self.current_size += size;
     }
 
     #[inline]
     pub fn is_full(&self) -> bool {
-        self.slots_available == 0
+        self.current_size > self.target_batch_size
     }
 }
 
