@@ -30,9 +30,7 @@ use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::object_store::{FileMeta, SizedFile};
 use datafusion::datasource::PartitionedFile;
-use datafusion::execution::context::{
-    ExecutionProps,
-};
+use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_plan::window_frames::WindowFrame;
 use datafusion::physical_plan::aggregates::create_aggregate_expr;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;

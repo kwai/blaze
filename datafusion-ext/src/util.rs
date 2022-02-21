@@ -7,7 +7,6 @@ impl Util {
     pub fn to_datafusion_external_result<T>(
         result: Result<T, impl std::error::Error>,
     ) -> DataFusionResult<T> {
-        result
-            .map_err(|e| DataFusionError::Internal(format!("{}", e)))
+        result.map_err(|e| DataFusionError::Internal(format!("{}", e)))
     }
 }
