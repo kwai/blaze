@@ -212,7 +212,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
-        rust: [stable]
+        rust: [nightly]
     steps:
       - uses: actions/checkout@v2
         with:
@@ -316,6 +316,10 @@ jobs:
           path: /home/runner/target
           # this key is not equal because coverage uses different compilation flags.
           key: ${{ runner.os }}-${{ matrix.arch }}-target-coverage-cache-${{ matrix.rust }}-
+      - name: Setup Rust toolchain
+        run: |
+          rustup toolchain install ${{ matrix.rust }}
+          rustup default ${{ matrix.rust }}
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.12
         with:
