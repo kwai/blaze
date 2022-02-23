@@ -30,7 +30,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64]
-        rust: [stable]
+        rust: [nightly]
     container:
       image: ${{ matrix.arch }}/rust
       env:
@@ -208,7 +208,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
-        rust: [stable]
+        rust: [nightly]
     steps:
       - uses: actions/checkout@v2
         with:
@@ -250,7 +250,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64]
-        rust: [stable]
+        rust: [nightly]
     container:
       image: ${{ matrix.arch }}/rust
       env:
@@ -291,7 +291,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64]
-        rust: [stable]
+        rust: [nightly]
     steps:
       - uses: actions/checkout@v2
         with:

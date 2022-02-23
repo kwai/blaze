@@ -7,15 +7,16 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-datafusion = "7.0.0"
+datafusion = { version = "7.0.0", features = ["simd"] }
 env_logger = "0.9.0"
 jni = "0.19.0"
 log = "0.4.14"
 prost = "0.9.0"
-tokio = "1.16.1"
+tokio = { version = "^1.0", features = ["rt-multi-thread"] }
 datafusion-ext = { path = "datafusion-ext" }
 plan-serde = { path = "plan-serde" }
 paste = "1.0.6"
+snmalloc-rs = { version = "0.2", features= ["cache-friendly"] }
 
 # [patch.crates-io]
 # datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "bf715773e66734af87a02845242a1bc48ded8d0f"}
