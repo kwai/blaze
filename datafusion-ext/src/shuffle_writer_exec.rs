@@ -159,6 +159,7 @@ fn append_column(
 struct ShuffleRepartitioner {
     id: MemoryConsumerId,
     shuffle_id: usize,
+    map_id: usize,
     schema: SchemaRef,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     spills: Mutex<Vec<SpillInfo>>,
@@ -176,6 +177,7 @@ impl ShuffleRepartitioner {
     pub fn new(
         partition_id: usize,
         shuffle_id: usize,
+        map_id: usize,
         schema: SchemaRef,
         partitioning: Partitioning,
         metrics_set: CompositeMetricsSet,
@@ -186,6 +188,7 @@ impl ShuffleRepartitioner {
         Self {
             id: MemoryConsumerId::new(partition_id),
             shuffle_id,
+            map_id,
             schema,
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
@@ -422,7 +425,7 @@ impl ShuffleRepartitioner {
                 SparkIndexShuffleBlockResolver.getDataFile,
                 shuffle_block_resolver,
                 JValue::Int(self.shuffle_id as i32),
-                JValue::Long(self.partition_id() as i64)
+                JValue::Long(self.map_id as i64)
             )?
             .l()?;
             let data_file_path =
@@ -564,6 +567,8 @@ pub struct ShuffleWriterExec {
     partitioning: Partitioning,
     /// the shuffle id this map belongs to
     shuffle_id: usize,
+    /// map id
+    map_id: usize,
     /// Containing all metrics set created during sort
     all_metrics: CompositeMetricsSet,
 }
@@ -601,6 +606,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 children[0].clone(),
                 self.partitioning.clone(),
                 self.shuffle_id,
+                self.map_id,
             )?)),
             _ => Err(DataFusionError::Internal(
                 "RepartitionExec wrong number of children".to_string(),
@@ -618,6 +624,7 @@ impl ExecutionPlan for ShuffleWriterExec {
             input,
             partition,
             self.shuffle_id,
+            self.map_id,
             self.partitioning.clone(),
             self.all_metrics.clone(),
             runtime,
@@ -652,12 +659,14 @@ impl ShuffleWriterExec {
         input: Arc<dyn ExecutionPlan>,
         partitioning: Partitioning,
         shuffle_id: usize,
+        map_id: usize,
     ) -> Result<Self> {
         Ok(ShuffleWriterExec {
             input,
             partitioning,
             all_metrics: CompositeMetricsSet::new(),
             shuffle_id,
+            map_id,
         })
     }
 }
@@ -666,6 +675,7 @@ pub async fn external_shuffle(
     mut input: SendableRecordBatchStream,
     partition_id: usize,
     shuffle_id: usize,
+    map_id: usize,
     partitioning: Partitioning,
     metrics_set: CompositeMetricsSet,
     runtime: Arc<RuntimeEnv>,
@@ -674,6 +684,7 @@ pub async fn external_shuffle(
     let repartitioner = ShuffleRepartitioner::new(
         partition_id,
         shuffle_id,
+        map_id,
         schema.clone(),
         partitioning,
         metrics_set,

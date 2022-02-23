@@ -375,6 +375,7 @@ message ShuffleWriterExecNode {
   PhysicalPlanNode input = 1;
   PhysicalHashRepartition output_partitioning = 2;
   uint32 shuffleId = 3;
+  uint64 mapId = 4;
 }
 
 message ShuffleReaderExecNode {
