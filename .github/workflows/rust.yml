@@ -58,6 +58,10 @@ jobs:
           rustup toolchain install ${{ matrix.rust }}
           rustup default ${{ matrix.rust }}
           rustup component add rustfmt
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.12
+        with:
+          cmake-version: '3.16.x'
       - name: Build Workspace
         run: |
           cargo build
@@ -208,7 +212,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
-        rust: [nightly]
+        rust: [stable]
     steps:
       - uses: actions/checkout@v2
         with:
@@ -278,6 +282,10 @@ jobs:
           rustup toolchain install ${{ matrix.rust }}
           rustup default ${{ matrix.rust }}
           rustup component add rustfmt clippy
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.12
+        with:
+          cmake-version: '3.16.x'
       - name: Run clippy
         run: |
           cargo clippy --all-targets --workspace -- -D warnings
@@ -308,6 +316,10 @@ jobs:
           path: /home/runner/target
           # this key is not equal because coverage uses different compilation flags.
           key: ${{ runner.os }}-${{ matrix.arch }}-target-coverage-cache-${{ matrix.rust }}-
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.12
+        with:
+          cmake-version: '3.16.x'
       - name: Run coverage
         run: |
           # 2020-11-15: There is a cargo-tarpaulin regression in 0.17.0
