@@ -8,12 +8,11 @@ edition = "2021"
 [dependencies]
 ahash = "0.7.6"
 async-trait = "0.1.52"
-datafusion = "7.0.0"
+datafusion = { version = "7.0.0", features = ["simd"] }
 futures = "0.3.19"
 jni = "0.19.0"
 lazy_static = "1.4.0"
 log = "0.4.14"
-tokio = "1.15.0"
-tokio-stream = "0.1.8"
+tokio = { version = "^1.0", features = ["rt-multi-thread"] }
 tempfile = "3"
 paste = "1.0.6"

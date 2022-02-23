@@ -18,6 +18,9 @@ use log::info;
 use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 
+#[global_allocator]
+static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+
 #[allow(non_snake_case)]
 #[no_mangle]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
