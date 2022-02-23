@@ -215,10 +215,10 @@ impl Read for HDFSFileReader {
                     )?;
                 }
 
-                let read_size = jni_bridge_call_method!(
+                let read_size = jni_bridge_call_static_method!(
                     env,
-                    HadoopFSDataInputStream.read,
-                    self.hdfs_input_stream,
+                    JniBridge.readFSDataInputStream,
+                    JValue::Object(self.hdfs_input_stream),
                     JValue::Object(buf.into())
                 )?
                 .i()? as usize;

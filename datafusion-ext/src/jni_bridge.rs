@@ -151,6 +151,8 @@ pub struct JniBridge<'a> {
     pub method_getShuffleManager_ret: JavaType,
     pub method_getResource: JStaticMethodID<'a>,
     pub method_getResource_ret: JavaType,
+    pub method_readFSDataInputStream: JStaticMethodID<'a>,
+    pub method_readFSDataInputStream_ret: JavaType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -183,6 +185,12 @@ impl<'a> JniBridge<'a> {
             method_getResource_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
             ),
+            method_readFSDataInputStream: env.get_static_method_id(
+                class,
+                "readFSDataInputStream",
+                "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;)I",
+            )?,
+            method_readFSDataInputStream_ret: JavaType::Primitive(Primitive::Int),
         })
     }
 }
