@@ -15,7 +15,9 @@ mod batch_buffer;
 lazy_static::lazy_static! {
     static ref OBJECT_STORE_REGISTRY: ObjectStoreRegistry = {
         let osr = ObjectStoreRegistry::default();
-        osr.register_store("hdfs".to_owned(), Arc::new(HDFSSingleFileObjectStore));
+        let hdfs_object_store = Arc::new(HDFSSingleFileObjectStore);
+        osr.register_store("hdfs".to_owned(), hdfs_object_store.clone());
+        osr.register_store("viewfs".to_owned(), hdfs_object_store.clone());
         osr
     };
 
