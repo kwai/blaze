@@ -202,6 +202,7 @@ impl Drop for HDFSFileReader {
 
 impl Read for HDFSFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        info!("HDFSFileReader.read: size={}", buf.len());
         Ok(())
             .and_then(|_| {
                 let env = JavaClasses::get_thread_jnienv();
@@ -224,6 +225,7 @@ impl Read for HDFSFileReader {
                 .i()? as usize;
 
                 self.pos += read_size as u64;
+                info!("HDFSFileReader.read result: read_size={}", read_size);
                 JniResult::Ok(read_size)
             })
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
