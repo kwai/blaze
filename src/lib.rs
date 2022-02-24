@@ -24,6 +24,11 @@ use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 use tokio::runtime::Runtime;
 
+#[cfg(feature = "mm")]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "sn")]
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
@@ -123,8 +128,6 @@ pub fn blaze_call_native(
             // use the default one here as placeholder now.
             let runtime = Arc::new(RuntimeEnv::default());
 
-            let schema = execution_plan.schema();
-
             let result = execution_plan
                 .execute(task_id.partition_id as usize, runtime)
                 .await
@@ -143,6 +146,7 @@ pub fn blaze_call_native(
             update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
 
             if !record_batches.is_empty() {
+                let schema = record_batches[0].schema();
                 info!("Result schema:");
                 for field in schema.fields() {
                     info!(
