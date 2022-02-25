@@ -1,3 +1,7 @@
+use std::cell::Cell;
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use jni::objects::JValue;
 use jni::objects::JObject;
 use jni::errors::Result as JniResult;
@@ -94,6 +98,15 @@ static mut JNI_JAVA_CLASSES: [u8; std::mem::size_of::<JavaClasses>()] =
 
 impl JavaClasses<'static> {
     pub fn init(env: &JNIEnv) -> JniResult<()> {
+        lazy_static::lazy_static! {
+            static ref JNI_JAVA_CLASSES_INITIALIZED: Arc<Mutex<Cell<bool>>> =
+                Arc::default();
+        }
+        let jni_java_classes_initialized = JNI_JAVA_CLASSES_INITIALIZED.lock().unwrap();
+        if jni_java_classes_initialized.get() {
+            return Ok(()); // already initialized
+        }
+
         let mut initialized_java_classes = JavaClasses {
             jvm: env.get_java_vm()?,
             classloader: JObject::null(),
@@ -134,6 +147,7 @@ impl JavaClasses<'static> {
             let jni_java_classes = JNI_JAVA_CLASSES.as_mut_ptr() as *mut JavaClasses;
             *jni_java_classes = initialized_java_classes;
         }
+        jni_java_classes_initialized.set(true);
         Ok(())
     }
 
@@ -203,7 +217,7 @@ impl<'a> JniBridge<'a> {
             method_getHDFSFileSystem: env.get_static_method_id(
                 class,
                 "getHDFSFileSystem",
-                "()Lorg/apache/hadoop/fs/FileSystem;",
+                "(Ljava/lang/String;)Lorg/apache/hadoop/fs/FileSystem;",
             )?,
             method_getHDFSFileSystem_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
