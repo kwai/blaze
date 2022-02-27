@@ -47,7 +47,6 @@ use futures::Stream;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
-use log::info;
 
 use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
@@ -109,17 +108,12 @@ impl ExecutionPlan for ShuffleReaderExec {
         let buffers = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
             let resource_key = format!("ShuffleReader.buffers:{}", self.job_id);
-            info!(
-                "Shuffle reader FetchIterator resource key: {}",
-                &resource_key
-            );
             let buffers = jni_bridge_call_static_method!(
                 env,
                 JniBridge.getResource,
                 JValue::Object(env.new_string(&resource_key)?.into())
             )?
             .l()?;
-            info!("FetchIterator: {:?}", buffers);
             JniResult::Ok(buffers)
         }))?;
         let schema = self.schema.clone();

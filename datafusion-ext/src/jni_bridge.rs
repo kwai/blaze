@@ -1,7 +1,13 @@
+use std::cell::Cell;
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
+use jni::objects::JObject;
 use jni::objects::JStaticMethodID;
+use jni::objects::JValue;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
@@ -54,6 +60,7 @@ macro_rules! jni_bridge_call_static_method {
 #[allow(non_snake_case)]
 pub struct JavaClasses<'a> {
     pub jvm: JavaVM,
+    pub classloader: JObject<'a>,
 
     pub cJniBridge: JniBridge<'a>,
     pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
@@ -91,8 +98,18 @@ static mut JNI_JAVA_CLASSES: [u8; std::mem::size_of::<JavaClasses>()] =
 
 impl JavaClasses<'static> {
     pub fn init(env: &JNIEnv) -> JniResult<()> {
-        let initialized_java_classes = JavaClasses {
+        lazy_static::lazy_static! {
+            static ref JNI_JAVA_CLASSES_INITIALIZED: Arc<Mutex<Cell<bool>>> =
+                Arc::default();
+        }
+        let jni_java_classes_initialized = JNI_JAVA_CLASSES_INITIALIZED.lock().unwrap();
+        if jni_java_classes_initialized.get() {
+            return Ok(()); // already initialized
+        }
+
+        let mut initialized_java_classes = JavaClasses {
             jvm: env.get_java_vm()?,
+            classloader: JObject::null(),
 
             cJniBridge: JniBridge::new(env)?,
             cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
@@ -116,6 +133,20 @@ impl JavaClasses<'static> {
             cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
             cSparkMetricNode: SparkMetricNode::new(env)?,
         };
+        initialized_java_classes.classloader = env
+            .call_static_method_unchecked(
+                initialized_java_classes.cJniBridge.class,
+                initialized_java_classes
+                    .cJniBridge
+                    .method_getContextClassLoader,
+                initialized_java_classes
+                    .cJniBridge
+                    .method_getContextClassLoader_ret
+                    .clone(),
+                &[],
+            )?
+            .l()?;
+
         unsafe {
             // safety:
             //  JavaClasses should be initialized once in jni entrypoint thread
@@ -123,6 +154,7 @@ impl JavaClasses<'static> {
             let jni_java_classes = JNI_JAVA_CLASSES.as_mut_ptr() as *mut JavaClasses;
             *jni_java_classes = initialized_java_classes;
         }
+        jni_java_classes_initialized.set(true);
         Ok(())
     }
 
@@ -135,22 +167,38 @@ impl JavaClasses<'static> {
     }
 
     pub fn get_thread_jnienv() -> JNIEnv<'static> {
-        JavaClasses::get()
-            .jvm
-            .attach_current_thread_permanently()
-            .unwrap()
+        let jvm = &JavaClasses::get().jvm;
+
+        if let Ok(env) = jvm.get_env() {
+            return env;
+        }
+
+        let env = jvm.attach_current_thread_permanently().unwrap();
+        jni_bridge_call_static_method!(
+            env,
+            JniBridge.setContextClassLoader,
+            JValue::Object(JavaClasses::get().classloader)
+        )
+        .unwrap();
+        return env;
     }
 }
 
 #[allow(non_snake_case)]
 pub struct JniBridge<'a> {
     pub class: JClass<'a>,
+    pub method_getContextClassLoader: JStaticMethodID<'a>,
+    pub method_getContextClassLoader_ret: JavaType,
+    pub method_setContextClassLoader: JStaticMethodID<'a>,
+    pub method_setContextClassLoader_ret: JavaType,
     pub method_getHDFSFileSystem: JStaticMethodID<'a>,
     pub method_getHDFSFileSystem_ret: JavaType,
     pub method_getShuffleManager: JStaticMethodID<'a>,
     pub method_getShuffleManager_ret: JavaType,
     pub method_getResource: JStaticMethodID<'a>,
     pub method_getResource_ret: JavaType,
+    pub method_readFSDataInputStream: JStaticMethodID<'a>,
+    pub method_readFSDataInputStream_ret: JavaType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -159,10 +207,24 @@ impl<'a> JniBridge<'a> {
         let class = env.find_class(Self::SIG_TYPE)?;
         Ok(JniBridge {
             class,
+            method_getContextClassLoader: env.get_static_method_id(
+                class,
+                "getContextClassLoader",
+                "()Ljava/lang/ClassLoader;",
+            )?,
+            method_getContextClassLoader_ret: JavaType::Object(
+                "java/lang/ClassLoader".to_owned(),
+            ),
+            method_setContextClassLoader: env.get_static_method_id(
+                class,
+                "setContextClassLoader",
+                "(Ljava/lang/ClassLoader;)V",
+            )?,
+            method_setContextClassLoader_ret: JavaType::Primitive(Primitive::Void),
             method_getHDFSFileSystem: env.get_static_method_id(
                 class,
                 "getHDFSFileSystem",
-                "()Lorg/apache/hadoop/fs/FileSystem;",
+                "(Ljava/lang/String;)Lorg/apache/hadoop/fs/FileSystem;",
             )?,
             method_getHDFSFileSystem_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
@@ -183,6 +245,12 @@ impl<'a> JniBridge<'a> {
             method_getResource_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
             ),
+            method_readFSDataInputStream: env.get_static_method_id(
+                class,
+                "readFSDataInputStream",
+                "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;)I",
+            )?,
+            method_readFSDataInputStream_ret: JavaType::Primitive(Primitive::Int),
         })
     }
 }
