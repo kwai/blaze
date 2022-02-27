@@ -40,7 +40,5 @@ pub fn set_job_id(job_id: &str) {
 }
 
 pub fn get_job_id() -> String {
-    JOB_ID.with(|thread_local_job_id| {
-        thread_local_job_id.borrow().clone()
-    })
+    JOB_ID.with(|thread_local_job_id| thread_local_job_id.borrow().clone())
 }

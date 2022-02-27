@@ -43,8 +43,12 @@ impl ObjectStore for HDFSSingleFileObjectStore {
         info!("HDFSSingleFileStore.list_file: {}", prefix);
         Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
-            let fs =
-                jni_bridge_call_static_method!(env, JniBridge.getHDFSFileSystem, JValue::Object(env.new_string(prefix)?.into()))?.l()?;
+            let fs = jni_bridge_call_static_method!(
+                env,
+                JniBridge.getHDFSFileSystem,
+                JValue::Object(env.new_string(prefix)?.into())
+            )?
+            .l()?;
 
             let path = jni_bridge_new_object!(
                 env,
@@ -146,7 +150,10 @@ impl ObjectReader for HDFSObjectReader {
 
 impl HDFSObjectReader {
     fn get_reader(&self, start: u64) -> Result<Box<dyn Read + Send + Sync>> {
-        info!("HDFSObjectReader.get_reader: file={:?}, start={}", self.file, start);
+        info!(
+            "HDFSObjectReader.get_reader: file={:?}, start={}",
+            self.file, start
+        );
         Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let reader = Box::new(HDFSFileReader::try_new(&self.file.path, start)?);
             JniResult::Ok(reader as Box<dyn Read + Send + Sync>)
@@ -172,7 +179,8 @@ impl HDFSFileReader {
                     env,
                     JniBridge.getHDFSFileSystem,
                     JValue::Object(env.new_string(path)?.into())
-                )?.l()?;
+                )?
+                .l()?;
                 let path = jni_bridge_new_object!(
                     env,
                     HadoopPath,

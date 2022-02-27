@@ -2,12 +2,12 @@ use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use jni::objects::JValue;
-use jni::objects::JObject;
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
+use jni::objects::JObject;
 use jni::objects::JStaticMethodID;
+use jni::objects::JValue;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
@@ -133,12 +133,19 @@ impl JavaClasses<'static> {
             cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
             cSparkMetricNode: SparkMetricNode::new(env)?,
         };
-        initialized_java_classes.classloader = env.call_static_method_unchecked(
-            initialized_java_classes.cJniBridge.class,
-            initialized_java_classes.cJniBridge.method_getContextClassLoader,
-            initialized_java_classes.cJniBridge.method_getContextClassLoader_ret.clone(),
-            &[],
-        )?.l()?;
+        initialized_java_classes.classloader = env
+            .call_static_method_unchecked(
+                initialized_java_classes.cJniBridge.class,
+                initialized_java_classes
+                    .cJniBridge
+                    .method_getContextClassLoader,
+                initialized_java_classes
+                    .cJniBridge
+                    .method_getContextClassLoader_ret
+                    .clone(),
+                &[],
+            )?
+            .l()?;
 
         unsafe {
             // safety:
@@ -170,7 +177,9 @@ impl JavaClasses<'static> {
         jni_bridge_call_static_method!(
             env,
             JniBridge.setContextClassLoader,
-            JValue::Object(JavaClasses::get().classloader)).unwrap();
+            JValue::Object(JavaClasses::get().classloader)
+        )
+        .unwrap();
         return env;
     }
 }
@@ -211,9 +220,7 @@ impl<'a> JniBridge<'a> {
                 "setContextClassLoader",
                 "(Ljava/lang/ClassLoader;)V",
             )?,
-            method_setContextClassLoader_ret: JavaType::Primitive(
-                Primitive::Void,
-            ),
+            method_setContextClassLoader_ret: JavaType::Primitive(Primitive::Void),
             method_getHDFSFileSystem: env.get_static_method_id(
                 class,
                 "getHDFSFileSystem",
