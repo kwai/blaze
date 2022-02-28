@@ -99,7 +99,7 @@ impl HDFSObjectReader {
             reader.new_pos = start;
             Ok(Box::new(reader.clone()) as Box<dyn Read + Send + Sync>)
         } else {
-            let reader = HDFSFileReader::try_new(&*self.file.path.clone(), start)?;
+            let reader = HDFSFileReader::try_new(&self.file.path, start)?;
             *reader_opt = Some(reader.clone());
             Ok(Box::new(reader) as Box<dyn Read + Send + Sync>)
         }
