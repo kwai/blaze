@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use datafusion::datasource::object_store::FileMeta;
@@ -113,12 +114,13 @@ impl ObjectStore for HDFSSingleFileObjectStore {
 
     fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
         info!("HDFSSingleFileStore.file_reader: {:?}", file);
-        Ok(Arc::new(HDFSObjectReader { file }))
+        Ok(Arc::new(HDFSObjectReader { file, opened: Mutex::new(None) }))
     }
 }
 
 struct HDFSObjectReader {
     file: SizedFile,
+    opened: Mutex<Option<HDFSFileReader>>,
 }
 
 #[async_trait]
@@ -131,16 +133,16 @@ impl ObjectReader for HDFSObjectReader {
         unimplemented!()
     }
 
-    fn sync_reader(&self) -> Result<Box<dyn Read + Send + Sync>> {
-        self.get_reader(0)
-    }
-
     fn sync_chunk_reader(
         &self,
         start: u64,
         _length: usize,
     ) -> Result<Box<dyn Read + Send + Sync>> {
-        self.get_reader(start)
+        self.get_reader_at(start)
+    }
+
+    fn sync_reader(&self) -> Result<Box<dyn Read + Send + Sync>> {
+        self.get_reader_at(0)
     }
 
     fn length(&self) -> u64 {
@@ -149,18 +151,26 @@ impl ObjectReader for HDFSObjectReader {
 }
 
 impl HDFSObjectReader {
-    fn get_reader(&self, start: u64) -> Result<Box<dyn Read + Send + Sync>> {
-        info!(
-            "HDFSObjectReader.get_reader: file={:?}, start={}",
-            self.file, start
-        );
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
-            let reader = Box::new(HDFSFileReader::try_new(&self.file.path, start)?);
-            JniResult::Ok(reader as Box<dyn Read + Send + Sync>)
-        }))
+    fn get_reader_at(&self, start: u64) -> Result<Box<dyn Read + Send + Sync>> {
+        let mut reader_opt = self.opened.lock();
+        if reader_opt.is_some() {
+            info!(
+                "HDFSObjectReader.seek on existing reader: file={:?}, seekPos={}",
+                self.file, start
+            );
+            let reader = reader_opt.as_mut().unwrap();
+            reader.seek(start)?;
+            Ok(Box::new(reader.clone()) as Box<dyn Read + Send + Sync>)
+        } else {
+            let reader = HDFSFileReader::try_new(&self.file.path, start)
+                .map_err(|e| DataFusionError::Internal(format!("{}", e)))?;
+            *reader_opt = Some(reader.clone());
+            Ok(Box::new(reader) as Box<dyn Read + Send + Sync>)
+        }
     }
 }
 
+#[derive(Clone)]
 struct HDFSFileReader {
     pub hdfs_input_stream: JObject<'static>,
     pub pos: u64,
@@ -193,10 +203,14 @@ impl HDFSFileReader {
                     JValue::Object(path)
                 )?
                 .l()?;
-                JniResult::Ok(hdfs_input_stream)
-            }?,
+                hdfs_input_stream
+            },
             pos,
         })
+    }
+
+    fn seek(&mut self, _new_start: u64) -> Result<()> {
+        todo!()
     }
 }
 

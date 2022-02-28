@@ -68,6 +68,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     );
 }
 
+#[allow(clippy::redundant_slicing)]
 pub fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JByteBuffer,
