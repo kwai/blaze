@@ -162,7 +162,7 @@ impl HDFSObjectReader {
                 self.file, start
             );
             let reader = reader_opt.as_mut().unwrap();
-            reader.seek(start)?;
+            reader.new_pos = start;
             Ok(Box::new(reader.clone()) as Box<dyn Read + Send + Sync>)
         } else {
             let reader = HDFSFileReader::try_new(&self.file.path, start)
@@ -176,7 +176,8 @@ impl HDFSObjectReader {
 #[derive(Clone)]
 struct HDFSFileReader {
     pub hdfs_input_stream: JObject<'static>,
-    pub pos: u64,
+    pub cur_pos: u64,
+    pub new_pos: u64,
 }
 
 unsafe impl Send for HDFSFileReader {}
@@ -208,12 +209,9 @@ impl HDFSFileReader {
                 .l()?;
                 hdfs_input_stream
             },
-            pos,
+            cur_pos: 0,
+            new_pos: pos,
         })
-    }
-
-    fn seek(&mut self, _new_start: u64) -> Result<()> {
-        todo!()
     }
 }
 
@@ -236,13 +234,14 @@ impl Read for HDFSFileReader {
             .and_then(|_| {
                 let env = JavaClasses::get_thread_jnienv();
                 let buf = env.new_direct_byte_buffer(buf)?;
-                if self.pos != 0 {
+                if self.cur_pos != self.new_pos {
                     jni_bridge_call_method!(
                         env,
                         HadoopFSDataInputStream.seek,
                         self.hdfs_input_stream,
-                        JValue::Long(self.pos as i64)
+                        JValue::Long(self.new_pos as i64)
                     )?;
+                    self.cur_pos = self.new_pos;
                 }
 
                 let read_size = jni_bridge_call_static_method!(
@@ -253,7 +252,7 @@ impl Read for HDFSFileReader {
                 )?
                 .i()? as usize;
 
-                self.pos += read_size as u64;
+                self.cur_pos += read_size as u64;
                 info!("HDFSFileReader.read result: read_size={}", read_size);
                 JniResult::Ok(read_size)
             })
