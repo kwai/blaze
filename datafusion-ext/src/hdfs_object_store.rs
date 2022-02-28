@@ -2,32 +2,26 @@ use parking_lot::Mutex;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::io::Read;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::Context;
-use std::task::Poll;
 
 use async_trait::async_trait;
-use datafusion::datasource::object_store::FileMeta;
 use datafusion::datasource::object_store::FileMetaStream;
 use datafusion::datasource::object_store::ListEntryStream;
 use datafusion::datasource::object_store::ObjectReader;
 use datafusion::datasource::object_store::ObjectStore;
 use datafusion::datasource::object_store::SizedFile;
-use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use futures::AsyncRead;
-use futures::Stream;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
 use log::info;
 
+use crate::error::Result as BlazeResult;
 use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
 use crate::jni_bridge_call_static_method;
 use crate::jni_bridge_new_object;
-use crate::util::Util;
 
 #[derive(Clone)]
 pub struct HDFSSingleFileObjectStore;
@@ -40,66 +34,8 @@ impl Debug for HDFSSingleFileObjectStore {
 
 #[async_trait::async_trait]
 impl ObjectStore for HDFSSingleFileObjectStore {
-    async fn list_file(&self, prefix: &str) -> Result<FileMetaStream> {
-        info!("HDFSSingleFileStore.list_file: {}", prefix);
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
-            let env = JavaClasses::get_thread_jnienv();
-            let fs = jni_bridge_call_static_method!(
-                env,
-                JniBridge.getHDFSFileSystem,
-                JValue::Object(env.new_string(prefix)?.into())
-            )?
-            .l()?;
-
-            let path = jni_bridge_new_object!(
-                env,
-                HadoopPath,
-                JValue::Object(env.new_string(prefix)?.into())
-            )?;
-
-            let file_status = jni_bridge_call_method!(
-                env,
-                HadoopFileSystem.getFileStatus,
-                fs,
-                JValue::Object(path)
-            )?
-            .l()?;
-
-            let file_size =
-                jni_bridge_call_method!(env, HadoopFileStatus.getLen, file_status)?.j()?
-                    as u64;
-
-            let file_meta = FileMeta {
-                sized_file: SizedFile {
-                    path: prefix.to_owned(),
-                    size: file_size,
-                },
-                last_modified: None,
-            };
-
-            struct HDFSSingleFileMetaStream {
-                file_meta: FileMeta,
-                ended: bool,
-            }
-            impl Stream for HDFSSingleFileMetaStream {
-                type Item = Result<FileMeta>;
-                fn poll_next(
-                    self: Pin<&mut Self>,
-                    _cx: &mut Context<'_>,
-                ) -> Poll<Option<Result<FileMeta>>> {
-                    let self_mut = self.get_mut();
-                    if !self_mut.ended {
-                        self_mut.ended = true;
-                        return Poll::Ready(Some(Ok(self_mut.file_meta.clone())));
-                    }
-                    Poll::Ready(None)
-                }
-            }
-            JniResult::Ok(Box::pin(HDFSSingleFileMetaStream {
-                file_meta,
-                ended: false,
-            }) as FileMetaStream)
-        }))
+    async fn list_file(&self, _prefix: &str) -> Result<FileMetaStream> {
+        unreachable!()
     }
 
     async fn list_dir(
@@ -107,9 +43,7 @@ impl ObjectStore for HDFSSingleFileObjectStore {
         _prefix: &str,
         _delimiter: Option<String>,
     ) -> Result<ListEntryStream> {
-        Result::Err(DataFusionError::NotImplemented(
-            "HDFSSingleFileObjectStore::list_dir not supported".to_owned(),
-        ))
+        unreachable!()
     }
 
     fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
@@ -165,8 +99,7 @@ impl HDFSObjectReader {
             reader.new_pos = start;
             Ok(Box::new(reader.clone()) as Box<dyn Read + Send + Sync>)
         } else {
-            let reader = HDFSFileReader::try_new(&self.file.path, start)
-                .map_err(|e| DataFusionError::Internal(format!("{}", e)))?;
+            let reader = HDFSFileReader::try_new(&*self.file.path.clone(), start)?;
             *reader_opt = Some(reader.clone());
             Ok(Box::new(reader) as Box<dyn Read + Send + Sync>)
         }
@@ -184,7 +117,7 @@ unsafe impl Send for HDFSFileReader {}
 unsafe impl Sync for HDFSFileReader {}
 
 impl HDFSFileReader {
-    pub fn try_new(path: &str, pos: u64) -> JniResult<HDFSFileReader> {
+    pub fn try_new(path: &str, pos: u64) -> BlazeResult<HDFSFileReader> {
         info!("HDFSFileReader.try_new: path={}, pos={}", path, pos);
         Ok(HDFSFileReader {
             hdfs_input_stream: {
@@ -195,11 +128,13 @@ impl HDFSFileReader {
                     JValue::Object(env.new_string(path)?.into())
                 )?
                 .l()?;
+                info!("got hdfs");
                 let path = jni_bridge_new_object!(
                     env,
                     HadoopPath,
                     JValue::Object(env.new_string(path)?.into())
                 )?;
+                info!("got path");
                 let hdfs_input_stream = jni_bridge_call_method!(
                     env,
                     HadoopFileSystem.open,

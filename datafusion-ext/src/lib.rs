@@ -11,6 +11,7 @@ pub mod shuffle_writer_exec;
 pub mod util;
 
 mod batch_buffer;
+mod error;
 
 lazy_static::lazy_static! {
     static ref OBJECT_STORE_REGISTRY: ObjectStoreRegistry = {
