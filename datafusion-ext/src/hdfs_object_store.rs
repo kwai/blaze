@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::io::Read;
@@ -5,7 +6,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
-use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use datafusion::datasource::object_store::FileMeta;
@@ -114,7 +114,10 @@ impl ObjectStore for HDFSSingleFileObjectStore {
 
     fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
         info!("HDFSSingleFileStore.file_reader: {:?}", file);
-        Ok(Arc::new(HDFSObjectReader { file, opened: Mutex::new(None) }))
+        Ok(Arc::new(HDFSObjectReader {
+            file,
+            opened: Mutex::new(None),
+        }))
     }
 }
 
