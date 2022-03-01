@@ -248,7 +248,7 @@ impl<'a> JniBridge<'a> {
             method_readFSDataInputStream: env.get_static_method_id(
                 class,
                 "readFSDataInputStream",
-                "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;)I",
+                "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;J)I",
             )?,
             method_readFSDataInputStream_ret: JavaType::Primitive(Primitive::Int),
         })
