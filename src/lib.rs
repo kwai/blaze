@@ -1,4 +1,3 @@
-use conquer_once::OnceCell;
 use std::future;
 use std::io::BufWriter;
 use std::sync::Arc;
@@ -20,6 +19,7 @@ use jni::objects::JObject;
 use jni::objects::JValue;
 use jni::JNIEnv;
 use log::info;
+use once_cell::sync::OnceCell;
 use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 use tokio::runtime::Runtime;
@@ -32,7 +32,16 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
-static TOKIO_RUNTIME: OnceCell<Runtime> = OnceCell::uninit();
+fn tokio_runtime(thread_num: usize) -> &'static Runtime {
+    static INSTANCE: OnceCell<Runtime> = OnceCell::new();
+    INSTANCE.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(thread_num)
+            .thread_name("blaze")
+            .build()
+            .unwrap()
+    })
+}
 
 #[allow(non_snake_case)]
 #[no_mangle]
@@ -114,15 +123,7 @@ pub fn blaze_call_native(
         datafusion::physical_plan::displayable(execution_plan.as_ref()).indent()
     );
 
-    TOKIO_RUNTIME
-        .try_get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(10) // TODO: we should set this through JNI param
-                .thread_name("blaze")
-                .build()
-                .unwrap()
-        })
-        .unwrap()
+    tokio_runtime(10) // TODO: we should set this through JNI param
         .block_on(async {
             // TODO: we can pass down shuffle dirs, max memory threshold and batch_size
             // by creating RuntimeEnv with specific RuntimeConfig.

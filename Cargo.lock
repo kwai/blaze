@@ -175,7 +175,6 @@ dependencies = [
 name = "blaze-rs"
 version = "0.1.2"
 dependencies = [
- "conquer-once",
  "datafusion",
  "datafusion-ext",
  "env_logger",
@@ -183,6 +182,7 @@ dependencies = [
  "jni",
  "log",
  "mimalloc",
+ "once_cell",
  "paste",
  "plan-serde",
  "prost",
@@ -306,21 +306,6 @@ dependencies = [
  "strum_macros",
  "unicode-width",
 ]
-
-[[package]]
-name = "conquer-once"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c6d3a9775a69f6d1fe2cc888999b67ed30257d3da4d2af91984e722f2ec918a"
-dependencies = [
- "conquer-util",
-]
-
-[[package]]
-name = "conquer-util"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e763eef8846b13b380f37dfecda401770b0ca4e56e95170237bd7c25c7db3582"
 
 [[package]]
 name = "constant_time_eq"
