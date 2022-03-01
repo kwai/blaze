@@ -21,7 +21,6 @@ use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
 use crate::jni_bridge_call_static_method;
 use crate::jni_bridge_new_object;
-use crate::util::Util;
 
 #[derive(Clone)]
 pub struct HDFSSingleFileObjectStore;
