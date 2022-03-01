@@ -109,7 +109,6 @@ impl HDFSObjectReader {
 #[derive(Clone)]
 struct HDFSFileReader {
     pub hdfs_input_stream: JObject<'static>,
-    pub cur_pos: u64,
     pub new_pos: u64,
 }
 
@@ -144,7 +143,6 @@ impl HDFSFileReader {
                 .l()?;
                 hdfs_input_stream
             },
-            cur_pos: 0,
             new_pos: pos,
         })
     }
@@ -169,15 +167,12 @@ impl Read for HDFSFileReader {
             .and_then(|_| {
                 let env = JavaClasses::get_thread_jnienv();
                 let buf = env.new_direct_byte_buffer(buf)?;
-                if self.cur_pos != self.new_pos {
-                    jni_bridge_call_method!(
-                        env,
-                        HadoopFSDataInputStream.seek,
-                        self.hdfs_input_stream,
-                        JValue::Long(self.new_pos as i64)
-                    )?;
-                    self.cur_pos = self.new_pos;
-                }
+                jni_bridge_call_method!(
+                    env,
+                    HadoopFSDataInputStream.seek,
+                    self.hdfs_input_stream,
+                    JValue::Long(self.new_pos as i64)
+                )?;
 
                 let read_size = jni_bridge_call_static_method!(
                     env,
@@ -187,7 +182,6 @@ impl Read for HDFSFileReader {
                 )?
                 .i()? as usize;
 
-                self.cur_pos += read_size as u64;
                 info!("HDFSFileReader.read result: read_size={}", read_size);
                 JniResult::Ok(read_size)
             })
