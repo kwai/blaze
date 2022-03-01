@@ -433,6 +433,7 @@ dependencies = [
  "jni",
  "lazy_static",
  "log",
+ "parking_lot 0.12.0",
  "paste",
  "tempfile",
  "tokio",
