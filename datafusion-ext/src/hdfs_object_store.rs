@@ -14,7 +14,7 @@ use futures::AsyncRead;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
-use log::info;
+use log::{debug, info};
 use parking_lot::Mutex;
 
 use crate::jni_bridge::JavaClasses;
@@ -88,7 +88,6 @@ impl ObjectReader for HDFSObjectReader {
 
 impl HDFSObjectReader {
     fn get_reader(&self, start: u64) -> Result<Box<dyn Read + Send + Sync>> {
-        info!("get reader");
         let mut opened = self.opened.lock();
         let reader = if opened.is_some() {
             info!(
@@ -104,7 +103,6 @@ impl HDFSObjectReader {
             *opened = Some(reader.clone());
             reader
         };
-        info!("get reader done");
         Ok(Box::new(reader) as Box<dyn Read + Send + Sync>)
     }
 }
@@ -174,7 +172,7 @@ impl Drop for HDFSFileReader {
 
 impl Read for HDFSFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        info!("HDFSFileReader.read: size={}", buf.len());
+        debug!("HDFSFileReader.read: size={}", buf.len());
         Ok(())
             .and_then(|_| {
                 let env = JavaClasses::get_thread_jnienv();
@@ -197,7 +195,7 @@ impl Read for HDFSFileReader {
                 )?
                 .i()? as usize;
 
-                info!("HDFSFileReader.read result: read_size={}", read_size);
+                debug!("HDFSFileReader.read result: read_size={}", read_size);
                 JniResult::Ok(read_size)
             })
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
