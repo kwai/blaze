@@ -16,7 +16,7 @@ use jni::JavaVM;
 #[macro_export]
 macro_rules! jni_bridge_new_object {
     ($env:expr, $clsname:ident $(, $args:expr)*) => {{
-        // log::info!("jni_bridge_new_object!({}, {:?})", stringify!($clsname), &[$($args,)*]);
+        log::info!("jni_bridge_new_object!({}, {:?})", stringify!($clsname), &[$($args,)*]);
         $env.new_object_unchecked(
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
@@ -28,10 +28,10 @@ macro_rules! jni_bridge_new_object {
 #[macro_export]
 macro_rules! jni_bridge_call_method {
     ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {{
-        // log::info!("jni_bridge_call_method!({}.{}, {:?})",
-        //     stringify!($clsname),
-        //     stringify!($method),
-        //     &[$($args,)*] as &[JValue]);
+        log::info!("jni_bridge_call_method!({}.{}, {:?})",
+            stringify!($clsname),
+            stringify!($method),
+            &[$($args,)*] as &[JValue]);
         $env.call_method_unchecked(
             $obj,
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
@@ -44,10 +44,10 @@ macro_rules! jni_bridge_call_method {
 #[macro_export]
 macro_rules! jni_bridge_call_static_method {
     ($env:expr, $clsname:ident . $method:ident $(, $args:expr)*) => {{
-        // log::info!("jni_bridge_call_static_method!({}.{}, {:?})",
-        //     stringify!($clsname),
-        //     stringify!($method),
-        //     &[$($args,)*] as &[JValue]);
+        log::info!("jni_bridge_call_static_method!({}.{}, {:?})",
+            stringify!($clsname),
+            stringify!($method),
+            &[$($args,)*] as &[JValue]);
         $env.call_static_method_unchecked(
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
@@ -204,7 +204,7 @@ impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<JniBridge<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JniBridge {
             class,
             method_getContextClassLoader: env.get_static_method_id(
@@ -269,7 +269,7 @@ impl<'a> JavaNioSeekableByteChannel<'a> {
     pub const SIG_TYPE: &'static str = "java/nio/channels/SeekableByteChannel";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaNioSeekableByteChannel<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaNioSeekableByteChannel {
             class,
             method_read: env.get_method_id(class, "read", "(Ljava/nio/ByteBuffer;)I")?,
@@ -298,7 +298,7 @@ impl<'a> JavaList<'a> {
     pub const SIG_TYPE: &'static str = "java/util/List";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaList<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaList {
             class,
             method_size: env.get_method_id(class, "size", "()I")?,
@@ -321,7 +321,7 @@ impl<'a> JavaMap<'a> {
     pub const SIG_TYPE: &'static str = "java/util/Map";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaMap<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaMap {
             class,
             method_get: env
@@ -350,7 +350,7 @@ impl<'a> JavaFile<'a> {
     pub const SIG_TYPE: &'static str = "java/io/File";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaFile<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaFile {
             class,
             method_getPath: env.get_method_id(
@@ -373,7 +373,7 @@ impl<'a> JavaConsumer<'a> {
     pub const SIG_TYPE: &'static str = "java/util/function/Consumer";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaConsumer<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaConsumer {
             class,
             method_accept: env.get_method_id(class, "accept", "(Ljava/lang/Object;)V")?,
@@ -394,7 +394,7 @@ impl<'a> ScalaIterator<'a> {
     pub const SIG_TYPE: &'static str = "scala/collection/Iterator";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaIterator<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(ScalaIterator {
             class,
             method_hasNext: env.get_method_id(class, "hasNext", "()Z")?,
@@ -417,7 +417,7 @@ impl<'a> ScalaTuple2<'a> {
     pub const SIG_TYPE: &'static str = "scala/Tuple2";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaTuple2<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(ScalaTuple2 {
             class,
             method__1: env.get_method_id(class, "_1", "()Ljava/lang/Object;")?,
@@ -440,7 +440,7 @@ impl<'a> HadoopFileSystem<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FileSystem";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopFileSystem<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(HadoopFileSystem {
             class,
             method_getFileStatus: env.get_method_id(
@@ -472,7 +472,7 @@ impl<'a> HadoopPath<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/Path";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopPath<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(HadoopPath {
             class,
             ctor: env.get_method_id(class, "<init>", "(Ljava/lang/String;)V")?,
@@ -490,7 +490,7 @@ impl<'a> HadoopFileStatus<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FileStatus";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopFileStatus<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(HadoopFileStatus {
             class,
             method_getLen: env.get_method_id(class, "getLen", "()J")?,
@@ -513,7 +513,7 @@ impl<'a> HadoopFSDataInputStream<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FSDataInputStream";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopFSDataInputStream<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(HadoopFSDataInputStream {
             class,
             method_seek: env.get_method_id(class, "seek", "(J)V")?,
@@ -536,7 +536,7 @@ impl<'a> SparkShuffleManager<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/shuffle/ShuffleManager";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkShuffleManager<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkShuffleManager {
             class,
             method_shuffleBlockResolver: env.get_method_id(
@@ -562,7 +562,7 @@ impl<'a> SparkIndexShuffleBlockResolver<'a> {
         "org/apache/spark/shuffle/IndexShuffleBlockResolver";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkIndexShuffleBlockResolver<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkIndexShuffleBlockResolver {
             class,
             method_getDataFile: env.get_method_id(
@@ -585,7 +585,7 @@ impl<'a> SparkManagedBuffer<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/network/buffer/ManagedBuffer";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkManagedBuffer<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkManagedBuffer {
             class,
             method_nioByteBuffer: env.get_method_id(
@@ -608,7 +608,7 @@ impl<'a> SparkSQLMetric<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/metric/SQLMetric";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkSQLMetric<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkSQLMetric {
             class,
             method_add: env.get_method_id(class, "add", "(J)V")?,
@@ -627,7 +627,7 @@ impl<'a> SparkBlazeConverters<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/execution/Converters";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkBlazeConverters<'a>> {
-        let class = env.find_class(Self::SIG_TYPE)?;
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkBlazeConverters {
             class,
             method_readManagedBufferToSegmentByteChannelsAsJava: env
@@ -655,7 +655,7 @@ impl<'a> SparkMetricNode<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/MetricNode";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkMetricNode<'a>> {
-        let class = env.find_class(Self::SIG_TYPE).unwrap();
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkMetricNode {
             class,
             method_getChild: env
@@ -672,4 +672,24 @@ impl<'a> SparkMetricNode<'a> {
             method_add_ret: JavaType::Primitive(Primitive::Void),
         })
     }
+}
+
+fn get_global_jclass<'a>(env: &JNIEnv<'a>, cls: &str) -> JniResult<JClass<'static>> {
+    struct PrivGlobalRefGuard {
+        obj: JObject<'static>,
+        _vm: JavaVM,
+    }
+    struct PrivGlobalRef {
+        inner: Arc<PrivGlobalRefGuard>,
+    }
+
+    // safety:
+    //  as all global refs to jclass in JavaClasses should never be GC'd during
+    // the whole jvm lifetime, we override GlobalRef::drop() to prevent
+    // deleting these global refs.
+    let local_jclass = env.find_class(cls)?;
+    let global: PrivGlobalRef = unsafe {
+        std::mem::transmute(env.new_global_ref::<JClass>(local_jclass.into())?)
+    };
+    return Ok(global.inner.obj.into());
 }
