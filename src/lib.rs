@@ -114,12 +114,8 @@ pub fn blaze_call_native(
     let execution_plan: Arc<dyn ExecutionPlan> =
         plan.try_into().expect("Error converting to ExecutionPlan");
     info!(
-        "Creating native execution plan succeeded: task_id={:?}",
-        task_id
-    );
-
-    info!(
-        "Executing plan:\n{}",
+        "Creating native execution plan succeeded: task_id={:?}, execution plan:\n{}",
+        task_id,
         datafusion::physical_plan::displayable(execution_plan.as_ref()).indent()
     );
 
