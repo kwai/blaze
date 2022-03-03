@@ -14,7 +14,7 @@ use futures::AsyncRead;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
-use log::{debug, info};
+use log::{debug, info, trace};
 
 use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
@@ -45,7 +45,7 @@ impl ObjectStore for HDFSSingleFileObjectStore {
     }
 
     fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
-        info!("HDFSSingleFileStore.file_reader: {:?}", file);
+        trace!("HDFSSingleFileStore.file_reader: {:?}", file);
         let hdfs_input_stream = Arc::new(
             FSDataInputStreamWrapper::try_new(&file.path)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?,

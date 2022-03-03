@@ -63,7 +63,7 @@ use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::StreamExt;
 use jni::{errors::Result as JniResult, objects::JValue};
-use log::info;
+use log::{debug, info};
 use tempfile::NamedTempFile;
 use tokio::task;
 
@@ -519,7 +519,7 @@ impl MemoryConsumer for ShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<usize> {
-        info!(
+        debug!(
             "{}[{}] spilling shuffle data of {} to disk while inserting ({} time(s) so far)",
             self.name(),
             self.id(),
@@ -671,6 +671,7 @@ impl ShuffleWriterExec {
     }
 }
 
+// TODO: reconsider memory consumption for shuffle buffers, unrevealed usage?
 pub async fn external_shuffle(
     mut input: SendableRecordBatchStream,
     partition_id: usize,

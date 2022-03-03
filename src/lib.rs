@@ -18,7 +18,7 @@ use jni::objects::JClass;
 use jni::objects::JObject;
 use jni::objects::JValue;
 use jni::JNIEnv;
-use log::info;
+use log::{debug, info, trace};
 use once_cell::sync::OnceCell;
 use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
@@ -90,21 +90,21 @@ pub fn blaze_call_native(
     );
     info!("Blaze native computing started");
 
-    info!("Initializing JavaClasses");
+    trace!("Initializing JavaClasses");
     JavaClasses::init(env).expect("Error initializing JavaClasses");
     let env = JavaClasses::get_thread_jnienv();
-    info!("Initializing JavaClasses succeeded");
+    trace!("Initializing JavaClasses succeeded");
 
-    info!("Decoding task definition");
+    trace!("Decoding task definition");
     let task_definition_raw = env
         .get_direct_buffer_address(task_definition)
         .expect("Error getting task definition");
     let task_definition: TaskDefinition =
         TaskDefinition::decode(&task_definition_raw[..])
             .expect("Error decoding task definition");
-    info!("Decoding task definition succeeded");
+    trace!("Decoding task definition succeeded");
 
-    info!("Creating native execution plan");
+    trace!("Creating native execution plan");
     let task_id = task_definition
         .task_id
         .expect("Missing task_definition.task_id");
@@ -149,9 +149,9 @@ pub fn blaze_call_native(
 
             if !record_batches.is_empty() {
                 let schema = record_batches[0].schema();
-                info!("Result schema:");
+                debug!("Result schema:");
                 for field in schema.fields() {
-                    info!(
+                    debug!(
                         " -> col={}, type={}, nullable={}",
                         field.name(),
                         field.data_type(),
@@ -164,7 +164,7 @@ pub fn blaze_call_native(
                 let mut arrow_writer =
                     StreamWriter::try_new(&mut buf_writer, &*schema).unwrap();
 
-                info!("Writing IPC");
+                debug!("Writing IPC");
                 let mut num_rows_total = 0;
                 for record_batch in record_batches.iter() {
                     num_rows_total += record_batch.num_rows();
@@ -186,7 +186,7 @@ pub fn blaze_call_native(
                 )
                 .unwrap();
 
-                info!("Invoking IPC data consumer");
+                trace!("Invoking IPC data consumer");
                 let byte_buffer = env
                     .new_direct_byte_buffer(buf_writer.get_mut())
                     .expect("Error creating ByteBuffer");
@@ -197,11 +197,11 @@ pub fn blaze_call_native(
                     JValue::Object(byte_buffer.into())
                 )
                 .expect("Error invoking IPC data consumer");
-                info!("Invoking IPC data consumer succeeded");
+                trace!("Invoking IPC data consumer succeeded");
             } else {
                 update_extra_metrics(&env, metric_node, start_time, 0, 0).unwrap();
 
-                info!("Invoking IPC data consumer (with null result)");
+                trace!("Invoking IPC data consumer (with null result)");
                 jni_bridge_call_method!(
                     env,
                     JavaConsumer.accept,
@@ -209,7 +209,7 @@ pub fn blaze_call_native(
                     JValue::Object(JObject::null())
                 )
                 .expect("Error invoking IPC data consumer");
-                info!("Invoking IPC data consumer succeeded");
+                trace!("Invoking IPC data consumer succeeded");
             }
         });
 
