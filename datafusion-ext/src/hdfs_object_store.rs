@@ -14,7 +14,7 @@ use futures::AsyncRead;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
-use log::{debug, info, trace};
+use log::{debug, trace};
 
 use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
