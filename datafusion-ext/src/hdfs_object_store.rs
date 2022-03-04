@@ -133,6 +133,7 @@ impl Read for HDFSFileReader {
 
 struct FSDataInputStreamWrapper {
     pub inner: JObject<'static>,
+    env: jni::JNIEnv<'static>,
 }
 unsafe impl Send for FSDataInputStreamWrapper {}
 unsafe impl Sync for FSDataInputStreamWrapper {}
@@ -160,14 +161,14 @@ impl FSDataInputStreamWrapper {
         .l()?;
         JniResult::Ok(FSDataInputStreamWrapper {
             inner: hdfs_input_stream,
+            env,
         })
     }
 }
 
 impl Drop for FSDataInputStreamWrapper {
     fn drop(&mut self) {
-        let env = JavaClasses::get_thread_jnienv();
-        jni_bridge_call_method!(env, HadoopFSDataInputStream.close, self.inner)
+        jni_bridge_call_method!(self.env, HadoopFSDataInputStream.close, self.inner)
             .expect("FSDataInputStream.close() exception");
     }
 }
