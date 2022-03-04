@@ -16,7 +16,7 @@ use jni::JavaVM;
 #[macro_export]
 macro_rules! jni_bridge_new_object {
     ($env:expr, $clsname:ident $(, $args:expr)*) => {{
-        log::info!("jni_bridge_new_object!({}, {:?})", stringify!($clsname), &[$($args,)*]);
+        log::trace!("jni_bridge_new_object!({}, {:?})", stringify!($clsname), &[$($args,)*]);
         $env.new_object_unchecked(
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
@@ -31,7 +31,7 @@ macro_rules! jni_bridge_new_object {
 #[macro_export]
 macro_rules! jni_bridge_call_method {
     ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {{
-        log::info!("jni_bridge_call_method!({}.{}, {:?})",
+        log::trace!("jni_bridge_call_method!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
             &[$($args,)*] as &[JValue]);
@@ -50,7 +50,7 @@ macro_rules! jni_bridge_call_method {
 #[macro_export]
 macro_rules! jni_bridge_call_static_method {
     ($env:expr, $clsname:ident . $method:ident $(, $args:expr)*) => {{
-        log::info!("jni_bridge_call_static_method!({}.{}, {:?})",
+        log::trace!("jni_bridge_call_static_method!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
             &[$($args,)*] as &[JValue]);
