@@ -21,7 +21,10 @@ macro_rules! jni_bridge_new_object {
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
             &[$($args,)*],
-        )
+        ).and_then(|ret| {
+            assert_eq!($env.exception_check().unwrap(), false);
+            Ok(ret)
+        })
     }}
 }
 
@@ -37,7 +40,10 @@ macro_rules! jni_bridge_call_method {
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
             &[$($args,)*],
-        )
+        ).and_then(|ret| {
+            assert_eq!($env.exception_check().unwrap(), false);
+            Ok(ret)
+        })
     }}
 }
 
@@ -53,7 +59,10 @@ macro_rules! jni_bridge_call_static_method {
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
             &[$($args,)*],
-        )
+        ).and_then(|ret| {
+            assert_eq!($env.exception_check().unwrap(), false);
+            Ok(ret)
+        })
     }}
 }
 
@@ -154,6 +163,7 @@ impl JavaClasses<'static> {
             let jni_java_classes = JNI_JAVA_CLASSES.as_mut_ptr() as *mut JavaClasses;
             *jni_java_classes = initialized_java_classes;
         }
+        assert_eq!(env.exception_check().unwrap(), false);
         jni_java_classes_initialized.set(true);
         Ok(())
     }
