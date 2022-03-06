@@ -85,9 +85,16 @@ pub fn blaze_call_native(
     ipc_record_batch_data_consumer: JObject,
 ) {
     let start_time = std::time::Instant::now();
-    let _env_logger_init = env_logger::try_init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
+
+    static ENV_LOGGER_INIT: OnceCell<()> = OnceCell::new();
+    ENV_LOGGER_INIT
+        .get_or_try_init(|| {
+            env_logger::try_init_from_env(
+                env_logger::Env::default()
+                    .filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+            )
+        })
+        .unwrap();
     info!("Blaze native computing started");
 
     debug!("Initializing JavaClasses");
