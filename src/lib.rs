@@ -1,6 +1,7 @@
 use std::future;
 use std::io::BufWriter;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use datafusion::arrow::ipc::writer::StreamWriter;
@@ -12,7 +13,6 @@ use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::jni_bridge_call_method;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
-use jni::errors::Result as JniResult;
 use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JObject;
@@ -24,6 +24,8 @@ use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 use tokio::runtime::Runtime;
 
+mod metrics;
+
 #[cfg(feature = "mm")]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -32,15 +34,37 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
+static BACKTRACE: OnceCell<Arc<Mutex<String>>> = OnceCell::new();
+static ENV_LOGGER_INIT: OnceCell<()> = OnceCell::new();
+static TOKIO_RUNTIME_INSTANCE: OnceCell<Runtime> = OnceCell::new();
+
 fn tokio_runtime(thread_num: usize) -> &'static Runtime {
-    static INSTANCE: OnceCell<Runtime> = OnceCell::new();
-    INSTANCE.get_or_init(|| {
+    TOKIO_RUNTIME_INSTANCE.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(thread_num)
             .thread_name("blaze")
             .build()
             .unwrap()
     })
+}
+
+fn setup_backtrace_hook() {
+    BACKTRACE.get_or_init(|| {
+        std::panic::set_hook(Box::new(|_| {
+            *BACKTRACE.get().unwrap().lock().unwrap() =
+                format!("{:?}", backtrace::Backtrace::new());
+        }));
+        Arc::new(Mutex::new("<Backtrace not found>".to_string()))
+    });
+}
+
+fn setup_env_logger() {
+    ENV_LOGGER_INIT.get_or_init(|| {
+        env_logger::try_init_from_env(
+            env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+        )
+        .unwrap();
+    });
 }
 
 #[allow(non_snake_case)]
@@ -52,28 +76,40 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     metricNode: JObject,
     ipcRecordBatchDataConsumer: JObject,
 ) {
-    let start_time = std::time::Instant::now();
-    if let Err(err) = std::panic::catch_unwind(|| {
-        blaze_call_native(&env, taskDefinition, metricNode, ipcRecordBatchDataConsumer);
+    let start_time = Instant::now();
+
+    setup_backtrace_hook();
+    setup_env_logger();
+
+    // save backtrace when panics
+    if let Err(e) = std::panic::catch_unwind(|| {
+        blaze_call_native(
+            &env,
+            taskDefinition,
+            metricNode,
+            ipcRecordBatchDataConsumer,
+            start_time,
+        );
     }) {
+        let panic_str = match e.downcast::<String>() {
+            Ok(v) => *v,
+            Err(e) => match e.downcast::<&str>() {
+                Ok(v) => v.to_string(),
+                _ => "Unknown blaze-rs exception".to_owned(),
+            },
+        };
+        let backtrace = BACKTRACE.get().unwrap().lock().unwrap();
+        eprintln!("{}\nBacktrace:\n{}", panic_str, *backtrace);
+
         if !env.exception_check().unwrap() {
-            env.throw_new(
-                "java/lang/RuntimeException",
-                if let Some(msg) = err.downcast_ref::<String>() {
-                    msg
-                } else if let Some(msg) = err.downcast_ref::<&str>() {
-                    msg
-                } else {
-                    "Unknown blaze-rs exception"
-                },
-            )
-            .unwrap();
+            env.throw_new("java/lang/RuntimeException", panic_str)
+                .unwrap();
         }
     }
-    let duration = std::time::Instant::now().duration_since(start_time);
+
     info!(
         "blaze_call_native() time cost: {} sec",
-        duration.as_secs_f64()
+        Instant::now().duration_since(start_time).as_secs_f64(),
     );
 }
 
@@ -83,13 +119,9 @@ pub fn blaze_call_native(
     task_definition: JByteBuffer,
     metric_node: JObject,
     ipc_record_batch_data_consumer: JObject,
+    start_time: Instant,
 ) {
-    let start_time = std::time::Instant::now();
-    let _env_logger_init = env_logger::try_init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
     info!("Blaze native computing started");
-
     debug!("Initializing JavaClasses");
     JavaClasses::init(env).expect("Error initializing JavaClasses");
     let env = JavaClasses::get_thread_jnienv();
@@ -141,7 +173,7 @@ pub fn blaze_call_native(
             info!("Executing plan finished");
 
             // update spark metrics
-            update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
+            metrics::update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
 
             if !record_batches.is_empty() {
                 let schema = record_batches[0].schema();
@@ -173,7 +205,7 @@ pub fn blaze_call_native(
                     num_rows_total,
                     buf_writer.get_ref().len()
                 );
-                update_extra_metrics(
+                metrics::update_extra_metrics(
                     &env,
                     metric_node,
                     start_time,
@@ -195,7 +227,8 @@ pub fn blaze_call_native(
                 .expect("Error invoking IPC data consumer");
                 debug!("Invoking IPC data consumer succeeded");
             } else {
-                update_extra_metrics(&env, metric_node, start_time, 0, 0).unwrap();
+                metrics::update_extra_metrics(&env, metric_node, start_time, 0, 0)
+                    .unwrap();
 
                 debug!("Invoking IPC data consumer (with null result)");
                 jni_bridge_call_method!(
@@ -210,71 +243,4 @@ pub fn blaze_call_native(
         });
 
     info!("Blaze native computing finished");
-}
-
-fn update_spark_metric_node(
-    env: &JNIEnv,
-    metric_node: JObject,
-    execution_plan: Arc<dyn ExecutionPlan>,
-) -> JniResult<()> {
-    // update current node
-    update_metrics(
-        env,
-        metric_node,
-        &execution_plan
-            .metrics()
-            .unwrap_or_default()
-            .iter()
-            .map(|m| (m.value().name(), m.value().as_usize() as i64))
-            .collect::<Vec<_>>(),
-    )?;
-
-    // update children nodes
-    for (i, child_plan) in execution_plan.children().iter().enumerate() {
-        let child_metric_node = jni_bridge_call_method!(
-            env,
-            SparkMetricNode.getChild,
-            metric_node,
-            JValue::Int(i as i32)
-        )?
-        .l()?;
-        update_spark_metric_node(env, child_metric_node, child_plan.clone())?;
-    }
-    Ok(())
-}
-
-fn update_extra_metrics(
-    env: &JNIEnv,
-    metric_node: JObject,
-    start_time: Instant,
-    num_ipc_rows: usize,
-    num_ipc_bytes: usize,
-) -> JniResult<()> {
-    let duration_ns = Instant::now().duration_since(start_time).as_nanos();
-    update_metrics(
-        env,
-        metric_node,
-        &[
-            ("blaze_output_ipc_rows", num_ipc_rows as i64),
-            ("blaze_output_ipc_bytes", num_ipc_bytes as i64),
-            ("blaze_exec_time", duration_ns as i64),
-        ],
-    )
-}
-
-fn update_metrics(
-    env: &JNIEnv,
-    metric_node: JObject,
-    metric_values: &[(&str, i64)],
-) -> JniResult<()> {
-    for &(name, value) in metric_values {
-        jni_bridge_call_method!(
-            env,
-            SparkMetricNode.add,
-            metric_node,
-            JValue::Object(env.new_string(name)?.into()),
-            JValue::Long(value)
-        )?;
-    }
-    Ok(())
 }
