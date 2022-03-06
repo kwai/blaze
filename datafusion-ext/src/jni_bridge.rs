@@ -142,8 +142,9 @@ impl JavaClasses<'static> {
             cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
             cSparkMetricNode: SparkMetricNode::new(env)?,
         };
-        initialized_java_classes.classloader = env
-            .call_static_method_unchecked(
+        initialized_java_classes.classloader = get_global_ref_jobject(
+            env,
+            env.call_static_method_unchecked(
                 initialized_java_classes.cJniBridge.class,
                 initialized_java_classes
                     .cJniBridge
@@ -154,7 +155,8 @@ impl JavaClasses<'static> {
                     .clone(),
                 &[],
             )?
-            .l()?;
+            .l()?,
+        )?;
 
         unsafe {
             // safety:
@@ -685,6 +687,14 @@ impl<'a> SparkMetricNode<'a> {
 }
 
 fn get_global_jclass<'a>(env: &JNIEnv<'a>, cls: &str) -> JniResult<JClass<'static>> {
+    let local_jclass = env.find_class(cls)?;
+    Ok(get_global_ref_jobject(env, local_jclass.into())?.into())
+}
+
+fn get_global_ref_jobject<'a>(
+    env: &JNIEnv<'a>,
+    obj: JObject<'a>,
+) -> JniResult<JObject<'static>> {
     struct PrivGlobalRefGuard {
         obj: JObject<'static>,
         _vm: JavaVM,
@@ -697,9 +707,7 @@ fn get_global_jclass<'a>(env: &JNIEnv<'a>, cls: &str) -> JniResult<JClass<'stati
     //  as all global refs to jclass in JavaClasses should never be GC'd during
     // the whole jvm lifetime, we override GlobalRef::drop() to prevent
     // deleting these global refs.
-    let local_jclass = env.find_class(cls)?;
-    let global: PrivGlobalRef = unsafe {
-        std::mem::transmute(env.new_global_ref::<JClass>(local_jclass.into())?)
-    };
-    return Ok(global.inner.obj.into());
+    let global: PrivGlobalRef =
+        unsafe { std::mem::transmute(env.new_global_ref::<JObject>(obj)?) };
+    return Ok(global.inner.obj);
 }
