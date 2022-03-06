@@ -151,6 +151,14 @@ fn append_column(
         }
         DataType::Utf8 => append!(StringBuilder, StringArray, to, from),
         DataType::LargeUtf8 => append!(LargeStringBuilder, LargeStringArray, to, from),
+        DataType::Decimal(_precision, _scale) => {
+            let decimal_builder =
+                to.as_any_mut().downcast_mut::<DecimalBuilder>().unwrap();
+            let decimal_array = from.as_any().downcast_ref::<DecimalArray>().unwrap();
+            for i in 0..decimal_array.len() {
+                decimal_builder.append_value(decimal_array.value(i))?;
+            }
+        }
         _ => todo!(),
     }
     Ok(())
