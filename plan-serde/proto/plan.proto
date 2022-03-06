@@ -567,6 +567,11 @@ message ScalarListValue {
     repeated ScalarValue values = 2;
 }
 
+message ScalarDecimalValue {
+  Decimal decimal = 1;
+  int64 long_value = 2; // datafusion has i128 decimal value, only use i64 for blaze
+}
+
 message ScalarValue {
     oneof value {
         bool   bool_value = 1;
@@ -590,6 +595,8 @@ message ScalarValue {
         ScalarType null_list_value = 18;
 
         PrimitiveScalarType null_value = 19;
+
+        ScalarDecimalValue decimal_value = 20;
     }
 }
 

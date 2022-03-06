@@ -1036,6 +1036,14 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
             protobuf::scalar_value::Value::TimeNanosecondValue(v) => {
                 ScalarValue::TimestampNanosecond(Some(*v), None)
             }
+            protobuf::scalar_value::Value::DecimalValue(v) => {
+                let decimal = v.decimal.as_ref().unwrap();
+                ScalarValue::Decimal128(
+                    Some(v.long_value as i128),
+                    decimal.whole as usize,
+                    decimal.fractional as usize,
+                )
+            }
             protobuf::scalar_value::Value::ListValue(scalar_list) => {
                 let protobuf::ScalarListValue {
                     values,
@@ -1187,6 +1195,14 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
                 PrimitiveScalarType::from_i32(*null_enum)
                     .ok_or_else(|| proto_error("Invalid scalar type"))?
                     .try_into()?
+            }
+            protobuf::scalar_value::Value::DecimalValue(v) => {
+                let decimal = v.decimal.as_ref().unwrap();
+                ScalarValue::Decimal128(
+                    Some(v.long_value as i128),
+                    decimal.whole as usize,
+                    decimal.fractional as usize,
+                )
             }
         };
         Ok(scalar)
