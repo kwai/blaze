@@ -181,7 +181,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .zip(projection.expr_name.iter())
                     .map(|(expr, name)| {
                         Ok((
-                            bind(expr.try_into()?, &input.schema()).unwrap(),
+                            bind(expr.try_into()?, &input.schema())?,
                             name.to_string(),
                         ))
                     })
@@ -202,7 +202,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })?
                     .try_into()?;
                 Ok(Arc::new(FilterExec::try_new(
-                    bind(predicate, &input.schema()).unwrap(),
+                    bind(predicate, &input.schema())?,
                     input,
                 )?))
             }
@@ -282,7 +282,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(LocalLimitExec::new(input, limit.limit as usize)))
             }
             PhysicalPlanType::Window(window_agg) => {
-                // TODO: bind column to input schema
                 let input: Arc<dyn ExecutionPlan> =
                     convert_box_required!(window_agg.input)?;
                 let input_schema = window_agg
@@ -307,17 +306,22 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         })?;
 
                         match expr_type {
-                            ExprType::WindowExpr(window_node) => Ok(create_window_expr(
-                                &convert_required!(window_node.window_function)?,
-                                name.to_owned(),
-                                &[convert_box_required!(window_node.expr)?],
-                                &[],
-                                &[],
-                                Some(WindowFrame::default()),
-                                &physical_schema,
-                            )?),
+                            ExprType::WindowExpr(window_node) => {
+                                let window_node_expr = bind(
+                                    convert_box_required!(window_node.expr)?, &input.schema()
+                                )?;
+                                Ok(create_window_expr(
+                                        &convert_required!(window_node.window_function)?,
+                                        name.to_owned(),
+                                        &[window_node_expr],
+                                        &[],
+                                        &[],
+                                        Some(WindowFrame::default()),
+                                        &physical_schema,
+                                )?)
+                            }
                             _ => Err(PlanSerDeError::General(
-                                "Invalid expression for WindowAggrExec".to_string(),
+                                    "Invalid expression for WindowAggrExec".to_string(),
                             )),
                         }
                     })
@@ -330,7 +334,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::HashAggregate(hash_agg) => {
-                // TODO: bind column to input schema
                 let input: Arc<dyn ExecutionPlan> =
                     convert_box_required!(hash_agg.input)?;
                 let mode = protobuf::AggregateMode::from_i32(hash_agg.mode).ok_or_else(|| {
@@ -351,11 +354,13 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .iter()
                     .zip(hash_agg.group_expr_name.iter())
                     .map(|(expr, name)| {
-                        bind(expr.try_into().unwrap(), &input.schema())
-                            .map(|expr| (expr, name.to_string()))
-                            .unwrap()
+                        expr.try_into().and_then(|expr: Arc<dyn PhysicalExpr>| {
+                            bind(expr, &input.schema())
+                                .map(|expr| (expr, name.to_string()))
+                                .map_err(|err| PlanSerDeError::DataFusionError(err))
+                        })
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, _>>()?;
 
                 let input_schema = hash_agg
                     .input_schema
@@ -392,11 +397,13 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                         ))
                                         },
                                     )?;
-
+                                let agg_expr = bind(
+                                    convert_box_required!(agg_node.expr)?, &input.schema()
+                                )?;
                                 Ok(create_aggregate_expr(
                                     &aggr_function.into(),
                                     false,
-                                    &[convert_box_required!(agg_node.expr)?],
+                                    &[agg_expr],
                                     &physical_schema,
                                     name.to_string(),
                                 )?)
@@ -418,17 +425,25 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::HashJoin(hashjoin) => {
-                // TODO: bind column to input schema
-                let left: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.left)?;
+                let left: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(hashjoin.left)?;
                 let right: Arc<dyn ExecutionPlan> =
                     convert_box_required!(hashjoin.right)?;
                 let on: Vec<(Column, Column)> = hashjoin
                     .on
                     .iter()
                     .map(|col| {
-                        let left = into_required!(col.left)?;
-                        let right = into_required!(col.right)?;
-                        Ok((left, right))
+                        let left_col: Column = into_required!(col.left)?;
+                        let left_col_binded: Column = Column::new_with_schema(
+                            left_col.name(),
+                            &left.schema(),
+                        )?;
+                        let right_col: Column = into_required!(col.right)?;
+                        let right_col_binded: Column = Column::new_with_schema(
+                            right_col.name(),
+                            &right.schema(),
+                        )?;
+                        Ok((left_col_binded, right_col_binded))
                     })
                     .collect::<Result<_, Self::Error>>()?;
                 let join_type = protobuf::JoinType::from_i32(hashjoin.join_type)
