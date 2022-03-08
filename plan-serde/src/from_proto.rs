@@ -24,12 +24,13 @@ use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::repartition_exec_node::PartitionMethod;
-use crate::{convert_box_required, convert_required, into_required, protobuf};
+use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
 use crate::{from_proto_binary_op, proto_error, str_to_byte};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::object_store::{FileMeta, SizedFile};
 use datafusion::datasource::PartitionedFile;
+use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_plan::window_frames::WindowFrame;
 use datafusion::physical_plan::aggregates::create_aggregate_expr;
@@ -66,6 +67,100 @@ use datafusion_ext::global_object_store_registry;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 
+fn bind(
+    expr_in: Arc<dyn PhysicalExpr>,
+    input_schema: &Arc<Schema>,
+) -> Result<Arc<dyn PhysicalExpr>, DataFusionError> {
+    let expr = expr_in.as_any();
+
+    if let Some(expr) = expr.downcast_ref::<Column>() {
+        Ok(Arc::new(Column::new_with_schema(
+            expr.name(),
+            input_schema,
+        )?))
+    } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
+        let binary_expr = Arc::new(BinaryExpr::new(
+            bind(expr.left().clone(), input_schema)?,
+            expr.op().clone(),
+            bind(expr.right().clone(), input_schema)?,
+        ));
+        Ok(binary_expr)
+    } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
+        let case_expr = Arc::new(CaseExpr::try_new(
+            expr.expr()
+                .as_ref()
+                .map(|exp| bind(exp.clone(), input_schema))
+                .transpose()?,
+            expr.when_then_expr()
+                .iter()
+                .map(|(when_expr, then_expr)| {
+                    (
+                        bind(when_expr.clone(), input_schema).unwrap(),
+                        bind(then_expr.clone(), input_schema).unwrap(),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .as_slice(),
+            expr.else_expr()
+                .as_ref()
+                .map(|exp| bind(exp.clone().clone(), input_schema))
+                .transpose()?,
+        )?);
+        Ok(case_expr)
+    } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
+        let not_expr = Arc::new(NotExpr::new(bind(expr.arg().clone(), input_schema)?));
+        Ok(not_expr)
+    } else if let Some(expr) = expr.downcast_ref::<IsNullExpr>() {
+        let is_null = Arc::new(IsNullExpr::new(bind(expr.arg().clone(), input_schema)?));
+        Ok(is_null)
+    } else if let Some(expr) = expr.downcast_ref::<IsNotNullExpr>() {
+        let is_not_null =
+            Arc::new(IsNotNullExpr::new(bind(expr.arg().clone(), input_schema)?));
+        Ok(is_not_null)
+    } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
+        let in_list = Arc::new(InListExpr::new(
+            bind(expr.expr().clone(), input_schema)?,
+            expr.list()
+                .iter()
+                .map(|a| bind(a.clone(), input_schema))
+                .collect::<Result<Vec<_>, DataFusionError>>()?,
+            expr.negated(),
+        ));
+        Ok(in_list)
+    } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
+        let neg = Arc::new(NegativeExpr::new(bind(expr.arg().clone(), input_schema)?));
+        Ok(neg)
+    } else if let Some(_) = expr.downcast_ref::<Literal>() {
+        Ok(expr_in)
+    } else if let Some(cast) = expr.downcast_ref::<CastExpr>() {
+        let cast = Arc::new(CastExpr::new(
+            bind(cast.expr().clone(), input_schema)?,
+            cast.cast_type().clone(),
+            DEFAULT_DATAFUSION_CAST_OPTIONS,
+        ));
+        Ok(cast)
+    } else if let Some(cast) = expr.downcast_ref::<TryCastExpr>() {
+        let try_cast = Arc::new(TryCastExpr::new(
+            bind(cast.expr().clone(), input_schema)?,
+            cast.cast_type().clone(),
+        ));
+        Ok(try_cast)
+    } else if let Some(expr) = expr.downcast_ref::<ScalarFunctionExpr>() {
+        let sfe = Arc::new(ScalarFunctionExpr::new(
+            expr.name(),
+            expr.fun().clone(),
+            expr.args()
+                .iter()
+                .map(|e| bind(e.clone(), input_schema))
+                .collect::<Result<Vec<_>, _>>()?,
+            expr.return_type(),
+        ));
+        Ok(sfe)
+    } else {
+        unimplemented!("Expression binding not implemented yet")
+    }
+}
+
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
     type Error = PlanSerDeError;
 
@@ -84,7 +179,12 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .expr
                     .iter()
                     .zip(projection.expr_name.iter())
-                    .map(|(expr, name)| Ok((expr.try_into()?, name.to_string())))
+                    .map(|(expr, name)| {
+                        Ok((
+                            bind(expr.try_into()?, &input.schema()).unwrap(),
+                            name.to_string(),
+                        ))
+                    })
                     .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>(
                     )?;
                 Ok(Arc::new(ProjectionExec::try_new(exprs, input)?))
@@ -101,7 +201,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         )
                     })?
                     .try_into()?;
-                Ok(Arc::new(FilterExec::try_new(predicate, input)?))
+                Ok(Arc::new(FilterExec::try_new(
+                    bind(predicate, &input.schema()).unwrap(),
+                    input,
+                )?))
             }
             PhysicalPlanType::CsvScan(scan) => Ok(Arc::new(CsvExec::new(
                 scan.base_conf.as_ref().unwrap().try_into()?,
@@ -132,12 +235,13 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::Repartition(repart) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(repart.input)?;
+                let schema = input.schema();
                 match repart.partition_method {
                     Some(PartitionMethod::Hash(ref hash_part)) => {
                         let expr = hash_part
                             .hash_expr
                             .iter()
-                            .map(|e| e.try_into())
+                            .map(|e| bind(e.try_into().unwrap(), &schema))
                             .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
 
                         Ok(Arc::new(RepartitionExec::try_new(
@@ -178,6 +282,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(LocalLimitExec::new(input, limit.limit as usize)))
             }
             PhysicalPlanType::Window(window_agg) => {
+                // TODO: bind column to input schema
                 let input: Arc<dyn ExecutionPlan> =
                     convert_box_required!(window_agg.input)?;
                 let input_schema = window_agg
@@ -225,6 +330,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::HashAggregate(hash_agg) => {
+                // TODO: bind column to input schema
                 let input: Arc<dyn ExecutionPlan> =
                     convert_box_required!(hash_agg.input)?;
                 let mode = protobuf::AggregateMode::from_i32(hash_agg.mode).ok_or_else(|| {
@@ -245,9 +351,11 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .iter()
                     .zip(hash_agg.group_expr_name.iter())
                     .map(|(expr, name)| {
-                        expr.try_into().map(|expr| (expr, name.to_string()))
+                        bind(expr.try_into().unwrap(), &input.schema())
+                            .map(|expr| (expr, name.to_string()))
+                            .unwrap()
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Vec<_>>();
 
                 let input_schema = hash_agg
                     .input_schema
@@ -310,6 +418,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::HashJoin(hashjoin) => {
+                // TODO: bind column to input schema
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.left)?;
                 let right: Arc<dyn ExecutionPlan> =
                     convert_box_required!(hashjoin.right)?;
@@ -406,7 +515,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 })?
                                 .as_ref();
                             Ok(PhysicalSortExpr {
-                                expr: expr.try_into()?,
+                                expr: bind(expr.try_into()?, &input.schema()).unwrap(),
                                 options: SortOptions {
                                     descending: !sort_expr.asc,
                                     nulls_first: sort_expr.nulls_first,

@@ -73,6 +73,17 @@ macro_rules! convert_box_required {
     }};
 }
 
+#[macro_export]
+macro_rules! convert_box_required_with_bind {
+    ($PB:expr, $SC:expr) => {{
+        if let Some(field) = $PB.as_ref() {
+            bind(field.as_ref().try_into(), $SC)
+        } else {
+            Err(proto_error("Missing required field in protobuf"))
+        }
+    }};
+}
+
 pub(crate) fn from_proto_binary_op(op: &str) -> Result<Operator, PlanSerDeError> {
     match op {
         "And" => Ok(Operator::And),
