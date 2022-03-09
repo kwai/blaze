@@ -37,6 +37,8 @@ pub enum PlanSerDeError {
     ArrowError(ArrowError),
     DataFusionError(DataFusionError),
     IoError(io::Error),
+    MissingRequiredField(String),
+    UnknownEnumVariant { name: String, value: i32 },
 }
 
 #[allow(clippy::from_over_into)]
@@ -89,8 +91,63 @@ impl Display for PlanSerDeError {
             PlanSerDeError::Internal(desc) => {
                 write!(f, "Internal Ballista error: {}", desc)
             }
+            Self::MissingRequiredField(name) => {
+                write!(f, "Missing required field {}", name)
+            }
+            Self::UnknownEnumVariant { name, value } => {
+                write!(f, "Unknown i32 value for {} enum: {}", name, value)
+            }
         }
     }
 }
 
 impl Error for PlanSerDeError {}
+
+impl PlanSerDeError {
+    pub(crate) fn required(field: impl Into<String>) -> PlanSerDeError {
+        PlanSerDeError::MissingRequiredField(field.into())
+    }
+
+    pub(crate) fn unknown(name: impl Into<String>, value: i32) -> PlanSerDeError {
+        PlanSerDeError::UnknownEnumVariant {
+            name: name.into(),
+            value,
+        }
+    }
+}
+
+/// An extension trait that adds the methods `optional` and `required` to any
+/// Option containing a type implementing `TryInto<U, Error = Error>`
+pub trait FromOptionalField<T> {
+    /// Converts an optional protobuf field to an option of a different type
+    ///
+    /// Returns None if the option is None, otherwise calls [`FromField::field`]
+    /// on the contained data, returning any error encountered
+    fn optional(self) -> std::result::Result<Option<T>, PlanSerDeError>;
+
+    /// Converts an optional protobuf field to a different type, returning an error if None
+    ///
+    /// Returns `Error::MissingRequiredField` if None, otherwise calls [`FromField::field`]
+    /// on the contained data, returning any error encountered
+    fn required(self, field: impl Into<String>)
+        -> std::result::Result<T, PlanSerDeError>;
+}
+
+impl<T, U> FromOptionalField<U> for Option<T>
+where
+    T: TryInto<U, Error = PlanSerDeError>,
+{
+    fn optional(self) -> std::result::Result<Option<U>, PlanSerDeError> {
+        self.map(|t| t.try_into()).transpose()
+    }
+
+    fn required(
+        self,
+        field: impl Into<String>,
+    ) -> std::result::Result<U, PlanSerDeError> {
+        match self {
+            None => Err(PlanSerDeError::required(field)),
+            Some(t) => t.try_into(),
+        }
+    }
+}

@@ -20,7 +20,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use crate::error::PlanSerDeError;
+use crate::error::{FromOptionalField, PlanSerDeError};
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::repartition_exec_node::PartitionMethod;
@@ -32,7 +32,9 @@ use datafusion::datasource::object_store::{FileMeta, SizedFile};
 use datafusion::datasource::PartitionedFile;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
+use datafusion::logical_plan;
 use datafusion::logical_plan::window_frames::WindowFrame;
+use datafusion::logical_plan::*;
 use datafusion::physical_plan::aggregates::create_aggregate_expr;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::file_format::{
@@ -63,6 +65,7 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::{
     AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
 };
+use datafusion::scalar::ScalarValue;
 use datafusion_ext::global_object_store_registry;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
@@ -209,10 +212,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 str_to_byte(&scan.delimiter)?,
             ))),
             PhysicalPlanType::ParquetScan(scan) => {
+                let predicate = scan
+                    .pruning_predicate
+                    .as_ref()
+                    .map(|expr| expr.try_into())
+                    .transpose()?;
                 Ok(Arc::new(ParquetExec::new(
                     scan.base_conf.as_ref().unwrap().try_into()?,
-                    // TODO predicate should be de-serialized
-                    None,
+                    predicate,
                 )))
             }
             PhysicalPlanType::AvroScan(scan) => Ok(Arc::new(AvroExec::new(
@@ -882,5 +889,179 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
             table_partition_cols: vec![],
         })
+    }
+}
+
+impl TryFrom<&protobuf::LogicalExprNode> for Expr {
+    type Error = PlanSerDeError;
+
+    fn try_from(expr: &protobuf::LogicalExprNode) -> Result<Self, Self::Error> {
+        use crate::protobuf::logical_expr_node::ExprType;
+
+        let expr_type = expr
+            .expr_type
+            .as_ref()
+            .ok_or_else(|| PlanSerDeError::required("expr_type"))?;
+
+        match expr_type {
+            ExprType::BinaryExpr(binary_expr) => Ok(Self::BinaryExpr {
+                left: Box::new(binary_expr.l.as_deref().required("l")?),
+                op: from_proto_binary_op(&binary_expr.op)?,
+                right: Box::new(binary_expr.r.as_deref().required("r")?),
+            }),
+            ExprType::Column(column) => Ok(Self::Column(column.into())),
+            ExprType::Literal(literal) => {
+                let scalar_value: ScalarValue = literal.try_into()?;
+                Ok(Self::Literal(scalar_value))
+            }
+            ExprType::Alias(alias) => Ok(Self::Alias(
+                Box::new(alias.expr.as_deref().required("expr")?),
+                alias.alias.clone(),
+            )),
+            ExprType::IsNullExpr(is_null) => Ok(Self::IsNull(Box::new(
+                is_null.expr.as_deref().required("expr")?,
+            ))),
+            ExprType::IsNotNullExpr(is_not_null) => Ok(Self::IsNotNull(Box::new(
+                is_not_null.expr.as_deref().required("expr")?,
+            ))),
+            ExprType::NotExpr(not) => {
+                Ok(Self::Not(Box::new(not.expr.as_deref().required("expr")?)))
+            }
+            ExprType::Between(between) => Ok(Self::Between {
+                expr: Box::new(between.expr.as_deref().required("expr")?),
+                negated: between.negated,
+                low: Box::new(between.low.as_deref().required("low")?),
+                high: Box::new(between.high.as_deref().required("high")?),
+            }),
+            ExprType::Case(case) => {
+                let when_then_expr = case
+                    .when_then_expr
+                    .iter()
+                    .map(|e| {
+                        let when_expr = e.when_expr.as_ref().required("when_expr")?;
+                        let then_expr = e.then_expr.as_ref().required("then_expr")?;
+                        Ok((Box::new(when_expr), Box::new(then_expr)))
+                    })
+                    .collect::<Result<Vec<(Box<Expr>, Box<Expr>)>, PlanSerDeError>>()?;
+                Ok(Self::Case {
+                    expr: parse_optional_expr(&case.expr)?.map(Box::new),
+                    when_then_expr,
+                    else_expr: parse_optional_expr(&case.else_expr)?.map(Box::new),
+                })
+            }
+            ExprType::Cast(cast) => {
+                let expr = Box::new(cast.expr.as_deref().required("expr")?);
+                let data_type = cast.arrow_type.as_ref().required("arrow_type")?;
+                Ok(Self::Cast { expr, data_type })
+            }
+            ExprType::TryCast(cast) => {
+                let expr = Box::new(cast.expr.as_deref().required("expr")?);
+                let data_type = cast.arrow_type.as_ref().required("arrow_type")?;
+                Ok(Self::TryCast { expr, data_type })
+            }
+            ExprType::Negative(negative) => Ok(Self::Negative(Box::new(
+                negative.expr.as_deref().required("expr")?,
+            ))),
+            ExprType::InList(in_list) => Ok(Self::InList {
+                expr: Box::new(in_list.expr.as_deref().required("expr")?),
+                list: in_list
+                    .list
+                    .iter()
+                    .map(|expr| expr.try_into())
+                    .collect::<Result<Vec<_>, _>>()?,
+                negated: in_list.negated,
+            }),
+            ExprType::Wildcard(_) => Ok(Self::Wildcard),
+            ExprType::ScalarFunction(expr) => {
+                let scalar_function = protobuf::ScalarFunction::from_i32(expr.fun)
+                    .ok_or_else(|| PlanSerDeError::unknown("ScalarFunction", expr.fun))?;
+                let args = &expr.args;
+
+                match scalar_function {
+                    protobuf::ScalarFunction::Sqrt => Ok(sqrt((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Sin => Ok(sin((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Cos => Ok(cos((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Tan => Ok(tan((&args[0]).try_into()?)),
+                    // ScalarFunction::Asin => Ok(asin(&args[0]).try_into()?)),
+                    // ScalarFunction::Acos => Ok(acos(&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Atan => Ok(atan((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Exp => Ok(exp((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Log2 => Ok(log2((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Ln => Ok(ln((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Log10 => Ok(log10((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Floor => Ok(floor((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Ceil => Ok(ceil((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Round => Ok(round((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Trunc => Ok(trunc((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Abs => Ok(abs((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Signum => {
+                        Ok(signum((&args[0]).try_into()?))
+                    }
+                    protobuf::ScalarFunction::Octetlength => {
+                        Ok(octet_length((&args[0]).try_into()?))
+                    }
+                    // // ScalarFunction::Concat => Ok(concat((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Lower => Ok(lower((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Upper => Ok(upper((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Trim => Ok(trim((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Ltrim => Ok(ltrim((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Rtrim => Ok(rtrim((&args[0]).try_into()?)),
+                    // ScalarFunction::Totimestamp => Ok(to_timestamp((&args[0]).try_into()?)),
+                    // ScalarFunction::Array => Ok(array((&args[0]).try_into()?)),
+                    // // ScalarFunction::Nullif => Ok(nulli((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Datepart => {
+                        Ok(date_part((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    protobuf::ScalarFunction::Datetrunc => {
+                        Ok(date_trunc((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    // ScalarFunction::Md5 => Ok(md5((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Sha224 => {
+                        Ok(sha224((&args[0]).try_into()?))
+                    }
+                    protobuf::ScalarFunction::Sha256 => {
+                        Ok(sha256((&args[0]).try_into()?))
+                    }
+                    protobuf::ScalarFunction::Sha384 => {
+                        Ok(sha384((&args[0]).try_into()?))
+                    }
+                    protobuf::ScalarFunction::Sha512 => {
+                        Ok(sha512((&args[0]).try_into()?))
+                    }
+                    protobuf::ScalarFunction::Digest => {
+                        Ok(digest((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    _ => Err(proto_error(
+                        "Protobuf deserialization error: Unsupported scalar function",
+                    )),
+                }
+            }
+        }
+    }
+}
+
+fn parse_optional_expr(
+    p: &Option<Box<protobuf::LogicalExprNode>>,
+) -> Result<Option<Expr>, PlanSerDeError> {
+    match p {
+        Some(expr) => expr.as_ref().try_into().map(Some),
+        None => Ok(None),
+    }
+}
+
+impl From<protobuf::Column> for logical_plan::Column {
+    fn from(c: protobuf::Column) -> Self {
+        let protobuf::Column { relation, name } = c;
+
+        Self {
+            relation: relation.map(|r| r.relation),
+            name,
+        }
+    }
+}
+
+impl From<&protobuf::Column> for logical_plan::Column {
+    fn from(c: &protobuf::Column) -> Self {
+        c.clone().into()
     }
 }

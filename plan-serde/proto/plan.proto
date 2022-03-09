@@ -286,6 +286,7 @@ message FileScanExecConf {
 
 message ParquetScanExecNode {
   FileScanExecConf base_conf = 1;
+  LogicalExprNode pruning_predicate = 2;
 }
 
 message CsvScanExecNode {
@@ -686,3 +687,106 @@ message ArrowType {
 //   }
 //}
 message EmptyMessage{}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Logical Expressions, Only used for parquet filter push down currently.
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+message LogicalExprNode {
+  oneof ExprType {
+    // column references
+    Column column = 1;
+    // alias
+    AliasNode alias = 2;
+    ScalarValue literal = 3;
+    // binary expressions
+    BinaryExprNode binary_expr = 4;
+    // null checks
+    IsNull is_null_expr = 5;
+    IsNotNull is_not_null_expr = 6;
+    Not not_expr = 7;
+    BetweenNode between = 8;
+    CaseNode case_ = 9;
+    CastNode cast = 10;
+    NegativeNode negative = 11;
+    InListNode in_list = 12;
+    bool wildcard = 13;
+    ScalarFunctionNode scalar_function = 14;
+    TryCastNode try_cast = 15;
+  }
+}
+
+message ColumnRelation {
+  string relation = 1;
+}
+
+message Column {
+  string name = 1;
+  ColumnRelation relation = 2;
+}
+
+message AliasNode {
+  LogicalExprNode expr = 1;
+  string alias = 2;
+}
+
+message BinaryExprNode {
+  LogicalExprNode l = 1;
+  LogicalExprNode r = 2;
+  string op = 3;
+}
+
+message IsNull {
+  LogicalExprNode expr = 1;
+}
+
+message IsNotNull {
+  LogicalExprNode expr = 1;
+}
+
+message Not {
+  LogicalExprNode expr = 1;
+}
+
+message BetweenNode {
+  LogicalExprNode expr = 1;
+  bool negated = 2;
+  LogicalExprNode low = 3;
+  LogicalExprNode high = 4;
+}
+
+message CaseNode {
+  LogicalExprNode expr = 1;
+  repeated WhenThen when_then_expr = 2;
+  LogicalExprNode else_expr = 3;
+}
+
+message WhenThen {
+  LogicalExprNode when_expr = 1;
+  LogicalExprNode then_expr = 2;
+}
+
+message CastNode {
+  LogicalExprNode expr = 1;
+  ArrowType arrow_type = 2;
+}
+
+message TryCastNode {
+  LogicalExprNode expr = 1;
+  ArrowType arrow_type = 2;
+}
+
+message NegativeNode {
+  LogicalExprNode expr = 1;
+}
+
+message InListNode {
+  LogicalExprNode expr = 1;
+  repeated LogicalExprNode list = 2;
+  bool negated = 3;
+}
+
+message ScalarFunctionNode {
+  ScalarFunction fun = 1;
+  repeated LogicalExprNode args = 2;
+}
