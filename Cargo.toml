@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-datafusion = { version = "7.0.0", features = ["simd"] }
+datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "11edd3c88dd7f67c89a7caeaaf24b219e17bb6d2", features = ["simd"] }
 env_logger = "0.9.0"
 jni = "0.19.0"
 log = "0.4.14"
@@ -37,5 +37,5 @@ mm = ["mimalloc"]
 overflow-checks = false
 
 [profile.release]
-#lto = true
-#codegen-units = 1
+lto = true
+codegen-units = 1
