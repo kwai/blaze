@@ -1000,7 +1000,14 @@ impl TryFrom<&protobuf::LogicalExprNode> for Expr {
                     protobuf::ScalarFunction::Octetlength => {
                         Ok(octet_length((&args[0]).try_into()?))
                     }
-                    // // ScalarFunction::Concat => Ok(concat((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Concat => {
+                        let args: Vec<Expr> = expr
+                            .args
+                            .iter()
+                            .map(|arg| arg.try_into())
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(concat(&*args))
+                    }
                     protobuf::ScalarFunction::Lower => Ok(lower((&args[0]).try_into()?)),
                     protobuf::ScalarFunction::Upper => Ok(upper((&args[0]).try_into()?)),
                     protobuf::ScalarFunction::Trim => Ok(trim((&args[0]).try_into()?)),
@@ -1015,7 +1022,7 @@ impl TryFrom<&protobuf::LogicalExprNode> for Expr {
                     protobuf::ScalarFunction::Datetrunc => {
                         Ok(date_trunc((&args[0]).try_into()?, (&args[1]).try_into()?))
                     }
-                    // ScalarFunction::Md5 => Ok(md5((&args[0]).try_into()?)),
+                    protobuf::ScalarFunction::Md5 => Ok(md5((&args[0]).try_into()?)),
                     protobuf::ScalarFunction::Sha224 => {
                         Ok(sha224((&args[0]).try_into()?))
                     }
