@@ -29,6 +29,22 @@ macro_rules! jni_bridge_new_object {
 }
 
 #[macro_export]
+macro_rules! jni_bridge_call_method_no_check_java_exception {
+    ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {{
+        log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?})",
+            stringify!($clsname),
+            stringify!($method),
+            &[$($args,)*] as &[JValue]);
+        $env.call_method_unchecked(
+            $obj,
+            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
+            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
+            &[$($args,)*],
+        )
+    }}
+}
+
+#[macro_export]
 macro_rules! jni_bridge_call_method {
     ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {{
         log::trace!("jni_bridge_call_method!({}.{}, {:?})",

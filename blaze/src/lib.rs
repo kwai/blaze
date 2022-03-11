@@ -188,35 +188,37 @@ pub fn blaze_call_native(
                 }
 
                 let mut buf: Vec<u8> = vec![];
-                let mut buf_writer = BufWriter::new(&mut buf);
-                let mut arrow_writer =
-                    StreamWriter::try_new(&mut buf_writer, &*schema).unwrap();
-
-                debug!("Writing IPC");
                 let mut num_rows_total = 0;
-                for record_batch in record_batches.iter() {
-                    num_rows_total += record_batch.num_rows();
-                    arrow_writer.write(record_batch).expect("Error writing IPC");
+                {
+                    let mut buf_writer = BufWriter::new(&mut buf);
+                    let mut arrow_writer =
+                        StreamWriter::try_new(&mut buf_writer, &*schema).unwrap();
+
+                    debug!("Writing IPC");
+                    for record_batch in record_batches.iter() {
+                        num_rows_total += record_batch.num_rows();
+                        arrow_writer.write(record_batch).expect("Error writing IPC");
+                    }
+                    arrow_writer.finish().expect("Error finishing arrow writer");
                 }
-                arrow_writer.finish().expect("Error finishing arrow writer");
-                let buf_writer = arrow_writer.into_inner().unwrap();
+
                 info!(
                     "Writing IPC finished: rows={}, bytes={}",
                     num_rows_total,
-                    buf_writer.get_ref().len()
+                    buf.len(),
                 );
                 metrics::update_extra_metrics(
                     &env,
                     metric_node,
                     start_time,
                     num_rows_total,
-                    buf_writer.get_ref().len(),
+                    buf.len(),
                 )
                 .unwrap();
 
                 debug!("Invoking IPC data consumer");
                 let byte_buffer = env
-                    .new_direct_byte_buffer(buf_writer.get_mut())
+                    .new_direct_byte_buffer(&mut buf)
                     .expect("Error creating ByteBuffer");
                 jni_bridge_call_method!(
                     env,
