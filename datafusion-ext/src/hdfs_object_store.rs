@@ -15,11 +15,12 @@ use jni::errors::Result as JniResult;
 use jni::objects::JObject;
 use jni::objects::JValue;
 use log::debug;
+use log::error;
 
-use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
 use crate::jni_bridge_call_static_method;
 use crate::jni_bridge_new_object;
+use crate::{jni_bridge::JavaClasses, jni_bridge_call_method_no_check_java_exception};
 
 #[derive(Clone)]
 pub struct HDFSSingleFileObjectStore;
@@ -168,7 +169,26 @@ impl FSDataInputStreamWrapper {
 
 impl Drop for FSDataInputStreamWrapper {
     fn drop(&mut self) {
-        jni_bridge_call_method!(self.env, HadoopFSDataInputStream.close, self.inner)
-            .expect("FSDataInputStream.close() exception");
+        // never panic in drop, otherwise the jvm process will be aborted
+        let no_panic_scope = || -> JniResult<()> {
+            jni_bridge_call_method_no_check_java_exception!(
+                self.env,
+                HadoopFSDataInputStream.close,
+                self.inner
+            )?;
+
+            if self.env.exception_check()? {
+                error!("java error occurred during FSDataInputStreamWrapper.close()");
+                self.env.exception_describe()?;
+            }
+            Ok(())
+        };
+
+        if let JniResult::Err(err) = no_panic_scope() {
+            error!(
+                "rust error happend during FSDataInputStreamWrapper.drop(): {:?}",
+                err
+            );
+        }
     }
 }
