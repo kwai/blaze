@@ -8,17 +8,11 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1.36"
 chrono = { version = "0.4", default-features = false }
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "11edd3c88dd7f67c89a7caeaaf24b219e17bb6d2", features = ["simd"] }
+datafusion = { version = "7.0.0", features = ["simd"] }
 datafusion-ext = { path = "../datafusion-ext" }
 log = "0.4.14"
 prost = "0.9"
 tonic = "0.6"
 
-
 [build-dependencies]
 tonic-build = { version = "0.6" }
-
-
-# [patch.crates-io]
-# arrow = { git = "https://github.com/apache/arrow-rs.git", branch = "master" }
-# datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", branch = "bz_master"}

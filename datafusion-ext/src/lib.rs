@@ -20,7 +20,7 @@ lazy_static::lazy_static! {
         let osr = ObjectStoreRegistry::default();
         let hdfs_object_store = Arc::new(HDFSSingleFileObjectStore);
         osr.register_store("hdfs".to_owned(), hdfs_object_store.clone());
-        osr.register_store("viewfs".to_owned(), hdfs_object_store.clone());
+        osr.register_store("viewfs".to_owned(), hdfs_object_store);
         osr
     };
 

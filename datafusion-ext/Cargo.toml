@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 ahash = "0.7.6"
 async-trait = "0.1.52"
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "11edd3c88dd7f67c89a7caeaaf24b219e17bb6d2", features = ["simd"] }
+datafusion = { version = "7.0.0", features = ["simd"] }
 futures = "0.3"
 jni = "0.19.0"
 lazy_static = "1.4.0"
