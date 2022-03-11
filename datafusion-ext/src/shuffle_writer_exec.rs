@@ -448,7 +448,7 @@ impl ShuffleRepartitioner {
 
 /// consume the `buffered_partitions` and do spill into a single temp shuffle output file
 async fn spill_into(
-    buffered_partitions: &mut Vec<PartitionBuffer>,
+    buffered_partitions: &mut [PartitionBuffer],
     schema: SchemaRef,
     path: &Path,
     num_output_partitions: usize,

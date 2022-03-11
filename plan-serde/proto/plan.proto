@@ -251,11 +251,17 @@ message FilterExecNode {
   PhysicalExprNode expr = 2;
 }
 
+message FileRange {
+  int64 start = 1;
+  int64 end = 2;
+}
+
 message PartitionedFile {
   string path = 1;
   uint64 size = 2;
   uint64 last_modified_ns = 3;
   repeated ScalarValue partition_values = 4;
+  FileRange range = 5;
 }
 
 message FileGroup {

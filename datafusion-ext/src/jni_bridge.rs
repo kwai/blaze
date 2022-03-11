@@ -181,7 +181,7 @@ impl JavaClasses<'static> {
             let jni_java_classes = JNI_JAVA_CLASSES.as_mut_ptr() as *mut JavaClasses;
             *jni_java_classes = initialized_java_classes;
         }
-        assert_eq!(env.exception_check().unwrap(), false);
+        assert!(!env.exception_check().unwrap());
         jni_java_classes_initialized.set(true);
         Ok(())
     }
@@ -208,7 +208,7 @@ impl JavaClasses<'static> {
             JValue::Object(JavaClasses::get().classloader)
         )
         .unwrap();
-        return env;
+        env
     }
 }
 
@@ -725,5 +725,5 @@ fn get_global_ref_jobject<'a>(
     // deleting these global refs.
     let global: PrivGlobalRef =
         unsafe { std::mem::transmute(env.new_global_ref::<JObject>(obj)?) };
-    return Ok(global.inner.obj);
+    Ok(global.inner.obj)
 }

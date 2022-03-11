@@ -29,7 +29,7 @@ use crate::{from_proto_binary_op, proto_error, str_to_byte};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::object_store::{FileMeta, SizedFile};
-use datafusion::datasource::PartitionedFile;
+use datafusion::datasource::{FileRange, PartitionedFile};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_plan;
@@ -84,7 +84,7 @@ fn bind(
     } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
         let binary_expr = Arc::new(BinaryExpr::new(
             bind(expr.left().clone(), input_schema)?,
-            expr.op().clone(),
+            *expr.op(),
             bind(expr.right().clone(), input_schema)?,
         ));
         Ok(binary_expr)
@@ -106,7 +106,7 @@ fn bind(
                 .as_slice(),
             expr.else_expr()
                 .as_ref()
-                .map(|exp| bind(exp.clone().clone(), input_schema))
+                .map(|exp| bind((**exp).clone(), input_schema))
                 .transpose()?,
         )?);
         Ok(case_expr)
@@ -133,7 +133,7 @@ fn bind(
     } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
         let neg = Arc::new(NegativeExpr::new(bind(expr.arg().clone(), input_schema)?));
         Ok(neg)
-    } else if let Some(_) = expr.downcast_ref::<Literal>() {
+    } else if expr.downcast_ref::<Literal>().is_some() {
         Ok(expr_in)
     } else if let Some(cast) = expr.downcast_ref::<CastExpr>() {
         let cast = Arc::new(CastExpr::new(
@@ -362,7 +362,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         expr.try_into().and_then(|expr: Arc<dyn PhysicalExpr>| {
                             bind(expr, &input.schema())
                                 .map(|expr| (expr, name.to_string()))
-                                .map_err(|err| PlanSerDeError::DataFusionError(err))
+                                .map_err(PlanSerDeError::DataFusionError)
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -800,6 +800,18 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
                 .iter()
                 .map(|v| v.try_into())
                 .collect::<Result<Vec<_>, _>>()?,
+            range: val.range.as_ref().map(|v| v.try_into()).transpose()?,
+        })
+    }
+}
+
+impl TryFrom<&protobuf::FileRange> for FileRange {
+    type Error = PlanSerDeError;
+
+    fn try_from(value: &protobuf::FileRange) -> Result<Self, Self::Error> {
+        Ok(FileRange {
+            start: value.start,
+            end: value.end,
         })
     }
 }
@@ -874,7 +886,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
                     self.file_groups
                         .get(0)
                         .and_then(|file_group| file_group.files.get(0))
-                        .and_then(|file| Some(file.path.as_ref()))
+                        .map(|file| file.path.as_ref())
                         .unwrap_or("default"),
                 )?
                 .0,
