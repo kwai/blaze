@@ -500,7 +500,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
                 let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
                 let shuffle_reader =
-                    ShuffleReaderExec::new(datafusion_ext::get_job_id(), schema);
+                    ShuffleReaderExec::new(shuffle_reader.native_shuffle_id.clone(), schema);
                 Ok(Arc::new(shuffle_reader))
             }
             PhysicalPlanType::Empty(empty) => {

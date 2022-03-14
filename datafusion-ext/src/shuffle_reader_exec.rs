@@ -55,14 +55,14 @@ use crate::util::Util;
 
 #[derive(Debug, Clone)]
 pub struct ShuffleReaderExec {
-    pub job_id: String,
+    pub native_shuffle_id: String,
     pub schema: SchemaRef,
     pub metrics: ExecutionPlanMetricsSet,
 }
 impl ShuffleReaderExec {
-    pub fn new(job_id: String, schema: SchemaRef) -> ShuffleReaderExec {
+    pub fn new(native_shuffle_id: String, schema: SchemaRef) -> ShuffleReaderExec {
         ShuffleReaderExec {
-            job_id,
+            native_shuffle_id,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
         }
@@ -107,11 +107,10 @@ impl ExecutionPlan for ShuffleReaderExec {
     ) -> Result<SendableRecordBatchStream> {
         let buffers = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
-            let resource_key = format!("ShuffleReader.buffers:{}", self.job_id);
             let buffers = jni_bridge_call_static_method!(
                 env,
                 JniBridge.getResource,
-                JValue::Object(env.new_string(&resource_key)?.into())
+                JValue::Object(env.new_string(&self.native_shuffle_id)?.into())
             )?
             .l()?;
             JniResult::Ok(buffers)

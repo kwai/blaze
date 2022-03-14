@@ -387,6 +387,7 @@ message ShuffleWriterExecNode {
 
 message ShuffleReaderExecNode {
   Schema schema = 2;
+  string nativeShuffleId = 3;
 }
 
 message GlobalLimitExecNode {
