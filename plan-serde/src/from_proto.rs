@@ -487,6 +487,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     convert_box_required!(shuffle_writer.input)?;
 
                 let output_partitioning = parse_protobuf_hash_partitioning(
+                    input.clone(),
                     shuffle_writer.output_partitioning.as_ref(),
                 )?;
 
@@ -499,8 +500,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
                 let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
-                let shuffle_reader =
-                    ShuffleReaderExec::new(shuffle_reader.native_shuffle_id.clone(), schema);
+                let shuffle_reader = ShuffleReaderExec::new(
+                    shuffle_reader.native_shuffle_id.clone(),
+                    schema,
+                );
                 Ok(Arc::new(shuffle_reader))
             }
             PhysicalPlanType::Empty(empty) => {
@@ -760,6 +763,7 @@ impl TryFrom<&protobuf::physical_window_expr_node::WindowFunction> for WindowFun
 }
 
 pub fn parse_protobuf_hash_partitioning(
+    input: Arc<dyn ExecutionPlan>,
     partitioning: Option<&protobuf::PhysicalHashRepartition>,
 ) -> Result<Option<Partitioning>, PlanSerDeError> {
     match partitioning {
@@ -767,7 +771,11 @@ pub fn parse_protobuf_hash_partitioning(
             let expr = hash_part
                 .hash_expr
                 .iter()
-                .map(|e| e.try_into())
+                .map(|e| {
+                    e.try_into().and_then(|e| {
+                        bind(e, &input.schema()).map_err(PlanSerDeError::DataFusionError)
+                    })
+                })
                 .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
 
             Ok(Some(Partitioning::Hash(
