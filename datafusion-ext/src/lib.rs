@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use datafusion::datasource::object_store::ObjectStoreRegistry;
-use jni::JNIEnv;
 
 use hdfs_object_store::HDFSSingleFileObjectStore;
-use jni_bridge::JavaClasses;
 
 pub mod hdfs_object_store; // note: can be changed to priv once plan transforming is removed
 pub mod jni_bridge;
@@ -29,23 +27,4 @@ lazy_static::lazy_static! {
 
 pub fn global_object_store_registry() -> &'static ObjectStoreRegistry {
     &OBJECT_STORE_REGISTRY
-}
-
-pub fn set_job_id(job_id: &str) {
-    let env_addr = unsafe {
-        // safety: transmute to raw pointer addr, only used as jobid map key
-        std::mem::transmute::<JNIEnv, usize>(JavaClasses::get_thread_jnienv())
-    };
-    JENV_JOB_IDS.insert(env_addr, job_id.to_owned());
-}
-
-pub fn get_job_id() -> String {
-    let env_addr = unsafe {
-        // safety: transmute to raw pointer addr, only used as jobid map key
-        std::mem::transmute::<JNIEnv, usize>(JavaClasses::get_thread_jnienv())
-    };
-    JENV_JOB_IDS
-        .get(&env_addr)
-        .expect("job id not set in current thread")
-        .clone()
 }

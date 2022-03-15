@@ -140,7 +140,6 @@ pub fn blaze_call_native(
     let task_id = task_definition
         .task_id
         .expect("Missing task_definition.task_id");
-    datafusion_ext::set_job_id(&task_id.job_id);
 
     let plan = &task_definition.plan.expect("Missing task_definition.plan");
     let execution_plan: Arc<dyn ExecutionPlan> =
