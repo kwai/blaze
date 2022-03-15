@@ -608,6 +608,7 @@ impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
             ScalarFunction::Ln => BuiltinScalarFunction::Ln,
             ScalarFunction::Totimestampmillis => BuiltinScalarFunction::ToTimestampMillis,
             ScalarFunction::StartsWith => BuiltinScalarFunction::StartsWith,
+            ScalarFunction::Substr => BuiltinScalarFunction::Substr,
         }
     }
 }
