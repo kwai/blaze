@@ -13,7 +13,6 @@ use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::jni_bridge_call_method;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
-use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JObject;
 use jni::objects::JValue;
@@ -72,7 +71,7 @@ fn setup_env_logger() {
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
-    taskDefinition: JByteBuffer,
+    taskDefinition: JObject,
     metricNode: JObject,
     ipcRecordBatchDataConsumer: JObject,
 ) {
@@ -116,7 +115,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 #[allow(clippy::redundant_slicing)]
 pub fn blaze_call_native(
     env: &JNIEnv,
-    task_definition: JByteBuffer,
+    task_definition: JObject,
     metric_node: JObject,
     ipc_record_batch_data_consumer: JObject,
     start_time: Instant,
@@ -129,11 +128,10 @@ pub fn blaze_call_native(
 
     debug!("Decoding task definition");
     let task_definition_raw = env
-        .get_direct_buffer_address(task_definition)
+        .convert_byte_array(task_definition.into_inner())
         .expect("Error getting task definition");
-    let task_definition: TaskDefinition =
-        TaskDefinition::decode(&task_definition_raw[..])
-            .expect("Error decoding task definition");
+    let task_definition: TaskDefinition = TaskDefinition::decode(&*task_definition_raw)
+        .expect("Error decoding task definition");
     debug!("Decoding task definition succeeded");
 
     debug!("Creating native execution plan");
@@ -186,60 +184,101 @@ pub fn blaze_call_native(
                     )
                 }
 
-                let mut buf: Vec<u8> = vec![];
+                const OUPTUT_IPC_ROWS_LIMIT: usize = 65536;
                 let mut num_rows_total = 0;
-                {
+                let mut total_buf_len = 0;
+                let mut current_batch_id = 0;
+                let mut current_batch_offset = 0;
+
+                // make sure each IPC is smaller than 2GB so that java
+                // bytebuffer can handle it.
+                while current_batch_id < record_batches.len() {
+                    debug!("Writing IPC");
+
+                    let mut buf: Vec<u8> = vec![];
                     let mut buf_writer = BufWriter::new(&mut buf);
                     let mut arrow_writer =
                         StreamWriter::try_new(&mut buf_writer, &*schema).unwrap();
+                    let mut num_ipc_rows = 0;
 
-                    debug!("Writing IPC");
-                    for record_batch in record_batches.iter() {
-                        num_rows_total += record_batch.num_rows();
-                        arrow_writer.write(record_batch).expect("Error writing IPC");
+                    // safety:
+                    // write record batches into ipcs. the real size might be
+                    // slightly larger than OUTPUT_IPC_SIZE, because there are
+                    // BufWriters.
+                    while current_batch_id < record_batches.len()
+                        && current_batch_offset
+                            < record_batches[current_batch_id].num_rows()
+                        && num_ipc_rows < OUPTUT_IPC_ROWS_LIMIT
+                    {
+                        let current_batch = &record_batches[current_batch_id];
+
+                        if current_batch_offset == 0
+                            && current_batch.num_rows() < OUPTUT_IPC_ROWS_LIMIT
+                        {
+                            // output the whole current batch
+                            current_batch_id += 1;
+                            num_ipc_rows += current_batch.num_rows();
+                            num_rows_total += current_batch.num_rows();
+                            arrow_writer
+                                .write(current_batch)
+                                .expect("Error writing IPC");
+                        } else {
+                            // big batch -- output slices of current batch
+                            let current_batch_offset_end = current_batch
+                                .num_rows()
+                                .min(current_batch_id + OUPTUT_IPC_ROWS_LIMIT);
+                            let current_batch_slice = current_batch
+                                .slice(current_batch_offset, current_batch_offset_end);
+                            num_ipc_rows += current_batch_slice.num_rows();
+                            num_rows_total += current_batch_slice.num_rows();
+                            arrow_writer
+                                .write(&current_batch_slice)
+                                .expect("Error writing IPC");
+
+                            current_batch_offset = current_batch_offset_end;
+                            if current_batch_offset >= current_batch.num_rows() {
+                                current_batch_id += 1;
+                                current_batch_offset = 0;
+                            }
+                        }
                     }
                     arrow_writer.finish().expect("Error finishing arrow writer");
+                    std::mem::drop(arrow_writer);
+                    std::mem::drop(buf_writer);
+
+                    info!(
+                        "Writing IPC finished: rows={}, bytes={}",
+                        num_rows_total,
+                        buf.len(),
+                    );
+                    total_buf_len += buf.len();
+
+                    debug!("Invoking IPC data consumer");
+                    let byte_buffer = env
+                        .new_direct_byte_buffer(&mut buf)
+                        .expect("Error creating ByteBuffer");
+                    jni_bridge_call_method!(
+                        env,
+                        JavaConsumer.accept,
+                        ipc_record_batch_data_consumer,
+                        JValue::Object(byte_buffer.into())
+                    )
+                    .expect("Error invoking IPC data consumer");
+                    debug!("Invoking IPC data consumer succeeded");
                 }
 
-                info!(
-                    "Writing IPC finished: rows={}, bytes={}",
-                    num_rows_total,
-                    buf.len(),
-                );
                 metrics::update_extra_metrics(
                     &env,
                     metric_node,
                     start_time,
                     num_rows_total,
-                    buf.len(),
+                    total_buf_len,
                 )
                 .unwrap();
-
-                debug!("Invoking IPC data consumer");
-                let byte_buffer = env
-                    .new_direct_byte_buffer(&mut buf)
-                    .expect("Error creating ByteBuffer");
-                jni_bridge_call_method!(
-                    env,
-                    JavaConsumer.accept,
-                    ipc_record_batch_data_consumer,
-                    JValue::Object(byte_buffer.into())
-                )
-                .expect("Error invoking IPC data consumer");
-                debug!("Invoking IPC data consumer succeeded");
             } else {
                 metrics::update_extra_metrics(&env, metric_node, start_time, 0, 0)
                     .unwrap();
-
-                debug!("Invoking IPC data consumer (with null result)");
-                jni_bridge_call_method!(
-                    env,
-                    JavaConsumer.accept,
-                    ipc_record_batch_data_consumer,
-                    JValue::Object(JObject::null())
-                )
-                .expect("Error invoking IPC data consumer");
-                debug!("Invoking IPC data consumer succeeded");
+                debug!("Empty result, no need to invoking IPC data consumer");
             }
         });
 
