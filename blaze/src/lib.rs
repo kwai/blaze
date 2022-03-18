@@ -17,7 +17,7 @@ use jni::objects::JClass;
 use jni::objects::JObject;
 use jni::objects::JValue;
 use jni::JNIEnv;
-use log::{debug, info};
+use log::{debug, error, info};
 use once_cell::sync::OnceCell;
 use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
@@ -98,7 +98,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             },
         };
         let backtrace = BACKTRACE.get().unwrap().lock().unwrap();
-        eprintln!("{}\nBacktrace:\n{}", panic_str, *backtrace);
+        error!("{}\nBacktrace:\n{}", panic_str, *backtrace);
 
         if !env.exception_check().unwrap() {
             env.throw_new("java/lang/RuntimeException", panic_str)

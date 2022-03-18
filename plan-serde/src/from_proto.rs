@@ -43,6 +43,7 @@ use datafusion::physical_plan::file_format::{
 use datafusion::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
 use datafusion::physical_plan::hash_join::PartitionMode;
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
+use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::window_functions::WindowFunction;
 use datafusion::physical_plan::windows::{create_window_expr, WindowAggExec};
 use datafusion::physical_plan::{
@@ -552,6 +553,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(SortExec::new_with_partitioning(
                     exprs, input, true,
                 )))
+            }
+            PhysicalPlanType::Union(union) => {
+                let inputs: Vec<Arc<dyn ExecutionPlan>> = union
+                    .children
+                    .iter()
+                    .map(|i| i.try_into())
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Arc::new(UnionExec::new(inputs)))
             }
             PhysicalPlanType::Unresolved(_unresolved_shuffle) => {
                 unreachable!()

@@ -46,6 +46,7 @@ message PhysicalPlanNode {
     ShuffleWriterExecNode shuffle_writer = 18;
     CrossJoinExecNode cross_join = 19;
     AvroScanExecNode avro_scan = 20;
+    UnionExecNode union = 21;
   }
 }
 
@@ -353,6 +354,10 @@ message ProjectionExecNode {
   PhysicalPlanNode input = 1;
   repeated PhysicalExprNode expr = 2;
   repeated string expr_name = 3;
+}
+
+message UnionExecNode {
+  repeated PhysicalPlanNode children = 1;
 }
 
 enum AggregateMode {
