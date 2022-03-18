@@ -13,7 +13,6 @@ use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::jni_bridge_call_method;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
-use jni::objects::JByteBuffer;
 use jni::objects::JClass;
 use jni::objects::JObject;
 use jni::objects::JValue;
@@ -72,7 +71,7 @@ fn setup_env_logger() {
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
-    taskDefinition: JByteBuffer,
+    taskDefinition: JObject,
     metricNode: JObject,
     ipcRecordBatchDataConsumer: JObject,
 ) {
@@ -116,7 +115,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 #[allow(clippy::redundant_slicing)]
 pub fn blaze_call_native(
     env: &JNIEnv,
-    task_definition: JByteBuffer,
+    task_definition: JObject,
     metric_node: JObject,
     ipc_record_batch_data_consumer: JObject,
     start_time: Instant,
@@ -128,11 +127,11 @@ pub fn blaze_call_native(
     debug!("Initializing JavaClasses succeeded");
 
     debug!("Decoding task definition");
-    let task_definition_raw = env
-        .get_direct_buffer_address(task_definition)
+    let task_definition_raw =
+        env.convert_byte_array(task_definition.into_inner())
         .expect("Error getting task definition");
     let task_definition: TaskDefinition =
-        TaskDefinition::decode(&task_definition_raw[..])
+        TaskDefinition::decode(&*task_definition_raw)
             .expect("Error decoding task definition");
     debug!("Decoding task definition succeeded");
 
