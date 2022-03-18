@@ -186,7 +186,10 @@ pub fn blaze_call_native(
                 .await
                 .unwrap();
 
-            info!("Executing plan finished");
+            info!(
+                "Executing plan finished, result rows: {}",
+                record_batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+            );
 
             // update spark metrics
             metrics::update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
@@ -225,8 +228,6 @@ pub fn blaze_call_native(
                     // slightly larger than OUTPUT_IPC_SIZE, because there are
                     // BufWriters.
                     while current_batch_id < record_batches.len()
-                        && current_batch_offset
-                            < record_batches[current_batch_id].num_rows()
                         && num_ipc_rows < OUPTUT_IPC_ROWS_LIMIT
                     {
                         let current_batch = &record_batches[current_batch_id];
@@ -245,9 +246,11 @@ pub fn blaze_call_native(
                             // big batch -- output slices of current batch
                             let current_batch_offset_end = current_batch
                                 .num_rows()
-                                .min(current_batch_id + OUPTUT_IPC_ROWS_LIMIT);
-                            let current_batch_slice = current_batch
-                                .slice(current_batch_offset, current_batch_offset_end);
+                                .min(current_batch_offset + OUPTUT_IPC_ROWS_LIMIT);
+                            let current_batch_slice = current_batch.slice(
+                                current_batch_offset,
+                                current_batch_offset_end - current_batch_offset,
+                            );
                             num_ipc_rows += current_batch_slice.num_rows();
                             num_rows_total += current_batch_slice.num_rows();
                             arrow_writer
@@ -272,7 +275,7 @@ pub fn blaze_call_native(
                     );
                     total_buf_len += buf.len();
 
-                    debug!("Invoking IPC data consumer");
+                    info!("Invoking IPC data consumer");
                     let byte_buffer = env
                         .new_direct_byte_buffer(&mut buf)
                         .expect("Error creating ByteBuffer");
@@ -283,7 +286,7 @@ pub fn blaze_call_native(
                         JValue::Object(byte_buffer.into())
                     )
                     .expect("Error invoking IPC data consumer");
-                    debug!("Invoking IPC data consumer succeeded");
+                    info!("Invoking IPC data consumer succeeded");
                 }
 
                 metrics::update_extra_metrics(
@@ -297,7 +300,7 @@ pub fn blaze_call_native(
             } else {
                 metrics::update_extra_metrics(&env, metric_node, start_time, 0, 0)
                     .unwrap();
-                debug!("Empty result, no need to invoking IPC data consumer");
+                info!("Empty result, no need to invoking IPC data consumer");
             }
         });
 
