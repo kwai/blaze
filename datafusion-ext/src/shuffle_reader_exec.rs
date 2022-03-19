@@ -32,7 +32,7 @@ use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::ipc::reader::FileReader;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
@@ -103,7 +103,7 @@ impl ExecutionPlan for ShuffleReaderExec {
     async fn execute(
         &self,
         _partition: usize,
-        _runtime: Arc<RuntimeEnv>,
+        _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let buffers = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
