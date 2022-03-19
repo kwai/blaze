@@ -42,6 +42,7 @@ use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::ipc::writer::FileWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
+use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
 use datafusion::execution::memory_manager::MemoryConsumer;
 use datafusion::execution::memory_manager::MemoryConsumerId;
@@ -625,9 +626,9 @@ impl ExecutionPlan for ShuffleWriterExec {
     async fn execute(
         &self,
         partition: usize,
-        runtime: Arc<RuntimeEnv>,
+        context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, runtime.clone()).await?;
+        let input = self.input.execute(partition, context.clone()).await?;
         external_shuffle(
             input,
             partition,
@@ -635,7 +636,7 @@ impl ExecutionPlan for ShuffleWriterExec {
             self.map_id,
             self.partitioning.clone(),
             self.all_metrics.clone(),
-            runtime,
+            context,
         )
         .await
     }
@@ -687,7 +688,7 @@ pub async fn external_shuffle(
     map_id: usize,
     partitioning: Partitioning,
     metrics_set: CompositeMetricsSet,
-    runtime: Arc<RuntimeEnv>,
+    context: Arc<TaskContext>,
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
     let repartitioner = ShuffleRepartitioner::new(
@@ -697,9 +698,9 @@ pub async fn external_shuffle(
         schema.clone(),
         partitioning,
         metrics_set,
-        runtime.clone(),
+        context.runtime.clone(),
     );
-    runtime.register_requester(repartitioner.id());
+    context.runtime.register_requester(repartitioner.id());
 
     while let Some(batch) = input.next().await {
         let batch = batch?;

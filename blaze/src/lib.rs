@@ -7,8 +7,10 @@ use std::time::Instant;
 use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
-use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::execution::memory_manager::MemoryManagerConfig;
+use datafusion::execution::runtime_env::RuntimeConfig;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::jni_bridge_call_method;
 use futures::TryFutureExt;
@@ -36,6 +38,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 static BACKTRACE: OnceCell<Arc<Mutex<String>>> = OnceCell::new();
 static ENV_LOGGER_INIT: OnceCell<()> = OnceCell::new();
 static TOKIO_RUNTIME_INSTANCE: OnceCell<Runtime> = OnceCell::new();
+static SESSION_CONTEXT: OnceCell<SessionContext> = OnceCell::new();
 
 fn tokio_runtime(thread_num: usize) -> &'static Runtime {
     TOKIO_RUNTIME_INSTANCE.get_or_init(|| {
@@ -64,6 +67,23 @@ fn setup_env_logger() {
         )
         .unwrap();
     });
+}
+
+fn session_ctx(
+    max_memory: usize,
+    memory_fraction: f64,
+    batch_size: usize,
+) -> &'static SessionContext {
+    SESSION_CONTEXT.get_or_init(|| {
+        let runtime_config = RuntimeConfig::new()
+            .with_batch_size(batch_size)
+            .with_memory_manager(MemoryManagerConfig::New {
+                max_memory,
+                memory_fraction,
+            });
+        let config = SessionConfig::new().with_runtime_config(runtime_config);
+        SessionContext::with_config(config)
+    })
 }
 
 #[allow(non_snake_case)]
@@ -150,13 +170,12 @@ pub fn blaze_call_native(
 
     tokio_runtime(10) // TODO: we should set this through JNI param
         .block_on(async {
-            // TODO: we can pass down shuffle dirs, max memory threshold and batch_size
-            // by creating RuntimeEnv with specific RuntimeConfig.
-            // use the default one here as placeholder now.
-            let runtime = Arc::new(RuntimeEnv::default());
+            // TODO: pass down these settings from JNI
+            let session_ctx = session_ctx(usize::MAX, 1.0, 10240);
+            let task_ctx = session_ctx.task_ctx();
 
             let result = execution_plan
-                .execute(task_id.partition_id as usize, runtime)
+                .execute(task_id.partition_id as usize, task_ctx)
                 .await
                 .unwrap();
 
