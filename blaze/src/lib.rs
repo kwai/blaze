@@ -13,6 +13,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::jni_bridge_call_method;
+use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
 use jni::objects::JClass;
@@ -190,6 +191,19 @@ pub fn blaze_call_native(
                 "Executing plan finished, result rows: {}",
                 record_batches.iter().map(|b| b.num_rows()).sum::<usize>(),
             );
+            if execution_plan
+                .as_any()
+                .downcast_ref::<ShuffleWriterExec>()
+                .is_some()
+            {
+                info!(
+                    "Shuffle writer output rows: {}",
+                    execution_plan.children()[0]
+                        .metrics()
+                        .and_then(|m| m.output_rows())
+                        .unwrap_or_default()
+                );
+            }
 
             // update spark metrics
             metrics::update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
@@ -270,7 +284,7 @@ pub fn blaze_call_native(
 
                     info!(
                         "Writing IPC finished: rows={}, bytes={}",
-                        num_rows_total,
+                        num_ipc_rows,
                         buf.len(),
                     );
                     total_buf_len += buf.len();
