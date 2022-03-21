@@ -105,21 +105,21 @@ impl ExecutionPlan for ShuffleReaderExec {
         _partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let buffers = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
+        let segments = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
-            let buffers = jni_bridge_call_static_method!(
+            let segments = jni_bridge_call_static_method!(
                 env,
                 JniBridge.getResource,
                 JValue::Object(env.new_string(&self.native_shuffle_id)?.into())
             )?
             .l()?;
-            JniResult::Ok(buffers)
+            JniResult::Ok(segments)
         }))?;
         let schema = self.schema.clone();
         let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
         Ok(Box::pin(ShuffleReaderStream::new(
             schema,
-            buffers,
+            segments,
             baseline_metrics,
         )))
     }
@@ -139,98 +139,56 @@ impl ExecutionPlan for ShuffleReaderExec {
 
 struct ShuffleReaderStream {
     schema: SchemaRef,
-    buffers: JObject<'static>,
-    seekable_byte_channels: JObject<'static>,
-    seekable_byte_channels_len: usize,
-    seekable_byte_channels_pos: usize,
-    seekable_byte_channel: JObject<'static>,
+    segments: JObject<'static>,
+    current_segment: JObject<'static>,
     arrow_file_reader: Option<FileReader<SeekableByteChannelReader>>,
     baseline_metrics: BaselineMetrics,
 }
-unsafe impl Sync for ShuffleReaderStream {} // safety: buffers is safe to be shared
+unsafe impl Sync for ShuffleReaderStream {} // safety: segments is safe to be shared
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for ShuffleReaderStream {}
 
 impl ShuffleReaderStream {
     pub fn new(
         schema: SchemaRef,
-        buffers: JObject<'static>,
+        segments: JObject<'static>,
         baseline_metrics: BaselineMetrics,
     ) -> ShuffleReaderStream {
         ShuffleReaderStream {
             schema,
-            buffers,
-            seekable_byte_channels: JObject::null(),
-            seekable_byte_channels_len: 0,
-            seekable_byte_channels_pos: 0,
-            seekable_byte_channel: JObject::null(),
+            segments,
+            current_segment: JObject::null(),
             arrow_file_reader: None,
             baseline_metrics,
         }
     }
 
-    fn next_seekable_byte_channel(&mut self) -> Result<bool> {
-        while self.seekable_byte_channels_pos == self.seekable_byte_channels_len {
-            if !self.next_seekable_byte_channels()? {
-                self.seekable_byte_channel = JObject::null();
-                self.arrow_file_reader = None;
-                return Ok(false);
-            }
-        }
-
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
+    fn next_segment(&mut self) -> Result<bool> {
+        let next_segment = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
-            self.seekable_byte_channel = jni_bridge_call_method!(
-                env,
-                JavaList.get,
-                self.seekable_byte_channels,
-                JValue::Int(self.seekable_byte_channels_pos as i32)
-            )?
-            .l()?;
-            JniResult::Ok(())
+
+            let has_next =
+                jni_bridge_call_method!(env, ScalaIterator.hasNext, self.segments)?
+                    .z()?;
+            if !has_next {
+                self.current_segment = JObject::null();
+                self.arrow_file_reader = None;
+                return JniResult::Ok(false);
+            }
+
+            let next_segment =
+                jni_bridge_call_method!(env, ScalaIterator.next, self.segments)?.l()?;
+            self.current_segment = next_segment;
+            JniResult::Ok(true)
         }))?;
 
-        let seekable_byte_channel_reader =
-            SeekableByteChannelReader(self.seekable_byte_channel);
-        self.arrow_file_reader = Some(FileReader::try_new(seekable_byte_channel_reader)?);
-        self.seekable_byte_channels_pos += 1;
-        Ok(true)
-    }
-
-    fn next_seekable_byte_channels(&mut self) -> Result<bool> {
-        if !self.buffers_has_next()? {
-            self.seekable_byte_channels = JObject::null();
-            self.seekable_byte_channels_len = 0;
-            self.seekable_byte_channels_pos = 0;
-            return Ok(false);
+        if next_segment {
+            self.arrow_file_reader = Some(FileReader::try_new(
+                SeekableByteChannelReader(self.current_segment),
+            )?);
+            return Ok(true);
         }
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
-            let env = JavaClasses::get_thread_jnienv();
-            let next =
-                jni_bridge_call_method!(env, ScalaIterator.next, self.buffers)?.l()?;
-            let next_managed_buffer =
-                jni_bridge_call_method!(env, ScalaTuple2._2, next)?.l()?;
-
-            self.seekable_byte_channels = jni_bridge_call_static_method!(
-                env,
-                SparkBlazeConverters.readManagedBufferToSegmentByteChannelsAsJava,
-                JValue::Object(next_managed_buffer)
-            )?
-            .l()?;
-            self.seekable_byte_channels_len =
-                jni_bridge_call_method!(env, JavaList.size, self.seekable_byte_channels)?
-                    .i()? as usize;
-            self.seekable_byte_channels_pos = 0;
-            JniResult::Ok(true)
-        }))
-    }
-
-    fn buffers_has_next(&self) -> Result<bool> {
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
-            let env = JavaClasses::get_thread_jnienv();
-            return jni_bridge_call_method!(env, ScalaIterator.hasNext, self.buffers)?
-                .z();
-        }))
+        Ok(false)
     }
 }
 
@@ -250,7 +208,7 @@ impl Stream for ShuffleReaderStream {
         }
 
         // current arrow file reader reaches EOF, try next ipc
-        if self.next_seekable_byte_channel().unwrap() {
+        if self.next_segment().unwrap() {
             return self.poll_next(cx);
         }
         Poll::Ready(None)
