@@ -894,56 +894,77 @@ impl Into<protobuf::Schema> for SchemaRef {
     }
 }
 
-impl TryInto<protobuf::ScalarFunction> for &BuiltinScalarFunction {
+impl TryFrom<&BuiltinScalarFunction> for protobuf::ScalarFunction {
     type Error = PlanSerDeError;
-    fn try_into(self) -> Result<protobuf::ScalarFunction, Self::Error> {
-        match self {
-            BuiltinScalarFunction::Sqrt => Ok(protobuf::ScalarFunction::Sqrt),
-            BuiltinScalarFunction::Sin => Ok(protobuf::ScalarFunction::Sin),
-            BuiltinScalarFunction::Cos => Ok(protobuf::ScalarFunction::Cos),
-            BuiltinScalarFunction::Tan => Ok(protobuf::ScalarFunction::Tan),
-            BuiltinScalarFunction::Asin => Ok(protobuf::ScalarFunction::Asin),
-            BuiltinScalarFunction::Acos => Ok(protobuf::ScalarFunction::Acos),
-            BuiltinScalarFunction::Atan => Ok(protobuf::ScalarFunction::Atan),
-            BuiltinScalarFunction::Exp => Ok(protobuf::ScalarFunction::Exp),
-            BuiltinScalarFunction::Log => Ok(protobuf::ScalarFunction::Log),
-            BuiltinScalarFunction::Ln => Ok(protobuf::ScalarFunction::Ln),
-            BuiltinScalarFunction::Log10 => Ok(protobuf::ScalarFunction::Log10),
-            BuiltinScalarFunction::Floor => Ok(protobuf::ScalarFunction::Floor),
-            BuiltinScalarFunction::Ceil => Ok(protobuf::ScalarFunction::Ceil),
-            BuiltinScalarFunction::Round => Ok(protobuf::ScalarFunction::Round),
-            BuiltinScalarFunction::Trunc => Ok(protobuf::ScalarFunction::Trunc),
-            BuiltinScalarFunction::Abs => Ok(protobuf::ScalarFunction::Abs),
-            BuiltinScalarFunction::OctetLength => {
-                Ok(protobuf::ScalarFunction::Octetlength)
-            }
-            BuiltinScalarFunction::Concat => Ok(protobuf::ScalarFunction::Concat),
-            BuiltinScalarFunction::Lower => Ok(protobuf::ScalarFunction::Lower),
-            BuiltinScalarFunction::Upper => Ok(protobuf::ScalarFunction::Upper),
-            BuiltinScalarFunction::Trim => Ok(protobuf::ScalarFunction::Trim),
-            BuiltinScalarFunction::Ltrim => Ok(protobuf::ScalarFunction::Ltrim),
-            BuiltinScalarFunction::Rtrim => Ok(protobuf::ScalarFunction::Rtrim),
-            BuiltinScalarFunction::ToTimestamp => {
-                Ok(protobuf::ScalarFunction::Totimestamp)
-            }
-            BuiltinScalarFunction::Array => Ok(protobuf::ScalarFunction::Array),
-            BuiltinScalarFunction::NullIf => Ok(protobuf::ScalarFunction::Nullif),
-            BuiltinScalarFunction::DatePart => Ok(protobuf::ScalarFunction::Datepart),
-            BuiltinScalarFunction::DateTrunc => Ok(protobuf::ScalarFunction::Datetrunc),
-            BuiltinScalarFunction::MD5 => Ok(protobuf::ScalarFunction::Md5),
-            BuiltinScalarFunction::SHA224 => Ok(protobuf::ScalarFunction::Sha224),
-            BuiltinScalarFunction::SHA256 => Ok(protobuf::ScalarFunction::Sha256),
-            BuiltinScalarFunction::SHA384 => Ok(protobuf::ScalarFunction::Sha384),
-            BuiltinScalarFunction::SHA512 => Ok(protobuf::ScalarFunction::Sha512),
-            BuiltinScalarFunction::Digest => Ok(protobuf::ScalarFunction::Digest),
-            BuiltinScalarFunction::ToTimestampMillis => {
-                Ok(protobuf::ScalarFunction::Totimestampmillis)
-            }
-            _ => Err(PlanSerDeError::General(format!(
-                "logical_plan::to_proto() unsupported scalar function {:?}",
-                self
-            ))),
-        }
+
+    fn try_from(scalar: &BuiltinScalarFunction) -> Result<Self, Self::Error> {
+        let scalar_function = match scalar {
+            BuiltinScalarFunction::Sqrt => Self::Sqrt,
+            BuiltinScalarFunction::Sin => Self::Sin,
+            BuiltinScalarFunction::Cos => Self::Cos,
+            BuiltinScalarFunction::Tan => Self::Tan,
+            BuiltinScalarFunction::Asin => Self::Asin,
+            BuiltinScalarFunction::Acos => Self::Acos,
+            BuiltinScalarFunction::Atan => Self::Atan,
+            BuiltinScalarFunction::Exp => Self::Exp,
+            BuiltinScalarFunction::Log => Self::Log,
+            BuiltinScalarFunction::Ln => Self::Ln,
+            BuiltinScalarFunction::Log10 => Self::Log10,
+            BuiltinScalarFunction::Floor => Self::Floor,
+            BuiltinScalarFunction::Ceil => Self::Ceil,
+            BuiltinScalarFunction::Round => Self::Round,
+            BuiltinScalarFunction::Trunc => Self::Trunc,
+            BuiltinScalarFunction::Abs => Self::Abs,
+            BuiltinScalarFunction::OctetLength => Self::OctetLength,
+            BuiltinScalarFunction::Concat => Self::Concat,
+            BuiltinScalarFunction::Lower => Self::Lower,
+            BuiltinScalarFunction::Upper => Self::Upper,
+            BuiltinScalarFunction::Trim => Self::Trim,
+            BuiltinScalarFunction::Ltrim => Self::Ltrim,
+            BuiltinScalarFunction::Rtrim => Self::Rtrim,
+            BuiltinScalarFunction::ToTimestamp => Self::ToTimestamp,
+            BuiltinScalarFunction::Array => Self::Array,
+            BuiltinScalarFunction::NullIf => Self::NullIf,
+            BuiltinScalarFunction::DatePart => Self::DatePart,
+            BuiltinScalarFunction::DateTrunc => Self::DateTrunc,
+            BuiltinScalarFunction::MD5 => Self::Md5,
+            BuiltinScalarFunction::SHA224 => Self::Sha224,
+            BuiltinScalarFunction::SHA256 => Self::Sha256,
+            BuiltinScalarFunction::SHA384 => Self::Sha384,
+            BuiltinScalarFunction::SHA512 => Self::Sha512,
+            BuiltinScalarFunction::Digest => Self::Digest,
+            BuiltinScalarFunction::ToTimestampMillis => Self::ToTimestampMillis,
+            BuiltinScalarFunction::Log2 => Self::Log2,
+            BuiltinScalarFunction::Signum => Self::Signum,
+            BuiltinScalarFunction::Ascii => Self::Ascii,
+            BuiltinScalarFunction::BitLength => Self::BitLength,
+            BuiltinScalarFunction::Btrim => Self::Btrim,
+            BuiltinScalarFunction::CharacterLength => Self::CharacterLength,
+            BuiltinScalarFunction::Chr => Self::Chr,
+            BuiltinScalarFunction::ConcatWithSeparator => Self::ConcatWithSeparator,
+            BuiltinScalarFunction::InitCap => Self::InitCap,
+            BuiltinScalarFunction::Left => Self::Left,
+            BuiltinScalarFunction::Lpad => Self::Lpad,
+            BuiltinScalarFunction::Random => Self::Random,
+            BuiltinScalarFunction::RegexpReplace => Self::RegexpReplace,
+            BuiltinScalarFunction::Repeat => Self::Repeat,
+            BuiltinScalarFunction::Replace => Self::Replace,
+            BuiltinScalarFunction::Reverse => Self::Reverse,
+            BuiltinScalarFunction::Right => Self::Right,
+            BuiltinScalarFunction::Rpad => Self::Rpad,
+            BuiltinScalarFunction::SplitPart => Self::SplitPart,
+            BuiltinScalarFunction::StartsWith => Self::StartsWith,
+            BuiltinScalarFunction::Strpos => Self::Strpos,
+            BuiltinScalarFunction::Substr => Self::Substr,
+            BuiltinScalarFunction::ToHex => Self::ToHex,
+            BuiltinScalarFunction::ToTimestampMicros => Self::ToTimestampMicros,
+            BuiltinScalarFunction::ToTimestampSeconds => Self::ToTimestampSeconds,
+            BuiltinScalarFunction::Now => Self::Now,
+            BuiltinScalarFunction::Translate => Self::Translate,
+            BuiltinScalarFunction::RegexpMatch => Self::RegexpMatch,
+        };
+
+        Ok(scalar_function)
     }
 }
 

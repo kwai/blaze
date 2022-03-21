@@ -579,45 +579,69 @@ impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
     fn from(f: &protobuf::ScalarFunction) -> BuiltinScalarFunction {
         use protobuf::ScalarFunction;
         match f {
-            ScalarFunction::Sqrt => BuiltinScalarFunction::Sqrt,
-            ScalarFunction::Sin => BuiltinScalarFunction::Sin,
-            ScalarFunction::Cos => BuiltinScalarFunction::Cos,
-            ScalarFunction::Tan => BuiltinScalarFunction::Tan,
-            ScalarFunction::Asin => BuiltinScalarFunction::Asin,
-            ScalarFunction::Acos => BuiltinScalarFunction::Acos,
-            ScalarFunction::Atan => BuiltinScalarFunction::Atan,
-            ScalarFunction::Exp => BuiltinScalarFunction::Exp,
-            ScalarFunction::Log => BuiltinScalarFunction::Log,
-            ScalarFunction::Log2 => BuiltinScalarFunction::Log2,
-            ScalarFunction::Log10 => BuiltinScalarFunction::Log10,
-            ScalarFunction::Floor => BuiltinScalarFunction::Floor,
-            ScalarFunction::Ceil => BuiltinScalarFunction::Ceil,
-            ScalarFunction::Round => BuiltinScalarFunction::Round,
-            ScalarFunction::Trunc => BuiltinScalarFunction::Trunc,
-            ScalarFunction::Abs => BuiltinScalarFunction::Abs,
-            ScalarFunction::Signum => BuiltinScalarFunction::Signum,
-            ScalarFunction::Octetlength => BuiltinScalarFunction::OctetLength,
-            ScalarFunction::Concat => BuiltinScalarFunction::Concat,
-            ScalarFunction::Lower => BuiltinScalarFunction::Lower,
-            ScalarFunction::Upper => BuiltinScalarFunction::Upper,
-            ScalarFunction::Trim => BuiltinScalarFunction::Trim,
-            ScalarFunction::Ltrim => BuiltinScalarFunction::Ltrim,
-            ScalarFunction::Rtrim => BuiltinScalarFunction::Rtrim,
-            ScalarFunction::Totimestamp => BuiltinScalarFunction::ToTimestamp,
-            ScalarFunction::Array => BuiltinScalarFunction::Array,
-            ScalarFunction::Nullif => BuiltinScalarFunction::NullIf,
-            ScalarFunction::Datepart => BuiltinScalarFunction::DatePart,
-            ScalarFunction::Datetrunc => BuiltinScalarFunction::DateTrunc,
-            ScalarFunction::Md5 => BuiltinScalarFunction::MD5,
-            ScalarFunction::Sha224 => BuiltinScalarFunction::SHA224,
-            ScalarFunction::Sha256 => BuiltinScalarFunction::SHA256,
-            ScalarFunction::Sha384 => BuiltinScalarFunction::SHA384,
-            ScalarFunction::Sha512 => BuiltinScalarFunction::SHA512,
-            ScalarFunction::Digest => BuiltinScalarFunction::Digest,
-            ScalarFunction::Ln => BuiltinScalarFunction::Ln,
-            ScalarFunction::Totimestampmillis => BuiltinScalarFunction::ToTimestampMillis,
-            ScalarFunction::StartsWith => BuiltinScalarFunction::StartsWith,
-            ScalarFunction::Substr => BuiltinScalarFunction::Substr,
+            ScalarFunction::Sqrt => Self::Sqrt,
+            ScalarFunction::Sin => Self::Sin,
+            ScalarFunction::Cos => Self::Cos,
+            ScalarFunction::Tan => Self::Tan,
+            ScalarFunction::Asin => Self::Asin,
+            ScalarFunction::Acos => Self::Acos,
+            ScalarFunction::Atan => Self::Atan,
+            ScalarFunction::Exp => Self::Exp,
+            ScalarFunction::Log => Self::Log,
+            ScalarFunction::Ln => Self::Ln,
+            ScalarFunction::Log10 => Self::Log10,
+            ScalarFunction::Floor => Self::Floor,
+            ScalarFunction::Ceil => Self::Ceil,
+            ScalarFunction::Round => Self::Round,
+            ScalarFunction::Trunc => Self::Trunc,
+            ScalarFunction::Abs => Self::Abs,
+            ScalarFunction::OctetLength => Self::OctetLength,
+            ScalarFunction::Concat => Self::Concat,
+            ScalarFunction::Lower => Self::Lower,
+            ScalarFunction::Upper => Self::Upper,
+            ScalarFunction::Trim => Self::Trim,
+            ScalarFunction::Ltrim => Self::Ltrim,
+            ScalarFunction::Rtrim => Self::Rtrim,
+            ScalarFunction::ToTimestamp => Self::ToTimestamp,
+            ScalarFunction::Array => Self::Array,
+            ScalarFunction::NullIf => Self::NullIf,
+            ScalarFunction::DatePart => Self::DatePart,
+            ScalarFunction::DateTrunc => Self::DateTrunc,
+            ScalarFunction::Md5 => Self::MD5,
+            ScalarFunction::Sha224 => Self::SHA224,
+            ScalarFunction::Sha256 => Self::SHA256,
+            ScalarFunction::Sha384 => Self::SHA384,
+            ScalarFunction::Sha512 => Self::SHA512,
+            ScalarFunction::Digest => Self::Digest,
+            ScalarFunction::ToTimestampMillis => Self::ToTimestampMillis,
+            ScalarFunction::Log2 => Self::Log2,
+            ScalarFunction::Signum => Self::Signum,
+            ScalarFunction::Ascii => Self::Ascii,
+            ScalarFunction::BitLength => Self::BitLength,
+            ScalarFunction::Btrim => Self::Btrim,
+            ScalarFunction::CharacterLength => Self::CharacterLength,
+            ScalarFunction::Chr => Self::Chr,
+            ScalarFunction::ConcatWithSeparator => Self::ConcatWithSeparator,
+            ScalarFunction::InitCap => Self::InitCap,
+            ScalarFunction::Left => Self::Left,
+            ScalarFunction::Lpad => Self::Lpad,
+            ScalarFunction::Random => Self::Random,
+            ScalarFunction::RegexpReplace => Self::RegexpReplace,
+            ScalarFunction::Repeat => Self::Repeat,
+            ScalarFunction::Replace => Self::Replace,
+            ScalarFunction::Reverse => Self::Reverse,
+            ScalarFunction::Right => Self::Right,
+            ScalarFunction::Rpad => Self::Rpad,
+            ScalarFunction::SplitPart => Self::SplitPart,
+            ScalarFunction::StartsWith => Self::StartsWith,
+            ScalarFunction::Strpos => Self::Strpos,
+            ScalarFunction::Substr => Self::Substr,
+            ScalarFunction::ToHex => Self::ToHex,
+            ScalarFunction::ToTimestampMicros => Self::ToTimestampMicros,
+            ScalarFunction::ToTimestampSeconds => Self::ToTimestampSeconds,
+            ScalarFunction::Now => Self::Now,
+            ScalarFunction::Translate => Self::Translate,
+            ScalarFunction::RegexpMatch => Self::RegexpMatch,
         }
     }
 }
@@ -927,6 +951,7 @@ impl TryFrom<&protobuf::LogicalExprNode> for Expr {
 
     fn try_from(expr: &protobuf::LogicalExprNode) -> Result<Self, Self::Error> {
         use crate::protobuf::logical_expr_node::ExprType;
+        use crate::protobuf::ScalarFunction;
 
         let expr_type = expr
             .expr_type
@@ -1008,66 +1033,152 @@ impl TryFrom<&protobuf::LogicalExprNode> for Expr {
                 let args = &expr.args;
 
                 match scalar_function {
-                    protobuf::ScalarFunction::Sqrt => Ok(sqrt((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Sin => Ok(sin((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Cos => Ok(cos((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Tan => Ok(tan((&args[0]).try_into()?)),
-                    // ScalarFunction::Asin => Ok(asin(&args[0]).try_into()?)),
-                    // ScalarFunction::Acos => Ok(acos(&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Atan => Ok(atan((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Exp => Ok(exp((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Log2 => Ok(log2((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Ln => Ok(ln((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Log10 => Ok(log10((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Floor => Ok(floor((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Ceil => Ok(ceil((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Round => Ok(round((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Trunc => Ok(trunc((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Abs => Ok(abs((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Signum => {
-                        Ok(signum((&args[0]).try_into()?))
-                    }
-                    protobuf::ScalarFunction::Octetlength => {
+                    ScalarFunction::Asin => Ok(asin((&args[0]).try_into()?)),
+                    ScalarFunction::Acos => Ok(acos((&args[0]).try_into()?)),
+                    ScalarFunction::Array => Ok(array(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::Sqrt => Ok(sqrt((&args[0]).try_into()?)),
+                    ScalarFunction::Sin => Ok(sin((&args[0]).try_into()?)),
+                    ScalarFunction::Cos => Ok(cos((&args[0]).try_into()?)),
+                    ScalarFunction::Tan => Ok(tan((&args[0]).try_into()?)),
+                    ScalarFunction::Atan => Ok(atan((&args[0]).try_into()?)),
+                    ScalarFunction::Exp => Ok(exp((&args[0]).try_into()?)),
+                    ScalarFunction::Log2 => Ok(log2((&args[0]).try_into()?)),
+                    ScalarFunction::Ln => Ok(ln((&args[0]).try_into()?)),
+                    ScalarFunction::Log10 => Ok(log10((&args[0]).try_into()?)),
+                    ScalarFunction::Floor => Ok(floor((&args[0]).try_into()?)),
+                    ScalarFunction::Ceil => Ok(ceil((&args[0]).try_into()?)),
+                    ScalarFunction::Round => Ok(round((&args[0]).try_into()?)),
+                    ScalarFunction::Trunc => Ok(trunc((&args[0]).try_into()?)),
+                    ScalarFunction::Abs => Ok(abs((&args[0]).try_into()?)),
+                    ScalarFunction::Signum => Ok(signum((&args[0]).try_into()?)),
+                    ScalarFunction::OctetLength => {
                         Ok(octet_length((&args[0]).try_into()?))
                     }
-                    protobuf::ScalarFunction::Concat => {
-                        let args: Vec<Expr> = expr
-                            .args
-                            .iter()
-                            .map(|arg| arg.try_into())
-                            .collect::<Result<Vec<_>, _>>()?;
-                        Ok(concat(&*args))
-                    }
-                    protobuf::ScalarFunction::Lower => Ok(lower((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Upper => Ok(upper((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Trim => Ok(trim((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Ltrim => Ok(ltrim((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Rtrim => Ok(rtrim((&args[0]).try_into()?)),
-                    // ScalarFunction::Totimestamp => Ok(to_timestamp((&args[0]).try_into()?)),
-                    // ScalarFunction::Array => Ok(array((&args[0]).try_into()?)),
-                    // // ScalarFunction::Nullif => Ok(nulli((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Datepart => {
+                    ScalarFunction::Lower => Ok(lower((&args[0]).try_into()?)),
+                    ScalarFunction::Upper => Ok(upper((&args[0]).try_into()?)),
+                    ScalarFunction::Trim => Ok(trim((&args[0]).try_into()?)),
+                    ScalarFunction::Ltrim => Ok(ltrim((&args[0]).try_into()?)),
+                    ScalarFunction::Rtrim => Ok(rtrim((&args[0]).try_into()?)),
+                    ScalarFunction::DatePart => {
                         Ok(date_part((&args[0]).try_into()?, (&args[1]).try_into()?))
                     }
-                    protobuf::ScalarFunction::Datetrunc => {
+                    ScalarFunction::DateTrunc => {
                         Ok(date_trunc((&args[0]).try_into()?, (&args[1]).try_into()?))
                     }
-                    protobuf::ScalarFunction::Md5 => Ok(md5((&args[0]).try_into()?)),
-                    protobuf::ScalarFunction::Sha224 => {
-                        Ok(sha224((&args[0]).try_into()?))
-                    }
-                    protobuf::ScalarFunction::Sha256 => {
-                        Ok(sha256((&args[0]).try_into()?))
-                    }
-                    protobuf::ScalarFunction::Sha384 => {
-                        Ok(sha384((&args[0]).try_into()?))
-                    }
-                    protobuf::ScalarFunction::Sha512 => {
-                        Ok(sha512((&args[0]).try_into()?))
-                    }
-                    protobuf::ScalarFunction::Digest => {
+                    ScalarFunction::Sha224 => Ok(sha224((&args[0]).try_into()?)),
+                    ScalarFunction::Sha256 => Ok(sha256((&args[0]).try_into()?)),
+                    ScalarFunction::Sha384 => Ok(sha384((&args[0]).try_into()?)),
+                    ScalarFunction::Sha512 => Ok(sha512((&args[0]).try_into()?)),
+                    ScalarFunction::Md5 => Ok(md5((&args[0]).try_into()?)),
+                    ScalarFunction::NullIf => Ok(nullif((&args[0]).try_into()?)),
+                    ScalarFunction::Digest => {
                         Ok(digest((&args[0]).try_into()?, (&args[1]).try_into()?))
                     }
+                    ScalarFunction::Ascii => Ok(ascii((&args[0]).try_into()?)),
+                    ScalarFunction::BitLength => Ok((&args[0]).try_into()?),
+                    ScalarFunction::CharacterLength => {
+                        Ok(character_length((&args[0]).try_into()?))
+                    }
+                    ScalarFunction::Chr => Ok(chr((&args[0]).try_into()?)),
+                    ScalarFunction::InitCap => Ok(ascii((&args[0]).try_into()?)),
+                    ScalarFunction::Left => {
+                        Ok(left((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    ScalarFunction::Random => Ok(random()),
+                    ScalarFunction::Repeat => {
+                        Ok(repeat((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    ScalarFunction::Replace => Ok(replace(
+                        (&args[0]).try_into()?,
+                        (&args[1]).try_into()?,
+                        (&args[2]).try_into()?,
+                    )),
+                    ScalarFunction::Reverse => Ok(reverse((&args[0]).try_into()?)),
+                    ScalarFunction::Right => {
+                        Ok(right((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    ScalarFunction::Concat => Ok(concat_expr(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::ConcatWithSeparator => Ok(concat_ws_expr(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::Lpad => Ok(lpad(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::Rpad => Ok(rpad(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::RegexpReplace => Ok(regexp_replace(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::RegexpMatch => Ok(regexp_match(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::Btrim => Ok(btrim(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::SplitPart => Ok(split_part(
+                        (&args[0]).try_into()?,
+                        (&args[1]).try_into()?,
+                        (&args[2]).try_into()?,
+                    )),
+                    ScalarFunction::StartsWith => {
+                        Ok(starts_with((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    ScalarFunction::Strpos => {
+                        Ok(strpos((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    ScalarFunction::Substr => {
+                        Ok(substr((&args[0]).try_into()?, (&args[1]).try_into()?))
+                    }
+                    ScalarFunction::ToHex => Ok(to_hex((&args[0]).try_into()?)),
+                    ScalarFunction::ToTimestampMillis => {
+                        Ok(to_timestamp_millis((&args[0]).try_into()?))
+                    }
+                    ScalarFunction::ToTimestampMicros => {
+                        Ok(to_timestamp_micros((&args[0]).try_into()?))
+                    }
+                    ScalarFunction::ToTimestampSeconds => {
+                        Ok(to_timestamp_seconds((&args[0]).try_into()?))
+                    }
+                    ScalarFunction::Now => Ok(now_expr(
+                        args.to_owned()
+                            .iter()
+                            .map(|e| e.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )),
+                    ScalarFunction::Translate => Ok(translate(
+                        (&args[0]).try_into()?,
+                        (&args[1]).try_into()?,
+                        (&args[2]).try_into()?,
+                    )),
                     _ => Err(proto_error(
                         "Protobuf deserialization error: Unsupported scalar function",
                     )),
