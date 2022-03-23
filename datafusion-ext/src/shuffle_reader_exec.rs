@@ -185,6 +185,7 @@ impl ShuffleReaderStream {
         if next_segment {
             self.arrow_file_reader = Some(FileReader::try_new(
                 SeekableByteChannelReader(self.current_segment),
+                None,
             )?);
             return Ok(true);
         }

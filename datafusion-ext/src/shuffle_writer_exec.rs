@@ -180,6 +180,7 @@ struct ShuffleRepartitioner {
     _metrics_set: CompositeMetricsSet,
     metrics: BaselineMetrics,
     random: RandomState,
+    batch_size: usize,
 }
 
 impl ShuffleRepartitioner {
@@ -191,6 +192,7 @@ impl ShuffleRepartitioner {
         partitioning: Partitioning,
         metrics_set: CompositeMetricsSet,
         runtime: Arc<RuntimeEnv>,
+        batch_size: usize,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
         let metrics = metrics_set.new_intermediate_baseline(partition_id);
@@ -211,6 +213,7 @@ impl ShuffleRepartitioner {
             _metrics_set: metrics_set,
             metrics,
             random: RandomState::with_seeds(0, 0, 0, 0),
+            batch_size,
         }
     }
 
@@ -224,7 +227,6 @@ impl ShuffleRepartitioner {
 
         let random_state = self.random.clone();
         let num_output_partitions = self.num_output_partitions;
-        let shuffle_batch_size = self.runtime.batch_size();
         match &self.partitioning {
             Partitioning::Hash(exprs, _) => {
                 let hashes_buf = &mut vec![];
@@ -257,14 +259,14 @@ impl ShuffleRepartitioner {
                         })
                         .collect::<Result<Vec<Arc<dyn Array>>>>()?;
 
-                    if partition_indices.len() > shuffle_batch_size {
+                    if partition_indices.len() > self.batch_size {
                         let output_batch =
                             RecordBatch::try_new(input.schema().clone(), columns)?;
                         output.frozen.push(output_batch);
                     } else {
                         if output.active.is_none() {
                             let buffer = MutableRecordBatch::new(
-                                shuffle_batch_size,
+                                self.batch_size,
                                 self.schema.clone(),
                             );
                             output.active = Some(buffer);
@@ -699,6 +701,7 @@ pub async fn external_shuffle(
         partitioning,
         metrics_set,
         context.runtime.clone(),
+        context.session_config().batch_size,
     );
     context.runtime.register_requester(repartitioner.id());
 

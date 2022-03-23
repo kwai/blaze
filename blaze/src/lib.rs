@@ -8,7 +8,7 @@ use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
-use datafusion::execution::runtime_env::RuntimeConfig;
+use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::jni_bridge::JavaClasses;
@@ -77,13 +77,13 @@ fn session_ctx(
 ) -> &'static SessionContext {
     SESSION_CONTEXT.get_or_init(|| {
         let runtime_config = RuntimeConfig::new()
-            .with_batch_size(batch_size)
             .with_memory_manager(MemoryManagerConfig::New {
                 max_memory,
                 memory_fraction,
             });
-        let config = SessionConfig::new().with_runtime_config(runtime_config);
-        SessionContext::with_config(config)
+        let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
+        let config = SessionConfig::new().with_batch_size(batch_size);
+        SessionContext::with_config_rt(config, runtime)
     })
 }
 

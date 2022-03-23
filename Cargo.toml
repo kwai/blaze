@@ -31,5 +31,3 @@ overflow-checks = false
 
 [patch.crates-io]
 datafusion = { git = "https://github.com/yjshen/arrow-datafusion.git", branch = "parquet_range_scan" }
-arrow = { git = "https://github.com/apache/arrow-rs.git", rev = "2bca71e322fcab6c6d93a47ef71638a617e29f6c"}
-parquet = { git = "https://github.com/apache/arrow-rs.git", rev = "2bca71e322fcab6c6d93a47ef71638a617e29f6c"}
