@@ -334,12 +334,6 @@ impl ShuffleRepartitioner {
                 let mut offsets = vec![0; num_output_partitions + 1];
                 let mut output_data = File::create(data_file_clone)?;
 
-                let mut spill_files = vec![];
-                for s in &output_spills {
-                    let reader = File::open(&s.file.path())?;
-                    spill_files.push(reader);
-                }
-
                 for i in 0..num_output_partitions {
                     offsets[i] = offset;
                     let partition_start = output_data.seek(SeekFrom::Current(0))?;
@@ -363,11 +357,11 @@ impl ShuffleRepartitioner {
                     }
 
                     // append partition in each spills
-                    for s in 0..output_spills.len() {
-                        let spill = &output_spills[s];
+                    for spill in &output_spills {
                         let length = spill.offsets[i + 1] - spill.offsets[i];
                         if length > 0 {
-                            let mut reader = &spill_files[s];
+                            let spill_file = File::open(&spill.file.path())?;
+                            let mut reader = &spill_file;
                             reader.seek(SeekFrom::Start(spill.offsets[i]))?;
                             let mut take = reader.take(length);
                             std::io::copy(&mut take, &mut output_data)?;
