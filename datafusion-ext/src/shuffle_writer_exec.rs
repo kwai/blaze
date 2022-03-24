@@ -184,6 +184,7 @@ struct ShuffleRepartitioner {
 }
 
 impl ShuffleRepartitioner {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         partition_id: usize,
         shuffle_id: usize,

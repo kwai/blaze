@@ -76,8 +76,8 @@ fn session_ctx(
     batch_size: usize,
 ) -> &'static SessionContext {
     SESSION_CONTEXT.get_or_init(|| {
-        let runtime_config = RuntimeConfig::new()
-            .with_memory_manager(MemoryManagerConfig::New {
+        let runtime_config =
+            RuntimeConfig::new().with_memory_manager(MemoryManagerConfig::New {
                 max_memory,
                 memory_fraction,
             });
