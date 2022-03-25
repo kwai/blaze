@@ -23,11 +23,12 @@ members = [
 ]
 
 [profile.release]
-#lto = true
-#codegen-units = 1
+lto = true
+codegen-units = 1
 
 [profile.dev]
 overflow-checks = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/yjshen/arrow-datafusion.git", branch = "parquet_range_scan" }
+ datafusion = { git = "https://github.com/yjshen/arrow-datafusion.git", branch = "parquet_range_scan" }
+ arrow = { git = "https://github.com/yjshen/arrow-rs.git", branch = "ord_decimal" }
