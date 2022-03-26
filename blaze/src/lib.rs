@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use datafusion::arrow::array::{Array, UInt64Array};
 use datafusion::arrow::compute::{take, TakeOptions};
-use datafusion::arrow::ipc::writer::StreamWriter;
+use datafusion::arrow::ipc::writer::FileWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
@@ -237,7 +237,7 @@ pub fn blaze_call_native(
                     let mut buf: Vec<u8> = vec![];
                     let mut buf_writer = BufWriter::new(&mut buf);
                     let mut arrow_writer =
-                        StreamWriter::try_new(&mut buf_writer, &*schema).unwrap();
+                        FileWriter::try_new(&mut buf_writer, &*schema).unwrap();
                     let mut num_ipc_rows = 0;
                     let mut sum_ipc_batch_bytes_size = 0;
 
