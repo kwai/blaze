@@ -1,7 +1,7 @@
 use std::future;
 use std::io::BufWriter;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -51,10 +51,11 @@ fn tokio_runtime(thread_num: usize) -> &'static Runtime {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(thread_num)
             .thread_name_fn(|| {
-               static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
-               let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
-               format!("Blaze-native-{}", id)
-            }).build()
+                static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
+                let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
+                format!("Blaze-native-{}", id)
+            })
+            .build()
             .unwrap()
     })
 }
