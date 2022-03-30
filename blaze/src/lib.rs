@@ -1,6 +1,7 @@
 use std::future;
 use std::io::BufWriter;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -49,8 +50,11 @@ fn tokio_runtime(thread_num: usize) -> &'static Runtime {
     TOKIO_RUNTIME_INSTANCE.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(thread_num)
-            .thread_name("blaze")
-            .build()
+            .thread_name_fn(|| {
+               static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
+               let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
+               format!("Blaze-native-{}", id)
+            }).build()
             .unwrap()
     })
 }
@@ -97,6 +101,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
     taskDefinition: JObject,
+    nativeMemory: i64,
+    memoryFraction: f64,
     metricNode: JObject,
     ipcRecordBatchDataConsumer: JObject,
 ) {
@@ -110,6 +116,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         blaze_call_native(
             &env,
             taskDefinition,
+            nativeMemory,
+            memoryFraction,
             metricNode,
             ipcRecordBatchDataConsumer,
             start_time,
@@ -141,6 +149,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 pub fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JObject,
+    native_memory: i64,
+    memory_fraction: f64,
     metric_node: JObject,
     ipc_record_batch_data_consumer: JObject,
     start_time: Instant,
@@ -175,8 +185,7 @@ pub fn blaze_call_native(
 
     tokio_runtime(10) // TODO: we should set this through JNI param
         .block_on(async {
-            // TODO: pass down these settings from JNI
-            let session_ctx = session_ctx(usize::MAX, 1.0, 10240);
+            let session_ctx = session_ctx(native_memory as usize, memory_fraction, 10240);
             let task_ctx = session_ctx.task_ctx();
 
             let result = execution_plan
@@ -297,11 +306,6 @@ pub fn blaze_call_native(
                             num_ipc_rows += batch_slice_len;
                             num_rows_total += batch_slice_len;
                             sum_ipc_batch_bytes_size += batch_byte_size(&batch_slice);
-                            info!(
-                                "XXXXXX batch slice num_rows: {}, bytes size: {}",
-                                batch_slice.num_rows(),
-                                batch_byte_size(&batch_slice),
-                            );
                             batch_offset += batch_slice_len;
                             if batch_offset >= batch.num_rows() {
                                 batch_id += 1;

@@ -401,7 +401,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_range_scan#245a633b4f2ad2411da096809f5faa77fe931b57"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#a656ca23bf98961aa6f0e8a6c057a531a96668a2"
 dependencies = [
  "ahash",
  "arrow",
@@ -432,7 +432,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_range_scan#245a633b4f2ad2411da096809f5faa77fe931b57"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#a656ca23bf98961aa6f0e8a6c057a531a96668a2"
 dependencies = [
  "arrow",
  "ordered-float 2.10.0",
@@ -443,7 +443,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_range_scan#245a633b4f2ad2411da096809f5faa77fe931b57"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#a656ca23bf98961aa6f0e8a6c057a531a96668a2"
 dependencies = [
  "ahash",
  "arrow",
@@ -472,7 +472,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_range_scan#245a633b4f2ad2411da096809f5faa77fe931b57"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#a656ca23bf98961aa6f0e8a6c057a531a96668a2"
 dependencies = [
  "ahash",
  "arrow",

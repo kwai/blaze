@@ -381,7 +381,7 @@ impl ShuffleRepartitioner {
             })
             .await,
         )??;
-        self.metrics.mem_used().set(0);
+        self.free_all_memory();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("data", DataType::Utf8, false),
@@ -401,6 +401,12 @@ impl ShuffleRepartitioner {
             schema,
             None,
         )?))
+    }
+
+    fn free_all_memory(&self) -> usize {
+        let used = self.metrics.mem_used().set(0);
+        self.shrink(used);
+        used
     }
 
     fn used(&self) -> usize {
@@ -549,7 +555,7 @@ impl MemoryConsumer for ShuffleRepartitioner {
         .await?;
 
         let mut spills = self.spills.lock().await;
-        let freed = self.metrics.mem_used().set(0);
+        let freed = self.free_all_memory();
         self.metrics.record_spill(freed);
         spills.push(SpillInfo {
             file: spillfile,
@@ -560,6 +566,12 @@ impl MemoryConsumer for ShuffleRepartitioner {
 
     fn mem_used(&self) -> usize {
         self.metrics.mem_used().value()
+    }
+}
+
+impl Drop for ShuffleRepartitioner {
+    fn drop(&mut self) {
+        self.runtime.drop_consumer(self.id(), self.used());
     }
 }
 
