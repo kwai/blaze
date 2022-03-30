@@ -88,7 +88,7 @@ fn session_ctx(
     tmp_dirs: String,
 ) -> &'static SessionContext {
     SESSION_CONTEXT.get_or_init(|| {
-        let dirs = tmp_dirs.split(",").map(PathBuf::from).collect::<Vec<_>>();
+        let dirs = tmp_dirs.split(',').map(PathBuf::from).collect::<Vec<_>>();
         let runtime_config = RuntimeConfig::new()
             .with_memory_manager(MemoryManagerConfig::New {
                 max_memory,
@@ -157,7 +157,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     );
 }
 
-#[allow(clippy::redundant_slicing)]
+#[allow(clippy::redundant_slicing, clippy::too_many_arguments)]
 pub fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JObject,
