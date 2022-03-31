@@ -381,7 +381,8 @@ impl ShuffleRepartitioner {
             })
             .await,
         )??;
-        self.metrics.mem_used().set(0);
+        let used = self.metrics.mem_used().set(0);
+        self.shrink(used);
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("data", DataType::Utf8, false),
@@ -560,6 +561,12 @@ impl MemoryConsumer for ShuffleRepartitioner {
 
     fn mem_used(&self) -> usize {
         self.metrics.mem_used().value()
+    }
+}
+
+impl Drop for ShuffleRepartitioner {
+    fn drop(&mut self) {
+        self.runtime.drop_consumer(self.id(), self.used());
     }
 }
 
