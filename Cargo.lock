@@ -72,8 +72,8 @@ checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
 
 [[package]]
 name = "arrow"
-version = "11.0.0"
-source = "git+https://github.com/yjshen/arrow-rs.git?branch=ord_decimal#ee43c182cd486c910052c38cf784466f8ca54c38"
+version = "11.1.0"
+source = "git+https://github.com/apache/arrow-rs.git?rev=eb6b7c65f49794f54d9b11a632172ffa13783ff2#eb6b7c65f49794f54d9b11a632172ffa13783ff2"
 dependencies = [
  "bitflags",
  "chrono",
@@ -401,13 +401,14 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#e0b464c995d7080ef53ba5672d3e88bed2e18af1"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
 dependencies = [
  "ahash",
  "arrow",
  "async-trait",
  "chrono",
  "datafusion-common",
+ "datafusion-data-access",
  "datafusion-expr",
  "datafusion-physical-expr",
  "futures",
@@ -432,7 +433,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#e0b464c995d7080ef53ba5672d3e88bed2e18af1"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
 dependencies = [
  "arrow",
  "ordered-float 2.10.0",
@@ -441,9 +442,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-data-access"
+version = "1.0.0"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "parking_lot",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#e0b464c995d7080ef53ba5672d3e88bed2e18af1"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
 dependencies = [
  "ahash",
  "arrow",
@@ -473,7 +487,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#e0b464c995d7080ef53ba5672d3e88bed2e18af1"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
 dependencies = [
  "ahash",
  "arrow",
@@ -685,9 +699,9 @@ checksum = "78cc372d058dcf6d5ecd98510e7fbc9e5aec4d21de70f65fea8fecebcd881bd4"
 
 [[package]]
 name = "h2"
-version = "0.3.12"
+version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62eeb471aa3e3c9197aa4bfeabfe02982f6dc96f750486c0bb0009ac58b26d2b"
+checksum = "37a82c6d637fc9515a4694bbf1cb2457b79d81ce52b3108bdeea58b07dd34a57"
 dependencies = [
  "bytes",
  "fnv",
@@ -698,7 +712,7 @@ dependencies = [
  "indexmap",
  "slab",
  "tokio",
- "tokio-util 0.6.9",
+ "tokio-util 0.7.1",
  "tracing",
 ]
 
@@ -1828,6 +1842,7 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1931,9 +1946,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.23"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa31669fa42c09c34d94d8165dd2012e8ff3c66aca50f3bb226b68f216f2706c"
+checksum = "90442985ee2f57c9e1b548ee72ae842f4a9a20e3f417cc38dbc5dc684d9bb4ee"
 dependencies = [
  "lazy_static",
 ]

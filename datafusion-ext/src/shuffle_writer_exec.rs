@@ -702,10 +702,10 @@ pub async fn external_shuffle(
         schema.clone(),
         partitioning,
         metrics_set,
-        context.runtime.clone(),
+        context.runtime_env(),
         context.session_config().batch_size,
     );
-    context.runtime.register_requester(repartitioner.id());
+    context.runtime_env().register_requester(repartitioner.id());
 
     while let Some(batch) = input.next().await {
         let batch = batch?;

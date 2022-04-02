@@ -31,4 +31,4 @@ overflow-checks = false
 
 [patch.crates-io]
 datafusion = { git = "https://github.com/yjshen/arrow-datafusion.git", branch = "parquet_and_memory" }
-arrow = { git = "https://github.com/yjshen/arrow-rs.git", branch = "ord_decimal" }
+arrow = { git = "https://github.com/apache/arrow-rs.git", rev = "eb6b7c65f49794f54d9b11a632172ffa13783ff2" }

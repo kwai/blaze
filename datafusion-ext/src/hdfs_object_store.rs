@@ -4,12 +4,11 @@ use std::io::Read;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::datasource::object_store::FileMetaStream;
-use datafusion::datasource::object_store::ListEntryStream;
-use datafusion::datasource::object_store::ObjectReader;
-use datafusion::datasource::object_store::ObjectStore;
-use datafusion::datasource::object_store::SizedFile;
-use datafusion::error::Result;
+use datafusion::datafusion_data_access::object_store::{
+    FileMetaStream, ListEntryStream, ObjectReader, ObjectStore,
+};
+use datafusion::datafusion_data_access::Result;
+use datafusion::datafusion_data_access::SizedFile;
 use futures::AsyncRead;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;

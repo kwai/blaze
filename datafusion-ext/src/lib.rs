@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use datafusion::datasource::object_store::ObjectStoreRegistry;
+use datafusion::datasource::object_store_registry::ObjectStoreRegistry;
 
 use hdfs_object_store::HDFSSingleFileObjectStore;
 
