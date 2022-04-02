@@ -401,7 +401,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=range_mm_sort#fb8db92d5eccc878123001bb33701338b090aeae"
 dependencies = [
  "ahash",
  "arrow",
@@ -433,7 +433,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=range_mm_sort#fb8db92d5eccc878123001bb33701338b090aeae"
 dependencies = [
  "arrow",
  "ordered-float 2.10.0",
@@ -444,7 +444,7 @@ dependencies = [
 [[package]]
 name = "datafusion-data-access"
 version = "1.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=range_mm_sort#fb8db92d5eccc878123001bb33701338b090aeae"
 dependencies = [
  "async-trait",
  "chrono",
@@ -457,7 +457,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=range_mm_sort#fb8db92d5eccc878123001bb33701338b090aeae"
 dependencies = [
  "ahash",
  "arrow",
@@ -487,7 +487,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=range_mm_sort#fb8db92d5eccc878123001bb33701338b090aeae"
 dependencies = [
  "ahash",
  "arrow",
@@ -1607,9 +1607,9 @@ dependencies = [
 
 [[package]]
 name = "slab"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9def91fd1e018fe007022791f865d0ccc9b3a0d5001e01aabb8b40e46000afb5"
+checksum = "eb703cfe953bccee95685111adeedb76fabe4e97549a58d16f03ea7b9367bb32"
 
 [[package]]
 name = "smallvec"
