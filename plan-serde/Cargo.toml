@@ -12,7 +12,7 @@ datafusion = { version = "7.0.0", features = ["simd"] }
 datafusion-ext = { path = "../datafusion-ext" }
 log = "0.4.14"
 prost = "0.9"
-tonic = "0.6"
+tonic = "0.7"
 
 [build-dependencies]
 tonic-build = { version = "0.6" }
