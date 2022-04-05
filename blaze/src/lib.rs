@@ -1,4 +1,4 @@
-use std::future;
+use std::cell::Cell;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,15 +10,14 @@ use datafusion::arrow::array::{Array, UInt64Array};
 use datafusion::arrow::compute::{take, TakeOptions};
 use datafusion::arrow::ipc::writer::FileWriter;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::error::DataFusionError;
+
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
-use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
-use futures::TryFutureExt;
-use futures::TryStreamExt;
+use datafusion_ext::jni_bridge_call_method_no_check_java_exception;
+use futures::StreamExt;
 use jni::objects::JObject;
 use jni::objects::JValue;
 use jni::objects::{JClass, JString};
@@ -29,7 +28,7 @@ use prost::Message;
 use tokio::runtime::Runtime;
 
 use datafusion_ext::jni_bridge::JavaClasses;
-use datafusion_ext::jni_bridge_call_method;
+
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 use plan_serde::protobuf::TaskDefinition;
 
@@ -203,176 +202,154 @@ pub fn blaze_call_native(
         .expect("Failed to convert tmp_dir string for disk_manager")
         .into();
 
-    tokio_runtime(pool_size as usize).block_on(async {
-        let session_ctx = session_ctx(
-            native_memory as usize,
-            memory_fraction,
-            batch_size as usize,
-            dirs,
-        );
+    let batch_size = batch_size as usize;
+    assert!(batch_size > 0);
+    tokio_runtime(pool_size as usize).block_on(async move {
+        let session_ctx =
+            session_ctx(native_memory as usize, memory_fraction, batch_size, dirs);
         let task_ctx = session_ctx.task_ctx();
 
+        // execute
         let result = execution_plan
             .execute(task_id.partition_id as usize, task_ctx)
             .await
             .unwrap();
-
-        let record_batches: Vec<RecordBatch> = result
-            .try_filter(|b| future::ready(b.num_rows() > 0))
-            .try_collect::<Vec<_>>()
-            .map_err(DataFusionError::from)
-            .await
+        metrics::update_spark_metric_node(&env, metric_node, execution_plan.clone())
             .unwrap();
 
+        // add some statistics logging
         info!(
             "Executing plan finished, result rows: {}",
-            record_batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+            execution_plan
+                .metrics()
+                .and_then(|m| m.output_rows())
+                .unwrap_or_default()
         );
-        if execution_plan
-            .as_any()
-            .downcast_ref::<ShuffleWriterExec>()
-            .is_some()
+        if let Some(shuffle_writer_exec) =
+            execution_plan.as_any().downcast_ref::<ShuffleWriterExec>()
         {
             info!(
                 "Shuffle writer output rows: {}",
-                execution_plan.children()[0]
+                shuffle_writer_exec.children()[0]
                     .metrics()
                     .and_then(|m| m.output_rows())
                     .unwrap_or_default()
             );
         }
+        info!("Result schema:");
+        for field in execution_plan.schema().fields() {
+            info!(
+                " -> col={}, type={}, nullable={}",
+                field.name(),
+                field.data_type(),
+                field.is_nullable()
+            )
+        }
 
-        // update spark metrics
-        metrics::update_spark_metric_node(&env, metric_node, execution_plan).unwrap();
+        // output ipc
+        let num_rows_total = Cell::new(0);
+        let num_bytes_total = Cell::new(0);
+        let stop = Cell::new(false);
+        result
+            .for_each(|batch| async {
+                let batch = batch.unwrap();
+                if stop.get() || batch.num_rows() == 0 {
+                    return;
+                }
+                num_rows_total.set(num_rows_total.get() + batch.num_rows());
 
-        if !record_batches.is_empty() {
-            let schema = record_batches[0].schema();
-            debug!("Result schema:");
-            for field in schema.fields() {
-                debug!(
-                    " -> col={}, type={}, nullable={}",
-                    field.name(),
-                    field.data_type(),
-                    field.is_nullable()
-                )
-            }
+                for batch_offset in (0..batch.num_rows()).step_by(batch_size) {
+                    let mut buf: Vec<u8> = vec![];
+                    let mut buf_writer = BufWriter::new(&mut buf);
+                    let mut arrow_writer =
+                        FileWriter::try_new(&mut buf_writer, &*batch.schema()).unwrap();
 
-            // make sure each IPC is smaller than 2GB so that java
-            // bytebuffer can handle it.
-            const OUTPUT_BATCH_SLICE_LEN: usize = 10000;
-            const OUTPUT_BATCH_BYTES_SIZE: usize = 67108864; // 64MB
-            let mut num_rows_total = 0;
-            let mut total_buf_len = 0;
-            let mut batch_id = 0;
-            let mut batch_offset = 0;
-
-            while batch_id < record_batches.len() {
-                let mut buf: Vec<u8> = vec![];
-                let mut buf_writer = BufWriter::new(&mut buf);
-                let mut arrow_writer =
-                    FileWriter::try_new(&mut buf_writer, &*schema).unwrap();
-                let mut num_ipc_rows = 0;
-                let mut sum_ipc_batch_bytes_size = 0;
-
-                // safety:
-                // write record batches into ipcs. the real size might be
-                // slightly larger than OUTPUT_BATCH_BYTES_SIZE, because there are
-                // BufWriters.
-                while batch_id < record_batches.len()
-                    && sum_ipc_batch_bytes_size < OUTPUT_BATCH_BYTES_SIZE
-                {
-                    let batch = &record_batches[batch_id];
-
-                    if batch_offset == 0 && batch.num_rows() < OUTPUT_BATCH_SLICE_LEN {
-                        // output the whole current batch
-                        batch_id += 1;
-                        num_ipc_rows += batch.num_rows();
-                        num_rows_total += batch.num_rows();
-                        sum_ipc_batch_bytes_size += batch_byte_size(batch);
-                        arrow_writer.write(batch).expect("Error writing IPC");
+                    if batch.num_rows() <= batch_size as usize {
+                        arrow_writer.write(&batch).expect("Error writing IPC");
                     } else {
-                        // big batch -- output slices of current batch
-                        let batch_slice_len = batch
-                            .num_rows()
-                            .saturating_sub(batch_offset)
-                            .min(OUTPUT_BATCH_SLICE_LEN);
-
-                        // FIXME: RecordBatch.slice() is buggy and produces duplicated rows
-                        //
-                        // let batch_slice = batch.slice(
-                        //     batch_offset,
-                        //     batch_slice_len);
-                        //
-                        let batch_slice = RecordBatch::try_new(
-                            batch.schema(),
-                            batch
-                                .columns()
-                                .iter()
-                                .map(|c| {
-                                    let batch_offset_end = batch_offset + batch_slice_len;
-                                    take(
-                                        c.as_ref(),
-                                        &UInt64Array::from_iter_values(
-                                            batch_offset as u64..batch_offset_end as u64,
-                                        ),
-                                        Some(TakeOptions {
-                                            check_bounds: false,
-                                        }),
-                                    )
-                                    .unwrap()
-                                })
-                                .collect::<Vec<Arc<dyn Array>>>(),
+                        let batch_slice = record_batch_slice(
+                            &batch,
+                            batch_offset,
+                            batch_size.min(batch.num_rows() - batch_offset),
                         )
                         .unwrap();
-                        num_ipc_rows += batch_slice_len;
-                        num_rows_total += batch_slice_len;
-                        sum_ipc_batch_bytes_size += batch_byte_size(&batch_slice);
-                        batch_offset += batch_slice_len;
-                        if batch_offset >= batch.num_rows() {
-                            batch_id += 1;
-                            batch_offset = 0;
-                        }
                         arrow_writer.write(&batch_slice).expect("Error writing IPC");
                     }
+                    arrow_writer.finish().unwrap();
+                    std::mem::drop(arrow_writer);
+                    std::mem::drop(buf_writer);
+
+                    consume_ipc(&env, &mut buf, ipc_record_batch_data_consumer).unwrap();
+                    if env.exception_check().unwrap() {
+                        log::warn!("Received consumer exception, stop outputing...");
+                        stop.set(true);
+                        env.exception_describe().unwrap();
+                        env.exception_clear().unwrap();
+                    }
+                    num_bytes_total.set(num_bytes_total.get() + buf.len());
                 }
-                arrow_writer.finish().expect("Error finishing arrow writer");
-                std::mem::drop(arrow_writer);
-                std::mem::drop(buf_writer);
 
-                info!(
-                    "Writing IPC finished: rows={}, bytes={}",
-                    num_ipc_rows,
-                    buf.len(),
-                );
-                total_buf_len += buf.len();
-
-                info!("Invoking IPC data consumer");
-                let byte_buffer = env
-                    .new_direct_byte_buffer(&mut buf)
-                    .expect("Error creating ByteBuffer");
-                jni_bridge_call_method!(
-                    env,
-                    JavaConsumer.accept,
-                    ipc_record_batch_data_consumer,
-                    JValue::Object(byte_buffer.into())
+                metrics::update_extra_metrics(
+                    &env,
+                    metric_node,
+                    start_time,
+                    num_rows_total.get(),
+                    num_bytes_total.get(),
                 )
-                .expect("Error invoking IPC data consumer");
-                info!("Invoking IPC data consumer succeeded");
-            }
-
-            metrics::update_extra_metrics(
-                &env,
-                metric_node,
-                start_time,
-                num_rows_total,
-                total_buf_len,
-            )
-            .unwrap();
-        } else {
-            metrics::update_extra_metrics(&env, metric_node, start_time, 0, 0).unwrap();
-            info!("Empty result, no need to invoking IPC data consumer");
-        }
+                .unwrap();
+            })
+            .await;
     });
-
     info!("Blaze native computing finished");
+}
+
+fn consume_ipc(
+    env: &JNIEnv,
+    buf: &mut [u8],
+    consumer: JObject,
+) -> jni::errors::Result<()> {
+    info!("Invoking IPC data consumer");
+
+    let byte_buffer = env
+        .new_direct_byte_buffer(buf)
+        .expect("Error creating ByteBuffer");
+    jni_bridge_call_method_no_check_java_exception!(
+        env,
+        JavaConsumer.accept,
+        consumer,
+        JValue::Object(byte_buffer.into())
+    )?;
+    info!("Invoking IPC data consumer succeeded");
+    Ok(())
+}
+
+fn record_batch_slice(
+    batch: &RecordBatch,
+    offset: usize,
+    len: usize,
+) -> datafusion::arrow::error::Result<RecordBatch> {
+    // FIXME: RecordBatch.slice() is buggy and produces
+    //   duplicated rows
+    //
+    // let batch_slice = batch.slice(
+    //     batch_offset,
+    //     batch_slice_len);
+    //
+    RecordBatch::try_new(
+        batch.schema(),
+        batch
+            .columns()
+            .iter()
+            .map(|c| {
+                let end = offset + len;
+                take(
+                    c.as_ref(),
+                    &UInt64Array::from_iter_values(offset as u64..end as u64),
+                    Some(TakeOptions {
+                        check_bounds: false,
+                    }),
+                )
+            })
+            .collect::<datafusion::arrow::error::Result<Vec<Arc<dyn Array>>>>()?,
+    )
 }
