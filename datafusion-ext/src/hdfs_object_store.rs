@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 use std::fmt::Formatter;
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -92,10 +92,10 @@ impl ObjectReader for HDFSObjectReader {
 
 impl HDFSObjectReader {
     fn get_reader(&self, start: u64) -> Result<Box<dyn Read + Send + Sync>> {
-        let reader = HDFSFileReader {
+        let reader = BufReader::new(HDFSFileReader {
             hdfs_input_stream: self.hdfs_input_stream.clone(),
             pos: start,
-        };
+        });
         Ok(Box::new(reader))
     }
 }

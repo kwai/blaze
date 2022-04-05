@@ -73,7 +73,8 @@ checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
 [[package]]
 name = "arrow"
 version = "11.1.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=eb6b7c65f49794f54d9b11a632172ffa13783ff2#eb6b7c65f49794f54d9b11a632172ffa13783ff2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e4a0aa844fa9e1933504b4cd10e776167f370b746d0a622f32696d8d3b252e7"
 dependencies = [
  "bitflags",
  "chrono",
@@ -401,7 +402,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a#3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a"
 dependencies = [
  "ahash",
  "arrow",
@@ -433,7 +434,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a#3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a"
 dependencies = [
  "arrow",
  "ordered-float 2.10.0",
@@ -444,7 +445,7 @@ dependencies = [
 [[package]]
 name = "datafusion-data-access"
 version = "1.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a#3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a"
 dependencies = [
  "async-trait",
  "chrono",
@@ -457,7 +458,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a#3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a"
 dependencies = [
  "ahash",
  "arrow",
@@ -487,7 +488,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?branch=parquet_and_memory#dcf365f74b766a1d3a338234dc44c86c73ef3637"
+source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a#3e5d2528ea0b0de1d5018e5185ecda3cd4a6573a"
 dependencies = [
  "ahash",
  "arrow",
@@ -1607,9 +1608,9 @@ dependencies = [
 
 [[package]]
 name = "slab"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9def91fd1e018fe007022791f865d0ccc9b3a0d5001e01aabb8b40e46000afb5"
+checksum = "eb703cfe953bccee95685111adeedb76fabe4e97549a58d16f03ea7b9367bb32"
 
 [[package]]
 name = "smallvec"
@@ -1653,9 +1654,9 @@ dependencies = [
 
 [[package]]
 name = "sqlparser"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adbbea2526ad0d02ad9414a07c396078a5b944bbf9ca4fbab8f01bb4cb579081"
+checksum = "7e9a527b68048eb95495a1508f6c8395c8defcff5ecdbe8ad4106d08a2ef2a3c"
 dependencies = [
  "log",
 ]
