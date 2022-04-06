@@ -308,7 +308,7 @@ impl ShuffleRepartitioner {
         let num_output_partitions = self.num_output_partitions;
         let (data_file, index_file) = self.get_data_index_file_path()?;
         info!(
-            "shuffle write using data file: {}, index file: {}",
+            "Native shuffle write using data file: {}, index file: {}",
             &data_file, &index_file
         );
 

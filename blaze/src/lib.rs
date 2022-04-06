@@ -236,9 +236,9 @@ pub fn blaze_call_native(
                     .unwrap_or_default()
             );
         }
-        info!("Result schema:");
+        debug!("Result schema:");
         for field in execution_plan.schema().fields() {
-            info!(
+            debug!(
                 " -> col={}, type={}, nullable={}",
                 field.name(),
                 field.data_type(),
@@ -281,7 +281,7 @@ pub fn blaze_call_native(
 
                     consume_ipc(&env, &mut buf, ipc_record_batch_data_consumer).unwrap();
                     if env.exception_check().unwrap() {
-                        log::warn!("Received consumer exception, stop outputing...");
+                        log::warn!("Received consumer exception, stop outputting...");
                         stop.set(true);
                         env.exception_describe().unwrap();
                         env.exception_clear().unwrap();
@@ -308,7 +308,7 @@ fn consume_ipc(
     buf: &mut [u8],
     consumer: JObject,
 ) -> jni::errors::Result<()> {
-    info!("Invoking IPC data consumer");
+    debug!("Invoking IPC data consumer");
 
     let byte_buffer = env
         .new_direct_byte_buffer(buf)
@@ -319,7 +319,7 @@ fn consume_ipc(
         consumer,
         JValue::Object(byte_buffer.into())
     )?;
-    info!("Invoking IPC data consumer succeeded");
+    debug!("Invoking IPC data consumer succeeded");
     Ok(())
 }
 
