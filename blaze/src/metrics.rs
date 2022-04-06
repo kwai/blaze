@@ -6,7 +6,6 @@ use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::jni_bridge_call_method;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
-use jni::objects::JValue;
 use jni::JNIEnv;
 
 pub fn update_spark_metric_node(
@@ -32,7 +31,7 @@ pub fn update_spark_metric_node(
             env,
             SparkMetricNode.getChild,
             metric_node,
-            JValue::Int(i as i32)
+            i as i32
         )?
         .l()?;
         update_spark_metric_node(env, child_metric_node, child_plan.clone())?;
@@ -65,13 +64,8 @@ fn update_metrics(
     metric_values: &[(&str, i64)],
 ) -> JniResult<()> {
     for &(name, value) in metric_values {
-        jni_bridge_call_method!(
-            env,
-            SparkMetricNode.add,
-            metric_node,
-            JValue::Object(env.new_string(name)?.into()),
-            JValue::Long(value)
-        )?;
+        let jname = env.new_string(name)?;
+        jni_bridge_call_method!(env, SparkMetricNode.add, metric_node, jname, value)?;
     }
     Ok(())
 }

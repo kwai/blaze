@@ -7,7 +7,6 @@ use jni::objects::JClass;
 use jni::objects::JMethodID;
 use jni::objects::JObject;
 use jni::objects::JStaticMethodID;
-use jni::objects::JValue;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
@@ -16,11 +15,13 @@ use jni::JavaVM;
 #[macro_export]
 macro_rules! jni_bridge_new_object {
     ($env:expr, $clsname:ident $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_new_object!({}, {:?})", stringify!($clsname), &[$($args,)*]);
+        log::trace!("jni_bridge_new_object!({}, {:?})",
+        stringify!($clsname),
+        &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
         $env.new_object_unchecked(
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
-            &[$($args,)*],
+            &[$(jni::objects::JValue::from($args),)*],
         ).and_then(|ret| {
             assert_eq!($env.exception_check().unwrap(), false);
             Ok(ret)
@@ -34,12 +35,12 @@ macro_rules! jni_bridge_call_method_no_check_java_exception {
         log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
-            &[$($args,)*] as &[JValue]);
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
         $env.call_method_unchecked(
             $obj,
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-            &[$($args,)*],
+            &[$(jni::objects::JValue::from($args),)*],
         )
     }}
 }
@@ -50,12 +51,12 @@ macro_rules! jni_bridge_call_method {
         log::trace!("jni_bridge_call_method!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
-            &[$($args,)*] as &[JValue]);
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
         $env.call_method_unchecked(
             $obj,
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-            &[$($args,)*],
+            &[$(jni::objects::JValue::from($args),)*],
         ).and_then(|ret| {
             assert_eq!($env.exception_check().unwrap(), false);
             Ok(ret)
@@ -69,12 +70,12 @@ macro_rules! jni_bridge_call_static_method {
         log::trace!("jni_bridge_call_static_method!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
-            &[$($args,)*] as &[JValue]);
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
         $env.call_static_method_unchecked(
             paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-            &[$($args,)*],
+            &[$(jni::objects::JValue::from($args),)*],
         ).and_then(|ret| {
             assert_eq!($env.exception_check().unwrap(), false);
             Ok(ret)
@@ -88,6 +89,8 @@ pub struct JavaClasses<'a> {
     pub classloader: JObject<'a>,
 
     pub cJniBridge: JniBridge<'a>,
+    pub cClass: JavaClass<'a>,
+    pub cJavaRuntimeException: JavaRuntimeException<'a>,
     pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
@@ -106,7 +109,6 @@ pub struct JavaClasses<'a> {
     pub cSparkShuffleManager: SparkShuffleManager<'a>,
     pub cSparkIndexShuffleBlockResolver: SparkIndexShuffleBlockResolver<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
-    pub cSparkBlazeConverters: SparkBlazeConverters<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
 }
 
@@ -137,6 +139,8 @@ impl JavaClasses<'static> {
             classloader: JObject::null(),
 
             cJniBridge: JniBridge::new(env)?,
+            cClass: JavaClass::new(env)?,
+            cJavaRuntimeException: JavaRuntimeException::new(env)?,
             cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
             cJavaList: JavaList::new(env)?,
             cJavaMap: JavaMap::new(env)?,
@@ -155,7 +159,6 @@ impl JavaClasses<'static> {
             cSparkShuffleManager: SparkShuffleManager::new(env)?,
             cSparkIndexShuffleBlockResolver: SparkIndexShuffleBlockResolver::new(env)?,
             cSparkSQLMetric: SparkSQLMetric::new(env)?,
-            cSparkBlazeConverters: SparkBlazeConverters::new(env)?,
             cSparkMetricNode: SparkMetricNode::new(env)?,
         };
         initialized_java_classes.classloader = get_global_ref_jobject(
@@ -205,7 +208,7 @@ impl JavaClasses<'static> {
         jni_bridge_call_static_method!(
             env,
             JniBridge.setContextClassLoader,
-            JValue::Object(JavaClasses::get().classloader)
+            JavaClasses::get().classloader
         )
         .unwrap();
         env
@@ -215,6 +218,8 @@ impl JavaClasses<'static> {
 #[allow(non_snake_case)]
 pub struct JniBridge<'a> {
     pub class: JClass<'a>,
+    pub method_raiseThrowable: JStaticMethodID<'a>,
+    pub method_raiseThrowable_ret: JavaType,
     pub method_getContextClassLoader: JStaticMethodID<'a>,
     pub method_getContextClassLoader_ret: JavaType,
     pub method_setContextClassLoader: JStaticMethodID<'a>,
@@ -235,6 +240,12 @@ impl<'a> JniBridge<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JniBridge {
             class,
+            method_raiseThrowable: env.get_static_method_id(
+                class,
+                "raiseThrowable",
+                "(Ljava/lang/Throwable;)V",
+            )?,
+            method_raiseThrowable_ret: JavaType::Primitive(Primitive::Void),
             method_getContextClassLoader: env.get_static_method_id(
                 class,
                 "getContextClassLoader",
@@ -279,6 +290,50 @@ impl<'a> JniBridge<'a> {
                 "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;J)I",
             )?,
             method_readFSDataInputStream_ret: JavaType::Primitive(Primitive::Int),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JavaClass<'a> {
+    pub class: JClass<'a>,
+    pub method_getName: JMethodID<'a>,
+    pub method_getName_ret: JavaType,
+}
+impl<'a> JavaClass<'a> {
+    pub const SIG_TYPE: &'static str = "java/lang/Class";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaClass<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaClass {
+            class,
+            method_getName: env.get_method_id(
+                class,
+                "getName",
+                "()Ljava/lang/String;",
+            )?,
+            method_getName_ret: JavaType::Object("java/lang/String".to_owned()),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JavaRuntimeException<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID<'a>,
+}
+impl<'a> JavaRuntimeException<'a> {
+    pub const SIG_TYPE: &'static str = "java/lang/RuntimeException";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaRuntimeException<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaRuntimeException {
+            class,
+            ctor: env.get_method_id(
+                class,
+                "<init>",
+                "(Ljava/lang/String;Ljava/lang/Throwable;)V",
+            )?,
         })
     }
 }
@@ -641,32 +696,6 @@ impl<'a> SparkSQLMetric<'a> {
             class,
             method_add: env.get_method_id(class, "add", "(J)V")?,
             method_add_ret: JavaType::Primitive(Primitive::Void),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct SparkBlazeConverters<'a> {
-    pub class: JClass<'a>,
-    pub method_readManagedBufferToSegmentByteChannelsAsJava: JStaticMethodID<'a>,
-    pub method_readManagedBufferToSegmentByteChannelsAsJava_ret: JavaType,
-}
-impl<'a> SparkBlazeConverters<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/execution/Converters";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkBlazeConverters<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(SparkBlazeConverters {
-            class,
-            method_readManagedBufferToSegmentByteChannelsAsJava: env
-                .get_static_method_id(
-                    class,
-                    "readManagedBufferToSegmentByteChannelsAsJava",
-                    "(Lorg/apache/spark/network/buffer/ManagedBuffer;)Ljava/util/List;",
-                )?,
-            method_readManagedBufferToSegmentByteChannelsAsJava_ret: JavaType::Object(
-                JavaList::SIG_TYPE.to_owned(),
-            ),
         })
     }
 }

@@ -63,7 +63,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::StreamExt;
-use jni::{errors::Result as JniResult, objects::JValue};
+use jni::errors::Result as JniResult;
 use log::{debug, info};
 use tempfile::NamedTempFile;
 use tokio::task;
@@ -431,8 +431,8 @@ impl ShuffleRepartitioner {
                 env,
                 SparkIndexShuffleBlockResolver.getDataFile,
                 shuffle_block_resolver,
-                JValue::Int(self.shuffle_id as i32),
-                JValue::Long(self.map_id as i64)
+                self.shuffle_id as i32,
+                self.map_id as i64
             )?
             .l()?;
             let data_file_path =

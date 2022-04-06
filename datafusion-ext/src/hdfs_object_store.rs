@@ -12,7 +12,6 @@ use datafusion::datafusion_data_access::SizedFile;
 use futures::AsyncRead;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
-use jni::objects::JValue;
 use log::debug;
 use log::error;
 
@@ -116,9 +115,9 @@ impl Read for HDFSFileReader {
                 let read_size = jni_bridge_call_static_method!(
                     env,
                     JniBridge.readFSDataInputStream,
-                    JValue::Object(self.hdfs_input_stream.inner),
-                    JValue::Object(buf.into()),
-                    JValue::Long(self.pos as i64)
+                    self.hdfs_input_stream.inner,
+                    buf,
+                    self.pos as i64
                 )?
                 .i()? as usize;
 
@@ -144,21 +143,12 @@ impl FSDataInputStreamWrapper {
         let fs = jni_bridge_call_static_method!(
             env,
             JniBridge.getHDFSFileSystem,
-            JValue::Object(env.new_string(path)?.into())
+            env.new_string(path)?
         )?
         .l()?;
-        let path = jni_bridge_new_object!(
-            env,
-            HadoopPath,
-            JValue::Object(env.new_string(path)?.into())
-        )?;
-        let hdfs_input_stream = jni_bridge_call_method!(
-            env,
-            HadoopFileSystem.open,
-            fs,
-            JValue::Object(path)
-        )?
-        .l()?;
+        let path = jni_bridge_new_object!(env, HadoopPath, env.new_string(path)?)?;
+        let hdfs_input_stream =
+            jni_bridge_call_method!(env, HadoopFileSystem.open, fs, path)?.l()?;
         JniResult::Ok(FSDataInputStreamWrapper {
             inner: hdfs_input_stream,
             env,

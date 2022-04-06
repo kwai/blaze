@@ -46,7 +46,6 @@ use datafusion::physical_plan::Statistics;
 use futures::Stream;
 use jni::errors::Result as JniResult;
 use jni::objects::JObject;
-use jni::objects::JValue;
 
 use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
@@ -110,7 +109,7 @@ impl ExecutionPlan for ShuffleReaderExec {
             let segments = jni_bridge_call_static_method!(
                 env,
                 JniBridge.getResource,
-                JValue::Object(env.new_string(&self.native_shuffle_id)?.into())
+                env.new_string(&self.native_shuffle_id)?
             )?
             .l()?;
             JniResult::Ok(segments)
@@ -232,7 +231,7 @@ impl Read for SeekableByteChannelReader {
                         env,
                         JavaNioSeekableByteChannel.read,
                         self.0,
-                        JValue::Object(env.new_direct_byte_buffer(buf)?.into())
+                        env.new_direct_byte_buffer(buf)?
                     )?
                     .i()? as usize,
                 );
@@ -256,7 +255,7 @@ impl Seek for SeekableByteChannelReader {
                             env,
                             JavaNioSeekableByteChannel.setPosition,
                             self.0,
-                            JValue::Long(position as i64)
+                            position as i64
                         )?;
                         JniResult::Ok(position)
                     }
@@ -273,7 +272,7 @@ impl Seek for SeekableByteChannelReader {
                             env,
                             JavaNioSeekableByteChannel.setPosition,
                             self.0,
-                            JValue::Long(position as i64)
+                            position as i64
                         )?;
                         JniResult::Ok(position)
                     }
