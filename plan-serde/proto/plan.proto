@@ -242,6 +242,7 @@ enum ScalarFunction {
   Translate=60;
   Trim=61;
   Upper=62;
+  Coalesce=63;
 }
 
 message PhysicalScalarFunctionNode {

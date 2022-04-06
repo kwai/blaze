@@ -642,6 +642,7 @@ impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
             ScalarFunction::Now => Self::Now,
             ScalarFunction::Translate => Self::Translate,
             ScalarFunction::RegexpMatch => Self::RegexpMatch,
+            ScalarFunction::Coalesce => Self::Coalesce,
         }
     }
 }
@@ -1178,6 +1179,12 @@ impl TryFrom<&protobuf::LogicalExprNode> for Expr {
                         (&args[0]).try_into()?,
                         (&args[1]).try_into()?,
                         (&args[2]).try_into()?,
+                    )),
+                    ScalarFunction::Coalesce => Ok(coalesce(
+                        args.to_owned()
+                            .iter()
+                            .map(|expr| expr.try_into())
+                            .collect::<Result<Vec<_>, _>>()?,
                     )),
                     _ => Err(proto_error(
                         "Protobuf deserialization error: Unsupported scalar function",
