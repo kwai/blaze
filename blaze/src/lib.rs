@@ -161,12 +161,11 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 env.exception_occurred().unwrap().into()
             };
 
-            jni_bridge_call_static_method!(
+            let _ = jni_bridge_call_static_method!(
                 env,
                 JniBridge.raiseThrowable,
                 jni_bridge_new_object!(env, JavaRuntimeException, msg, cause).unwrap()
-            )
-            .unwrap();
+            );
         }
     }
 
