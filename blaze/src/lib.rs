@@ -128,6 +128,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     setup_env_logger();
 
     // save backtrace when panics
+    let original_panic_hook = std::panic::take_hook();
     if let Err(e) = std::panic::catch_unwind(|| {
         blaze_call_native(
             &env,
@@ -143,6 +144,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         )
         .unwrap();
     }) {
+        std::panic::set_hook(original_panic_hook);
         let panic_str = match e.downcast::<String>() {
             Ok(v) => *v,
             Err(e) => match e.downcast::<&str>() {
