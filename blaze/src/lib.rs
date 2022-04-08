@@ -1,5 +1,9 @@
 use std::cell::Cell;
+use std::cell::RefCell;
+use std::error::Error;
 use std::io::BufWriter;
+use std::io::Error as IoError;
+use std::io::ErrorKind as IoErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -14,12 +18,16 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
+use datafusion::physical_plan::displayable;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
+use datafusion_ext::jni_bridge_call_method;
 use datafusion_ext::jni_bridge_call_method_no_check_java_exception;
+use datafusion_ext::jni_bridge_call_static_method;
+use datafusion_ext::jni_bridge_new_object;
 use futures::StreamExt;
 use jni::objects::JObject;
-use jni::objects::JValue;
+
 use jni::objects::{JClass, JString};
 use jni::JNIEnv;
 use log::{debug, error, info};
@@ -132,7 +140,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             metricNode,
             ipcRecordBatchDataConsumer,
             start_time,
-        );
+        )
+        .unwrap();
     }) {
         let panic_str = match e.downcast::<String>() {
             Ok(v) => *v,
@@ -144,9 +153,20 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         let backtrace = BACKTRACE.get().unwrap().lock().unwrap();
         error!("{}\nBacktrace:\n{}", panic_str, *backtrace);
 
-        if !env.exception_check().unwrap() {
-            env.throw_new("java/lang/RuntimeException", panic_str)
-                .unwrap();
+        {
+            let msg = env.new_string(panic_str).unwrap();
+            let cause = if env.exception_check().unwrap() {
+                JObject::null()
+            } else {
+                env.exception_occurred().unwrap().into()
+            };
+
+            jni_bridge_call_static_method!(
+                env,
+                JniBridge.raiseThrowable,
+                jni_bridge_new_object!(env, JavaRuntimeException, msg, cause).unwrap()
+            )
+            .unwrap();
         }
     }
 
@@ -168,54 +188,49 @@ pub fn blaze_call_native(
     metric_node: JObject,
     ipc_record_batch_data_consumer: JObject,
     start_time: Instant,
-) {
+) -> Result<(), Box<dyn Error>> {
     info!("Blaze native computing started");
     debug!("Initializing JavaClasses");
-    JavaClasses::init(env).expect("Error initializing JavaClasses");
+    JavaClasses::init(env)?;
+
     let env = JavaClasses::get_thread_jnienv();
     debug!("Initializing JavaClasses succeeded");
 
     debug!("Decoding task definition");
-    let task_definition_raw = env
-        .convert_byte_array(task_definition.into_inner())
-        .expect("Error getting task definition");
-    let task_definition: TaskDefinition = TaskDefinition::decode(&*task_definition_raw)
-        .expect("Error decoding task definition");
+    let task_definition_raw = env.convert_byte_array(task_definition.into_inner())?;
+    let task_definition: TaskDefinition = TaskDefinition::decode(&*task_definition_raw)?;
     debug!("Decoding task definition succeeded");
 
     debug!("Creating native execution plan");
     let task_id = task_definition
         .task_id
-        .expect("Missing task_definition.task_id");
+        .ok_or_else(|| IoError::new(IoErrorKind::InvalidInput, "task id is empty"))?;
+    let plan = &task_definition
+        .plan
+        .ok_or_else(|| IoError::new(IoErrorKind::InvalidInput, "task plan is empty"))?;
 
-    let plan = &task_definition.plan.expect("Missing task_definition.plan");
-    let execution_plan: Arc<dyn ExecutionPlan> =
-        plan.try_into().expect("Error converting to ExecutionPlan");
+    let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into()?;
+    info!("Creating native execution plan succeeded");
+    info!("  task_id={:?}", task_id);
     info!(
-        "Creating native execution plan succeeded: task_id={:?}, execution plan:\n{}",
-        task_id,
-        datafusion::physical_plan::displayable(execution_plan.as_ref()).indent()
+        "   execution plan:\n{}",
+        displayable(execution_plan.as_ref()).indent()
     );
 
-    let dirs = env
-        .get_string(tmp_dirs)
-        .expect("Failed to convert tmp_dir string for disk_manager")
-        .into();
-
+    let dirs = env.get_string(tmp_dirs)?.into();
     let batch_size = batch_size as usize;
     assert!(batch_size > 0);
+
     tokio_runtime(pool_size as usize).block_on(async move {
         let session_ctx =
             session_ctx(native_memory as usize, memory_fraction, batch_size, dirs);
         let task_ctx = session_ctx.task_ctx();
 
         // execute
-        let result = execution_plan
+        let mut result = execution_plan
             .execute(task_id.partition_id as usize, task_ctx)
-            .await
-            .unwrap();
-        metrics::update_spark_metric_node(&env, metric_node, execution_plan.clone())
-            .unwrap();
+            .await?;
+        metrics::update_spark_metric_node(&env, metric_node, execution_plan.clone())?;
 
         // add some statistics logging
         info!(
@@ -249,58 +264,86 @@ pub fn blaze_call_native(
         // output ipc
         let num_rows_total = Cell::new(0);
         let num_bytes_total = Cell::new(0);
-        let stop = Cell::new(false);
-        result
-            .for_each(|batch| async {
-                let batch = batch.unwrap();
-                if stop.get() || batch.num_rows() == 0 {
-                    return;
+        let consume_throws = RefCell::new(None);
+        let process_result_batch = |batch: &RecordBatch| {
+            num_rows_total.set(num_rows_total.get() + batch.num_rows());
+
+            for batch_offset in (0..batch.num_rows()).step_by(batch_size) {
+                let mut buf: Vec<u8> = vec![];
+                let mut buf_writer = BufWriter::new(&mut buf);
+                let mut arrow_writer =
+                    FileWriter::try_new(&mut buf_writer, &*batch.schema())?;
+
+                if batch.num_rows() <= batch_size as usize {
+                    arrow_writer.write(batch)?;
+                } else {
+                    let batch_slice = record_batch_slice(
+                        batch,
+                        batch_offset,
+                        batch_size.min(batch.num_rows() - batch_offset),
+                    )?;
+                    arrow_writer.write(&batch_slice)?;
                 }
-                num_rows_total.set(num_rows_total.get() + batch.num_rows());
+                arrow_writer.finish()?;
+                std::mem::drop(arrow_writer);
+                std::mem::drop(buf_writer);
 
-                for batch_offset in (0..batch.num_rows()).step_by(batch_size) {
-                    let mut buf: Vec<u8> = vec![];
-                    let mut buf_writer = BufWriter::new(&mut buf);
-                    let mut arrow_writer =
-                        FileWriter::try_new(&mut buf_writer, &*batch.schema()).unwrap();
+                consume_ipc(&env, &mut buf, ipc_record_batch_data_consumer).or_else(
+                    |err| {
+                        if let jni::errors::Error::JavaException { .. } = err {
+                            *consume_throws.borrow_mut() =
+                                Some(env.exception_occurred()?);
+                            log::warn!("Received consumer exception, stop outputting...");
+                            env.exception_describe()?;
+                            env.exception_clear()?;
+                            Ok(())
+                        } else {
+                            Err(err)
+                        }
+                    },
+                )?;
+                num_bytes_total.set(num_bytes_total.get() + buf.len());
+            }
+            Result::<(), Box<dyn Error>>::Ok(())
+        };
 
-                    if batch.num_rows() <= batch_size as usize {
-                        arrow_writer.write(&batch).expect("Error writing IPC");
-                    } else {
-                        let batch_slice = record_batch_slice(
-                            &batch,
-                            batch_offset,
-                            batch_size.min(batch.num_rows() - batch_offset),
-                        )
-                        .unwrap();
-                        arrow_writer.write(&batch_slice).expect("Error writing IPC");
+        while let Some(batch) = result.next().await {
+            let batch = batch?;
+            if consume_throws.borrow().is_some() || batch.num_rows() == 0 {
+                continue;
+            }
+            process_result_batch(&batch)?
+        }
+
+        // update metric
+        metrics::update_extra_metrics(
+            &env,
+            metric_node,
+            start_time,
+            num_rows_total.get(),
+            num_bytes_total.get(),
+        )?;
+
+        // dealing with consumer exceptions
+        match consume_throws.take() {
+            Some(e) => {
+                let exception_class = env.get_object_class(e).unwrap();
+                let exception_classname =
+                    jni_bridge_call_method!(env, Class.getName, exception_class)?.l()?;
+                match env.get_string(exception_classname.into())?.to_str()? {
+                    "java.lang.InterruptedException" => {
+                        info!("Interrupted");
                     }
-                    arrow_writer.finish().unwrap();
-                    std::mem::drop(arrow_writer);
-                    std::mem::drop(buf_writer);
-
-                    consume_ipc(&env, &mut buf, ipc_record_batch_data_consumer).unwrap();
-                    if env.exception_check().unwrap() {
-                        log::warn!("Received consumer exception, stop outputting...");
-                        stop.set(true);
-                        env.exception_describe().unwrap();
-                        env.exception_clear().unwrap();
-                    }
-                    num_bytes_total.set(num_bytes_total.get() + buf.len());
+                    _ => env.throw(e)?,
                 }
+            }
+            None => {}
+        }
+        Result::<(), Box<dyn Error>>::Ok(())
+    })?;
 
-                metrics::update_extra_metrics(
-                    &env,
-                    metric_node,
-                    start_time,
-                    num_rows_total.get(),
-                    num_bytes_total.get(),
-                )
-                .unwrap();
-            })
-            .await;
-    });
     info!("Blaze native computing finished");
+    Ok(())
 }
 
 fn consume_ipc(
@@ -317,7 +360,7 @@ fn consume_ipc(
         env,
         JavaConsumer.accept,
         consumer,
-        JValue::Object(byte_buffer.into())
+        byte_buffer
     )?;
     debug!("Invoking IPC data consumer succeeded");
     Ok(())
