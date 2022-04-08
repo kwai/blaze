@@ -22,7 +22,6 @@ use datafusion::physical_plan::displayable;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::jni_bridge_call_method;
-use datafusion_ext::jni_bridge_call_method_no_check_java_exception;
 use datafusion_ext::jni_bridge_call_static_method;
 use datafusion_ext::jni_bridge_new_object;
 use futures::StreamExt;
@@ -128,8 +127,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     setup_env_logger();
 
     // save backtrace when panics
-    let original_panic_hook = std::panic::take_hook();
     if let Err(e) = std::panic::catch_unwind(|| {
+        info!("Blaze native computing started");
         blaze_call_native(
             &env,
             taskDefinition,
@@ -143,32 +142,44 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             start_time,
         )
         .unwrap();
+        info!("Blaze native computing finished");
     }) {
-        std::panic::set_hook(original_panic_hook);
-        let panic_str = match e.downcast::<String>() {
-            Ok(v) => *v,
-            Err(e) => match e.downcast::<&str>() {
-                Ok(v) => v.to_string(),
-                _ => "Unknown blaze-rs exception".to_owned(),
-            },
-        };
-        let backtrace = BACKTRACE.get().unwrap().lock().unwrap();
-        error!("{}\nBacktrace:\n{}", panic_str, *backtrace);
+        let recover = || {
+            if is_jvm_interrupted(&env)? {
+                info!("Blaze native computing interrupted by JVM");
+                return Ok(());
+            }
 
-        {
-            let msg = env.new_string(panic_str).unwrap();
-            let cause = if env.exception_check().unwrap() {
-                JObject::null()
-            } else {
-                env.exception_occurred().unwrap().into()
+            let panic_str = match e.downcast::<String>() {
+                Ok(v) => *v,
+                Err(e) => match e.downcast::<&str>() {
+                    Ok(v) => v.to_string(),
+                    _ => "Unknown blaze-rs exception".to_owned(),
+                },
             };
+            let backtrace = BACKTRACE.get().unwrap().lock().unwrap();
+            error!("{}\nBacktrace:\n{}", panic_str, *backtrace);
 
-            let _ = jni_bridge_call_static_method!(
+            // throw jvm runtime exception
+            let cause = if env.exception_check()? {
+                let throwable = env.exception_occurred()?.into();
+                env.exception_clear()?;
+                throwable
+            } else {
+                JObject::null()
+            };
+            let msg = env.new_string(panic_str)?;
+            let _throw = jni_bridge_call_static_method!(
                 env,
                 JniBridge.raiseThrowable,
-                jni_bridge_new_object!(env, JavaRuntimeException, msg, cause).unwrap()
+                jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?
             );
-        }
+            Ok(())
+        };
+        recover().unwrap_or_else(|err: Box<dyn Error>| {
+            error!("Error recovering from panic, cannot resume: {:?}", err);
+            std::process::abort();
+        });
     }
 
     info!(
@@ -190,7 +201,6 @@ pub fn blaze_call_native(
     ipc_record_batch_data_consumer: JObject,
     start_time: Instant,
 ) -> Result<(), Box<dyn Error>> {
-    info!("Blaze native computing started");
     debug!("Initializing JavaClasses");
     JavaClasses::init(env)?;
 
@@ -266,6 +276,18 @@ pub fn blaze_call_native(
         let num_rows_total = Cell::new(0);
         let num_bytes_total = Cell::new(0);
         let consume_throws = RefCell::new(None);
+
+        let update_extra_metrics = || {
+            metrics::update_extra_metrics(
+                &env,
+                metric_node,
+                start_time,
+                num_rows_total.get(),
+                num_bytes_total.get(),
+            )?;
+            Result::<(), Box<dyn Error>>::Ok(())
+        };
+
         let process_result_batch = |batch: &RecordBatch| {
             num_rows_total.set(num_rows_total.get() + batch.num_rows());
 
@@ -310,41 +332,31 @@ pub fn blaze_call_native(
 
         while let Some(batch) = result.next().await {
             let batch = batch?;
-            if consume_throws.borrow().is_some() || batch.num_rows() == 0 {
-                continue;
+            if batch.num_rows() > 0 {
+                process_result_batch(&batch).or_else(|err| {
+                    update_extra_metrics()?;
+                    Err(err)
+                })?;
             }
-            process_result_batch(&batch)?
         }
-
-        // update metric
-        metrics::update_extra_metrics(
-            &env,
-            metric_node,
-            start_time,
-            num_rows_total.get(),
-            num_bytes_total.get(),
-        )?;
-
-        // dealing with consumer exceptions
-        match consume_throws.take() {
-            Some(e) => {
-                let exception_class = env.get_object_class(e).unwrap();
-                let exception_classname =
-                    jni_bridge_call_method!(env, Class.getName, exception_class)?.l()?;
-                match env.get_string(exception_classname.into())?.to_str()? {
-                    "java.lang.InterruptedException" => {
-                        info!("Interrupted");
-                    }
-                    _ => env.throw(e)?,
-                }
-            }
-            None => {}
-        }
+        update_extra_metrics()?;
         Result::<(), Box<dyn Error>>::Ok(())
     })?;
-
-    info!("Blaze native computing finished");
     Ok(())
+}
+
+fn is_jvm_interrupted(env: &JNIEnv) -> jni::errors::Result<bool> {
+    let interrupted_exception_class = "java.lang.InterruptedException";
+    if env.exception_check()? {
+        let e = env.exception_occurred()?;
+        let class = env.get_object_class(e)?;
+        let classname = jni_bridge_call_method!(env, Class.getName, class)?.l()?;
+        let classname = env.get_string(classname.into())?;
+        if classname.to_string_lossy().as_ref() == interrupted_exception_class {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn consume_ipc(
@@ -357,12 +369,7 @@ fn consume_ipc(
     let byte_buffer = env
         .new_direct_byte_buffer(buf)
         .expect("Error creating ByteBuffer");
-    jni_bridge_call_method_no_check_java_exception!(
-        env,
-        JavaConsumer.accept,
-        consumer,
-        byte_buffer
-    )?;
+    jni_bridge_call_method!(env, JavaConsumer.accept, consumer, byte_buffer)?;
     debug!("Invoking IPC data consumer succeeded");
     Ok(())
 }
