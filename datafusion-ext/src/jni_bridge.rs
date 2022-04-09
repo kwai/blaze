@@ -13,29 +13,37 @@ use jni::JNIEnv;
 use jni::JavaVM;
 
 #[macro_export]
+macro_rules! jni_bridge_new_object_impl {
+    ($env:expr, $clsname:ident $(, $args:expr)*) => {{
+        $env.new_object_unchecked(
+            paste::paste! {JavaClasses::get().[<c $clsname>].class},
+            paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
+            &[$(jni::objects::JValue::from($args),)*],
+        )
+    }}
+}
+
+#[macro_export]
 macro_rules! jni_bridge_new_object {
     ($env:expr, $clsname:ident $(, $args:expr)*) => {{
         log::trace!("jni_bridge_new_object!({}, {:?})",
         stringify!($clsname),
         &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        $env.new_object_unchecked(
-            paste::paste! {JavaClasses::get().[<c $clsname>].class},
-            paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
-            &[$(jni::objects::JValue::from($args),)*],
-        ).and_then(|ret| {
-            assert_eq!($env.exception_check().unwrap(), false);
-            Ok(ret)
-        })
+        match $crate::jni_bridge_new_object_impl!($env, $clsname $(, $args)*) {
+            Err(jni::errors::Error::JavaException) => {
+                let _describe = $env.exception_describe();
+                panic!("Exception thrown at jni_bridge_new_object!({}, {:?})",
+                    stringify!($clsname),
+                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+            }
+            result => result
+        }
     }}
 }
 
 #[macro_export]
-macro_rules! jni_bridge_call_method_no_check_java_exception {
-    ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?})",
-            stringify!($clsname),
-            stringify!($method),
-            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+macro_rules! jni_bridge_call_method_impl {
+    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
         $env.call_method_unchecked(
             $obj,
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
@@ -46,21 +54,56 @@ macro_rules! jni_bridge_call_method_no_check_java_exception {
 }
 
 #[macro_export]
+macro_rules! jni_bridge_call_method_no_check_java_exception {
+    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
+        log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?})",
+            stringify!($clsname),
+            stringify!($method),
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+        $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*)
+    }}
+}
+
+#[macro_export]
 macro_rules! jni_bridge_call_method {
-    ($env:expr, $clsname:ident . $method:ident, $obj:expr $(, $args:expr)*) => {{
+    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
         log::trace!("jni_bridge_call_method!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
             &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        $env.call_method_unchecked(
-            $obj,
+        match $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*) {
+            Err(jni::errors::Error::JavaException) => {
+                let _describe = $env.exception_describe();
+                panic!("Exception thrown at jni_bridge_call_method!({}.{}, {:?})",
+                    stringify!($clsname),
+                    stringify!($method),
+                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+            }
+            result => result
+        }
+    }}
+}
+
+#[macro_export]
+macro_rules! jni_bridge_call_static_method_impl {
+    ($env:expr, $clsname:ident.$method:ident $(, $args:expr)*) => {{
+        $env.call_static_method_unchecked(
+            paste::paste! {JavaClasses::get().[<c $clsname>].class},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
             paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
             &[$(jni::objects::JValue::from($args),)*],
-        ).and_then(|ret| {
-            assert_eq!($env.exception_check().unwrap(), false);
-            Ok(ret)
-        })
+        )
+    }}
+}
+
+#[macro_export]
+macro_rules! jni_bridge_call_static_method_no_check_java_exception {
+    ($env:expr, $clsname:ident.$method:ident $(, $args:expr)*) => {{
+        log::trace!("jni_bridge_call_static_method_no_check_java_exception!({}.{}, {:?})",
+            stringify!($clsname),
+            stringify!($method),
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+        $crate::jni_bridge_call_static_method_impl!($env, $clsname.$method $(, $args)*)
     }}
 }
 
@@ -71,15 +114,16 @@ macro_rules! jni_bridge_call_static_method {
             stringify!($clsname),
             stringify!($method),
             &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        $env.call_static_method_unchecked(
-            paste::paste! {JavaClasses::get().[<c $clsname>].class},
-            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
-            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-            &[$(jni::objects::JValue::from($args),)*],
-        ).and_then(|ret| {
-            assert_eq!($env.exception_check().unwrap(), false);
-            Ok(ret)
-        })
+        match $crate::jni_bridge_call_static_method_impl!($env, $clsname.$method $(, $args)*) {
+            Err(jni::errors::Error::JavaException) => {
+                let _describe = $env.exception_describe();
+                panic!("Exception thrown at jni_bridge_call_static_method!({}.{}, {:?})",
+                    stringify!($clsname),
+                    stringify!($method),
+                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+            }
+            result => result
+        }
     }}
 }
 

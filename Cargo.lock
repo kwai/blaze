@@ -208,6 +208,7 @@ dependencies = [
  "log",
  "mimalloc",
  "once_cell",
+ "panic-message",
  "paste",
  "plan-serde",
  "prost",
@@ -1262,6 +1263,12 @@ dependencies = [
  "cfg-if",
  "libm",
 ]
+
+[[package]]
+name = "panic-message"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "384e52fd8fbd4cbe3c317e8216260c21a0f9134de108cea8a4dd4e7e152c472d"
 
 [[package]]
 name = "parking_lot"

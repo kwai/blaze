@@ -7,7 +7,6 @@ use std::io::ErrorKind as IoErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Instant;
 
 use datafusion::arrow::array::{Array, UInt64Array};
@@ -21,9 +20,7 @@ use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::displayable;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_ext::jni_bridge_call_method;
-use datafusion_ext::jni_bridge_call_static_method;
-use datafusion_ext::jni_bridge_new_object;
+use datafusion_ext::*;
 use futures::StreamExt;
 use jni::objects::JObject;
 
@@ -49,7 +46,6 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
-static BACKTRACE: OnceCell<Arc<Mutex<String>>> = OnceCell::new();
 static ENV_LOGGER_INIT: OnceCell<()> = OnceCell::new();
 static TOKIO_RUNTIME_INSTANCE: OnceCell<Runtime> = OnceCell::new();
 static SESSION_CONTEXT: OnceCell<SessionContext> = OnceCell::new();
@@ -66,16 +62,6 @@ fn tokio_runtime(thread_num: usize) -> &'static Runtime {
             .build()
             .unwrap()
     })
-}
-
-fn setup_backtrace_hook() {
-    BACKTRACE.get_or_init(|| {
-        std::panic::set_hook(Box::new(|_| {
-            *BACKTRACE.get().unwrap().lock().unwrap() =
-                format!("{:?}", backtrace::Backtrace::new());
-        }));
-        Arc::new(Mutex::new("<Backtrace not found>".to_string()))
-    });
 }
 
 fn setup_env_logger() {
@@ -122,8 +108,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     ipcRecordBatchDataConsumer: JObject,
 ) {
     let start_time = Instant::now();
-
-    setup_backtrace_hook();
     setup_env_logger();
 
     // save backtrace when panics
@@ -146,19 +130,11 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     }) {
         let recover = || {
             if is_jvm_interrupted(&env)? {
+                env.exception_clear()?;
                 info!("Blaze native computing interrupted by JVM");
                 return Ok(());
             }
-
-            let panic_str = match e.downcast::<String>() {
-                Ok(v) => *v,
-                Err(e) => match e.downcast::<&str>() {
-                    Ok(v) => v.to_string(),
-                    _ => "Unknown blaze-rs exception".to_owned(),
-                },
-            };
-            let backtrace = BACKTRACE.get().unwrap().lock().unwrap();
-            error!("{}\nBacktrace:\n{}", panic_str, *backtrace);
+            let panic_message = panic_message::panic_message(&e);
 
             // throw jvm runtime exception
             let cause = if env.exception_check()? {
@@ -168,8 +144,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             } else {
                 JObject::null()
             };
-            let msg = env.new_string(panic_str)?;
-            let _throw = jni_bridge_call_static_method!(
+            let msg = env.new_string(&panic_message)?;
+            let _throw = jni_bridge_call_static_method_no_check_java_exception!(
                 env,
                 JniBridge.raiseThrowable,
                 jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?
@@ -182,10 +158,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         });
     }
 
-    info!(
-        "blaze_call_native() time cost: {} sec",
-        Instant::now().duration_since(start_time).as_secs_f64(),
-    );
+    let time_cost_sec = Instant::now().duration_since(start_time).as_secs_f64();
+    info!("blaze_call_native() time cost: {} sec", time_cost_sec);
 }
 
 #[allow(clippy::redundant_slicing, clippy::too_many_arguments)]
@@ -221,12 +195,11 @@ pub fn blaze_call_native(
         .ok_or_else(|| IoError::new(IoErrorKind::InvalidInput, "task plan is empty"))?;
 
     let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into()?;
+    let execution_plan_displayable =
+        displayable(execution_plan.as_ref()).indent().to_string();
     info!("Creating native execution plan succeeded");
     info!("  task_id={:?}", task_id);
-    info!(
-        "   execution plan:\n{}",
-        displayable(execution_plan.as_ref()).indent()
-    );
+    info!("  execution plan:\n{}", execution_plan_displayable);
 
     let dirs = env.get_string(tmp_dirs)?.into();
     let batch_size = batch_size as usize;
@@ -369,7 +342,12 @@ fn consume_ipc(
     let byte_buffer = env
         .new_direct_byte_buffer(buf)
         .expect("Error creating ByteBuffer");
-    jni_bridge_call_method!(env, JavaConsumer.accept, consumer, byte_buffer)?;
+    jni_bridge_call_method_no_check_java_exception!(
+        env,
+        JavaConsumer.accept,
+        consumer,
+        byte_buffer
+    )?;
     debug!("Invoking IPC data consumer succeeded");
     Ok(())
 }
