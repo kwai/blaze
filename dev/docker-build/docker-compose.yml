@@ -1,0 +1,10 @@
+version: "3"
+
+services:
+  build-release:
+    build: ./rust-nightly
+    volumes:
+      - ~/.cargo/git:/root/.cargo/git:rw
+      - ~/.cargo/registry:/root/.cargo/registry:rw
+      - ./../../:/blaze-rs:rw
+    command: "bash -c 'source ~/.bashrc && cd /blaze-rs && ./release.sh mm'"
