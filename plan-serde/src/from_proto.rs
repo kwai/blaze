@@ -29,7 +29,7 @@ use crate::{from_proto_binary_op, proto_error, str_to_byte};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datafusion_data_access::{FileMeta, SizedFile};
-use datafusion::datasource::{FileRange, PartitionedFile};
+use datafusion::datasource::listing::{FileRange, PartitionedFile};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_plan;

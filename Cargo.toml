@@ -30,4 +30,4 @@ members = [
 overflow-checks = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/yjshen/arrow-datafusion.git", rev = "b3a5574d3a7f16259a4cf48cac5cb3eb6af992f7" }
+datafusion = { git = "https://github.com/yjshen/arrow-datafusion.git", rev = "8ecd6271d5725c2a41edb74c0d6289314408293f" }
