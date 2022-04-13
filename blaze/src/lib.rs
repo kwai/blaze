@@ -1,7 +1,4 @@
-use std::cell::Cell;
-use std::cell::RefCell;
 use std::error::Error;
-use std::io::BufWriter;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::path::PathBuf;
@@ -9,16 +6,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use datafusion::arrow::array::{Array, UInt64Array};
-use datafusion::arrow::compute::{take, TakeOptions};
-use datafusion::arrow::ipc::writer::FileWriter;
+use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::record_batch::RecordBatch;
 
+use datafusion::arrow::error::Result as ArrowResult;
+use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
-use datafusion::physical_plan::displayable;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::{displayable, SendableRecordBatchStream};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::*;
 use futures::StreamExt;
@@ -33,7 +30,6 @@ use tokio::runtime::Runtime;
 
 use datafusion_ext::jni_bridge::JavaClasses;
 
-use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 use plan_serde::protobuf::TaskDefinition;
 
 mod metrics;
@@ -105,15 +101,14 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     memoryFraction: f64,
     tmpDirs: JString,
     metricNode: JObject,
-    ipcRecordBatchDataConsumer: JObject,
-) {
+) -> i64 {
     let start_time = Instant::now();
     setup_env_logger();
 
     // save backtrace when panics
-    if let Err(e) = std::panic::catch_unwind(|| {
+    let result = match std::panic::catch_unwind(|| {
         info!("Blaze native computing started");
-        blaze_call_native(
+        let iter_ptr = blaze_call_native(
             &env,
             taskDefinition,
             poolSize,
@@ -122,47 +117,99 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             memoryFraction,
             tmpDirs,
             metricNode,
-            ipcRecordBatchDataConsumer,
-            start_time,
         )
         .unwrap();
         info!("Blaze native computing finished");
+        iter_ptr
     }) {
-        let recover = || {
-            if is_jvm_interrupted(&env)? {
-                env.exception_clear()?;
-                info!("Blaze native computing interrupted by JVM");
-                return Ok(());
-            }
-            let panic_message = panic_message::panic_message(&e);
+        Err(e) => {
+            let recover = || {
+                if is_jvm_interrupted(&env)? {
+                    env.exception_clear()?;
+                    info!("Blaze native computing interrupted by JVM");
+                    return Ok(());
+                }
+                let panic_message = panic_message::panic_message(&e);
 
-            // throw jvm runtime exception
-            let cause = if env.exception_check()? {
-                let throwable = env.exception_occurred()?.into();
-                env.exception_clear()?;
-                throwable
-            } else {
-                JObject::null()
+                // throw jvm runtime exception
+                let cause = if env.exception_check()? {
+                    let throwable = env.exception_occurred()?.into();
+                    env.exception_clear()?;
+                    throwable
+                } else {
+                    JObject::null()
+                };
+                let msg = env.new_string(&panic_message)?;
+                let _throw = jni_bridge_call_static_method_no_check_java_exception!(
+                    env,
+                    JniBridge.raiseThrowable,
+                    jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?
+                );
+                Ok(())
             };
-            let msg = env.new_string(&panic_message)?;
-            let _throw = jni_bridge_call_static_method_no_check_java_exception!(
-                env,
-                JniBridge.raiseThrowable,
-                jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?
-            );
-            Ok(())
-        };
-        recover().unwrap_or_else(|err: Box<dyn Error>| {
-            error!("Error recovering from panic, cannot resume: {:?}", err);
-            std::process::abort();
-        });
-    }
+            recover().unwrap_or_else(|err: Box<dyn Error>| {
+                error!("Error recovering from panic, cannot resume: {:?}", err);
+                std::process::abort();
+            });
+            -1
+        }
+        Ok(ptr) => ptr,
+    };
 
     let time_cost_sec = Instant::now().duration_since(start_time).as_secs_f64();
     info!("blaze_call_native() time cost: {} sec", time_cost_sec);
+    result
 }
 
-#[allow(clippy::redundant_slicing, clippy::too_many_arguments)]
+#[allow(non_snake_case)]
+#[no_mangle]
+pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext(
+    _: JNIEnv,
+    _: JClass,
+    iter_ptr: i64,
+    schema_ptr: i64,
+    array_ptr: i64,
+) -> i64 {
+    unsafe {
+        let sync_iter = &mut *(iter_ptr as *mut SyncBatchIterator);
+        match sync_iter.next() {
+            Some(Ok(batch)) => {
+                let array: StructArray = batch.into();
+                let out_schema = schema_ptr as *mut FFI_ArrowSchema;
+                let out_array = array_ptr as *mut FFI_ArrowArray;
+                export_array_into_raw(Arc::new(array), out_array, out_schema).unwrap();
+                1
+            }
+            _ => -1,
+        }
+    }
+}
+
+struct SyncBatchIterator {
+    inner: SendableRecordBatchStream,
+    rt: Runtime,
+}
+
+impl SyncBatchIterator {
+    fn new(inner: SendableRecordBatchStream) -> Self {
+        Self {
+            inner,
+            rt: tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap(),
+        }
+    }
+}
+
+impl Iterator for SyncBatchIterator {
+    type Item = ArrowResult<RecordBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.rt.block_on(async { self.inner.next().await })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JObject,
@@ -172,9 +219,7 @@ pub fn blaze_call_native(
     memory_fraction: f64,
     tmp_dirs: JString,
     metric_node: JObject,
-    ipc_record_batch_data_consumer: JObject,
-    start_time: Instant,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<i64, Box<dyn Error>> {
     debug!("Initializing JavaClasses");
     JavaClasses::init(env)?;
 
@@ -211,111 +256,15 @@ pub fn blaze_call_native(
         let task_ctx = session_ctx.task_ctx();
 
         // execute
-        let mut result = execution_plan
+        let result = execution_plan
             .execute(task_id.partition_id as usize, task_ctx)
             .await?;
         metrics::update_spark_metric_node(&env, metric_node, execution_plan.clone())?;
 
-        // add some statistics logging
-        info!(
-            "Executing plan finished, result rows: {}",
-            execution_plan
-                .metrics()
-                .and_then(|m| m.output_rows())
-                .unwrap_or_default()
-        );
-        if let Some(shuffle_writer_exec) =
-            execution_plan.as_any().downcast_ref::<ShuffleWriterExec>()
-        {
-            info!(
-                "Shuffle writer output rows: {}",
-                shuffle_writer_exec.children()[0]
-                    .metrics()
-                    .and_then(|m| m.output_rows())
-                    .unwrap_or_default()
-            );
-        }
-        debug!("Result schema:");
-        for field in execution_plan.schema().fields() {
-            debug!(
-                " -> col={}, type={}, nullable={}",
-                field.name(),
-                field.data_type(),
-                field.is_nullable()
-            )
-        }
-
-        // output ipc
-        let num_rows_total = Cell::new(0);
-        let num_bytes_total = Cell::new(0);
-        let consume_throws = RefCell::new(None);
-
-        let update_extra_metrics = || {
-            metrics::update_extra_metrics(
-                &env,
-                metric_node,
-                start_time,
-                num_rows_total.get(),
-                num_bytes_total.get(),
-            )?;
-            Result::<(), Box<dyn Error>>::Ok(())
-        };
-
-        let process_result_batch = |batch: &RecordBatch| {
-            num_rows_total.set(num_rows_total.get() + batch.num_rows());
-
-            for batch_offset in (0..batch.num_rows()).step_by(batch_size) {
-                let mut buf: Vec<u8> = vec![];
-                let mut buf_writer = BufWriter::new(&mut buf);
-                let mut arrow_writer =
-                    FileWriter::try_new(&mut buf_writer, &*batch.schema())?;
-
-                if batch.num_rows() <= batch_size as usize {
-                    arrow_writer.write(batch)?;
-                } else {
-                    let batch_slice = record_batch_slice(
-                        batch,
-                        batch_offset,
-                        batch_size.min(batch.num_rows() - batch_offset),
-                    )?;
-                    arrow_writer.write(&batch_slice)?;
-                }
-                arrow_writer.finish()?;
-                std::mem::drop(arrow_writer);
-                std::mem::drop(buf_writer);
-
-                consume_ipc(&env, &mut buf, ipc_record_batch_data_consumer).or_else(
-                    |err| {
-                        if let jni::errors::Error::JavaException { .. } = err {
-                            *consume_throws.borrow_mut() =
-                                Some(env.exception_occurred()?);
-                            log::warn!("Received consumer exception, stop outputting...");
-                            env.exception_describe()?;
-                            env.exception_clear()?;
-                            Ok(())
-                        } else {
-                            Err(err)
-                        }
-                    },
-                )?;
-                num_bytes_total.set(num_bytes_total.get() + buf.len());
-            }
-            Result::<(), Box<dyn Error>>::Ok(())
-        };
-
-        while let Some(batch) = result.next().await {
-            let batch = batch?;
-            if batch.num_rows() > 0 {
-                process_result_batch(&batch).or_else(|err| {
-                    update_extra_metrics()?;
-                    Err(err)
-                })?;
-            }
-        }
-        update_extra_metrics()?;
-        Result::<(), Box<dyn Error>>::Ok(())
-    })?;
-    Ok(())
+        let sync_iter = SyncBatchIterator::new(result);
+        let iter = Box::into_raw(Box::new(sync_iter)) as i64;
+        Ok(iter)
+    })
 }
 
 fn is_jvm_interrupted(env: &JNIEnv) -> jni::errors::Result<bool> {
@@ -330,55 +279,4 @@ fn is_jvm_interrupted(env: &JNIEnv) -> jni::errors::Result<bool> {
         }
     }
     Ok(false)
-}
-
-fn consume_ipc(
-    env: &JNIEnv,
-    buf: &mut [u8],
-    consumer: JObject,
-) -> jni::errors::Result<()> {
-    debug!("Invoking IPC data consumer");
-
-    let byte_buffer = env
-        .new_direct_byte_buffer(buf)
-        .expect("Error creating ByteBuffer");
-    jni_bridge_call_method_no_check_java_exception!(
-        env,
-        JavaConsumer.accept,
-        consumer,
-        byte_buffer
-    )?;
-    debug!("Invoking IPC data consumer succeeded");
-    Ok(())
-}
-
-fn record_batch_slice(
-    batch: &RecordBatch,
-    offset: usize,
-    len: usize,
-) -> datafusion::arrow::error::Result<RecordBatch> {
-    // FIXME: RecordBatch.slice() is buggy and produces
-    //   duplicated rows
-    //
-    // let batch_slice = batch.slice(
-    //     batch_offset,
-    //     batch_slice_len);
-    //
-    RecordBatch::try_new(
-        batch.schema(),
-        batch
-            .columns()
-            .iter()
-            .map(|c| {
-                let end = offset + len;
-                take(
-                    c.as_ref(),
-                    &UInt64Array::from_iter_values(offset as u64..end as u64),
-                    Some(TakeOptions {
-                        check_bounds: false,
-                    }),
-                )
-            })
-            .collect::<datafusion::arrow::error::Result<Vec<Arc<dyn Array>>>>()?,
-    )
 }
