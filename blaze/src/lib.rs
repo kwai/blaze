@@ -23,7 +23,7 @@ use jni::objects::JObject;
 
 use jni::objects::{JClass, JString};
 use jni::JNIEnv;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use once_cell::sync::OnceCell;
 use prost::Message;
 use tokio::runtime::Runtime;
