@@ -39,6 +39,7 @@ pub fn update_spark_metric_node(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn update_extra_metrics(
     env: &JNIEnv,
     metric_node: JObject,
