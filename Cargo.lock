@@ -73,8 +73,7 @@ checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
 [[package]]
 name = "arrow"
 version = "11.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e4a0aa844fa9e1933504b4cd10e776167f370b746d0a622f32696d8d3b252e7"
+source = "git+https://github.com/apache/arrow-rs.git?rev=b12f7cd3c295dc88b93be46d30ddbb46202e1ff4#b12f7cd3c295dc88b93be46d30ddbb46202e1ff4"
 dependencies = [
  "bitflags",
  "chrono",
@@ -403,7 +402,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=8ecd6271d5725c2a41edb74c0d6289314408293f#8ecd6271d5725c2a41edb74c0d6289314408293f"
+source = "git+https://github.com/apache/arrow-datafusion.git?rev=b1a28d0774c7e4c6535e26b536783880f9bf9c27#b1a28d0774c7e4c6535e26b536783880f9bf9c27"
 dependencies = [
  "ahash",
  "arrow",
@@ -435,7 +434,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=8ecd6271d5725c2a41edb74c0d6289314408293f#8ecd6271d5725c2a41edb74c0d6289314408293f"
+source = "git+https://github.com/apache/arrow-datafusion.git?rev=b1a28d0774c7e4c6535e26b536783880f9bf9c27#b1a28d0774c7e4c6535e26b536783880f9bf9c27"
 dependencies = [
  "arrow",
  "ordered-float 2.10.0",
@@ -446,7 +445,7 @@ dependencies = [
 [[package]]
 name = "datafusion-data-access"
 version = "1.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=8ecd6271d5725c2a41edb74c0d6289314408293f#8ecd6271d5725c2a41edb74c0d6289314408293f"
+source = "git+https://github.com/apache/arrow-datafusion.git?rev=b1a28d0774c7e4c6535e26b536783880f9bf9c27#b1a28d0774c7e4c6535e26b536783880f9bf9c27"
 dependencies = [
  "async-trait",
  "chrono",
@@ -459,7 +458,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=8ecd6271d5725c2a41edb74c0d6289314408293f#8ecd6271d5725c2a41edb74c0d6289314408293f"
+source = "git+https://github.com/apache/arrow-datafusion.git?rev=b1a28d0774c7e4c6535e26b536783880f9bf9c27#b1a28d0774c7e4c6535e26b536783880f9bf9c27"
 dependencies = [
  "ahash",
  "arrow",
@@ -478,7 +477,6 @@ dependencies = [
  "futures",
  "jni",
  "lazy_static",
- "lock_api",
  "log",
  "parking_lot",
  "paste",
@@ -489,7 +487,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=8ecd6271d5725c2a41edb74c0d6289314408293f#8ecd6271d5725c2a41edb74c0d6289314408293f"
+source = "git+https://github.com/apache/arrow-datafusion.git?rev=b1a28d0774c7e4c6535e26b536783880f9bf9c27#b1a28d0774c7e4c6535e26b536783880f9bf9c27"
 dependencies = [
  "ahash",
  "arrow",
