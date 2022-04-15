@@ -7,9 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
-use datafusion::arrow::record_batch::RecordBatch;
 
-use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
@@ -170,9 +168,14 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext(
     schema_ptr: i64,
     array_ptr: i64,
 ) -> i64 {
+    // loadNext is always called after callNative, therefore a tokio runtime already
+    tokio_runtime(0).block_on(read_stream_next(iter_ptr, schema_ptr, array_ptr))
+}
+
+async fn read_stream_next(iter_ptr: i64, schema_ptr: i64, array_ptr: i64) -> i64 {
     unsafe {
-        let sync_iter = &mut *(iter_ptr as *mut SyncBatchIterator);
-        match sync_iter.next() {
+        let stream = &mut *(iter_ptr as *mut SendableRecordBatchStream);
+        match stream.next().await {
             Some(Ok(batch)) => {
                 let array: StructArray = batch.into();
                 let out_schema = schema_ptr as *mut FFI_ArrowSchema;
@@ -182,30 +185,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext(
             }
             _ => -1,
         }
-    }
-}
-
-struct SyncBatchIterator {
-    inner: SendableRecordBatchStream,
-    rt: Runtime,
-}
-
-impl SyncBatchIterator {
-    fn new(inner: SendableRecordBatchStream) -> Self {
-        Self {
-            inner,
-            rt: tokio::runtime::Builder::new_current_thread()
-                .build()
-                .unwrap(),
-        }
-    }
-}
-
-impl Iterator for SyncBatchIterator {
-    type Item = ArrowResult<RecordBatch>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.rt.block_on(async { self.inner.next().await })
     }
 }
 
@@ -260,10 +239,8 @@ pub fn blaze_call_native(
             .execute(task_id.partition_id as usize, task_ctx)
             .await?;
         metrics::update_spark_metric_node(&env, metric_node, execution_plan.clone())?;
-
-        let sync_iter = SyncBatchIterator::new(result);
-        let iter = Box::into_raw(Box::new(sync_iter)) as i64;
-        Ok(iter)
+        let stream_ptr = Box::into_raw(Box::new(result)) as i64;
+        Ok(stream_ptr)
     })
 }
 
