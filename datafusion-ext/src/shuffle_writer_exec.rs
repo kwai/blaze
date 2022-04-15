@@ -30,7 +30,6 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-use ahash::RandomState;
 use async_trait::async_trait;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::take;
@@ -51,7 +50,6 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::from_slice::FromSlice;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::hash_utils::create_hashes;
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::metrics::CompositeMetricsSet;
@@ -68,6 +66,7 @@ use log::{debug, info};
 use tempfile::NamedTempFile;
 use tokio::task;
 
+use crate::spark_hash::{create_hashes, pmod};
 use crate::{
     batch_buffer::MutableRecordBatch, jni_bridge::JavaClasses, jni_bridge_call_method,
     jni_bridge_call_static_method, util::Util,
@@ -179,7 +178,6 @@ struct ShuffleRepartitioner {
     runtime: Arc<RuntimeEnv>,
     _metrics_set: CompositeMetricsSet,
     metrics: BaselineMetrics,
-    random: RandomState,
     batch_size: usize,
 }
 
@@ -213,7 +211,6 @@ impl ShuffleRepartitioner {
             runtime,
             _metrics_set: metrics_set,
             metrics,
-            random: RandomState::with_seeds(0, 0, 0, 0),
             batch_size,
         }
     }
@@ -226,7 +223,6 @@ impl ShuffleRepartitioner {
         self.try_grow(size).await?;
         self.metrics.mem_used().add(size);
 
-        let random_state = self.random.clone();
         let num_output_partitions = self.num_output_partitions;
         match &self.partitioning {
             Partitioning::Hash(exprs, _) => {
@@ -235,13 +231,13 @@ impl ShuffleRepartitioner {
                     .iter()
                     .map(|expr| Ok(expr.evaluate(&input)?.into_array(input.num_rows())))
                     .collect::<Result<Vec<_>>>()?;
-                hashes_buf.resize(arrays[0].len(), 0);
+                // use identical seed as spark hash partition
+                hashes_buf.resize(arrays[0].len(), 42);
                 // Hash arrays and compute buckets based on number of partitions
-                let hashes = create_hashes(&arrays, &random_state, hashes_buf)?;
+                let hashes = create_hashes(&arrays, hashes_buf)?;
                 let mut indices = vec![vec![]; num_output_partitions];
                 for (index, hash) in hashes.iter().enumerate() {
-                    indices[(*hash % num_output_partitions as u64) as usize]
-                        .push(index as u64)
+                    indices[pmod(*hash, num_output_partitions)].push(index as u64)
                 }
 
                 for (num_output_partition, partition_indices) in
