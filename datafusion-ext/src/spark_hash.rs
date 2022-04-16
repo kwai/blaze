@@ -18,9 +18,10 @@
 //! Functionality used both on logical and physical plans
 
 use datafusion::arrow::array::{
-    Array, ArrayRef, Date32Array, Date64Array, DictionaryArray, Int16Array, Int32Array,
-    Int64Array, Int8Array, LargeStringArray, StringArray, TimestampMicrosecondArray,
-    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
+    Array, ArrayRef, BooleanArray, Date32Array, Date64Array, DictionaryArray, Int16Array,
+    Int32Array, Int64Array, Int8Array, LargeStringArray, StringArray,
+    TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+    TimestampSecondArray,
 };
 use datafusion::arrow::datatypes::{
     ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type,
@@ -126,6 +127,27 @@ pub fn create_hashes<'a>(
 ) -> Result<&'a mut Vec<u32>> {
     for col in arrays {
         match col.data_type() {
+            DataType::Boolean => {
+                let array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+                if array.null_count() == 0 {
+                    for (i, hash) in hashes_buffer.iter_mut().enumerate() {
+                        *hash = hash32_with_seed(
+                            ((if array.value(i) { 1 } else { 0 }) as i32).to_le_bytes(),
+                            *hash,
+                        );
+                    }
+                } else {
+                    for (i, hash) in hashes_buffer.iter_mut().enumerate() {
+                        if !array.is_null(i) {
+                            *hash = hash32_with_seed(
+                                ((if array.value(i) { 1 } else { 0 }) as i32)
+                                    .to_le_bytes(),
+                                *hash,
+                            );
+                        }
+                    }
+                }
+            }
             DataType::Int8 => {
                 hash_array_primitive_i32!(Int8Array, col, i8, hashes_buffer);
             }
