@@ -47,6 +47,7 @@ message PhysicalPlanNode {
     CrossJoinExecNode cross_join = 19;
     AvroScanExecNode avro_scan = 20;
     UnionExecNode union = 21;
+    SortMergeJoinExecNode sort_merge_join = 22;
   }
 }
 
@@ -346,6 +347,15 @@ message HashJoinExecNode {
   bool null_equals_null = 7;
 }
 
+message SortMergeJoinExecNode {
+  PhysicalPlanNode left = 1;
+  PhysicalPlanNode right = 2;
+  repeated JoinOn on = 3;
+  repeated SortOptions sort_options = 4;
+  JoinType join_type = 5;
+  bool null_equals_null = 6;
+}
+
 enum JoinType {
   INNER = 0;
   LEFT = 1;
@@ -355,6 +365,10 @@ enum JoinType {
   ANTI = 5;
 }
 
+message SortOptions {
+  bool asc = 1;
+  bool nulls_first = 2;
+}
 message CrossJoinExecNode {
   PhysicalPlanNode left = 1;
   PhysicalPlanNode right = 2;
