@@ -177,11 +177,12 @@ async fn read_stream_next(iter_ptr: i64, schema_ptr: i64, array_ptr: i64) -> i64
         let stream = &mut *(iter_ptr as *mut SendableRecordBatchStream);
         match stream.next().await {
             Some(Ok(batch)) => {
+                let num_rows = batch.num_rows();
                 let array: StructArray = batch.into();
                 let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                 let out_array = array_ptr as *mut FFI_ArrowArray;
                 export_array_into_raw(Arc::new(array), out_array, out_schema).unwrap();
-                1
+                num_rows as i64
             }
             _ => -1,
         }
