@@ -22,13 +22,14 @@ members = [
     "blaze",
 ]
 
-[profile.release]
-lto = true
-codegen-units = 1
+#[profile.release]
+#lto = true
+#codegen-units = 1
 
 [profile.dev]
 overflow-checks = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "b1a28d0774c7e4c6535e26b536783880f9bf9c27" }
+#datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "b1a28d0774c7e4c6535e26b536783880f9bf9c27" }
+datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "f8515594ba603520580ca9d06ef95ed31b68c388" }
 arrow = { git = "https://github.com/apache/arrow-rs.git", rev = "b12f7cd3c295dc88b93be46d30ddbb46202e1ff4" }

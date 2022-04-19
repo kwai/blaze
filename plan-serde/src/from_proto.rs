@@ -61,6 +61,7 @@ use datafusion::physical_plan::{
     limit::{GlobalLimitExec, LocalLimitExec},
     projection::ProjectionExec,
     repartition::RepartitionExec,
+    sort_merge_join::SortMergeJoinExec,
     Partitioning,
 };
 use datafusion::physical_plan::{
@@ -475,6 +476,51 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     &join_type.into(),
                     partition_mode,
                     &hashjoin.null_equals_null,
+                )?))
+            }
+            PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
+                let left: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(sort_merge_join.left)?;
+                let right: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(sort_merge_join.right)?;
+                let on: Vec<(Column, Column)> = sort_merge_join
+                    .on
+                    .iter()
+                    .map(|col| {
+                        let left_col: Column = into_required!(col.left)?;
+                        let left_col_binded: Column =
+                            Column::new_with_schema(left_col.name(), &left.schema())?;
+                        let right_col: Column = into_required!(col.right)?;
+                        let right_col_binded: Column =
+                            Column::new_with_schema(right_col.name(), &right.schema())?;
+                        Ok((left_col_binded, right_col_binded))
+                    })
+                    .collect::<Result<_, Self::Error>>()?;
+
+                let sort_options = sort_merge_join
+                    .sort_options
+                    .iter()
+                    .map(|sort_options| SortOptions {
+                        descending: !sort_options.asc,
+                        nulls_first: sort_options.nulls_first,
+                    })
+                    .collect::<Vec<_>>();
+
+                let join_type = protobuf::JoinType::from_i32(sort_merge_join.join_type)
+                    .ok_or_else(|| {
+                    proto_error(format!(
+                        "Received a HashJoinNode message with unknown JoinType {}",
+                        sort_merge_join.join_type
+                    ))
+                })?;
+
+                Ok(Arc::new(SortMergeJoinExec::try_new(
+                    left,
+                    right,
+                    on,
+                    join_type.into(),
+                    sort_options,
+                    sort_merge_join.null_equals_null,
                 )?))
             }
             PhysicalPlanType::CrossJoin(crossjoin) => {
