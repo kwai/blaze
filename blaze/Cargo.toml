@@ -20,7 +20,7 @@ snmalloc-rs = { version = "0.2", optional = true }
 mimalloc = { version = "0.1", optional = true, default-features = false }
 futures = "0.3"
 once_cell = "1.10.0"
-backtrace = "0.3.64"
+backtrace = "0.3.65"
 panic-message = "0.3.0"
 
 [features]
