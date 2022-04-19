@@ -3,7 +3,7 @@ FROM centos:7
 # install gcc-11
 RUN yum update -y
 RUN yum install -y centos-release-scl
-RUN yum install -y devtoolset-11-gcc
+RUN yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
 RUN echo '. /opt/rh/devtoolset-11/enable' >> ~/.bashrc
 
 # install rust stable toolchain
