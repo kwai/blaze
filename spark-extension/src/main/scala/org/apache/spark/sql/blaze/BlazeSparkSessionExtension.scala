@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.blaze
 
 import scala.collection.mutable
@@ -143,57 +160,63 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     logInfo(s"  dataFilters: ${dataFilters}")
     logInfo(s"  tableIdentifier: ${tableIdentifier}")
     if (relation.fileFormat.isInstanceOf[ParquetFileFormat]) {
-      return NativeParquetScanExec(exec) // note: supports exec.dataFilters for better performance?
+      return NativeParquetScanExec(
+        exec
+      ) // note: supports exec.dataFilters for better performance?
     }
     exec
   }
 
-  private def convertProjectExec(exec: ProjectExec): SparkPlan = exec match {
-    case ProjectExec(projectList, child) if NativeSupports.isNative(child) =>
-      logInfo(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
-      exec.projectList.foreach(p => logInfo(s"  projectExpr: ${p}"))
-      NativeProjectExec(projectList, child)
-    case _ =>
-      logInfo(s"Ignoring ProjectExec: ${exec.simpleStringWithNodeId()}")
-      exec
-  }
+  private def convertProjectExec(exec: ProjectExec): SparkPlan =
+    exec match {
+      case ProjectExec(projectList, child) if NativeSupports.isNative(child) =>
+        logInfo(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
+        exec.projectList.foreach(p => logInfo(s"  projectExpr: ${p}"))
+        NativeProjectExec(projectList, child)
+      case _ =>
+        logInfo(s"Ignoring ProjectExec: ${exec.simpleStringWithNodeId()}")
+        exec
+    }
 
-  private def convertFilterExec(exec: FilterExec): SparkPlan = exec match {
-    case FilterExec(condition, child) if NativeSupports.isNative(child) =>
-      logInfo(s"Converting FilterExec: ${exec.simpleStringWithNodeId()}")
-      logInfo(s"  condition: ${exec.condition}")
-      NativeFilterExec(condition, child)
-    case _ =>
-      logInfo(s"Ignoring FilterExec: ${exec.simpleStringWithNodeId()}")
-      exec
-  }
+  private def convertFilterExec(exec: FilterExec): SparkPlan =
+    exec match {
+      case FilterExec(condition, child) if NativeSupports.isNative(child) =>
+        logInfo(s"Converting FilterExec: ${exec.simpleStringWithNodeId()}")
+        logInfo(s"  condition: ${exec.condition}")
+        NativeFilterExec(condition, child)
+      case _ =>
+        logInfo(s"Ignoring FilterExec: ${exec.simpleStringWithNodeId()}")
+        exec
+    }
 
-  def convertSortExec(exec: SortExec): SparkPlan = exec match {
-    case SortExec(sortOrder, global, child, _) if NativeSupports.isNative(child) =>
-      logInfo(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
-      logInfo(s"  global: ${global}")
-      exec.sortOrder.foreach(s => logInfo(s"  sortOrder: ${s}"))
-      NativeSortExec(sortOrder, global, child)
-    case _ =>
-      logInfo(s"Ignoring SortExec: ${exec.simpleStringWithNodeId()}")
-      exec
-  }
+  def convertSortExec(exec: SortExec): SparkPlan =
+    exec match {
+      case SortExec(sortOrder, global, child, _) if NativeSupports.isNative(child) =>
+        logInfo(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
+        logInfo(s"  global: ${global}")
+        exec.sortOrder.foreach(s => logInfo(s"  sortOrder: ${s}"))
+        NativeSortExec(sortOrder, global, child)
+      case _ =>
+        logInfo(s"Ignoring SortExec: ${exec.simpleStringWithNodeId()}")
+        exec
+    }
 
-  def convertUnionExec(exec: UnionExec): SparkPlan = exec match {
-    case UnionExec(children) if children.forall(c => NativeSupports.isNative(c)) =>
-      logInfo(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
-      NativeUnionExec(children)
-    case _ =>
-      logInfo(s"Ignoring UnionExec: ${exec.simpleStringWithNodeId()}")
-      exec
-  }
+  def convertUnionExec(exec: UnionExec): SparkPlan =
+    exec match {
+      case UnionExec(children) if children.forall(c => NativeSupports.isNative(c)) =>
+        logInfo(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
+        NativeUnionExec(children)
+      case _ =>
+        logInfo(s"Ignoring UnionExec: ${exec.simpleStringWithNodeId()}")
+        exec
+    }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
     exec match {
       case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =>
         if (condition.isEmpty &&
-            NativeSupports.isNative(left) &&
-            NativeSupports.isNative(right)) {
+          NativeSupports.isNative(left) &&
+          NativeSupports.isNative(right)) {
           logInfo(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
           return NativeSortMergeJoinExec(
             left,

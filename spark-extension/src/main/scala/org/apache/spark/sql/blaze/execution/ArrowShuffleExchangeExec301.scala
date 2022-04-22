@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.blaze.execution
 
 import java.nio.file.Paths
@@ -67,7 +84,9 @@ case class ArrowShuffleExchangeExec301(
     "blazeShuffleWriteExecTime" -> SQLMetrics
       .createNanoTimingMetric(sparkContext, "blaze shuffle write exec time"),
     "blazeShuffleReadExecTime" -> SQLMetrics
-      .createNanoTimingMetric(sparkContext, "blaze shuffle read exec time")) ++ readMetrics ++ writeMetrics
+      .createNanoTimingMetric(
+        sparkContext,
+        "blaze shuffle read exec time")) ++ readMetrics ++ writeMetrics
 
   @transient lazy val inputRDD: RDD[InternalRow] = child.execute()
   // 'mapOutputStatisticsFuture' is only needed when enable AQE.
@@ -93,7 +112,8 @@ case class ArrowShuffleExchangeExec301(
         outputPartitioning,
         serializer,
         metrics,
-        child.metrics) // native shuffle write exec time is written to child node's metric
+        child.metrics
+      ) // native shuffle write exec time is written to child node's metric
     } else {
       ArrowShuffleExchangeExec301.prepareShuffleDependency(
         inputRDD,
@@ -137,13 +157,14 @@ case class ArrowShuffleExchangeExec301(
     Statistics(dataSize, Some(rowCount))
   }
 
-  protected override def doExecute(): RDD[InternalRow] = attachTree(this, "execute") {
-    // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
-    if (cachedShuffleRDD == null) {
-      cachedShuffleRDD = new ShuffledRowRDD(shuffleDependency, readMetrics)
+  protected override def doExecute(): RDD[InternalRow] =
+    attachTree(this, "execute") {
+      // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
+      if (cachedShuffleRDD == null) {
+        cachedShuffleRDD = new ShuffledRowRDD(shuffleDependency, readMetrics)
+      }
+      cachedShuffleRDD
     }
-    cachedShuffleRDD
-  }
 
   override def doExecuteNative(): NativeRDD = {
     val shuffleId = shuffleDependency.shuffleId
@@ -162,7 +183,10 @@ case class ArrowShuffleExchangeExec301(
       rdd.partitions,
       rdd.dependencies,
       (partition, taskContext) => {
-        rdd.compute(partition, taskContext) // store fetch iterator in jni resource before native compute
+        rdd.compute(
+          partition,
+          taskContext
+        ) // store fetch iterator in jni resource before native compute
         PhysicalPlanNode
           .newBuilder()
           .setShuffleReader(
@@ -217,7 +241,8 @@ object ArrowShuffleExchangeExec301 {
                   .setPartitionCount(numPartitions)
                   .addAllHashExpr(expressions.map(NativeConverters.convertExpr).asJava)
                   .build())
-              .buildPartial()) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
+              .buildPartial()
+          ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
           .build()
       })
 
@@ -286,25 +311,27 @@ object ArrowShuffleExchangeExec301 {
       // TODO: Handle BroadcastPartitioning.
     }
 
-    def getPartitionKeyExtractor(): InternalRow => Any = newPartitioning match {
-      case RoundRobinPartitioning(numPartitions) =>
-        // Distributes elements evenly across output partitions, starting from a random partition.
-        var position = new Random(TaskContext.get().partitionId()).nextInt(numPartitions)
-        (row: InternalRow) => {
-          // The HashPartitioner will handle the `mod` by the number of partitions
-          position += 1
-          position
-        }
-      case h: HashPartitioning =>
-        val projection = UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
-        row => projection(row).getInt(0)
-      case RangePartitioning(sortingExpressions, _) =>
-        val projection =
-          UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-        row => projection(row)
-      case SinglePartition => identity
-      case _ => sys.error(s"Exchange not implemented for $newPartitioning")
-    }
+    def getPartitionKeyExtractor(): InternalRow => Any =
+      newPartitioning match {
+        case RoundRobinPartitioning(numPartitions) =>
+          // Distributes elements evenly across output partitions, starting from a random partition.
+          var position = new Random(TaskContext.get().partitionId()).nextInt(numPartitions)
+          (row: InternalRow) => {
+            // The HashPartitioner will handle the `mod` by the number of partitions
+            position += 1
+            position
+          }
+        case h: HashPartitioning =>
+          val projection =
+            UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
+          row => projection(row).getInt(0)
+        case RangePartitioning(sortingExpressions, _) =>
+          val projection =
+            UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
+          row => projection(row)
+        case SinglePartition => identity
+        case _ => sys.error(s"Exchange not implemented for $newPartitioning")
+      }
 
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
@@ -360,20 +387,24 @@ object ArrowShuffleExchangeExec301 {
       // round-robin function is order sensitive if we don't sort the input.
       val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
       if (needToCopyObjectsBeforeShuffle(part)) {
-        newRdd.mapPartitionsWithIndexInternal((_, iter) => {
-          val getPartitionKey = getPartitionKeyExtractor()
-          iter.map { row =>
-            (part.getPartition(getPartitionKey(row)), row.copy())
-          }
-        }, isOrderSensitive = isOrderSensitive)
+        newRdd.mapPartitionsWithIndexInternal(
+          (_, iter) => {
+            val getPartitionKey = getPartitionKeyExtractor()
+            iter.map { row =>
+              (part.getPartition(getPartitionKey(row)), row.copy())
+            }
+          },
+          isOrderSensitive = isOrderSensitive)
       } else {
-        newRdd.mapPartitionsWithIndexInternal((_, iter) => {
-          val getPartitionKey = getPartitionKeyExtractor()
-          val mutablePair = new MutablePair[Int, InternalRow]()
-          iter.map { row =>
-            mutablePair.update(part.getPartition(getPartitionKey(row)), row)
-          }
-        }, isOrderSensitive = isOrderSensitive)
+        newRdd.mapPartitionsWithIndexInternal(
+          (_, iter) => {
+            val getPartitionKey = getPartitionKeyExtractor()
+            val mutablePair = new MutablePair[Int, InternalRow]()
+            iter.map { row =>
+              mutablePair.update(part.getPartition(getPartitionKey(row)), row)
+            }
+          },
+          isOrderSensitive = isOrderSensitive)
       }
     }
 

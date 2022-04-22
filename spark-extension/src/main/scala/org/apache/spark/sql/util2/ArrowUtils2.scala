@@ -33,48 +33,50 @@ object ArrowUtils2 {
   // todo: support more types.
 
   /** Maps data type from Spark to Arrow. NOTE: timeZoneId required for TimestampTypes */
-  def toArrowType(dt: DataType, timeZoneId: String): ArrowType = dt match {
-    case BooleanType => ArrowType.Bool.INSTANCE
-    case ByteType => new ArrowType.Int(8, true)
-    case ShortType => new ArrowType.Int(8 * 2, true)
-    case IntegerType => new ArrowType.Int(8 * 4, true)
-    case LongType => new ArrowType.Int(8 * 8, true)
-    case FloatType => new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE)
-    case DoubleType => new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)
-    case StringType => ArrowType.Utf8.INSTANCE
-    case BinaryType => ArrowType.Binary.INSTANCE
-    case DecimalType.Fixed(precision, scale) => new ArrowType.Decimal(precision, scale, 128)
-    case DateType => new ArrowType.Date(DateUnit.DAY)
-    case TimestampType =>
-      if (timeZoneId == null) {
-        throw new UnsupportedOperationException(
-          s"${TimestampType.catalogString} must supply timeZoneId parameter")
-      } else {
-        new ArrowType.Timestamp(TimeUnit.MICROSECOND, timeZoneId)
-      }
-    case _ =>
-      throw new UnsupportedOperationException(s"Unsupported data type: ${dt.catalogString}")
-  }
+  def toArrowType(dt: DataType, timeZoneId: String): ArrowType =
+    dt match {
+      case BooleanType => ArrowType.Bool.INSTANCE
+      case ByteType => new ArrowType.Int(8, true)
+      case ShortType => new ArrowType.Int(8 * 2, true)
+      case IntegerType => new ArrowType.Int(8 * 4, true)
+      case LongType => new ArrowType.Int(8 * 8, true)
+      case FloatType => new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE)
+      case DoubleType => new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)
+      case StringType => ArrowType.Utf8.INSTANCE
+      case BinaryType => ArrowType.Binary.INSTANCE
+      case DecimalType.Fixed(precision, scale) => new ArrowType.Decimal(precision, scale, 128)
+      case DateType => new ArrowType.Date(DateUnit.DAY)
+      case TimestampType =>
+        if (timeZoneId == null) {
+          throw new UnsupportedOperationException(
+            s"${TimestampType.catalogString} must supply timeZoneId parameter")
+        } else {
+          new ArrowType.Timestamp(TimeUnit.MICROSECOND, timeZoneId)
+        }
+      case _ =>
+        throw new UnsupportedOperationException(s"Unsupported data type: ${dt.catalogString}")
+    }
 
-  def fromArrowType(dt: ArrowType): DataType = dt match {
-    case ArrowType.Bool.INSTANCE => BooleanType
-    case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 => ByteType
-    case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 * 2 => ShortType
-    case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 * 4 => IntegerType
-    case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 * 8 => LongType
-    case float: ArrowType.FloatingPoint
-        if float.getPrecision() == FloatingPointPrecision.SINGLE =>
-      FloatType
-    case float: ArrowType.FloatingPoint
-        if float.getPrecision() == FloatingPointPrecision.DOUBLE =>
-      DoubleType
-    case ArrowType.Utf8.INSTANCE => StringType
-    case ArrowType.Binary.INSTANCE => BinaryType
-    case d: ArrowType.Decimal => DecimalType(d.getPrecision, d.getScale)
-    case date: ArrowType.Date if date.getUnit == DateUnit.DAY => DateType
-    case ts: ArrowType.Timestamp if ts.getUnit == TimeUnit.MICROSECOND => TimestampType
-    case _ => throw new UnsupportedOperationException(s"Unsupported data type: $dt")
-  }
+  def fromArrowType(dt: ArrowType): DataType =
+    dt match {
+      case ArrowType.Bool.INSTANCE => BooleanType
+      case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 => ByteType
+      case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 * 2 => ShortType
+      case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 * 4 => IntegerType
+      case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 * 8 => LongType
+      case float: ArrowType.FloatingPoint
+          if float.getPrecision() == FloatingPointPrecision.SINGLE =>
+        FloatType
+      case float: ArrowType.FloatingPoint
+          if float.getPrecision() == FloatingPointPrecision.DOUBLE =>
+        DoubleType
+      case ArrowType.Utf8.INSTANCE => StringType
+      case ArrowType.Binary.INSTANCE => BinaryType
+      case d: ArrowType.Decimal => DecimalType(d.getPrecision, d.getScale)
+      case date: ArrowType.Date if date.getUnit == DateUnit.DAY => DateType
+      case ts: ArrowType.Timestamp if ts.getUnit == TimeUnit.MICROSECOND => TimestampType
+      case _ => throw new UnsupportedOperationException(s"Unsupported data type: $dt")
+    }
 
   /** Maps field from Spark to Arrow. NOTE: timeZoneId required for TimestampType */
   def toArrowField(name: String, dt: DataType, nullable: Boolean, timeZoneId: String): Field = {

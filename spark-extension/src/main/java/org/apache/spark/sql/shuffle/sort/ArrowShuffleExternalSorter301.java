@@ -50,22 +50,21 @@ import scala.Tuple2;
 /**
  * An external sorter that is specialized for sort-based shuffle.
  *
- * <p>Incoming records are appended to data pages. When all records have been inserted (or when
- * the current thread's shuffle memory limit is reached), the in-memory records are sorted
- * according to their partition ids (using a {@link ShuffleInMemorySorter}). The sorted records
- * are then written to a single output file (or multiple files, if we've spilled). The format of
- * the output files is the same as the format of the final output file written by {@link
- * SortShuffleWriter}: each output partition's records are written as a single serialized,
- * compressed stream that can be read with a new decompression and deserialization stream.
+ * <p>Incoming records are appended to data pages. When all records have been inserted (or when the
+ * current thread's shuffle memory limit is reached), the in-memory records are sorted according to
+ * their partition ids (using a {@link ShuffleInMemorySorter}). The sorted records are then written
+ * to a single output file (or multiple files, if we've spilled). The format of the output files is
+ * the same as the format of the final output file written by {@link SortShuffleWriter}: each output
+ * partition's records are written as a single serialized, compressed stream that can be read with a
+ * new decompression and deserialization stream.
  *
- * <p>Unlike {@link org.apache.spark.util.collection.ExternalSorter}, this sorter does not merge
- * its spill files. Instead, this merging is performed in {@link UnsafeShuffleWriter}, which uses
- * a specialized merge procedure that avoids extra serialization/deserialization.
+ * <p>Unlike {@link org.apache.spark.util.collection.ExternalSorter}, this sorter does not merge its
+ * spill files. Instead, this merging is performed in {@link UnsafeShuffleWriter}, which uses a
+ * specialized merge procedure that avoids extra serialization/deserialization.
  */
 final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
 
-  private static final Logger logger =
-      LoggerFactory.getLogger(ArrowShuffleExternalSorter301.class);
+  private static final Logger logger = LoggerFactory.getLogger(ArrowShuffleExternalSorter301.class);
 
   private final int numPartitions;
   private final TaskMemoryManager taskMemoryManager;
@@ -88,9 +87,9 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
 
   /**
    * Memory pages that hold the records being sorted. The pages in this list are freed when
-   * spilling, although in principle we could recycle these pages across spills (on the other
-   * hand, this might not be necessary if we maintained a pool of re-usable pages in the
-   * TaskMemoryManager itself).
+   * spilling, although in principle we could recycle these pages across spills (on the other hand,
+   * this might not be necessary if we maintained a pool of re-usable pages in the TaskMemoryManager
+   * itself).
    */
   private final LinkedList<MemoryBlock> allocatedPages = new LinkedList<>();
 
@@ -116,8 +115,7 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
       int maxRecordsPerBatch) {
     super(
         memoryManager,
-        (int)
-            Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES, memoryManager.pageSizeBytes()),
+        (int) Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES, memoryManager.pageSizeBytes()),
         memoryManager.getTungstenMemoryMode());
     this.taskMemoryManager = memoryManager;
     this.blockManager = blockManager;
@@ -141,12 +139,12 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
   }
 
   /**
-   * Sorts the in-memory records and writes the sorted records to an on-disk file. This method
-   * does not free the sort data structures.
+   * Sorts the in-memory records and writes the sorted records to an on-disk file. This method does
+   * not free the sort data structures.
    *
-   * @param isLastFile if true, this indicates that we're writing the final output file and that
-   *     the bytes written should be counted towards shuffle spill metrics rather than shuffle
-   *     write metrics.
+   * @param isLastFile if true, this indicates that we're writing the final output file and that the
+   *     bytes written should be counted towards shuffle spill metrics rather than shuffle write
+   *     metrics.
    */
   private void writeSortedFile(boolean isLastFile) {
 
@@ -369,9 +367,9 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
    * Allocates more memory in order to insert an additional record. This will request additional
    * memory from the memory manager and spill if the requested memory can not be obtained.
    *
-   * @param required the required space in the data page, in bytes, including space for storing
-   *     the record size. This must be less than or equal to the page size (records that exceed
-   *     the page size are handled via a different code path which uses special overflow pages).
+   * @param required the required space in the data page, in bytes, including space for storing the
+   *     record size. This must be less than or equal to the page size (records that exceed the page
+   *     size are handled via a different code path which uses special overflow pages).
    */
   private void acquireNewPageIfNecessary(int required) {
     if (currentPage == null
@@ -404,8 +402,7 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
 
     assert (currentPage != null);
     final Object base = currentPage.getBaseObject();
-    final long recordAddress =
-        taskMemoryManager.encodePageNumberAndOffset(currentPage, pageCursor);
+    final long recordAddress = taskMemoryManager.encodePageNumberAndOffset(currentPage, pageCursor);
     UnsafeAlignedOffset.putSize(base, pageCursor, length);
     pageCursor += uaoSize;
     Platform.copyMemory(recordBase, recordOffset, base, pageCursor, length);

@@ -40,14 +40,15 @@ jobs:
         with:
           distribution: 'adopt'
           java-version: '8'
-          cache: 'maven'
-      - name: Build
-        run: mvn package -DskipTests
+      - name: Build with Gradle
+        uses: gradle/gradle-build-action@0d13054264b0bb894ded474f08ebb30921341cee
+        with:
+          arguments: build
       - name: Upload plugin
         uses: actions/upload-artifact@v3
         with:
           name: plugin
-          path: spark-extension/target/blaze-engine-1.0-SNAPSHOT.jar
+          path: target/blaze-engine-1.0-SNAPSHOT.jar
 
   build_blaze_lib:
     name: Build libblaze

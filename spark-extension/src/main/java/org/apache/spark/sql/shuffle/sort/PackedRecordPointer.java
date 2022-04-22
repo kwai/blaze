@@ -27,9 +27,9 @@ package org.apache.spark.sql.shuffle.sort;
  * </pre>
  *
  * This implies that the maximum addressable page size is 2^27 bits = 128 megabytes, assuming that
- * our offsets in pages are not 8-byte-word-aligned. Since we have 2^13 pages (based off the
- * 13-bit page numbers assigned by {@link org.apache.spark.memory.TaskMemoryManager}), this
- * implies that we can address 2^13 * 128 megabytes = 1 terabyte of RAM per task.
+ * our offsets in pages are not 8-byte-word-aligned. Since we have 2^13 pages (based off the 13-bit
+ * page numbers assigned by {@link org.apache.spark.memory.TaskMemoryManager}), this implies that we
+ * can address 2^13 * 128 megabytes = 1 terabyte of RAM per task.
  *
  * <p>Assuming word-alignment would allow for a 1 gigabyte maximum page size, but we leave this
  * optimization to future work as it will require more careful design to ensure that addresses are
@@ -39,14 +39,10 @@ final class PackedRecordPointer {
 
   static final int MAXIMUM_PAGE_SIZE_BYTES = 1 << 27; // 128 megabytes
 
-  /**
-   * The maximum partition identifier that can be encoded. Note that partition ids start from 0.
-   */
+  /** The maximum partition identifier that can be encoded. Note that partition ids start from 0. */
   static final int MAXIMUM_PARTITION_ID = (1 << 24) - 1; // 16777215
 
-  /**
-   * The index of the first byte of the partition id, counting from the least significant byte.
-   */
+  /** The index of the first byte of the partition id, counting from the least significant byte. */
   static final int PARTITION_ID_START_BYTE_INDEX = 5;
 
   /** The index of the last byte of the partition id, counting from the least significant byte. */

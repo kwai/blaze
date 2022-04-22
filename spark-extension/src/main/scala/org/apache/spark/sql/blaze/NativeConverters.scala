@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.blaze
 
 import scala.collection.JavaConverters._
@@ -143,7 +160,9 @@ object NativeConverters {
       case BinaryType => arrowTypeBuilder.setBINARY(EmptyMessage.getDefaultInstance)
       case DateType => arrowTypeBuilder.setDATE32(EmptyMessage.getDefaultInstance)
       case TimestampType =>
-        arrowTypeBuilder.setTIMESTAMP(Timestamp.getDefaultInstance) // NOTE: microsecond => millisecond
+        arrowTypeBuilder.setTIMESTAMP(
+          Timestamp.getDefaultInstance
+        ) // NOTE: microsecond => millisecond
 
       // decimal
       case t: DecimalType =>
@@ -228,21 +247,23 @@ object NativeConverters {
     def buildScalarFunction(
         fn: ScalarFunction,
         args: Seq[Expression],
-        dataType: DataType): PhysicalExprNode = buildExprNode {
-      _.setScalarFunction(
-        PhysicalScalarFunctionNode
-          .newBuilder()
-          .setName(fn.name())
-          .setFun(fn)
-          .addAllArgs(args.map(convertExpr).asJava)
-          .setReturnType(convertDataType(dataType))
-          .build())
-    }
+        dataType: DataType): PhysicalExprNode =
+      buildExprNode {
+        _.setScalarFunction(
+          PhysicalScalarFunctionNode
+            .newBuilder()
+            .setName(fn.name())
+            .setFun(fn)
+            .addAllArgs(args.map(convertExpr).asJava)
+            .setReturnType(convertDataType(dataType))
+            .build())
+      }
 
-    def unpackBinaryTypeCast(expr: Expression) = expr match {
-      case Cast(inner, BinaryType, _) => inner
-      case expr => expr
-    }
+    def unpackBinaryTypeCast(expr: Expression) =
+      expr match {
+        case Cast(inner, BinaryType, _) => inner
+        case expr => expr
+      }
 
     sparkExpr match {
       case l @ Literal(value, dataType) =>
@@ -415,18 +436,20 @@ object NativeConverters {
     def buildScalarFunction(
         fn: ScalarFunction,
         args: Seq[Expression],
-        dataType: DataType): LogicalExprNode = buildExprNode {
-      _.setScalarFunction(
-        ScalarFunctionNode
-          .newBuilder()
-          .setFun(fn)
-          .addAllArgs(args.map(convertExprLogical).asJava))
-    }
+        dataType: DataType): LogicalExprNode =
+      buildExprNode {
+        _.setScalarFunction(
+          ScalarFunctionNode
+            .newBuilder()
+            .setFun(fn)
+            .addAllArgs(args.map(convertExprLogical).asJava))
+      }
 
-    def unpackBinaryTypeCast(expr: Expression) = expr match {
-      case Cast(inner, BinaryType, _) => inner
-      case expr => expr
-    }
+    def unpackBinaryTypeCast(expr: Expression) =
+      expr match {
+        case Cast(inner, BinaryType, _) => inner
+        case expr => expr
+      }
 
     sparkExpr match {
       case l @ Literal(value, dataType) =>

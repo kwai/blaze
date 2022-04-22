@@ -175,14 +175,15 @@ private[spark] final class ShuffleBlockFetcherIterator301(
     new SimpleDownloadFile(blockManager.diskBlockManager.createTempLocalBlock()._2, transportConf)
   }
 
-  override def registerTempFileToClean(file: DownloadFile): Boolean = synchronized {
-    if (isZombie) {
-      false
-    } else {
-      shuffleFilesSet += file
-      true
+  override def registerTempFileToClean(file: DownloadFile): Boolean =
+    synchronized {
+      if (isZombie) {
+        false
+      } else {
+        shuffleFilesSet += file
+        true
+      }
     }
-  }
 
   /**
    * Fetches the next (BlockId, InputStream). If a task fails, the ManagedBuffers
@@ -275,7 +276,7 @@ private[spark] final class ShuffleBlockFetcherIterator301(
     if (deferredFetchRequests.nonEmpty) {
       for ((remoteAddress, defReqQueue) <- deferredFetchRequests) {
         while (isRemoteBlockFetchable(defReqQueue) &&
-               !isRemoteAddressMaxedOut(remoteAddress, defReqQueue.front)) {
+          !isRemoteAddressMaxedOut(remoteAddress, defReqQueue.front)) {
           val request = defReqQueue.dequeue()
           logDebug(
             s"Processing deferred fetch request for $remoteAddress with "

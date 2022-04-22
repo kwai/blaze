@@ -59,13 +59,13 @@ import scala.collection.Iterator;
 
 /**
  * This class implements sort-based shuffle's hash-style shuffle fallback path. This write path
- * writes incoming records to separate files, one file per reduce partition, then concatenates
- * these per-partition files to form a single output file, regions of which are served to
- * reducers. Records are not buffered in memory. It writes output in a format that can be served /
- * consumed via {@link org.apache.spark.shuffle.IndexShuffleBlockResolver}.
+ * writes incoming records to separate files, one file per reduce partition, then concatenates these
+ * per-partition files to form a single output file, regions of which are served to reducers.
+ * Records are not buffered in memory. It writes output in a format that can be served / consumed
+ * via {@link org.apache.spark.shuffle.IndexShuffleBlockResolver}.
  *
- * <p>This write path is inefficient for shuffles with large numbers of reduce partitions because
- * it simultaneously opens separate serializers and file streams for all partitions. As a result,
+ * <p>This write path is inefficient for shuffles with large numbers of reduce partitions because it
+ * simultaneously opens separate serializers and file streams for all partitions. As a result,
  * {@link SortShuffleManager} only selects this write path when
  *
  * <ul>
@@ -121,8 +121,7 @@ final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, 
       ShuffleWriteMetricsReporter writeMetrics,
       ShuffleExecutorComponents shuffleExecutorComponents) {
     // Use getSizeAsKb (not bytes) to maintain backwards compatibility if no units are provided
-    this.fileBufferSize =
-        (int) (long) conf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
+    this.fileBufferSize = (int) (long) conf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
     this.transferToEnabled = conf.getBoolean("spark.file.transferTo", true);
     this.blockManager = blockManager;
     final ShuffleDependency<K, V, V> dep = handle.dependency();
@@ -181,8 +180,7 @@ final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, 
       }
 
       partitionLengths = writePartitionedData(mapOutputWriter);
-      mapStatus =
-          MapStatus$.MODULE$.apply(blockManager.shuffleServerId(), partitionLengths, mapId);
+      mapStatus = MapStatus$.MODULE$.apply(blockManager.shuffleServerId(), partitionLengths, mapId);
     } catch (Exception e) {
       try {
         mapOutputWriter.abort(e);
@@ -202,8 +200,7 @@ final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, 
   /**
    * Concatenate all of the per-partition files into a single combined file.
    *
-   * @return array of lengths, in bytes, of each partition of the file (used by map output
-   *     tracker).
+   * @return array of lengths, in bytes, of each partition of the file (used by map output tracker).
    */
   private long[] writePartitionedData(ShuffleMapOutputWriter mapOutputWriter) throws IOException {
     // Track location of the partition starts in the output file
@@ -217,8 +214,7 @@ final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, 
             if (transferToEnabled) {
               // Using WritableByteChannelWrapper to make resource closing consistent between
               // this implementation and UnsafeShuffleWriter.
-              Optional<WritableByteChannelWrapper> maybeOutputChannel =
-                  writer.openChannelWrapper();
+              Optional<WritableByteChannelWrapper> maybeOutputChannel = writer.openChannelWrapper();
               if (maybeOutputChannel.isPresent()) {
                 writePartitionedDataWithChannel(file, maybeOutputChannel.get());
               } else {
@@ -240,8 +236,8 @@ final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, 
     return mapOutputWriter.commitAllPartitions();
   }
 
-  private void writePartitionedDataWithChannel(
-      File file, WritableByteChannelWrapper outputChannel) throws IOException {
+  private void writePartitionedDataWithChannel(File file, WritableByteChannelWrapper outputChannel)
+      throws IOException {
     boolean copyThrewException = true;
     try {
       FileInputStream in = new FileInputStream(file);

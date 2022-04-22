@@ -38,8 +38,7 @@ final class ShuffleInMemorySorter {
   private final int initialSize;
   /**
    * An array of record pointers and partition ids that have been encoded by {@link
-   * PackedRecordPointer}. The sort operates on this array instead of directly manipulating
-   * records.
+   * PackedRecordPointer}. The sort operates on this array instead of directly manipulating records.
    *
    * <p>Only part of the array will be used to store the pointers, the rest part is preserved as
    * temporary buffer for sorting.
@@ -168,8 +167,7 @@ final class ShuffleInMemorySorter {
   }
 
   /**
-   * An iterator-like class that's used instead of Java's Iterator in order to facilitate
-   * inlining.
+   * An iterator-like class that's used instead of Java's Iterator in order to facilitate inlining.
    */
   public static final class ShuffleSorterIterator {
 

@@ -20,7 +20,6 @@ package org.apache.spark.sql.shuffle.sort;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.io.ByteStreams;
 import com.google.common.io.Closeables;
-
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -308,15 +307,13 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
 
   private long[] mergeSpillsUsingStandardWriter(SpillInfo[] spills) throws IOException {
     long[] partitionLengths;
-    final boolean compressionEnabled =
-        (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_COMPRESS());
+    final boolean compressionEnabled = (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_COMPRESS());
     final CompressionCodec compressionCodec = CompressionCodec$.MODULE$.createCodec(sparkConf);
     final boolean fastMergeEnabled =
         (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_UNSAFE_FAST_MERGE_ENABLE());
     final boolean fastMergeIsSupported =
         !compressionEnabled
-            || CompressionCodec$.MODULE$.supportsConcatenationOfSerializedStreams(
-                compressionCodec);
+            || CompressionCodec$.MODULE$.supportsConcatenationOfSerializedStreams(compressionCodec);
     final boolean encryptionEnabled = blockManager.serializerManager().encryptionEnabled();
     final ShuffleMapOutputWriter mapWriter =
         shuffleExecutorComponents.createMapOutputWriter(
@@ -369,8 +366,8 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
   /**
    * Merges spill files using Java FileStreams. This code path is typically slower than the
    * NIO-based merge, {@link ArrowShuffleWriter301#mergeSpillsWithTransferTo(SpillInfo[],
-   * ShuffleMapOutputWriter)}, and it's mostly used in cases where the IO compression codec does
-   * not support concatenation of compressed data, when encryption is enabled, or when users have
+   * ShuffleMapOutputWriter)}, and it's mostly used in cases where the IO compression codec does not
+   * support concatenation of compressed data, when encryption is enabled, or when users have
    * explicitly disabled use of {@code transferTo} in order to work around kernel bugs. This code
    * path might also be faster in cases where individual partition size in a spill is small and
    * UnsafeShuffleWriter#mergeSpillsWithTransferTo method performs many small disk ios which is
@@ -532,8 +529,7 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
         stopping = true;
         if (success) {
           if (mapStatus == null) {
-            throw new IllegalStateException(
-                "Cannot call stop(true) without having called write()");
+            throw new IllegalStateException("Cannot call stop(true) without having called write()");
           }
           return Option.apply(mapStatus);
         } else {
