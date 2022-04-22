@@ -62,8 +62,6 @@ site/
 # docker volumes used for caching
 .docker
 
-# Rust
-target
 # Binaries should have Cargo.lock
 # https://doc.rust-lang.org/cargo/faq.html#why-do-binaries-have-cargolock-in-version-control-but-not-libraries
 # Cargo.lock
@@ -73,3 +71,10 @@ rusty-tags.vi
 .flatbuffers/
 
 .vscode
+
+# Rust
+target
+
+# Java
+spark-extension/target
+spark-extension/src/generated-sources
