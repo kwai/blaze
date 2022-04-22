@@ -1,7 +1,6 @@
 name: Run TPC-DS tests
 
 on:
-  push:
   pull_request:
 
 jobs:
@@ -48,14 +47,11 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: plugin
-          path: target/spark-blaze-extension-1.0-SNAPSHOT.jar
+          path: spark-extension/target/blaze-engine-1.0-SNAPSHOT.jar
 
   build_blaze_lib:
-    name: Build blaze-rs
+    name: Build libblaze
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: blaze-rs
     strategy:
       matrix:
         arch: [amd64]
@@ -67,11 +63,7 @@ jobs:
         # "1" means line tables only, which is useful for panic tracebacks.
         RUSTFLAGS: "-C debuginfo=1"
     steps:
-      - name: Checkout blaze
-        uses: actions/checkout@v3
-        with:
-          repository: blaze-init/blaze-rs
-          path: blaze-rs
+      - uses: actions/checkout@v3
       - name: Cache Cargo
         uses: actions/cache@v2
         with:
@@ -100,7 +92,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: libblaze
-          path: blaze-rs/target/debug/libblaze.so
+          path: target/debug/libblaze.so
 
   setup-spark:
     name: Setup Spark Env
@@ -159,7 +151,7 @@ jobs:
           key: spark-lib
       - name: mv jar
         run: |
-          cp spark-blaze-extension-1.0-SNAPSHOT.jar spark/jars/
+          cp blaze-engine-1.0-SNAPSHOT.jar spark/jars/
       - name: Run with broadcast
         run: |
           export RUST_LOG=ERROR
