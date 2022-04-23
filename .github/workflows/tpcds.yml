@@ -132,6 +132,8 @@ jobs:
                 q91, q92, q93, q94, q95, q96, q97, q98, q99]
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: true
       - name: Download validator
         uses: actions/download-artifact@v3
         with:
