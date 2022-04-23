@@ -1,6 +1,7 @@
 name: Run TPC-DS tests
 
 on:
+  push:
   pull_request:
 
 jobs:
