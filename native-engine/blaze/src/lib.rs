@@ -190,7 +190,7 @@ async fn read_stream_next(iter_ptr: i64, schema_ptr: i64, array_ptr: i64) -> i64
                     num_rows as i64
                 }
                 _ => -1,
-            }
+            };
         }
     }
 }
