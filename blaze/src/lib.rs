@@ -175,16 +175,21 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext(
 async fn read_stream_next(iter_ptr: i64, schema_ptr: i64, array_ptr: i64) -> i64 {
     unsafe {
         let stream = &mut *(iter_ptr as *mut SendableRecordBatchStream);
-        match stream.next().await {
-            Some(Ok(batch)) => {
-                let num_rows = batch.num_rows();
-                let array: StructArray = batch.into();
-                let out_schema = schema_ptr as *mut FFI_ArrowSchema;
-                let out_array = array_ptr as *mut FFI_ArrowArray;
-                export_array_into_raw(Arc::new(array), out_array, out_schema).unwrap();
-                num_rows as i64
+        loop {
+            match stream.next().await {
+                Some(Ok(batch)) => {
+                    let num_rows = batch.num_rows();
+                    if num_rows == 0 {
+                        continue;
+                    }
+                    let array: StructArray = batch.into();
+                    let out_schema = schema_ptr as *mut FFI_ArrowSchema;
+                    let out_array = array_ptr as *mut FFI_ArrowArray;
+                    export_array_into_raw(Arc::new(array), out_array, out_schema).unwrap();
+                    return num_rows as i64;
+                }
+                _ => return -1,
             }
-            _ => -1,
         }
     }
 }
