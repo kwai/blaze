@@ -16,12 +16,31 @@
  */
 
 plugins {
-	id 'com.blaze.java-conventions'
+	id 'java-library'
+	id 'maven-publish'
+	id 'scala'
 	id "com.google.protobuf" version "0.8.18"
 	id "com.github.johnrengelman.shadow" version "7.1.2"
 	id "com.github.alisiikh.scalastyle" version "3.4.1"
 	id "com.diffplug.spotless" version "6.4.2"
 }
+
+repositories {
+	mavenLocal()
+	mavenCentral()
+}
+
+group = 'com.blaze'
+version = '1.0-SNAPSHOT'
+
+java.sourceCompatibility = JavaVersion.VERSION_1_8
+java.targetCompatibility = JavaVersion.VERSION_1_8
+
+compileJava.options.encoding = "UTF-8"
+compileTestJava.options.encoding = "UTF-8"
+javadoc.options.encoding = 'UTF-8'
+compileScala.options.encoding = "UTF-8"
+compileTestScala.options.encoding = "UTF-8"
 
 dependencies {
 	// Overriding transitive dependency versions in arrow-vector, by the version used by Spark
@@ -170,4 +189,5 @@ protobuf {
 
 description = 'blaze-engine'
 
+jar.enabled = false
 tasks.build.dependsOn tasks.shadowJar
