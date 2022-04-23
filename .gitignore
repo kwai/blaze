@@ -34,9 +34,8 @@ MANIFEST
 compile_commands.json
 build.ninja
 
-.gradle
-buildSrc/.gradle
-*/build
+.gradle/
+build/
 
 # Generated Visual Studio files
 *.vcxproj
@@ -77,8 +76,7 @@ rusty-tags.vi
 .vscode
 
 # Rust
-target
+target/
 
 # Java
-spark-extension/target
 spark-extension/src/generated-sources

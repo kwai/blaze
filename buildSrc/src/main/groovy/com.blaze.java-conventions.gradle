@@ -5,6 +5,7 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
+    id 'scala'
 }
 
 repositories {
@@ -14,8 +15,15 @@ repositories {
 
 group = 'com.blaze'
 version = '1.0-SNAPSHOT'
+
 java.sourceCompatibility = JavaVersion.VERSION_1_8
 java.targetCompatibility = JavaVersion.VERSION_1_8
+
+compileJava.options.encoding = "UTF-8"
+compileTestJava.options.encoding = "UTF-8"
+javadoc.options.encoding = 'UTF-8'
+compileScala.options.encoding = "UTF-8"
+compileTestScala.options.encoding = "UTF-8"
 
 publishing {
     publications {
