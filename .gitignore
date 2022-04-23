@@ -34,6 +34,10 @@ MANIFEST
 compile_commands.json
 build.ninja
 
+.gradle
+buildSrc/.gradle
+*/build
+
 # Generated Visual Studio files
 *.vcxproj
 *.vcxproj.*

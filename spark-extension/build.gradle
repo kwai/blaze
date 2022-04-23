@@ -12,6 +12,23 @@ plugins {
 }
 
 dependencies {
+	// Overriding transitive dependency versions in arrow-vector, by the version used by Spark
+	implementation ('com.fasterxml.jackson.core:jackson-annotations') {
+		version {
+			strictly '2.10.0'
+		}
+	}
+	implementation ('com.fasterxml.jackson.core:jackson-core') {
+		version {
+			strictly '2.10.0'
+		}
+	}
+	implementation ('com.fasterxml.jackson.core:jackson-databind') {
+		version {
+			strictly '2.10.0'
+		}
+	}
+
 	implementation 'org.apache.arrow:arrow-vector:7.0.0'
 	implementation 'org.apache.arrow:arrow-memory-netty:7.0.0'
 	implementation 'org.apache.arrow:arrow-compression:7.0.0'
@@ -28,11 +45,6 @@ dependencies {
 shadowJar {
 	destinationDir(new File("../target"))
 	archiveFileName.set("${project.name}-${project.version}.jar")
-	dependencies {
-		exclude('com.fasterxml.jackson.core:jackson-annotations:*')
-		exclude('com.fasterxml.jackson.core:jackson-core:*')
-		exclude('io.netty:netty-common:*')
-	}
 
 	relocate('com.google.protobuf', 'blaze.com.google.protobuf')
 	relocate('org.apache.arrow', "blaze.org.apache.arrow") {
