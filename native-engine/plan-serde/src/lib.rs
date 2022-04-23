@@ -20,9 +20,10 @@ use crate::protobuf::scalar_type;
 use datafusion::arrow::datatypes::{
     DataType, Field, IntervalUnit, Schema, SchemaRef, TimeUnit, UnionMode,
 };
-use datafusion::logical_expr::{BuiltInWindowFunction, BuiltinScalarFunction};
 use datafusion::logical_plan::{JoinConstraint, Operator};
 use datafusion::physical_plan::aggregates::AggregateFunction;
+use datafusion::physical_plan::functions::BuiltinScalarFunction;
+use datafusion::physical_plan::window_functions::BuiltInWindowFunction;
 use datafusion::prelude::JoinType;
 use datafusion::scalar::ScalarValue;
 

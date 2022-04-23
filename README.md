@@ -33,13 +33,13 @@ This repo is under active development and is not ready for production (or even d
 ## Overview
 
 
-## For developers
-
-- [Architectural Overview](./dev/doc/architectural_overview.md)
-
-
 ## Are we TPC-DS yet?
 > A work-in-progress to catalog the state of support for TPC-DS.
 
 Please click on the ❌ next to the commit ID to check how far we are 😉.
+
+
+## For developers
+
+- [Architectural Overview](./dev/doc/architectural_overview.md)
 
