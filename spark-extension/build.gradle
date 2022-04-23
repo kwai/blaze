@@ -1,0 +1,193 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+plugins {
+	id 'java-library'
+	id 'maven-publish'
+	id 'scala'
+	id "com.google.protobuf" version "0.8.18"
+	id "com.github.johnrengelman.shadow" version "7.1.2"
+	id "com.github.alisiikh.scalastyle" version "3.4.1"
+	id "com.diffplug.spotless" version "6.4.2"
+}
+
+repositories {
+	mavenLocal()
+	mavenCentral()
+}
+
+group = 'com.blaze'
+version = '1.0-SNAPSHOT'
+
+java.sourceCompatibility = JavaVersion.VERSION_1_8
+java.targetCompatibility = JavaVersion.VERSION_1_8
+
+compileJava.options.encoding = "UTF-8"
+compileTestJava.options.encoding = "UTF-8"
+javadoc.options.encoding = 'UTF-8'
+compileScala.options.encoding = "UTF-8"
+compileTestScala.options.encoding = "UTF-8"
+
+dependencies {
+	// Overriding transitive dependency versions in arrow-vector, by the version used by Spark
+	implementation ('com.fasterxml.jackson.core:jackson-annotations') {
+		version {
+			strictly '2.10.0'
+		}
+	}
+	implementation ('com.fasterxml.jackson.core:jackson-core') {
+		version {
+			strictly '2.10.0'
+		}
+	}
+	implementation ('com.fasterxml.jackson.core:jackson-databind') {
+		version {
+			strictly '2.10.0'
+		}
+	}
+
+	implementation 'org.apache.arrow:arrow-vector:7.0.0'
+	implementation 'org.apache.arrow:arrow-memory-netty:7.0.0'
+	implementation 'org.apache.arrow:arrow-compression:7.0.0'
+	implementation 'org.apache.arrow:arrow-c-data:7.0.0'
+	implementation 'com.google.protobuf:protobuf-java:3.19.4'
+
+	testImplementation 'org.scalatest:scalatest_2.12:3.2.9'
+
+	compileOnly 'org.scala-lang:scala-library:2.12.10'
+	compileOnly 'org.apache.spark:spark-core_2.12:3.0.3'
+	compileOnly 'org.apache.spark:spark-sql_2.12:3.0.3'
+}
+
+shadowJar {
+	destinationDir(new File("../target"))
+	archiveFileName.set("${project.name}-${project.version}.jar")
+
+	relocate('com.google.protobuf', 'blaze.com.google.protobuf')
+	relocate('org.apache.arrow', "blaze.org.apache.arrow") {
+		exclude('org.apache.arrow.c.*')
+		exclude('org.apache.arrow.c.jni.*')
+	}
+	relocate('io.netty', 'blaze.io.netty')
+	relocate('com.google.flatbuffers', 'blaze.com.google.flatbuffers')
+}
+
+scalastyle {
+	scalaVersion = '2.12'
+	scalastyleVersion = '1.5.1'
+	config = file("${projectDir}/scalastyle_config.xml") // path to scalastyle config xml file
+	skip = true  // skips scalastyle check if set to true
+	inputEncoding = 'UTF-8'
+	outputEncoding = 'UTF-8'
+	failOnWarning = false
+	verbose = false
+	quiet = false
+	forkOptions {} // JavaForkOptions that determine fork options of the daemon worker(s)
+}
+
+spotless {
+	format 'misc', {
+		// define the files to apply `misc` to
+		target '*.gradle', '*.md', '.gitignore'
+
+		// define the steps to apply to those files
+		trimTrailingWhitespace()
+		indentWithTabs() // or spaces. Takes an integer argument if you don't like 4
+		endWithNewline()
+	}
+	java {
+		// optional: you can specify import groups directly
+		// note: you can use an empty string for all the imports you didn't specify explicitly, and '\\#` prefix for static imports
+		importOrder('java', 'javax', 'org.apache', 'com.blaze', '', '\\#')
+
+		target 'src/main/java/**/*.java'
+
+		removeUnusedImports()
+
+		googleJavaFormat()
+
+		licenseHeader '/*\n' +
+				' * Licensed to the Apache Software Foundation (ASF) under one or more\n' +
+				' * contributor license agreements.  See the NOTICE file distributed with\n' +
+				' * this work for additional information regarding copyright ownership.\n' +
+				' * The ASF licenses this file to You under the Apache License, Version 2.0\n' +
+				' * (the "License"); you may not use this file except in compliance with\n' +
+				' * the License.  You may obtain a copy of the License at\n' +
+				' *\n' +
+				' *    http://www.apache.org/licenses/LICENSE-2.0\n' +
+				' *\n' +
+				' * Unless required by applicable law or agreed to in writing, software\n' +
+				' * distributed under the License is distributed on an "AS IS" BASIS,\n' +
+				' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n' +
+				' * See the License for the specific language governing permissions and\n' +
+				' * limitations under the License.\n' +
+				' */\n' +
+				'\n'
+	}
+	scala {
+		target 'src/main/scala/**/*.scala'
+
+		scalafmt('2.6.1').configFile('../dev/.scalafmt.conf')
+
+		licenseHeader '/*\n' +
+				' * Licensed to the Apache Software Foundation (ASF) under one or more\n' +
+				' * contributor license agreements.  See the NOTICE file distributed with\n' +
+				' * this work for additional information regarding copyright ownership.\n' +
+				' * The ASF licenses this file to You under the Apache License, Version 2.0\n' +
+				' * (the "License"); you may not use this file except in compliance with\n' +
+				' * the License.  You may obtain a copy of the License at\n' +
+				' *\n' +
+				' *    http://www.apache.org/licenses/LICENSE-2.0\n' +
+				' *\n' +
+				' * Unless required by applicable law or agreed to in writing, software\n' +
+				' * distributed under the License is distributed on an "AS IS" BASIS,\n' +
+				' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n' +
+				' * See the License for the specific language governing permissions and\n' +
+				' * limitations under the License.\n' +
+				' */\n' +
+				'\n', 'package '
+	}
+}
+
+sourceSets {
+	main {
+		proto {
+			srcDir '../native-engine/plan-serde/proto'
+		}
+		scala {
+			srcDirs = ['src/generated-sources/main/java', 'src/main/scala', 'src/main/java']
+		}
+		java {
+			srcDirs = []
+		}
+	}
+}
+
+protobuf {
+	// Configure the protoc executable
+	protoc {
+		// Download from repositories
+		artifact = 'com.google.protobuf:protoc:3.0.0'
+	}
+
+	generatedFilesBaseDir = "$projectDir/src/generated-sources"
+}
+
+description = 'blaze-engine'
+
+jar.enabled = false
+tasks.build.dependsOn tasks.shadowJar

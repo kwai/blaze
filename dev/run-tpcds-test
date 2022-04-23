@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+#
+# Shell script for validating TPCDS query results
+
+if [ -z "${SPARK_HOME}" ]; then
+  echo "env SPARK_HOME not defined" 1>&2
+  exit 1
+fi
+
+# Determine the current working directory
+_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+echo $_DIR
+
+# Load common functions
+. "${_DIR}/utils.sh"
+
+# Do some preparations before launching spark-submit
+parse_args_for_spark_submit "$@"
+
+# Resolve a jar location for the TPCDS data generator
+find_resource() {
+  local jar_file="tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar"
+  local libso="$_DIR/../libblaze.so"
+  local built_jar="$_DIR/../${jar_file}"
+  if [[ -e "$built_jar" && -e "$libso" ]]; then
+    LIBSO=$libso
+    RESOURCE=$built_jar
+  else
+    echo "${built_jar} ${libso} not found"
+    exit 1
+  fi
+}
+
+find_resource
+echo $LIBSO
+export LD_LIBRARY_PATH=${LIBSO}:${LD_LIBRARY_PATH}
+
+echo "Using \`spark-submit\` from path: $SPARK_HOME" 1>&2
+exec "${SPARK_HOME}"/bin/spark-submit                                   \
+  --class org.apache.spark.sql.execution.benchmark.TPCDSQueryValidator  \
+  --conf spark.sql.extensions=org.apache.spark.sql.blaze.BlazeSparkSessionExtension \
+  --conf spark.shuffle.manager=org.apache.spark.sql.blaze.execution.ArrowShuffleManager301 \
+  --conf spark.sql.codegen.wholeStage=false                             \
+  $(join_by " " ${SPARK_CONF[@]})                                       \
+  ${RESOURCE}                                                           \
+  $(join_by " " ${ARGS[@]})
+

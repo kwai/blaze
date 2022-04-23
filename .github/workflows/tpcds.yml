@@ -1,0 +1,166 @@
+name: Run TPC-DS tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build_validator:
+    name: Build Validator
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: validator
+    steps:
+      - name: Checkout Validator
+        uses: actions/checkout@v3
+        with:
+          repository: blaze-init/tpcds-validator
+          path: validator
+      - name: JDK setup
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'adopt'
+          java-version: '8'
+          cache: 'maven'
+      - name: Build
+        run: mvn package -DskipTests
+      - name: Upload validator
+        uses: actions/upload-artifact@v3
+        with:
+          name: validator
+          path: validator/target/tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar
+
+  build-plugin:
+    name: Build Plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: JDK setup
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'adopt'
+          java-version: '8'
+      - name: Build with Gradle
+        uses: gradle/gradle-build-action@0d13054264b0bb894ded474f08ebb30921341cee
+        with:
+          arguments: build
+      - name: Upload plugin
+        uses: actions/upload-artifact@v3
+        with:
+          name: plugin
+          path: target/blaze-engine-1.0-SNAPSHOT.jar
+
+  build_blaze_lib:
+    name: Build libblaze
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64]
+        rust: [nightly]
+    container:
+      image: ${{ matrix.arch }}/rust
+      env:
+        # Disable full debug symbol generation to speed up CI build and keep memory down
+        # "1" means line tables only, which is useful for panic tracebacks.
+        RUSTFLAGS: "-C debuginfo=1"
+    steps:
+      - uses: actions/checkout@v3
+      - name: Cache Cargo
+        uses: actions/cache@v2
+        with:
+          # these represent dependencies downloaded by cargo
+          # and thus do not depend on the OS, arch nor rust version.
+          path: /github/home/.cargo
+          key: cargo-cache-
+      - name: Cache Rust dependencies
+        uses: actions/cache@v2
+        with:
+          # these represent compiled steps of both dependencies and arrow
+          # and thus are specific for a particular OS, arch and rust version.
+          path: /github/home/target
+          key: ${{ runner.os }}-${{ matrix.arch }}-target-cache-${{ matrix.rust }}-
+      - name: Setup Rust toolchain
+        run: |
+          rustup toolchain install ${{ matrix.rust }}
+          rustup default ${{ matrix.rust }}
+          rustup component add rustfmt
+      - name: Build workspace in debug mode
+        run: |
+          cargo build
+        env:
+          CARGO_HOME: "/github/home/.cargo"
+      - name: Upload blaze.so
+        uses: actions/upload-artifact@v3
+        with:
+          name: libblaze
+          path: target/debug/libblaze.so
+
+  setup-spark:
+    name: Setup Spark Env
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache Spark
+        id: cache-spark
+        uses: actions/cache@v3
+        with:
+          path: spark
+          key: spark-lib
+      - name: Setup Spark dist
+        if: steps.cache-spark.outputs.cache-hit != 'true'
+        run: |
+          wget -c "https://mirror.iscas.ac.cn/apache/spark/spark-3.0.3/spark-3.0.3-bin-hadoop2.7.tgz"
+          mkdir -p spark && cd spark && tar -xf "../spark-3.0.3-bin-hadoop2.7.tgz" --strip-component=1
+          mv conf/log4j.properties.template conf/log4j.properties
+          sed -i 's/INFO/ERROR/g' conf/log4j.properties
+
+  test-it:
+    name: Run test ${{ matrix.query }}
+    needs: [build_validator, build_blaze_lib, setup-spark, build-plugin]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        query: [q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11,
+                q12, q13, q14a, q14b, q15, q16, q17, q18, q19, q20,
+                q21, q22, q23a, q23b, q24a, q24b, q25, q26, q27, q28, q29,
+                q31, q33, q34, q35, q36, q37, q38, q39a, q39b, q40,
+                q41, q42, q43, q44, q45, q46, q47, q48, q49, q50,
+                q51, q52, q53, q54, q55, q56, q57, q58, q59, q60,
+                q61, q62, q63, q64, q65, q66, q67, q68, q69, q70,
+                q71, q72, q73, q74, q75, q76, q77, q78, q79, q80,
+                q81, q82, q83, q84, q85, q86, q87, q88, q89, q90,
+                q91, q92, q93, q94, q95, q96, q97, q98, q99]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - name: Download validator
+        uses: actions/download-artifact@v3
+        with:
+          name: validator
+      - name: Download lib
+        uses: actions/download-artifact@v3
+        with:
+          name: libblaze
+      - name: Download plugin
+        uses: actions/download-artifact@v3
+        with:
+          name: plugin
+      - name: Cache Spark
+        id: cache-spark
+        uses: actions/cache@v3
+        with:
+          path: spark
+          key: spark-lib
+      - name: mv jar
+        run: |
+          cp blaze-engine-1.0-SNAPSHOT.jar spark/jars/
+      - name: Run with broadcast
+        run: |
+          export RUST_LOG=ERROR
+          SPARK_HOME=spark dev/run-tpcds-test --data-location dev/tpcds_1g --query-filter ${{ matrix.query }}
+      - name: Run without broadcast
+        run: |
+          export RUST_LOG=ERROR
+          SPARK_HOME=spark dev/run-tpcds-test --conf spark.sql.autoBroadcastJoinThreshold=-1 --data-location dev/tpcds_1g --query-filter ${{ matrix.query }}

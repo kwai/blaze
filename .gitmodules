@@ -1,0 +1,3 @@
+[submodule "dev/tpcds_1g"]
+	path = dev/tpcds_1g
+	url = git@github.com:blaze-init/tpcds_1g.git
