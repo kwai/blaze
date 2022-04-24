@@ -214,13 +214,17 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
     exec match {
       case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =>
-        if (condition.isEmpty &&
-          NativeSupports.isNative(left) &&
-          NativeSupports.isNative(right)) {
+        if (condition.isEmpty && Seq(left, right).exists(NativeSupports.isNative)) {
           logInfo(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
           return NativeSortMergeJoinExec(
-            left,
-            right,
+            left match {
+              case l if !NativeSupports.isNative(l) => ConvertToNativeExec(l)
+              case l => l
+            },
+            right match {
+              case r if !NativeSupports.isNative(r) => ConvertToNativeExec(r)
+              case r => r
+            },
             leftKeys,
             rightKeys,
             exec.output,
