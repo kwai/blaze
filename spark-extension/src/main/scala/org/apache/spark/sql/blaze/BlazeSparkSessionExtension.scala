@@ -86,30 +86,31 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   }
 
   override def apply(sparkPlan: SparkPlan): SparkPlan = {
-    var sparkPlanTransformed = sparkPlan.transformUp {
-      case exec: ShuffleExchangeExec if enableNativeShuffle =>
-        tryConvert(exec, convertShuffleExchangeExec)
-      case exec: FileSourceScanExec if enableScan => tryConvert(exec, convertFileSourceScanExec)
-      case exec: ProjectExec if enableProject => tryConvert(exec, convertProjectExec)
-      case exec: FilterExec if enableFilter => tryConvert(exec, convertFilterExec)
-      case exec: SortExec if enableSort => tryConvert(exec, convertSortExec)
-      case exec: UnionExec if enableUnion => tryConvert(exec, convertUnionExec)
-      case exec: SortMergeJoinExec if enableSmj => tryConvert(exec, convertSortMergeJoinExec)
-      case exec @ (
-            _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec | _: SortMergeJoinExec |
-            _: WindowExec
-          ) =>
-        log.info(s"Ignore unsupported exec: ${exec.simpleStringWithNodeId()}")
-        exec.mapChildren(child => convertToUnsafeRow(addWholeStageWrapper(child)))
-
-      case exec if !NativeSupports.isNative(exec) =>
-        log.info(s"Ignore unsupported exec: ${exec.simpleStringWithNodeId()}")
-        exec.mapChildren(child => addWholeStageWrapper(child))
-
-      case exec =>
-        log.info(s"Ignore unsupported exec: ${exec.simpleStringWithNodeId()}")
-        exec
-    }
+    var sparkPlanTransformed = sparkPlan
+      .transformUp { // transform supported plans to native
+        case exec: ShuffleExchangeExec if enableNativeShuffle =>
+          tryConvert(exec, convertShuffleExchangeExec)
+        case exec: FileSourceScanExec if enableScan => tryConvert(exec, convertFileSourceScanExec)
+        case exec: ProjectExec if enableProject => tryConvert(exec, convertProjectExec)
+        case exec: FilterExec if enableFilter => tryConvert(exec, convertFilterExec)
+        case exec: SortExec if enableSort => tryConvert(exec, convertSortExec)
+        case exec: UnionExec if enableUnion => tryConvert(exec, convertUnionExec)
+        case exec: SortMergeJoinExec if enableSmj => tryConvert(exec, convertSortMergeJoinExec)
+        case exec =>
+          log.info(s"Ignore unsupported exec: ${exec.simpleStringWithNodeId()}")
+          exec
+      }
+      .transformUp { // add ConvertToUnsafeRow before specified plans those require consuming unsafe rows
+        case exec @ (
+              _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
+              _: SortMergeJoinExec | _: WindowExec
+            ) =>
+          exec.mapChildren(child => convertToUnsafeRow(child))
+      }
+      .transformUp { // add WholeStageCodegen wrapper
+        case exec if !NativeSupports.isNative(exec) =>
+          exec.mapChildren(child => addWholeStageWrapper(child))
+      }
 
     // wrap with ConvertUnsafeRowExec if top exec is native
     if (NativeSupports.isNative(sparkPlanTransformed)) {
