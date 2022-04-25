@@ -6,5 +6,5 @@ services:
     volumes:
       - ~/.cargo/git:/root/.cargo/git:rw
       - ~/.cargo/registry:/root/.cargo/registry:rw
-      - ./../../native-engine:/native-engine:rw
-    command: "bash -c 'source ~/.bashrc && cd /native-engine && ./release.sh mm'"
+      - ./../../:/blaze:rw
+    command: "bash -c 'source ~/.bashrc && cd /blaze && ./release.sh'"
