@@ -30,6 +30,7 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
@@ -104,22 +105,31 @@ object NativeSupports extends Logging {
     FFIHelper.fromBlazeIter(iterPtr, context)
   }
 
-  def getDefaultNativeMetrics(sparkContext: SparkContext): Map[String, SQLMetric] =
+  def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =
     Map(
-      "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
-      "blazeExecIPCWrittenRows" -> SQLMetrics
-        .createMetric(sparkContext, "blaze exec IPC written rows"),
-      "blazeExecIPCWrittenBytes" -> SQLMetrics
-        .createSizeMetric(sparkContext, "blaze exec IPC written bytes"),
-      "blazeExecTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "blaze exec time"),
-      "blazeShuffleWriteExecTime" -> SQLMetrics
-        .createNanoTimingMetric(sparkContext, "blaze shuffle write exec time"))
+      "output_rows" -> SQLMetrics.createMetric(sc, "number of output rows"),
+      "elasped_compute" -> SQLMetrics.createNanoTimingMetric(sc, "elasped compute"),
+      "mem_used" -> SQLMetrics.createSizeMetric(sc, "native memory used"),
+      "spilled_count" -> SQLMetrics.createMetric(sc, "spill count"),
+      "spilled_bytes" -> SQLMetrics.createSizeMetric(sc, "spill bytes"),
+      "blaze_output_ipc_rows" -> SQLMetrics.createMetric(sc, "blaze exec IPC written rows"),
+      "blaze_output_ipc_bytes" -> SQLMetrics.createSizeMetric(sc, "blaze exec IPC written bytes"),
+      "blaze_exec_time" -> SQLMetrics.createNanoTimingMetric(sc, "blaze exec time"),
+      "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "join time"),
+      "input_batches" -> SQLMetrics.createMetric(sc, "number of input batches"),
+      "input_rows" -> SQLMetrics.createMetric(sc, "number of input rows"))
 }
 
-case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode]) {
+case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])
+    extends Logging {
   def getChild(i: Int): MetricNode =
     children(i)
 
-  def add(metricName: String, v: Long): Unit =
-    metrics.get(metricName).foreach(_.add(v))
+  def add(metricName: String, v: Long): Unit = {
+    metrics.get(metricName) match {
+      case Some(metric) => metric.add(v)
+      case None =>
+        logWarning(s"Ignore non-exist metric: ${metricName}")
+    }
+  }
 }

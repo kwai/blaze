@@ -60,13 +60,7 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
 
   override def doExecuteNative(): NativeRDD = {
     val rdds = children.map(c => NativeSupports.executeNative(c))
-    val nativeMetrics = MetricNode(
-      Map(
-        "output_rows" -> metrics("numOutputRows"),
-        "blaze_output_ipc_rows" -> metrics("blazeExecIPCWrittenRows"),
-        "blaze_output_ipc_bytes" -> metrics("blazeExecIPCWrittenBytes"),
-        "blaze_exec_time" -> metrics("blazeExecTime")),
-      rdds.map(r => r.metrics))
+    val nativeMetrics = MetricNode(metrics, rdds.map(_.metrics))
 
     def partitions: Array[Partition] = {
       val array = new Array[Partition](rdds.map(_.partitions.length).sum)

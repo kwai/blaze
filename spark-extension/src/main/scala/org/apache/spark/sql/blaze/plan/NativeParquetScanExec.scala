@@ -65,13 +65,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
   override def doExecuteNative(): NativeRDD = {
     val inputFileScanRDD = basedFileScan.inputRDD.asInstanceOf[FileScanRDD]
     val partitions = inputFileScanRDD.filePartitions.toArray
-    val nativeMetrics = MetricNode(
-      Map(
-        "output_rows" -> metrics("numOutputRows"),
-        "blaze_output_ipc_rows" -> metrics("blazeExecIPCWrittenRows"),
-        "blaze_output_ipc_bytes" -> metrics("blazeExecIPCWrittenBytes"),
-        "blaze_exec_time" -> metrics("blazeExecTime")),
-      Nil)
+    val nativeMetrics = MetricNode(metrics, Nil)
 
     val fileSchema = basedFileScan.relation.schema
     val outputSchema = basedFileScan.requiredSchema.fields

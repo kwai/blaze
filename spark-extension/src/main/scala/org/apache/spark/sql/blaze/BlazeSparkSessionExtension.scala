@@ -18,6 +18,7 @@
 package org.apache.spark.sql.blaze
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
@@ -44,6 +45,10 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.plan.NativeSortMergeJoinExec
+import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.util.ShutdownHookManager
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
@@ -202,23 +207,92 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
     exec match {
       case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =>
-        if (condition.isEmpty && Seq(left, right).exists(NativeSupports.isNative)) {
+        if (Seq(left, right).exists(NativeSupports.isNative)) {
           logInfo(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
-          return NativeSortMergeJoinExec(
-            left match {
-              case l if !NativeSupports.isNative(l) => ConvertToNativeExec(l)
-              case l => l
-            },
-            right match {
-              case r if !NativeSupports.isNative(r) => ConvertToNativeExec(r)
-              case r => r
-            },
-            leftKeys,
-            rightKeys,
+
+          val extraColumnPrefix = s"__dummy_smjkey_"
+          var extraColumnId = 0
+
+          def buildJoinColumnsProject(
+              child: SparkPlan,
+              joinKeys: Seq[Expression]): (Seq[AttributeReference], NativeProjectExec) = {
+            val extraProjectList = ArrayBuffer[NamedExpression]()
+            val transformedKeys = ArrayBuffer[AttributeReference]()
+
+            joinKeys.foreach {
+              case attr: AttributeReference => transformedKeys.append(attr)
+              case expr =>
+                val aliasExpr = Alias(expr, s"${extraColumnPrefix}_${extraColumnId}")()
+                extraColumnId += 1
+                extraProjectList.append(aliasExpr)
+
+                val attr = AttributeReference(
+                  aliasExpr.name,
+                  aliasExpr.dataType,
+                  aliasExpr.nullable,
+                  aliasExpr.metadata)(aliasExpr.exprId, aliasExpr.qualifier)
+                transformedKeys.append(attr)
+            }
+            (transformedKeys, NativeProjectExec(child.output ++ extraProjectList, child))
+          }
+
+          def buildPostProject(child: NativeSortMergeJoinExec): NativeProjectExec = {
+            val projectList = child.output
+              .filter(!_.name.startsWith(extraColumnPrefix))
+              .map(
+                attr =>
+                  AttributeReference(attr.name, attr.dataType, attr.nullable, attr.metadata)(
+                    attr.exprId,
+                    attr.qualifier))
+            NativeProjectExec(projectList, child)
+          }
+
+          var nativeLeft = left match {
+            case l if !NativeSupports.isNative(l) => ConvertToNativeExec(l)
+            case l => l
+          }
+          var nativeRight = right match {
+            case r if !NativeSupports.isNative(r) => ConvertToNativeExec(r)
+            case r => r
+          }
+          var modifiedLeftKeys = leftKeys
+          var modifiedRightKeys = rightKeys
+          var needPostProject = false
+
+          if (leftKeys.exists(!_.isInstanceOf[AttributeReference])) {
+            val (keys, exec) = buildJoinColumnsProject(nativeLeft, leftKeys)
+            modifiedLeftKeys = keys
+            nativeLeft = exec
+            needPostProject = true
+          }
+          if (rightKeys.exists(!_.isInstanceOf[AttributeReference])) {
+            val (keys, exec) = buildJoinColumnsProject(nativeRight, rightKeys)
+            modifiedRightKeys = keys
+            nativeRight = exec
+            needPostProject = true
+          }
+
+          val smj = NativeSortMergeJoinExec(
+            nativeLeft,
+            nativeRight,
+            modifiedLeftKeys,
+            modifiedRightKeys,
             exec.output,
             exec.outputPartitioning,
             exec.outputOrdering,
             joinType)
+
+          val postProjectedSmj = if (needPostProject) {
+            buildPostProject(smj)
+          } else {
+            smj
+          }
+
+          val conditionedSmj = condition match {
+            case Some(condition) => NativeFilterExec(condition, postProjectedSmj)
+            case None => postProjectedSmj
+          }
+          return conditionedSmj
         }
     }
     logInfo(s"Ignoring SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
