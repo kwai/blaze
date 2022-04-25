@@ -22,35 +22,28 @@ import scala.collection.mutable
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.execution.ArrowShuffleExchangeExec301
 import org.apache.spark.sql.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.blaze.plan.NativeSortExec
 import org.apache.spark.sql.blaze.plan.NativeUnionExec
-import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.CollectLimitExec
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.SortExec
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
-import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.plan.NativeSortMergeJoinExec
-import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.util.ShutdownHookManager
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
@@ -107,10 +100,6 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
             ) =>
           exec.mapChildren(child => convertToUnsafeRow(child))
       }
-      .transformUp { // add WholeStageCodegen wrapper
-        case exec if !NativeSupports.isNative(exec) =>
-          exec.mapChildren(child => addWholeStageWrapper(child))
-      }
 
     // wrap with ConvertUnsafeRowExec if top exec is native
     if (NativeSupports.isNative(sparkPlanTransformed)) {
@@ -137,9 +126,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   private def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
     val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
     logInfo(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
-
-    val wrappedChild = addWholeStageWrapper(child)
-    ArrowShuffleExchangeExec301(outputPartitioning, wrappedChild, noUserSpecifiedNumPartition)
+    ArrowShuffleExchangeExec301(outputPartitioning, child, noUserSpecifiedNumPartition)
   }
 
   private def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
@@ -244,14 +231,6 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
       case exec => exec
     }
   }
-
-  private def addWholeStageWrapper(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case exec if enableWholeStage && NativeSupports.isNative(exec) =>
-        WholeStageCodegenForBlazeNativeExec(exec)
-      case exec => exec
-    }
-  }
 }
 
 object BlazeQueryStagePrepOverrides extends Logging {
@@ -282,17 +261,4 @@ object BlazeQueryStagePrepOverrides extends Logging {
       case (className, count) => logInfo(s"Failed to convert ${count} ${className} plans")
     }
   }
-}
-
-case class WholeStageCodegenForBlazeNativeExec(override val child: SparkPlan)
-    extends UnaryExecNode
-    with NativeSupports {
-
-  override def nodeName: String = "WholeStageCodegen for Blaze Native Execution"
-  override def logicalLink: Option[LogicalPlan] = child.logicalLink
-  override def output: Seq[Attribute] = child.output
-  override def metrics: Map[String, SQLMetric] = child.metrics
-
-  override def doExecuteNative(): NativeRDD = NativeSupports.executeNative(child)
-  override protected def doExecute(): RDD[InternalRow] = child.execute()
 }
