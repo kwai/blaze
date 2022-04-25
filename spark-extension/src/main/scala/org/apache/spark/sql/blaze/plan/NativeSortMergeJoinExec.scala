@@ -88,14 +88,7 @@ case class NativeSortMergeJoinExec(
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeSupports.executeNative(left)
     val rightRDD = NativeSupports.executeNative(right)
-
-    val nativeMetrics = MetricNode(
-      Map(
-        "output_rows" -> metrics("numOutputRows"),
-        "blaze_output_ipc_rows" -> metrics("blazeExecIPCWrittenRows"),
-        "blaze_output_ipc_bytes" -> metrics("blazeExecIPCWrittenBytes"),
-        "blaze_exec_time" -> metrics("blazeExecTime")),
-      Seq(leftRDD.metrics, rightRDD.metrics))
+    val nativeMetrics = MetricNode(metrics, Seq(leftRDD.metrics, rightRDD.metrics))
 
     val partitions = if (joinType != RightOuter) {
       leftRDD.partitions

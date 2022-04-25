@@ -57,13 +57,7 @@ case class NativeProjectExec(projectList: Seq[NamedExpression], override val chi
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
-    val nativeMetrics = MetricNode(
-      Map(
-        "output_rows" -> metrics("numOutputRows"),
-        "blaze_output_ipc_rows" -> metrics("blazeExecIPCWrittenRows"),
-        "blaze_output_ipc_bytes" -> metrics("blazeExecIPCWrittenBytes"),
-        "blaze_exec_time" -> metrics("blazeExecTime")),
-      Seq(inputRDD.metrics))
+    val nativeMetrics = MetricNode(metrics, Seq(inputRDD.metrics))
 
     new NativeRDD(
       sparkContext,
