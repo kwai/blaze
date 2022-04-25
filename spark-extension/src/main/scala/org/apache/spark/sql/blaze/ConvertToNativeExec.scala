@@ -51,20 +51,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = child.execute()
     val timeZoneId = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
-    val nativeMetrics = MetricNode(
-      Map(
-        "output_rows" -> metrics("numOutputRows"),
-        "elasped_compute" -> metrics("elapsedCompute"),
-        "mem_used" -> metrics("memUsed"),
-        "spilled_count" -> metrics("spilledCount"),
-        "spilled_bytes" -> metrics("spilledBytes"),
-        "blaze_output_ipc_rows" -> metrics("blazeExecIPCWrittenRows"),
-        "blaze_output_ipc_bytes" -> metrics("blazeExecIPCWrittenBytes"),
-        "blaze_exec_time" -> metrics("blazeExecTime"),
-        "join_time" -> metrics("joinTime"),
-        "input_batches" -> metrics("inputBatches"),
-        "input_rows" -> metrics("inputRows")),
-      Nil)
+    val nativeMetrics = MetricNode(metrics, Nil)
 
     new NativeRDD(
       sparkContext,
