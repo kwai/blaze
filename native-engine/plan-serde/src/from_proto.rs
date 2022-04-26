@@ -32,6 +32,7 @@ use datafusion::datafusion_data_access::{FileMeta, SizedFile};
 use datafusion::datasource::listing::{FileRange, PartitionedFile};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
+use datafusion::logical_expr::{BuiltinScalarFunction, WindowFunction};
 use datafusion::logical_plan;
 use datafusion::logical_plan::window_frames::WindowFrame;
 use datafusion::logical_plan::*;
@@ -44,7 +45,6 @@ use datafusion::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec
 use datafusion::physical_plan::hash_join::PartitionMode;
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
 use datafusion::physical_plan::union::UnionExec;
-use datafusion::physical_plan::window_functions::WindowFunction;
 use datafusion::physical_plan::windows::{create_window_expr, WindowAggExec};
 use datafusion::physical_plan::{
     coalesce_batches::CoalesceBatchesExec,
@@ -56,7 +56,7 @@ use datafusion::physical_plan::{
         DEFAULT_DATAFUSION_CAST_OPTIONS,
     },
     filter::FilterExec,
-    functions::{self, BuiltinScalarFunction, ScalarFunctionExpr},
+    functions::{self, ScalarFunctionExpr},
     hash_join::HashJoinExec,
     limit::{GlobalLimitExec, LocalLimitExec},
     projection::ProjectionExec,
