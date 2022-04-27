@@ -22,9 +22,9 @@ members = [
     "native-engine/blaze",
 ]
 
-#[profile.release]
-#lto = true
-#codegen-units = 1
+[profile.release]
+lto = true
+codegen-units = 1
 
 [profile.dev]
 overflow-checks = false
