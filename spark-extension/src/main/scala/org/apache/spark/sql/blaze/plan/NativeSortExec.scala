@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.SortExec
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.PhysicalSortExprNode
@@ -96,4 +97,7 @@ case class NativeSortExec(
         PhysicalPlanNode.newBuilder().setSort(nativeSortExec).build()
       })
   }
+
+  override def doCanonicalize(): SparkPlan =
+    SortExec(sortOrder, global, child, testSpillFrequency = 0).canonicalized
 }

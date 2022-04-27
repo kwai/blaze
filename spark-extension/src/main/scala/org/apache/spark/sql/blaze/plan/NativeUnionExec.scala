@@ -29,9 +29,10 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.StructType
 import org.blaze.protobuf.{PhysicalPlanNode, UnionExecNode}
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+
+import org.apache.spark.sql.execution.UnionExec
 
 case class NativeUnionExec(override val children: Seq[SparkPlan])
     extends SparkPlan
@@ -93,4 +94,6 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
         PhysicalPlanNode.newBuilder().setUnion(union).build()
       })
   }
+
+  override def doCanonicalize(): SparkPlan = UnionExec(children).canonicalized
 }

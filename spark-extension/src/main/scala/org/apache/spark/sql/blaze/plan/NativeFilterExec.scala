@@ -30,6 +30,7 @@ import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.FilterExec
 import org.blaze.protobuf.FilterExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 
@@ -65,4 +66,7 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
         PhysicalPlanNode.newBuilder().setFilter(nativeFilterExec).build()
       })
   }
+
+  override def doCanonicalize(): SparkPlan =
+    FilterExec(condition, child).canonicalized
 }

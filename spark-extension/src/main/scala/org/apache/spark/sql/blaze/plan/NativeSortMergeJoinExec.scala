@@ -35,6 +35,7 @@ import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.BinaryExecNode
+import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.blaze.protobuf.JoinOn
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.SortMergeJoinExecNode
@@ -119,4 +120,14 @@ case class NativeSortMergeJoinExec(
         PhysicalPlanNode.newBuilder().setSortMergeJoin(sortMergeJoinExec).build()
       })
   }
+
+  override def doCanonicalize(): SparkPlan =
+    SortMergeJoinExec(
+      leftKeys,
+      rightKeys,
+      joinType,
+      condition = None,
+      left,
+      right,
+      isSkewJoin = false).canonicalized
 }

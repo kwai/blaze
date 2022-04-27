@@ -37,6 +37,7 @@ import org.apache.spark.sql.execution.AliasAwareOutputPartitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.types.DataTypes
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
@@ -111,4 +112,6 @@ case class NativeProjectExec(projectList: Seq[NamedExpression], override val chi
     }
     namedExprs
   }
+
+  override def doCanonicalize(): SparkPlan = ProjectExec(projectList, child).canonicalized
 }

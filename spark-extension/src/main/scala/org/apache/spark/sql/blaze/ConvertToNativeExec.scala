@@ -81,4 +81,6 @@ case class ConvertToNativeExec(override val child: SparkPlan)
           .build()
       })
   }
+
+  override def doCanonicalize(): SparkPlan = child.canonicalized
 }

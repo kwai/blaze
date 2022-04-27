@@ -53,6 +53,7 @@ import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
@@ -186,6 +187,9 @@ case class ArrowShuffleExchangeExec301(
           .build()
       })
   }
+
+  //override def doCanonicalize(): SparkPlan =
+  //  ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition).canonicalized
 }
 
 object ArrowShuffleExchangeExec301 {

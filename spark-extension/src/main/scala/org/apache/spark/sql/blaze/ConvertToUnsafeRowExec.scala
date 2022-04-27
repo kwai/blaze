@@ -55,4 +55,6 @@ case class ConvertToUnsafeRowExec(override val child: SparkPlan) extends UnaryEx
       convertedIterator
     }
   }
+
+  override def doCanonicalize(): SparkPlan = child.canonicalized
 }
