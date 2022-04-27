@@ -41,9 +41,9 @@ import org.blaze.protobuf.PartitionedFile
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.FileRange
 import org.blaze.protobuf.Statistics
-
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.execution.SparkPlan
 import org.blaze.protobuf.LogicalExprNode
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
@@ -143,4 +143,6 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
 
   override def simpleString(maxFields: Int): String =
     s"$nodeName (${basedFileScan.simpleString(maxFields)})"
+
+  override def doCanonicalize(): SparkPlan = basedFileScan.canonicalized
 }

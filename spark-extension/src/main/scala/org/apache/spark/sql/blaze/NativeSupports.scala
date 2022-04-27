@@ -30,6 +30,7 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
@@ -45,6 +46,7 @@ object NativeSupports extends Logging {
       case _: NativeSupports => true
       case plan: CustomShuffleReaderExec => isNative(plan.child)
       case plan: QueryStageExec => isNative(plan.plan)
+      case plan: ReusedExchangeExec => isNative(plan.child)
       case _ => false
     }
 
@@ -53,6 +55,7 @@ object NativeSupports extends Logging {
       case plan: NativeSupports => plan.doExecuteNative()
       case plan: CustomShuffleReaderExec => executeNative(plan.child)
       case plan: QueryStageExec => executeNative(plan.plan)
+      case plan: ReusedExchangeExec => executeNative(plan.child)
       case _ => throw new SparkException(s"Underlying plan is not NativeSupports: ${plan}")
     }
 
