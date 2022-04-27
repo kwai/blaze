@@ -72,8 +72,9 @@ checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
 
 [[package]]
 name = "arrow"
-version = "11.1.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=b12f7cd3c295dc88b93be46d30ddbb46202e1ff4#b12f7cd3c295dc88b93be46d30ddbb46202e1ff4"
+version = "12.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e94e2d315bc11f3d43f38344141453282591788381061fabc06c95e37d0dbc7d"
 dependencies = [
  "bitflags",
  "chrono",
@@ -408,7 +409,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=f64568cac3528cdc72d689560e687b403a8d526e#f64568cac3528cdc72d689560e687b403a8d526e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e#48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e"
 dependencies = [
  "ahash",
  "arrow",
@@ -440,7 +441,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=f64568cac3528cdc72d689560e687b403a8d526e#f64568cac3528cdc72d689560e687b403a8d526e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e#48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e"
 dependencies = [
  "arrow",
  "ordered-float 2.10.0",
@@ -451,7 +452,7 @@ dependencies = [
 [[package]]
 name = "datafusion-data-access"
 version = "1.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=f64568cac3528cdc72d689560e687b403a8d526e#f64568cac3528cdc72d689560e687b403a8d526e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e#48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e"
 dependencies = [
  "async-trait",
  "chrono",
@@ -464,7 +465,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=f64568cac3528cdc72d689560e687b403a8d526e#f64568cac3528cdc72d689560e687b403a8d526e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e#48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e"
 dependencies = [
  "ahash",
  "arrow",
@@ -494,7 +495,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=f64568cac3528cdc72d689560e687b403a8d526e#f64568cac3528cdc72d689560e687b403a8d526e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e#48ebd340c4364ca7d12518b66c2a9c4ba1ecc47e"
 dependencies = [
  "ahash",
  "arrow",
@@ -1343,9 +1344,9 @@ dependencies = [
 
 [[package]]
 name = "parquet"
-version = "11.1.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e2ba225e8c800adda2da6b0d63a65abf71867868682947ccb8fc6a9c68ba541"
+checksum = "13c5df78854c7d56aed3aba69fb1b342dda41c384963f4ddfa962b690572b42a"
 dependencies = [
  "arrow",
  "base64",
@@ -2094,9 +2095,9 @@ checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
 
 [[package]]
 name = "uuid"
-version = "0.8.2"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+checksum = "8cfcd319456c4d6ea10087ed423473267e1a071f3bc0aa89f80d60997843c6f0"
 dependencies = [
  "getrandom",
 ]
