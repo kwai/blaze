@@ -17,15 +17,16 @@
 
 package org.apache.spark.sql.blaze.plan
 
-import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.sql.blaze.{
-  JniBridge,
-  MetricNode,
-  NativeConverters,
-  NativeRDD,
-  NativeSupports
-}
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute}
+import scala.collection.JavaConverters._
+
+import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.And
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
@@ -34,17 +35,14 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.SparkPlan
 import org.blaze.protobuf.FileGroup
+import org.blaze.protobuf.FileRange
 import org.blaze.protobuf.FileScanExecConf
 import org.blaze.protobuf.ParquetScanExecNode
 import org.blaze.protobuf.PartitionedFile
 import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.FileRange
 import org.blaze.protobuf.Statistics
-import scala.collection.JavaConverters._
-
-import org.apache.spark.sql.execution.SparkPlan
-import org.blaze.protobuf.LogicalExprNode
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     extends LeafExecNode
@@ -56,14 +54,47 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
   override def output: Seq[Attribute] = basedFileScan.output
   override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning
 
+  private val inputFileScanRDD = basedFileScan.inputRDD.asInstanceOf[FileScanRDD]
+
   private val nativeFileSchema = NativeConverters.convertSchema(basedFileScan.relation.schema)
   private val nativePruningPredicateFilter = basedFileScan.dataFilters
     .reduceOption(And)
     .map(NativeConverters.convertExprLogical)
 
+  private val nativeFileGroups: Array[FileGroup] = {
+    val partitions = inputFileScanRDD.filePartitions.toArray
+
+    // compute file sizes
+    val fileSizes = partitions
+      .flatMap(_.files)
+      .groupBy(_.filePath)
+      .mapValues(_.map(_.length).sum)
+
+    // list input file statuses
+    def nativePartitionedFile(file: org.apache.spark.sql.execution.datasources.PartitionedFile) =
+      PartitionedFile
+        .newBuilder()
+        .setPath(file.filePath.replaceFirst("^file://", ""))
+        .setSize(fileSizes(file.filePath))
+        .setLastModifiedNs(0)
+        .setRange(
+          FileRange
+            .newBuilder()
+            .setStart(file.start)
+            .setEnd(file.start + file.length)
+            .build())
+        .build()
+
+    partitions.map { partition =>
+      FileGroup
+        .newBuilder()
+        .addAllFiles(partition.files.map(nativePartitionedFile).toList.asJava)
+        .build()
+    }
+  }
+
   override def doExecute(): RDD[InternalRow] = doExecuteNative()
   override def doExecuteNative(): NativeRDD = {
-    val inputFileScanRDD = basedFileScan.inputRDD.asInstanceOf[FileScanRDD]
     val partitions = inputFileScanRDD.filePartitions.toArray
     val nativeMetrics = MetricNode(metrics, Nil)
 
@@ -76,65 +107,28 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       nativeMetrics,
       partitions.asInstanceOf[Array[Partition]],
       Nil,
-      (p, _) => {
-        val nativeParquetScanConfBuilder = FileScanExecConf
+      (partition, _) => {
+        val nativeParquetScanConf = FileScanExecConf
           .newBuilder()
           .setStatistics(Statistics.getDefaultInstance)
           .setSchema(nativeFileSchema)
+          .addAllFileGroups(nativeFileGroups.toList.asJava)
           .addAllProjection(projection.map(Integer.valueOf).toSeq.asJava)
-
-        partitions.zipWithIndex.foreach {
-          case (filePartition, i) =>
-            val nativeFileGroupBuilder = FileGroup.newBuilder()
-            if (i == p.index) {
-              var fs: FileSystem = null
-              filePartition.files.foreach {
-                file =>
-                  if (fs == null) {
-                    fs = JniBridge.getHDFSFileSystem(file.filePath)
-                  }
-                  val fileStatus = fs.getFileStatus(new Path(file.filePath))
-                  val range = FileRange
-                    .newBuilder()
-                    .setStart(file.start)
-                    .setEnd(file.start + file.length)
-                    .build()
-                  nativeFileGroupBuilder.addFiles(
-                    PartitionedFile
-                      .newBuilder()
-                      .setPath(file.filePath.replaceFirst("^file://", ""))
-                      .setSize(fileStatus.getLen)
-                      .setLastModifiedNs(fileStatus.getModificationTime * 1000 * 1000)
-                      .setRange(range)
-                      .build())
-              }
-            } else {
-              filePartition.files.foreach { file =>
-                val range = FileRange
-                  .newBuilder()
-                  .setStart(file.start)
-                  .setEnd(file.start + file.length)
-                  .build();
-                nativeFileGroupBuilder.addFiles(
-                  PartitionedFile
-                    .newBuilder()
-                    .setPath(file.filePath.replaceFirst("^file://", ""))
-                    .setSize(file.length)
-                    .setLastModifiedNs(0)
-                    .setRange(range)
-                    .build())
-              }
-            }
-            nativeParquetScanConfBuilder.addFileGroups(nativeFileGroupBuilder.build())
-        }
+          .build()
 
         val nativeParquetScanExecBuilder = ParquetScanExecNode
           .newBuilder()
-          .setBaseConf(nativeParquetScanConfBuilder.build())
-        if (nativePruningPredicateFilter.isDefined) {
-          nativeParquetScanExecBuilder.setPruningPredicate(nativePruningPredicateFilter.get)
+          .setBaseConf(nativeParquetScanConf)
+
+        nativePruningPredicateFilter match {
+          case Some(filter) => nativeParquetScanExecBuilder.setPruningPredicate(filter)
+          case None => // no nothing
         }
-        PhysicalPlanNode.newBuilder().setParquetScan(nativeParquetScanExecBuilder.build()).build()
+
+        PhysicalPlanNode
+          .newBuilder()
+          .setParquetScan(nativeParquetScanExecBuilder.build())
+          .build()
       })
   }
 
