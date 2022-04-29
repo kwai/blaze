@@ -1,14 +1,62 @@
 use std::sync::Arc;
-use std::time::Instant;
 
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion_ext::jni_bridge::JavaClasses;
-use datafusion_ext::jni_bridge_call_method;
 use jni::errors::Result as JniResult;
-use jni::objects::JObject;
+use jni::objects::{JClass, JObject};
 use jni::JNIEnv;
 
-pub fn update_spark_metric_node(
+use datafusion_ext::jni_bridge::JavaClasses;
+use datafusion_ext::{
+    jni_bridge_call_method, jni_bridge_call_static_method_no_check_java_exception,
+    jni_bridge_new_object,
+};
+
+use crate::BlazeIter;
+
+const REPORTED_METRICS: &[&str] = &[
+    "input_rows",
+    "input_batches",
+    "output_rows",
+    "output_batches",
+    "elapsed_compute",
+    "join_time",
+];
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_updateMetrics(
+    env: JNIEnv,
+    _: JClass,
+    iter_ptr: i64,
+    metrics: JObject,
+) {
+    let blaze_iter = unsafe { &mut *(iter_ptr as *mut BlazeIter) };
+
+    match update_spark_metric_node(&env, metrics, blaze_iter.execution_plan.clone()) {
+        Ok(_) => {}
+        Err(e) => {
+            // throw a runtime exception when updating metrics error
+            let msg = format!(
+                "update spark metrics error: {e}, node: {:?}",
+                blaze_iter.execution_plan
+            );
+            let msg_jstr = env.new_string(msg).unwrap();
+            let _throw = jni_bridge_call_static_method_no_check_java_exception!(
+                env,
+                JniBridge.raiseThrowable,
+                jni_bridge_new_object!(
+                    env,
+                    JavaRuntimeException,
+                    msg_jstr,
+                    JObject::null()
+                )
+                .unwrap()
+            );
+        }
+    }
+}
+
+fn update_spark_metric_node(
     env: &JNIEnv,
     metric_node: JObject,
     execution_plan: Arc<dyn ExecutionPlan>,
@@ -21,7 +69,8 @@ pub fn update_spark_metric_node(
             .metrics()
             .unwrap_or_default()
             .iter()
-            .map(|m| (m.value().name(), m.value().as_usize() as i64))
+            .map(|m| m.value())
+            .map(|m| (m.name(), m.as_usize() as i64))
             .collect::<Vec<_>>(),
     )?;
 
@@ -39,34 +88,16 @@ pub fn update_spark_metric_node(
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn update_extra_metrics(
-    env: &JNIEnv,
-    metric_node: JObject,
-    start_time: Instant,
-    num_ipc_rows: usize,
-    num_ipc_bytes: usize,
-) -> JniResult<()> {
-    let duration_ns = Instant::now().duration_since(start_time).as_nanos();
-    update_metrics(
-        env,
-        metric_node,
-        &[
-            ("blaze_output_ipc_rows", num_ipc_rows as i64),
-            ("blaze_output_ipc_bytes", num_ipc_bytes as i64),
-            ("blaze_exec_time", duration_ns as i64),
-        ],
-    )
-}
-
 fn update_metrics(
     env: &JNIEnv,
     metric_node: JObject,
     metric_values: &[(&str, i64)],
 ) -> JniResult<()> {
     for &(name, value) in metric_values {
-        let jname = env.new_string(name)?;
-        jni_bridge_call_method!(env, SparkMetricNode.add, metric_node, jname, value)?;
+        if REPORTED_METRICS.contains(&name) {
+            let jname = env.new_string(name)?;
+            jni_bridge_call_method!(env, SparkMetricNode.add, metric_node, jname, value)?;
+        }
     }
     Ok(())
 }

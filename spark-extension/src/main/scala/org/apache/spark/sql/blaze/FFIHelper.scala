@@ -52,7 +52,10 @@ object FFIHelper {
       })
   }
 
-  def fromBlazeIter(iterPtr: Long, context: TaskContext): Iterator[InternalRow] = {
+  def fromBlazeIter(
+      iterPtr: Long,
+      context: TaskContext,
+      metrics: MetricNode): Iterator[InternalRow] = {
     val allocator =
       ArrowUtils2.rootAllocator.newChildAllocator("fromBLZIterator", 0, Long.MaxValue)
     val provider = new CDataDictionaryProvider()
@@ -72,17 +75,23 @@ object FFIHelper {
     }
 
     new Iterator[InternalRow] {
+      private val metricsToUpdate = metrics
       private var rowIter = rootAsRowIter(root)
+      private var finished = false
 
       context.addTaskCompletionListener[Unit] { _ =>
-        root.close()
-        allocator.close()
+        finish()
       }
 
       override def hasNext: Boolean =
         rowIter.hasNext || {
           rowIter = nextBatch()
-          rowIter.nonEmpty
+          rowIter match {
+            case rowIter if rowIter.nonEmpty => true
+            case _ =>
+              finish()
+              false
+          }
         }
 
       override def next(): InternalRow = rowIter.next()
@@ -100,6 +109,16 @@ object FFIHelper {
             Data.importIntoVectorSchemaRoot(allocator, consumerArray, root, provider)
             rootAsRowIter(root)
           }
+        }
+      }
+
+      private def finish(): Unit = {
+        if (!finished) {
+          finished = true
+          JniBridge.updateMetrics(iterPtr, metricsToUpdate)
+          JniBridge.deallocIter(iterPtr)
+          root.close()
+          allocator.close()
         }
       }
     }

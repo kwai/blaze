@@ -104,6 +104,10 @@ impl ExecutionPlan for ShuffleReaderExec {
         _partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
+        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
+        let _timer = elapsed_compute.timer();
+
         let segments = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
             let segments = jni_bridge_call_static_method!(
@@ -115,7 +119,6 @@ impl ExecutionPlan for ShuffleReaderExec {
             JniResult::Ok(segments)
         }))?;
         let schema = self.schema.clone();
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
         Ok(Box::pin(ShuffleReaderStream::new(
             schema,
             segments,
@@ -199,6 +202,9 @@ impl Stream for ShuffleReaderStream {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
+        let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
+        let _timer = elapsed_compute.timer();
+
         if let Some(arrow_file_reader) = &mut self.arrow_file_reader {
             if let Some(record_batch) = arrow_file_reader.next() {
                 return self

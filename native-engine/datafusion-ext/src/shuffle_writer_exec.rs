@@ -176,7 +176,6 @@ struct ShuffleRepartitioner {
     partitioning: Partitioning,
     num_output_partitions: usize,
     runtime: Arc<RuntimeEnv>,
-    _metrics_set: CompositeMetricsSet,
     metrics: BaselineMetrics,
     batch_size: usize,
 }
@@ -189,12 +188,11 @@ impl ShuffleRepartitioner {
         map_id: usize,
         schema: SchemaRef,
         partitioning: Partitioning,
-        metrics_set: CompositeMetricsSet,
+        metrics: BaselineMetrics,
         runtime: Arc<RuntimeEnv>,
         batch_size: usize,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
-        let metrics = metrics_set.new_intermediate_baseline(partition_id);
         Self {
             id: MemoryConsumerId::new(partition_id),
             shuffle_id,
@@ -209,13 +207,14 @@ impl ShuffleRepartitioner {
             partitioning,
             num_output_partitions,
             runtime,
-            _metrics_set: metrics_set,
             metrics,
             batch_size,
         }
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
+        let _timer = self.metrics.elapsed_compute().timer();
+
         // TODO: this is a rough estimation of memory consumed for a input batch
         // for example, for first batch seen, we need to open as much output buffer
         // as we encountered in this batch, thus the memory consumption is `rough`.
@@ -301,6 +300,7 @@ impl ShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<SendableRecordBatchStream> {
+        let _timer = self.metrics.elapsed_compute().timer();
         let num_output_partitions = self.num_output_partitions;
         let (data_file, index_file) = self.get_data_index_file_path()?;
         info!(
@@ -324,8 +324,12 @@ impl ShuffleRepartitioner {
         let index_file_clone = index_file.clone();
         let input_schema = self.schema.clone();
 
+        std::mem::drop(_timer);
+        let elapsed_compute = self.metrics.elapsed_compute().clone();
+
         Util::to_datafusion_external_result(
             task::spawn_blocking(move || {
+                let _timer = elapsed_compute.timer();
                 let mut offset: u64 = 0;
                 let mut offsets = vec![0; num_output_partitions + 1];
                 let mut output_data = File::create(data_file_clone)?;
@@ -629,13 +633,15 @@ impl ExecutionPlan for ShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let input = self.input.execute(partition, context.clone()).await?;
+        let metrics = self.all_metrics.new_intermediate_baseline(partition);
+
         external_shuffle(
             input,
             partition,
             self.shuffle_id,
             self.map_id,
             self.partitioning.clone(),
-            self.all_metrics.clone(),
+            metrics,
             context,
         )
         .await
@@ -687,7 +693,7 @@ pub async fn external_shuffle(
     shuffle_id: usize,
     map_id: usize,
     partitioning: Partitioning,
-    metrics_set: CompositeMetricsSet,
+    metrics: BaselineMetrics,
     context: Arc<TaskContext>,
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
@@ -697,7 +703,7 @@ pub async fn external_shuffle(
         map_id,
         schema.clone(),
         partitioning,
-        metrics_set,
+        metrics,
         context.runtime_env(),
         context.session_config().batch_size,
     );

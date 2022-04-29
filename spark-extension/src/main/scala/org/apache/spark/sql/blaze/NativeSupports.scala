@@ -18,6 +18,7 @@
 package org.apache.spark.sql.blaze
 
 import scala.annotation.tailrec
+import scala.collection.immutable.TreeMap
 
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.SparkException
@@ -31,7 +32,6 @@ import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
-import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
@@ -97,30 +97,24 @@ object NativeSupports extends Logging {
       batchSize,
       nativeMemory,
       memoryFraction,
-      tmpDirs,
-      metrics)
+      tmpDirs)
 
     if (iterPtr < 0) {
       logWarning("Error occurred while call physical_plan.execute")
       return Iterator.empty
     }
 
-    FFIHelper.fromBlazeIter(iterPtr, context)
+    FFIHelper.fromBlazeIter(iterPtr, context, metrics)
   }
 
   def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =
-    Map(
-      "output_rows" -> SQLMetrics.createMetric(sc, "number of output rows"),
-      "elasped_compute" -> SQLMetrics.createNanoTimingMetric(sc, "elasped compute"),
-      "mem_used" -> SQLMetrics.createSizeMetric(sc, "native memory used"),
-      "spilled_count" -> SQLMetrics.createMetric(sc, "spill count"),
-      "spilled_bytes" -> SQLMetrics.createSizeMetric(sc, "spill bytes"),
-      "blaze_output_ipc_rows" -> SQLMetrics.createMetric(sc, "blaze exec IPC written rows"),
-      "blaze_output_ipc_bytes" -> SQLMetrics.createSizeMetric(sc, "blaze exec IPC written bytes"),
-      "blaze_exec_time" -> SQLMetrics.createNanoTimingMetric(sc, "blaze exec time"),
-      "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "join time"),
-      "input_batches" -> SQLMetrics.createMetric(sc, "number of input batches"),
-      "input_rows" -> SQLMetrics.createMetric(sc, "number of input rows"))
+    TreeMap(
+      "output_rows" -> SQLMetrics.createMetric(sc, "Native.output_rows"),
+      "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
+      "input_rows" -> SQLMetrics.createMetric(sc, "Native.input_rows"),
+      "input_batches" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
+      "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
+      "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"))
 }
 
 case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])
