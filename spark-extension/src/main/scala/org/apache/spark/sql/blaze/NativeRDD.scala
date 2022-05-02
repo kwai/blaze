@@ -40,7 +40,7 @@ class NativeRDD(
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
     val computingNativePlan = nativePlan(split, context)
-    NativeSupports.executeNativePlan(computingNativePlan, metrics, context)
+    NativeSupports.executeNativePlan(computingNativePlan, metrics, split, context)
   }
 }
 

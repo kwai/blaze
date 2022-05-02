@@ -27,11 +27,8 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.sql.util2.ArrowWriter
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.blaze.execution.ArrowWriterIterator
-import org.apache.spark.sql.blaze.execution.Converters
 import org.apache.spark.sql.internal.SQLConf
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.ShuffleReaderExecNode
@@ -51,6 +48,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = child.execute()
     val timeZoneId = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
+    val nativeSchema = NativeConverters.convertSchema(schema)
     val nativeMetrics = MetricNode(metrics, Nil)
 
     new NativeRDD(
@@ -75,7 +73,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
           .setShuffleReader(
             ShuffleReaderExecNode
               .newBuilder()
-              .setSchema(NativeConverters.convertSchema(schema))
+              .setSchema(nativeSchema)
               .setNativeShuffleId(resourceId)
               .build())
           .build()

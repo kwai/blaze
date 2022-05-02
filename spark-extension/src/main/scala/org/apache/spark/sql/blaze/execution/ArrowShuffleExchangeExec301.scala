@@ -156,6 +156,8 @@ case class ArrowShuffleExchangeExec301(
     Statistics(dataSize, Some(rowCount))
   }
 
+  private val nativeSchema = NativeConverters.convertSchema(schema)
+
   protected override def doExecute(): RDD[InternalRow] =
     attachTree(this, "execute") {
       // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
@@ -182,16 +184,15 @@ case class ArrowShuffleExchangeExec301(
       rdd.partitions,
       rdd.dependencies,
       (partition, taskContext) => {
-        rdd.compute(
-          partition,
-          taskContext
-        ) // store fetch iterator in jni resource before native compute
+        // store fetch iterator in jni resource before native compute
+        rdd.compute(rdd.partitions(partition.index), taskContext)
+
         PhysicalPlanNode
           .newBuilder()
           .setShuffleReader(
             ShuffleReaderExecNode
               .newBuilder()
-              .setSchema(NativeConverters.convertSchema(schema))
+              .setSchema(nativeSchema)
               .setNativeShuffleId(NativeRDD.getNativeShuffleId(taskContext, shuffleId))
               .build())
           .build()
@@ -516,6 +517,7 @@ object ArrowShuffleExchangeExec301 {
         val iterator = NativeSupports.executeNativePlan(
           nativeShuffleWriterExec,
           nativeShuffleRDD.metrics,
+          partition,
           context)
 
         // get partition lengths from shuffle write output index file
