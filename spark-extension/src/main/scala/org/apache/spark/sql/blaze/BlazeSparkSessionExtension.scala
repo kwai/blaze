@@ -49,7 +49,6 @@ import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.util.ShutdownHookManager
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
@@ -76,12 +75,6 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   val enableSort = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sort", true)
   val enableUnion = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "union", true)
   val enableSmj = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sortmergejoin", true)
-
-  if (!BlazeQueryStagePrepOverrides.printConvertedCountersHookAdded) {
-    BlazeQueryStagePrepOverrides.printConvertedCountersHookAdded = true
-    ShutdownHookManager.addShutdownHook(() =>
-      BlazeQueryStagePrepOverrides.printConvertedCounters())
-  }
 
   override def apply(sparkPlan: SparkPlan): SparkPlan = {
     var sparkPlanTransformed = sparkPlan
@@ -111,7 +104,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
       sparkPlanTransformed = convertToUnsafeRow(sparkPlanTransformed)
     }
 
-    logInfo(s"Transformed spark plan:\n${sparkPlanTransformed
+    logDebug(s"Transformed spark plan:\n${sparkPlanTransformed
       .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
     sparkPlanTransformed
   }
@@ -119,18 +112,16 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   private def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan =
     try {
       val convertedExec = convert(exec)
-      BlazeQueryStagePrepOverrides.convertedSuccessCounters(exec.getClass.getSimpleName) += 1
       convertedExec
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
-        BlazeQueryStagePrepOverrides.convertedFailureCounters(exec.getClass.getSimpleName) += 1
         logWarning(s"Error converting exec: ${exec.getClass.getSimpleName}: ${e.getMessage}")
         exec
     }
 
   private def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
     val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
-    logInfo(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
+    logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
     ArrowShuffleExchangeExec301(outputPartitioning, child, noUserSpecifiedNumPartition)
   }
 
@@ -143,15 +134,15 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
       optionalBucketSet,
       dataFilters,
       tableIdentifier) = exec
-    logInfo(s"Converting FileSourceScanExec: ${exec.simpleStringWithNodeId}")
-    logInfo(s"  relation: ${relation}")
-    logInfo(s"  relation.location: ${relation.location}")
-    logInfo(s"  output: ${output}")
-    logInfo(s"  requiredSchema: ${requiredSchema}")
-    logInfo(s"  partitionFilters: ${partitionFilters}")
-    logInfo(s"  optionalBucketSet: ${optionalBucketSet}")
-    logInfo(s"  dataFilters: ${dataFilters}")
-    logInfo(s"  tableIdentifier: ${tableIdentifier}")
+    logDebug(s"Converting FileSourceScanExec: ${exec.simpleStringWithNodeId}")
+    logDebug(s"  relation: ${relation}")
+    logDebug(s"  relation.location: ${relation.location}")
+    logDebug(s"  output: ${output}")
+    logDebug(s"  requiredSchema: ${requiredSchema}")
+    logDebug(s"  partitionFilters: ${partitionFilters}")
+    logDebug(s"  optionalBucketSet: ${optionalBucketSet}")
+    logDebug(s"  dataFilters: ${dataFilters}")
+    logDebug(s"  tableIdentifier: ${tableIdentifier}")
     if (relation.fileFormat.isInstanceOf[ParquetFileFormat]) {
       return NativeParquetScanExec(
         exec
@@ -163,44 +154,43 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   private def convertProjectExec(exec: ProjectExec): SparkPlan =
     exec match {
       case ProjectExec(projectList, child) if NativeSupports.isNative(child) =>
-        logInfo(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
-        exec.projectList.foreach(p => logInfo(s"  projectExpr: ${p}"))
+        logDebug(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
+        exec.projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
         NativeProjectExec(projectList, child)
       case _ =>
-        logInfo(s"Ignoring ProjectExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"Ignoring ProjectExec: ${exec.simpleStringWithNodeId()}")
         exec
     }
 
   private def convertFilterExec(exec: FilterExec): SparkPlan =
     exec match {
       case FilterExec(condition, child) if NativeSupports.isNative(child) =>
-        logInfo(s"Converting FilterExec: ${exec.simpleStringWithNodeId()}")
-        logInfo(s"  condition: ${exec.condition}")
+        logDebug(s"  condition: ${exec.condition}")
         NativeFilterExec(condition, child)
       case _ =>
-        logInfo(s"Ignoring FilterExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"Ignoring FilterExec: ${exec.simpleStringWithNodeId()}")
         exec
     }
 
   def convertSortExec(exec: SortExec): SparkPlan =
     exec match {
       case SortExec(sortOrder, global, child, _) if NativeSupports.isNative(child) =>
-        logInfo(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
-        logInfo(s"  global: ${global}")
-        exec.sortOrder.foreach(s => logInfo(s"  sortOrder: ${s}"))
+        logDebug(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"  global: ${global}")
+        exec.sortOrder.foreach(s => logDebug(s"  sortOrder: ${s}"))
         NativeSortExec(sortOrder, global, child)
       case _ =>
-        logInfo(s"Ignoring SortExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"Ignoring SortExec: ${exec.simpleStringWithNodeId()}")
         exec
     }
 
   def convertUnionExec(exec: UnionExec): SparkPlan =
     exec match {
       case UnionExec(children) if children.forall(c => NativeSupports.isNative(c)) =>
-        logInfo(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
         NativeUnionExec(children)
       case _ =>
-        logInfo(s"Ignoring UnionExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"Ignoring UnionExec: ${exec.simpleStringWithNodeId()}")
         exec
     }
 
@@ -208,7 +198,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     exec match {
       case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =>
         if (Seq(left, right).exists(NativeSupports.isNative)) {
-          logInfo(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
+          logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
 
           val extraColumnPrefix = s"__dummy_smjkey_"
           var extraColumnId = 0
@@ -295,7 +285,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
           return conditionedSmj
         }
     }
-    logInfo(s"Ignoring SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(s"Ignoring SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
     exec
   }
 
@@ -303,36 +293,6 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     exec match {
       case exec if NativeSupports.isNative(exec) => ConvertToUnsafeRowExec(exec)
       case exec => exec
-    }
-  }
-}
-
-object BlazeQueryStagePrepOverrides extends Logging {
-  val convertedSuccessCounters: mutable.Map[String, Int] = mutable.Map(
-    "FileSourceScanExec" -> 0,
-    "ProjectExec" -> 0,
-    "FilterExec" -> 0,
-    "SortExec" -> 0,
-    "UnionExec" -> 0,
-    "SortMergeJoinExec" -> 0,
-    "ShuffleExchangeExec" -> 0)
-
-  val convertedFailureCounters: mutable.Map[String, Int] = mutable.Map(
-    "FileSourceScanExec" -> 0,
-    "ProjectExec" -> 0,
-    "FilterExec" -> 0,
-    "SortExec" -> 0,
-    "UnionExec" -> 0,
-    "SortMergeJoinExec" -> 0,
-    "ShuffleExchangeExec" -> 0)
-
-  private var printConvertedCountersHookAdded = false
-  private def printConvertedCounters(): Unit = {
-    BlazeQueryStagePrepOverrides.convertedSuccessCounters.foreach {
-      case (className, count) => logInfo(s"Succeeded to convert ${count} ${className} plans")
-    }
-    BlazeQueryStagePrepOverrides.convertedFailureCounters.foreach {
-      case (className, count) => logInfo(s"Failed to convert ${count} ${className} plans")
     }
   }
 }

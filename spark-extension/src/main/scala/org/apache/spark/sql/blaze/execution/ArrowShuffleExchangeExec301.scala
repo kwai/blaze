@@ -76,13 +76,18 @@ case class ArrowShuffleExchangeExec301(
     extends ShuffleExchangeLike
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
-    "blaze_shuffle_write_exec_time" ->
-      SQLMetrics.createNanoTimingMetric(sparkContext, "native shuffle write exec time"),
-    "blaze_shuffle_read_exec_time"
-      -> SQLMetrics.createNanoTimingMetric(sparkContext, "native shuffle read exec time"),
-    "dataSize" ->
-      SQLMetrics.createSizeMetric(sparkContext, "data size")) ++ readMetrics ++ writeMetrics
+  override lazy val metrics: Map[String, SQLMetric] =
+    Map(
+      "shuffle_write_rows" ->
+        SQLMetrics.createMetric(sparkContext, "Native.shuffle_write_rows"),
+      "shuffle_write_elapsed_compute" ->
+        SQLMetrics.createNanoTimingMetric(sparkContext, "Native.shuffle_write_elapsed_compute"),
+      "shuffle_read_rows" ->
+        SQLMetrics.createMetric(sparkContext, "Native.shuffle_read_rows"),
+      "shuffle_read_elapsed_compute" ->
+        SQLMetrics.createNanoTimingMetric(sparkContext, "Native.shuffle_read_elapsed_compute"),
+      "dataSize" ->
+        SQLMetrics.createSizeMetric(sparkContext, "data size")) ++ readMetrics ++ writeMetrics
 
   @transient lazy val inputRDD: RDD[InternalRow] = child.execute()
   // 'mapOutputStatisticsFuture' is only needed when enable AQE.
@@ -164,7 +169,12 @@ case class ArrowShuffleExchangeExec301(
     val shuffleId = shuffleDependency.shuffleId
     val rdd = doExecute()
     val nativeMetrics =
-      MetricNode(metrics.updated("blaze_exec_time", metrics("blaze_shuffle_read_exec_time")), Nil)
+      MetricNode(
+        metrics
+          .filterKeys(key => !key.startsWith("shufle_write"))
+          .updated("output_rows", metrics("shuffle_read_rows"))
+          .updated("elapsed_compute", metrics("shuffle_read_elapsed_compute")),
+        Nil)
 
     new NativeRDD(
       sparkContext,
@@ -188,8 +198,8 @@ case class ArrowShuffleExchangeExec301(
       })
   }
 
-  //override def doCanonicalize(): SparkPlan =
-  //  ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition).canonicalized
+  override def doCanonicalize(): SparkPlan =
+    ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition).canonicalized
 }
 
 object ArrowShuffleExchangeExec301 {
@@ -211,7 +221,10 @@ object ArrowShuffleExchangeExec301 {
       outputPartitioning.asInstanceOf[HashPartitioning]
 
     val nativeMetrics = MetricNode(
-      metrics.updated("blaze_exec_time", metrics("blaze_shuffle_write_exec_time")),
+      metrics
+        .filterKeys(key => !key.startsWith("shufle_read"))
+        .updated("output_rows", metrics("shuffle_write_rows"))
+        .updated("elapsed_compute", metrics("shuffle_write_elapsed_compute")),
       Seq(nativeInputRDD.metrics))
 
     val nativeShuffleRDD = new NativeRDD(

@@ -35,48 +35,44 @@ public class JniBridge {
     System.loadLibrary("blaze");
   }
 
-  public static void raiseThrowable(Throwable t) throws Throwable {
-    throw t;
-  }
-
-  // JVM -> Native
-  public static ClassLoader getContextClassLoader() {
-    return Thread.currentThread().getContextClassLoader();
-  }
-
-  // JVM -> Native
-  public static void setContextClassLoader(ClassLoader cl) {
-    Thread.currentThread().setContextClassLoader(cl);
-  }
-
-  // JVM -> Native
-  public static FileSystem getHDFSFileSystem() throws IOException {
-    return FileSystem.get(SparkHadoopUtil.get().conf());
-  }
-
-  // JVM -> Native
-  public static ShuffleManager getShuffleManager() {
-    return SparkEnv.get().shuffleManager();
-  }
-
-  // JVM -> Native
-  public static Object getResource(String key) {
-    return resourcesMap.get(key);
-  }
-
-  // Native -> JVM
   public static native long callNative(
       byte[] taskDefinition,
       long tokioPoolSize,
       long batchSize,
       long nativeMemory,
       double memoryFraction,
-      String tmpDirs,
-      MetricNode metrics);
+      String tmpDirs);
 
   public static native int loadNext(long iter_ptr, long schema_ptr, long array_ptr);
 
-  // JVM -> Native
+  public static native int deallocIter(long iter_ptr);
+
+  public static native void updateMetrics(long iter_ptr, MetricNode metrics);
+
+  public static void raiseThrowable(Throwable t) throws Throwable {
+    throw t;
+  }
+
+  public static ClassLoader getContextClassLoader() {
+    return Thread.currentThread().getContextClassLoader();
+  }
+
+  public static void setContextClassLoader(ClassLoader cl) {
+    Thread.currentThread().setContextClassLoader(cl);
+  }
+
+  public static FileSystem getHDFSFileSystem() throws IOException {
+    return FileSystem.get(SparkHadoopUtil.get().conf());
+  }
+
+  public static ShuffleManager getShuffleManager() {
+    return SparkEnv.get().shuffleManager();
+  }
+
+  public static Object getResource(String key) {
+    return resourcesMap.get(key);
+  }
+
   // shim method to FSDataInputStream.read()
   public static int readFSDataInputStream(FSDataInputStream in, ByteBuffer bb, long pos)
       throws IOException {
