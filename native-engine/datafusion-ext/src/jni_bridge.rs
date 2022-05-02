@@ -307,7 +307,7 @@ impl<'a> JniBridge<'a> {
             method_getHDFSFileSystem: env.get_static_method_id(
                 class,
                 "getHDFSFileSystem",
-                "(Ljava/lang/String;)Lorg/apache/hadoop/fs/FileSystem;",
+                "()Lorg/apache/hadoop/fs/FileSystem;",
             )?,
             method_getHDFSFileSystem_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),

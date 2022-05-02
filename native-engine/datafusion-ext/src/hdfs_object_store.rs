@@ -140,12 +140,7 @@ unsafe impl Sync for FSDataInputStreamWrapper {}
 impl FSDataInputStreamWrapper {
     pub fn try_new(path: &str) -> JniResult<FSDataInputStreamWrapper> {
         let env = JavaClasses::get_thread_jnienv();
-        let fs = jni_bridge_call_static_method!(
-            env,
-            JniBridge.getHDFSFileSystem,
-            env.new_string(path)?
-        )?
-        .l()?;
+        let fs = jni_bridge_call_static_method!(env, JniBridge.getHDFSFileSystem)?.l()?;
         let path = jni_bridge_new_object!(env, HadoopPath, env.new_string(path)?)?;
         let hdfs_input_stream =
             jni_bridge_call_method!(env, HadoopFileSystem.open, fs, path)?.l()?;
