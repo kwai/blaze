@@ -32,6 +32,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.Partition
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
@@ -62,13 +63,15 @@ object NativeSupports extends Logging {
   def executeNativePlan(
       nativePlan: PhysicalPlanNode,
       metrics: MetricNode,
+      partition: Partition,
       context: TaskContext): Iterator[InternalRow] = {
 
+    // do not use context.partitionId since it is not correct in Union plans.
     val partitionId = PartitionId
       .newBuilder()
-      .setPartitionId(context.partitionId())
+      .setPartitionId(partition.index)
       .setStageId(context.stageId())
-      .setJobId(context.partitionId().toString)
+      .setJobId(partition.index.toString)
       .build()
 
     val taskDefinition = TaskDefinition

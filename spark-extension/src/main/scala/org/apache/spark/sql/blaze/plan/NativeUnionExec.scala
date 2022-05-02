@@ -17,22 +17,30 @@
 
 package org.apache.spark.sql.blaze.plan
 
-import org.apache.spark.internal.config.RDD_PARALLEL_LISTING_THRESHOLD
-import org.apache.spark.{Dependency, Partition, RangeDependency}
-import org.apache.spark.rdd.{RDD, UnionPartition, UnionRDD}
+import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters._
+
+import org.apache.spark.Dependency
+import org.apache.spark.Partition
+import org.apache.spark.RangeDependency
+import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.types.StructType
-import org.blaze.protobuf.{PhysicalPlanNode, UnionExecNode}
-import scala.collection.JavaConverters._
-import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.sql.execution.UnionExec
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.TaskContext
+import org.apache.spark.sql.blaze.NativeConverters
+import org.blaze.protobuf.EmptyExecNode
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.RepartitionExecNode
+import org.blaze.protobuf.UnionExecNode
 
 case class NativeUnionExec(override val children: Seq[SparkPlan])
     extends SparkPlan
@@ -57,14 +65,34 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
     }
   }
 
-  override def doExecute(): RDD[InternalRow] = doExecuteNative()
+  private val nativeSchema = NativeConverters.convertSchema(schema)
+  private val nativeEmptyExec = PhysicalPlanNode
+    .newBuilder()
+    .setEmpty(
+      EmptyExecNode
+        .newBuilder()
+        .setSchema(nativeSchema)
+        .setProduceOneRow(false)
+        .build())
+    .build()
+  private def nativeEmptyPartitionsExec(numPartitions: Int) =
+    PhysicalPlanNode
+      .newBuilder()
+      .setRepartition(
+        RepartitionExecNode
+          .newBuilder()
+          .setInput(nativeEmptyExec)
+          .setRoundRobin(numPartitions)
+          .build())
+      .build()
 
+  override def doExecute(): RDD[InternalRow] = doExecuteNative()
   override def doExecuteNative(): NativeRDD = {
     val rdds = children.map(c => NativeSupports.executeNative(c))
     val nativeMetrics = MetricNode(metrics, rdds.map(_.metrics))
 
-    def partitions: Array[Partition] = {
-      val array = new Array[Partition](rdds.map(_.partitions.length).sum)
+    def unionedPartitions: Array[UnionPartition[InternalRow]] = {
+      val array = new Array[UnionPartition[InternalRow]](rdds.map(_.partitions.length).sum)
       var pos = 0
       for ((rdd, rddIndex) <- rdds.zipWithIndex; split <- rdd.partitions) {
         array(pos) = new UnionPartition(pos, rdd, rddIndex, split.index)
@@ -86,11 +114,17 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      partitions,
+      unionedPartitions.asInstanceOf[Array[Partition]],
       dependencies,
       (partition, taskContext) => {
-        val inputs = rdds.map(r => r.nativePlan(partition, taskContext))
-        val union = UnionExecNode.newBuilder().addAllChildren(inputs.asJava)
+        val unionPartition = unionedPartitions(partition.index)
+        val unionChildrenExecs = rdds.zipWithIndex.map {
+          case (rdd, i) if i == unionPartition.parentRddIndex =>
+            rdd.nativePlan(unionPartition.parentPartition, taskContext)
+          case (rdd, _) =>
+            nativeEmptyPartitionsExec(rdd.partitions.length)
+        }
+        val union = UnionExecNode.newBuilder().addAllChildren(unionChildrenExecs.asJava)
         PhysicalPlanNode.newBuilder().setUnion(union).build()
       })
   }
