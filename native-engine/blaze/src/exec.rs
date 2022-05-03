@@ -101,26 +101,29 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext
     array_ptr: i64,
 ) -> i64 {
     // loadNext is always called after callNative, therefore a tokio runtime already
-    tokio_runtime(0).block_on(async {
-        let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
-        loop {
-            return match blaze_iter.stream.next().await {
-                Some(Ok(batch)) => {
-                    let num_rows = batch.num_rows();
-                    if num_rows == 0 {
-                        continue;
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
+            loop {
+                return match blaze_iter.stream.next().await {
+                    Some(Ok(batch)) => {
+                        let num_rows = batch.num_rows();
+                        if num_rows == 0 {
+                            continue;
+                        }
+                        let array: StructArray = batch.into();
+                        let out_schema = schema_ptr as *mut FFI_ArrowSchema;
+                        let out_array = array_ptr as *mut FFI_ArrowArray;
+                        export_array_into_raw(Arc::new(array), out_array, out_schema)
+                            .unwrap();
+                        num_rows as i64
                     }
-                    let array: StructArray = batch.into();
-                    let out_schema = schema_ptr as *mut FFI_ArrowSchema;
-                    let out_array = array_ptr as *mut FFI_ArrowArray;
-                    export_array_into_raw(Arc::new(array), out_array, out_schema)
-                        .unwrap();
-                    num_rows as i64
-                }
-                _ => -1,
-            };
-        }
-    })
+                    _ => -1,
+                };
+            }
+        })
 }
 
 #[allow(non_snake_case)]
