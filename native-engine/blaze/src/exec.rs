@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
+use datafusion::arrow::datatypes::{Field, Schema};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use futures::StreamExt;
 use jni::objects::JObject;
@@ -113,11 +115,19 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext
                         if num_rows == 0 {
                             continue;
                         }
-                        let array: StructArray = batch.into();
+
+                        let renamed_batch = RecordBatch::try_new(
+                            blaze_iter.renamed_schema.clone(),
+                            batch.columns().to_vec(),
+                        )
+                        .unwrap();
+
+                        let array: StructArray = renamed_batch.into();
                         let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                         let out_array = array_ptr as *mut FFI_ArrowArray;
                         export_array_into_raw(Arc::new(array), out_array, out_schema)
                             .unwrap();
+
                         num_rows as i64
                     }
                     _ => -1,
@@ -186,6 +196,26 @@ fn blaze_call_native(
             .execute(task_id.partition_id as usize, task_ctx)
             .await?;
 
+        // rename all fields to avoid fields with duplicated names
+        // we are safe to do this because the cunsumer does not rely on these names
+        let mut num_fields = 0;
+        let renamed_schema: Arc<Schema> = Arc::new(Schema::new(
+            execution_plan
+                .schema()
+                .fields()
+                .iter()
+                .map(|field| {
+                    let unnamed_field = Field::new(
+                        &format!("_c{}", num_fields),
+                        field.data_type().clone(),
+                        field.is_nullable(),
+                    );
+                    num_fields += 1;
+                    unnamed_field
+                })
+                .collect(),
+        ));
+
         // safety - manually allocated memory will be released when stream is exhausted
         unsafe {
             let blaze_iter_ptr: *mut BlazeIter =
@@ -195,7 +225,8 @@ fn blaze_call_native(
                 blaze_iter_ptr,
                 BlazeIter {
                     stream: result_stream,
-                    execution_plan: execution_plan.clone(),
+                    execution_plan,
+                    renamed_schema,
                 },
             );
             Ok(blaze_iter_ptr as i64)
