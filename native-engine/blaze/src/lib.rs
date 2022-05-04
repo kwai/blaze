@@ -1,3 +1,4 @@
+use datafusion::arrow::datatypes::Schema;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -24,6 +25,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 pub struct BlazeIter {
     pub stream: SendableRecordBatchStream,
     pub execution_plan: Arc<dyn ExecutionPlan>,
+    pub renamed_schema: Arc<Schema>,
 }
 
 pub fn tokio_runtime(thread_num: usize) -> &'static Runtime {

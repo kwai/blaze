@@ -66,7 +66,10 @@ object FFIHelper {
         val arrayPtr: Long = consumerArray.memoryAddress
         val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
         if (rt < 0) {
-          return Iterator.empty
+          return CompletionIterator[InternalRow, Iterator[InternalRow]](
+            Iterator.empty, {
+              allocator.close()
+            })
         }
         val root: VectorSchemaRoot =
           Data.importVectorSchemaRoot(allocator, consumerArray, consumerSchema, provider)
