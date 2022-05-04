@@ -595,7 +595,11 @@ impl ExecutionPlan for ShuffleWriterExec {
 
     /// Get the schema for this execution plan
     fn schema(&self) -> SchemaRef {
-        self.input.schema()
+        Arc::new(Schema::new(vec![
+            Field::new("data_file_name", DataType::Utf8, false),
+            Field::new("index_file_name", DataType::Utf8, false),
+        ]))
+
     }
 
     fn output_partitioning(&self) -> Partitioning {
