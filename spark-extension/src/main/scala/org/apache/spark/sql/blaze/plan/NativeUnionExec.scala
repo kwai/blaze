@@ -35,7 +35,6 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.TaskContext
 import org.apache.spark.sql.blaze.NativeConverters
 import org.blaze.protobuf.EmptyExecNode
 import org.blaze.protobuf.PhysicalPlanNode
@@ -119,10 +118,10 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
       (partition, taskContext) => {
         val unionPartition = unionedPartitions(partition.index)
         val unionChildrenExecs = rdds.zipWithIndex.map {
-          case (rdd, i) if i == unionPartition.parentRddIndex =>
+          case (rdd, rddIndex) if rddIndex == unionPartition.parentRddIndex =>
             rdd.nativePlan(unionPartition.parentPartition, taskContext)
           case (rdd, _) =>
-            nativeEmptyPartitionsExec(rdd.partitions.length)
+            rdd.nativePlan(rdd.partitions(0), taskContext)
         }
         val union = UnionExecNode.newBuilder().addAllChildren(unionChildrenExecs.asJava)
         PhysicalPlanNode.newBuilder().setUnion(union).build()

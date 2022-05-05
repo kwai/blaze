@@ -599,7 +599,6 @@ impl ExecutionPlan for ShuffleWriterExec {
             Field::new("data_file_name", DataType::Utf8, false),
             Field::new("index_file_name", DataType::Utf8, false),
         ]))
-
     }
 
     fn output_partitioning(&self) -> Partitioning {

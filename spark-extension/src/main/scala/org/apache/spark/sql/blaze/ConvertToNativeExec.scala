@@ -74,6 +74,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
             ShuffleReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
+              .setNumPartitions(inputRDD.getNumPartitions)
               .setNativeShuffleId(resourceId)
               .build())
           .build()
