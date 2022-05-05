@@ -89,9 +89,10 @@ case class NativeSortExec(
       inputRDD.partitions,
       inputRDD.dependencies,
       (partition, taskContext) => {
+        val inputPartition = inputRDD.partitions(partition.index)
         val nativeSortExec = SortExecNode
           .newBuilder()
-          .setInput(inputRDD.nativePlan(partition, taskContext))
+          .setInput(inputRDD.nativePlan(inputPartition, taskContext))
           .addAllExpr(nativeSortExprs.asJava)
           .build()
         PhysicalPlanNode.newBuilder().setSort(nativeSortExec).build()

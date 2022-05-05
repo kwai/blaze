@@ -66,11 +66,12 @@ case class NativeProjectExec(projectList: Seq[NamedExpression], override val chi
       inputRDD.partitions,
       inputRDD.dependencies,
       (partition, taskContext) => {
+        val inputPartition = inputRDD.partitions(partition.index)
         val nativeProjectExec = ProjectionExecNode
           .newBuilder()
           .addAllExprName(nativeNamedExprs.map(_._1).asJava)
           .addAllExpr(nativeNamedExprs.map(_._2).asJava)
-          .setInput(inputRDD.nativePlan(partition, taskContext))
+          .setInput(inputRDD.nativePlan(inputPartition, taskContext))
           .build()
         PhysicalPlanNode.newBuilder().setProjection(nativeProjectExec).build()
       })

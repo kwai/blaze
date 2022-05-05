@@ -106,7 +106,10 @@ case class NativeSortMergeJoinExec(
       partitions,
       dependencies,
       (partition, taskContext) => {
-        val leftChild = leftRDD.nativePlan(partition, taskContext)
+        val leftPartition = leftRDD.partitions(partition.index)
+        val leftChild = leftRDD.nativePlan(leftPartition, taskContext)
+
+        val rightPartition = rightRDD.partitions(partition.index)
         val rightChild = rightRDD.nativePlan(partition, taskContext)
 
         val sortMergeJoinExec = SortMergeJoinExecNode

@@ -40,6 +40,7 @@ use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
+use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::RecordBatchStream;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
@@ -54,13 +55,19 @@ use crate::util::Util;
 
 #[derive(Debug, Clone)]
 pub struct ShuffleReaderExec {
+    pub num_partitions: usize,
     pub native_shuffle_id: String,
     pub schema: SchemaRef,
     pub metrics: ExecutionPlanMetricsSet,
 }
 impl ShuffleReaderExec {
-    pub fn new(native_shuffle_id: String, schema: SchemaRef) -> ShuffleReaderExec {
+    pub fn new(
+        num_partitions: usize,
+        native_shuffle_id: String,
+        schema: SchemaRef,
+    ) -> ShuffleReaderExec {
         ShuffleReaderExec {
+            num_partitions,
             native_shuffle_id,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
@@ -79,7 +86,7 @@ impl ExecutionPlan for ShuffleReaderExec {
     }
 
     fn output_partitioning(&self) -> Partitioning {
-        Partitioning::UnknownPartitioning(1)
+        UnknownPartitioning(self.num_partitions)
     }
 
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {

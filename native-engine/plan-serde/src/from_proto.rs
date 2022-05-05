@@ -547,11 +547,11 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
                 let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
-                let shuffle_reader = ShuffleReaderExec::new(
+                Ok(Arc::new(ShuffleReaderExec::new(
+                    shuffle_reader.num_partitions as usize,
                     shuffle_reader.native_shuffle_id.clone(),
                     schema,
-                );
-                Ok(Arc::new(shuffle_reader))
+                )))
             }
             PhysicalPlanType::Empty(empty) => {
                 let schema = Arc::new(convert_required!(empty.schema)?);

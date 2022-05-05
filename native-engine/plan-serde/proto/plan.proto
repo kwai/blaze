@@ -431,6 +431,7 @@ message ShuffleWriterExecNode {
 }
 
 message ShuffleReaderExecNode {
+  uint32 num_partitions = 1;
   Schema schema = 2;
   string nativeShuffleId = 3;
 }

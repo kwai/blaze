@@ -193,6 +193,7 @@ case class ArrowShuffleExchangeExec301(
             ShuffleReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
+              .setNumPartitions(rdd.getNumPartitions)
               .setNativeShuffleId(NativeRDD.getNativeShuffleId(taskContext, shuffleId))
               .build())
           .build()
@@ -234,12 +235,13 @@ object ArrowShuffleExchangeExec301 {
       nativeInputRDD.partitions,
       nativeInputRDD.dependencies,
       (partition, taskContext) => {
+        val nativeInputPartition = nativeInputRDD.partitions(partition.index)
         PhysicalPlanNode
           .newBuilder()
           .setShuffleWriter(
             ShuffleWriterExecNode
               .newBuilder()
-              .setInput(nativeInputRDD.nativePlan(partition, taskContext))
+              .setInput(nativeInputRDD.nativePlan(nativeInputPartition, taskContext))
               .setOutputPartitioning(
                 PhysicalHashRepartition
                   .newBuilder()

@@ -58,9 +58,10 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
       inputRDD.partitions,
       inputRDD.dependencies,
       (partition, taskContext) => {
+        val inputPartition = inputRDD.partitions(partition.index)
         val nativeFilterExec = FilterExecNode
           .newBuilder()
-          .setInput(inputRDD.nativePlan(partition, taskContext))
+          .setInput(inputRDD.nativePlan(inputPartition, taskContext))
           .setExpr(nativeFilterExpr)
           .build()
         PhysicalPlanNode.newBuilder().setFilter(nativeFilterExec).build()
