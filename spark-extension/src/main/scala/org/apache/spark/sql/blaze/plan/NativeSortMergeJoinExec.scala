@@ -85,7 +85,6 @@ case class NativeSortMergeJoinExec(
 
   private val nativeJoinType = NativeConverters.convertJoinType(joinType)
 
-  override def doExecute(): RDD[InternalRow] = doExecuteNative()
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeSupports.executeNative(left)
     val rightRDD = NativeSupports.executeNative(right)
@@ -110,7 +109,7 @@ case class NativeSortMergeJoinExec(
         val leftChild = leftRDD.nativePlan(leftPartition, taskContext)
 
         val rightPartition = rightRDD.partitions(partition.index)
-        val rightChild = rightRDD.nativePlan(partition, taskContext)
+        val rightChild = rightRDD.nativePlan(rightPartition, taskContext)
 
         val sortMergeJoinExec = SortMergeJoinExecNode
           .newBuilder()

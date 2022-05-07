@@ -46,7 +46,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::Stream;
 use jni::errors::Result as JniResult;
-use jni::objects::JObject;
+use jni::objects::{GlobalRef, JObject};
 
 use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
@@ -123,7 +123,7 @@ impl ExecutionPlan for ShuffleReaderExec {
                 env.new_string(&self.native_shuffle_id)?
             )?
             .l()?;
-            JniResult::Ok(segments)
+            JniResult::Ok(env.new_global_ref(segments)?)
         }))?;
         let schema = self.schema.clone();
         Ok(Box::pin(ShuffleReaderStream::new(
@@ -148,8 +148,8 @@ impl ExecutionPlan for ShuffleReaderExec {
 
 struct ShuffleReaderStream {
     schema: SchemaRef,
-    segments: JObject<'static>,
-    current_segment: JObject<'static>,
+    segments: GlobalRef,
+    current_segment: Option<GlobalRef>,
     arrow_file_reader: Option<FileReader<SeekableByteChannelReader>>,
     baseline_metrics: BaselineMetrics,
 }
@@ -160,40 +160,48 @@ unsafe impl Send for ShuffleReaderStream {}
 impl ShuffleReaderStream {
     pub fn new(
         schema: SchemaRef,
-        segments: JObject<'static>,
+        segments: GlobalRef,
         baseline_metrics: BaselineMetrics,
     ) -> ShuffleReaderStream {
         ShuffleReaderStream {
             schema,
             segments,
-            current_segment: JObject::null(),
+            current_segment: None,
             arrow_file_reader: None,
             baseline_metrics,
         }
     }
 
     fn next_segment(&mut self) -> Result<bool> {
-        let next_segment = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
+        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
 
-            let has_next =
-                jni_bridge_call_method!(env, ScalaIterator.hasNext, self.segments)?
-                    .z()?;
+            let has_next = jni_bridge_call_method!(
+                env,
+                ScalaIterator.hasNext,
+                self.segments.as_obj()
+            )?
+            .z()?;
             if !has_next {
-                self.current_segment = JObject::null();
+                self.current_segment = None;
                 self.arrow_file_reader = None;
                 return JniResult::Ok(false);
             }
 
             let next_segment =
-                jni_bridge_call_method!(env, ScalaIterator.next, self.segments)?.l()?;
-            self.current_segment = next_segment;
+                jni_bridge_call_method!(env, ScalaIterator.next, self.segments.as_obj())?
+                    .l()?;
+            self.current_segment = Some(env.new_global_ref(next_segment)?);
             JniResult::Ok(true)
         }))?;
 
-        if next_segment {
+        if let Some(current_segment) = &self.current_segment {
             self.arrow_file_reader = Some(FileReader::try_new(
-                SeekableByteChannelReader(self.current_segment),
+                // safety:
+                // the lifetime of SeekableByteChannelReader is exactly the same as self.arrow_file_reader
+                SeekableByteChannelReader(unsafe {
+                    std::mem::transmute::<_, JObject<'static>>(current_segment.as_obj())
+                }),
                 None,
             )?);
             return Ok(true);
@@ -257,6 +265,7 @@ impl Read for SeekableByteChannelReader {
             })
     }
 }
+
 impl Seek for SeekableByteChannelReader {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         Ok(())

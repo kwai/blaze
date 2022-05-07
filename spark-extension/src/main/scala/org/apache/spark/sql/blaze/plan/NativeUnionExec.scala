@@ -23,7 +23,6 @@ import scala.collection.JavaConverters._
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
-import org.apache.spark.rdd.RDD
 import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeRDD
@@ -35,10 +34,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.blaze.NativeConverters
-import org.blaze.protobuf.EmptyExecNode
 import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.RepartitionExecNode
 import org.blaze.protobuf.UnionExecNode
 
 case class NativeUnionExec(override val children: Seq[SparkPlan])
@@ -64,28 +60,6 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
     }
   }
 
-  private val nativeSchema = NativeConverters.convertSchema(schema)
-  private val nativeEmptyExec = PhysicalPlanNode
-    .newBuilder()
-    .setEmpty(
-      EmptyExecNode
-        .newBuilder()
-        .setSchema(nativeSchema)
-        .setProduceOneRow(false)
-        .build())
-    .build()
-  private def nativeEmptyPartitionsExec(numPartitions: Int) =
-    PhysicalPlanNode
-      .newBuilder()
-      .setRepartition(
-        RepartitionExecNode
-          .newBuilder()
-          .setInput(nativeEmptyExec)
-          .setRoundRobin(numPartitions)
-          .build())
-      .build()
-
-  override def doExecute(): RDD[InternalRow] = doExecuteNative()
   override def doExecuteNative(): NativeRDD = {
     val rdds = children.map(c => NativeSupports.executeNative(c))
     val nativeMetrics = MetricNode(metrics, rdds.map(_.metrics))

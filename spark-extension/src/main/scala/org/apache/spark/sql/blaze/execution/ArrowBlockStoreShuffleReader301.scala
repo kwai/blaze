@@ -17,8 +17,6 @@
 
 package org.apache.spark.sql.blaze.execution
 
-import java.nio.channels.SeekableByteChannel
-
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
@@ -31,7 +29,6 @@ import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.BlockManagerId
@@ -72,7 +69,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
 
     // Store buffers in JniBridge
     JniBridge.resourcesMap.put(
-      NativeRDD.getNativeShuffleId(context, handle.shuffleId),
+      ArrowShuffleExchangeExec301.getNativeShuffleId(context, handle.shuffleId),
       new InterruptibleIterator(
         context,
         buffers.flatMap {

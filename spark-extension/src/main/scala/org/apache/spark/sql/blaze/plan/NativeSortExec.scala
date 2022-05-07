@@ -19,14 +19,12 @@ package org.apache.spark.sql.blaze.plan
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Ascending
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.NullsFirst
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Distribution
@@ -78,7 +76,6 @@ case class NativeSortExec(
       .build()
   }
 
-  override def doExecute(): RDD[InternalRow] = doExecuteNative()
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
     val nativeMetrics = MetricNode(metrics, Seq(inputRDD.metrics))

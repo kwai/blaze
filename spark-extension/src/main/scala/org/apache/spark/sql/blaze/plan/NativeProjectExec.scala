@@ -54,8 +54,6 @@ case class NativeProjectExec(projectList: Seq[NamedExpression], override val chi
   override def outputExpressions: Seq[NamedExpression] = projectList
   override def output: Seq[Attribute] = outputExpressions.map(_.toAttribute)
 
-  override def doExecute(): RDD[InternalRow] = doExecuteNative()
-
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
     val nativeMetrics = MetricNode(metrics, Seq(inputRDD.metrics))

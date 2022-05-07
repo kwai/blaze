@@ -30,4 +30,4 @@ codegen-units = 1
 overflow-checks = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "b8e4d6612693237932cc9dbe3003293fd0f00919" }
+datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "c70cb4e766d4a318cce658e05451bb2370f7d41c" }

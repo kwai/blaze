@@ -18,10 +18,11 @@
 package org.apache.spark.sql.blaze.execution
 
 import java.nio.channels.SeekableByteChannel
+
 import org.apache.arrow.vector.ipc.ArrowFileReader
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.TaskContext
-import org.apache.spark.sql.blaze.FFIHelper.rootAsRowIter
+import org.apache.spark.sql.blaze.FFIHelper
 import org.apache.spark.sql.util2.ArrowUtils2
 
 class ArrowReaderIterator(channel: SeekableByteChannel, taskContext: TaskContext) {
@@ -53,7 +54,7 @@ class ArrowReaderIterator(channel: SeekableByteChannel, taskContext: TaskContext
 
     private def nextBatch(): Iterator[InternalRow] = {
       if (arrowReader.loadNextBatch()) {
-        rootAsRowIter(root)
+        FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
       } else {
         Iterator.empty
       }
