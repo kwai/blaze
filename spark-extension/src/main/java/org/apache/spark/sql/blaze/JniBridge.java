@@ -24,9 +24,7 @@ import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.spark.SparkEnv;
 import org.apache.spark.deploy.SparkHadoopUtil;
-import org.apache.spark.shuffle.ShuffleManager;
 
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
@@ -63,10 +61,6 @@ public class JniBridge {
 
   public static FileSystem getHDFSFileSystem() throws IOException {
     return FileSystem.get(SparkHadoopUtil.get().conf());
-  }
-
-  public static ShuffleManager getShuffleManager() {
-    return SparkEnv.get().shuffleManager();
   }
 
   public static Object getResource(String key) {

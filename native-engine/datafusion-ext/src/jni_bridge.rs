@@ -152,8 +152,6 @@ pub struct JavaClasses<'a> {
     pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
 
     pub cSparkManagedBuffer: SparkManagedBuffer<'a>,
-    pub cSparkShuffleManager: SparkShuffleManager<'a>,
-    pub cSparkIndexShuffleBlockResolver: SparkIndexShuffleBlockResolver<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
 }
@@ -202,8 +200,6 @@ impl JavaClasses<'static> {
             cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env)?,
 
             cSparkManagedBuffer: SparkManagedBuffer::new(env)?,
-            cSparkShuffleManager: SparkShuffleManager::new(env)?,
-            cSparkIndexShuffleBlockResolver: SparkIndexShuffleBlockResolver::new(env)?,
             cSparkSQLMetric: SparkSQLMetric::new(env)?,
             cSparkMetricNode: SparkMetricNode::new(env)?,
         };
@@ -272,8 +268,6 @@ pub struct JniBridge<'a> {
     pub method_setContextClassLoader_ret: JavaType,
     pub method_getHDFSFileSystem: JStaticMethodID<'a>,
     pub method_getHDFSFileSystem_ret: JavaType,
-    pub method_getShuffleManager: JStaticMethodID<'a>,
-    pub method_getShuffleManager_ret: JavaType,
     pub method_getResource: JStaticMethodID<'a>,
     pub method_getResource_ret: JavaType,
     pub method_readFSDataInputStream: JStaticMethodID<'a>,
@@ -313,14 +307,6 @@ impl<'a> JniBridge<'a> {
             )?,
             method_getHDFSFileSystem_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
-            ),
-            method_getShuffleManager: env.get_static_method_id(
-                class,
-                "getShuffleManager",
-                "()Lorg/apache/spark/shuffle/ShuffleManager;",
-            )?,
-            method_getShuffleManager_ret: JavaType::Object(
-                "org/apache/spark/shuffle/ShuffleManager".to_owned(),
             ),
             method_getResource: env.get_static_method_id(
                 class,
@@ -651,55 +637,6 @@ impl<'a> HadoopFSDataInputStream<'a> {
             method_read_ret: JavaType::Primitive(Primitive::Int),
             method_close: env.get_method_id(class, "close", "()V")?,
             method_close_ret: JavaType::Primitive(Primitive::Void),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct SparkShuffleManager<'a> {
-    pub class: JClass<'a>,
-    pub method_shuffleBlockResolver: JMethodID<'a>,
-    pub method_shuffleBlockResolver_ret: JavaType,
-}
-impl<'a> SparkShuffleManager<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/shuffle/ShuffleManager";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkShuffleManager<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(SparkShuffleManager {
-            class,
-            method_shuffleBlockResolver: env.get_method_id(
-                class,
-                "shuffleBlockResolver",
-                "()Lorg/apache/spark/shuffle/ShuffleBlockResolver;",
-            )?,
-            method_shuffleBlockResolver_ret: JavaType::Object(
-                SparkIndexShuffleBlockResolver::SIG_TYPE.to_owned(),
-            ),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct SparkIndexShuffleBlockResolver<'a> {
-    pub class: JClass<'a>,
-    pub method_getDataFile: JMethodID<'a>,
-    pub method_getDataFile_ret: JavaType,
-}
-impl<'a> SparkIndexShuffleBlockResolver<'a> {
-    pub const SIG_TYPE: &'static str =
-        "org/apache/spark/shuffle/IndexShuffleBlockResolver";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkIndexShuffleBlockResolver<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(SparkIndexShuffleBlockResolver {
-            class,
-            method_getDataFile: env.get_method_id(
-                class,
-                "getDataFile",
-                "(IJ)Ljava/io/File;",
-            )?,
-            method_getDataFile_ret: JavaType::Object(JavaFile::SIG_TYPE.to_owned()),
         })
     }
 }

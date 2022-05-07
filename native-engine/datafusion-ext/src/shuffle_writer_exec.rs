@@ -34,8 +34,7 @@ use async_trait::async_trait;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::take;
 use datafusion::arrow::datatypes::DataType;
-use datafusion::arrow::datatypes::Field;
-use datafusion::arrow::datatypes::Schema;
+
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::ipc::writer::FileWriter;
@@ -61,16 +60,13 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::StreamExt;
-use jni::errors::Result as JniResult;
-use log::{debug, info};
+
+use log::debug;
 use tempfile::NamedTempFile;
 use tokio::task;
 
 use crate::spark_hash::{create_hashes, pmod};
-use crate::{
-    batch_buffer::MutableRecordBatch, jni_bridge::JavaClasses, jni_bridge_call_method,
-    jni_bridge_call_static_method, util::Util,
-};
+use crate::{batch_buffer::MutableRecordBatch, util::Util};
 
 #[derive(Default)]
 struct PartitionBuffer {
@@ -170,8 +166,8 @@ fn append_column(
 
 struct ShuffleRepartitioner {
     id: MemoryConsumerId,
-    shuffle_id: usize,
-    map_id: usize,
+    output_data_file: String,
+    output_index_file: String,
     schema: SchemaRef,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     spills: Mutex<Vec<SpillInfo>>,
@@ -188,8 +184,8 @@ impl ShuffleRepartitioner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         partition_id: usize,
-        shuffle_id: usize,
-        map_id: usize,
+        output_data_file: String,
+        output_index_file: String,
         schema: SchemaRef,
         partitioning: Partitioning,
         metrics: BaselineMetrics,
@@ -199,8 +195,8 @@ impl ShuffleRepartitioner {
         let num_output_partitions = partitioning.partition_count();
         Self {
             id: MemoryConsumerId::new(partition_id),
-            shuffle_id,
-            map_id,
+            output_data_file,
+            output_index_file,
             schema,
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
@@ -306,12 +302,6 @@ impl ShuffleRepartitioner {
     async fn shuffle_write(&self) -> Result<SendableRecordBatchStream> {
         let _timer = self.metrics.elapsed_compute().timer();
         let num_output_partitions = self.num_output_partitions;
-        let (data_file, index_file) = self.get_data_index_file_path()?;
-        info!(
-            "Native shuffle write using data file: {}, index file: {}",
-            &data_file, &index_file
-        );
-
         let mut buffered_partitions = self.buffered_partitions.lock().await;
         let mut output_batches: Vec<Vec<RecordBatch>> =
             vec![vec![]; num_output_partitions];
@@ -324,8 +314,8 @@ impl ShuffleRepartitioner {
         let mut spills = self.spills.lock().await;
         let output_spills = spills.drain(..).collect::<Vec<_>>();
 
-        let data_file_clone = data_file.clone();
-        let index_file_clone = index_file.clone();
+        let data_file = self.output_data_file.clone();
+        let index_file = self.output_index_file.clone();
         let input_schema = self.schema.clone();
 
         std::mem::drop(_timer);
@@ -336,7 +326,7 @@ impl ShuffleRepartitioner {
                 let _timer = elapsed_compute.timer();
                 let mut offset: u64 = 0;
                 let mut offsets = vec![0; num_output_partitions + 1];
-                let mut output_data = File::create(data_file_clone)?;
+                let mut output_data = File::create(data_file)?;
 
                 for i in 0..num_output_partitions {
                     offsets[i] = offset;
@@ -376,7 +366,7 @@ impl ShuffleRepartitioner {
                 }
                 // add one extra offset at last to ease partition length computation
                 offsets[num_output_partitions] = offset;
-                let mut output_index = File::create(index_file_clone)?;
+                let mut output_index = File::create(index_file)?;
                 for offset in offsets {
                     output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
                 }
@@ -388,22 +378,10 @@ impl ShuffleRepartitioner {
         let used = self.metrics.mem_used().set(0);
         self.shrink(used);
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("data", DataType::Utf8, false),
-            Field::new("index", DataType::Utf8, false),
-        ]));
-
-        let shuffle_result = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(StringArray::from_slice(&[data_file])),
-                Arc::new(StringArray::from_slice(&[index_file])),
-            ],
-        )?;
-
+        // shuffle writer always has empty output
         Ok(Box::pin(MemoryStream::try_new(
-            vec![shuffle_result],
-            schema,
+            vec![],
+            self.schema.clone(),
             None,
         )?))
     }
@@ -418,34 +396,6 @@ impl ShuffleRepartitioner {
 
     fn spill_count(&self) -> usize {
         self.metrics.spill_count().value()
-    }
-
-    fn get_data_index_file_path(&self) -> Result<(String, String)> {
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
-            let env = JavaClasses::get_thread_jnienv();
-            let shuffle_manager =
-                jni_bridge_call_static_method!(env, JniBridge.getShuffleManager)?.l()?;
-            let shuffle_block_resolver = jni_bridge_call_method!(
-                env,
-                SparkShuffleManager.shuffleBlockResolver,
-                shuffle_manager
-            )?
-            .l()?;
-            let data_file = jni_bridge_call_method!(
-                env,
-                SparkIndexShuffleBlockResolver.getDataFile,
-                shuffle_block_resolver,
-                self.shuffle_id as i32,
-                self.map_id as i64
-            )?
-            .l()?;
-            let data_file_path =
-                jni_bridge_call_method!(env, JavaFile.getPath, data_file)?.l()?;
-
-            let data_file_path: String = env.get_string(data_file_path.into())?.into();
-            let index_file_path: String = data_file_path.replace(".data", ".index");
-            JniResult::Ok((data_file_path + ".tmp", index_file_path + ".tmp"))
-        }))
     }
 }
 
@@ -582,10 +532,10 @@ pub struct ShuffleWriterExec {
     input: Arc<dyn ExecutionPlan>,
     /// Partitioning scheme to use
     partitioning: Partitioning,
-    /// the shuffle id this map belongs to
-    shuffle_id: usize,
-    /// map id
-    map_id: usize,
+    /// Output data file path
+    output_data_file: String,
+    /// Output index file path
+    output_index_file: String,
     /// Containing all metrics set created during sort
     all_metrics: CompositeMetricsSet,
 }
@@ -599,10 +549,7 @@ impl ExecutionPlan for ShuffleWriterExec {
 
     /// Get the schema for this execution plan
     fn schema(&self) -> SchemaRef {
-        Arc::new(Schema::new(vec![
-            Field::new("data_file_name", DataType::Utf8, false),
-            Field::new("index_file_name", DataType::Utf8, false),
-        ]))
+        self.input.schema()
     }
 
     fn output_partitioning(&self) -> Partitioning {
@@ -625,8 +572,8 @@ impl ExecutionPlan for ShuffleWriterExec {
             1 => Ok(Arc::new(ShuffleWriterExec::try_new(
                 children[0].clone(),
                 self.partitioning.clone(),
-                self.shuffle_id,
-                self.map_id,
+                self.output_data_file.clone(),
+                self.output_index_file.clone(),
             )?)),
             _ => Err(DataFusionError::Internal(
                 "RepartitionExec wrong number of children".to_string(),
@@ -645,8 +592,8 @@ impl ExecutionPlan for ShuffleWriterExec {
         external_shuffle(
             input,
             partition,
-            self.shuffle_id,
-            self.map_id,
+            self.output_data_file.clone(),
+            self.output_index_file.clone(),
             self.partitioning.clone(),
             metrics,
             context,
@@ -680,15 +627,15 @@ impl ShuffleWriterExec {
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
         partitioning: Partitioning,
-        shuffle_id: usize,
-        map_id: usize,
+        output_data_file: String,
+        output_index_file: String,
     ) -> Result<Self> {
         Ok(ShuffleWriterExec {
             input,
             partitioning,
             all_metrics: CompositeMetricsSet::new(),
-            shuffle_id,
-            map_id,
+            output_data_file,
+            output_index_file,
         })
     }
 }
@@ -697,8 +644,8 @@ impl ShuffleWriterExec {
 pub async fn external_shuffle(
     mut input: SendableRecordBatchStream,
     partition_id: usize,
-    shuffle_id: usize,
-    map_id: usize,
+    output_data_file: String,
+    output_index_file: String,
     partitioning: Partitioning,
     metrics: BaselineMetrics,
     context: Arc<TaskContext>,
@@ -706,8 +653,8 @@ pub async fn external_shuffle(
     let schema = input.schema();
     let repartitioner = ShuffleRepartitioner::new(
         partition_id,
-        shuffle_id,
-        map_id,
+        output_data_file,
+        output_index_file,
         schema.clone(),
         partitioning,
         metrics,

@@ -541,8 +541,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(ShuffleWriterExec::try_new(
                     input,
                     output_partitioning.unwrap(),
-                    shuffle_writer.shuffle_id as usize,
-                    shuffle_writer.map_id as usize,
+                    shuffle_writer.output_data_file.clone(),
+                    shuffle_writer.output_index_file.clone(),
                 )?))
             }
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
