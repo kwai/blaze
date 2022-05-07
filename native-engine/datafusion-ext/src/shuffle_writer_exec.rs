@@ -156,7 +156,11 @@ fn append_column(
                 to.as_any_mut().downcast_mut::<DecimalBuilder>().unwrap();
             let decimal_array = from.as_any().downcast_ref::<DecimalArray>().unwrap();
             for i in 0..decimal_array.len() {
-                decimal_builder.append_value(decimal_array.value(i))?;
+                if decimal_array.is_valid(i) {
+                    decimal_builder.append_value(decimal_array.value(i))?;
+                } else {
+                    decimal_builder.append_null()?;
+                }
             }
         }
         _ => todo!(),
