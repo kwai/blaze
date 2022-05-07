@@ -17,12 +17,12 @@
 
 package org.apache.spark.sql.blaze
 
-import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.execution.ArrowShuffleExchangeExec301
 import org.apache.spark.sql.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.blaze.plan.NativeParquetScanExec
@@ -49,6 +49,18 @@ import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.execution.CodegenSupport
+import org.apache.spark.sql.execution.ColumnarRule
+import org.apache.spark.sql.execution.ColumnarToRowExec
+import org.apache.spark.sql.execution.RowToColumnarExec
+import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.vectorized.ColumnarBatch
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
@@ -58,6 +70,10 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
 
     extensions.injectQueryStagePrepRule(sparkSession => {
       BlazeQueryStagePrepOverrides(sparkSession)
+    })
+
+    extensions.injectColumnar(sparkSession => {
+      BlazeColumnarOverrides(sparkSession)
     })
   }
 }
@@ -144,9 +160,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
     if (relation.fileFormat.isInstanceOf[ParquetFileFormat]) {
-      return NativeParquetScanExec(
-        exec
-      ) // note: supports exec.dataFilters for better performance?
+      return NativeParquetScanExec(exec)
     }
     exec
   }
@@ -291,8 +305,39 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
 
   private def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
     exec match {
-      case exec if NativeSupports.isNative(exec) => ConvertToUnsafeRowExec(exec)
+      case exec if NativeSupports.isNative(exec) =>
+        NativeColumnarReaderExec(exec)
+      case exec =>
+        exec
+    }
+  }
+}
+
+case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule {
+  override def postColumnarTransitions: Rule[SparkPlan] =
+    _.transformUp {
+      // native plans do exactly support columnar, so RowToColumnar can be safely removed
+      case NativeColumnarReaderExec(RowToColumnarExec(child)) => NativeColumnarReaderExec(child)
       case exec => exec
     }
+}
+
+case class NativeColumnarReaderExec(override val child: SparkPlan) extends UnaryExecNode {
+  override def logicalLink: Option[LogicalPlan] = child.logicalLink
+  override def output: Seq[Attribute] = child.output
+  override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+  override def supportsColumnar: Boolean = true
+
+  override def doExecute(): RDD[InternalRow] = {
+    val doExecutorMethod = child.getClass.getDeclaredMethod("doExecute")
+    doExecutorMethod.setAccessible(true)
+    doExecutorMethod.invoke(child).asInstanceOf[RDD[InternalRow]]
+  }
+  override def doExecuteColumnar(): RDD[ColumnarBatch] = {
+    val realChild = NativeSupports.getUnderlyingNativePlan(child)
+    val doExecutorColumnarMethod = realChild.getClass.getDeclaredMethod("doExecuteColumnar")
+    doExecutorColumnarMethod.setAccessible(true)
+    doExecutorColumnarMethod.invoke(realChild).asInstanceOf[RDD[ColumnarBatch]]
   }
 }

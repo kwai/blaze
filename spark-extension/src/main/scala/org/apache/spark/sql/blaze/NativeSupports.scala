@@ -26,19 +26,28 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
 import org.apache.spark.sql.execution.adaptive.QueryStageExec
 import org.apache.spark.TaskContext
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.Partition
+import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.SparkContext
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
 
-trait NativeSupports {
+trait NativeSupports extends SparkPlan {
   def doExecuteNative(): NativeRDD
+
+  protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
+  protected override def doExecuteColumnar(): RDD[ColumnarBatch] = doExecuteNative().toColumnar
+
+  // native to native plans are not columnar executed
+  var columnarEnabled = false
+  override def supportsColumnar: Boolean = columnarEnabled
 }
 
 object NativeSupports extends Logging {
@@ -49,6 +58,15 @@ object NativeSupports extends Logging {
       case plan: QueryStageExec => isNative(plan.plan)
       case plan: ReusedExchangeExec => isNative(plan.child)
       case _ => false
+    }
+
+  @tailrec def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports =
+    plan match {
+      case plan: NativeSupports => plan
+      case plan: CustomShuffleReaderExec => getUnderlyingNativePlan(plan.child)
+      case plan: QueryStageExec => getUnderlyingNativePlan(plan.plan)
+      case plan: ReusedExchangeExec => getUnderlyingNativePlan(plan.child)
+      case _ => throw new RuntimeException("unreachable: plan is not native")
     }
 
   @tailrec def executeNative(plan: SparkPlan): NativeRDD =
@@ -65,6 +83,42 @@ object NativeSupports extends Logging {
       metrics: MetricNode,
       partition: Partition,
       context: TaskContext): Iterator[InternalRow] = {
+
+    val iterPtr = executeNativePlanInternal(nativePlan, partition, context)
+    if (iterPtr < 0) {
+      logWarning("Error occurred while call physical_plan.execute")
+      return Iterator.empty
+    }
+    FFIHelper.fromBlazeIter(iterPtr, context, metrics)
+  }
+
+  def executeNativePlanColumnar(
+      nativePlan: PhysicalPlanNode,
+      metrics: MetricNode,
+      partition: Partition,
+      context: TaskContext): Iterator[ColumnarBatch] = {
+
+    val iterPtr = executeNativePlanInternal(nativePlan, partition, context)
+    if (iterPtr < 0) {
+      logWarning("Error occurred while call physical_plan.execute")
+      return Iterator.empty
+    }
+    FFIHelper.fromBlazeIterColumnar(iterPtr, context, metrics)
+  }
+
+  def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =
+    TreeMap(
+      "output_rows" -> SQLMetrics.createMetric(sc, "Native.output_rows"),
+      "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
+      "input_rows" -> SQLMetrics.createMetric(sc, "Native.input_rows"),
+      "input_batches" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
+      "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
+      "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"))
+
+  def executeNativePlanInternal(
+      nativePlan: PhysicalPlanNode,
+      partition: Partition,
+      context: TaskContext): Long = {
 
     // do not use context.partitionId since it is not correct in Union plans.
     val partitionId = PartitionId
@@ -93,31 +147,14 @@ object NativeSupports extends Logging {
     val batchSize = SparkEnv.get.conf.getLong("spark.blaze.batchSize", 16384)
     val tokioPoolSize = SparkEnv.get.conf.getLong("spark.blaze.tokioPoolSize", 10)
     val tmpDirs = SparkEnv.get.blockManager.diskBlockManager.localDirsString.mkString(",")
-
-    val iterPtr = JniBridge.callNative(
+    JniBridge.callNative(
       taskDefinition.toByteArray,
       tokioPoolSize,
       batchSize,
       nativeMemory,
       memoryFraction,
       tmpDirs)
-
-    if (iterPtr < 0) {
-      logWarning("Error occurred while call physical_plan.execute")
-      return Iterator.empty
-    }
-
-    FFIHelper.fromBlazeIter(iterPtr, context, metrics)
   }
-
-  def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =
-    TreeMap(
-      "output_rows" -> SQLMetrics.createMetric(sc, "Native.output_rows"),
-      "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
-      "input_rows" -> SQLMetrics.createMetric(sc, "Native.input_rows"),
-      "input_batches" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
-      "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
-      "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"))
 }
 
 case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])

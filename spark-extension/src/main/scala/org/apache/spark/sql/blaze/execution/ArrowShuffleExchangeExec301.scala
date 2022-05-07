@@ -194,7 +194,8 @@ case class ArrowShuffleExchangeExec301(
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(rdd.getNumPartitions)
-              .setNativeShuffleId(NativeRDD.getNativeShuffleId(taskContext, shuffleId))
+              .setNativeShuffleId(
+                ArrowShuffleExchangeExec301.getNativeShuffleId(taskContext, shuffleId))
               .build())
           .build()
       })
@@ -210,6 +211,9 @@ object ArrowShuffleExchangeExec301 {
       outputPartitioning: Partitioning): Boolean = {
     rdd.isInstanceOf[NativeRDD] && outputPartitioning.isInstanceOf[HashPartitioning]
   }
+
+  def getNativeShuffleId(context: TaskContext, shuffleId: Int): String =
+    s"NativeShuffleReadExec:${context.stageId}:${context.stageAttemptNumber}:${context.partitionId}:${context.taskAttemptId}:${shuffleId}"
 
   def prepareNativeShuffleDependency(
       rdd: RDD[InternalRow],

@@ -24,6 +24,7 @@ import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.SparkContext
 import org.apache.spark.TaskContext
+import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.blaze.protobuf.PhysicalPlanNode
 
 class NativeRDD(
@@ -42,9 +43,15 @@ class NativeRDD(
     val computingNativePlan = nativePlan(split, context)
     NativeSupports.executeNativePlan(computingNativePlan, metrics, split, context)
   }
-}
 
-object NativeRDD {
-  def getNativeShuffleId(context: TaskContext, shuffleId: Int): String =
-    s"nativeShuffleId:${context.stageId}:${context.stageAttemptNumber}:${context.partitionId}:${context.taskAttemptId}:${shuffleId}"
+  def toColumnar: RDD[ColumnarBatch] =
+    new RDD[ColumnarBatch](rddSparkContext, rddDependencies) {
+      override protected def getPartitions: Array[Partition] = rddPartitions
+      override protected def getDependencies: Seq[Dependency[_]] = rddDependencies
+
+      override def compute(split: Partition, context: TaskContext): Iterator[ColumnarBatch] = {
+        val computingNativePlan = nativePlan(split, context)
+        NativeSupports.executeNativePlanColumnar(computingNativePlan, metrics, split, context)
+      }
+    }
 }

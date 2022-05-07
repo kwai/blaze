@@ -39,23 +39,32 @@ object FFIHelper {
     finally resource.close()
   }
 
-  def rootAsRowIter(root: VectorSchemaRoot): Iterator[InternalRow] = {
+  def rootAsBatch(root: VectorSchemaRoot): ColumnarBatch = {
     val columns = root.getFieldVectors.asScala.map { vector =>
       new ArrowColumnVector(vector).asInstanceOf[ColumnVector]
     }.toArray
     val batch = new ColumnarBatch(columns)
     batch.setNumRows(root.getRowCount)
+    batch
+  }
 
+  def batchAsRowIter(batch: ColumnarBatch): Iterator[InternalRow] = {
     CompletionIterator[InternalRow, Iterator[InternalRow]](
-      batch.rowIterator().asScala, {
-        batch.close()
-      })
+      batch.rowIterator().asScala,
+      batch.close())
   }
 
   def fromBlazeIter(
       iterPtr: Long,
       context: TaskContext,
       metrics: MetricNode): Iterator[InternalRow] = {
+    fromBlazeIterColumnar(iterPtr, context, metrics).flatMap(batchAsRowIter)
+  }
+
+  def fromBlazeIterColumnar(
+      iterPtr: Long,
+      context: TaskContext,
+      metrics: MetricNode): Iterator[ColumnarBatch] = {
     val allocator =
       ArrowUtils2.rootAllocator.newChildAllocator("fromBLZIterator", 0, Long.MaxValue)
     val provider = new CDataDictionaryProvider()
@@ -66,8 +75,10 @@ object FFIHelper {
         val arrayPtr: Long = consumerArray.memoryAddress
         val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
         if (rt < 0) {
-          return CompletionIterator[InternalRow, Iterator[InternalRow]](
+          return CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
             Iterator.empty, {
+              JniBridge.updateMetrics(iterPtr, metrics)
+              JniBridge.deallocIter(iterPtr)
               allocator.close()
             })
         }
@@ -77,51 +88,46 @@ object FFIHelper {
       }
     }
 
-    new Iterator[InternalRow] {
-      private val metricsToUpdate = metrics
-      private var rowIter = rootAsRowIter(root)
+    new Iterator[ColumnarBatch] {
+      private var batch: ColumnarBatch = _
       private var finished = false
 
       context.addTaskCompletionListener[Unit] { _ =>
         finish()
+        allocator.close()
       }
 
       override def hasNext: Boolean =
-        rowIter.hasNext || {
-          rowIter = nextBatch()
-          rowIter match {
-            case rowIter if rowIter.nonEmpty => true
-            case _ =>
-              finish()
-              false
+        !finished && {
+          if (batch == null) { // first call
+            batch = rootAsBatch(root)
+            return true
           }
-        }
+          tryWithResource(ArrowSchema.allocateNew(allocator)) { consumerSchema =>
+            tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
+              val schemaPtr: Long = consumerSchema.memoryAddress
+              val arrayPtr: Long = consumerArray.memoryAddress
+              val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
+              if (rt < 0) {
+                finish()
+                return false
+              }
 
-      override def next(): InternalRow = rowIter.next()
-
-      private def nextBatch(): Iterator[InternalRow] = {
-        tryWithResource(ArrowSchema.allocateNew(allocator)) { consumerSchema =>
-          tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
-            val schemaPtr: Long = consumerSchema.memoryAddress
-            val arrayPtr: Long = consumerArray.memoryAddress
-            val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
-            if (rt < 0) {
-              return Iterator.empty
+              Data.importIntoVectorSchemaRoot(allocator, consumerArray, root, provider)
+              batch = rootAsBatch(root)
+              true
             }
-
-            Data.importIntoVectorSchemaRoot(allocator, consumerArray, root, provider)
-            rootAsRowIter(root)
           }
         }
-      }
+
+      override def next(): ColumnarBatch = batch
 
       private def finish(): Unit = {
         if (!finished) {
           finished = true
-          JniBridge.updateMetrics(iterPtr, metricsToUpdate)
+          JniBridge.updateMetrics(iterPtr, metrics)
           JniBridge.deallocIter(iterPtr)
           root.close()
-          allocator.close()
         }
       }
     }

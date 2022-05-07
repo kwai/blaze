@@ -56,9 +56,10 @@ macro_rules! jni_bridge_call_method_impl {
 #[macro_export]
 macro_rules! jni_bridge_call_method_no_check_java_exception {
     ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?})",
+        log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?}, {:?})",
             stringify!($clsname),
             stringify!($method),
+            $obj,
             &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
         $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*)
     }}
@@ -67,9 +68,10 @@ macro_rules! jni_bridge_call_method_no_check_java_exception {
 #[macro_export]
 macro_rules! jni_bridge_call_method {
     ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_call_method!({}.{}, {:?})",
+        log::trace!("jni_bridge_call_method!({}.{}, {:?}, {:?})",
             stringify!($clsname),
             stringify!($method),
+            $obj,
             &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
         match $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*) {
             Err(jni::errors::Error::JavaException) => {
@@ -784,19 +786,14 @@ fn get_global_ref_jobject<'a>(
     env: &JNIEnv<'a>,
     obj: JObject<'a>,
 ) -> JniResult<JObject<'static>> {
-    struct PrivGlobalRefGuard {
-        obj: JObject<'static>,
-        _vm: JavaVM,
-    }
-    struct PrivGlobalRef {
-        inner: Arc<PrivGlobalRefGuard>,
-    }
+    let global = env.new_global_ref::<JObject>(obj)?;
 
     // safety:
     //  as all global refs to jclass in JavaClasses should never be GC'd during
-    // the whole jvm lifetime, we override GlobalRef::drop() to prevent
+    // the whole jvm lifetime, we put GlobalRef into ManuallyDrop to prevent
     // deleting these global refs.
-    let global: PrivGlobalRef =
-        unsafe { std::mem::transmute(env.new_global_ref::<JObject>(obj)?) };
-    Ok(global.inner.obj)
+    let global_obj =
+        unsafe { std::mem::transmute::<_, JObject<'static>>(global.as_obj()) };
+    let _ = std::mem::ManuallyDrop::new(global);
+    Ok(global_obj)
 }
