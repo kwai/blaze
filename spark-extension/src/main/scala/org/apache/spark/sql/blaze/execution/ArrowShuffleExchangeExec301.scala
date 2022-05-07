@@ -509,6 +509,12 @@ object ArrowShuffleExchangeExec301 {
           context: TaskContext,
           partition: Partition): MapStatus = {
 
+        val shuffleBlockResolver =
+          SparkEnv.get.shuffleManager.shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver]
+        val dataFile = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
+        val tempDataFilePath = dataFile.getPath.replace(".data", ".data.tmp")
+        val tempIndexFilePath = dataFile.getPath.replace(".data", ".index.tmp")
+
         val nativeShuffleRDD =
           rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD]
         val nativeShuffleWriterExec = PhysicalPlanNode
@@ -516,8 +522,8 @@ object ArrowShuffleExchangeExec301 {
           .setShuffleWriter(
             ShuffleWriterExecNode
               .newBuilder(nativeShuffleRDD.nativePlan(partition, context).getShuffleWriter)
-              .setShuffleId(dep.shuffleId)
-              .setMapId(mapId)
+              .setOutputDataFile(tempDataFilePath)
+              .setOutputIndexFile(tempIndexFilePath)
               .build())
           .build()
         val iterator = NativeSupports.executeNativePlan(
@@ -525,13 +531,12 @@ object ArrowShuffleExchangeExec301 {
           nativeShuffleRDD.metrics,
           partition,
           context)
+        assert(iterator.toArray.isEmpty)
 
         // get partition lengths from shuffle write output index file
-        val indexFileTmp = iterator.toSeq.head.getString(1)
-        val dataFileTmp = indexFileTmp.replace(".index.tmp", ".data.tmp")
         var offset = 0L
         val partitionLengths = Files
-          .readAllBytes(Paths.get(indexFileTmp))
+          .readAllBytes(Paths.get(tempIndexFilePath))
           .grouped(8)
           .drop(1) // first partition offset is always 0
           .map(indexBytes => {
@@ -544,13 +549,11 @@ object ArrowShuffleExchangeExec301 {
           .toArray
 
         // commit
-        SparkEnv.get.shuffleManager.shuffleBlockResolver
-          .asInstanceOf[IndexShuffleBlockResolver]
-          .writeIndexFileAndCommit(
-            dep.shuffleId,
-            mapId,
-            partitionLengths,
-            Paths.get(dataFileTmp).toFile)
+        shuffleBlockResolver.writeIndexFileAndCommit(
+          dep.shuffleId,
+          mapId,
+          partitionLengths,
+          Paths.get(tempDataFilePath).toFile)
         MapStatus.apply(SparkEnv.get.blockManager.shuffleServerId, partitionLengths, mapId)
       }
     }
