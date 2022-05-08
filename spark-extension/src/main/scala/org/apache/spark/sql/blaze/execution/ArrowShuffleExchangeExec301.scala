@@ -60,12 +60,14 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.MutablePair
 import org.apache.spark.util.collection.unsafe.sort.PrefixComparators
 import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.blaze.protobuf.PhysicalHashRepartition
 import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.Schema
 import org.blaze.protobuf.ShuffleReaderExecNode
 import org.blaze.protobuf.ShuffleWriterExecNode
 
@@ -156,7 +158,8 @@ case class ArrowShuffleExchangeExec301(
     Statistics(dataSize, Some(rowCount))
   }
 
-  private val nativeSchema = NativeConverters.convertSchema(schema)
+  val nativeSchema: Schema = NativeConverters.convertSchema(
+    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
 
   protected override def doExecute(): RDD[InternalRow] =
     attachTree(this, "execute") {

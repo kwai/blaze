@@ -274,9 +274,9 @@ object NativeConverters {
             b.setLiteral(ScalarValue.newBuilder().setNullValue(convertToScalarType(dataType)))
           }
         }
-      case AttributeReference(name, _, _, _) =>
+      case ar: AttributeReference =>
         buildExprNode {
-          _.setColumn(PhysicalColumn.newBuilder().setName(name).build())
+          _.setColumn(PhysicalColumn.newBuilder().setName(ar.toString()).build())
         }
 
       // cast
@@ -460,9 +460,13 @@ object NativeConverters {
             b.setLiteral(ScalarValue.newBuilder().setNullValue(convertToScalarType(dataType)))
           }
         }
-      case AttributeReference(name, _, _, _) =>
+      case ar: AttributeReference =>
         buildExprNode {
-          _.setColumn(Column.newBuilder().setName(name))
+          // NOTE:
+          //  use ar.name instead of ar.toString() here.
+          //  unlike physical exprs, native logical exprs are only used in parquet scan data filters.
+          // whose column names should not be shuffixed with exprIds.
+          _.setColumn(Column.newBuilder().setName(ar.name).build())
         }
 
       // cast

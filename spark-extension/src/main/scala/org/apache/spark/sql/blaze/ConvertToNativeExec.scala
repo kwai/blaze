@@ -23,14 +23,16 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.blaze.execution.ArrowWriterIterator
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
 import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.Schema
 import org.blaze.protobuf.ShuffleReaderExecNode
 
 case class ConvertToNativeExec(override val child: SparkPlan)
@@ -44,11 +46,12 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
-  override def doExecute(): RDD[InternalRow] = doExecuteNative()
+  val nativeSchema: Schema = NativeConverters.convertSchema(
+    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = child.execute()
     val timeZoneId = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
-    val nativeSchema = NativeConverters.convertSchema(schema)
     val nativeMetrics = MetricNode(metrics, Nil)
 
     new NativeRDD(

@@ -48,6 +48,7 @@ message PhysicalPlanNode {
     AvroScanExecNode avro_scan = 20;
     UnionExecNode union = 21;
     SortMergeJoinExecNode sort_merge_join = 22;
+    RenameColumnsExecNode rename_columns = 23;
   }
 }
 
@@ -354,6 +355,11 @@ message SortMergeJoinExecNode {
   repeated SortOptions sort_options = 4;
   JoinType join_type = 5;
   bool null_equals_null = 6;
+}
+
+message RenameColumnsExecNode {
+  PhysicalPlanNode input = 1;
+  repeated string renamed_column_names = 2;
 }
 
 enum JoinType {
