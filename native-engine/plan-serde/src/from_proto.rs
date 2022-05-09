@@ -69,6 +69,7 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::global_object_store_registry;
+use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 
@@ -607,6 +608,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .map(|i| i.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Arc::new(UnionExec::new(inputs)))
+            }
+            PhysicalPlanType::RenameColumns(rename_columns) => {
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(rename_columns.input)?;
+                Ok(Arc::new(RenameColumnsExec::try_new(
+                    input,
+                    rename_columns.renamed_column_names.clone(),
+                )?))
             }
             PhysicalPlanType::Unresolved(_unresolved_shuffle) => {
                 unreachable!()

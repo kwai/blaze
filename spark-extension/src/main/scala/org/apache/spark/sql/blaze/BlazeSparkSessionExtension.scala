@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.blaze
 
+import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.SparkSessionExtensions
@@ -44,6 +45,7 @@ import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.sql.blaze.plan.NativeSortMergeJoinExec
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
@@ -52,14 +54,16 @@ import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.CodegenSupport
 import org.apache.spark.sql.execution.ColumnarRule
-import org.apache.spark.sql.execution.ColumnarToRowExec
 import org.apache.spark.sql.execution.RowToColumnarExec
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
+import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
+import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
+import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
+import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
@@ -138,7 +142,10 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
   private def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
     val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
-    ArrowShuffleExchangeExec301(outputPartitioning, child, noUserSpecifiedNumPartition)
+    ArrowShuffleExchangeExec301(
+      outputPartitioning,
+      addRenameColumnsExec(child),
+      noUserSpecifiedNumPartition)
   }
 
   private def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
@@ -170,7 +177,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
       case ProjectExec(projectList, child) if NativeSupports.isNative(child) =>
         logDebug(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
         exec.projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
-        NativeProjectExec(projectList, child)
+        NativeProjectExec(projectList, addRenameColumnsExec(child))
       case _ =>
         logDebug(s"Ignoring ProjectExec: ${exec.simpleStringWithNodeId()}")
         exec
@@ -180,7 +187,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     exec match {
       case FilterExec(condition, child) if NativeSupports.isNative(child) =>
         logDebug(s"  condition: ${exec.condition}")
-        NativeFilterExec(condition, child)
+        NativeFilterExec(condition, addRenameColumnsExec(child))
       case _ =>
         logDebug(s"Ignoring FilterExec: ${exec.simpleStringWithNodeId()}")
         exec
@@ -192,7 +199,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
         logDebug(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
         logDebug(s"  global: ${global}")
         exec.sortOrder.foreach(s => logDebug(s"  sortOrder: ${s}"))
-        NativeSortExec(sortOrder, global, child)
+        NativeSortExec(sortOrder, global, addRenameColumnsExec(child))
       case _ =>
         logDebug(s"Ignoring SortExec: ${exec.simpleStringWithNodeId()}")
         exec
@@ -202,7 +209,9 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     exec match {
       case UnionExec(children) if children.forall(c => NativeSupports.isNative(c)) =>
         logDebug(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
-        NativeUnionExec(children)
+        NativeUnionExec(children.map(child => {
+          addRenameColumnsExec(child)
+        }))
       case _ =>
         logDebug(s"Ignoring UnionExec: ${exec.simpleStringWithNodeId()}")
         exec
@@ -277,8 +286,8 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
           }
 
           val smj = NativeSortMergeJoinExec(
-            nativeLeft,
-            nativeRight,
+            addRenameColumnsExec(nativeLeft),
+            addRenameColumnsExec(nativeRight),
             modifiedLeftKeys,
             modifiedRightKeys,
             exec.output,
@@ -293,7 +302,12 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
           }
 
           val conditionedSmj = condition match {
-            case Some(condition) => NativeFilterExec(condition, postProjectedSmj)
+            case Some(condition) =>
+              if (condition.references.exists(a => !smj.output.contains(a))) {
+                throw new NotImplementedError(
+                  "SMJ post filter with columns not existed in join output is not yet supported")
+              }
+              NativeFilterExec(condition, postProjectedSmj)
             case None => postProjectedSmj
           }
           return conditionedSmj
@@ -309,6 +323,23 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
         NativeColumnarReaderExec(exec)
       case exec =>
         exec
+    }
+  }
+
+  private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
+    if (needRenameColumns(exec)) {
+      return NativeRenameColumnsExec(exec, exec.output.map(_.toString()))
+    }
+    exec
+  }
+
+  @tailrec private def needRenameColumns(exec: SparkPlan): Boolean = {
+    exec match {
+      case exec: ShuffleQueryStageExec => needRenameColumns(exec.plan)
+      case exec: BroadcastQueryStageExec => needRenameColumns(exec.plan)
+      case exec: CustomShuffleReaderExec => needRenameColumns(exec.child)
+      case _: NativeParquetScanExec | _: ReusedExchangeExec => true
+      case _ => false
     }
   }
 }

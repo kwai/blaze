@@ -22,7 +22,6 @@ import java.util.UUID
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
@@ -31,7 +30,6 @@ import org.apache.spark.sql.catalyst.analysis.ResolvedStar
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.AliasAwareOutputPartitioning
 import org.apache.spark.sql.execution.SparkPlan
@@ -88,12 +86,15 @@ case class NativeProjectExec(projectList: Seq[NamedExpression], override val chi
             }
 
           case alias: Alias =>
-            namedExprs.append((alias.name, NativeConverters.convertExpr(alias.child)))
+            namedExprs.append(
+              (alias.toAttribute.toString(), NativeConverters.convertExpr(alias.child)))
             numAddedColumns += 1
 
           case otherNamedExpression =>
             namedExprs.append(
-              (otherNamedExpression.name, NativeConverters.convertExpr(otherNamedExpression)))
+              (
+                otherNamedExpression.toString(),
+                NativeConverters.convertExpr(otherNamedExpression)))
             numAddedColumns += 1
         }
       }
