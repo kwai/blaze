@@ -145,6 +145,7 @@ pub struct JavaClasses<'a> {
 
     pub cScalaIterator: ScalaIterator<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
+    pub cScalaFunction0: ScalaFunction0<'a>,
 
     pub cHadoopFileSystem: HadoopFileSystem<'a>,
     pub cHadoopPath: HadoopPath<'a>,
@@ -193,6 +194,7 @@ impl JavaClasses<'static> {
 
             cScalaIterator: ScalaIterator::new(env)?,
             cScalaTuple2: ScalaTuple2::new(env)?,
+            cScalaFunction0: ScalaFunction0::new(env)?,
 
             cHadoopFileSystem: HadoopFileSystem::new(env)?,
             cHadoopPath: HadoopPath::new(env)?,
@@ -539,6 +541,25 @@ impl<'a> ScalaTuple2<'a> {
             method__1_ret: JavaType::Object("java/lang/Object".to_owned()),
             method__2: env.get_method_id(class, "_2", "()Ljava/lang/Object;")?,
             method__2_ret: JavaType::Object("java/lang/Object".to_owned()),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct ScalaFunction0<'a> {
+    pub class: JClass<'a>,
+    pub method_apply: JMethodID<'a>,
+    pub method_apply_ret: JavaType,
+}
+impl<'a> ScalaFunction0<'a> {
+    pub const SIG_TYPE: &'static str = "scala/Function0";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaFunction0<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(ScalaFunction0 {
+            class,
+            method_apply: env.get_method_id(class, "apply", "()Ljava/lang/Object;")?,
+            method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
         })
     }
 }

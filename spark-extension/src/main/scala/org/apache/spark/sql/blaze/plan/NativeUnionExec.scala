@@ -25,6 +25,7 @@ import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
 import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -33,8 +34,11 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.UnionExec
+import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.Schema
 import org.blaze.protobuf.UnionExecNode
 
 case class NativeUnionExec(override val children: Seq[SparkPlan])
@@ -95,12 +99,26 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
           case (rdd, rddIndex) if rddIndex == unionPartition.parentRddIndex =>
             rdd.nativePlan(unionPartition.parentPartition, taskContext)
           case (rdd, _) =>
-            rdd.nativePlan(rdd.partitions(0), taskContext)
+            nativeEmptyPartitionExec(rdd.getNumPartitions)
         }
         val union = UnionExecNode.newBuilder().addAllChildren(unionChildrenExecs.asJava)
         PhysicalPlanNode.newBuilder().setUnion(union).build()
       })
   }
+
+  private def nativeEmptyPartitionExec(numPartitions: Int) =
+    PhysicalPlanNode
+      .newBuilder()
+      .setEmptyPartitions(
+        EmptyPartitionsExecNode
+          .newBuilder()
+          .setSchema(nativeSchema)
+          .setNumPartitions(numPartitions)
+          .build())
+      .build()
+
+  val nativeSchema: Schema = NativeConverters.convertSchema(
+    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
 
   override def doCanonicalize(): SparkPlan = UnionExec(children).canonicalized
 }

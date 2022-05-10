@@ -49,6 +49,7 @@ message PhysicalPlanNode {
     UnionExecNode union = 21;
     SortMergeJoinExecNode sort_merge_join = 22;
     RenameColumnsExecNode rename_columns = 23;
+    EmptyPartitionsExecNode empty_partitions = 24;
   }
 }
 
@@ -360,6 +361,11 @@ message SortMergeJoinExecNode {
 message RenameColumnsExecNode {
   PhysicalPlanNode input = 1;
   repeated string renamed_column_names = 2;
+}
+
+message EmptyPartitionsExecNode {
+  Schema schema = 1;
+  uint32 num_partitions = 2;
 }
 
 enum JoinType {

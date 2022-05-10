@@ -5,6 +5,7 @@ use datafusion::datasource::object_store_registry::ObjectStoreRegistry;
 
 use hdfs_object_store::HDFSSingleFileObjectStore;
 
+pub mod empty_partitions_exec;
 pub mod hdfs_object_store; // note: can be changed to priv once plan transforming is removed
 pub mod jni_bridge;
 pub mod rename_columns_exec;
