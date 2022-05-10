@@ -30,19 +30,92 @@ use datafusion::arrow::datatypes::{
 use datafusion::error::{DataFusionError, Result};
 use std::sync::Arc;
 
-use fasthash::murmur3::hash32_with_seed;
+#[inline]
+fn spark_compatible_murmur3_hash<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
+    #[inline]
+    fn mix_k1(mut k1: i32) -> i32 {
+        k1 *= 0xcc9e2d51u32 as i32;
+        k1 = k1.rotate_left(15);
+        k1 *= 0x1b873593u32 as i32;
+        k1
+    }
+
+    #[inline]
+    fn mix_h1(mut h1: i32, k1: i32) -> i32 {
+        h1 ^= k1;
+        h1 = h1.rotate_left(13);
+        h1 = h1 * 5 + 0xe6546b64u32 as i32;
+        h1
+    }
+
+    #[inline]
+    fn fmix(mut h1: i32, len: i32) -> i32 {
+        h1 ^= len;
+        h1 ^= (h1 as u32 >> 16) as i32;
+        h1 *= 0x85ebca6bu32 as i32;
+        h1 ^= (h1 as u32 >> 13) as i32;
+        h1 *= 0xc2b2ae35u32 as i32;
+        h1 ^= (h1 as u32 >> 16) as i32;
+        h1
+    }
+
+    #[inline]
+    unsafe fn hash_bytes_by_int(data: &[u8], seed: u32) -> i32 {
+        // safety: data length must be aligned to 4 bytes
+        let mut h1 = seed as i32;
+        for i in (0..data.len()).step_by(4) {
+            let mut half_word = *(data.as_ptr().add(i) as *const i32);
+            if cfg!(target_endian = "big") {
+                half_word = half_word.reverse_bits();
+            }
+            h1 = mix_h1(h1, mix_k1(half_word));
+        }
+        h1
+    }
+    let data = data.as_ref();
+    let len = data.len();
+    let len_aligned = len - len % 4;
+
+    // safety:
+    // avoid boundary checking in performance critical codes.
+    // all operations are garenteed to be safe
+    unsafe {
+        let mut h1 = hash_bytes_by_int(
+            std::slice::from_raw_parts(data.get_unchecked(0), len_aligned),
+            seed,
+        );
+
+        for i in len_aligned..len {
+            let half_word = *data.get_unchecked(i) as i8 as i32;
+            h1 = mix_h1(h1, mix_k1(half_word));
+        }
+        fmix(h1, len as i32) as u32
+    }
+}
+
+#[test]
+fn test_murmur3() {
+    let hashes = ["", "a", "ab", "abc", "abcd", "abcde"]
+        .into_iter()
+        .map(|s| spark_compatible_murmur3_hash(s.as_bytes(), 42) as i32)
+        .collect::<Vec<_>>();
+    let expected = vec![
+        142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928,
+    ];
+    assert_eq!(hashes, expected);
+}
 
 macro_rules! hash_array {
     ($array_type:ident, $column: ident, $ty: ident, $hashes: ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash = hash32_with_seed(&array.value(i), *hash);
+                *hash = spark_compatible_murmur3_hash(&array.value(i), *hash);
             }
         } else {
             for (i, hash) in $hashes.iter_mut().enumerate() {
                 if !array.is_null(i) {
-                    *hash = hash32_with_seed(&array.value(i), *hash);
+                    *hash = spark_compatible_murmur3_hash(&array.value(i), *hash);
                 }
             }
         }
@@ -56,12 +129,16 @@ macro_rules! hash_array_primitive_i32 {
 
         if array.null_count() == 0 {
             for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
-                *hash = hash32_with_seed((*value as i32).to_le_bytes(), *hash);
+                *hash =
+                    spark_compatible_murmur3_hash((*value as i32).to_le_bytes(), *hash);
             }
         } else {
             for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
                 if !array.is_null(i) {
-                    *hash = hash32_with_seed((*value as i32).to_le_bytes(), *hash);
+                    *hash = spark_compatible_murmur3_hash(
+                        (*value as i32).to_le_bytes(),
+                        *hash,
+                    );
                 }
             }
         }
@@ -75,12 +152,16 @@ macro_rules! hash_array_primitive_i64 {
 
         if array.null_count() == 0 {
             for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
-                *hash = hash32_with_seed((*value as i64).to_le_bytes(), *hash);
+                *hash =
+                    spark_compatible_murmur3_hash((*value as i64).to_le_bytes(), *hash);
             }
         } else {
             for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
                 if !array.is_null(i) {
-                    *hash = hash32_with_seed((*value as i64).to_le_bytes(), *hash);
+                    *hash = spark_compatible_murmur3_hash(
+                        (*value as i64).to_le_bytes(),
+                        *hash,
+                    );
                 }
             }
         }
@@ -131,7 +212,7 @@ pub fn create_hashes<'a>(
                 let array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
                 if array.null_count() == 0 {
                     for (i, hash) in hashes_buffer.iter_mut().enumerate() {
-                        *hash = hash32_with_seed(
+                        *hash = spark_compatible_murmur3_hash(
                             ((if array.value(i) { 1 } else { 0 }) as i32).to_le_bytes(),
                             *hash,
                         );
@@ -139,7 +220,7 @@ pub fn create_hashes<'a>(
                 } else {
                     for (i, hash) in hashes_buffer.iter_mut().enumerate() {
                         if !array.is_null(i) {
-                            *hash = hash32_with_seed(
+                            *hash = spark_compatible_murmur3_hash(
                                 ((if array.value(i) { 1 } else { 0 }) as i32)
                                     .to_le_bytes(),
                                 *hash,
@@ -305,8 +386,8 @@ mod tests {
         let mut hashes = vec![42; 5];
         create_hashes(&[i], &mut hashes).unwrap();
 
-        // generated with scala.util.hashing.MurmurHash3.bytesHash(x, 42) since Spark is tested against this as well
-        let expected = vec![0xe2dbd2e1, 0x36d9b514, 0x87fcd5c, 0x34c06aff, 0x2e37a0c4];
+        // generated with Murmur3Hash(Seq(Literal("")), 42).eval() since Spark is tested against this as well
+        let expected = vec![3286402344, 2486176763, 142593372, 885025535, 2395000894];
         assert_eq!(hashes, expected);
     }
 
