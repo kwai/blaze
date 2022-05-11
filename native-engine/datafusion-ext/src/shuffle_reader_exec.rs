@@ -117,12 +117,15 @@ impl ExecutionPlan for ShuffleReaderExec {
 
         let segments = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
             let env = JavaClasses::get_thread_jnienv();
-            let segments = jni_bridge_call_static_method!(
+            let segments_provider = jni_bridge_call_static_method!(
                 env,
                 JniBridge.getResource,
                 env.new_string(&self.native_shuffle_id)?
             )?
             .l()?;
+            let segments =
+                jni_bridge_call_method!(env, ScalaFunction0.apply, segments_provider)?
+                    .l()?;
             JniResult::Ok(env.new_global_ref(segments)?)
         }))?;
         let schema = self.schema.clone();

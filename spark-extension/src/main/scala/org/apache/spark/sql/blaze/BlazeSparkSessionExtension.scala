@@ -338,7 +338,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
       case exec: ShuffleQueryStageExec => needRenameColumns(exec.plan)
       case exec: BroadcastQueryStageExec => needRenameColumns(exec.plan)
       case exec: CustomShuffleReaderExec => needRenameColumns(exec.child)
-      case _: NativeParquetScanExec | _: ReusedExchangeExec => true
+      case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec => true
       case _ => false
     }
   }

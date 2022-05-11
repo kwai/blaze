@@ -613,7 +613,6 @@ impl TryFrom<&datafusion::scalar::ScalarValue> for protobuf::ScalarValue {
                 })
             }
             scalar::ScalarValue::List(value, datatype) => {
-                println!("Current datatype of list: {:?}", datatype);
                 match value {
                     Some(values) => {
                         if values.is_empty() {
@@ -630,7 +629,6 @@ impl TryFrom<&datafusion::scalar::ScalarValue> for protobuf::ScalarValue {
                                 DataType::List(field) => field.as_ref().data_type(),
                                 _ => todo!("Proper error handling"),
                             };
-                            println!("Current scalar type for list: {:?}", scalar_type);
                             let type_checked_values: Vec<protobuf::ScalarValue> = values
                                 .iter()
                                 .map(|scalar| match (scalar, scalar_type) {

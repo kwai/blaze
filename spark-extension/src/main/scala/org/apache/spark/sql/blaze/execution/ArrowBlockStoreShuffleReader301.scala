@@ -17,6 +17,10 @@
 
 package org.apache.spark.sql.blaze.execution
 
+import java.nio.channels.SeekableByteChannel
+
+import scala.Function.tupled
+
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
@@ -37,7 +41,7 @@ import org.apache.spark.util.CompletionIterator
 
 class ArrowBlockStoreShuffleReader301[K, C](
     handle: BaseShuffleHandle[K, _, C],
-    blocksByAddress: Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
+    blocksByAddress: () => Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
     context: TaskContext,
     readMetrics: ShuffleReadMetricsReporter,
     serializerManager: SerializerManager = SparkEnv.get.serializerManager,
@@ -52,33 +56,35 @@ class ArrowBlockStoreShuffleReader301[K, C](
 
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
-    val buffers = new ShuffleBlockFetcherIterator301(
-      context,
-      blockManager.blockStoreClient,
-      blockManager,
-      blocksByAddress,
-      // Note: we use getSizeAsMb when no suffix is provided for backwards compatibility
-      SparkEnv.get.conf.get(config.REDUCER_MAX_SIZE_IN_FLIGHT) * 1024 * 1024,
-      SparkEnv.get.conf.get(config.REDUCER_MAX_REQS_IN_FLIGHT),
-      SparkEnv.get.conf.get(config.REDUCER_MAX_BLOCKS_IN_FLIGHT_PER_ADDRESS),
-      SparkEnv.get.conf.get(config.MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM),
-      SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT),
-      SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT_MEMORY),
-      readMetrics,
-      fetchContinuousBlocksInBatch).toCompletionIterator
+    val provideBuffers = () =>
+      new ShuffleBlockFetcherIterator301(
+        context,
+        SparkEnv.get.blockManager.blockStoreClient,
+        SparkEnv.get.blockManager,
+        blocksByAddress(),
+        // Note: we use getSizeAsMb when no suffix is provided for backwards compatibility
+        SparkEnv.get.conf.get(config.REDUCER_MAX_SIZE_IN_FLIGHT) * 1024 * 1024,
+        SparkEnv.get.conf.get(config.REDUCER_MAX_REQS_IN_FLIGHT),
+        SparkEnv.get.conf.get(config.REDUCER_MAX_BLOCKS_IN_FLIGHT_PER_ADDRESS),
+        SparkEnv.get.conf.get(config.MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM),
+        SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT),
+        SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT_MEMORY),
+        readMetrics,
+        fetchContinuousBlocksInBatch).toCompletionIterator
 
     // Store buffers in JniBridge
-    JniBridge.resourcesMap.put(
-      ArrowShuffleExchangeExec301.getNativeShuffleId(context, handle.shuffleId),
-      new InterruptibleIterator(
-        context,
-        buffers.flatMap {
-          case (blockId, managedBuffer) =>
-            Converters.readManagedBufferToSegmentByteChannels(managedBuffer).toIterator
-        }))
+    val resourceId = ArrowShuffleExchangeExec301.getNativeShuffleId(context, handle.shuffleId)
+    val provideIpcReader = () => {
+      val ipcIterator = provideBuffers().flatMap {
+        case (_, managedBuffer) =>
+          Converters.readManagedBufferToSegmentByteChannels(managedBuffer).toIterator
+      }
+      new InterruptibleIterator(context, ipcIterator)
+    }
+    JniBridge.resourcesMap.put(resourceId, () => provideIpcReader())
 
     // Create a key/value iterator for each stream
-    val recordIter = buffers.flatMap {
+    val recordIter = provideBuffers().flatMap {
       case (blockId, managedBuffer) =>
         // Note: the asKeyValueIterator below wraps a key/value iterator inside of a
         // NextIterator. The NextIterator makes sure that close() is called on the

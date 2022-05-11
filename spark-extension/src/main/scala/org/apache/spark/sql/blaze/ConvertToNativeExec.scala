@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.blaze
 
+import java.nio.channels.SeekableByteChannel
 import java.util.UUID
 
 import org.apache.spark.rdd.RDD
@@ -31,6 +32,7 @@ import org.apache.spark.sql.blaze.execution.ArrowWriterIterator
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.InterruptibleIterator
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.ShuffleReaderExecNode
@@ -60,16 +62,17 @@ case class ConvertToNativeExec(override val child: SparkPlan)
       inputRDD.partitions,
       inputRDD.dependencies,
       (partition, context) => {
-        val inputRowIter = inputRDD.compute(partition, context)
-        val arrowWriterIterator =
-          new ArrowWriterIterator(inputRowIter, schema, timeZoneId, context)
-
         val resourceId = "ConvertToNativeExec" +
           s":stage=${context.stageId()}" +
           s":partition=${context.partitionId()}" +
           s":taskAttempt=${context.taskAttemptId()}" +
           s":uuid=${UUID.randomUUID().toString}"
-        JniBridge.resourcesMap.put(resourceId, arrowWriterIterator)
+        val provideIpcIterator = () => {
+          val inputRowIter = inputRDD.compute(partition, context)
+          val ipcIterator = new ArrowWriterIterator(inputRowIter, schema, timeZoneId, context)
+          new InterruptibleIterator(context, ipcIterator)
+        }
+        JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
 
         PhysicalPlanNode
           .newBuilder()

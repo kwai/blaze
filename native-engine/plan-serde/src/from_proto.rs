@@ -68,6 +68,7 @@ use datafusion::physical_plan::{
     AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
 };
 use datafusion::scalar::ScalarValue;
+use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::global_object_store_registry;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
@@ -608,6 +609,13 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .map(|i| i.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Arc::new(UnionExec::new(inputs)))
+            }
+            PhysicalPlanType::EmptyPartitions(empty_partitions) => {
+                let schema = Arc::new(convert_required!(empty_partitions.schema)?);
+                Ok(Arc::new(EmptyPartitionsExec::new(
+                    schema,
+                    empty_partitions.num_partitions as usize,
+                )))
             }
             PhysicalPlanType::RenameColumns(rename_columns) => {
                 let input: Arc<dyn ExecutionPlan> =
