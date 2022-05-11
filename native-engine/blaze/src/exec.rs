@@ -21,7 +21,7 @@ use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
 use plan_serde::protobuf::TaskDefinition;
 
-use crate::{session_ctx, setup_env_logger, tokio_runtime, BlazeIter};
+use crate::{session_ctx, setup_env_logger, BlazeIter};
 
 #[allow(non_snake_case)]
 #[no_mangle]
@@ -150,7 +150,7 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_deallocI
 fn blaze_call_native(
     env: &JNIEnv,
     task_definition: JObject,
-    pool_size: i64,
+    _pool_size: i64,
     batch_size: i64,
     native_memory: i64,
     memory_fraction: f64,
@@ -186,52 +186,49 @@ fn blaze_call_native(
     let batch_size = batch_size as usize;
     assert!(batch_size > 0);
 
-    tokio_runtime(pool_size as usize).block_on(async move {
-        let session_ctx =
-            session_ctx(native_memory as usize, memory_fraction, batch_size, dirs);
-        let task_ctx = session_ctx.task_ctx();
+    let session_ctx =
+        session_ctx(native_memory as usize, memory_fraction, batch_size, dirs);
+    let task_ctx = session_ctx.task_ctx();
 
-        // execute
-        let result_stream = execution_plan
-            .execute(task_id.partition_id as usize, task_ctx)
-            .await?;
+    // execute
+    let result_stream =
+        execution_plan.execute(task_id.partition_id as usize, task_ctx)?;
 
-        // rename all fields to avoid fields with duplicated names
-        // we are safe to do this because the cunsumer does not rely on these names
-        let mut num_fields = 0;
-        let renamed_schema: Arc<Schema> = Arc::new(Schema::new(
-            execution_plan
-                .schema()
-                .fields()
-                .iter()
-                .map(|field| {
-                    let unnamed_field = Field::new(
-                        &format!("_c{}", num_fields),
-                        field.data_type().clone(),
-                        field.is_nullable(),
-                    );
-                    num_fields += 1;
-                    unnamed_field
-                })
-                .collect(),
-        ));
+    // rename all fields to avoid fields with duplicated names
+    // we are safe to do this because the cunsumer does not rely on these names
+    let mut num_fields = 0;
+    let renamed_schema: Arc<Schema> = Arc::new(Schema::new(
+        execution_plan
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| {
+                let unnamed_field = Field::new(
+                    &format!("_c{}", num_fields),
+                    field.data_type().clone(),
+                    field.is_nullable(),
+                );
+                num_fields += 1;
+                unnamed_field
+            })
+            .collect(),
+    ));
 
-        // safety - manually allocated memory will be released when stream is exhausted
-        unsafe {
-            let blaze_iter_ptr: *mut BlazeIter =
-                std::alloc::alloc(Layout::new::<BlazeIter>()) as *mut BlazeIter;
+    // safety - manually allocated memory will be released when stream is exhausted
+    unsafe {
+        let blaze_iter_ptr: *mut BlazeIter =
+            std::alloc::alloc(Layout::new::<BlazeIter>()) as *mut BlazeIter;
 
-            std::ptr::write(
-                blaze_iter_ptr,
-                BlazeIter {
-                    stream: result_stream,
-                    execution_plan,
-                    renamed_schema,
-                },
-            );
-            Ok(blaze_iter_ptr as i64)
-        }
-    })
+        std::ptr::write(
+            blaze_iter_ptr,
+            BlazeIter {
+                stream: result_stream,
+                execution_plan,
+                renamed_schema,
+            },
+        );
+        Ok(blaze_iter_ptr as i64)
+    }
 }
 
 fn is_jvm_interrupted(env: &JNIEnv) -> jni::errors::Result<bool> {

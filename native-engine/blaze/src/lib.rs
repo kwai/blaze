@@ -1,6 +1,5 @@
 use datafusion::arrow::datatypes::Schema;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use datafusion::execution::disk_manager::DiskManagerConfig;
@@ -9,7 +8,6 @@ use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{ExecutionPlan, SendableRecordBatchStream};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use once_cell::sync::OnceCell;
-use tokio::runtime::Runtime;
 
 mod exec;
 mod metrics;
@@ -26,21 +24,6 @@ pub struct BlazeIter {
     pub stream: SendableRecordBatchStream,
     pub execution_plan: Arc<dyn ExecutionPlan>,
     pub renamed_schema: Arc<Schema>,
-}
-
-pub fn tokio_runtime(thread_num: usize) -> &'static Runtime {
-    static TOKIO_RUNTIME_INSTANCE: OnceCell<Runtime> = OnceCell::new();
-    TOKIO_RUNTIME_INSTANCE.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(thread_num)
-            .thread_name_fn(|| {
-                static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
-                let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
-                format!("Blaze-native-{}", id)
-            })
-            .build()
-            .unwrap()
-    })
 }
 
 pub fn session_ctx(
