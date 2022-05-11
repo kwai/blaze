@@ -37,11 +37,11 @@ use datafusion::logical_plan;
 use datafusion::logical_plan::window_frames::WindowFrame;
 use datafusion::logical_plan::*;
 use datafusion::physical_plan::aggregates::create_aggregate_expr;
+use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::file_format::{
     AvroExec, CsvExec, FileScanConfig, ParquetExec,
 };
-use datafusion::physical_plan::hash_aggregate::{AggregateMode, HashAggregateExec};
 use datafusion::physical_plan::hash_join::PartitionMode;
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
 use datafusion::physical_plan::union::UnionExec;
@@ -418,14 +418,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 )?)
                             }
                             _ => Err(PlanSerDeError::General(
-                                "Invalid aggregate  expression for HashAggregateExec"
+                                "Invalid aggregate  expression for AggregateExec"
                                     .to_string(),
                             )),
                         }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                Ok(Arc::new(HashAggregateExec::try_new(
+                Ok(Arc::new(AggregateExec::try_new(
                     agg_mode,
                     group,
                     physical_aggr_expr,

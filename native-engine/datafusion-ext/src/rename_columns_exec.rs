@@ -114,12 +114,12 @@ impl ExecutionPlan for RenameColumnsExec {
         )?))
     }
 
-    async fn execute(
+    fn execute(
         &self,
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, context).await?;
+        let input = self.input.execute(partition, context)?;
         let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
         Ok(Box::pin(RenameColumnsStream::new(
             input,

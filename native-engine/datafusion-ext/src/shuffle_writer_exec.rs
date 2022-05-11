@@ -37,6 +37,7 @@ use datafusion::arrow::datatypes::DataType;
 
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::TimeUnit;
+use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::FileWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
@@ -53,13 +54,14 @@ use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::metrics::CompositeMetricsSet;
 use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
-use futures::StreamExt;
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
 
 use log::debug;
 use tempfile::NamedTempFile;
@@ -581,24 +583,30 @@ impl ExecutionPlan for ShuffleWriterExec {
         }
     }
 
-    async fn execute(
+    fn execute(
         &self,
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, context.clone()).await?;
+        let input = self.input.execute(partition, context.clone())?;
         let metrics = self.all_metrics.new_intermediate_baseline(partition);
 
-        external_shuffle(
-            input,
-            partition,
-            self.output_data_file.clone(),
-            self.output_index_file.clone(),
-            self.partitioning.clone(),
-            metrics,
-            context,
-        )
-        .await
+        Ok(Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            futures::stream::once(
+                external_shuffle(
+                    input,
+                    partition,
+                    self.output_data_file.clone(),
+                    self.output_index_file.clone(),
+                    self.partitioning.clone(),
+                    metrics,
+                    context,
+                )
+                .map_err(|e| ArrowError::ExternalError(Box::new(e))),
+            )
+            .try_flatten(),
+        )))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

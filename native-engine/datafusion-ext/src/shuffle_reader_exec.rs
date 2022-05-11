@@ -106,7 +106,7 @@ impl ExecutionPlan for ShuffleReaderExec {
         ))
     }
 
-    async fn execute(
+    fn execute(
         &self,
         _partition: usize,
         _context: Arc<TaskContext>,
