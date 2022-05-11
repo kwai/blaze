@@ -409,9 +409,26 @@ private[spark] final class ShuffleBlockFetcherIterator301(
     }
   }
 
-  def toCompletionIterator: Iterator[(BlockId, ManagedBuffer)] = {
-    CompletionIterator[(BlockId, ManagedBuffer), this.type](
-      this,
+  def toAutoReleaseCompletionIterator: Iterator[(BlockId, ManagedBuffer)] = {
+    val inner = this
+
+    CompletionIterator[(BlockId, ManagedBuffer), Iterator[(BlockId, ManagedBuffer)]](
+      new Iterator[(BlockId, ManagedBuffer)] {
+        private var currentManagerBuffer: ManagedBuffer = _
+
+        override def hasNext: Boolean = inner.hasNext
+
+        override def next(): (BlockId, ManagedBuffer) = {
+          // release previous buffer before reading next one
+          if (currentManagerBuffer != null) {
+            currentManagerBuffer.release()
+          }
+
+          val next = inner.next()
+          currentManagerBuffer = next._2
+          next
+        }
+      },
       onCompleteCallback.onComplete(context))
   }
 

@@ -70,7 +70,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
         SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT),
         SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT_MEMORY),
         readMetrics,
-        fetchContinuousBlocksInBatch).toCompletionIterator
+        fetchContinuousBlocksInBatch).toAutoReleaseCompletionIterator
 
     // Store buffers in JniBridge
     val resourceId = ArrowShuffleExchangeExec301.getNativeShuffleId(context, handle.shuffleId)
