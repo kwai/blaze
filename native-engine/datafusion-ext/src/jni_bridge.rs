@@ -129,6 +129,28 @@ macro_rules! jni_bridge_call_static_method {
     }}
 }
 
+#[macro_export]
+macro_rules! weak_global_ref {
+    ($env:expr, $obj:expr) => {{
+        let jnienv = &*(*$env.get_native_interface());
+        if let Some(new_weak_global_ref) = &jnienv.NewWeakGlobalRef {
+            let weak_global =
+                new_weak_global_ref($env.get_native_interface(), $obj.into_inner());
+            if !weak_global.is_null() {
+                jni::errors::Result::Ok(JObject::from(weak_global))
+            } else {
+                jni::errors::Result::Err(jni::errors::Error::NullPtr(
+                    "NewWeakGlobalRef() returns null",
+                ))
+            }
+        } else {
+            jni::errors::Result::Err(jni::errors::Error::JNIEnvMethodNotFound(
+                "NewWeakGlobalRef",
+            ))
+        }
+    }};
+}
+
 #[allow(non_snake_case)]
 pub struct JavaClasses<'a> {
     pub jvm: JavaVM,
@@ -138,12 +160,14 @@ pub struct JavaClasses<'a> {
     pub cClass: JavaClass<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
     pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
+    pub cJavaLong: JavaLong<'a>,
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
     pub cJavaFile: JavaFile<'a>,
     pub cJavaConsumer: JavaConsumer<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
+    pub cScalaPromise: ScalaPromise<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
     pub cScalaFunction0: ScalaFunction0<'a>,
 
@@ -187,12 +211,14 @@ impl JavaClasses<'static> {
             cClass: JavaClass::new(env)?,
             cJavaRuntimeException: JavaRuntimeException::new(env)?,
             cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
+            cJavaLong: JavaLong::new(env)?,
             cJavaList: JavaList::new(env)?,
             cJavaMap: JavaMap::new(env)?,
             cJavaFile: JavaFile::new(env)?,
             cJavaConsumer: JavaConsumer::new(env)?,
 
             cScalaIterator: ScalaIterator::new(env)?,
+            cScalaPromise: ScalaPromise::new(env)?,
             cScalaTuple2: ScalaTuple2::new(env)?,
             cScalaFunction0: ScalaFunction0::new(env)?,
 
@@ -404,6 +430,23 @@ impl<'a> JavaNioSeekableByteChannel<'a> {
 }
 
 #[allow(non_snake_case)]
+pub struct JavaLong<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID<'a>,
+}
+impl<'a> JavaLong<'a> {
+    pub const SIG_TYPE: &'static str = "java/lang/Long";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaLong<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaLong {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(J)V")?,
+        })
+    }
+}
+
+#[allow(non_snake_case)]
 pub struct JavaList<'a> {
     pub class: JClass<'a>,
     pub method_size: JMethodID<'a>,
@@ -518,6 +561,45 @@ impl<'a> ScalaIterator<'a> {
             method_hasNext_ret: JavaType::Primitive(Primitive::Boolean),
             method_next: env.get_method_id(class, "next", "()Ljava/lang/Object;")?,
             method_next_ret: JavaType::Object("java/lang/Object".to_owned()),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct ScalaPromise<'a> {
+    pub class: JClass<'a>,
+    pub method_apply: JStaticMethodID<'a>,
+    pub method_apply_ret: JavaType,
+    pub method_success: JMethodID<'a>,
+    pub method_success_ret: JavaType,
+    pub method_failure: JMethodID<'a>,
+    pub method_failure_ret: JavaType,
+}
+impl<'a> ScalaPromise<'a> {
+    pub const SIG_TYPE: &'static str = "scala/concurrent/Promise";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaPromise<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(ScalaPromise {
+            class,
+            method_apply: env.get_static_method_id(
+                class,
+                "apply",
+                "()Lscala/concurrent/Promise;",
+            )?,
+            method_apply_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
+            method_success: env.get_method_id(
+                class,
+                "success",
+                "(Ljava/lang/Object;)Lscala/concurrent/Promise;",
+            )?,
+            method_success_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
+            method_failure: env.get_method_id(
+                class,
+                "failure",
+                "(Ljava/lang/Throwable;)Lscala/concurrent/Promise;",
+            )?,
+            method_failure_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
         })
     }
 }

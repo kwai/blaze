@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.spark.deploy.SparkHadoopUtil;
+import scala.concurrent.Promise;
 
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
@@ -35,13 +36,12 @@ public class JniBridge {
 
   public static native long callNative(
       byte[] taskDefinition,
-      long tokioPoolSize,
       long batchSize,
       long nativeMemory,
       double memoryFraction,
       String tmpDirs);
 
-  public static native int loadNext(long iter_ptr, long schema_ptr, long array_ptr);
+  public static native Promise<Long> loadNext(long iter_ptr, long schema_ptr, long array_ptr);
 
   public static native int deallocIter(long iter_ptr);
 

@@ -51,7 +51,6 @@ use jni::objects::{GlobalRef, JObject};
 use crate::jni_bridge::JavaClasses;
 use crate::jni_bridge_call_method;
 use crate::jni_bridge_call_static_method;
-use crate::util::Util;
 
 #[derive(Debug, Clone)]
 pub struct ShuffleReaderExec {
@@ -115,7 +114,7 @@ impl ExecutionPlan for ShuffleReaderExec {
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
-        let segments = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
+        let segments = (|| {
             let env = JavaClasses::get_thread_jnienv();
             let segments_provider = jni_bridge_call_static_method!(
                 env,
@@ -127,7 +126,11 @@ impl ExecutionPlan for ShuffleReaderExec {
                 jni_bridge_call_method!(env, ScalaFunction0.apply, segments_provider)?
                     .l()?;
             JniResult::Ok(env.new_global_ref(segments)?)
-        }))?;
+        })()
+        .map_err(|e| {
+            DataFusionError::Execution(format!("shuffle reader execute error: {:?}", e))
+        })?;
+
         let schema = self.schema.clone();
         Ok(Box::pin(ShuffleReaderStream::new(
             schema,
@@ -176,7 +179,7 @@ impl ShuffleReaderStream {
     }
 
     fn next_segment(&mut self) -> Result<bool> {
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
+        (|| {
             let env = JavaClasses::get_thread_jnienv();
 
             let has_next = jni_bridge_call_method!(
@@ -196,7 +199,13 @@ impl ShuffleReaderStream {
                     .l()?;
             self.current_segment = Some(env.new_global_ref(next_segment)?);
             JniResult::Ok(true)
-        }))?;
+        })()
+        .map_err(|e| {
+            DataFusionError::Execution(format!(
+                "shuffle reader next segment error: {:?}",
+                e
+            ))
+        })?;
 
         if let Some(current_segment) = &self.current_segment {
             self.arrow_file_reader = Some(FileReader::try_new(

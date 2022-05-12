@@ -1,4 +1,3 @@
-use datafusion::arrow::datatypes::Schema;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,6 +7,7 @@ use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{ExecutionPlan, SendableRecordBatchStream};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use once_cell::sync::OnceCell;
+use tokio::runtime::Runtime;
 
 mod exec;
 mod metrics;
@@ -23,7 +23,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 pub struct BlazeIter {
     pub stream: SendableRecordBatchStream,
     pub execution_plan: Arc<dyn ExecutionPlan>,
-    pub renamed_schema: Arc<Schema>,
+    pub runtime: Arc<Runtime>,
 }
 
 pub fn session_ctx(

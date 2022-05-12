@@ -145,11 +145,9 @@ object NativeSupports extends Logging {
       .getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024
     val memoryFraction = SparkEnv.get.conf.getDouble("spark.blaze.memoryFraction", 0.75)
     val batchSize = SparkEnv.get.conf.getLong("spark.blaze.batchSize", 16384)
-    val tokioPoolSize = SparkEnv.get.conf.getLong("spark.blaze.tokioPoolSize", 10)
     val tmpDirs = SparkEnv.get.blockManager.diskBlockManager.localDirsString.mkString(",")
     JniBridge.callNative(
       taskDefinition.toByteArray,
-      tokioPoolSize,
       batchSize,
       nativeMemory,
       memoryFraction,

@@ -11,7 +11,6 @@ pub mod jni_bridge;
 pub mod rename_columns_exec;
 pub mod shuffle_reader_exec;
 pub mod shuffle_writer_exec;
-pub mod util;
 
 mod batch_buffer;
 mod spark_hash;
