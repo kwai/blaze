@@ -51,51 +51,6 @@ jobs:
           name: plugin
           path: target/blaze-engine-1.0-SNAPSHOT.jar
 
-  build_blaze_lib:
-    name: Build libblaze
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [amd64]
-        rust: [nightly]
-    container:
-      image: ${{ matrix.arch }}/rust
-      env:
-        # Disable full debug symbol generation to speed up CI build and keep memory down
-        # "1" means line tables only, which is useful for panic tracebacks.
-        RUSTFLAGS: "-C debuginfo=1"
-    steps:
-      - uses: actions/checkout@v3
-      - name: Cache Cargo
-        uses: actions/cache@v2
-        with:
-          # these represent dependencies downloaded by cargo
-          # and thus do not depend on the OS, arch nor rust version.
-          path: /github/home/.cargo
-          key: cargo-cache-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v2
-        with:
-          # these represent compiled steps of both dependencies and arrow
-          # and thus are specific for a particular OS, arch and rust version.
-          path: /github/home/target
-          key: ${{ runner.os }}-${{ matrix.arch }}-target-cache-${{ matrix.rust }}-
-      - name: Setup Rust toolchain
-        run: |
-          rustup toolchain install ${{ matrix.rust }}
-          rustup default ${{ matrix.rust }}
-          rustup component add rustfmt
-      - name: Build workspace in debug mode
-        run: |
-          cargo build
-        env:
-          CARGO_HOME: "/github/home/.cargo"
-      - name: Upload blaze.so
-        uses: actions/upload-artifact@v3
-        with:
-          name: libblaze
-          path: target/debug/libblaze.so
-
   setup-spark:
     name: Setup Spark Env
     runs-on: ubuntu-latest

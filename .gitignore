@@ -43,6 +43,7 @@ docker_cache
 
 # Rust
 target/
+lib/
 
 # Protoc generated src
 spark-extension/src/generated-sources
