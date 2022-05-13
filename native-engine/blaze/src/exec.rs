@@ -2,15 +2,17 @@ use std::alloc::Layout;
 use std::error::Error;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use datafusion::error::DataFusionError;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 
-use jni::objects::JObject;
 use jni::objects::{JClass, JString};
+use jni::objects::{JObject, JThrowable};
 
 use jni::JNIEnv;
 use log::info;
@@ -137,108 +139,56 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext
     schema_ptr: i64,
     array_ptr: i64,
 ) -> JObject<'env> {
-    unsafe fn failure(promise_ptr: isize, msg: &str) {
-        unsafe fn try_failure(promise_ptr: isize, msg: &str) -> jni::errors::Result<()> {
-            let env = JavaClasses::get_thread_jnienv();
-            let promise = std::mem::transmute::<_, JObject>(promise_ptr);
-            let msg = env.new_string(msg).unwrap();
-            let cause = if env.exception_check()? {
-                let throwable = env.exception_occurred()?.into();
-                env.exception_clear().unwrap();
-                throwable
-            } else {
-                JObject::null()
-            };
-            let e = jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?;
-            jni_bridge_call_method!(env, ScalaPromise.failure, promise, e)?;
-            Ok(())
-        }
-
-        if let Err(err) = std::panic::catch_unwind(|| {
-            try_failure(promise_ptr, msg).unwrap();
-        }) {
-            let err = panic_message::panic_message(&err);
-            let env = JavaClasses::get_thread_jnienv();
-            env.fatal_error(format!("calling Promise.failure error: {:?}", err));
-        }
-    }
-
-    unsafe fn success(promise_ptr: isize, ret: i64) {
-        unsafe fn try_success(promise_ptr: isize, ret: i64) -> jni::errors::Result<()> {
-            let env = JavaClasses::get_thread_jnienv();
-            let promise = std::mem::transmute::<_, JObject>(promise_ptr);
-            jni_bridge_call_method!(
-                env,
-                ScalaPromise.success,
-                promise,
-                jni_bridge_new_object!(env, JavaLong, ret)?
-            )?;
-            Ok(())
-        }
-        if let Err(err) = try_success(promise_ptr, ret) {
-            failure(
-                promise_ptr,
-                &format!("calling Promise.success error: {:?}", err),
-            );
-        }
-    }
     let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
     let env = JavaClasses::get_thread_jnienv();
 
     // create a weak global retPromise
-    let ret_promise_ptr = std::mem::transmute::<_, isize>({
-        let local = jni_bridge_call_static_method!(env, ScalaPromise.apply)
-            .unwrap()
-            .l()
-            .unwrap();
-        match weak_global_ref!(env, local) {
-            Ok(weak_global_ref) => weak_global_ref,
-            Err(err) => {
-                throw_runtime_exception(
-                    &format!("create weak global ref for promise error: {:?}", err),
-                    JObject::null(),
-                )
-                .unwrap();
-                return JObject::null();
-            }
-        }
-    });
+    let ret_promise_ptr = std::mem::transmute::<_, isize>(
+        jni_weak_global_ref!(
+            env,
+            jni_bridge_call_static_method!(
+                env,
+                ScalaPromise.apply -> JObject
+            )
+            .unwrap_or_fatal()
+        )
+        .unwrap_or_fatal(),
+    );
 
     // spawn a thread to poll next batch
     blaze_iter.runtime.clone().spawn(async move {
-        loop {
+        AssertUnwindSafe(async move {
             match blaze_iter.stream.next().await {
                 Some(Ok(batch)) => {
                     let num_rows = batch.num_rows();
-                    if num_rows == 0 {
-                        continue;
-                    }
-
                     let array: StructArray = batch.into();
                     let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                     let out_array = array_ptr as *mut FFI_ArrowArray;
 
-                    if let Err(err) =
-                        export_array_into_raw(Arc::new(array), out_array, out_schema)
-                    {
-                        break failure(
-                            ret_promise_ptr,
-                            &format!("export_array_into_raw error: {:?}", err),
-                        );
-                    }
-                    break success(ret_promise_ptr, num_rows as i64);
+                    export_array_into_raw(Arc::new(array), out_array, out_schema)
+                        .expect("export_array_into_raw error");
+                    promise_success(ret_promise_ptr, num_rows as i64);
                 }
                 Some(Err(e)) => {
-                    break failure(
+                    promise_failure(
                         ret_promise_ptr,
                         &format!("stream.next() error: {:?}", e),
                     );
                 }
                 None => {
-                    break success(ret_promise_ptr, -1);
+                    promise_success(ret_promise_ptr, -1);
                 }
             }
-        }
+        })
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|err| {
+            let err = panic_message::panic_message(&err);
+            promise_failure(
+                ret_promise_ptr,
+                &format!("blaze loadNext() panics: {}", err),
+            );
+        })
     });
     std::mem::transmute(ret_promise_ptr)
 }
@@ -253,13 +203,61 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_deallocI
     std::alloc::dealloc(iter_ptr as *mut u8, Layout::new::<BlazeIter>());
 }
 
-fn is_jvm_interrupted(env: &JNIEnv) -> jni::errors::Result<bool> {
+unsafe fn promise_failure(promise_ptr: isize, msg: &str) {
+    unsafe fn try_failure(
+        promise_ptr: isize,
+        msg: &str,
+    ) -> datafusion::error::Result<()> {
+        let env = JavaClasses::get_thread_jnienv();
+        let promise = std::mem::transmute::<_, JObject>(promise_ptr);
+        let msg = jni_map_error!(env.new_string(msg))?;
+        let cause = if env.exception_check().unwrap_or(false) {
+            let throwable = env
+                .exception_occurred()
+                .unwrap_or(JThrowable::from(JObject::null()))
+                .into();
+            let _ = env.exception_clear();
+            throwable
+        } else {
+            JObject::null()
+        };
+        let e = jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?;
+        jni_bridge_call_method!(env, ScalaPromise.failure -> JObject, promise, e)?;
+        Ok(())
+    }
+    try_failure(promise_ptr, msg).unwrap_or_fatal();
+}
+
+unsafe fn promise_success(promise_ptr: isize, ret: i64) {
+    unsafe fn try_success(promise_ptr: isize, ret: i64) -> datafusion::error::Result<()> {
+        let env = JavaClasses::get_thread_jnienv();
+        let promise = std::mem::transmute::<_, JObject>(promise_ptr);
+        jni_bridge_call_method!(
+            env,
+            ScalaPromise.success -> JObject,
+            promise,
+            jni_bridge_new_object!(env, JavaLong, ret)?
+        )?;
+        Ok(())
+    }
+    try_success(promise_ptr, ret).unwrap_or_else(|err: DataFusionError| {
+        promise_failure(
+            promise_ptr,
+            &format!("calling Promise.success error: {:?}", err),
+        );
+    });
+}
+
+fn is_jvm_interrupted(env: &JNIEnv) -> datafusion::error::Result<bool> {
     let interrupted_exception_class = "java.lang.InterruptedException";
-    if env.exception_check()? {
-        let e = env.exception_occurred()?;
-        let class = env.get_object_class(e)?;
-        let classname = jni_bridge_call_method!(env, Class.getName, class)?.l()?;
-        let classname = env.get_string(classname.into())?;
+    if env.exception_check().unwrap_or(false) {
+        let e: JObject = env
+            .exception_occurred()
+            .unwrap_or(JThrowable::from(JObject::null()))
+            .into();
+        let class = jni_map_error!(env.get_object_class(e))?;
+        let classname = jni_bridge_call_method!(env, Class.getName -> JObject, class)?;
+        let classname = jni_map_error!(env.get_string(classname.into()))?;
         if classname.to_string_lossy().as_ref() == interrupted_exception_class {
             return Ok(true);
         }
@@ -267,13 +265,13 @@ fn is_jvm_interrupted(env: &JNIEnv) -> jni::errors::Result<bool> {
     Ok(false)
 }
 
-fn throw_runtime_exception(msg: &str, cause: JObject) -> jni::errors::Result<()> {
+fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Result<()> {
     let env = JavaClasses::get_thread_jnienv();
-    let msg = env.new_string(msg)?;
+    let msg = jni_map_error!(env.new_string(msg))?;
     let e = jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?;
-    let _throw = jni_bridge_call_static_method_no_check_java_exception!(
+    let _throw = jni_bridge_call_static_method!(
         env,
-        JniBridge.raiseThrowable,
+        JniBridge.raiseThrowable -> (),
         e
     );
     Ok(())

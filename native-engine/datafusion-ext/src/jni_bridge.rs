@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use crate::ResultExt;
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -13,141 +14,119 @@ use jni::JNIEnv;
 use jni::JavaVM;
 
 #[macro_export]
-macro_rules! jni_bridge_new_object_impl {
-    ($env:expr, $clsname:ident $(, $args:expr)*) => {{
-        $env.new_object_unchecked(
-            paste::paste! {JavaClasses::get().[<c $clsname>].class},
-            paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
-            &[$(jni::objects::JValue::from($args),)*],
-        )
+macro_rules! jni_map_error {
+    ($result:expr) => {{
+        match $result {
+            Ok(result) => datafusion::error::Result::Ok(result),
+            Err(jni::errors::Error::JavaException) => {
+                let env = $crate::jni_bridge::JavaClasses::get_thread_jnienv();
+                let _ = env.exception_describe();
+                Err(datafusion::error::DataFusionError::External(
+                    format!("Java exception thrown at {}:{}", file!(), line!()).into(),
+                ))
+            }
+            Err(err) => Err(datafusion::error::DataFusionError::External(
+                format!(
+                    "Unknown JNI error occurred at {}:{}: {:?}",
+                    file!(),
+                    line!(),
+                    err
+                )
+                .into(),
+            )),
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! jvalues {
+    ($($args:expr,)* $(,)?) => {{
+        &[$(jni::objects::JValue::from($args)),*] as &[jni::objects::JValue]
     }}
 }
 
 #[macro_export]
 macro_rules! jni_bridge_new_object {
     ($env:expr, $clsname:ident $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_new_object!({}, {:?})",
-        stringify!($clsname),
-        &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        match $crate::jni_bridge_new_object_impl!($env, $clsname $(, $args)*) {
-            Err(jni::errors::Error::JavaException) => {
-                let _describe = $env.exception_describe();
-                panic!("Exception thrown at jni_bridge_new_object!({}, {:?})",
-                    stringify!($clsname),
-                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-            }
-            result => result
-        }
-    }}
-}
-
-#[macro_export]
-macro_rules! jni_bridge_call_method_impl {
-    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
-        $env.call_method_unchecked(
-            $obj,
-            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
-            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-            &[$(jni::objects::JValue::from($args),)*],
-        )
-    }}
-}
-
-#[macro_export]
-macro_rules! jni_bridge_call_method_no_check_java_exception {
-    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?}, {:?})",
+        log::trace!(
+            "jni_bridge_new_object!({}, {:?})",
             stringify!($clsname),
-            stringify!($method),
-            $obj,
-            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*)
+            $crate::jvalues!($($args,)*));
+        $crate::jni_map_error!(
+            $env.new_object_unchecked(
+                paste::paste! {JavaClasses::get().[<c $clsname>].class},
+                paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
+                $crate::jvalues!($($args,)*))
+        )
     }}
 }
 
 #[macro_export]
 macro_rules! jni_bridge_call_method {
-    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
+    ($env:expr, $clsname:ident.$method:ident -> $ret:ty, $obj:expr $(, $args:expr)*) => {{
         log::trace!("jni_bridge_call_method!({}.{}, {:?}, {:?})",
             stringify!($clsname),
             stringify!($method),
             $obj,
-            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        match $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*) {
-            Err(jni::errors::Error::JavaException) => {
-                let _describe = $env.exception_describe();
-                panic!("Exception thrown at jni_bridge_call_method!({}.{}, {:?})",
-                    stringify!($clsname),
-                    stringify!($method),
-                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-            }
-            result => result
-        }
-    }}
-}
-
-#[macro_export]
-macro_rules! jni_bridge_call_static_method_impl {
-    ($env:expr, $clsname:ident.$method:ident $(, $args:expr)*) => {{
-        $env.call_static_method_unchecked(
-            paste::paste! {JavaClasses::get().[<c $clsname>].class},
-            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
-            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-            &[$(jni::objects::JValue::from($args),)*],
-        )
-    }}
-}
-
-#[macro_export]
-macro_rules! jni_bridge_call_static_method_no_check_java_exception {
-    ($env:expr, $clsname:ident.$method:ident $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_call_static_method_no_check_java_exception!({}.{}, {:?})",
-            stringify!($clsname),
-            stringify!($method),
-            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        $crate::jni_bridge_call_static_method_impl!($env, $clsname.$method $(, $args)*)
+            $crate::jvalues!($($args,)*));
+        $crate::jni_map_error!(
+            $env.call_method_unchecked(
+                $obj,
+                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
+                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
+                $crate::jvalues!($($args,)*)
+            )
+        ).and_then(|result| $crate::jni_map_error!(<$ret>::try_from(result)))
     }}
 }
 
 #[macro_export]
 macro_rules! jni_bridge_call_static_method {
-    ($env:expr, $clsname:ident . $method:ident $(, $args:expr)*) => {{
-        log::trace!("jni_bridge_call_static_method!({}.{}, {:?})",
+    ($env:expr, $clsname:ident . $method:ident -> $ret:ty $(,$args:expr)* $(,)?) => {{
+        log::trace!(
+            "jni_bridge_call_static_method!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
-            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-        match $crate::jni_bridge_call_static_method_impl!($env, $clsname.$method $(, $args)*) {
-            Err(jni::errors::Error::JavaException) => {
-                let _describe = $env.exception_describe();
-                panic!("Exception thrown at jni_bridge_call_static_method!({}.{}, {:?})",
-                    stringify!($clsname),
-                    stringify!($method),
-                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
-            }
-            result => result
-        }
+            $crate::jvalues!($($args,)*));
+        $crate::jni_map_error!(
+            $env.call_static_method_unchecked(
+                paste::paste! {JavaClasses::get().[<c $clsname>].class},
+                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
+                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
+                $crate::jvalues!($($args,)*)
+            )
+        ).and_then(|result| $crate::jni_map_error!(<$ret>::try_from(result)))
     }}
 }
 
 #[macro_export]
-macro_rules! weak_global_ref {
+macro_rules! jni_weak_global_ref {
     ($env:expr, $obj:expr) => {{
-        let jnienv = &*(*$env.get_native_interface());
-        if let Some(new_weak_global_ref) = &jnienv.NewWeakGlobalRef {
-            let weak_global =
-                new_weak_global_ref($env.get_native_interface(), $obj.into_inner());
-            if !weak_global.is_null() {
-                jni::errors::Result::Ok(JObject::from(weak_global))
+        $crate::jni_map_error!({
+            let jnienv = &*(*$env.get_native_interface());
+            if let Some(new_weak_global_ref) = &jnienv.NewWeakGlobalRef {
+                let weak_global =
+                    new_weak_global_ref($env.get_native_interface(), $obj.into_inner());
+                if !weak_global.is_null() {
+                    jni::errors::Result::Ok(JObject::from(weak_global))
+                } else {
+                    jni::errors::Result::Err(jni::errors::Error::NullPtr(
+                        "NewWeakGlobalRef() returns null",
+                    ))
+                }
             } else {
-                jni::errors::Result::Err(jni::errors::Error::NullPtr(
-                    "NewWeakGlobalRef() returns null",
+                jni::errors::Result::Err(jni::errors::Error::JNIEnvMethodNotFound(
+                    "NewWeakGlobalRef",
                 ))
             }
-        } else {
-            jni::errors::Result::Err(jni::errors::Error::JNIEnvMethodNotFound(
-                "NewWeakGlobalRef",
-            ))
-        }
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! jni_global_ref {
+    ($env:expr, $obj:expr) => {{
+        $crate::jni_map_error!($env.new_global_ref($obj))
     }};
 }
 
@@ -273,14 +252,15 @@ impl JavaClasses<'static> {
         if let Ok(env) = jvm.get_env() {
             return env;
         }
-
         let env = jvm.attach_current_thread_permanently().unwrap();
+
         jni_bridge_call_static_method!(
             env,
-            JniBridge.setContextClassLoader,
+            JniBridge.setContextClassLoader -> (),
             JavaClasses::get().classloader
         )
-        .unwrap();
+        .unwrap_or_fatal();
+
         env
     }
 }
