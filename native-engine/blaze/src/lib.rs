@@ -1,11 +1,12 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc};
 
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{ExecutionPlan, SendableRecordBatchStream};
 use datafusion::prelude::{SessionConfig, SessionContext};
+
 use once_cell::sync::OnceCell;
 use tokio::runtime::Runtime;
 
@@ -24,6 +25,8 @@ pub struct BlazeIter {
     pub stream: SendableRecordBatchStream,
     pub execution_plan: Arc<dyn ExecutionPlan>,
     pub runtime: Arc<Runtime>,
+    pub task_context_ptr: isize,
+    pub task_context_propagated: bool,
 }
 
 pub fn session_ctx(

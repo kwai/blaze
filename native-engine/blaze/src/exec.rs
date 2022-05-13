@@ -4,7 +4,8 @@ use std::error::Error;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::sync::{Arc};
+use std::time::Duration;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
@@ -35,16 +36,16 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     native_memory: i64,
     memory_fraction: f64,
     tmp_dirs: JString,
-) -> i64 {
+) -> isize {
     info!("Entering blaze callNative()");
     setup_env_logger();
 
     match std::panic::catch_unwind(|| {
         JavaClasses::init(&env).unwrap();
 
-        let task_definition_raw = env
-            .convert_byte_array(task_definition.into_inner())
-            .unwrap();
+        let task_definition_raw =
+            jni_map_error!(env.convert_byte_array(task_definition.into_inner())).unwrap();
+
         let task_definition: TaskDefinition =
             TaskDefinition::decode(&*task_definition_raw).unwrap();
         let task_id = task_definition
@@ -63,7 +64,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         info!("  task_id={:?}", task_id);
         info!("  execution plan:\n{}", execution_plan_displayable);
 
-        let dirs = env.get_string(tmp_dirs).unwrap().into();
+        let dirs = jni_map_error!(env.get_string(tmp_dirs)).unwrap().into();
         let batch_size = batch_size as usize;
         assert!(batch_size > 0);
 
@@ -81,6 +82,14 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             let blaze_iter_ptr: *mut BlazeIter =
                 std::alloc::alloc(Layout::new::<BlazeIter>()) as *mut BlazeIter;
 
+            let task_context_ptr = std::mem::transmute::<_, isize>(
+                jni_bridge_call_static_method!(
+                    env,
+                    JniBridge.getTaskContext -> JObject
+                )
+                .expect("get task context error"),
+            );
+
             std::ptr::write(
                 blaze_iter_ptr,
                 BlazeIter {
@@ -89,12 +98,15 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                     runtime: Arc::new(
                         tokio::runtime::Builder::new_multi_thread()
                             .worker_threads(1)
+                            .thread_keep_alive(Duration::MAX) // always use same thread
                             .build()
                             .unwrap(),
                     ),
+                    task_context_ptr,
+                    task_context_propagated: false,
                 },
             );
-            blaze_iter_ptr as i64
+            blaze_iter_ptr as isize
         }
     }) {
         Err(err) => {
@@ -110,9 +122,9 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext<'env>(
     _: JNIEnv<'env>,
     _: JClass,
-    iter_ptr: i64,
-    schema_ptr: i64,
-    array_ptr: i64,
+    iter_ptr: isize,
+    schema_ptr: isize,
+    array_ptr: isize,
 ) -> JObject<'env> {
     match std::panic::catch_unwind(|| {
         let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
@@ -131,19 +143,16 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext
             .unwrap(),
         );
 
-        // get task context in current thread and propagate to spawned thread
-        let task_context_ptr = std::mem::transmute::<_, isize>(
-            jni_bridge_call_static_method!(
-                env,
-                JniBridge.getTaskContext -> JObject
-            )
-            .expect("get task context error"),
-        );
+        // make sure TaskContext is propagated only once
+        let task_context_propagated = blaze_iter.task_context_propagated;
+        let task_context_ptr = blaze_iter.task_context_ptr;
+        blaze_iter.task_context_propagated = true;
 
         // spawn a thread to poll next batch
         blaze_iter.runtime.clone().spawn(async move {
             AssertUnwindSafe(async move {
-                {
+                if !task_context_propagated {
+                    // propagate TaskContext to spawned thread
                     let env = JavaClasses::get_thread_jnienv();
                     let task_context =
                         std::mem::transmute::<_, JObject>(task_context_ptr);
