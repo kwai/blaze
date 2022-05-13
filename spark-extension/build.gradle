@@ -84,6 +84,7 @@ shadowJar {
 	}
 	relocate('io.netty', 'blaze.io.netty')
 	relocate('com.google.flatbuffers', 'blaze.com.google.flatbuffers')
+	outputs.upToDateWhen { false }
 }
 
 scalastyle {
@@ -174,6 +175,9 @@ sourceSets {
 		java {
 			srcDirs = []
 		}
+		resources {
+			srcDir '../lib'
+		}
 	}
 }
 
@@ -187,7 +191,19 @@ protobuf {
 	generatedFilesBaseDir = "$projectDir/src/generated-sources"
 }
 
+clean.doLast {
+	file("${projectDir}/../lib").deleteDir()
+	file("${projectDir}/../target").deleteDir()
+}
+
+task cargo(type: Exec) {
+	workingDir '.'
+	executable "${projectDir}/../release.sh"
+	args += [project.hasProperty('mode') ? getProperty('mode') : 'debug']
+}
+
 description = 'blaze-engine'
 
 jar.enabled = false
+tasks.compileScala.dependsOn tasks.cargo
 tasks.build.dependsOn tasks.shadowJar
