@@ -124,10 +124,6 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: validator
-      - name: Download lib
-        uses: actions/download-artifact@v3
-        with:
-          name: libblaze
       - name: Download plugin
         uses: actions/download-artifact@v3
         with:
