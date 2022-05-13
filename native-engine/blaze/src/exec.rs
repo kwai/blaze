@@ -1,4 +1,5 @@
 use std::alloc::Layout;
+use std::any::Any;
 use std::error::Error;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
@@ -38,8 +39,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     info!("Entering blaze callNative()");
     setup_env_logger();
 
-    // save backtrace when panics
-    let result = match std::panic::catch_unwind(|| {
+    match std::panic::catch_unwind(|| {
         JavaClasses::init(&env).unwrap();
 
         let task_definition_raw = env
@@ -97,37 +97,12 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             blaze_iter_ptr as i64
         }
     }) {
-        Err(e) => {
-            let recover = || {
-                if is_jvm_interrupted(&env)? {
-                    env.exception_clear()?;
-                    info!("Blaze callNative() interrupted by JVM");
-                    return Ok(());
-                }
-                let panic_message = panic_message::panic_message(&e);
-
-                // throw jvm runtime exception
-                let cause = if env.exception_check()? {
-                    let throwable = env.exception_occurred()?.into();
-                    env.exception_clear()?;
-                    throwable
-                } else {
-                    JObject::null()
-                };
-                throw_runtime_exception(panic_message, cause)?;
-                Ok(())
-            };
-            recover().unwrap_or_else(|err: Box<dyn Error>| {
-                env.fatal_error(format!(
-                    "Error recovering from panic, cannot resume: {:?}",
-                    err
-                ));
-            });
+        Err(err) => {
+            handle_unwinded(err);
             -1
         }
         Ok(ptr) => ptr,
-    };
-    result
+    }
 }
 
 #[allow(non_snake_case)]
@@ -139,58 +114,87 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext
     schema_ptr: i64,
     array_ptr: i64,
 ) -> JObject<'env> {
-    let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
-    let env = JavaClasses::get_thread_jnienv();
+    match std::panic::catch_unwind(|| {
+        let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
+        let env = JavaClasses::get_thread_jnienv();
 
-    // create a weak global retPromise
-    let ret_promise_ptr = std::mem::transmute::<_, isize>(
-        jni_weak_global_ref!(
-            env,
+        // create a weak global retPromise
+        let ret_promise_ptr = std::mem::transmute::<_, isize>(
+            jni_weak_global_ref!(
+                env,
+                jni_bridge_call_static_method!(
+                    env,
+                    ScalaPromise.apply -> JObject
+                )
+                .unwrap()
+            )
+            .unwrap(),
+        );
+
+        // get task context in current thread and propagate to spawned thread
+        let task_context_ptr = std::mem::transmute::<_, isize>(
             jni_bridge_call_static_method!(
                 env,
-                ScalaPromise.apply -> JObject
+                JniBridge.getTaskContext -> JObject
             )
-            .unwrap_or_fatal()
-        )
-        .unwrap_or_fatal(),
-    );
+            .expect("get task context error"),
+        );
 
-    // spawn a thread to poll next batch
-    blaze_iter.runtime.clone().spawn(async move {
-        AssertUnwindSafe(async move {
-            match blaze_iter.stream.next().await {
-                Some(Ok(batch)) => {
-                    let num_rows = batch.num_rows();
-                    let array: StructArray = batch.into();
-                    let out_schema = schema_ptr as *mut FFI_ArrowSchema;
-                    let out_array = array_ptr as *mut FFI_ArrowArray;
+        // spawn a thread to poll next batch
+        blaze_iter.runtime.clone().spawn(async move {
+            AssertUnwindSafe(async move {
+                {
+                    let env = JavaClasses::get_thread_jnienv();
+                    let task_context =
+                        std::mem::transmute::<_, JObject>(task_context_ptr);
+                    jni_bridge_call_static_method!(
+                        env,
+                        JniBridge.setTaskContext -> (),
+                        task_context
+                    )
+                    .expect("set task context error");
+                }
 
-                    export_array_into_raw(Arc::new(array), out_array, out_schema)
-                        .expect("export_array_into_raw error");
-                    promise_success(ret_promise_ptr, num_rows as i64);
+                match blaze_iter.stream.next().await {
+                    Some(Ok(batch)) => {
+                        let num_rows = batch.num_rows();
+                        let array: StructArray = batch.into();
+                        let out_schema = schema_ptr as *mut FFI_ArrowSchema;
+                        let out_array = array_ptr as *mut FFI_ArrowArray;
+
+                        export_array_into_raw(Arc::new(array), out_array, out_schema)
+                            .expect("export_array_into_raw error");
+                        promise_success(ret_promise_ptr, num_rows as i64);
+                    }
+                    Some(Err(e)) => {
+                        promise_failure(
+                            ret_promise_ptr,
+                            &format!("stream.next() error: {:?}", e),
+                        );
+                    }
+                    None => {
+                        promise_success(ret_promise_ptr, -1);
+                    }
                 }
-                Some(Err(e)) => {
-                    promise_failure(
-                        ret_promise_ptr,
-                        &format!("stream.next() error: {:?}", e),
-                    );
-                }
-                None => {
-                    promise_success(ret_promise_ptr, -1);
-                }
-            }
-        })
-        .catch_unwind()
-        .await
-        .unwrap_or_else(|err| {
-            let err = panic_message::panic_message(&err);
-            promise_failure(
-                ret_promise_ptr,
-                &format!("blaze loadNext() panics: {}", err),
-            );
-        })
-    });
-    std::mem::transmute(ret_promise_ptr)
+            })
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|err| {
+                let err = panic_message::panic_message(&err);
+                promise_failure(
+                    ret_promise_ptr,
+                    &format!("blaze loadNext() panics: {}", err),
+                );
+            })
+        });
+        std::mem::transmute(ret_promise_ptr)
+    }) {
+        Err(err) => {
+            handle_unwinded(err);
+            JObject::null()
+        }
+        Ok(ret_promise) => ret_promise,
+    }
 }
 
 #[allow(non_snake_case)]
@@ -275,4 +279,38 @@ fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Resu
         e
     );
     Ok(())
+}
+
+fn handle_unwinded(err: Box<dyn Any + Send>) {
+    let env = JavaClasses::get_thread_jnienv();
+
+    // default handling:
+    //  * caused by InterruptedException: do nothing but just print a message.
+    //  * other reasons: wrap it into a RuntimeException and throw.
+    //  * if another error happens during handling, kill the whole JVM instance.
+    let recover = || {
+        if is_jvm_interrupted(&env)? {
+            env.exception_clear()?;
+            info!("native execution interrupted by JVM");
+            return Ok(());
+        }
+        let panic_message = panic_message::panic_message(&err);
+
+        // throw jvm runtime exception
+        let cause = if env.exception_check()? {
+            let throwable = env.exception_occurred()?.into();
+            env.exception_clear()?;
+            throwable
+        } else {
+            JObject::null()
+        };
+        throw_runtime_exception(panic_message, cause)?;
+        Ok(())
+    };
+    recover().unwrap_or_else(|err: Box<dyn Error>| {
+        env.fatal_error(format!(
+            "Error recovering from panic, cannot resume: {:?}",
+            err
+        ));
+    });
 }
