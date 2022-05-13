@@ -30,7 +30,7 @@ public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
   static {
-    System.loadLibrary("blaze");
+    JniLoader.get().ensureLoaded();
   }
 
   public static native long callNative(
