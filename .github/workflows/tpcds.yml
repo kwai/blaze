@@ -71,7 +71,7 @@ jobs:
 
   test-it:
     name: Run test ${{ matrix.query }}
-    needs: [build_validator, build_blaze_lib, setup-spark, build-plugin]
+    needs: [build_validator, setup-spark, build-plugin]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
