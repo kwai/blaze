@@ -18,6 +18,7 @@
 # Gradle
 .gradle/
 build/
+lib/
 
 # Generated Visual Studio files
 *.vcxproj
