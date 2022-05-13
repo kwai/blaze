@@ -18,9 +18,8 @@
 name: Check and test
 
 on:
-  # always trigger
+  workflow_dispatch:
   push:
-  pull_request:
 
 jobs:
   # build the library, a compilation step used by multiple steps below
