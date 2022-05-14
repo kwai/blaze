@@ -43,7 +43,7 @@ public class JniBridge {
       double memoryFraction,
       String tmpDirs);
 
-  public static native Promise<Long> loadNext(long iter_ptr, long schema_ptr, long array_ptr);
+  public static native Promise<Boolean> loadNext(long iter_ptr, long schema_ptr, long array_ptr);
 
   public static native int deallocIter(long iter_ptr);
 
