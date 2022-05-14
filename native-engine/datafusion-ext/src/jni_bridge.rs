@@ -278,6 +278,10 @@ pub struct JniBridge<'a> {
     pub method_getHDFSFileSystem_ret: JavaType,
     pub method_getResource: JStaticMethodID<'a>,
     pub method_getResource_ret: JavaType,
+    pub method_setTaskContext: JStaticMethodID<'a>,
+    pub method_setTaskContext_ret: JavaType,
+    pub method_getTaskContext: JStaticMethodID<'a>,
+    pub method_getTaskContext_ret: JavaType,
     pub method_readFSDataInputStream: JStaticMethodID<'a>,
     pub method_readFSDataInputStream_ret: JavaType,
 }
@@ -324,6 +328,20 @@ impl<'a> JniBridge<'a> {
             method_getResource_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
             ),
+            method_getTaskContext: env.get_static_method_id(
+                class,
+                "getTaskContext",
+                "()Lorg/apache/spark/TaskContext;",
+            )?,
+            method_getTaskContext_ret: JavaType::Object(
+                "org/apache/spark/TaskContext".to_owned(),
+            ),
+            method_setTaskContext: env.get_static_method_id(
+                class,
+                "setTaskContext",
+                "(Lorg/apache/spark/TaskContext;)V",
+            )?,
+            method_setTaskContext_ret: JavaType::Primitive(Primitive::Void),
             method_readFSDataInputStream: env.get_static_method_id(
                 class,
                 "readFSDataInputStream",
