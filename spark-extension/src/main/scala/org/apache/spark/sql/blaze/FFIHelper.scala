@@ -76,9 +76,9 @@ object FFIHelper {
       tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
         val schemaPtr: Long = consumerSchema.memoryAddress
         val arrayPtr: Long = consumerArray.memoryAddress
-        val rtPromise = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
-        val rt = Await.result(rtPromise.future, Duration.Inf)
-        if (rt < 0) {
+        val loadNextPromise = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
+        val hasNext = Await.result(loadNextPromise.future, Duration.Inf)
+        if (!hasNext) {
           return CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
             Iterator.empty, {
               JniBridge.updateMetrics(iterPtr, metrics)
@@ -111,9 +111,9 @@ object FFIHelper {
             tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
               val schemaPtr: Long = consumerSchema.memoryAddress
               val arrayPtr: Long = consumerArray.memoryAddress
-              val rtPromise = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
-              val rt = Await.result(rtPromise.future, Duration.Inf)
-              if (rt < 0) {
+              val loadNextPromise = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
+              val hasNext = Await.result(loadNextPromise.future, Duration.Inf)
+              if (!hasNext) {
                 finish()
                 return false
               }

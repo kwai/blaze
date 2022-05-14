@@ -12,10 +12,9 @@ use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use datafusion::error::DataFusionError;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use futures::{FutureExt, StreamExt};
-
 use jni::objects::{JClass, JString};
 use jni::objects::{JObject, JThrowable};
-
+use jni::sys::{jboolean, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use log::info;
 use prost::Message;
@@ -37,8 +36,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     memory_fraction: f64,
     tmp_dirs: JString,
 ) -> i64 {
-    info!("Entering blaze callNative()");
     setup_env_logger();
+    info!("Entering blaze callNative()");
 
     match std::panic::catch_unwind(|| {
         JavaClasses::init(&env).unwrap();
@@ -78,16 +77,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             .unwrap();
 
         // create tokio runtime used for loadNext()
-        // propagate task context to spawned children threads
-        let task_context_ptr = unsafe {
-            std::mem::transmute::<_, isize>(
-                jni_bridge_call_static_method!(
-                    env,
-                    JniBridge.getTaskContext -> JObject
-                ).unwrap()
-            )
-        };
-
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
@@ -97,21 +86,44 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                         .worker_threads(1)
                         .thread_keep_alive(Duration::MAX) // always use same thread
                         .build()
-                        .unwrap());
+                        .unwrap(),
+                );
+
+                // propagate task context to spawned children threads
+                let env = JavaClasses::get_thread_jnienv();
+                let task_context_ptr = unsafe {
+                    std::mem::transmute::<_, isize>(
+                        jni_bridge_call_static_method!(
+                            env,
+                            JniBridge.getTaskContext -> JObject
+                        )
+                        .unwrap(),
+                    )
+                };
 
                 runtime.spawn(async move {
-                    let env = JavaClasses::get_thread_jnienv();
-                    let task_context = unsafe {
-                        std::mem::transmute::<_, JObject>(task_context_ptr)
-                    };
-                    jni_bridge_call_static_method!(
-                        env,
-                        JniBridge.setTaskContext -> JObject,
-                        task_context,
-                    ).unwrap();
-                }).await.unwrap();
+                    AssertUnwindSafe(async move {
+                        let env = JavaClasses::get_thread_jnienv();
+                        let task_context = unsafe {
+                            std::mem::transmute::<_, JObject>(task_context_ptr)
+                        };
+                        jni_bridge_call_static_method!(
+                            env,
+                            JniBridge.setTaskContext -> (),
+                            task_context,
+                        )
+                        .unwrap();
+                    })
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|err| {
+                        let panic_message = panic_message::panic_message(&err);
+                        throw_runtime_exception(panic_message, JObject::null())
+                            .unwrap_or_fatal();
+                    });
+                });
 
-                return runtime;
+                runtime
             });
 
         // safety - manually allocated memory will be released when stream is exhausted
@@ -143,10 +155,10 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext<'env>(
     _: JNIEnv<'env>,
     _: JClass,
-    iter_ptr: i64,
-    schema_ptr: i64,
-    array_ptr: i64,
-) -> JObject<'env> {
+    iter_ptr: jlong,
+    schema_ptr: jlong,
+    array_ptr: jlong,
+) -> JObject<'static> {
     match std::panic::catch_unwind(|| {
         let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
         let env = JavaClasses::get_thread_jnienv();
@@ -167,25 +179,29 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext
         // spawn a thread to poll next batch
         blaze_iter.runtime.clone().spawn(async move {
             AssertUnwindSafe(async move {
-                match blaze_iter.stream.next().await {
-                    Some(Ok(batch)) => {
-                        let num_rows = batch.num_rows();
-                        let array: StructArray = batch.into();
-                        let out_schema = schema_ptr as *mut FFI_ArrowSchema;
-                        let out_array = array_ptr as *mut FFI_ArrowArray;
+                loop {
+                    match blaze_iter.stream.next().await {
+                        Some(Ok(batch)) => {
+                            if batch.num_rows() == 0 {
+                                continue;
+                            }
+                            let array: StructArray = batch.into();
+                            let out_schema = schema_ptr as *mut FFI_ArrowSchema;
+                            let out_array = array_ptr as *mut FFI_ArrowArray;
 
-                        export_array_into_raw(Arc::new(array), out_array, out_schema)
-                            .expect("export_array_into_raw error");
-                        promise_success(ret_promise_ptr, num_rows as i64);
-                    }
-                    Some(Err(e)) => {
-                        promise_failure(
-                            ret_promise_ptr,
-                            &format!("stream.next() error: {:?}", e),
-                        );
-                    }
-                    None => {
-                        promise_success(ret_promise_ptr, -1);
+                            export_array_into_raw(Arc::new(array), out_array, out_schema)
+                                .expect("export_array_into_raw error");
+                            break promise_success(ret_promise_ptr, JNI_TRUE);
+                        }
+                        Some(Err(e)) => {
+                            break promise_failure(
+                                ret_promise_ptr,
+                                &format!("stream.next() error: {:?}", e),
+                            );
+                        }
+                        None => {
+                            break promise_success(ret_promise_ptr, JNI_FALSE);
+                        }
                     }
                 }
             })
@@ -244,15 +260,18 @@ unsafe fn promise_failure(promise_ptr: isize, msg: &str) {
     try_failure(promise_ptr, msg).unwrap_or_fatal();
 }
 
-unsafe fn promise_success(promise_ptr: isize, ret: i64) {
-    unsafe fn try_success(promise_ptr: isize, ret: i64) -> datafusion::error::Result<()> {
+unsafe fn promise_success(promise_ptr: isize, ret: jboolean) {
+    unsafe fn try_success(
+        promise_ptr: isize,
+        ret: jboolean,
+    ) -> datafusion::error::Result<()> {
         let env = JavaClasses::get_thread_jnienv();
         let promise = std::mem::transmute::<_, JObject>(promise_ptr);
         jni_bridge_call_method!(
             env,
             ScalaPromise.success -> JObject,
             promise,
-            jni_bridge_new_object!(env, JavaLong, ret)?
+            jni_bridge_new_object!(env, JavaBoolean, ret)?
         )?;
         Ok(())
     }

@@ -139,6 +139,7 @@ pub struct JavaClasses<'a> {
     pub cClass: JavaClass<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
     pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
+    pub cJavaBoolean: JavaBoolean<'a>,
     pub cJavaLong: JavaLong<'a>,
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
@@ -190,6 +191,7 @@ impl JavaClasses<'static> {
             cClass: JavaClass::new(env)?,
             cJavaRuntimeException: JavaRuntimeException::new(env)?,
             cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
+            cJavaBoolean: JavaBoolean::new(env)?,
             cJavaLong: JavaLong::new(env)?,
             cJavaList: JavaList::new(env)?,
             cJavaMap: JavaMap::new(env)?,
@@ -423,6 +425,23 @@ impl<'a> JavaNioSeekableByteChannel<'a> {
             method_setPosition_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
             method_size: env.get_method_id(class, "size", "()J")?,
             method_size_ret: JavaType::Primitive(Primitive::Long),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JavaBoolean<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID<'a>,
+}
+impl<'a> JavaBoolean<'a> {
+    pub const SIG_TYPE: &'static str = "java/lang/Boolean";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaBoolean<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaBoolean {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(Z)V")?,
         })
     }
 }
