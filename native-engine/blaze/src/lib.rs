@@ -50,9 +50,8 @@ pub fn session_ctx(
 pub fn setup_env_logger() {
     static ENV_LOGGER_INIT: OnceCell<()> = OnceCell::new();
     ENV_LOGGER_INIT.get_or_init(|| {
-        env_logger::try_init_from_env(
+        let _ = env_logger::try_init_from_env(
             env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-        )
-        .unwrap();
+        );
     });
 }

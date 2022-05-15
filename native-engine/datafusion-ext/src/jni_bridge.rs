@@ -144,7 +144,7 @@ pub struct JavaClasses<'a> {
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
     pub cJavaFile: JavaFile<'a>,
-    pub cJavaConsumer: JavaConsumer<'a>,
+    pub cJavaExchanger: JavaExchanger<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
     pub cScalaPromise: ScalaPromise<'a>,
@@ -196,7 +196,7 @@ impl JavaClasses<'static> {
             cJavaList: JavaList::new(env)?,
             cJavaMap: JavaMap::new(env)?,
             cJavaFile: JavaFile::new(env)?,
-            cJavaConsumer: JavaConsumer::new(env)?,
+            cJavaExchanger: JavaExchanger::new(env)?,
 
             cScalaIterator: ScalaIterator::new(env)?,
             cScalaPromise: ScalaPromise::new(env)?,
@@ -450,6 +450,8 @@ impl<'a> JavaBoolean<'a> {
 pub struct JavaLong<'a> {
     pub class: JClass<'a>,
     pub ctor: JMethodID<'a>,
+    pub method_longValue: JMethodID<'a>,
+    pub method_longValue_ret: JavaType,
 }
 impl<'a> JavaLong<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/Long";
@@ -459,6 +461,8 @@ impl<'a> JavaLong<'a> {
         Ok(JavaLong {
             class,
             ctor: env.get_method_id(class, "<init>", "(J)V")?,
+            method_longValue: env.get_method_id(class, "longValue", "()J")?,
+            method_longValue_ret: JavaType::Primitive(Primitive::Long),
         })
     }
 }
@@ -541,20 +545,24 @@ impl<'a> JavaFile<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct JavaConsumer<'a> {
+pub struct JavaExchanger<'a> {
     pub class: JClass<'a>,
-    pub method_accept: JMethodID<'a>,
-    pub method_accept_ret: JavaType,
+    pub method_exchange: JMethodID<'a>,
+    pub method_exchange_ret: JavaType,
 }
-impl<'a> JavaConsumer<'a> {
-    pub const SIG_TYPE: &'static str = "java/util/function/Consumer";
+impl<'a> JavaExchanger<'a> {
+    pub const SIG_TYPE: &'static str = "java/util/concurrent/Exchanger";
 
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaConsumer<'a>> {
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaExchanger<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaConsumer {
+        Ok(JavaExchanger {
             class,
-            method_accept: env.get_method_id(class, "accept", "(Ljava/lang/Object;)V")?,
-            method_accept_ret: JavaType::Primitive(Primitive::Void),
+            method_exchange: env.get_method_id(
+                class,
+                "exchange",
+                "(Ljava/lang/Object;)Ljava/lang/Object;",
+            )?,
+            method_exchange_ret: JavaType::Object("java/lang/Object".to_owned()),
         })
     }
 }

@@ -390,17 +390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dashmap"
-version = "5.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "391b56fbd302e585b7a9494fb70e40949567b1cf9003a8e4a6041a1687c26573"
-dependencies = [
- "cfg-if",
- "hashbrown 0.12.1",
- "lock_api",
-]
-
-[[package]]
 name = "datafusion"
 version = "7.0.0"
 source = "git+https://github.com/yjshen/arrow-datafusion.git?rev=c7a1acd7fcdae75e4a83b187779a83cb94981d5e#c7a1acd7fcdae75e4a83b187779a83cb94981d5e"
@@ -475,13 +464,12 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "async-trait",
- "dashmap",
  "datafusion",
  "futures",
  "jni",
  "lazy_static",
  "log",
- "parking_lot",
+ "once_cell",
  "paste",
  "tempfile",
  "tokio",

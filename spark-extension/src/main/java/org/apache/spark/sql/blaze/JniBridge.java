@@ -22,12 +22,12 @@ import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Exchanger;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
 import org.apache.spark.deploy.SparkHadoopUtil;
-import scala.concurrent.Promise;
 
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
@@ -43,11 +43,12 @@ public class JniBridge {
       double memoryFraction,
       String tmpDirs);
 
-  public static native Promise<Boolean> loadNext(long iter_ptr, long schema_ptr, long array_ptr);
+  public static native void loadBatches(
+      long iterPtr, Exchanger<?> inputExchanger, Exchanger<?> outputExchanger);
 
-  public static native int deallocIter(long iter_ptr);
+  public static native int deallocIter(long iterPtr);
 
-  public static native void updateMetrics(long iter_ptr, MetricNode metrics);
+  public static native void updateMetrics(long iterPtr, MetricNode metrics);
 
   public static void raiseThrowable(Throwable t) throws Throwable {
     throw t;
