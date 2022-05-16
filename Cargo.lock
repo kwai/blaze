@@ -467,7 +467,6 @@ dependencies = [
  "datafusion",
  "futures",
  "jni",
- "lazy_static",
  "log",
  "once_cell",
  "paste",

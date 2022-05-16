@@ -144,20 +144,14 @@ object FFIHelper {
 class NativeBlazeIterWrapper(iterPtr: Long) {
   private val inputExchanger = new Exchanger[Object]()
   private val outputExchanger = new Exchanger[Object]()
-  private var finished = false
 
   JniBridge.loadBatches(iterPtr, inputExchanger, outputExchanger)
 
   def nextBatch(schemaPtr: Long, arrayPtr: Long): Boolean = {
-    assert(!finished)
     inputExchanger.exchange((schemaPtr, arrayPtr))
     outputExchanger.exchange(null) match {
       case err: Throwable => throw err
-      case hasNext =>
-        if (hasNext.asInstanceOf[Long] == -1L) {
-          finished = true
-        }
-        !finished
+      case hasNext => hasNext.asInstanceOf[Boolean]
     }
   }
 }

@@ -13,10 +13,11 @@ use datafusion::physical_plan::{displayable, ExecutionPlan};
 use futures::{FutureExt, StreamExt};
 use jni::objects::{JClass, JString};
 use jni::objects::{JObject, JThrowable};
-use jni::sys::jlong;
+use jni::sys::{jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use log::info;
 use prost::Message;
+use tokio::runtime::Runtime;
 
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
@@ -35,11 +36,11 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     memory_fraction: f64,
     tmp_dirs: JString,
 ) -> i64 {
-    setup_env_logger();
-    info!("Entering blaze callNative()");
-
     match std::panic::catch_unwind(|| {
-        JavaClasses::init(&env).unwrap();
+        setup_env_logger();
+        info!("Entering blaze callNative()");
+
+        JavaClasses::init(&env);
 
         let task_definition_raw = env
             .convert_byte_array(task_definition.into_inner())
@@ -168,7 +169,7 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadBatc
         jni_weak_global_ref!(env, output_exchanger).unwrap(),
     );
 
-    match std::panic::catch_unwind(|| {
+    if let Err(err) = std::panic::catch_unwind(|| {
         let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
 
         // spawn a thread to poll next batch
@@ -209,8 +210,8 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadBatc
                             )
                             .expect("export_array_into_raw error");
 
-                            // output_exchanger <- num_rows
-                            let r = jni_bridge_new_object!(env, JavaLong, num_rows as i64).unwrap();
+                            // output_exchanger <- hasNext=true
+                            let r = jni_bridge_new_object!(env, JavaBoolean, JNI_TRUE).unwrap();
                             jni_bridge_call_method!(
                                 env,
                                 JavaExchanger.exchange -> JObject,
@@ -238,7 +239,7 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadBatc
                 ).unwrap();
 
                 // output_exchanger <- num_rows=-1
-                let r = jni_bridge_new_object!(env, JavaLong, -1i64).unwrap();
+                let r = jni_bridge_new_object!(env, JavaBoolean, JNI_FALSE).unwrap();
                 jni_bridge_call_method!(
                     env,
                     JavaExchanger.exchange -> JObject,
@@ -271,10 +272,7 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadBatc
             .unwrap();
         });
     }) {
-        Err(err) => {
-            handle_unwinded(err);
-        }
-        Ok(()) => {}
+        handle_unwinded(err)
     }
 }
 
@@ -285,6 +283,13 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_deallocI
     _: JClass,
     iter_ptr: i64,
 ) {
+    // shutdown any background threads
+    // safety: safe to copy because Runtime::drop() does not do anything under ThreadPool mode
+    let runtime: Runtime =
+        std::mem::transmute_copy((*(iter_ptr as *mut BlazeIter)).runtime.as_ref());
+    runtime.shutdown_background();
+
+    // dealloc memory
     std::alloc::dealloc(iter_ptr as *mut u8, Layout::new::<BlazeIter>());
 }
 

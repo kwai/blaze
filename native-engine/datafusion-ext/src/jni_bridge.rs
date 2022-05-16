@@ -1,8 +1,3 @@
-use std::cell::Cell;
-use std::sync::Arc;
-use std::sync::Mutex;
-
-use crate::ResultExt;
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -12,6 +7,9 @@ use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
 use jni::JavaVM;
+use once_cell::sync::OnceCell;
+
+use crate::ResultExt;
 
 #[macro_export]
 macro_rules! jni_map_error {
@@ -162,89 +160,64 @@ pub struct JavaClasses<'a> {
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
-unsafe impl<'a> Send for JavaClasses<'a> {} // safety: see JavaClasses::init()
+unsafe impl<'a> Send for JavaClasses<'a> {}
 unsafe impl<'a> Sync for JavaClasses<'a> {}
 
-// safety:
-//   All jclasses and jmethodids are implemented in raw pointers and can be
-//   safely initialized to zero (null)
-//
-static mut JNI_JAVA_CLASSES: [u8; std::mem::size_of::<JavaClasses>()] =
-    [0; std::mem::size_of::<JavaClasses>()];
+static JNI_JAVA_CLASSES: OnceCell<JavaClasses> = OnceCell::new();
 
 impl JavaClasses<'static> {
-    pub fn init(env: &JNIEnv) -> JniResult<()> {
-        lazy_static::lazy_static! {
-            static ref JNI_JAVA_CLASSES_INITIALIZED: Arc<Mutex<Cell<bool>>> =
-                Arc::default();
-        }
-        let jni_java_classes_initialized = JNI_JAVA_CLASSES_INITIALIZED.lock().unwrap();
-        if jni_java_classes_initialized.get() {
-            return Ok(()); // already initialized
-        }
+    pub fn init(env: &JNIEnv) {
+        JNI_JAVA_CLASSES.get_or_init(|| {
+            let env = unsafe { std::mem::transmute_copy::<_, &'static JNIEnv>(env) };
+            let jni_bridge = JniBridge::new(env).unwrap();
+            let classloader = env
+                .call_static_method_unchecked(
+                    jni_bridge.class,
+                    jni_bridge.method_getContextClassLoader,
+                    jni_bridge.method_getContextClassLoader_ret.clone(),
+                    &[],
+                )
+                .unwrap()
+                .l()
+                .unwrap();
 
-        let mut initialized_java_classes = JavaClasses {
-            jvm: env.get_java_vm()?,
-            classloader: JObject::null(),
+            JavaClasses {
+                jvm: env.get_java_vm().unwrap(),
+                classloader: get_global_ref_jobject(env, classloader).unwrap(),
+                cJniBridge: jni_bridge,
 
-            cJniBridge: JniBridge::new(env)?,
-            cClass: JavaClass::new(env)?,
-            cJavaRuntimeException: JavaRuntimeException::new(env)?,
-            cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
-            cJavaBoolean: JavaBoolean::new(env)?,
-            cJavaLong: JavaLong::new(env)?,
-            cJavaList: JavaList::new(env)?,
-            cJavaMap: JavaMap::new(env)?,
-            cJavaFile: JavaFile::new(env)?,
-            cJavaExchanger: JavaExchanger::new(env)?,
+                cClass: JavaClass::new(env).unwrap(),
+                cJavaRuntimeException: JavaRuntimeException::new(env).unwrap(),
+                cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)
+                    .unwrap(),
+                cJavaBoolean: JavaBoolean::new(env).unwrap(),
+                cJavaLong: JavaLong::new(env).unwrap(),
+                cJavaList: JavaList::new(env).unwrap(),
+                cJavaMap: JavaMap::new(env).unwrap(),
+                cJavaFile: JavaFile::new(env).unwrap(),
+                cJavaExchanger: JavaExchanger::new(env).unwrap(),
 
-            cScalaIterator: ScalaIterator::new(env)?,
-            cScalaPromise: ScalaPromise::new(env)?,
-            cScalaTuple2: ScalaTuple2::new(env)?,
-            cScalaFunction0: ScalaFunction0::new(env)?,
+                cScalaIterator: ScalaIterator::new(env).unwrap(),
+                cScalaPromise: ScalaPromise::new(env).unwrap(),
+                cScalaTuple2: ScalaTuple2::new(env).unwrap(),
+                cScalaFunction0: ScalaFunction0::new(env).unwrap(),
 
-            cHadoopFileSystem: HadoopFileSystem::new(env)?,
-            cHadoopPath: HadoopPath::new(env)?,
-            cHadoopFileStatus: HadoopFileStatus::new(env)?,
-            cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env)?,
+                cHadoopFileSystem: HadoopFileSystem::new(env).unwrap(),
+                cHadoopPath: HadoopPath::new(env).unwrap(),
+                cHadoopFileStatus: HadoopFileStatus::new(env).unwrap(),
+                cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env).unwrap(),
 
-            cSparkManagedBuffer: SparkManagedBuffer::new(env)?,
-            cSparkSQLMetric: SparkSQLMetric::new(env)?,
-            cSparkMetricNode: SparkMetricNode::new(env)?,
-        };
-        initialized_java_classes.classloader = get_global_ref_jobject(
-            env,
-            env.call_static_method_unchecked(
-                initialized_java_classes.cJniBridge.class,
-                initialized_java_classes
-                    .cJniBridge
-                    .method_getContextClassLoader,
-                initialized_java_classes
-                    .cJniBridge
-                    .method_getContextClassLoader_ret
-                    .clone(),
-                &[],
-            )?
-            .l()?,
-        )?;
-
-        unsafe {
-            // safety:
-            //  JavaClasses should be initialized once in jni entrypoint thread
-            //  no write/read conflicts will happen
-            let jni_java_classes = JNI_JAVA_CLASSES.as_mut_ptr() as *mut JavaClasses;
-            *jni_java_classes = initialized_java_classes;
-        }
-        assert!(!env.exception_check().unwrap());
-        jni_java_classes_initialized.set(true);
-        Ok(())
+                cSparkManagedBuffer: SparkManagedBuffer::new(env).unwrap(),
+                cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
+                cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
+            }
+        });
     }
 
     pub fn get() -> &'static JavaClasses<'static> {
         unsafe {
-            // safety: see JavaClasses::init()
-            let jni_java_classes = JNI_JAVA_CLASSES.as_ptr() as *const JavaClasses;
-            &*jni_java_classes
+            // safety: JNI_JAVA_CLASSES must be initialized frist
+            JNI_JAVA_CLASSES.get_unchecked()
         }
     }
 
