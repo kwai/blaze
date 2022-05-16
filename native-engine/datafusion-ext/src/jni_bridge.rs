@@ -168,7 +168,8 @@ static JNI_JAVA_CLASSES: OnceCell<JavaClasses> = OnceCell::new();
 impl JavaClasses<'static> {
     pub fn init(env: &JNIEnv) {
         JNI_JAVA_CLASSES.get_or_init(|| {
-            let env = unsafe { std::mem::transmute_copy::<_, &'static JNIEnv>(env) };
+            log::info!("Initializing JavaClasses...");
+            let env = unsafe { std::mem::transmute::<_, &'static JNIEnv>(env) };
             let jni_bridge = JniBridge::new(env).unwrap();
             let classloader = env
                 .call_static_method_unchecked(
@@ -181,7 +182,7 @@ impl JavaClasses<'static> {
                 .l()
                 .unwrap();
 
-            JavaClasses {
+            let java_classes = JavaClasses {
                 jvm: env.get_java_vm().unwrap(),
                 classloader: get_global_ref_jobject(env, classloader).unwrap(),
                 cJniBridge: jni_bridge,
@@ -210,7 +211,9 @@ impl JavaClasses<'static> {
                 cSparkManagedBuffer: SparkManagedBuffer::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
-            }
+            };
+            log::info!("Initializing JavaClasses finished");
+            java_classes
         });
     }
 

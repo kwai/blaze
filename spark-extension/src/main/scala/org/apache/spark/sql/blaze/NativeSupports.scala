@@ -140,19 +140,7 @@ object NativeSupports extends Logging {
     } else {
       logInfo(s"Start executing native plan")
     }
-
-    val nativeMemory = SparkEnv.get.conf
-      .getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024
-    val memoryFraction = SparkEnv.get.conf.getDouble("spark.blaze.memoryFraction", 0.75)
-    val batchSize = SparkEnv.get.conf.getLong("spark.blaze.batchSize", 16384)
-    val tmpDirs = SparkEnv.get.blockManager.diskBlockManager.localDirsString.mkString(",")
-
-    JniBridge.callNative(
-      taskDefinition.toByteArray,
-      batchSize,
-      nativeMemory,
-      memoryFraction,
-      tmpDirs)
+    JniBridge.callNative(taskDefinition.toByteArray)
   }
 }
 

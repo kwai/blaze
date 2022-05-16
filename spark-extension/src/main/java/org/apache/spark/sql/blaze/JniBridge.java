@@ -23,8 +23,11 @@ import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Exchanger;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.spark.SparkConf;
+import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
 import org.apache.spark.deploy.SparkHadoopUtil;
@@ -34,14 +37,22 @@ public class JniBridge {
 
   static {
     JniLoader.get().ensureLoaded();
+
+    // init native
+    SparkEnv sparkEnv = SparkEnv.get();
+    SparkConf conf = sparkEnv.conf();
+    long batchSize = conf.getLong("spark.blaze.batchSize", 16384);
+    long nativeMemory = conf.getLong("spark.executor.memoryOverhead", Long.MAX_VALUE) * 1024 * 1024;
+    double memoryFraction = conf.getDouble("spark.blaze.memoryFraction", 0.75);
+    String tmpDirs =
+        StringUtils.join(sparkEnv.blockManager().diskBlockManager().localDirsString(), ",");
+    initNative(batchSize, nativeMemory, memoryFraction, tmpDirs);
   }
 
-  public static native long callNative(
-      byte[] taskDefinition,
-      long batchSize,
-      long nativeMemory,
-      double memoryFraction,
-      String tmpDirs);
+  private static native long initNative(
+      long batchSize, long nativeMemory, double memoryFraction, String tmpDirs);
+
+  public static native long callNative(byte[] taskDefinition);
 
   public static native void loadBatches(
       long iterPtr, Exchanger<?> inputExchanger, Exchanger<?> outputExchanger);
