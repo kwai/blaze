@@ -107,7 +107,7 @@ Also, we have a bunch of configurations that control how the accelerator behaves
 ## Performance
 
 We periodically benchmark Blaze locally with a 1 TB TPC-DS Dataset to show our latest results and prevent unnoticed
-performance regressions. Check [Benchmark Results](./benchmark-results) with the latest date for the performance
+performance regressions. Check [Benchmark Results](./benchmark-results/tpc-ds.md) with the latest date for the performance
 comparison with vanilla Spark.
 
 We also encourage you to benchmark Blaze locally and share the results with us. 🤗
