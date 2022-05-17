@@ -93,15 +93,15 @@ $SPARK_HOME/bin/spark-[sql|submit] \
   .... # your original arguments goes here
 ```
 
-Also, we have a bunch of configurations that control how the accelerator behaves:
+At the same time, there are a series of configurations that you can use to control Blaze finely.
 
-| Parameter                                                         | Default value         | Description                                                                                           |
-|-------------------------------------------------------------------|-----------------------|-------------------------------------------------------------------------------------------------------|
-| spark.executor.memoryOverhead                                     | executor.memory * 0.1 | The amount of non-heap memory to be allocated per executor. DataFusion would use this part of memory. |
-| spark.blaze.memoryFraction                                        | 0.75                  | A fraction of the off-heap that DataFusion could use during execution.                                |
-| spark.blaze.batchSize                                             | 16384                 | Batch size for vectorized execution.                                                                  |
-| spark.blaze.enable.shuffle                                        | true                  | If enabled, use native, Arrow-IPC based Shuffle.                                                      |
-| spark.blaze.enalbe.[scan,project,filter,sort,union,sortmergejoin] | true                  | If enabled, offload the corresponding operator to native engine.                                      |
+| Parameter                                                         | Default value         | Description                                                                                      |
+|-------------------------------------------------------------------|-----------------------|--------------------------------------------------------------------------------------------------|
+| spark.executor.memoryOverhead                                     | executor.memory * 0.1 | The amount of non-heap memory to be allocated per executor. Blaze would use this part of memory. |
+| spark.blaze.memoryFraction                                        | 0.75                  | A fraction of the off-heap that Blaze could use during execution.                                |
+| spark.blaze.batchSize                                             | 16384                 | Batch size for vectorized execution.                                                             |
+| spark.blaze.enable.shuffle                                        | true                  | If enabled, use native, Arrow-IPC based Shuffle.                                                 |
+| spark.blaze.enalbe.[scan,project,filter,sort,union,sortmergejoin] | true                  | If enabled, offload the corresponding operator to native engine.                                 |
 
 
 ## Performance
