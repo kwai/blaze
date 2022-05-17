@@ -18,9 +18,6 @@
 package org.apache.spark.sql.blaze
 
 import scala.collection.JavaConverters._
-import scala.concurrent.Await
-import scala.concurrent.Promise
-import scala.concurrent.duration.Duration
 
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.ArrowSchema
@@ -76,9 +73,8 @@ object FFIHelper {
       tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
         val schemaPtr: Long = consumerSchema.memoryAddress
         val arrayPtr: Long = consumerArray.memoryAddress
-        val loadNextPromise = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
-        val hasNext = Await.result(loadNextPromise.future, Duration.Inf)
-        if (!hasNext) {
+        val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
+        if (rt < 0) {
           return CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
             Iterator.empty, {
               JniBridge.updateMetrics(iterPtr, metrics)
@@ -111,9 +107,8 @@ object FFIHelper {
             tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
               val schemaPtr: Long = consumerSchema.memoryAddress
               val arrayPtr: Long = consumerArray.memoryAddress
-              val loadNextPromise = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
-              val hasNext = Await.result(loadNextPromise.future, Duration.Inf)
-              if (!hasNext) {
+              val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
+              if (rt < 0) {
                 finish()
                 return false
               }

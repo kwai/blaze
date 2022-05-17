@@ -19,9 +19,10 @@
 
 # Blaze
 
-[![test](https://github.com/blaze-init/blaze/actions/workflows/rust.yml/badge.svg)](https://github.com/blaze-init/blaze/actions/workflows/rust.yml)
+[![test](https://github.com/blaze-init/blaze-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/blaze-init/blaze-rs/actions/workflows/rust.yml)
+<!-- [![codecov](https://codecov.io/gh/blaze-init/blaze-rs/branch/master/graph/badge.svg?token=T0J6196MLB)](https://codecov.io/gh/blaze-init/blaze-rs) -->
 
-The Blaze project aims to provide Spark SQL with a high-performance, low-cost native execution layer.
+The Blaze project aims to provide Spark with a high-performance, low-cost native execution layer.
 
 We seek to solve a series of performance bottlenecks in the current JVM-based Task execution of Spark SQL,
 such as high fluctuations in performance due to GC, high memory overhead, and inability to accelerate computation directly with SIMD instructions.
@@ -32,45 +33,13 @@ This repo is under active development and is not ready for production (or even d
 ## Overview
 
 
-## How fast we are, compared to Vanilla Spark
+## Are we TPC-DS yet?
+> A work-in-progress to catalog the state of support for TPC-DS.
 
-
-## How to run it
-
-### 1. Build and Run
-
-We could simply build Blaze using:
-
-```bash
-./gradlew -Pmode=[debug|release] build
-```
-
-Once we have Blaze successfully built, it can be submitted using the `bin/spark-submit` or `bin/spark-sql` script.
-
-```bash
-./bin/spark-submit \
-  --jar target/blaze-engine-${VERSION}.jar
-  ....
-```
-
-or
-
-```bash
-./bin/spark-sql \
-  --jar target/blaze-engine-${VERSION}.jar
-  ....
-```
-
-
-### 2. Run using Docker
-TBD
+Please click on the ❌ next to the commit ID to check how far we are 😉.
 
 
 ## For developers
 
 - [Architectural Overview](./dev/doc/architectural_overview.md)
-
-
-### Are we TPC-DS yet?
-- [ ] Q95
 

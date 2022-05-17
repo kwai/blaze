@@ -1,228 +1,139 @@
 use std::alloc::Layout;
-use std::any::Any;
 use std::error::Error;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::Instant;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
+use datafusion::arrow::datatypes::{Field, Schema};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-use datafusion::error::DataFusionError;
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
+use jni::objects::JObject;
 use jni::objects::{JClass, JString};
-use jni::objects::{JObject, JThrowable};
-use jni::sys::{jboolean, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
-use log::info;
+use log::{debug, error, info};
 use prost::Message;
 
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
 use plan_serde::protobuf::TaskDefinition;
 
-use crate::{session_ctx, setup_env_logger, BlazeIter};
+use crate::{init_logging, init_session_ctx, BlazeIter};
 
 #[allow(non_snake_case)]
 #[no_mangle]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
-    task_definition: JObject,
+    taskDefinition: JObject,
+    poolSize: i64,
     batch_size: i64,
-    native_memory: i64,
-    memory_fraction: f64,
-    tmp_dirs: JString,
+    nativeMemory: i64,
+    memoryFraction: f64,
+    tmpDirs: JString,
 ) -> i64 {
-    setup_env_logger();
-    info!("Entering blaze callNative()");
+    let start_time = Instant::now();
+    init_logging();
 
-    match std::panic::catch_unwind(|| {
-        JavaClasses::init(&env).unwrap();
-
-        let task_definition_raw = env
-            .convert_byte_array(task_definition.into_inner())
-            .unwrap();
-        let task_definition: TaskDefinition =
-            TaskDefinition::decode(&*task_definition_raw).unwrap();
-        let task_id = task_definition
-            .task_id
-            .ok_or_else(|| IoError::new(IoErrorKind::InvalidInput, "task id is empty"))
-            .unwrap();
-        let plan = &task_definition
-            .plan
-            .ok_or_else(|| IoError::new(IoErrorKind::InvalidInput, "task plan is empty"))
-            .unwrap();
-
-        let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into().unwrap();
-        let execution_plan_displayable =
-            displayable(execution_plan.as_ref()).indent().to_string();
-        info!("Creating native execution plan succeeded");
-        info!("  task_id={:?}", task_id);
-        info!("  execution plan:\n{}", execution_plan_displayable);
-
-        let dirs = env.get_string(tmp_dirs).unwrap().into();
-        let batch_size = batch_size as usize;
-        assert!(batch_size > 0);
-
-        let session_ctx =
-            session_ctx(native_memory as usize, memory_fraction, batch_size, dirs);
-        let task_ctx = session_ctx.task_ctx();
-
-        // execute
-        let stream = execution_plan
-            .execute(task_id.partition_id as usize, task_ctx)
-            .unwrap();
-
-        // create tokio runtime used for loadNext()
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap()
-            .block_on(async move {
-                let runtime = Arc::new(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .thread_keep_alive(Duration::MAX) // always use same thread
-                        .build()
-                        .unwrap(),
-                );
-
-                // propagate task context to spawned children threads
-                let env = JavaClasses::get_thread_jnienv();
-                let task_context_ptr = unsafe {
-                    std::mem::transmute::<_, isize>(
-                        jni_bridge_call_static_method!(
-                            env,
-                            JniBridge.getTaskContext -> JObject
-                        )
-                        .unwrap(),
-                    )
-                };
-
-                runtime.spawn(async move {
-                    AssertUnwindSafe(async move {
-                        let env = JavaClasses::get_thread_jnienv();
-                        let task_context = unsafe {
-                            std::mem::transmute::<_, JObject>(task_context_ptr)
-                        };
-                        jni_bridge_call_static_method!(
-                            env,
-                            JniBridge.setTaskContext -> (),
-                            task_context,
-                        )
-                        .unwrap();
-                    })
-                    .catch_unwind()
-                    .await
-                    .unwrap_or_else(|err| {
-                        let panic_message = panic_message::panic_message(&err);
-                        throw_runtime_exception(panic_message, JObject::null())
-                            .unwrap_or_fatal();
-                    });
-                });
-
-                runtime
-            });
-
-        // safety - manually allocated memory will be released when stream is exhausted
-        unsafe {
-            let blaze_iter_ptr: *mut BlazeIter =
-                std::alloc::alloc(Layout::new::<BlazeIter>()) as *mut BlazeIter;
-
-            std::ptr::write(
-                blaze_iter_ptr,
-                BlazeIter {
-                    stream,
-                    execution_plan,
-                    runtime,
-                },
-            );
-            blaze_iter_ptr as i64
-        }
+    // save backtrace when panics
+    let result = match std::panic::catch_unwind(|| {
+        info!("Blaze native computing started");
+        let iter_ptr = blaze_call_native(
+            &env,
+            taskDefinition,
+            poolSize,
+            batch_size,
+            nativeMemory,
+            memoryFraction,
+            tmpDirs,
+        )
+        .unwrap();
+        info!("Blaze native computing finished");
+        iter_ptr
     }) {
-        Err(err) => {
-            handle_unwinded(err);
+        Err(e) => {
+            let recover = || {
+                if is_jvm_interrupted(&env)? {
+                    env.exception_clear()?;
+                    info!("Blaze native computing interrupted by JVM");
+                    return Ok(());
+                }
+                let panic_message = panic_message::panic_message(&e);
+
+                // throw jvm runtime exception
+                let cause = if env.exception_check()? {
+                    let throwable = env.exception_occurred()?.into();
+                    env.exception_clear()?;
+                    throwable
+                } else {
+                    JObject::null()
+                };
+                let msg = env.new_string(&panic_message)?;
+                let _throw = jni_bridge_call_static_method_no_check_java_exception!(
+                    env,
+                    JniBridge.raiseThrowable,
+                    jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?
+                );
+                Ok(())
+            };
+            recover().unwrap_or_else(|err: Box<dyn Error>| {
+                error!("Error recovering from panic, cannot resume: {:?}", err);
+                std::process::abort();
+            });
             -1
         }
         Ok(ptr) => ptr,
-    }
+    };
+
+    let time_cost_sec = Instant::now().duration_since(start_time).as_secs_f64();
+    info!("blaze_call_native() time cost: {} sec", time_cost_sec);
+    result
 }
 
 #[allow(non_snake_case)]
 #[no_mangle]
-pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext<'env>(
-    _: JNIEnv<'env>,
+pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadNext(
+    _: JNIEnv,
     _: JClass,
-    iter_ptr: jlong,
-    schema_ptr: jlong,
-    array_ptr: jlong,
-) -> JObject<'static> {
-    match std::panic::catch_unwind(|| {
-        let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
-        let env = JavaClasses::get_thread_jnienv();
-
-        // create a weak global retPromise
-        let ret_promise_ptr = std::mem::transmute::<_, isize>(
-            jni_weak_global_ref!(
-                env,
-                jni_bridge_call_static_method!(
-                    env,
-                    ScalaPromise.apply -> JObject
-                )
-                .unwrap()
-            )
-            .unwrap(),
-        );
-
-        // spawn a thread to poll next batch
-        blaze_iter.runtime.clone().spawn(async move {
-            AssertUnwindSafe(async move {
-                loop {
-                    match blaze_iter.stream.next().await {
-                        Some(Ok(batch)) => {
-                            if batch.num_rows() == 0 {
-                                continue;
-                            }
-                            let array: StructArray = batch.into();
-                            let out_schema = schema_ptr as *mut FFI_ArrowSchema;
-                            let out_array = array_ptr as *mut FFI_ArrowArray;
-
-                            export_array_into_raw(Arc::new(array), out_array, out_schema)
-                                .expect("export_array_into_raw error");
-                            break promise_success(ret_promise_ptr, JNI_TRUE);
+    iter_ptr: i64,
+    schema_ptr: i64,
+    array_ptr: i64,
+) -> i64 {
+    // loadNext is always called after callNative, therefore a tokio runtime already
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let blaze_iter = &mut *(iter_ptr as *mut BlazeIter);
+            loop {
+                return match blaze_iter.stream.next().await {
+                    Some(Ok(batch)) => {
+                        let num_rows = batch.num_rows();
+                        if num_rows == 0 {
+                            continue;
                         }
-                        Some(Err(e)) => {
-                            break promise_failure(
-                                ret_promise_ptr,
-                                &format!("stream.next() error: {:?}", e),
-                            );
-                        }
-                        None => {
-                            break promise_success(ret_promise_ptr, JNI_FALSE);
-                        }
+
+                        let renamed_batch = RecordBatch::try_new(
+                            blaze_iter.renamed_schema.clone(),
+                            batch.columns().to_vec(),
+                        )
+                        .unwrap();
+
+                        let array: StructArray = renamed_batch.into();
+                        let out_schema = schema_ptr as *mut FFI_ArrowSchema;
+                        let out_array = array_ptr as *mut FFI_ArrowArray;
+                        export_array_into_raw(Arc::new(array), out_array, out_schema)
+                            .unwrap();
+
+                        num_rows as i64
                     }
-                }
-            })
-            .catch_unwind()
-            .await
-            .unwrap_or_else(|err| {
-                let err = panic_message::panic_message(&err);
-                promise_failure(
-                    ret_promise_ptr,
-                    &format!("blaze loadNext() panics: {}", err),
-                );
-            })
-        });
-        std::mem::transmute(ret_promise_ptr)
-    }) {
-        Err(err) => {
-            handle_unwinded(err);
-            JObject::null()
-        }
-        Ok(ret_promise) => ret_promise,
-    }
+                    _ => -1,
+                };
+            }
+        })
 }
 
 #[allow(non_snake_case)]
@@ -235,113 +146,101 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_deallocI
     std::alloc::dealloc(iter_ptr as *mut u8, Layout::new::<BlazeIter>());
 }
 
-unsafe fn promise_failure(promise_ptr: isize, msg: &str) {
-    unsafe fn try_failure(
-        promise_ptr: isize,
-        msg: &str,
-    ) -> datafusion::error::Result<()> {
-        let env = JavaClasses::get_thread_jnienv();
-        let promise = std::mem::transmute::<_, JObject>(promise_ptr);
-        let msg = jni_map_error!(env.new_string(msg))?;
-        let cause = if env.exception_check().unwrap_or(false) {
-            let throwable = env
-                .exception_occurred()
-                .unwrap_or(JThrowable::from(JObject::null()))
-                .into();
-            let _ = env.exception_clear();
-            throwable
-        } else {
-            JObject::null()
-        };
-        let e = jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?;
-        jni_bridge_call_method!(env, ScalaPromise.failure -> JObject, promise, e)?;
-        Ok(())
-    }
-    try_failure(promise_ptr, msg).unwrap_or_fatal();
-}
+#[allow(clippy::too_many_arguments)]
+fn blaze_call_native(
+    env: &JNIEnv,
+    task_definition: JObject,
+    _pool_size: i64,
+    batch_size: i64,
+    native_memory: i64,
+    memory_fraction: f64,
+    tmp_dirs: JString,
+) -> Result<i64, Box<dyn Error>> {
+    debug!("Initializing JavaClasses");
+    JavaClasses::init(env)?;
 
-unsafe fn promise_success(promise_ptr: isize, ret: jboolean) {
-    unsafe fn try_success(
-        promise_ptr: isize,
-        ret: jboolean,
-    ) -> datafusion::error::Result<()> {
-        let env = JavaClasses::get_thread_jnienv();
-        let promise = std::mem::transmute::<_, JObject>(promise_ptr);
-        jni_bridge_call_method!(
-            env,
-            ScalaPromise.success -> JObject,
-            promise,
-            jni_bridge_new_object!(env, JavaBoolean, ret)?
-        )?;
-        Ok(())
-    }
-    try_success(promise_ptr, ret).unwrap_or_else(|err: DataFusionError| {
-        promise_failure(
-            promise_ptr,
-            &format!("calling Promise.success error: {:?}", err),
+    let env = JavaClasses::get_thread_jnienv();
+    debug!("Initializing JavaClasses succeeded");
+
+    debug!("Decoding task definition");
+    let task_definition_raw = env.convert_byte_array(task_definition.into_inner())?;
+    let task_definition: TaskDefinition = TaskDefinition::decode(&*task_definition_raw)?;
+    debug!("Decoding task definition succeeded");
+
+    debug!("Creating native execution plan");
+    let task_id = task_definition
+        .task_id
+        .ok_or_else(|| IoError::new(IoErrorKind::InvalidInput, "task id is empty"))?;
+    let plan = &task_definition
+        .plan
+        .ok_or_else(|| IoError::new(IoErrorKind::InvalidInput, "task plan is empty"))?;
+
+    let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into()?;
+    let execution_plan_displayable =
+        displayable(execution_plan.as_ref()).indent().to_string();
+    info!("Creating native execution plan succeeded");
+    info!("  task_id={:?}", task_id);
+    info!("  execution plan:\n{}", execution_plan_displayable);
+
+    let dirs = env.get_string(tmp_dirs)?.into();
+    let batch_size = batch_size as usize;
+    assert!(batch_size > 0);
+
+    let session_ctx =
+        init_session_ctx(native_memory as usize, memory_fraction, batch_size, dirs);
+    let task_ctx = session_ctx.task_ctx();
+
+    // execute
+    let result_stream =
+        execution_plan.execute(task_id.partition_id as usize, task_ctx)?;
+
+    // rename all fields to avoid fields with duplicated names
+    // we are safe to do this because the cunsumer does not rely on these names
+    let mut num_fields = 0;
+    let renamed_schema: Arc<Schema> = Arc::new(Schema::new(
+        execution_plan
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| {
+                let unnamed_field = Field::new(
+                    &format!("_c{}", num_fields),
+                    field.data_type().clone(),
+                    field.is_nullable(),
+                );
+                num_fields += 1;
+                unnamed_field
+            })
+            .collect(),
+    ));
+
+    // safety - manually allocated memory will be released when stream is exhausted
+    unsafe {
+        let blaze_iter_ptr: *mut BlazeIter =
+            std::alloc::alloc(Layout::new::<BlazeIter>()) as *mut BlazeIter;
+
+        std::ptr::write(
+            blaze_iter_ptr,
+            BlazeIter {
+                stream: result_stream,
+                execution_plan,
+                renamed_schema,
+            },
         );
-    });
+        Ok(blaze_iter_ptr as i64)
+    }
 }
 
-fn is_jvm_interrupted(env: &JNIEnv) -> datafusion::error::Result<bool> {
+fn is_jvm_interrupted(env: &JNIEnv) -> jni::errors::Result<bool> {
     let interrupted_exception_class = "java.lang.InterruptedException";
-    if env.exception_check().unwrap_or(false) {
-        let e: JObject = env
-            .exception_occurred()
-            .unwrap_or(JThrowable::from(JObject::null()))
-            .into();
-        let class = jni_map_error!(env.get_object_class(e))?;
-        let classname = jni_bridge_call_method!(env, Class.getName -> JObject, class)?;
-        let classname = jni_map_error!(env.get_string(classname.into()))?;
+    if env.exception_check()? {
+        let e = env.exception_occurred()?;
+        let class = env.get_object_class(e)?;
+        let classname = jni_bridge_call_method!(env, Class.getName, class)?.l()?;
+        let classname = env.get_string(classname.into())?;
         if classname.to_string_lossy().as_ref() == interrupted_exception_class {
             return Ok(true);
         }
     }
     Ok(false)
-}
-
-fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Result<()> {
-    let env = JavaClasses::get_thread_jnienv();
-    let msg = jni_map_error!(env.new_string(msg))?;
-    let e = jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?;
-    let _throw = jni_bridge_call_static_method!(
-        env,
-        JniBridge.raiseThrowable -> (),
-        e
-    );
-    Ok(())
-}
-
-fn handle_unwinded(err: Box<dyn Any + Send>) {
-    let env = JavaClasses::get_thread_jnienv();
-
-    // default handling:
-    //  * caused by InterruptedException: do nothing but just print a message.
-    //  * other reasons: wrap it into a RuntimeException and throw.
-    //  * if another error happens during handling, kill the whole JVM instance.
-    let recover = || {
-        if is_jvm_interrupted(&env)? {
-            env.exception_clear()?;
-            info!("native execution interrupted by JVM");
-            return Ok(());
-        }
-        let panic_message = panic_message::panic_message(&err);
-
-        // throw jvm runtime exception
-        let cause = if env.exception_check()? {
-            let throwable = env.exception_occurred()?.into();
-            env.exception_clear()?;
-            throwable
-        } else {
-            JObject::null()
-        };
-        throw_runtime_exception(panic_message, cause)?;
-        Ok(())
-    };
-    recover().unwrap_or_else(|err: Box<dyn Error>| {
-        env.fatal_error(format!(
-            "Error recovering from panic, cannot resume: {:?}",
-            err
-        ));
-    });
 }
