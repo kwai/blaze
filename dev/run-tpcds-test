@@ -38,16 +38,20 @@ parse_args_for_spark_submit "$@"
 # Resolve a jar location for the TPCDS data generator
 find_resource() {
   local jar_file="tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar"
+  local libso="$_DIR/../libblaze.so"
   local built_jar="$_DIR/../${jar_file}"
-  if [[ -e "$built_jar" ]]; then
+  if [[ -e "$built_jar" && -e "$libso" ]]; then
+    LIBSO=$libso
     RESOURCE=$built_jar
   else
-    echo "${built_jar} not found"
+    echo "${built_jar} ${libso} not found"
     exit 1
   fi
 }
 
 find_resource
+echo $LIBSO
+export LD_LIBRARY_PATH=${LIBSO}:${LD_LIBRARY_PATH}
 
 echo "Using \`spark-submit\` from path: $SPARK_HOME" 1>&2
 exec "${SPARK_HOME}"/bin/spark-submit                                   \
@@ -57,3 +61,4 @@ exec "${SPARK_HOME}"/bin/spark-submit                                   \
   $(join_by " " ${SPARK_CONF[@]})                                       \
   ${RESOURCE}                                                           \
   $(join_by " " ${ARGS[@]})
+

@@ -2,7 +2,6 @@ use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::ResultExt;
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -14,120 +13,120 @@ use jni::JNIEnv;
 use jni::JavaVM;
 
 #[macro_export]
-macro_rules! jni_map_error {
-    ($result:expr) => {{
-        match $result {
-            Ok(result) => datafusion::error::Result::Ok(result),
-            Err(jni::errors::Error::JavaException) => {
-                let env = $crate::jni_bridge::JavaClasses::get_thread_jnienv();
-                let _ = env.exception_describe();
-                Err(datafusion::error::DataFusionError::External(
-                    format!("Java exception thrown at {}:{}", file!(), line!()).into(),
-                ))
-            }
-            Err(err) => Err(datafusion::error::DataFusionError::External(
-                format!(
-                    "Unknown JNI error occurred at {}:{}: {:?}",
-                    file!(),
-                    line!(),
-                    err
-                )
-                .into(),
-            )),
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! jvalues {
-    ($($args:expr,)* $(,)?) => {{
-        &[$(jni::objects::JValue::from($args)),*] as &[jni::objects::JValue]
+macro_rules! jni_bridge_new_object_impl {
+    ($env:expr, $clsname:ident $(, $args:expr)*) => {{
+        $env.new_object_unchecked(
+            paste::paste! {JavaClasses::get().[<c $clsname>].class},
+            paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
+            &[$(jni::objects::JValue::from($args),)*],
+        )
     }}
 }
 
 #[macro_export]
 macro_rules! jni_bridge_new_object {
     ($env:expr, $clsname:ident $(, $args:expr)*) => {{
-        log::trace!(
-            "jni_bridge_new_object!({}, {:?})",
-            stringify!($clsname),
-            $crate::jvalues!($($args,)*));
-        $crate::jni_map_error!(
-            $env.new_object_unchecked(
-                paste::paste! {JavaClasses::get().[<c $clsname>].class},
-                paste::paste! {JavaClasses::get().[<c $clsname>].ctor},
-                $crate::jvalues!($($args,)*))
+        log::trace!("jni_bridge_new_object!({}, {:?})",
+        stringify!($clsname),
+        &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+        match $crate::jni_bridge_new_object_impl!($env, $clsname $(, $args)*) {
+            Err(jni::errors::Error::JavaException) => {
+                let _describe = $env.exception_describe();
+                panic!("Exception thrown at jni_bridge_new_object!({}, {:?})",
+                    stringify!($clsname),
+                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+            }
+            result => result
+        }
+    }}
+}
+
+#[macro_export]
+macro_rules! jni_bridge_call_method_impl {
+    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
+        $env.call_method_unchecked(
+            $obj,
+            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
+            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
+            &[$(jni::objects::JValue::from($args),)*],
         )
     }}
 }
 
 #[macro_export]
+macro_rules! jni_bridge_call_method_no_check_java_exception {
+    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
+        log::trace!("jni_bridge_call_method_no_check_java_exception!({}.{}, {:?}, {:?})",
+            stringify!($clsname),
+            stringify!($method),
+            $obj,
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+        $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*)
+    }}
+}
+
+#[macro_export]
 macro_rules! jni_bridge_call_method {
-    ($env:expr, $clsname:ident.$method:ident -> $ret:ty, $obj:expr $(, $args:expr)*) => {{
+    ($env:expr, $clsname:ident.$method:ident, $obj:expr $(, $args:expr)*) => {{
         log::trace!("jni_bridge_call_method!({}.{}, {:?}, {:?})",
             stringify!($clsname),
             stringify!($method),
             $obj,
-            $crate::jvalues!($($args,)*));
-        $crate::jni_map_error!(
-            $env.call_method_unchecked(
-                $obj,
-                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
-                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-                $crate::jvalues!($($args,)*)
-            )
-        ).and_then(|result| $crate::jni_map_error!(<$ret>::try_from(result)))
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+        match $crate::jni_bridge_call_method_impl!($env, $clsname.$method, $obj $(, $args)*) {
+            Err(jni::errors::Error::JavaException) => {
+                let _describe = $env.exception_describe();
+                panic!("Exception thrown at jni_bridge_call_method!({}.{}, {:?})",
+                    stringify!($clsname),
+                    stringify!($method),
+                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+            }
+            result => result
+        }
+    }}
+}
+
+#[macro_export]
+macro_rules! jni_bridge_call_static_method_impl {
+    ($env:expr, $clsname:ident.$method:ident $(, $args:expr)*) => {{
+        $env.call_static_method_unchecked(
+            paste::paste! {JavaClasses::get().[<c $clsname>].class},
+            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
+            paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
+            &[$(jni::objects::JValue::from($args),)*],
+        )
+    }}
+}
+
+#[macro_export]
+macro_rules! jni_bridge_call_static_method_no_check_java_exception {
+    ($env:expr, $clsname:ident.$method:ident $(, $args:expr)*) => {{
+        log::trace!("jni_bridge_call_static_method_no_check_java_exception!({}.{}, {:?})",
+            stringify!($clsname),
+            stringify!($method),
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+        $crate::jni_bridge_call_static_method_impl!($env, $clsname.$method $(, $args)*)
     }}
 }
 
 #[macro_export]
 macro_rules! jni_bridge_call_static_method {
-    ($env:expr, $clsname:ident . $method:ident -> $ret:ty $(,$args:expr)* $(,)?) => {{
-        log::trace!(
-            "jni_bridge_call_static_method!({}.{}, {:?})",
+    ($env:expr, $clsname:ident . $method:ident $(, $args:expr)*) => {{
+        log::trace!("jni_bridge_call_static_method!({}.{}, {:?})",
             stringify!($clsname),
             stringify!($method),
-            $crate::jvalues!($($args,)*));
-        $crate::jni_map_error!(
-            $env.call_static_method_unchecked(
-                paste::paste! {JavaClasses::get().[<c $clsname>].class},
-                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method>]},
-                paste::paste! {JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-                $crate::jvalues!($($args,)*)
-            )
-        ).and_then(|result| $crate::jni_map_error!(<$ret>::try_from(result)))
-    }}
-}
-
-#[macro_export]
-macro_rules! jni_weak_global_ref {
-    ($env:expr, $obj:expr) => {{
-        $crate::jni_map_error!({
-            let jnienv = &*(*$env.get_native_interface());
-            if let Some(new_weak_global_ref) = &jnienv.NewWeakGlobalRef {
-                let weak_global =
-                    new_weak_global_ref($env.get_native_interface(), $obj.into_inner());
-                if !weak_global.is_null() {
-                    jni::errors::Result::Ok(JObject::from(weak_global))
-                } else {
-                    jni::errors::Result::Err(jni::errors::Error::NullPtr(
-                        "NewWeakGlobalRef() returns null",
-                    ))
-                }
-            } else {
-                jni::errors::Result::Err(jni::errors::Error::JNIEnvMethodNotFound(
-                    "NewWeakGlobalRef",
-                ))
+            &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
+        match $crate::jni_bridge_call_static_method_impl!($env, $clsname.$method $(, $args)*) {
+            Err(jni::errors::Error::JavaException) => {
+                let _describe = $env.exception_describe();
+                panic!("Exception thrown at jni_bridge_call_static_method!({}.{}, {:?})",
+                    stringify!($clsname),
+                    stringify!($method),
+                    &[$(jni::objects::JValue::from($args),)*] as &[jni::objects::JValue]);
             }
-        })
-    }};
-}
-
-#[macro_export]
-macro_rules! jni_global_ref {
-    ($env:expr, $obj:expr) => {{
-        $crate::jni_map_error!($env.new_global_ref($obj))
-    }};
+            result => result
+        }
+    }}
 }
 
 #[allow(non_snake_case)]
@@ -139,15 +138,12 @@ pub struct JavaClasses<'a> {
     pub cClass: JavaClass<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
     pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
-    pub cJavaBoolean: JavaBoolean<'a>,
-    pub cJavaLong: JavaLong<'a>,
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
     pub cJavaFile: JavaFile<'a>,
     pub cJavaConsumer: JavaConsumer<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
-    pub cScalaPromise: ScalaPromise<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
     pub cScalaFunction0: ScalaFunction0<'a>,
 
@@ -191,15 +187,12 @@ impl JavaClasses<'static> {
             cClass: JavaClass::new(env)?,
             cJavaRuntimeException: JavaRuntimeException::new(env)?,
             cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)?,
-            cJavaBoolean: JavaBoolean::new(env)?,
-            cJavaLong: JavaLong::new(env)?,
             cJavaList: JavaList::new(env)?,
             cJavaMap: JavaMap::new(env)?,
             cJavaFile: JavaFile::new(env)?,
             cJavaConsumer: JavaConsumer::new(env)?,
 
             cScalaIterator: ScalaIterator::new(env)?,
-            cScalaPromise: ScalaPromise::new(env)?,
             cScalaTuple2: ScalaTuple2::new(env)?,
             cScalaFunction0: ScalaFunction0::new(env)?,
 
@@ -254,15 +247,14 @@ impl JavaClasses<'static> {
         if let Ok(env) = jvm.get_env() {
             return env;
         }
-        let env = jvm.attach_current_thread_permanently().unwrap();
 
+        let env = jvm.attach_current_thread_permanently().unwrap();
         jni_bridge_call_static_method!(
             env,
-            JniBridge.setContextClassLoader -> (),
+            JniBridge.setContextClassLoader,
             JavaClasses::get().classloader
         )
-        .unwrap_or_fatal();
-
+        .unwrap();
         env
     }
 }
@@ -280,10 +272,6 @@ pub struct JniBridge<'a> {
     pub method_getHDFSFileSystem_ret: JavaType,
     pub method_getResource: JStaticMethodID<'a>,
     pub method_getResource_ret: JavaType,
-    pub method_setTaskContext: JStaticMethodID<'a>,
-    pub method_setTaskContext_ret: JavaType,
-    pub method_getTaskContext: JStaticMethodID<'a>,
-    pub method_getTaskContext_ret: JavaType,
     pub method_readFSDataInputStream: JStaticMethodID<'a>,
     pub method_readFSDataInputStream_ret: JavaType,
 }
@@ -330,20 +318,6 @@ impl<'a> JniBridge<'a> {
             method_getResource_ret: JavaType::Object(
                 HadoopFileSystem::SIG_TYPE.to_owned(),
             ),
-            method_getTaskContext: env.get_static_method_id(
-                class,
-                "getTaskContext",
-                "()Lorg/apache/spark/TaskContext;",
-            )?,
-            method_getTaskContext_ret: JavaType::Object(
-                "org/apache/spark/TaskContext".to_owned(),
-            ),
-            method_setTaskContext: env.get_static_method_id(
-                class,
-                "setTaskContext",
-                "(Lorg/apache/spark/TaskContext;)V",
-            )?,
-            method_setTaskContext_ret: JavaType::Primitive(Primitive::Void),
             method_readFSDataInputStream: env.get_static_method_id(
                 class,
                 "readFSDataInputStream",
@@ -425,40 +399,6 @@ impl<'a> JavaNioSeekableByteChannel<'a> {
             method_setPosition_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
             method_size: env.get_method_id(class, "size", "()J")?,
             method_size_ret: JavaType::Primitive(Primitive::Long),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct JavaBoolean<'a> {
-    pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
-}
-impl<'a> JavaBoolean<'a> {
-    pub const SIG_TYPE: &'static str = "java/lang/Boolean";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaBoolean<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaBoolean {
-            class,
-            ctor: env.get_method_id(class, "<init>", "(Z)V")?,
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct JavaLong<'a> {
-    pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
-}
-impl<'a> JavaLong<'a> {
-    pub const SIG_TYPE: &'static str = "java/lang/Long";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaLong<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaLong {
-            class,
-            ctor: env.get_method_id(class, "<init>", "(J)V")?,
         })
     }
 }
@@ -578,45 +518,6 @@ impl<'a> ScalaIterator<'a> {
             method_hasNext_ret: JavaType::Primitive(Primitive::Boolean),
             method_next: env.get_method_id(class, "next", "()Ljava/lang/Object;")?,
             method_next_ret: JavaType::Object("java/lang/Object".to_owned()),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct ScalaPromise<'a> {
-    pub class: JClass<'a>,
-    pub method_apply: JStaticMethodID<'a>,
-    pub method_apply_ret: JavaType,
-    pub method_success: JMethodID<'a>,
-    pub method_success_ret: JavaType,
-    pub method_failure: JMethodID<'a>,
-    pub method_failure_ret: JavaType,
-}
-impl<'a> ScalaPromise<'a> {
-    pub const SIG_TYPE: &'static str = "scala/concurrent/Promise";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaPromise<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(ScalaPromise {
-            class,
-            method_apply: env.get_static_method_id(
-                class,
-                "apply",
-                "()Lscala/concurrent/Promise;",
-            )?,
-            method_apply_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
-            method_success: env.get_method_id(
-                class,
-                "success",
-                "(Ljava/lang/Object;)Lscala/concurrent/Promise;",
-            )?,
-            method_success_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
-            method_failure: env.get_method_id(
-                class,
-                "failure",
-                "(Ljava/lang/Throwable;)Lscala/concurrent/Promise;",
-            )?,
-            method_failure_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
         })
     }
 }

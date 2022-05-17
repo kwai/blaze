@@ -24,26 +24,24 @@ import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.spark.TaskContext;
-import org.apache.spark.TaskContext$;
 import org.apache.spark.deploy.SparkHadoopUtil;
-import scala.concurrent.Promise;
 
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
   static {
-    JniLoader.get().ensureLoaded();
+    System.loadLibrary("blaze");
   }
 
   public static native long callNative(
       byte[] taskDefinition,
+      long tokioPoolSize,
       long batchSize,
       long nativeMemory,
       double memoryFraction,
       String tmpDirs);
 
-  public static native Promise<Boolean> loadNext(long iter_ptr, long schema_ptr, long array_ptr);
+  public static native int loadNext(long iter_ptr, long schema_ptr, long array_ptr);
 
   public static native int deallocIter(long iter_ptr);
 
@@ -67,14 +65,6 @@ public class JniBridge {
 
   public static Object getResource(String key) {
     return resourcesMap.get(key);
-  }
-
-  public static TaskContext getTaskContext() {
-    return TaskContext$.MODULE$.get();
-  }
-
-  public static void setTaskContext(TaskContext tc) {
-    TaskContext$.MODULE$.setTaskContext(tc);
   }
 
   // shim method to FSDataInputStream.read()
