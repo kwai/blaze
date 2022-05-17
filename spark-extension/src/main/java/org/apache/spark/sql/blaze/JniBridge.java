@@ -36,7 +36,7 @@ public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
   static {
-    JniLoader.get().ensureLoaded();
+    System.loadLibrary("blaze");
 
     // init native
     SparkEnv sparkEnv = SparkEnv.get();
