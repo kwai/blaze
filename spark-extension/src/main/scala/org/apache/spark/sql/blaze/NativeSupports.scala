@@ -120,6 +120,9 @@ object NativeSupports extends Logging {
       partition: Partition,
       context: TaskContext): Long = {
 
+    // make sure native library is loaded
+    BlazeSparkSessionExtension.loadBlazeNativeLibrary()
+
     // do not use context.partitionId since it is not correct in Union plans.
     val partitionId = PartitionId
       .newBuilder()

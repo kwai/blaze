@@ -17,9 +17,17 @@
 
 package org.apache.spark.sql.blaze
 
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.InputStream
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.arrow.c.jni.JniWrapper
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
@@ -59,12 +67,12 @@ import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.RowToColumnarExec
 import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.util.Utils
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
@@ -80,6 +88,25 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
       BlazeColumnarOverrides(sparkSession)
     })
   }
+}
+
+object BlazeSparkSessionExtension {
+  var blazeNativeLibraryLoaded: Boolean = false
+
+  def loadBlazeNativeLibrary(): Unit =
+    this.synchronized {
+      if (!blazeNativeLibraryLoaded) {
+        val libraryName = System.mapLibraryName("blaze")
+        Utils.tryWithResource(
+          classOf[BlazeSparkSessionExtension].getClassLoader.getResourceAsStream(libraryName)) {
+          is =>
+            val temp = Files.createTempFile("jnilib-", ".tmp")
+            Files.copy(is, temp.toAbsolutePath, StandardCopyOption.REPLACE_EXISTING)
+            System.load(temp.toAbsolutePath.toString)
+        }
+        blazeNativeLibraryLoaded = true
+      }
+    }
 }
 
 case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)

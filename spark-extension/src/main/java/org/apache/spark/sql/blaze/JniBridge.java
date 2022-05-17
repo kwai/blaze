@@ -29,10 +29,6 @@ import org.apache.spark.deploy.SparkHadoopUtil;
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
-  static {
-    JniLoader.get().ensureLoaded();
-  }
-
   public static native long callNative(
       byte[] taskDefinition,
       long tokioPoolSize,
