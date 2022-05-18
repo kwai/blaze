@@ -113,12 +113,20 @@ comparison with vanilla Spark.
 We also encourage you to benchmark Blaze locally and share the results with us. 🤗
 
 ## Roadmap
+### 1. Operators
+
 Currently, there are still several operators that we cannot execute natively:
 - Aggregate. Relies on https://github.com/apache/arrow-datafusion/issues/1570.
 - Join with an optional filter condition. Relies on https://github.com/apache/arrow-datafusion/issues/2509.
 - Broadcast HashJoin.
 - Window.
 
+### 2. Compressed Shuffle
+
+We use segmented Arrow-IPC files to express shuffle data. If we could apply IPC compression,
+we would benefit more from Shuffle since columnar data would have a better compression ratio. Tracked in #4.
+
+### 3. UDF support
 Also, we would like to have a high-performance JVM-UDF invocation framework that could utilize a great variety
 of the existing UDFs written in Spark/Hive language, and we haven't supported them natively in Blaze.
 
