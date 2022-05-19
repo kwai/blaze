@@ -10,7 +10,6 @@ use datafusion::datafusion_data_access::object_store::{
 use datafusion::datafusion_data_access::Result;
 use datafusion::datafusion_data_access::SizedFile;
 use futures::AsyncRead;
-
 use jni::objects::JObject;
 use jni::sys::jint;
 

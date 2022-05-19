@@ -17,21 +17,23 @@
 
 package org.apache.spark.sql.blaze.execution
 
+import java.util.concurrent.ConcurrentHashMap
+
+import scala.collection.JavaConverters._
+
+import org.apache.spark.ShuffleDependency
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkEnv
+import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
-import org.apache.spark.shuffle.sort.{
-  BypassMergeSortShuffleHandle,
-  SerializedShuffleHandle,
-  SortShuffleManager,
-  SortShuffleWriter
-}
+import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
+import org.apache.spark.shuffle.sort.SerializedShuffleHandle
+import org.apache.spark.shuffle.sort.SortShuffleManager
+import org.apache.spark.shuffle.sort.SortShuffleWriter
 import org.apache.spark.sql.shuffle.sort.ArrowShuffleWriter301
 import org.apache.spark.util.collection.OpenHashSet
-import org.apache.spark.{ShuffleDependency, SparkConf, SparkEnv, TaskContext}
-
-import java.util.concurrent.ConcurrentHashMap
-import scala.collection.JavaConverters._
 
 class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Logging {
 

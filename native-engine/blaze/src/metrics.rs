@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use datafusion::physical_plan::ExecutionPlan;
-
 use jni::objects::{JClass, JObject};
 use jni::JNIEnv;
 

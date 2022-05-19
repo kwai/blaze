@@ -15,15 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::any::Any;
+use std::fmt::Formatter;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
-
 use datafusion::physical_expr::PhysicalSortExpr;
-
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
 };
@@ -32,11 +36,6 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::{Stream, StreamExt};
-use std::any::Any;
-use std::fmt::Formatter;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
 
 #[derive(Debug, Clone)]
 pub struct RenameColumnsExec {

@@ -34,7 +34,6 @@ use async_trait::async_trait;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::take;
 use datafusion::arrow::datatypes::DataType;
-
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::error::ArrowError;
@@ -62,7 +61,6 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
-
 use log::debug;
 use tempfile::NamedTempFile;
 use tokio::task;

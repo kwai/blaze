@@ -22,7 +22,6 @@ import java.nio.ByteBuffer
 import java.nio.channels.SeekableByteChannel
 import java.nio.ByteOrder
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.TaskContext

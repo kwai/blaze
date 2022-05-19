@@ -20,12 +20,6 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use crate::error::{FromOptionalField, PlanSerDeError};
-use crate::protobuf::physical_expr_node::ExprType;
-use crate::protobuf::physical_plan_node::PhysicalPlanType;
-use crate::protobuf::repartition_exec_node::PartitionMethod;
-use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
-use crate::{from_proto_binary_op, proto_error, str_to_byte};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datafusion_data_access::{FileMeta, SizedFile};
@@ -68,11 +62,19 @@ use datafusion::physical_plan::{
     AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
 };
 use datafusion::scalar::ScalarValue;
+
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::global_object_store_registry;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
+
+use crate::error::{FromOptionalField, PlanSerDeError};
+use crate::protobuf::physical_expr_node::ExprType;
+use crate::protobuf::physical_plan_node::PhysicalPlanType;
+use crate::protobuf::repartition_exec_node::PartitionMethod;
+use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
+use crate::{from_proto_binary_op, proto_error, str_to_byte};
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,

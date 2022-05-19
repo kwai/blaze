@@ -1,25 +1,19 @@
 use std::alloc::Layout;
 use std::any::Any;
-
 use std::error::Error;
 use std::panic::AssertUnwindSafe;
-
 use std::sync::Arc;
 use std::time::Duration;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-
 use datafusion::physical_plan::{displayable, ExecutionPlan};
-
 use futures::{FutureExt, StreamExt};
 use jni::objects::{JClass, JString};
 use jni::objects::{JObject, JThrowable};
 use jni::sys::{jbyteArray, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
-
 use prost::Message;
-
 use tokio::runtime::Runtime;
 
 use datafusion_ext::jni_bridge::JavaClasses;

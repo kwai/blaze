@@ -145,7 +145,6 @@ pub struct JavaClasses<'a> {
     pub cJavaSynchronousQueue: JavaSynchronousQueue<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
-    pub cScalaPromise: ScalaPromise<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
     pub cScalaFunction0: ScalaFunction0<'a>,
 
@@ -199,7 +198,6 @@ impl JavaClasses<'static> {
                 cJavaSynchronousQueue: JavaSynchronousQueue::new(env).unwrap(),
 
                 cScalaIterator: ScalaIterator::new(env).unwrap(),
-                cScalaPromise: ScalaPromise::new(env).unwrap(),
                 cScalaTuple2: ScalaTuple2::new(env).unwrap(),
                 cScalaFunction0: ScalaFunction0::new(env).unwrap(),
 
@@ -578,45 +576,6 @@ impl<'a> ScalaIterator<'a> {
             method_hasNext_ret: JavaType::Primitive(Primitive::Boolean),
             method_next: env.get_method_id(class, "next", "()Ljava/lang/Object;")?,
             method_next_ret: JavaType::Object("java/lang/Object".to_owned()),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct ScalaPromise<'a> {
-    pub class: JClass<'a>,
-    pub method_apply: JStaticMethodID<'a>,
-    pub method_apply_ret: JavaType,
-    pub method_success: JMethodID<'a>,
-    pub method_success_ret: JavaType,
-    pub method_failure: JMethodID<'a>,
-    pub method_failure_ret: JavaType,
-}
-impl<'a> ScalaPromise<'a> {
-    pub const SIG_TYPE: &'static str = "scala/concurrent/Promise";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaPromise<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(ScalaPromise {
-            class,
-            method_apply: env.get_static_method_id(
-                class,
-                "apply",
-                "()Lscala/concurrent/Promise;",
-            )?,
-            method_apply_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
-            method_success: env.get_method_id(
-                class,
-                "success",
-                "(Ljava/lang/Object;)Lscala/concurrent/Promise;",
-            )?,
-            method_success_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
-            method_failure: env.get_method_id(
-                class,
-                "failure",
-                "(Ljava/lang/Throwable;)Lscala/concurrent/Promise;",
-            )?,
-            method_failure_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
         })
     }
 }

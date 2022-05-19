@@ -17,6 +17,14 @@
 
 package org.apache.spark.sql.blaze.execution
 
+import java.io.BufferedOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.channels.ClosedByInterruptException
+import java.nio.channels.FileChannel
+
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.arrow.vector.ipc.ArrowFileWriter
@@ -24,16 +32,13 @@ import org.apache.arrow.vector.ipc.message.MessageSerializer
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.util2.ArrowWriter
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util2.ArrowUtils2
-import org.apache.spark.storage.{FileSegment, TimeTrackingOutputStream}
+import org.apache.spark.sql.util2.ArrowWriter
+import org.apache.spark.storage.FileSegment
+import org.apache.spark.storage.TimeTrackingOutputStream
 import org.apache.spark.util.Utils
-
-import java.io.{BufferedOutputStream, File, FileOutputStream, OutputStream}
-import java.nio.ByteBuffer
-import java.nio.channels.{ClosedByInterruptException, FileChannel}
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.SparkEnv
 
 /**

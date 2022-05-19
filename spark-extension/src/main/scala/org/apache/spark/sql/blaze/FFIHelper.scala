@@ -18,13 +18,9 @@
 package org.apache.spark.sql.blaze
 
 import java.util.concurrent.SynchronousQueue
-import java.util.concurrent.LinkedTransferQueue
 import java.util.concurrent.TimeUnit
 
 import scala.collection.JavaConverters._
-import scala.concurrent.Await
-import scala.concurrent.Promise
-import scala.concurrent.duration.Duration
 
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.ArrowSchema

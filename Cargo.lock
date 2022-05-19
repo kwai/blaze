@@ -195,7 +195,6 @@ dependencies = [
  "lazy_static",
  "log",
  "mimalloc",
- "once_cell",
  "panic-message",
  "paste",
  "plan-serde",

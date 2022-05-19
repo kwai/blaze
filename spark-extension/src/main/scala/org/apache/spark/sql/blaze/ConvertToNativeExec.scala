@@ -17,10 +17,8 @@
 
 package org.apache.spark.sql.blaze
 
-import java.nio.channels.SeekableByteChannel
 import java.util.UUID
 
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning

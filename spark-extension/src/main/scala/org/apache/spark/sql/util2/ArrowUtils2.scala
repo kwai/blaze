@@ -17,14 +17,19 @@
 
 package org.apache.spark.sql.util2
 
+import scala.collection.JavaConverters._
+
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.complex.MapVector
-import org.apache.arrow.vector.types.pojo.{ArrowType, Field, FieldType, Schema}
-import org.apache.arrow.vector.types.{DateUnit, FloatingPointPrecision, TimeUnit}
+import org.apache.arrow.vector.types.DateUnit
+import org.apache.arrow.vector.types.FloatingPointPrecision
+import org.apache.arrow.vector.types.TimeUnit
+import org.apache.arrow.vector.types.pojo.ArrowType
+import org.apache.arrow.vector.types.pojo.Field
+import org.apache.arrow.vector.types.pojo.FieldType
+import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
-
-import scala.collection.JavaConverters._
 
 object ArrowUtils2 {
 

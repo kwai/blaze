@@ -18,22 +18,31 @@
 package org.apache.spark.storage
 
 import java.io.IOException
-
-import org.apache.spark.internal.Logging
-import org.apache.spark.network.buffer.{FileSegmentManagedBuffer, ManagedBuffer}
-import org.apache.spark.network.shuffle._
-import org.apache.spark.network.util.TransportConf
-import org.apache.spark.shuffle.{FetchFailedException, ShuffleReadMetricsReporter}
-import org.apache.spark.util.{CompletionIterator, Utils}
-import org.apache.spark.{SparkException, TaskContext}
 import java.nio.channels.ClosedByInterruptException
-import java.util.concurrent.{LinkedBlockingQueue, TimeUnit}
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.mutable
-import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, LinkedHashMap, Queue}
-import scala.util.{Failure, Success}
+import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.HashMap
+import scala.collection.mutable.HashSet
+import scala.collection.mutable.LinkedHashMap
+import scala.collection.mutable.Queue
+import scala.util.Failure
+import scala.util.Success
 
+import org.apache.spark.SparkException
+import org.apache.spark.TaskContext
+import org.apache.spark.internal.Logging
+import org.apache.spark.network.buffer.FileSegmentManagedBuffer
+import org.apache.spark.network.buffer.ManagedBuffer
+import org.apache.spark.network.shuffle._
+import org.apache.spark.network.util.TransportConf
+import org.apache.spark.shuffle.FetchFailedException
+import org.apache.spark.shuffle.ShuffleReadMetricsReporter
+import org.apache.spark.util.CompletionIterator
+import org.apache.spark.util.Utils
 import org.apache.spark.util.TaskCompletionListener
 
 /**
