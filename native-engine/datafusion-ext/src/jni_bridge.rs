@@ -260,6 +260,8 @@ pub struct JniBridge<'a> {
     pub method_getTaskContext_ret: JavaType,
     pub method_readFSDataInputStream: JStaticMethodID<'a>,
     pub method_readFSDataInputStream_ret: JavaType,
+    pub method_seekByteChannel: JStaticMethodID<'a>,
+    pub method_seekByteChannel_ret: JavaType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -324,6 +326,12 @@ impl<'a> JniBridge<'a> {
                 "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;J)I",
             )?,
             method_readFSDataInputStream_ret: JavaType::Primitive(Primitive::Int),
+            method_seekByteChannel: env.get_static_method_id(
+                class,
+                "seekByteChannel",
+                "(Ljava/nio/channels/SeekableByteChannel;J)J",
+            )?,
+            method_seekByteChannel_ret: JavaType::Primitive(Primitive::Long),
         })
     }
 }

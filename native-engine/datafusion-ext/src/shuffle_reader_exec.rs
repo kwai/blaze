@@ -255,46 +255,20 @@ impl Read for SeekableByteChannelReader {
 impl Seek for SeekableByteChannelReader {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let env = JavaClasses::get_thread_jnienv();
-        match pos {
-            SeekFrom::Start(position) => {
-                jni_bridge_call_method!(
-                    env,
-                    JavaNioSeekableByteChannel.setPosition -> JObject,
-                    self.0.as_obj(),
-                    position as i64
-                )
-                .and_then(|channel| {
-                    // channel ref must be explicitly deleted to avoid OOM
-                    jni_map_error!(env.delete_local_ref(channel))
-                })
-                .to_io_result()?;
-                Ok(position)
+        jni_bridge_call_static_method!(
+            env,
+            JniBridge.seekByteChannel -> jlong,
+            self.0.as_obj(),
+            match pos {
+                SeekFrom::Start(position) =>
+                    position as i64,
+                SeekFrom::End(position) =>
+                    position,
+                SeekFrom::Current(_) =>
+                    unimplemented!(),
             }
-
-            SeekFrom::End(offset) => {
-                let size = jni_bridge_call_method!(
-                    env,
-                    JavaNioSeekableByteChannel.size -> jlong,
-                    self.0.as_obj()
-                )
-                .to_io_result()? as u64;
-
-                let position = size + offset as u64;
-                jni_bridge_call_method!(
-                    env,
-                    JavaNioSeekableByteChannel.setPosition -> JObject,
-                    self.0.as_obj(),
-                    position as i64
-                )
-                .and_then(|channel| {
-                    // channel ref must be explicitly deleted to avoid OOM
-                    jni_map_error!(env.delete_local_ref(channel))
-                })
-                .to_io_result()?;
-                Ok(position)
-            }
-
-            SeekFrom::Current(_) => unimplemented!(),
-        }
+        )
+        .map(|position| position as u64)
+        .to_io_result()
     }
 }
