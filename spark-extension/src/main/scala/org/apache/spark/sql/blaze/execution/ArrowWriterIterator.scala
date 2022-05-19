@@ -17,7 +17,6 @@
 
 package org.apache.spark.sql.blaze.execution
 
-import java.nio.channels.ByteChannel
 import java.nio.channels.Channels
 
 import org.apache.arrow.vector.VectorSchemaRoot

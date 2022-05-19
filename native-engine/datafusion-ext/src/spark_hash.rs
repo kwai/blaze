@@ -17,6 +17,8 @@
 
 //! Functionality used both on logical and physical plans
 
+use std::sync::Arc;
+
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Date32Array, Date64Array, DictionaryArray, Int16Array,
     Int32Array, Int64Array, Int8Array, LargeStringArray, StringArray,
@@ -28,7 +30,6 @@ use datafusion::arrow::datatypes::{
     Int8Type, TimeUnit,
 };
 use datafusion::error::{DataFusionError, Result};
-use std::sync::Arc;
 
 #[inline]
 fn spark_compatible_murmur3_hash<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
@@ -322,12 +323,14 @@ pub(crate) fn pmod(hash: u32, n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::spark_hash::{create_hashes, pmod};
+    use std::sync::Arc;
+
     use datafusion::arrow::array::{
         ArrayRef, Int32Array, Int64Array, Int8Array, StringArray,
     };
     use datafusion::from_slice::FromSlice;
-    use std::sync::Arc;
+
+    use crate::spark_hash::{create_hashes, pmod};
 
     #[test]
     fn test_i8() {

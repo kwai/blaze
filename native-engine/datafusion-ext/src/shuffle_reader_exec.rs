@@ -45,13 +45,14 @@ use datafusion::physical_plan::RecordBatchStream;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::Stream;
-use jni::errors::Result as JniResult;
 use jni::objects::{GlobalRef, JObject};
+use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
 
 use crate::jni_bridge::JavaClasses;
-use crate::jni_bridge_call_method;
 use crate::jni_bridge_call_static_method;
-use crate::util::Util;
+use crate::jni_global_ref;
+use crate::jni_map_error;
+use crate::{jni_bridge_call_method, ResultExt};
 
 #[derive(Debug, Clone)]
 pub struct ShuffleReaderExec {
@@ -115,19 +116,21 @@ impl ExecutionPlan for ShuffleReaderExec {
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
-        let segments = Util::to_datafusion_external_result(Ok(()).and_then(|_| {
-            let env = JavaClasses::get_thread_jnienv();
-            let segments_provider = jni_bridge_call_static_method!(
+        let env = JavaClasses::get_thread_jnienv();
+        let segments_provider = jni_bridge_call_static_method!(
+            env,
+            JniBridge.getResource -> JObject,
+            jni_map_error!(env.new_string(&self.native_shuffle_id))?
+        )?;
+        let segments = jni_global_ref!(
+            env,
+            jni_bridge_call_method!(
                 env,
-                JniBridge.getResource,
-                env.new_string(&self.native_shuffle_id)?
+                ScalaFunction0.apply -> JObject,
+                segments_provider
             )?
-            .l()?;
-            let segments =
-                jni_bridge_call_method!(env, ScalaFunction0.apply, segments_provider)?
-                    .l()?;
-            JniResult::Ok(env.new_global_ref(segments)?)
-        }))?;
+        )?;
+
         let schema = self.schema.clone();
         Ok(Box::pin(ShuffleReaderStream::new(
             schema,
@@ -152,7 +155,6 @@ impl ExecutionPlan for ShuffleReaderExec {
 struct ShuffleReaderStream {
     schema: SchemaRef,
     segments: GlobalRef,
-    current_segment: Option<GlobalRef>,
     arrow_file_reader: Option<FileReader<SeekableByteChannelReader>>,
     baseline_metrics: BaselineMetrics,
 }
@@ -169,47 +171,38 @@ impl ShuffleReaderStream {
         ShuffleReaderStream {
             schema,
             segments,
-            current_segment: None,
             arrow_file_reader: None,
             baseline_metrics,
         }
     }
 
     fn next_segment(&mut self) -> Result<bool> {
-        Util::to_datafusion_external_result(Ok(()).and_then(|_| {
-            let env = JavaClasses::get_thread_jnienv();
+        let env = JavaClasses::get_thread_jnienv();
 
-            let has_next = jni_bridge_call_method!(
-                env,
-                ScalaIterator.hasNext,
-                self.segments.as_obj()
-            )?
-            .z()?;
-            if !has_next {
-                self.current_segment = None;
-                self.arrow_file_reader = None;
-                return JniResult::Ok(false);
-            }
-
-            let next_segment =
-                jni_bridge_call_method!(env, ScalaIterator.next, self.segments.as_obj())?
-                    .l()?;
-            self.current_segment = Some(env.new_global_ref(next_segment)?);
-            JniResult::Ok(true)
-        }))?;
-
-        if let Some(current_segment) = &self.current_segment {
-            self.arrow_file_reader = Some(FileReader::try_new(
-                // safety:
-                // the lifetime of SeekableByteChannelReader is exactly the same as self.arrow_file_reader
-                SeekableByteChannelReader(unsafe {
-                    std::mem::transmute::<_, JObject<'static>>(current_segment.as_obj())
-                }),
-                None,
-            )?);
-            return Ok(true);
+        if jni_bridge_call_method!(
+            env,
+            ScalaIterator.hasNext -> jboolean,
+            self.segments.as_obj()
+        )? != JNI_TRUE
+        {
+            self.arrow_file_reader = None;
+            return Ok(false);
         }
-        Ok(false)
+
+        let channel = jni_bridge_call_method!(
+            env,
+            ScalaIterator.next -> JObject,
+            self.segments.as_obj()
+        )?;
+
+        self.arrow_file_reader = Some(FileReader::try_new(
+            SeekableByteChannelReader(jni_global_ref!(env, channel)?),
+            None,
+        )?);
+
+        // channel ref must be explicitly deleted to avoid OOM
+        jni_map_error!(env.delete_local_ref(channel))?;
+        Ok(true)
     }
 }
 
@@ -232,7 +225,7 @@ impl Stream for ShuffleReaderStream {
         }
 
         // current arrow file reader reaches EOF, try next ipc
-        if self.next_segment().unwrap() {
+        if self.next_segment()? {
             return self.poll_next(cx);
         }
         Poll::Ready(None)
@@ -244,72 +237,64 @@ impl RecordBatchStream for ShuffleReaderStream {
     }
 }
 
-struct SeekableByteChannelReader(JObject<'static>);
+struct SeekableByteChannelReader(GlobalRef);
+
 impl Read for SeekableByteChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Ok(())
-            .and_then(|_| {
-                let env = JavaClasses::get_thread_jnienv();
-                return JniResult::Ok(
-                    jni_bridge_call_method!(
-                        env,
-                        JavaNioSeekableByteChannel.read,
-                        self.0,
-                        env.new_direct_byte_buffer(buf)?
-                    )?
-                    .i()? as usize,
-                );
-            })
-            .map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "JNI error: SeekableByteChannelReader.jni_read",
-                )
-            })
+        let env = JavaClasses::get_thread_jnienv();
+        Ok(jni_bridge_call_method!(
+            env,
+            JavaNioSeekableByteChannel.read -> jint,
+            self.0.as_obj(),
+            jni_map_error!(env.new_direct_byte_buffer(buf)).to_io_result()?
+        )
+        .to_io_result()? as usize)
     }
 }
 
 impl Seek for SeekableByteChannelReader {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        Ok(())
-            .and_then(|_| {
-                let env = JavaClasses::get_thread_jnienv();
-                match pos {
-                    SeekFrom::Start(position) => {
-                        jni_bridge_call_method!(
-                            env,
-                            JavaNioSeekableByteChannel.setPosition,
-                            self.0,
-                            position as i64
-                        )?;
-                        JniResult::Ok(position)
-                    }
-
-                    SeekFrom::End(offset) => {
-                        let size = jni_bridge_call_method!(
-                            env,
-                            JavaNioSeekableByteChannel.size,
-                            self.0
-                        )?
-                        .j()? as u64;
-                        let position = size + offset as u64;
-                        jni_bridge_call_method!(
-                            env,
-                            JavaNioSeekableByteChannel.setPosition,
-                            self.0,
-                            position as i64
-                        )?;
-                        JniResult::Ok(position)
-                    }
-
-                    SeekFrom::Current(_) => unimplemented!(),
-                }
-            })
-            .map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "JNI error: SeekableByteChannelReader.jni_seek",
+        let env = JavaClasses::get_thread_jnienv();
+        match pos {
+            SeekFrom::Start(position) => {
+                jni_bridge_call_method!(
+                    env,
+                    JavaNioSeekableByteChannel.setPosition -> JObject,
+                    self.0.as_obj(),
+                    position as i64
                 )
-            })
+                .and_then(|channel| {
+                    // channel ref must be explicitly deleted to avoid OOM
+                    jni_map_error!(env.delete_local_ref(channel))
+                })
+                .to_io_result()?;
+                Ok(position)
+            }
+
+            SeekFrom::End(offset) => {
+                let size = jni_bridge_call_method!(
+                    env,
+                    JavaNioSeekableByteChannel.size -> jlong,
+                    self.0.as_obj()
+                )
+                .to_io_result()? as u64;
+
+                let position = size + offset as u64;
+                jni_bridge_call_method!(
+                    env,
+                    JavaNioSeekableByteChannel.setPosition -> JObject,
+                    self.0.as_obj(),
+                    position as i64
+                )
+                .and_then(|channel| {
+                    // channel ref must be explicitly deleted to avoid OOM
+                    jni_map_error!(env.delete_local_ref(channel))
+                })
+                .to_io_result()?;
+                Ok(position)
+            }
+
+            SeekFrom::Current(_) => unimplemented!(),
+        }
     }
 }

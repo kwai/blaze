@@ -17,10 +17,6 @@
 
 package org.apache.spark.sql.blaze.execution
 
-import java.nio.channels.SeekableByteChannel
-
-import scala.Function.tupled
-
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
@@ -30,8 +26,8 @@ import org.apache.spark.internal.config
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.shuffle.BaseShuffleHandle
-import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.shuffle.ShuffleReader
+import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
@@ -70,7 +66,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
         SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT),
         SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT_MEMORY),
         readMetrics,
-        fetchContinuousBlocksInBatch).toCompletionIterator
+        fetchContinuousBlocksInBatch).toAutoReleaseCompletionIterator
 
     // Store buffers in JniBridge
     val resourceId = ArrowShuffleExchangeExec301.getNativeShuffleId(context, handle.shuffleId)

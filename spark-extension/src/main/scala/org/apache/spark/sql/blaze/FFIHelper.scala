@@ -17,6 +17,9 @@
 
 package org.apache.spark.sql.blaze
 
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.TimeUnit
+
 import scala.collection.JavaConverters._
 
 import org.apache.arrow.c.ArrowArray
@@ -68,13 +71,14 @@ object FFIHelper {
     val allocator =
       ArrowUtils2.rootAllocator.newChildAllocator("fromBLZIterator", 0, Long.MaxValue)
     val provider = new CDataDictionaryProvider()
+    val nativeBlazeIterWrapper = new NativeBlazeIterWrapper(iterPtr)
 
     val root = tryWithResource(ArrowSchema.allocateNew(allocator)) { consumerSchema =>
       tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
         val schemaPtr: Long = consumerSchema.memoryAddress
         val arrayPtr: Long = consumerArray.memoryAddress
-        val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
-        if (rt < 0) {
+        val hasNext = nativeBlazeIterWrapper.nextBatch(schemaPtr, arrayPtr)
+        if (!hasNext) {
           return CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
             Iterator.empty, {
               JniBridge.updateMetrics(iterPtr, metrics)
@@ -107,8 +111,8 @@ object FFIHelper {
             tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
               val schemaPtr: Long = consumerSchema.memoryAddress
               val arrayPtr: Long = consumerArray.memoryAddress
-              val rt = JniBridge.loadNext(iterPtr, schemaPtr, arrayPtr)
-              if (rt < 0) {
+              val hasNext = nativeBlazeIterWrapper.nextBatch(schemaPtr, arrayPtr)
+              if (!hasNext) {
                 finish()
                 return false
               }
@@ -130,6 +134,46 @@ object FFIHelper {
           root.close()
         }
       }
+    }
+  }
+}
+
+class NativeBlazeIterWrapper(iterPtr: Long) {
+  private val retQueue = new SynchronousQueue[Object]()
+  private val errQueue = new SynchronousQueue[Throwable]()
+  private var unfinished = true
+
+  JniBridge.loadBatches(iterPtr, retQueue, errQueue)
+
+  def nextBatch(schemaPtr: Long, arrayPtr: Long): Boolean = {
+    assert(unfinished)
+    putWithExceptionCheck(schemaPtr, arrayPtr)
+    unfinished = unfinished && takeWithExceptionCheck()
+    unfinished
+  }
+
+  private def putWithExceptionCheck(schemaPtr: Long, arrayPtr: Long): Unit = {
+    while (!retQueue.offer((schemaPtr, arrayPtr), 1, TimeUnit.SECONDS)) {
+      checkException()
+    }
+  }
+
+  private def takeWithExceptionCheck(): Boolean = {
+    while (true) {
+      val ret = retQueue.poll(1, TimeUnit.SECONDS)
+      if (ret != null) {
+        return ret.asInstanceOf[Boolean]
+      } else {
+        checkException()
+      }
+    }
+    false // unreachable
+  }
+
+  private def checkException(): Unit = {
+    val maybeThrowable = errQueue.poll()
+    if (maybeThrowable != null) {
+      throw maybeThrowable
     }
   }
 }

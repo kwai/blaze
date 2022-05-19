@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::error::PlanSerDeError;
-use crate::protobuf::scalar_type;
 use datafusion::arrow::datatypes::{
     DataType, Field, IntervalUnit, Schema, SchemaRef, TimeUnit, UnionMode,
 };
@@ -25,6 +23,9 @@ use datafusion::logical_plan::{JoinConstraint, Operator};
 use datafusion::physical_plan::aggregates::AggregateFunction;
 use datafusion::prelude::JoinType;
 use datafusion::scalar::ScalarValue;
+
+use crate::error::PlanSerDeError;
+use crate::protobuf::scalar_type;
 
 // include the generated protobuf source as a submodule
 #[allow(clippy::all)]

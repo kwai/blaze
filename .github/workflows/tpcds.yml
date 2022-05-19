@@ -159,8 +159,8 @@ jobs:
       - name: Run with broadcast
         run: |
           export RUST_LOG=ERROR
-          SPARK_HOME=spark dev/run-tpcds-test --data-location dev/tpcds_1g --query-filter ${{ matrix.query }}
+          SPARK_HOME=spark dev/run-tpcds-test --data-location dev/tpcds_1g  --conf spark.driver.memory=3g --conf spark.driver.memoryOverhead=2048 --query-filter ${{ matrix.query }}
       - name: Run without broadcast
         run: |
           export RUST_LOG=ERROR
-          SPARK_HOME=spark dev/run-tpcds-test --conf spark.sql.autoBroadcastJoinThreshold=-1 --data-location dev/tpcds_1g --query-filter ${{ matrix.query }}
+          SPARK_HOME=spark dev/run-tpcds-test --conf spark.sql.autoBroadcastJoinThreshold=-1 --conf spark.driver.memory=3g --conf spark.driver.memoryOverhead=2048 --data-location dev/tpcds_1g --query-filter ${{ matrix.query }}
