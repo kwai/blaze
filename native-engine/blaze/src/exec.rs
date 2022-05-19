@@ -2,25 +2,36 @@ use std::alloc::Layout;
 use std::any::Any;
 use std::error::Error;
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use datafusion::execution::disk_manager::DiskManagerConfig;
+use datafusion::execution::memory_manager::MemoryManagerConfig;
+use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{displayable, ExecutionPlan};
+use datafusion::prelude::{SessionConfig, SessionContext};
 use futures::{FutureExt, StreamExt};
 use jni::objects::{JClass, JString};
 use jni::objects::{JObject, JThrowable};
 use jni::sys::{jbyteArray, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
+use log::LevelFilter;
+use once_cell::sync::OnceCell;
 use prost::Message;
+use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
 use tokio::runtime::Runtime;
 
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
 use plan_serde::protobuf::TaskDefinition;
 
-use crate::{init_logging, init_session_ctx, BlazeIter, LOGGING_INIT, SESSIONCTX};
+use crate::BlazeIter;
+
+static LOGGING_INIT: OnceCell<()> = OnceCell::new();
+static SESSIONCTX: OnceCell<SessionContext> = OnceCell::new();
 
 #[allow(non_snake_case)]
 #[allow(clippy::single_match)]
@@ -35,19 +46,42 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
 ) {
     match std::panic::catch_unwind(|| {
         // init logging
-        if LOGGING_INIT.lock().unwrap().is_some() {
-            panic!("Calling initNative() more than once");
-        }
-        init_logging();
+        LOGGING_INIT.get_or_init(|| {
+            TermLogger::init(
+                LevelFilter::Info,
+                ConfigBuilder::new()
+                    .set_thread_mode(ThreadLogMode::Both)
+                    .build(),
+                TerminalMode::Stderr,
+                ColorChoice::Never,
+            )
+            .unwrap();
+        });
 
         // init jni java classes
         JavaClasses::init(&env);
 
         // init datafusion session context
-        let env = JavaClasses::get_thread_jnienv();
-        let dirs = jni_map_error!(env.get_string(tmp_dirs)).unwrap().into();
-        let batch_size = batch_size as usize;
-        init_session_ctx(native_memory as usize, memory_fraction, batch_size, dirs);
+        SESSIONCTX.get_or_init(|| {
+            let env = JavaClasses::get_thread_jnienv();
+            let dirs = jni_map_error!(env.get_string(tmp_dirs))
+                .unwrap()
+                .to_string_lossy()
+                .split(',')
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            let max_memory = native_memory as usize;
+            let batch_size = batch_size as usize;
+            let runtime_config = RuntimeConfig::new()
+                .with_memory_manager(MemoryManagerConfig::New {
+                    max_memory,
+                    memory_fraction,
+                })
+                .with_disk_manager(DiskManagerConfig::NewSpecified(dirs));
+            let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
+            let config = SessionConfig::new().with_batch_size(batch_size);
+            SessionContext::with_config_rt(config, runtime)
+        });
     }) {
         Err(err) => {
             handle_unwinded(err);
@@ -81,7 +115,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         log::info!("  execution plan:\n{}", execution_plan_displayable);
 
         // execute
-        let session_ctx = SESSIONCTX.lock().unwrap().as_ref().unwrap().clone();
+        let session_ctx = SESSIONCTX.get().unwrap();
         let task_ctx = session_ctx.task_ctx();
         let stream = execution_plan
             .execute(task_id.partition_id as usize, task_ctx)
