@@ -29,6 +29,7 @@ use plan_serde::protobuf::TaskDefinition;
 use crate::{init_logging, init_session_ctx, BlazeIter, LOGGING_INIT, SESSIONCTX};
 
 #[allow(non_snake_case)]
+#[allow(clippy::single_match)]
 #[no_mangle]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
     env: JNIEnv,
