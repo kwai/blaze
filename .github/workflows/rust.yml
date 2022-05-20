@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: Check and test
+name: Build
 
 on:
   workflow_dispatch:
@@ -155,46 +155,46 @@ jobs:
           CARGO_HOME: "/github/home/.cargo"
           CARGO_TARGET_DIR: "/github/home/target"
 
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [amd64]
-        rust: [nightly]
-    steps:
-      - uses: actions/checkout@v2
-        with:
-          submodules: true
-      - name: Cache Cargo
-        uses: actions/cache@v2
-        with:
-          path: /home/runner/.cargo
-          # this key is not equal because the user is different than on a container (runner vs github)
-          key: cargo-coverage-cache-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v2
-        with:
-          path: /home/runner/target
-          # this key is not equal because coverage uses different compilation flags.
-          key: ${{ runner.os }}-${{ matrix.arch }}-target-coverage-cache-${{ matrix.rust }}-
-      - name: Setup Rust toolchain
-        run: |
-          rustup toolchain install ${{ matrix.rust }}
-          rustup default ${{ matrix.rust }}
-      - name: Setup cmake
-        uses: jwlawson/actions-setup-cmake@v1.12
-        with:
-          cmake-version: '3.16.x'
-      - name: Run coverage
-        run: |
-          # 2020-11-15: There is a cargo-tarpaulin regression in 0.17.0
-          # see https://github.com/xd009642/tarpaulin/issues/618
-          cargo install --version 0.16.0 cargo-tarpaulin
-          cargo tarpaulin --out Xml
-        env:
-          CARGO_HOME: "/home/runner/.cargo"
-          CARGO_TARGET_DIR: "/home/runner/target"
-      - name: Report coverage
-        continue-on-error: true
-        run: bash <(curl -s https://codecov.io/bash)
+  # coverage:
+  #   name: Coverage
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       arch: [amd64]
+  #       rust: [nightly]
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #       with:
+  #         submodules: true
+  #     - name: Cache Cargo
+  #       uses: actions/cache@v2
+  #       with:
+  #         path: /home/runner/.cargo
+  #         # this key is not equal because the user is different than on a container (runner vs github)
+  #         key: cargo-coverage-cache-
+  #     - name: Cache Rust dependencies
+  #       uses: actions/cache@v2
+  #       with:
+  #         path: /home/runner/target
+  #         # this key is not equal because coverage uses different compilation flags.
+  #         key: ${{ runner.os }}-${{ matrix.arch }}-target-coverage-cache-${{ matrix.rust }}-
+  #     - name: Setup Rust toolchain
+  #       run: |
+  #         rustup toolchain install ${{ matrix.rust }}
+  #         rustup default ${{ matrix.rust }}
+  #     - name: Setup cmake
+  #       uses: jwlawson/actions-setup-cmake@v1.12
+  #       with:
+  #         cmake-version: '3.16.x'
+  #     - name: Run coverage
+  #       run: |
+  #         # 2020-11-15: There is a cargo-tarpaulin regression in 0.17.0
+  #         # see https://github.com/xd009642/tarpaulin/issues/618
+  #         cargo install --version 0.16.0 cargo-tarpaulin
+  #         cargo tarpaulin --out Xml
+  #       env:
+  #         CARGO_HOME: "/home/runner/.cargo"
+  #         CARGO_TARGET_DIR: "/home/runner/target"
+  #     - name: Report coverage
+  #       continue-on-error: true
+  #       run: bash <(curl -s https://codecov.io/bash)
