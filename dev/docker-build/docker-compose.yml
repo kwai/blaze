@@ -6,5 +6,6 @@ services:
     volumes:
       - ~/.cargo/git:/root/.cargo/git:rw
       - ~/.cargo/registry:/root/.cargo/registry:rw
+      - ~/.gradle:/root/.gradle:rw
       - ./../../:/blaze:rw
     command: "bash -c 'source ~/.bashrc && cd /blaze && ./release.sh'"

@@ -197,7 +197,7 @@ clean.doLast {
 }
 task cargo(type: Exec) {
 	workingDir '.'
-	executable "${projectDir}/../release.sh"
+	executable "${projectDir}/../build-native.sh"
 	args += [project.hasProperty('mode') ? getProperty('mode') : 'debug']
 }
 
