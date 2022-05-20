@@ -34,30 +34,10 @@ jobs:
   build-plugin:
     name: Build Plugin
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: JDK setup
-        uses: actions/setup-java@v2
-        with:
-          distribution: 'adopt'
-          java-version: '8'
-      - name: Build with Gradle
-        uses: gradle/gradle-build-action@0d13054264b0bb894ded474f08ebb30921341cee
-        with:
-          arguments: build
-      - name: Upload plugin
-        uses: actions/upload-artifact@v3
-        with:
-          name: plugin
-          path: target/blaze-engine-1.0-SNAPSHOT.jar
-
-  build_blaze_lib:
-    name: Build libblaze
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64]
-        rust: [nightly]
+        arch: [ amd64 ]
+        rust: [ nightly ]
     container:
       image: ${{ matrix.arch }}/rust
       env:
@@ -85,16 +65,21 @@ jobs:
           rustup toolchain install ${{ matrix.rust }}
           rustup default ${{ matrix.rust }}
           rustup component add rustfmt
-      - name: Build workspace in debug mode
-        run: |
-          cargo build
-        env:
-          CARGO_HOME: "/github/home/.cargo"
-      - name: Upload blaze.so
+      - uses: actions/checkout@v3
+      - name: JDK setup
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'adopt'
+          java-version: '8'
+      - name: Build with Gradle
+        uses: gradle/gradle-build-action@0d13054264b0bb894ded474f08ebb30921341cee
+        with:
+          arguments: -Pmode=debug build
+      - name: Upload plugin
         uses: actions/upload-artifact@v3
         with:
-          name: libblaze
-          path: target/debug/libblaze.so
+          name: plugin
+          path: target/blaze-engine-1.0-SNAPSHOT.jar
 
   setup-spark:
     name: Setup Spark Env
@@ -116,7 +101,7 @@ jobs:
 
   test-it:
     name: Run test ${{ matrix.query }}
-    needs: [build_validator, build_blaze_lib, setup-spark, build-plugin]
+    needs: [build_validator, setup-spark, build-plugin]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -139,10 +124,6 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: validator
-      - name: Download lib
-        uses: actions/download-artifact@v3
-        with:
-          name: libblaze
       - name: Download plugin
         uses: actions/download-artifact@v3
         with:

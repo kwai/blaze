@@ -145,7 +145,7 @@ object NativeSupports extends Logging {
     NativeSupports.synchronized {
       if (!NativeSupports.nativeInitialized) {
         logInfo(s"Initializing native environment ...")
-        System.loadLibrary("blaze")
+        JniLoader.get.ensureLoaded()
         JniBridge.initNative(batchSize, nativeMemory, memoryFraction, tmpDirs)
         NativeSupports.nativeInitialized = true
       }
