@@ -19,6 +19,7 @@
 
 # BLAZE
 [![test](https://github.com/blaze-init/blaze-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/blaze-init/blaze-rs/actions/workflows/rust.yml)
+[![test](https://github.com/blaze-init/blaze-rs/actions/workflows/tpcds.yml/badge.svg)](https://github.com/blaze-init/blaze-rs/actions/workflows/tpcds.yml)
 
 
 The Blaze accelerator for Apache Spark leverages native vectorized execution to accelerate query processing. It combines

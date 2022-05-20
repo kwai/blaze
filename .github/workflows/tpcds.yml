@@ -1,4 +1,4 @@
-name: Run TPC-DS tests
+name: TPC-DS
 
 on:
   workflow_dispatch:
