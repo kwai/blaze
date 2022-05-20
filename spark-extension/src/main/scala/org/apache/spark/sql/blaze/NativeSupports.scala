@@ -17,6 +17,9 @@
 
 package org.apache.spark.sql.blaze
 
+import java.io.{File, FileNotFoundException, IOException}
+import java.nio.file.{Files, StandardCopyOption}
+
 import scala.annotation.tailrec
 import scala.collection.immutable.TreeMap
 
@@ -145,7 +148,7 @@ object NativeSupports extends Logging {
     NativeSupports.synchronized {
       if (!NativeSupports.nativeInitialized) {
         logInfo(s"Initializing native environment ...")
-        JniLoader.get.ensureLoaded()
+        load("blaze")
         JniBridge.initNative(batchSize, nativeMemory, memoryFraction, tmpDirs)
         NativeSupports.nativeInitialized = true
       }
@@ -158,6 +161,24 @@ object NativeSupports extends Logging {
     }
 
     JniBridge.callNative(taskDefinition.toByteArray);
+  }
+
+  private def load(name: String): Unit = {
+    val libraryToLoad = System.mapLibraryName(name)
+    try {
+      val temp = File.createTempFile("jnilib-", ".tmp", new File(System.getProperty("java.io.tmpdir")))
+      try {
+        val is = classOf[NativeSupports].getClassLoader.getResourceAsStream(libraryToLoad)
+        try {
+          if (is == null) throw new FileNotFoundException(libraryToLoad)
+          Files.copy(is, temp.toPath, StandardCopyOption.REPLACE_EXISTING)
+          System.load(temp.getAbsolutePath)
+        } finally if (is != null) is.close()
+      }
+    } catch {
+      case e: IOException =>
+        throw new IllegalStateException("error loading native libraries: " + e)
+    }
   }
 }
 
