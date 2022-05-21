@@ -170,7 +170,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             });
 
         // safety - manually allocated memory will be released when stream is exhausted
-        log::info!("Got blaze iter");
         unsafe {
             let blaze_iter_ptr: *mut BlazeIter =
                 std::alloc::alloc(Layout::new::<BlazeIter>()) as *mut BlazeIter;
@@ -183,6 +182,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                     runtime,
                 },
             );
+            log::info!("Exiting blaze callNative()");
             blaze_iter_ptr as i64
         }
     }) {
@@ -214,6 +214,8 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadBatc
         // spawn a thread to poll next batch
         blaze_iter.runtime.clone().spawn(async move {
             AssertUnwindSafe(async move {
+                let mut total_batches = 0;
+                let mut total_rows = 0;
                 while let Some(r) = blaze_iter.stream.next().await {
                     match r {
                         Ok(batch) => {
@@ -223,6 +225,8 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadBatc
                             if num_rows == 0 {
                                 continue;
                             }
+                            total_batches += 1;
+                            total_rows += num_rows;
 
                             // ret_queue -> (schema_ptr, array_ptr)
                             let input = jni_bridge_call_method!(
@@ -281,6 +285,10 @@ pub unsafe extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_loadBatc
                     r
                 )
                 .unwrap();
+
+                log::info!("Exiting blaze loadBatches()");
+                log::info!("  total loaded batches: {}", total_batches);
+                log::info!("  total loaded rows: {}", total_rows);
             })
             .catch_unwind()
             .await

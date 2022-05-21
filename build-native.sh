@@ -2,10 +2,10 @@
 
 if [[ "$1" == "debug" ]]; then
   echo "Building native with debug mode..."
-  RUSTFLAGS='-C target-cpu=native' cargo +nightly build
+  cargo +nightly build
 else
   echo "Building native with release mode..."
-  RUSTFLAGS='-C target-cpu=native' cargo +nightly build --release --features=mm
+  cargo +nightly build --release --features=mm
 fi
 rt=$?
 if [[ "$rt" != 0 ]]; then
