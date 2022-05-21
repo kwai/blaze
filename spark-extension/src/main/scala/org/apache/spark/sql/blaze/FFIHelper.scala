@@ -57,32 +57,28 @@ object FFIHelper {
       batch.close())
   }
 
-  def fromBlazeIter(
-      iterPtr: Long,
-      context: TaskContext,
-      metrics: MetricNode): Iterator[InternalRow] = {
-    fromBlazeIterColumnar(iterPtr, context, metrics).flatMap(batchAsRowIter)
+  def fromBlazeCallNative(
+      wrapper: BlazeCallNativeWrapper,
+      context: TaskContext): Iterator[InternalRow] = {
+    fromBlazeCallNativeColumnar(wrapper, context).flatMap(batchAsRowIter)
   }
 
-  def fromBlazeIterColumnar(
-      iterPtr: Long,
-      context: TaskContext,
-      metrics: MetricNode): Iterator[ColumnarBatch] = {
+  def fromBlazeCallNativeColumnar(
+      wrapper: BlazeCallNativeWrapper,
+      context: TaskContext): Iterator[ColumnarBatch] = {
     val allocator =
-      ArrowUtils2.rootAllocator.newChildAllocator("fromBLZIterator", 0, Long.MaxValue)
+      ArrowUtils2.rootAllocator.newChildAllocator("fromBlazeCallNativeColumnar", 0, Long.MaxValue)
     val provider = new CDataDictionaryProvider()
-    val nativeBlazeIterWrapper = new NativeBlazeIterWrapper(iterPtr)
 
     val root = tryWithResource(ArrowSchema.allocateNew(allocator)) { consumerSchema =>
       tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
         val schemaPtr: Long = consumerSchema.memoryAddress
         val arrayPtr: Long = consumerArray.memoryAddress
-        val hasNext = nativeBlazeIterWrapper.nextBatch(schemaPtr, arrayPtr)
+        val hasNext = wrapper.nextBatch(schemaPtr, arrayPtr)
         if (!hasNext) {
           return CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
             Iterator.empty, {
-              JniBridge.updateMetrics(iterPtr, metrics)
-              JniBridge.deallocIter(iterPtr)
+              wrapper.finish()
               allocator.close()
             })
         }
@@ -111,7 +107,7 @@ object FFIHelper {
             tryWithResource(ArrowArray.allocateNew(allocator)) { consumerArray =>
               val schemaPtr: Long = consumerSchema.memoryAddress
               val arrayPtr: Long = consumerArray.memoryAddress
-              val hasNext = nativeBlazeIterWrapper.nextBatch(schemaPtr, arrayPtr)
+              val hasNext = wrapper.nextBatch(schemaPtr, arrayPtr)
               if (!hasNext) {
                 finish()
                 return false
@@ -129,51 +125,10 @@ object FFIHelper {
       private def finish(): Unit = {
         if (!finished) {
           finished = true
-          JniBridge.updateMetrics(iterPtr, metrics)
-          JniBridge.deallocIter(iterPtr)
+          wrapper.finish()
           root.close()
         }
       }
-    }
-  }
-}
-
-class NativeBlazeIterWrapper(iterPtr: Long) {
-  private val retQueue = new SynchronousQueue[Object]()
-  private val errQueue = new SynchronousQueue[Throwable]()
-  private var unfinished = true
-
-  JniBridge.loadBatches(iterPtr, retQueue, errQueue)
-
-  def nextBatch(schemaPtr: Long, arrayPtr: Long): Boolean = {
-    assert(unfinished)
-    putWithExceptionCheck(schemaPtr, arrayPtr)
-    unfinished = unfinished && takeWithExceptionCheck()
-    unfinished
-  }
-
-  private def putWithExceptionCheck(schemaPtr: Long, arrayPtr: Long): Unit = {
-    while (!retQueue.offer((schemaPtr, arrayPtr), 1, TimeUnit.SECONDS)) {
-      checkException()
-    }
-  }
-
-  private def takeWithExceptionCheck(): Boolean = {
-    while (true) {
-      val ret = retQueue.poll(1, TimeUnit.SECONDS)
-      if (ret != null) {
-        return ret.asInstanceOf[Boolean]
-      } else {
-        checkException()
-      }
-    }
-    false // unreachable
-  }
-
-  private def checkException(): Unit = {
-    val maybeThrowable = errQueue.poll()
-    if (maybeThrowable != null) {
-      throw maybeThrowable
     }
   }
 }

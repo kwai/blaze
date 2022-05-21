@@ -142,7 +142,6 @@ pub struct JavaClasses<'a> {
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
     pub cJavaFile: JavaFile<'a>,
-    pub cJavaSynchronousQueue: JavaSynchronousQueue<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
@@ -153,9 +152,10 @@ pub struct JavaClasses<'a> {
     pub cHadoopFileStatus: HadoopFileStatus<'a>,
     pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
 
-    pub cSparkManagedBuffer: SparkManagedBuffer<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
+
+    pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -195,7 +195,6 @@ impl JavaClasses<'static> {
                 cJavaList: JavaList::new(env).unwrap(),
                 cJavaMap: JavaMap::new(env).unwrap(),
                 cJavaFile: JavaFile::new(env).unwrap(),
-                cJavaSynchronousQueue: JavaSynchronousQueue::new(env).unwrap(),
 
                 cScalaIterator: ScalaIterator::new(env).unwrap(),
                 cScalaTuple2: ScalaTuple2::new(env).unwrap(),
@@ -206,9 +205,10 @@ impl JavaClasses<'static> {
                 cHadoopFileStatus: HadoopFileStatus::new(env).unwrap(),
                 cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env).unwrap(),
 
-                cSparkManagedBuffer: SparkManagedBuffer::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
+
+                cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
             };
             log::info!("Initializing JavaClasses finished");
             java_classes
@@ -527,45 +527,6 @@ impl<'a> JavaFile<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct JavaSynchronousQueue<'a> {
-    pub class: JClass<'a>,
-    pub method_put: JMethodID<'a>,
-    pub method_put_ret: JavaType,
-    pub method_take: JMethodID<'a>,
-    pub method_take_ret: JavaType,
-    pub method_offer: JMethodID<'a>,
-    pub method_offer_ret: JavaType,
-    pub method_poll: JMethodID<'a>,
-    pub method_poll_ret: JavaType,
-}
-impl<'a> JavaSynchronousQueue<'a> {
-    pub const SIG_TYPE: &'static str = "java/util/concurrent/SynchronousQueue";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaSynchronousQueue<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaSynchronousQueue {
-            class,
-            method_put: env
-                .get_method_id(class, "put", "(Ljava/lang/Object;)V")
-                .unwrap(),
-            method_put_ret: JavaType::Primitive(Primitive::Void),
-            method_take: env
-                .get_method_id(class, "take", "()Ljava/lang/Object;")
-                .unwrap(),
-            method_take_ret: JavaType::Object("java/lang/Object".to_owned()),
-            method_offer: env
-                .get_method_id(class, "offer", "(Ljava/lang/Object;)Z")
-                .unwrap(),
-            method_offer_ret: JavaType::Primitive(Primitive::Boolean),
-            method_poll: env
-                .get_method_id(class, "poll", "()Ljava/lang/Object;")
-                .unwrap(),
-            method_poll_ret: JavaType::Object("java/lang/Object".to_owned()),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
 pub struct ScalaIterator<'a> {
     pub class: JClass<'a>,
     pub method_hasNext: JMethodID<'a>,
@@ -729,29 +690,6 @@ impl<'a> HadoopFSDataInputStream<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct SparkManagedBuffer<'a> {
-    pub class: JClass<'a>,
-    pub method_nioByteBuffer: JMethodID<'a>,
-    pub method_nioByteBuffer_ret: JavaType,
-}
-impl<'a> SparkManagedBuffer<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/network/buffer/ManagedBuffer";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkManagedBuffer<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(SparkManagedBuffer {
-            class,
-            method_nioByteBuffer: env.get_method_id(
-                class,
-                "nioByteBuffer",
-                "()Ljava/nio/ByteBuffer;",
-            )?,
-            method_nioByteBuffer_ret: JavaType::Object("java/nio/ByteBuffer".to_owned()),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
 pub struct SparkSQLMetric<'a> {
     pub class: JClass<'a>,
     pub method_add: JMethodID<'a>,
@@ -797,6 +735,64 @@ impl<'a> SparkMetricNode<'a> {
                 .get_method_id(class, "add", "(Ljava/lang/String;J)V")
                 .unwrap(),
             method_add_ret: JavaType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeCallNativeWrapper<'a> {
+    pub class: JClass<'a>,
+    pub method_isFinished: JMethodID<'a>,
+    pub method_isFinished_ret: JavaType,
+    pub method_getRawTaskDefinition: JMethodID<'a>,
+    pub method_getRawTaskDefinition_ret: JavaType,
+    pub method_getMetrics: JMethodID<'a>,
+    pub method_getMetrics_ret: JavaType,
+    pub method_enqueueWithTimeout: JMethodID<'a>,
+    pub method_enqueueWithTimeout_ret: JavaType,
+    pub method_enqueueError: JMethodID<'a>,
+    pub method_enqueueError_ret: JavaType,
+    pub method_dequeueWithTimeout: JMethodID<'a>,
+    pub method_dequeueWithTimeout_ret: JavaType,
+}
+impl<'a> BlazeCallNativeWrapper<'a> {
+    pub const SIG_TYPE: &'static str =
+        "org/apache/spark/sql/blaze/BlazeCallNativeWrapper";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeCallNativeWrapper<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeCallNativeWrapper {
+            class,
+            method_isFinished: env.get_method_id(class, "isFinished", "()Z").unwrap(),
+            method_isFinished_ret: JavaType::Primitive(Primitive::Boolean),
+            method_getRawTaskDefinition: env
+                .get_method_id(class, "getRawTaskDefinition", "()[B")
+                .unwrap(),
+            method_getRawTaskDefinition_ret: JavaType::Array(Box::new(
+                JavaType::Primitive(Primitive::Byte),
+            )),
+            method_getMetrics: env
+                .get_method_id(
+                    class,
+                    "getMetrics",
+                    "()Lorg/apache/spark/sql/blaze/MetricNode;",
+                )
+                .unwrap(),
+            method_getMetrics_ret: JavaType::Object(SparkMetricNode::SIG_TYPE.to_owned()),
+            method_enqueueWithTimeout: env
+                .get_method_id(class, "enqueueWithTimeout", "(Ljava/lang/Object;)Z")
+                .unwrap(),
+            method_enqueueWithTimeout_ret: JavaType::Primitive(Primitive::Boolean),
+            method_enqueueError: env
+                .get_method_id(class, "enqueueError", "(Ljava/lang/Object;)Z")
+                .unwrap(),
+            method_enqueueError_ret: JavaType::Primitive(Primitive::Boolean),
+            method_dequeueWithTimeout: env
+                .get_method_id(class, "dequeueWithTimeout", "()Ljava/lang/Object;")
+                .unwrap(),
+            method_dequeueWithTimeout_ret: JavaType::Object(
+                "java/lang/Object".to_owned(),
+            ),
         })
     }
 }

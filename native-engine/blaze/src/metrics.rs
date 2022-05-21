@@ -1,16 +1,11 @@
 use std::sync::Arc;
 
 use datafusion::physical_plan::ExecutionPlan;
-use jni::objects::{JClass, JObject};
+use jni::objects::JObject;
 use jni::JNIEnv;
 
 use datafusion_ext::jni_bridge::JavaClasses;
-use datafusion_ext::{
-    jni_bridge_call_method, jni_bridge_call_static_method, jni_bridge_new_object,
-    jni_map_error,
-};
-
-use crate::BlazeIter;
+use datafusion_ext::{jni_bridge_call_method, jni_map_error};
 
 const REPORTED_METRICS: &[&str] = &[
     "input_rows",
@@ -21,41 +16,7 @@ const REPORTED_METRICS: &[&str] = &[
     "join_time",
 ];
 
-#[allow(non_snake_case)]
-#[no_mangle]
-pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_updateMetrics(
-    env: JNIEnv,
-    _: JClass,
-    iter_ptr: i64,
-    metrics: JObject,
-) {
-    let blaze_iter = unsafe { &mut *(iter_ptr as *mut BlazeIter) };
-
-    match update_spark_metric_node(&env, metrics, blaze_iter.execution_plan.clone()) {
-        Ok(_) => {}
-        Err(e) => {
-            // throw a runtime exception when updating metrics error
-            let msg = format!(
-                "update spark metrics error: {e}, node: {:?}",
-                blaze_iter.execution_plan
-            );
-            let msg_jstr = env.new_string(msg).unwrap();
-            let _throw = jni_bridge_call_static_method!(
-                env,
-                JniBridge.raiseThrowable -> (),
-                jni_bridge_new_object!(
-                    env,
-                    JavaRuntimeException,
-                    msg_jstr,
-                    JObject::null()
-                )
-                .unwrap()
-            );
-        }
-    }
-}
-
-fn update_spark_metric_node(
+pub fn update_spark_metric_node(
     env: &JNIEnv,
     metric_node: JObject,
     execution_plan: Arc<dyn ExecutionPlan>,

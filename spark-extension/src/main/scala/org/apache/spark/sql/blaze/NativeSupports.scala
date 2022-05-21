@@ -19,6 +19,9 @@ package org.apache.spark.sql.blaze
 
 import java.io.{File, FileNotFoundException, IOException}
 import java.nio.file.{Files, StandardCopyOption}
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.annotation.tailrec
 import scala.collection.immutable.TreeMap
@@ -89,12 +92,8 @@ object NativeSupports extends Logging {
       partition: Partition,
       context: TaskContext): Iterator[InternalRow] = {
 
-    val iterPtr = executeNativePlanInternal(nativePlan, partition, context)
-    if (iterPtr < 0) {
-      logWarning("Error occurred while call physical_plan.execute")
-      return Iterator.empty
-    }
-    FFIHelper.fromBlazeIter(iterPtr, context, metrics)
+    val wrapper = BlazeCallNativeWrapper(nativePlan, partition, context, metrics)
+    FFIHelper.fromBlazeCallNative(wrapper, context)
   }
 
   def executeNativePlanColumnar(
@@ -103,12 +102,8 @@ object NativeSupports extends Logging {
       partition: Partition,
       context: TaskContext): Iterator[ColumnarBatch] = {
 
-    val iterPtr = executeNativePlanInternal(nativePlan, partition, context)
-    if (iterPtr < 0) {
-      logWarning("Error occurred while call physical_plan.execute")
-      return Iterator.empty
-    }
-    FFIHelper.fromBlazeIterColumnar(iterPtr, context, metrics)
+    val wrapper = BlazeCallNativeWrapper(nativePlan, partition, context, metrics)
+    FFIHelper.fromBlazeCallNativeColumnar(wrapper, context)
   }
 
   def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =
@@ -120,13 +115,63 @@ object NativeSupports extends Logging {
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
       "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"))
 
-  def executeNativePlanInternal(
-      nativePlan: PhysicalPlanNode,
-      partition: Partition,
-      context: TaskContext): Long = {
+}
 
+case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])
+    extends Logging {
+  def getChild(i: Int): MetricNode =
+    children(i)
+
+  def add(metricName: String, v: Long): Unit = {
+    metrics.get(metricName) match {
+      case Some(metric) => metric.add(v)
+      case None =>
+        logWarning(s"Ignore non-exist metric: ${metricName}")
+    }
+  }
+}
+
+case class BlazeCallNativeWrapper(
+    nativePlan: PhysicalPlanNode,
+    partition: Partition,
+    context: TaskContext,
+    metrics: MetricNode)
+    extends Logging {
+
+  private val valueQueue: SynchronousQueue[Object] = new SynchronousQueue()
+  private val errorQueue: SynchronousQueue[Object] = new SynchronousQueue()
+  private val finished: AtomicBoolean = new AtomicBoolean(false)
+
+  BlazeCallNativeWrapper.synchronized {
+    val conf = SparkEnv.get.conf
+    val batchSize = conf.getLong("spark.blaze.batchSize", 16384);
+    val nativeMemory = conf.getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024;
+    val memoryFraction = conf.getDouble("spark.blaze.memoryFraction", 0.75);
+    val tmpDirs = SparkEnv.get.blockManager.diskBlockManager.localDirsString.mkString(",")
+
+    if (!BlazeCallNativeWrapper.nativeInitialized) {
+      logInfo(s"Initializing native environment ...")
+      BlazeCallNativeWrapper.load("blaze")
+      JniBridge.initNative(batchSize, nativeMemory, memoryFraction, tmpDirs)
+      BlazeCallNativeWrapper.nativeInitialized = true
+    }
+  }
+
+  logInfo(s"Start executing native plan")
+  JniBridge.callNative(this)
+
+  def isFinished: Boolean = finished.get()
+  def finish(): Unit = {
+    if (!isFinished) {
+      finished.set(true)
+    }
+  }
+
+  protected def getMetrics: MetricNode = metrics
+
+  protected def getRawTaskDefinition: Array[Byte] = {
     // do not use context.partitionId since it is not correct in Union plans.
-    val partitionId = PartitionId
+    val partitionId: PartitionId = PartitionId
       .newBuilder()
       .setPartitionId(partition.index)
       .setStageId(context.stageId())
@@ -138,30 +183,52 @@ object NativeSupports extends Logging {
       .setTaskId(partitionId)
       .setPlan(nativePlan)
       .build()
+    taskDefinition.toByteArray
+  }
 
-    val conf = SparkEnv.get.conf
-    val batchSize = conf.getLong("spark.blaze.batchSize", 16384);
-    val nativeMemory = conf.getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024;
-    val memoryFraction = conf.getDouble("spark.blaze.memoryFraction", 0.75);
-    val tmpDirs = SparkEnv.get.blockManager.diskBlockManager.localDirsString.mkString(",")
+  def nextBatch(schemaPtr: Long, arrayPtr: Long): Boolean = {
+    while (!isFinished && { checkError(); true } && !enqueueWithTimeout((schemaPtr, arrayPtr))) {}
+    while (!isFinished && { checkError(); true }) {
+      dequeueWithTimeout() match {
+        case java.lang.Boolean.TRUE =>
+          return true
 
-    NativeSupports.synchronized {
-      if (!NativeSupports.nativeInitialized) {
-        logInfo(s"Initializing native environment ...")
-        load("blaze")
-        JniBridge.initNative(batchSize, nativeMemory, memoryFraction, tmpDirs)
-        NativeSupports.nativeInitialized = true
+        case java.lang.Boolean.FALSE =>
+          finish()
+          return false
+
+        case null =>
+        // do nothing
       }
     }
-
-    if (SparkEnv.get.conf.getBoolean("spark.blaze.dumpNativePlanBeforeExecuting", false)) {
-      logInfo(s"Start executing native plan: ${taskDefinition.toString}")
-    } else {
-      logInfo(s"Start executing native plan")
-    }
-
-    JniBridge.callNative(taskDefinition.toByteArray);
+    !isFinished
   }
+
+  protected def enqueueWithTimeout(value: Object): Boolean = {
+    valueQueue.offer(value, 100, TimeUnit.MILLISECONDS)
+  }
+
+  protected def dequeueWithTimeout(): Object = {
+    valueQueue.poll(100, TimeUnit.MILLISECONDS)
+  }
+
+  protected def enqueueError(value: Object): Boolean = {
+    errorQueue.offer(value, 100, TimeUnit.MILLISECONDS)
+  }
+
+  protected def checkError(): Unit = {
+    errorQueue.poll() match {
+      case e: Throwable =>
+        finish()
+        throw e
+      case null =>
+      // do nothing
+    }
+  }
+}
+
+object BlazeCallNativeWrapper {
+  private var nativeInitialized: Boolean = false
 
   private def load(name: String): Unit = {
     val libraryToLoad = System.mapLibraryName(name)
@@ -183,20 +250,6 @@ object NativeSupports extends Logging {
     } catch {
       case e: IOException =>
         throw new IllegalStateException("error loading native libraries: " + e)
-    }
-  }
-}
-
-case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])
-    extends Logging {
-  def getChild(i: Int): MetricNode =
-    children(i)
-
-  def add(metricName: String, v: Long): Unit = {
-    metrics.get(metricName) match {
-      case Some(metric) => metric.add(v)
-      case None =>
-        logWarning(s"Ignore non-exist metric: ${metricName}")
     }
   }
 }
