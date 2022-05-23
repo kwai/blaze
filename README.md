@@ -23,7 +23,7 @@
 
 
 The Blaze accelerator for Apache Spark leverages native vectorized execution to accelerate query processing. It combines
-the power of the [Arrow-DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the Spark distributed
+the power of the [Apache Arrow-DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the Spark distributed
 computing framework.
 
 Blaze takes a fully optimized physical plan from Spark, mapping it into DataFusion's execution plan, and performs native
@@ -76,7 +76,7 @@ Blaze._
 ./gradlew -Pmode=[debug|release] build
 ```
 
-After the build is finished, a fat Jar package that contains all the dependencies is generated in the `target`
+After the build is finished, a fat Jar package that contains all the dependencies will be generated in the `target`
 directory.
 
 ## Run Spark Job with Blaze Accelerator
@@ -94,7 +94,7 @@ $SPARK_HOME/bin/spark-[sql|submit] \
   .... # your original arguments goes here
 ```
 
-At the same time, there are a series of configurations that you can use to control Blaze finely.
+At the same time, there are a series of configurations that you can use to control Blaze with more granularity.
 
 | Parameter                                                         | Default value         | Description                                                                                      |
 |-------------------------------------------------------------------|-----------------------|--------------------------------------------------------------------------------------------------|
@@ -125,11 +125,11 @@ Currently, there are still several operators that we cannot execute natively:
 ### 2. Compressed Shuffle
 
 We use segmented Arrow-IPC files to express shuffle data. If we could apply IPC compression,
-we would benefit more from Shuffle since columnar data would have a better compression ratio. Tracked in #4.
+we would benefit more from Shuffle since columnar data would have a better compression ratio. Tracked in [#4](https://github.com/blaze-init/blaze/issues/4).
 
 ### 3. UDF support
-Also, we would like to have a high-performance JVM-UDF invocation framework that could utilize a great variety
-of the existing UDFs written in Spark/Hive language, and we haven't supported them natively in Blaze.
+We would like to have a high-performance JVM-UDF invocation framework that could utilize a great variety
+of the existing UDFs written in Spark/Hive language. They are not supported natively in Blaze at the moment.
 
 ## Community
 
