@@ -23,7 +23,6 @@ import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SeekableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.SynchronousQueue;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.spark.TaskContext;
@@ -36,14 +35,7 @@ public class JniBridge {
   public static native void initNative(
       long batchSize, long nativeMemory, double memoryFraction, String tmpDirs);
 
-  public static native long callNative(byte[] taskDefinition);
-
-  public static native void loadBatches(
-      long iterPtr, SynchronousQueue<?> retQueue, SynchronousQueue<?> errQueue);
-
-  public static native int deallocIter(long iterPtr);
-
-  public static native void updateMetrics(long iterPtr, MetricNode metrics);
+  public static native void callNative(BlazeCallNativeWrapper wrapper);
 
   public static void raiseThrowable(Throwable t) throws Throwable {
     throw t;
