@@ -19,6 +19,7 @@ package org.apache.spark.sql.blaze
 
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+import scala.util.Try
 
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
@@ -47,6 +48,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.sql.blaze.plan.NativeSortMergeJoinExec
+import org.apache.spark.sql.blaze.NativeSupports.isNative
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -56,6 +58,7 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.RowToColumnarExec
 import org.apache.spark.sql.execution.UnaryExecNode
@@ -63,6 +66,7 @@ import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
@@ -84,51 +88,105 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
 case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     extends Rule[SparkPlan]
     with Logging {
-  val ENABLE_OPERATION = "spark.blaze.enable."
-  val enableWholeStage =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "wholestagewrapper", true)
-  val enableNativeShuffle = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "shuffle", true)
-  val enableScan = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "scan", true)
-  val enableProject = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "project", true)
-  val enableFilter = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "filter", true)
-  val enableSort = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sort", true)
-  val enableUnion = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "union", true)
-  val enableSmj = SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sortmergejoin", true)
+  import org.apache.spark.sql.blaze.Util._
 
   override def apply(sparkPlan: SparkPlan): SparkPlan = {
-    var sparkPlanTransformed = sparkPlan
+    val sparkPlanTransformed = sparkPlan
       .transformUp { // transform supported plans to native
         case exec: ShuffleExchangeExec if enableNativeShuffle =>
           tryConvert(exec, convertShuffleExchangeExec)
         case exec: FileSourceScanExec if enableScan => tryConvert(exec, convertFileSourceScanExec)
-        case exec: ProjectExec if enableProject => tryConvert(exec, convertProjectExec)
-        case exec: FilterExec if enableFilter => tryConvert(exec, convertFilterExec)
-        case exec: SortExec if enableSort => tryConvert(exec, convertSortExec)
-        case exec: UnionExec if enableUnion => tryConvert(exec, convertUnionExec)
-        case exec: SortMergeJoinExec if enableSmj => tryConvert(exec, convertSortMergeJoinExec)
-        case exec =>
-          log.info(s"Ignore unsupported exec: ${exec.simpleStringWithNodeId()}")
-          exec
-      }
-      .transformUp { // add ConvertToUnsafeRow before specified plans those require consuming unsafe rows
-        case exec @ (
-              _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
-              _: SortMergeJoinExec | _: WindowExec
-            ) =>
-          exec.mapChildren(child => convertToUnsafeRow(child))
+        case exec => exec
       }
 
-    // wrap with ConvertUnsafeRowExec if top exec is native
-    if (NativeSupports.isNative(sparkPlanTransformed)) {
-      sparkPlanTransformed = convertToUnsafeRow(sparkPlanTransformed)
-    }
-
-    logDebug(s"Transformed spark plan:\n${sparkPlanTransformed
+    logDebug(s"Transformed spark plan after QueryStagePrep:\n${sparkPlanTransformed
       .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
     sparkPlanTransformed
   }
+}
 
-  private def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan =
+case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule with Logging {
+  import org.apache.spark.sql.blaze.Util._
+
+  override def preColumnarTransitions: Rule[SparkPlan] =
+    sparkPlan => {
+      // mark all skewed SMJ sorters
+      sparkPlan.foreachUp {
+        case SortMergeJoinExec(
+              _,
+              _,
+              _,
+              _,
+              SortExec(_, _, sortChild1, _),
+              SortExec(_, _, sortChild2, _),
+              true) =>
+          sortChild1.setTagValue(skewJoinSortChildrenTag, true)
+          sortChild2.setTagValue(skewJoinSortChildrenTag, true)
+        case _ =>
+      }
+
+      // transform supported plans to native
+      var sparkPlanTransformed = sparkPlan
+        .transformUp {
+          case exec: ProjectExec if Util.enableProject =>
+            tryConvert(exec, convertProjectExec)
+          case exec: FilterExec if Util.enableFilter =>
+            tryConvert(exec, convertFilterExec)
+          case exec: SortExec if Util.enableSort =>
+            tryConvert(exec, convertSortExec)
+          case exec: UnionExec if Util.enableUnion =>
+            tryConvert(exec, convertUnionExec)
+          case exec: SortMergeJoinExec if enableSmj =>
+            tryConvert(exec, convertSortMergeJoinExec)
+          case exec => exec
+        }
+        .transformUp {
+          // add ConvertToUnsafeRow before specified plans those require consuming unsafe rows
+          case exec @ (
+                _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
+                _: SortMergeJoinExec | _: WindowExec
+              ) =>
+            exec.mapChildren(child => convertToUnsafeRow(child))
+        }
+
+      // wrap with ConvertUnsafeRowExec if top exec is native
+      val topNeededConvertToUnsafeRow =
+        !Try(NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed))
+          .getOrElse(null)
+          .isInstanceOf[ShuffleExchangeLike]
+      if (topNeededConvertToUnsafeRow) {
+        sparkPlanTransformed = convertToUnsafeRow(sparkPlanTransformed)
+      }
+
+      logDebug(s"Transformed spark plan after postColumnarTransitions:\n${sparkPlanTransformed
+        .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
+      sparkPlanTransformed
+    }
+}
+
+private object Util extends Logging {
+  private val ENABLE_OPERATION = "spark.blaze.enable."
+
+  val enableWholeStage: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "wholestagewrapper", defaultValue = true)
+  val enableNativeShuffle: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "shuffle", defaultValue = true)
+  val enableScan: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "scan", defaultValue = true)
+  val enableProject: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "project", defaultValue = true)
+  val enableFilter: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "filter", defaultValue = true)
+  val enableSort: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sort", defaultValue = true)
+  val enableUnion: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "union", defaultValue = true)
+  val enableSmj: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sortmergejoin", defaultValue = true)
+
+  val skewJoinSortChildrenTag: TreeNodeTag[Boolean] = TreeNodeTag("skewJoinSortChildren")
+
+  def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan =
     try {
       val convertedExec = convert(exec)
       convertedExec
@@ -138,7 +196,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
         exec
     }
 
-  private def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
+  def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
     val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
     ArrowShuffleExchangeExec301(
@@ -147,7 +205,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
       noUserSpecifiedNumPartition)
   }
 
-  private def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
+  def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
     val FileSourceScanExec(
       relation,
       output,
@@ -171,7 +229,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     exec
   }
 
-  private def convertProjectExec(exec: ProjectExec): SparkPlan =
+  def convertProjectExec(exec: ProjectExec): SparkPlan =
     exec match {
       case ProjectExec(projectList, child) if NativeSupports.isNative(child) =>
         logDebug(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
@@ -182,7 +240,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
         exec
     }
 
-  private def convertFilterExec(exec: FilterExec): SparkPlan =
+  def convertFilterExec(exec: FilterExec): SparkPlan =
     exec match {
       case FilterExec(condition, child) if NativeSupports.isNative(child) =>
         logDebug(s"  condition: ${exec.condition}")
@@ -192,7 +250,10 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
         exec
     }
 
-  def convertSortExec(exec: SortExec): SparkPlan =
+  def convertSortExec(exec: SortExec): SparkPlan = {
+    if (exec.child.getTagValue(skewJoinSortChildrenTag).isDefined) {
+      return exec // do not convert skewed join SMJ sorters
+    }
     exec match {
       case SortExec(sortOrder, global, child, _) if NativeSupports.isNative(child) =>
         logDebug(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
@@ -203,6 +264,7 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
         logDebug(s"Ignoring SortExec: ${exec.simpleStringWithNodeId()}")
         exec
     }
+  }
 
   def convertUnionExec(exec: UnionExec): SparkPlan =
     exec match {
@@ -217,8 +279,11 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
+    if (exec.isSkewJoin) {
+      throw new NotImplementedError("skew join is not yet supported")
+    }
     exec match {
-      case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =>
+      case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, _) =>
         if (Seq(left, right).exists(NativeSupports.isNative)) {
           logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
 
@@ -316,23 +381,22 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
     exec
   }
 
-  private def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case exec if NativeSupports.isNative(exec) =>
-        NativeColumnarReaderExec(exec)
-      case exec =>
-        exec
+  def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
+    if (!NativeSupports.isNative(exec)) {
+      return exec
     }
+    ConvertToUnsafeRowExec(exec)
   }
 
-  private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
+  def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
     if (needRenameColumns(exec)) {
       return NativeRenameColumnsExec(exec, exec.output.map(_.toString()))
     }
     exec
   }
 
-  @tailrec private def needRenameColumns(exec: SparkPlan): Boolean = {
+  @tailrec
+  def needRenameColumns(exec: SparkPlan): Boolean = {
     exec match {
       case exec: ShuffleQueryStageExec => needRenameColumns(exec.plan)
       case exec: BroadcastQueryStageExec => needRenameColumns(exec.plan)
@@ -340,34 +404,5 @@ case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
       case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec => true
       case _ => false
     }
-  }
-}
-
-case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule {
-  override def postColumnarTransitions: Rule[SparkPlan] =
-    _.transformUp {
-      // native plans do exactly support columnar, so RowToColumnar can be safely removed
-      case NativeColumnarReaderExec(RowToColumnarExec(child)) => NativeColumnarReaderExec(child)
-      case exec => exec
-    }
-}
-
-case class NativeColumnarReaderExec(override val child: SparkPlan) extends UnaryExecNode {
-  override def logicalLink: Option[LogicalPlan] = child.logicalLink
-  override def output: Seq[Attribute] = child.output
-  override def outputPartitioning: Partitioning = child.outputPartitioning
-  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
-  override def supportsColumnar: Boolean = true
-
-  override def doExecute(): RDD[InternalRow] = {
-    val doExecutorMethod = child.getClass.getDeclaredMethod("doExecute")
-    doExecutorMethod.setAccessible(true)
-    doExecutorMethod.invoke(child).asInstanceOf[RDD[InternalRow]]
-  }
-  override def doExecuteColumnar(): RDD[ColumnarBatch] = {
-    val realChild = NativeSupports.getUnderlyingNativePlan(child)
-    val doExecutorColumnarMethod = realChild.getClass.getDeclaredMethod("doExecuteColumnar")
-    doExecutorColumnarMethod.setAccessible(true)
-    doExecutorColumnarMethod.invoke(realChild).asInstanceOf[RDD[ColumnarBatch]]
   }
 }
