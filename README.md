@@ -111,6 +111,11 @@ We periodically benchmark Blaze locally with a 1 TB TPC-DS Dataset to show our l
 performance regressions. Check [Benchmark Results](./benchmark-results/tpc-ds.md) with the latest date for the performance
 comparison with vanilla Spark.
 
+Currently, you can expect up to a 2x performance boost, cutting resource consumption to 1/5 within several keystrokes.
+Stay tuned and join us for more upcoming thrilling numbers.
+
+![20220522-memcost](./benchmark-results/blaze-prev-20220522.png)
+
 We also encourage you to benchmark Blaze locally and share the results with us. 🤗
 
 ## Roadmap
