@@ -62,10 +62,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
 
         // init datafusion session context
         SESSIONCTX.get_or_init(|| {
-            let env = JavaClasses::get_thread_jnienv();
-            let dirs = jni_map_error!(env.get_string(tmp_dirs))
+            let dirs = jni_get_string!(tmp_dirs)
                 .unwrap()
-                .to_string_lossy()
                 .split(',')
                 .map(PathBuf::from)
                 .collect::<Vec<_>>();
@@ -92,51 +90,36 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
 #[allow(non_snake_case)]
 #[no_mangle]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
-    env: JNIEnv,
+    _: JNIEnv,
     _: JClass,
     wrapper: JObject,
 ) {
     if let Err(err) = std::panic::catch_unwind(|| {
         log::info!("Entering blaze callNative()");
 
-        let wrapper = Arc::new(jni_global_ref!(env, wrapper).unwrap());
-        let wrapper_for_error = wrapper.clone();
+        let wrapper = Arc::new(jni_new_global_ref!(wrapper).unwrap());
+        let wrapper_clone = wrapper.clone();
 
-        macro_rules! is_finished {
-            ($env:expr, $wrapper:expr) => {{
-                JNI_TRUE == jni_bridge_call_method!(
-                    $env,
-                    BlazeCallNativeWrapper.isFinished -> jboolean,
-                    $wrapper.as_obj()
-                ).unwrap()
-            }}
-        }
+        let obj_true =
+            jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_TRUE).unwrap()).unwrap();
 
-        let obj_true = jni_global_ref!(
-            env,
-            jni_bridge_new_object!(env, JavaBoolean, JNI_TRUE).unwrap()
-        )
-        .unwrap();
-        let obj_false = jni_global_ref!(
-            env,
-            jni_bridge_new_object!(env, JavaBoolean, JNI_FALSE).unwrap()
-        )
-        .unwrap();
+        let obj_false =
+            jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_FALSE).unwrap())
+                .unwrap();
 
         // decode plan
-        let raw_task_definition: JObject = jni_bridge_call_method!(
-            env,
-            BlazeCallNativeWrapper.getRawTaskDefinition -> JObject,
-            wrapper.as_obj()
+        let raw_task_definition: JObject = jni_call!(
+            BlazeCallNativeWrapper(wrapper.as_obj()).getRawTaskDefinition() -> JObject
         )
         .unwrap();
 
         let task_definition = TaskDefinition::decode(
-            jni_map_error!(env.convert_byte_array(raw_task_definition.into_inner()))
+            jni_convert_byte_array!(raw_task_definition.into_inner())
                 .unwrap()
                 .as_slice(),
         )
         .unwrap();
+
         let task_id = &task_definition.task_id.expect("task_id is empty");
         let plan = &task_definition.plan.expect("plan is empty");
 
@@ -155,13 +138,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             .execute(task_id.partition_id as usize, task_ctx)
             .unwrap();
 
-        let task_context = jni_global_ref!(
-            env,
-            jni_bridge_call_static_method!(
-                env,
-                JniBridge.getTaskContext -> JObject,
-            )
-            .unwrap()
+        let task_context = jni_new_global_ref!(
+            jni_call_static!(JniBridge.getTaskContext() -> JObject).unwrap()
         )
         .unwrap();
 
@@ -195,19 +173,10 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 let mut total_rows = 0;
 
                 // propagate task context to spawned children threads
-                {
-                    let env = JavaClasses::get_thread_jnienv();
-                    jni_bridge_call_static_method!(
-                        env,
-                        JniBridge.setTaskContext -> (),
-                        task_context.as_obj(),
-                    )
-                    .unwrap();
-                }
+                jni_call_static!(JniBridge.setTaskContext(task_context.as_obj()) -> ()).unwrap();
 
                 // load batches
                 while let Some(r) = stream.next().await {
-                    let env = JavaClasses::get_thread_jnienv();
                     match r {
                         Ok(batch) => {
                             let num_rows = batch.num_rows();
@@ -219,13 +188,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
                             // value_queue -> (schema_ptr, array_ptr)
                             let mut input = JObject::null();
-                            while !is_finished!(env, wrapper) {
-                                input = jni_bridge_call_method!(
-                                    env,
-                                    BlazeCallNativeWrapper.dequeueWithTimeout -> JObject,
-                                    wrapper.as_obj()
-                                )
-                                .unwrap();
+                            while jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE {
+                                input = jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).dequeueWithTimeout() -> JObject).unwrap();
 
                                 if !input.is_null() {
                                     break;
@@ -235,10 +199,10 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                                 break;
                             }
 
-                            let schema_ptr = jni_bridge_call_method!(env, ScalaTuple2._1 -> JObject, input).unwrap();
-                            let schema_ptr = jni_bridge_call_method!(env, JavaLong.longValue -> jlong, schema_ptr).unwrap();
-                            let array_ptr = jni_bridge_call_method!(env, ScalaTuple2._2 -> JObject, input).unwrap();
-                            let array_ptr = jni_bridge_call_method!(env, JavaLong.longValue -> jlong, array_ptr).unwrap();
+                            let schema_ptr = jni_call!(ScalaTuple2(input)._1() -> JObject).unwrap();
+                            let schema_ptr = jni_call!(JavaLong(schema_ptr).longValue() -> jlong).unwrap();
+                            let array_ptr = jni_call!(ScalaTuple2(input)._2() -> JObject).unwrap();
+                            let array_ptr = jni_call!(JavaLong(array_ptr).longValue() -> jlong).unwrap();
 
                             let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                             let out_array = array_ptr as *mut FFI_ArrowArray;
@@ -253,65 +217,37 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                             }
 
                             // value_queue <- hasNext=true
-                            while !is_finished!(env, wrapper) {
-                                let enqueued = jni_bridge_call_method!(
-                                    env,
-                                    BlazeCallNativeWrapper.enqueueWithTimeout -> jboolean,
-                                    wrapper.as_obj(),
-                                    obj_true.as_obj()
-                                )
-                                .unwrap();
-
-                                if enqueued == JNI_TRUE {
-                                    break;
-                                }
-                            }
+                            while {
+                                jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE &&
+                                jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(obj_true.as_obj()) -> jboolean).unwrap() != JNI_TRUE
+                            } {}
                         }
                         Err(e) => {
                             panic!("stream.next() error: {:?}", e);
                         }
                     }
                 }
-                let env = JavaClasses::get_thread_jnienv();
 
                 // value_queue -> (discard)
-                while !is_finished!(env, wrapper) {
-                    let input = jni_bridge_call_method!(
-                        env,
-                        BlazeCallNativeWrapper.dequeueWithTimeout -> JObject,
-                        wrapper.as_obj()
-                    )
-                    .unwrap();
-
+                while jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE {
+                    let input = jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).dequeueWithTimeout() -> JObject).unwrap();
                     if !input.is_null() {
                         break;
                     }
                 }
 
                 // value_queue <- hasNext=false
-                while !is_finished!(env, wrapper) {
-                    let enqueued = jni_bridge_call_method!(
-                        env,
-                        BlazeCallNativeWrapper.enqueueWithTimeout -> jboolean,
-                        wrapper.as_obj(),
-                        obj_false.as_obj()
-                    )
-                    .unwrap();
-
-                    if enqueued == JNI_TRUE {
-                        break;
-                    }
-                }
+                while {
+                    jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE &&
+                    jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(obj_false.as_obj()) -> jboolean).unwrap() != JNI_TRUE
+                } {}
 
                 log::info!("Updating blaze exec metrics ...");
-                let metrics = jni_bridge_call_method!(
-                    env,
-                    BlazeCallNativeWrapper.getMetrics -> JObject,
-                    wrapper.as_obj()
-                )
-                .unwrap();
+                let metrics = jni_call!(
+                    BlazeCallNativeWrapper(wrapper.as_obj()).getMetrics() -> JObject
+                ).unwrap();
+
                 update_spark_metric_node(
-                    &env,
                     metrics,
                     execution_plan.clone(),
                 ).unwrap();
@@ -324,31 +260,29 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             .catch_unwind()
             .await
             .map_err(|err| {
-                let env = JavaClasses::get_thread_jnienv();
                 let panic_message = panic_message::panic_message(&err);
 
-                let e = if jni_map_error!(env.exception_check())? {
+                let e = if jni_exception_check!()? {
                     log::error!("native execution panics with an java exception");
                     log::error!("panic message: {}", panic_message);
-                    jni_map_error!(env.exception_occurred())?.into()
+                    jni_exception_occurred!()?.into()
                 } else {
                     log::error!("native execution panics");
                     log::error!("panic message: {}", panic_message);
-                    jni_bridge_new_object!(
-                        env,
+                    jni_new_object!(
                         JavaRuntimeException,
-                        jni_map_error!(env.new_string("blaze native panics"))?,
+                        jni_new_string!("blaze native panics")?,
                         JObject::null()
                     )?
                 };
 
                 // error_queue <- exception
-                while !is_finished!(env, wrapper_for_error) {
-                    let enqueued = jni_bridge_call_method!(
-                        env,
-                        BlazeCallNativeWrapper.enqueueError -> jboolean,
-                        wrapper_for_error.as_obj(),
-                        e
+
+                while jni_call!(
+                    BlazeCallNativeWrapper(wrapper_clone.as_obj()).isFinished() -> jboolean
+                ).unwrap() != JNI_TRUE {
+                    let enqueued = jni_call!(
+                        BlazeCallNativeWrapper(wrapper_clone.as_obj()).enqueueError(e) -> jboolean
                     )?;
                     if enqueued == JNI_TRUE {
                         break;
@@ -367,17 +301,15 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     }
 }
 
-fn is_jvm_interrupted(env: &JNIEnv) -> datafusion::error::Result<bool> {
+fn is_jvm_interrupted() -> datafusion::error::Result<bool> {
     let interrupted_exception_class = "java.lang.InterruptedException";
-    if env.exception_check().unwrap_or(false) {
-        let e: JObject = env
-            .exception_occurred()
-            .unwrap_or_else(|_| JThrowable::from(JObject::null()))
-            .into();
-        let class = jni_map_error!(env.get_object_class(e))?;
-        let classname = jni_bridge_call_method!(env, Class.getName -> JObject, class)?;
-        let classname = jni_map_error!(env.get_string(classname.into()))?;
-        if classname.to_string_lossy().as_ref() == interrupted_exception_class {
+    if jni_exception_check!()? {
+        let e: JObject = jni_exception_occurred!()?.into();
+        let class = jni_get_object_class!(e)?;
+        let classname_obj = jni_call!(Class(class).getName() -> JObject)?;
+        let classname = jni_get_string!(classname_obj.into())?;
+
+        if classname == interrupted_exception_class {
             return Ok(true);
         }
     }
@@ -385,11 +317,11 @@ fn is_jvm_interrupted(env: &JNIEnv) -> datafusion::error::Result<bool> {
 }
 
 fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Result<()> {
-    let env = JavaClasses::get_thread_jnienv();
-    let msg = jni_map_error!(env.new_string(msg))?;
-    let e = jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?;
-    if let Err(err) = env.throw(JThrowable::from(e)) {
-        env.fatal_error(format!(
+    let msg = jni_new_string!(msg)?;
+    let e = jni_new_object!(JavaRuntimeException, msg, cause)?;
+
+    if let Err(err) = jni_throw!(JThrowable::from(e)) {
+        jni_fatal_error!(format!(
             "Error throwing RuntimeException, cannot result: {:?}",
             err
         ));
@@ -398,24 +330,22 @@ fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Resu
 }
 
 fn handle_unwinded(err: Box<dyn Any + Send>) {
-    let env = JavaClasses::get_thread_jnienv();
-
     // default handling:
     //  * caused by InterruptedException: do nothing but just print a message.
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if is_jvm_interrupted(&env)? {
-            env.exception_clear()?;
+        if is_jvm_interrupted()? {
+            jni_exception_clear!()?;
             log::info!("native execution interrupted by JVM");
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);
 
         // throw jvm runtime exception
-        let cause = if env.exception_check()? {
-            let throwable = env.exception_occurred()?.into();
-            env.exception_clear()?;
+        let cause = if jni_exception_check!()? {
+            let throwable = jni_exception_occurred!()?.into();
+            jni_exception_clear!()?;
             throwable
         } else {
             JObject::null()
@@ -424,7 +354,7 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
         Ok(())
     };
     recover().unwrap_or_else(|err: Box<dyn Error>| {
-        env.fatal_error(format!(
+        jni_fatal_error!(format!(
             "Error recovering from panic, cannot resume: {:?}",
             err
         ));

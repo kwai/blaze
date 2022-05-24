@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use datafusion::physical_plan::ExecutionPlan;
 use jni::objects::JObject;
-use jni::JNIEnv;
 
-use datafusion_ext::jni_bridge::JavaClasses;
-use datafusion_ext::{jni_bridge_call_method, jni_map_error};
+use datafusion_ext::jni_call;
+use datafusion_ext::jni_new_string;
 
 const REPORTED_METRICS: &[&str] = &[
     "input_rows",
@@ -17,13 +16,11 @@ const REPORTED_METRICS: &[&str] = &[
 ];
 
 pub fn update_spark_metric_node(
-    env: &JNIEnv,
     metric_node: JObject,
     execution_plan: Arc<dyn ExecutionPlan>,
 ) -> datafusion::error::Result<()> {
     // update current node
     update_metrics(
-        env,
         metric_node,
         &execution_plan
             .metrics()
@@ -36,26 +33,22 @@ pub fn update_spark_metric_node(
 
     // update children nodes
     for (i, child_plan) in execution_plan.children().iter().enumerate() {
-        let child_metric_node = jni_bridge_call_method!(
-            env,
-            SparkMetricNode.getChild -> JObject,
-            metric_node,
-            i as i32
+        let child_metric_node = jni_call!(
+            SparkMetricNode(metric_node).getChild(i as i32) -> JObject
         )?;
-        update_spark_metric_node(env, child_metric_node, child_plan.clone())?;
+        update_spark_metric_node(child_metric_node, child_plan.clone())?;
     }
     Ok(())
 }
 
 fn update_metrics(
-    env: &JNIEnv,
     metric_node: JObject,
     metric_values: &[(&str, i64)],
 ) -> datafusion::error::Result<()> {
     for &(name, value) in metric_values {
         if REPORTED_METRICS.contains(&name) {
-            let jname = jni_map_error!(env.new_string(name))?;
-            jni_bridge_call_method!(env, SparkMetricNode.add -> (), metric_node, jname, value)?;
+            let jname = jni_new_string!(&name)?;
+            jni_call!(SparkMetricNode(metric_node).add(jname, value) -> ())?;
         }
     }
     Ok(())
