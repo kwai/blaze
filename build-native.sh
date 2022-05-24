@@ -2,10 +2,10 @@
 
 if [[ "$1" == "debug" ]]; then
   echo "Building native with debug mode..."
-  cargo +nightly build
+  cargo +nightly-2022-05-22 build
 else
   echo "Building native with release mode..."
-  cargo +nightly build --release --features=mm
+  cargo +nightly-2022-05-22 build --release --features=mm
 fi
 rt=$?
 if [[ "$rt" != 0 ]]; then
