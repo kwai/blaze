@@ -50,16 +50,11 @@ trait NativeSupports extends SparkPlan {
 
   protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
   protected override def doExecuteColumnar(): RDD[ColumnarBatch] = doExecuteNative().toColumnar
-
-  // native to native plans are not columnar executed
-  var columnarEnabled = false
-  override def supportsColumnar: Boolean = columnarEnabled
 }
 
 object NativeSupports extends Logging {
-  private var nativeInitialized: Boolean = false
-
-  @tailrec def isNative(plan: SparkPlan): Boolean =
+  @tailrec
+  def isNative(plan: SparkPlan): Boolean =
     plan match {
       case _: NativeSupports => true
       case plan: CustomShuffleReaderExec => isNative(plan.child)
@@ -68,7 +63,8 @@ object NativeSupports extends Logging {
       case _ => false
     }
 
-  @tailrec def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports =
+  @tailrec
+  def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports =
     plan match {
       case plan: NativeSupports => plan
       case plan: CustomShuffleReaderExec => getUnderlyingNativePlan(plan.child)
@@ -77,7 +73,8 @@ object NativeSupports extends Logging {
       case _ => throw new RuntimeException("unreachable: plan is not native")
     }
 
-  @tailrec def executeNative(plan: SparkPlan): NativeRDD =
+  @tailrec
+  def executeNative(plan: SparkPlan): NativeRDD =
     plan match {
       case plan: NativeSupports => plan.doExecuteNative()
       case plan: CustomShuffleReaderExec => executeNative(plan.child)

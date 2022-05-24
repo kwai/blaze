@@ -37,10 +37,6 @@ public class JniBridge {
 
   public static native void callNative(BlazeCallNativeWrapper wrapper);
 
-  public static void raiseThrowable(Throwable t) throws Throwable {
-    throw t;
-  }
-
   public static ClassLoader getContextClassLoader() {
     return Thread.currentThread().getContextClassLoader();
   }

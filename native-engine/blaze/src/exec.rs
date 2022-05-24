@@ -388,11 +388,12 @@ fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Resu
     let env = JavaClasses::get_thread_jnienv();
     let msg = jni_map_error!(env.new_string(msg))?;
     let e = jni_bridge_new_object!(env, JavaRuntimeException, msg, cause)?;
-    let _throw = jni_bridge_call_static_method!(
-        env,
-        JniBridge.raiseThrowable -> (),
-        e
-    );
+    if let Err(err) = env.throw(JThrowable::from(e)) {
+        env.fatal_error(format!(
+            "Error throwing RuntimeException, cannot result: {:?}",
+            err
+        ));
+    }
     Ok(())
 }
 
