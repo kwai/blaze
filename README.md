@@ -102,7 +102,7 @@ At the same time, there are a series of configurations that you can use to contr
 | spark.blaze.memoryFraction                                        | 0.75                  | A fraction of the off-heap that Blaze could use during execution.                                |
 | spark.blaze.batchSize                                             | 16384                 | Batch size for vectorized execution.                                                             |
 | spark.blaze.enable.shuffle                                        | true                  | If enabled, use native, Arrow-IPC based Shuffle.                                                 |
-| spark.blaze.enalbe.[scan,project,filter,sort,union,sortmergejoin] | true                  | If enabled, offload the corresponding operator to native engine.                                 |
+| spark.blaze.enable.[scan,project,filter,sort,union,sortmergejoin] | true                  | If enabled, offload the corresponding operator to native engine.                                 |
 
 
 ## Performance
