@@ -244,8 +244,6 @@ impl JavaClasses<'static> {
 #[allow(non_snake_case)]
 pub struct JniBridge<'a> {
     pub class: JClass<'a>,
-    pub method_raiseThrowable: JStaticMethodID<'a>,
-    pub method_raiseThrowable_ret: JavaType,
     pub method_getContextClassLoader: JStaticMethodID<'a>,
     pub method_getContextClassLoader_ret: JavaType,
     pub method_setContextClassLoader: JStaticMethodID<'a>,
@@ -270,12 +268,6 @@ impl<'a> JniBridge<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JniBridge {
             class,
-            method_raiseThrowable: env.get_static_method_id(
-                class,
-                "raiseThrowable",
-                "(Ljava/lang/Throwable;)V",
-            )?,
-            method_raiseThrowable_ret: JavaType::Primitive(Primitive::Void),
             method_getContextClassLoader: env.get_static_method_id(
                 class,
                 "getContextClassLoader",
