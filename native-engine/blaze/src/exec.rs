@@ -25,6 +25,7 @@ use once_cell::sync::OnceCell;
 use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
+use tokio::runtime::Runtime;
 
 use crate::metrics::update_spark_metric_node;
 
@@ -164,17 +165,31 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         )
         .unwrap();
 
+        // a runtime wrapper that calls shutdown_background on dropping
+        struct RuntimeWrapper {
+            runtime: Option<Runtime>,
+        }
+        impl Drop for RuntimeWrapper {
+            fn drop(&mut self) {
+                if let Some(rt) = self.runtime.take() {
+                    rt.shutdown_background();
+                }
+            }
+        }
+
         // spawn a thread to poll batches
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .thread_keep_alive(Duration::MAX) // always use same thread
-                .build()
-                .unwrap(),
-        );
+        let runtime = Arc::new(RuntimeWrapper {
+            runtime: Some(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .thread_keep_alive(Duration::MAX) // always use same thread
+                    .build()
+                    .unwrap(),
+            ),
+        });
         let runtime_clone = runtime.clone();
 
-        runtime.clone().spawn(async move {
+        runtime.clone().runtime.as_ref().unwrap().spawn(async move {
             AssertUnwindSafe(async move {
                 let mut total_batches = 0;
                 let mut total_rows = 0;
@@ -304,7 +319,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 log::info!("Blaze native executing finished.");
                 log::info!("  total loaded batches: {}", total_batches);
                 log::info!("  total loaded rows: {}", total_rows);
-                Arc::try_unwrap(runtime).unwrap().shutdown_background();
+                std::mem::drop(runtime);
             })
             .catch_unwind()
             .await
@@ -340,7 +355,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                     }
                 }
                 log::info!("Blaze native executing exited with error.");
-                Arc::try_unwrap(runtime_clone).unwrap().shutdown_background();
+                std::mem::drop(runtime_clone);
                 datafusion::error::Result::Ok(())
             })
             .unwrap();
