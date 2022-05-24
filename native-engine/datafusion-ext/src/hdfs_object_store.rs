@@ -10,13 +10,14 @@ use datafusion::datafusion_data_access::object_store::{
 use datafusion::datafusion_data_access::Result;
 use datafusion::datafusion_data_access::SizedFile;
 use futures::AsyncRead;
-use jni::objects::JObject;
+use jni::objects::{GlobalRef, JObject};
 use jni::sys::jint;
 
 use crate::jni_bridge::JavaClasses;
-use crate::jni_bridge_call_static_method;
 use crate::jni_bridge_new_object;
+use crate::ResultExt;
 use crate::{jni_bridge_call_method, jni_map_error};
+use crate::{jni_bridge_call_static_method, jni_global_ref};
 
 #[derive(Clone)]
 pub struct HDFSSingleFileObjectStore;
@@ -43,13 +44,21 @@ impl ObjectStore for HDFSSingleFileObjectStore {
 
     fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
         log::debug!("HDFSSingleFileStore.file_reader: {:?}", file);
-        let hdfs_input_stream = Arc::new(
-            FSDataInputStreamWrapper::try_new(&file.path)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?,
-        );
+
+        let env = JavaClasses::get_thread_jnienv();
+        let path = file.path.clone();
+        let get_hdfs_input_stream = || -> datafusion::error::Result<GlobalRef> {
+            let fs = jni_bridge_call_static_method!(env, JniBridge.getHDFSFileSystem -> JObject)?;
+            let path_str = jni_map_error!(env.new_string(path))?;
+            let path = jni_bridge_new_object!(env, HadoopPath, path_str)?;
+            Ok(jni_global_ref!(
+                env,
+                jni_bridge_call_method!(env, HadoopFileSystem.open -> JObject, fs, path)?
+            )?)
+        };
         Ok(Arc::new(HDFSObjectReader {
             file,
-            hdfs_input_stream,
+            hdfs_input_stream: Arc::new(get_hdfs_input_stream().to_io_result()?),
         }))
     }
 }
@@ -57,7 +66,7 @@ impl ObjectStore for HDFSSingleFileObjectStore {
 #[derive(Clone)]
 struct HDFSObjectReader {
     file: SizedFile,
-    hdfs_input_stream: Arc<FSDataInputStreamWrapper>,
+    hdfs_input_stream: Arc<GlobalRef>,
 }
 
 #[async_trait]
@@ -99,67 +108,38 @@ impl HDFSObjectReader {
 
 #[derive(Clone)]
 struct HDFSFileReader {
-    pub hdfs_input_stream: Arc<FSDataInputStreamWrapper>,
+    pub hdfs_input_stream: Arc<GlobalRef>,
     pub pos: u64,
 }
 
-impl Read for HDFSFileReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        (|| {
-            let env = JavaClasses::get_thread_jnienv();
-
-            log::debug!("HDFSFileReader.read: size={}", buf.len());
-            let buf = jni_map_error!(env.new_direct_byte_buffer(buf))?;
-            let read_size = jni_bridge_call_static_method!(
-                env,
-                JniBridge.readFSDataInputStream -> jint,
-                self.hdfs_input_stream.inner,
-                buf,
-                self.pos as i64,
-            )? as usize;
-
-            log::debug!("HDFSFileReader.read result: read_size={}", read_size);
-            self.pos += read_size as u64;
-            Ok(read_size)
-        })()
-        .map_err(|err: Box<dyn std::error::Error>| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", err))
-        })
-    }
-}
-
-struct FSDataInputStreamWrapper {
-    pub inner: JObject<'static>,
-    env: jni::JNIEnv<'static>,
-}
-unsafe impl Send for FSDataInputStreamWrapper {}
-unsafe impl Sync for FSDataInputStreamWrapper {}
-
-impl FSDataInputStreamWrapper {
-    pub fn try_new(path: &str) -> Result<FSDataInputStreamWrapper> {
-        (|| {
-            let env = JavaClasses::get_thread_jnienv();
-            let fs = jni_bridge_call_static_method!(env, JniBridge.getHDFSFileSystem -> JObject)?;
-            let path = jni_bridge_new_object!(env, HadoopPath, jni_map_error!(env.new_string(path))?)?;
-            let hdfs_input_stream =
-                jni_bridge_call_method!(env, HadoopFileSystem.open -> JObject, fs, path)?;
-            Ok(FSDataInputStreamWrapper {
-                inner: hdfs_input_stream,
-                env,
-            })
-        })().map_err(|err: Box<dyn std::error::Error>| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", err))
-        })
-    }
-}
-
-impl Drop for FSDataInputStreamWrapper {
+impl Drop for HDFSFileReader {
     fn drop(&mut self) {
         // never panic in drop, otherwise the jvm process will be aborted
+        let env = JavaClasses::get_thread_jnienv();
         let _ = jni_bridge_call_method!(
-            self.env,
+            env,
             HadoopFSDataInputStream.close -> (),
-            self.inner
+            self.hdfs_input_stream.as_obj()
         );
+    }
+}
+impl Read for HDFSFileReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let env = JavaClasses::get_thread_jnienv();
+
+        log::debug!("HDFSFileReader.read: size={}", buf.len());
+        let buf = jni_map_error!(env.new_direct_byte_buffer(buf)).to_io_result()?;
+        let read_size = jni_bridge_call_static_method!(
+            env,
+            JniBridge.readFSDataInputStream -> jint,
+            self.hdfs_input_stream.as_obj(),
+            buf,
+            self.pos as i64,
+        )
+        .to_io_result()? as usize;
+
+        log::debug!("HDFSFileReader.read result: read_size={}", read_size);
+        self.pos += read_size as u64;
+        Ok(read_size)
     }
 }
