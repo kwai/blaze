@@ -207,6 +207,9 @@ private[spark] final class ShuffleBlockFetcherIterator301(
       throw new NoSuchElementException()
     }
 
+    // release current buffer before fetching next
+    releaseCurrentResultBuffer()
+
     numBlocksProcessed += 1
 
     var result: FetchResult = null
@@ -418,26 +421,11 @@ private[spark] final class ShuffleBlockFetcherIterator301(
     }
   }
 
-  def toAutoReleaseCompletionIterator: Iterator[(BlockId, ManagedBuffer)] = {
+  def toCompletionIterator: Iterator[(BlockId, ManagedBuffer)] = {
     val inner = this
 
     CompletionIterator[(BlockId, ManagedBuffer), Iterator[(BlockId, ManagedBuffer)]](
-      new Iterator[(BlockId, ManagedBuffer)] {
-        private var currentManagerBuffer: ManagedBuffer = _
-
-        override def hasNext: Boolean = inner.hasNext
-
-        override def next(): (BlockId, ManagedBuffer) = {
-          // release previous buffer before reading next one
-          if (currentManagerBuffer != null) {
-            currentManagerBuffer.release()
-          }
-
-          val next = inner.next()
-          currentManagerBuffer = next._2
-          next
-        }
-      },
+      this,
       onCompleteCallback.onComplete(context))
   }
 
