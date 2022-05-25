@@ -437,7 +437,7 @@ async fn spill_into(
                 let ipc_length: u64 = partition_end - partition_start;
                 file.write_all(&ipc_length.to_le_bytes()[..])?;
                 file.flush()?;
-                offset = ipc_length + 8;
+                offset = partition_start + ipc_length + 8;
             }
         }
         // add one extra offset at last to ease partition length computation
