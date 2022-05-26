@@ -1,11 +1,8 @@
-use std::sync::Arc;
-
 use datafusion::datasource::object_store_registry::ObjectStoreRegistry;
 use once_cell::sync::OnceCell;
 
 use hdfs_object_store::HDFSSingleFileObjectStore;
-
-use crate::jni_bridge::JavaClasses;
+use std::sync::Arc;
 
 pub mod empty_partitions_exec;
 pub mod hdfs_object_store; // note: can be changed to priv once plan transforming is removed
@@ -40,20 +37,14 @@ where
         match self {
             Ok(value) => value,
             Err(err) => {
-                let env = JavaClasses::get_thread_jnienv();
-                if env.exception_check().unwrap_or(false) {
-                    let _ = env.exception_describe();
-                    let _ = env.exception_clear();
+                if jni_exception_check!().unwrap_or(false) {
+                    let _ = jni_exception_describe!();
+                    let _ = jni_exception_clear!();
                 }
                 let errmsg = format!("uncaught error in native code: {:?}", err);
 
-                std::panic::catch_unwind(move || {
-                    let env = JavaClasses::get_thread_jnienv();
-                    env.fatal_error(errmsg);
-                })
-                .unwrap_or_else(|_| {
-                    std::process::abort();
-                })
+                std::panic::catch_unwind(move || jni_fatal_error!(errmsg))
+                    .unwrap_or_else(|_| std::process::abort())
             }
         }
     }
