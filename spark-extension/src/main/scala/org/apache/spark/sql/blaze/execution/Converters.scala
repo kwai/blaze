@@ -35,16 +35,6 @@ import org.blaze.NioSeekableByteChannel
 
 object Converters extends Logging {
 
-  /**
-   * Parse ManagedBuffer from shuffle reader into record iterator.
-   * Each ManagedBuffer may be composed of one or more IPC entities.
-   */
-  def readManagedBuffer(data: ManagedBuffer, context: TaskContext): Iterator[InternalRow] = {
-    val segmentSeekableByteChannels = readManagedBufferToSegmentByteChannels(data)
-    segmentSeekableByteChannels.toIterator.flatMap(channel =>
-      new ArrowReaderIterator(channel, context).result)
-  }
-
   def readManagedBufferToSegmentByteChannels(data: ManagedBuffer): Seq[SeekableByteChannel] = {
     val result: ArrayBuffer[SeekableByteChannel] = ArrayBuffer()
     data match {
