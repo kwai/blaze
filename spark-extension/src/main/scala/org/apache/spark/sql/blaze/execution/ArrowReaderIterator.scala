@@ -24,39 +24,38 @@ import org.apache.spark.TaskContext
 import org.apache.spark.sql.blaze.FFIHelper
 import org.apache.spark.sql.util2.ArrowUtils2
 
-class ArrowReaderIterator(channel: SeekableByteChannel, taskContext: TaskContext) {
+class ArrowReaderIterator(channel: SeekableByteChannel, taskContext: TaskContext)
+    extends Iterator[InternalRow] {
+
   private val allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowReaderIterator", 0, Long.MaxValue)
   private val arrowReader = new ArrowFileReader(channel, allocator)
   private val root = arrowReader.getVectorSchemaRoot
   private var closed = false
+  private var rowIter = nextBatch()
 
-  val result: Iterator[InternalRow] = new Iterator[InternalRow] {
-    private var rowIter = nextBatch()
+  taskContext.addTaskCompletionListener[Unit] { _ =>
+    if (!closed) {
+      root.close()
+      allocator.close()
+      arrowReader.close()
+      closed = true
+    }
+  }
 
-    taskContext.addTaskCompletionListener[Unit] { _ =>
-      if (!closed) {
-        root.close()
-        allocator.close()
-        arrowReader.close()
-        closed = true
-      }
+  override def hasNext: Boolean =
+    rowIter.hasNext || {
+      rowIter = nextBatch()
+      rowIter.nonEmpty
     }
 
-    override def hasNext: Boolean =
-      rowIter.hasNext || {
-        rowIter = nextBatch()
-        rowIter.nonEmpty
-      }
+  override def next(): InternalRow = rowIter.next()
 
-    override def next(): InternalRow = rowIter.next()
-
-    private def nextBatch(): Iterator[InternalRow] = {
-      if (arrowReader.loadNextBatch()) {
-        FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
-      } else {
-        Iterator.empty
-      }
+  private def nextBatch(): Iterator[InternalRow] = {
+    if (arrowReader.loadNextBatch()) {
+      FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
+    } else {
+      Iterator.empty
     }
   }
 }

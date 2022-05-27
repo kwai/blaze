@@ -21,6 +21,7 @@ import java.nio.file.{Files, StandardCopyOption}
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 
 import scala.annotation.tailrec
 import scala.collection.immutable.TreeMap
@@ -39,9 +40,18 @@ import org.apache.spark.Partition
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.blaze.execution.ArrowBlockStoreShuffleReader301
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.execution.CoalescedPartitionSpec
+import org.apache.spark.sql.execution.ShuffledRowRDD
+import org.apache.spark.sql.execution.ShufflePartitionSpec
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.Schema
+import org.blaze.protobuf.ShuffleReaderExecNode
 import org.blaze.protobuf.TaskDefinition
 
 trait NativeSupports extends SparkPlan {
@@ -76,7 +86,7 @@ object NativeSupports extends Logging {
   def executeNative(plan: SparkPlan): NativeRDD =
     plan match {
       case plan: NativeSupports => plan.doExecuteNative()
-      case plan: CustomShuffleReaderExec => executeNative(plan.child)
+      case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan, plan.output)
       case plan: QueryStageExec => executeNative(plan.plan)
       case plan: ReusedExchangeExec => executeNative(plan.child)
       case _ => throw new SparkException(s"Underlying plan is not NativeSupports: ${plan}")
@@ -111,6 +121,70 @@ object NativeSupports extends Logging {
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
       "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"))
 
+  private def executeNativeCustomShuffleReader(
+      exec: CustomShuffleReaderExec,
+      output: Seq[Attribute]): NativeRDD = {
+    exec match {
+      case CustomShuffleReaderExec(_, _, _) =>
+        val inputShuffledRowRDD = exec.execute().asInstanceOf[ShuffledRowRDD]
+        val shuffleHandle = inputShuffledRowRDD.dependency.shuffleHandle
+
+        val inputRDD = NativeSupports.executeNative(exec.child)
+        val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
+          StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+        val metrics = MetricNode(Map(), Seq(inputRDD.metrics))
+
+        new NativeRDD(
+          inputShuffledRowRDD.sparkContext,
+          metrics,
+          inputShuffledRowRDD.partitions,
+          inputShuffledRowRDD.dependencies,
+          (partition, taskContext) => {
+
+            // use reflection to get partitionSpec because ShuffledRowRDDPartition is private
+            val shuffledRDDPartitionClass =
+              Class.forName("org.apache.spark.sql.execution.ShuffledRowRDDPartition")
+            val specField = shuffledRDDPartitionClass.getDeclaredField("spec")
+            specField.setAccessible(true)
+            val spec = specField.get(partition).asInstanceOf[ShufflePartitionSpec]
+
+            spec match {
+              case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
+                // store fetch iterator in jni resource before native compute
+                val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
+                JniBridge.resourcesMap.put(
+                  jniResourceId,
+                  () => {
+                    val shuffleManager = SparkEnv.get.shuffleManager
+                    shuffleManager
+                      .getReader(
+                        shuffleHandle,
+                        startReducerIndex,
+                        endReducerIndex,
+                        taskContext,
+                        taskContext.taskMetrics().createTempShuffleReadMetrics())
+                      .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
+                      .readIpc()
+                  })
+
+                PhysicalPlanNode
+                  .newBuilder()
+                  .setShuffleReader(
+                    ShuffleReaderExecNode
+                      .newBuilder()
+                      .setSchema(nativeSchema)
+                      .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
+                      .setNativeShuffleId(jniResourceId)
+                      .build())
+                  .build()
+
+              case unsupported =>
+                throw new NotImplementedError(
+                  s"CustomShuffleReader partition spec is not yet supported: ${unsupported}")
+            }
+          })
+    }
+  }
 }
 
 case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])

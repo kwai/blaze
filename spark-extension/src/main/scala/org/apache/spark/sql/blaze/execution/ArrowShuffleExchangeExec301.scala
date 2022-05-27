@@ -22,6 +22,7 @@ import java.nio.ByteOrder
 import java.nio.file.Files
 import java.util.Random
 import java.util.function.Supplier
+import java.util.UUID
 
 import scala.collection.JavaConverters._
 import scala.concurrent.Future
@@ -42,6 +43,7 @@ import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.execution.ArrowShuffleExchangeExec301.canUseNativeShuffleWrite
+import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.errors.attachTree
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -170,7 +172,7 @@ case class ArrowShuffleExchangeExec301(
     }
 
   override def doExecuteNative(): NativeRDD = {
-    val shuffleId = shuffleDependency.shuffleId
+    val shuffleHandle = shuffleDependency.shuffleHandle
     val rdd = doExecute()
     val nativeMetrics =
       MetricNode(
@@ -186,8 +188,23 @@ case class ArrowShuffleExchangeExec301(
       rdd.partitions,
       rdd.dependencies,
       (partition, taskContext) => {
+
         // store fetch iterator in jni resource before native compute
-        rdd.compute(rdd.partitions(partition.index), taskContext)
+        val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
+        JniBridge.resourcesMap.put(
+          jniResourceId,
+          () => {
+            val shuffleManager = SparkEnv.get.shuffleManager
+            shuffleManager
+              .getReader(
+                shuffleHandle,
+                partition.index,
+                partition.index + 1,
+                taskContext,
+                taskContext.taskMetrics().createTempShuffleReadMetrics())
+              .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
+              .readIpc()
+          })
 
         PhysicalPlanNode
           .newBuilder()
@@ -196,8 +213,7 @@ case class ArrowShuffleExchangeExec301(
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(rdd.getNumPartitions)
-              .setNativeShuffleId(
-                ArrowShuffleExchangeExec301.getNativeShuffleId(taskContext, shuffleId))
+              .setNativeShuffleId(jniResourceId)
               .build())
           .build()
       })
@@ -213,9 +229,6 @@ object ArrowShuffleExchangeExec301 {
       outputPartitioning: Partitioning): Boolean = {
     rdd.isInstanceOf[NativeRDD] && outputPartitioning.isInstanceOf[HashPartitioning]
   }
-
-  def getNativeShuffleId(context: TaskContext, shuffleId: Int): String =
-    s"NativeShuffleReadExec:${context.stageId}:${context.stageAttemptNumber}:${context.partitionId}:${context.taskAttemptId}:${shuffleId}"
 
   def prepareNativeShuffleDependency(
       rdd: RDD[InternalRow],
