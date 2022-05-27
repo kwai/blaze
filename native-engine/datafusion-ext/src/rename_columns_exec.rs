@@ -49,9 +49,11 @@ impl RenameColumnsExec {
     ) -> Result<Self> {
         let input_schema = input.schema();
         if renamed_column_names.len() != input_schema.fields().len() {
-            return Err(DataFusionError::Plan(
-                "renamed_column_names length not matched with input schema".to_string(),
-            ));
+            return Err(DataFusionError::Plan(format!(
+                "renamed_column_names length not matched with input schema, \
+                    renames: {:?}, input schema: {}",
+                renamed_column_names, input_schema,
+            )));
         }
 
         let renamed_schema = Arc::new(Schema::new(
