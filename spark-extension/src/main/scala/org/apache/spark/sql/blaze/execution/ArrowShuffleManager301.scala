@@ -31,7 +31,7 @@ import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
 import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.sort.SortShuffleWriter
-import org.apache.spark.sql.shuffle.sort.ArrowShuffleWriter301
+import org.apache.spark.shuffle.sort.ArrowShuffleWriter301
 import org.apache.spark.util.collection.OpenHashSet
 
 class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Logging {

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.shuffle.sort;
+package org.apache.spark.shuffle.sort;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.io.ByteStreams;
@@ -53,8 +53,6 @@ import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.ShufflePartitionWriter;
 import org.apache.spark.shuffle.api.SingleSpillShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.WritableByteChannelWrapper;
-import org.apache.spark.shuffle.sort.SerializedShuffleHandle;
-import org.apache.spark.shuffle.sort.SortShuffleManager;
 import org.apache.spark.sql.blaze.execution.ShuffleDependencySchema;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
