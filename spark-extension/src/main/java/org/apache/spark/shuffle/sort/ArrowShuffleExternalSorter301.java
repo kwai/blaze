@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.shuffle.sort;
+package org.apache.spark.shuffle.sort;
 
 import java.io.File;
 import java.io.IOException;
@@ -29,8 +29,6 @@ import org.apache.spark.memory.SparkOutOfMemoryError;
 import org.apache.spark.memory.TaskMemoryManager;
 import org.apache.spark.memory.TooLargePageException;
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter;
-import org.apache.spark.shuffle.sort.SortShuffleWriter;
-import org.apache.spark.shuffle.sort.UnsafeShuffleWriter;
 import org.apache.spark.sql.blaze.execution.DiskBlockArrowIPCWriter;
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
 import org.apache.spark.sql.types.StructType;
