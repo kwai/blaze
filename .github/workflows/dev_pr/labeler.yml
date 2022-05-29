@@ -17,9 +17,6 @@
 scala-java:
   - spark-extension/**/*
 
-rust:
-  - native-engine/**/*
-
 blaze:
   - native-engine/blaze/**/*
 
@@ -31,3 +28,5 @@ plan-serde:
 
 doc:
   - README.md
+  - dev/doc/*.md
+  - benchmark-results/*
