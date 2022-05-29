@@ -76,9 +76,6 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
   /** The buffer size to use when writing spills using DiskBlockObjectWriter */
   private final int fileBufferSizeBytes;
 
-  /** The buffer size to use when writing the sorted records to an on-disk file */
-  private final int diskWriteBufferSize;
-
   private final boolean shuffleSync;
   private final int maxRecordsPerBatch;
 
@@ -130,8 +127,6 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
         new ShuffleInMemorySorter(
             this, initialSize, (boolean) conf.get(package$.MODULE$.SHUFFLE_SORT_USE_RADIXSORT()));
     this.peakMemoryUsedBytes = getMemoryUsage();
-    this.diskWriteBufferSize =
-        (int) (long) conf.get(package$.MODULE$.SHUFFLE_DISK_WRITE_BUFFER_SIZE());
     this.shuffleSync = (boolean) conf.get(package$.MODULE$.SHUFFLE_SYNC());
   }
 
@@ -165,13 +160,6 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
       // them towards shuffle bytes written.
       writeMetricsToUse = new ShuffleWriteMetrics();
     }
-
-    // Small writes to DiskBlockObjectWriter will be fairly inefficient. Since there doesn't seem
-    // to
-    // be an API to directly transfer bytes from managed memory to the disk writer, we buffer
-    // data through a byte array. This array does not need to be large enough to hold a single
-    // record;
-    final byte[] writeBuffer = new byte[diskWriteBufferSize];
 
     // Because this output will be read during shuffle, its compression codec must be controlled
     // by
@@ -208,9 +196,11 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
         final long recordPointer = sortedRecords.packedRecordPointer.getRecordPointer();
         final Object recordPage = taskMemoryManager.getPage(recordPointer);
         final long recordOffsetInPage = taskMemoryManager.getOffsetInPage(recordPointer);
-        int dataRemaining = UnsafeAlignedOffset.getSize(recordPage, recordOffsetInPage);
         long recordReadPosition = recordOffsetInPage + uaoSize; // skip over record length
-        current.pointTo(recordPage, recordReadPosition, dataRemaining);
+
+        int recordSizeInBytes = Platform.getInt(recordPage, recordReadPosition);
+        recordReadPosition += 4;
+        current.pointTo(recordPage, recordReadPosition, recordSizeInBytes);
         writer.write(current);
         writer.recordWritten();
       }
