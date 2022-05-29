@@ -54,7 +54,7 @@ import org.apache.spark.shuffle.api.ShufflePartitionWriter;
 import org.apache.spark.shuffle.api.SingleSpillShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.WritableByteChannelWrapper;
 import org.apache.spark.sql.blaze.execution.ShuffleDependencySchema;
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
 import org.apache.spark.sql.types.StructType;
@@ -249,11 +249,11 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
     serBuffer.reset();
     serOutputStream.writeKey(key, OBJECT_CLASS_TAG);
 
-    if (record._2() instanceof GenericInternalRow) {
-      UnsafeRow unsafeRow = unsafeProjection.apply((GenericInternalRow) record._2());
-      serOutputStream.writeValue(unsafeRow, OBJECT_CLASS_TAG);
-    } else {
+    if (record._2() instanceof UnsafeRow) {
       serOutputStream.writeValue(record._2(), OBJECT_CLASS_TAG);
+    } else {
+      UnsafeRow unsafeRow = unsafeProjection.apply((InternalRow) record._2());
+      serOutputStream.writeValue(unsafeRow, OBJECT_CLASS_TAG);
     }
     serOutputStream.flush();
 

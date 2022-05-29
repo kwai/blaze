@@ -178,6 +178,7 @@ private[spark] class DiskBlockArrowIPCWriter(
     if (currentRowCount > 0) {
       arrowBuffer.finish()
       writer.writeBatch()
+      arrowBuffer.reset()
       currentRowCount = 0
     }
     writer.end()
