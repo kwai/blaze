@@ -16,10 +16,21 @@
 
 package org.apache.spark.sql.blaze.execution
 
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.InputStream
+import java.nio.channels.Channels
 import java.nio.channels.SeekableByteChannel
+import java.nio.ByteBuffer
+import java.nio.file.Files
+import java.nio.file.Paths
 
-import scala.collection.GenTraversableOnce
+import scala.reflect.io.Path
 
+import io.netty.channel.internal.ChannelUtils
+import org.apache.commons.compress.utils.BoundedInputStream
+import org.apache.commons.compress.utils.IOUtils
+import org.apache.commons.io.FileUtils
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
@@ -32,13 +43,13 @@ import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
-import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.execution.Converters.readManagedBufferToSegmentByteChannels
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.ShuffleBlockFetcherIterator301
 import org.apache.spark.util.CompletionIterator
+import org.blaze.NioSeekableByteChannel
 
 class ArrowBlockStoreShuffleReader301[K, C](
     handle: BaseShuffleHandle[K, _, C],
@@ -53,7 +64,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
     with Logging {
 
   private val dep = handle.dependency
-  private val serializerInstance = dep.serializer.newInstance()
+  private val zcodec: CompressionCodec = Util.getZCodecForShuffle
 
   private def fetchIterator: Iterator[(BlockId, ManagedBuffer)] = {
     new ShuffleBlockFetcherIterator301(
@@ -81,7 +92,20 @@ class ArrowBlockStoreShuffleReader301[K, C](
     // use 0 as key since it's not used
     val recordIter = fetchIterator.flatMap { blockBuffer =>
       readManagedBufferToSegmentByteChannels(blockBuffer._2).toIterator
-        .flatMap(channel => new ArrowReaderIterator(channel, context))
+        .flatMap(channel => {
+          // NOTE: as ArrowReader requires seekable input, the whole arrow data
+          // must be decompressed into byte array.
+
+          // TODO: avoid buffering the whole compressed data
+          val buf = new Array[Byte](channel.size().asInstanceOf[Int])
+          channel.read(ByteBuffer.wrap(buf))
+          val zis = zcodec.compressedInputStream(new ByteArrayInputStream(buf))
+          
+          val arrowData = IOUtils.toByteArray(zis)
+          val zchannel =
+            new NioSeekableByteChannel(ByteBuffer.wrap(arrowData), 0, arrowData.length)
+          new ArrowReaderIterator(zchannel, context)
+        })
         .map(x => (0, x))
     }
 

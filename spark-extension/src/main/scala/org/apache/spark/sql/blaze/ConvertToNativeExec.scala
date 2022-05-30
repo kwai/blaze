@@ -30,9 +30,9 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.InterruptibleIterator
+import org.blaze.protobuf.JvmToNativeExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleReaderExecNode
 
 case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode
@@ -73,12 +73,12 @@ case class ConvertToNativeExec(override val child: SparkPlan)
 
         PhysicalPlanNode
           .newBuilder()
-          .setShuffleReader(
-            ShuffleReaderExecNode
+          .setJvmToNative(
+            JvmToNativeExecNode
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(inputRDD.getNumPartitions)
-              .setNativeShuffleId(resourceId)
+              .setNativeResourceId(resourceId)
               .build())
           .build()
       })

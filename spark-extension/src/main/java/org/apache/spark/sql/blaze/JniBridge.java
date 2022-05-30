@@ -20,7 +20,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
-import java.nio.channels.SeekableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -80,21 +79,5 @@ public class JniBridge {
       }
       return bytesRead;
     }
-  }
-
-  /**
-   * shim method to SeekableByteChannel.seek
-   *
-   * @param pos when non-negative: seek from start, else seek from end
-   * @return current position from start after seeked
-   * @throws IOException
-   */
-  public static long seekByteChannel(SeekableByteChannel channel, long pos) throws IOException {
-    long abstractPos = pos;
-    if (pos < 0) {
-      abstractPos += channel.size();
-    }
-    channel.position(abstractPos);
-    return abstractPos;
   }
 }
