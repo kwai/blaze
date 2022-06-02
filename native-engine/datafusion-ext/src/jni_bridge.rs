@@ -286,6 +286,7 @@ pub struct JavaClasses<'a> {
     pub cSparkMetricNode: SparkMetricNode<'a>,
 
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
+    pub cBlazeIpcData: BlazeIpcData<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -338,6 +339,7 @@ impl JavaClasses<'static> {
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
 
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
+                cBlazeIpcData: BlazeIpcData::new(env).unwrap(),
             };
             log::info!("Initializing JavaClasses finished");
             java_classes
@@ -888,6 +890,37 @@ impl<'a> BlazeCallNativeWrapper<'a> {
             method_dequeueWithTimeout_ret: JavaType::Object(
                 "java/lang/Object".to_owned(),
             ),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeIpcData<'a> {
+    pub class: JClass<'a>,
+    pub method_readArrowData: JMethodID<'a>,
+    pub method_readArrowData_ret: JavaType,
+    pub method_ipcLength: JMethodID<'a>,
+    pub method_ipcLength_ret: JavaType,
+    pub method_ipcLengthUncompressed: JMethodID<'a>,
+    pub method_ipcLengthUncompressed_ret: JavaType,
+}
+impl<'a> BlazeIpcData<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/execution/IpcData";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeIpcData<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeIpcData {
+            class,
+            method_readArrowData: env
+                .get_method_id(class, "readArrowData", "(Ljava/nio/ByteBuffer;)V")
+                .unwrap(),
+            method_readArrowData_ret: JavaType::Primitive(Primitive::Void),
+            method_ipcLength: env.get_method_id(class, "ipcLength", "()J").unwrap(),
+            method_ipcLength_ret: JavaType::Primitive(Primitive::Long),
+            method_ipcLengthUncompressed: env
+                .get_method_id(class, "ipcLengthUncompressed", "()J")
+                .unwrap(),
+            method_ipcLengthUncompressed_ret: JavaType::Primitive(Primitive::Long),
         })
     }
 }

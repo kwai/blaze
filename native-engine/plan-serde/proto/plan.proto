@@ -48,7 +48,6 @@ message PhysicalPlanNode {
     SortMergeJoinExecNode sort_merge_join = 22;
     RenameColumnsExecNode rename_columns = 23;
     EmptyPartitionsExecNode empty_partitions = 24;
-    JvmToNativeExecNode jvm_to_native = 25;
   }
 }
 
@@ -445,12 +444,6 @@ message ShuffleReaderExecNode {
   uint32 num_partitions = 1;
   Schema schema = 2;
   string nativeShuffleId = 3;
-}
-
-message JvmToNativeExecNode {
-  uint32 num_partitions = 1;
-  Schema schema = 2;
-  string nativeResourceId = 3;
 }
 
 message GlobalLimitExecNode {

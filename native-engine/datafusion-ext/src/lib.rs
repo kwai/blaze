@@ -21,7 +21,6 @@ use std::sync::Arc;
 pub mod empty_partitions_exec;
 pub mod hdfs_object_store; // note: can be changed to priv once plan transforming is removed
 pub mod jni_bridge;
-pub mod jvm_to_native_exec;
 pub mod rename_columns_exec;
 pub mod shuffle_reader_exec;
 pub mod shuffle_writer_exec;

@@ -25,6 +25,8 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config.IO_COMPRESSION_CODEC
+import org.apache.spark.io.CompressionCodec
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
 import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
@@ -236,5 +238,19 @@ private[spark] object ArrowShuffleManager301 extends Logging {
       SparkEnv.get.executorId,
       extraConfigs.asJava)
     executorComponents
+  }
+
+  lazy val compressionCodecForShuffling: CompressionCodec = {
+    val sparkConf = SparkEnv.get.conf
+    val zcodecConfName = "spark.blaze.shuffle.compression.codec"
+    val zcodecName =
+      sparkConf.get(zcodecConfName, defaultValue = sparkConf.get(IO_COMPRESSION_CODEC))
+
+    // only zstd compression is supported at the moment
+    if (zcodecName != "zstd") {
+      logWarning(
+        s"Overriding config ${IO_COMPRESSION_CODEC}=${zcodecName} in shuffling, force using zstd")
+    }
+    CompressionCodec.createCodec(sparkConf, "zstd")
   }
 }
