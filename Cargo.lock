@@ -473,6 +473,7 @@ dependencies = [
  "paste",
  "tempfile",
  "tokio",
+ "zstd",
 ]
 
 [[package]]

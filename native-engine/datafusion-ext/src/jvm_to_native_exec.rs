@@ -15,9 +15,9 @@
 use std::any::Any;
 use std::fmt::Debug;
 use std::fmt::Formatter;
-use std::io::ErrorKind::InvalidData;
-
-use std::io::{Cursor, Read};
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
@@ -51,23 +51,24 @@ use crate::jni_delete_local_ref;
 use crate::jni_new_direct_byte_buffer;
 use crate::jni_new_global_ref;
 use crate::jni_new_string;
+use crate::ResultExt;
 
 #[derive(Debug, Clone)]
-pub struct ShuffleReaderExec {
+pub struct JvmToNativeExec {
     pub num_partitions: usize,
-    pub native_shuffle_id: String,
+    pub native_resource_id: String,
     pub schema: SchemaRef,
     pub metrics: ExecutionPlanMetricsSet,
 }
-impl ShuffleReaderExec {
+impl JvmToNativeExec {
     pub fn new(
         num_partitions: usize,
-        native_shuffle_id: String,
+        native_resource_id: String,
         schema: SchemaRef,
-    ) -> ShuffleReaderExec {
-        ShuffleReaderExec {
+    ) -> JvmToNativeExec {
+        JvmToNativeExec {
             num_partitions,
-            native_shuffle_id,
+            native_resource_id,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
         }
@@ -75,7 +76,7 @@ impl ShuffleReaderExec {
 }
 
 #[async_trait]
-impl ExecutionPlan for ShuffleReaderExec {
+impl ExecutionPlan for JvmToNativeExec {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -101,7 +102,7 @@ impl ExecutionPlan for ShuffleReaderExec {
         _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         Err(DataFusionError::Plan(
-            "Blaze ShuffleReaderExec does not support with_new_children()".to_owned(),
+            "Blaze JvmToNativeExec does not support with_new_children()".to_owned(),
         ))
     }
 
@@ -116,7 +117,7 @@ impl ExecutionPlan for ShuffleReaderExec {
 
         let segments_provider = jni_call_static!(
             JniBridge.getResource(
-                jni_new_string!(&self.native_shuffle_id)?
+                jni_new_string!(&self.native_resource_id)?
             ) -> JObject
         )?;
         let segments = jni_new_global_ref!(
@@ -124,7 +125,7 @@ impl ExecutionPlan for ShuffleReaderExec {
         )?;
 
         let schema = self.schema.clone();
-        Ok(Box::pin(ShuffleReaderStream::new(
+        Ok(Box::pin(JvmToNativeStream::new(
             schema,
             segments,
             baseline_metrics,
@@ -144,23 +145,23 @@ impl ExecutionPlan for ShuffleReaderExec {
     }
 }
 
-struct ShuffleReaderStream {
+struct JvmToNativeStream {
     schema: SchemaRef,
     segments: GlobalRef,
-    arrow_file_reader: Option<FileReader<Cursor<Vec<u8>>>>,
+    arrow_file_reader: Option<FileReader<SeekableByteChannelReader>>,
     baseline_metrics: BaselineMetrics,
 }
-unsafe impl Sync for ShuffleReaderStream {} // safety: segments is safe to be shared
-#[allow(clippy::non_send_fields_in_send_ty)]
-unsafe impl Send for ShuffleReaderStream {}
+//unsafe impl Sync for JvmToNativeStream {} // safety: segments is safe to be shared
+//#[allow(clippy::non_send_fields_in_send_ty)]
+//unsafe impl Send for JvmToNativeStream {}
 
-impl ShuffleReaderStream {
+impl JvmToNativeStream {
     pub fn new(
         schema: SchemaRef,
         segments: GlobalRef,
         baseline_metrics: BaselineMetrics,
-    ) -> ShuffleReaderStream {
-        ShuffleReaderStream {
+    ) -> JvmToNativeStream {
+        JvmToNativeStream {
             schema,
             segments,
             arrow_file_reader: None,
@@ -177,33 +178,14 @@ impl ShuffleReaderStream {
             return Ok(false);
         }
 
-        let channel = jni_call!(ScalaIterator(self.segments.as_obj()).next() -> JObject)?;
-        let len = jni_call!(JavaSeekableByteChannel(channel).size() -> jlong)? as u64;
+        let channel = jni_call!(
+            ScalaIterator(self.segments.as_obj()).next() -> JObject
+        )?;
 
-        // read compressed data
-        let mut zdata = vec![0; len as usize];
-        let mut zdata_read_bytes = 0;
-        while zdata_read_bytes < len as usize {
-            let buf = jni_new_direct_byte_buffer!(&mut zdata[zdata_read_bytes..])?;
-            let read_bytes = jni_call!(
-                JavaSeekableByteChannel(channel).read(buf) -> jint
-            )?;
-            if read_bytes < 0 {
-                return Err(DataFusionError::IoError(std::io::Error::new(
-                    InvalidData,
-                    "unexpected EOF",
-                )));
-            }
-            zdata_read_bytes += read_bytes as usize;
-        }
-
-        // decompress one segment of IPC into memory
-        let mut arrow_data = vec![];
-        let mut zreader = zstd::stream::Decoder::new(&zdata[..])?;
-        zreader.read_to_end(&mut arrow_data)?;
-
-        self.arrow_file_reader =
-            Some(FileReader::try_new(Cursor::new(arrow_data), None)?);
+        self.arrow_file_reader = Some(FileReader::try_new(
+            SeekableByteChannelReader(jni_new_global_ref!(channel)?),
+            None,
+        )?);
 
         // channel ref must be explicitly deleted to avoid OOM
         jni_delete_local_ref!(channel)?;
@@ -211,7 +193,7 @@ impl ShuffleReaderStream {
     }
 }
 
-impl Stream for ShuffleReaderStream {
+impl Stream for JvmToNativeStream {
     type Item = ArrowResult<RecordBatch>;
 
     fn poll_next(
@@ -236,8 +218,43 @@ impl Stream for ShuffleReaderStream {
         Poll::Ready(None)
     }
 }
-impl RecordBatchStream for ShuffleReaderStream {
+impl RecordBatchStream for JvmToNativeStream {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
+    }
+}
+
+struct SeekableByteChannelReader(GlobalRef);
+
+impl Read for SeekableByteChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(jni_call!(
+            JavaSeekableByteChannel(self.0.as_obj()).read(
+                jni_new_direct_byte_buffer!(buf).to_io_result()?
+            ) -> jint
+        )
+        .to_io_result()? as usize)
+    }
+}
+
+impl Seek for SeekableByteChannelReader {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let abstract_pos = match pos {
+            SeekFrom::Start(pos) => pos as i64,
+            SeekFrom::End(pos) => {
+                pos + jni_call!(
+                    JavaSeekableByteChannel(self.0.as_obj()).size() -> jlong
+                )
+                .to_io_result()?
+            }
+            SeekFrom::Current(_) => unimplemented!(),
+        } as u64;
+
+        let unused = jni_call!(
+            JavaSeekableByteChannel(self.0.as_obj()).setPosition(abstract_pos as i64) -> JObject
+        ).to_io_result()?;
+
+        jni_delete_local_ref!(unused).to_io_result()?;
+        Ok(abstract_pos)
     }
 }

@@ -62,6 +62,7 @@ use datafusion::scalar::ScalarValue;
 
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::global_object_store_registry;
+use datafusion_ext::jvm_to_native_exec::JvmToNativeExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
@@ -551,6 +552,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(ShuffleReaderExec::new(
                     shuffle_reader.num_partitions as usize,
                     shuffle_reader.native_shuffle_id.clone(),
+                    schema,
+                )))
+            }
+            PhysicalPlanType::JvmToNative(jvm_to_native) => {
+                let schema = Arc::new(convert_required!(jvm_to_native.schema)?);
+                Ok(Arc::new(JvmToNativeExec::new(
+                    jvm_to_native.num_partitions as usize,
+                    jvm_to_native.native_resource_id.clone(),
                     schema,
                 )))
             }

@@ -23,13 +23,11 @@ import java.nio.ByteOrder
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.buffer.FileSegmentManagedBuffer
 import org.apache.spark.network.buffer.ManagedBuffer
 import org.apache.spark.network.buffer.NettyManagedBuffer
 import org.apache.spark.network.buffer.NioManagedBuffer
-import org.apache.spark.sql.catalyst.InternalRow
 import org.blaze.FileSegmentSeekableByteChannel
 import org.blaze.NioSeekableByteChannel
 

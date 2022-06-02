@@ -34,16 +34,16 @@ public class NioSeekableByteChannel implements SeekableByteChannel {
 
   @Override
   public int read(ByteBuffer dest) throws IOException {
-    if (buffer.position() == buffer.limit()) {
+    if (!buffer.hasRemaining()) {
       return -1;
     }
-    int readSize = Math.min(dest.capacity() - dest.position(), buffer.limit() - buffer.position());
+    int readSize = Math.min(dest.capacity() - dest.position(), buffer.remaining());
 
     ByteBuffer bufferPart = buffer.duplicate();
     bufferPart.limit(bufferPart.position() + readSize);
 
     ByteBuffer destPart = dest.duplicate();
-    destPart.limit(readSize);
+    destPart.limit(destPart.position() + readSize);
 
     destPart.put(bufferPart);
     dest.position(dest.position() + readSize);

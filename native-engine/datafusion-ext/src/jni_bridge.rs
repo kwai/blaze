@@ -266,7 +266,7 @@ pub struct JavaClasses<'a> {
     pub cJniBridge: JniBridge<'a>,
     pub cClass: JavaClass<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
-    pub cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel<'a>,
+    pub cJavaSeekableByteChannel: JavaSeekableByteChannel<'a>,
     pub cJavaBoolean: JavaBoolean<'a>,
     pub cJavaLong: JavaLong<'a>,
     pub cJavaList: JavaList<'a>,
@@ -318,8 +318,7 @@ impl JavaClasses<'static> {
 
                 cClass: JavaClass::new(env).unwrap(),
                 cJavaRuntimeException: JavaRuntimeException::new(env).unwrap(),
-                cJavaNioSeekableByteChannel: JavaNioSeekableByteChannel::new(env)
-                    .unwrap(),
+                cJavaSeekableByteChannel: JavaSeekableByteChannel::new(env).unwrap(),
                 cJavaBoolean: JavaBoolean::new(env).unwrap(),
                 cJavaLong: JavaLong::new(env).unwrap(),
                 cJavaList: JavaList::new(env).unwrap(),
@@ -370,8 +369,6 @@ pub struct JniBridge<'a> {
     pub method_getTaskContext_ret: JavaType,
     pub method_readFSDataInputStream: JStaticMethodID<'a>,
     pub method_readFSDataInputStream_ret: JavaType,
-    pub method_seekByteChannel: JStaticMethodID<'a>,
-    pub method_seekByteChannel_ret: JavaType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -430,12 +427,6 @@ impl<'a> JniBridge<'a> {
                 "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;J)I",
             )?,
             method_readFSDataInputStream_ret: JavaType::Primitive(Primitive::Int),
-            method_seekByteChannel: env.get_static_method_id(
-                class,
-                "seekByteChannel",
-                "(Ljava/nio/channels/SeekableByteChannel;J)J",
-            )?,
-            method_seekByteChannel_ret: JavaType::Primitive(Primitive::Long),
         })
     }
 }
@@ -485,7 +476,7 @@ impl<'a> JavaRuntimeException<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct JavaNioSeekableByteChannel<'a> {
+pub struct JavaSeekableByteChannel<'a> {
     pub class: JClass<'a>,
     pub method_read: JMethodID<'a>,
     pub method_read_ret: JavaType,
@@ -494,12 +485,12 @@ pub struct JavaNioSeekableByteChannel<'a> {
     pub method_size: JMethodID<'a>,
     pub method_size_ret: JavaType,
 }
-impl<'a> JavaNioSeekableByteChannel<'a> {
+impl<'a> JavaSeekableByteChannel<'a> {
     pub const SIG_TYPE: &'static str = "java/nio/channels/SeekableByteChannel";
 
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaNioSeekableByteChannel<'a>> {
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaSeekableByteChannel<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaNioSeekableByteChannel {
+        Ok(JavaSeekableByteChannel {
             class,
             method_read: env.get_method_id(class, "read", "(Ljava/nio/ByteBuffer;)I")?,
             method_read_ret: JavaType::Primitive(Primitive::Int),

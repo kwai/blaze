@@ -139,7 +139,7 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
         (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_SORT_INIT_BUFFER_SIZE());
     this.inputBufferSizeInBytes =
         (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
-    this.maxRecordsPerBatch = sparkConf.getInt("spark.blaze.shuffle.maxRecordsPerBatch", 8192);
+    this.maxRecordsPerBatch = sparkConf.getInt("spark.blaze.batchSize", 10000);
     open();
   }
 

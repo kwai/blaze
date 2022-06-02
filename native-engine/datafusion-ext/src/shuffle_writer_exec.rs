@@ -58,7 +58,6 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
-use log::debug;
 use tempfile::NamedTempFile;
 use tokio::task;
 
@@ -210,6 +209,10 @@ impl ShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
+        if input.num_rows() == 0 {
+            // skip empty batch
+            return Ok(());
+        }
         let _timer = self.metrics.elapsed_compute().timer();
 
         // TODO: this is a rough estimation of memory consumed for a input batch
@@ -236,8 +239,10 @@ impl ShuffleRepartitioner {
                     indices[pmod(*hash, num_output_partitions)].push(index as u64)
                 }
 
-                for (num_output_partition, partition_indices) in
-                    indices.into_iter().enumerate()
+                for (num_output_partition, partition_indices) in indices
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, indices)| !indices.is_empty())
                 {
                     let mut buffered_partitions = self.buffered_partitions.lock().await;
                     let output = &mut buffered_partitions[num_output_partition];
@@ -320,48 +325,33 @@ impl ShuffleRepartitioner {
 
         task::spawn_blocking(move || {
             let _timer = elapsed_compute.timer();
-            let mut offset: u64 = 0;
             let mut offsets = vec![0; num_output_partitions + 1];
             let mut output_data = File::create(data_file)?;
 
             for i in 0..num_output_partitions {
-                offsets[i] = offset;
-                let partition_start = output_data.seek(SeekFrom::Current(0))?;
-
-                // write in-mem batches first if any
+                offsets[i] = output_data.seek(SeekFrom::Current(0))?;
                 let in_mem_batches = &output_batches[i];
-                if !in_mem_batches.is_empty() {
-                    let mut file_writer =
-                        FileWriter::try_new(output_data, input_schema.as_ref())?;
-                    for batch in in_mem_batches {
-                        file_writer.write(batch)?;
-                    }
-                    file_writer.finish()?;
-
-                    output_data = file_writer.into_inner()?;
-                    let partition_end = output_data.seek(SeekFrom::Current(0))?;
-                    let ipc_length: u64 = partition_end - partition_start;
-                    output_data.write_all(&ipc_length.to_le_bytes()[..])?;
-                    output_data.flush()?;
-                    offset = partition_start + ipc_length + 8;
+                if in_mem_batches.iter().any(|batch| batch.num_rows() > 0) {
+                    write_compressed_ipc(
+                        input_schema.clone(),
+                        in_mem_batches,
+                        &mut output_data,
+                    )?;
                 }
 
                 // append partition in each spills
                 for spill in &output_spills {
                     let length = spill.offsets[i + 1] - spill.offsets[i];
                     if length > 0 {
-                        let spill_file = File::open(&spill.file.path())?;
-                        let mut reader = &spill_file;
-                        reader.seek(SeekFrom::Start(spill.offsets[i]))?;
-                        let mut take = reader.take(length);
-                        std::io::copy(&mut take, &mut output_data)?;
+                        let mut spill_file = File::open(&spill.file.path())?;
+                        spill_file.seek(SeekFrom::Start(spill.offsets[i]))?;
+                        std::io::copy(&mut spill_file.take(length), &mut output_data)?;
                         output_data.flush()?;
                     }
-                    offset += length;
                 }
             }
             // add one extra offset at last to ease partition length computation
-            offsets[num_output_partitions] = offset;
+            offsets[num_output_partitions] = output_data.seek(SeekFrom::Current(0))?;
             let mut output_index = File::create(index_file)?;
             for offset in offsets {
                 output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
@@ -414,31 +404,18 @@ async fn spill_into(
     let path = path.to_owned();
 
     let res = task::spawn_blocking(move || {
-        let mut offset: u64 = 0;
         let mut offsets = vec![0; num_output_partitions + 1];
-        let mut file = OpenOptions::new().read(true).append(true).open(path)?;
+        let mut spill_data = OpenOptions::new().read(true).append(true).open(path)?;
 
         for i in 0..num_output_partitions {
-            let partition_start = file.seek(SeekFrom::Current(0))?;
+            offsets[i] = spill_data.seek(SeekFrom::Current(0))?;
             let partition_batches = &output_batches[i];
-            offsets[i] = offset;
-            if !partition_batches.is_empty() {
-                let mut file_writer = FileWriter::try_new(file, &schema)?;
-                for batch in partition_batches {
-                    file_writer.write(batch)?;
-                }
-                file_writer.finish()?;
-
-                file = file_writer.into_inner()?;
-                let partition_end = file.seek(SeekFrom::Current(0))?;
-                let ipc_length: u64 = partition_end - partition_start;
-                file.write_all(&ipc_length.to_le_bytes()[..])?;
-                file.flush()?;
-                offset = partition_start + ipc_length + 8;
+            if partition_batches.iter().any(|batch| batch.num_rows() > 0) {
+                write_compressed_ipc(schema.clone(), partition_batches, &mut spill_data)?;
             }
         }
         // add one extra offset at last to ease partition length computation
-        offsets[num_output_partitions] = offset;
+        offsets[num_output_partitions] = spill_data.seek(SeekFrom::Current(0))?;
         Ok(offsets)
     })
     .await
@@ -479,7 +456,7 @@ impl MemoryConsumer for ShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<usize> {
-        debug!(
+        log::debug!(
             "{}[{}] spilling shuffle data of {} to disk while inserting ({} time(s) so far)",
             self.name(),
             self.id(),
@@ -674,4 +651,31 @@ pub async fn external_shuffle(
     }
 
     repartitioner.shuffle_write().await
+}
+
+fn write_compressed_ipc(
+    schema: SchemaRef,
+    batches: &[RecordBatch],
+    output: &mut File,
+) -> Result<()> {
+    let start = output.seek(SeekFrom::Current(0))?;
+
+    let mut arrow_writer = FileWriter::try_new(
+        zstd::Encoder::new(output.try_clone()?, 1)?,
+        schema.as_ref(),
+    )?;
+    for batch in batches {
+        if batch.num_rows() > 0 {
+            arrow_writer.write(batch)?;
+        }
+    }
+    arrow_writer.finish()?;
+    let mut zwriter = arrow_writer.into_inner()?;
+    zwriter.flush()?;
+    zwriter.finish()?;
+
+    let ipc_length = output.seek(SeekFrom::Current(0))? - start;
+    output.write_all(&ipc_length.to_le_bytes()[..])?;
+    output.flush()?;
+    Ok(())
 }
