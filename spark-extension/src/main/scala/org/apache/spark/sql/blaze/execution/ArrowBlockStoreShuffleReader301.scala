@@ -16,21 +16,10 @@
 
 package org.apache.spark.sql.blaze.execution
 
-import java.io.ByteArrayInputStream
-import java.io.File
 import java.io.InputStream
-import java.nio.channels.Channels
-import java.nio.channels.SeekableByteChannel
 import java.nio.ByteBuffer
-import java.nio.file.Files
-import java.nio.file.Paths
 
-import scala.reflect.io.Path
-
-import io.netty.channel.internal.ChannelUtils
-import org.apache.commons.compress.utils.BoundedInputStream
-import org.apache.commons.compress.utils.IOUtils
-import org.apache.commons.io.FileUtils
+import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
@@ -38,18 +27,15 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
 import org.apache.spark.io.CompressionCodec
-import org.apache.spark.network.buffer.ManagedBuffer
 import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
-import org.apache.spark.sql.blaze.execution.Converters.readManagedBufferToSegmentByteChannels
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.BlockManagerId
-import org.apache.spark.storage.ShuffleBlockFetcherIterator301
+import org.apache.spark.storage.ShuffleBlockFetcherIterator
 import org.apache.spark.util.CompletionIterator
-import org.blaze.NioSeekableByteChannel
 
 class ArrowBlockStoreShuffleReader301[K, C](
     handle: BaseShuffleHandle[K, _, C],
@@ -64,14 +50,14 @@ class ArrowBlockStoreShuffleReader301[K, C](
     with Logging {
 
   private val dep = handle.dependency
-  private val zcodec: CompressionCodec = Util.getZCodecForShuffle
 
-  private def fetchIterator: Iterator[(BlockId, ManagedBuffer)] = {
-    new ShuffleBlockFetcherIterator301(
+  private def fetchIterator: Iterator[(BlockId, InputStream)] = {
+    new ShuffleBlockFetcherIterator(
       context,
       SparkEnv.get.blockManager.blockStoreClient,
       SparkEnv.get.blockManager,
       blocksByAddress(),
+      (_, inputStream) => inputStream,
       // Note: we use getSizeAsMb when no suffix is provided for backwards compatibility
       SparkEnv.get.conf.get(config.REDUCER_MAX_SIZE_IN_FLIGHT) * 1024 * 1024,
       SparkEnv.get.conf.get(config.REDUCER_MAX_REQS_IN_FLIGHT),
@@ -83,31 +69,22 @@ class ArrowBlockStoreShuffleReader301[K, C](
       fetchContinuousBlocksInBatch).toCompletionIterator
   }
 
+  def readIpc(): Iterator[IpcData] = {
+    fetchIterator.flatMap {
+      case (_, inputStream) =>
+        IpcInputStreamIterator(inputStream)
+    }
+  }
+
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
-    // Create a key/value iterator for each stream
-    // Note: the asKeyValueIterator below wraps a key/value iterator inside of a
-    // NextIterator. The NextIterator makes sure that close() is called on the
-    // underlying InputStream when all records have been read.
-    // use 0 as key since it's not used
-    val recordIter = fetchIterator.flatMap { blockBuffer =>
-      readManagedBufferToSegmentByteChannels(blockBuffer._2).toIterator
-        .flatMap(channel => {
-          // NOTE: as ArrowReader requires seekable input, the whole arrow data
-          // must be decompressed into byte array.
-
-          // TODO: avoid buffering the whole compressed data
-          val buf = new Array[Byte](channel.size().asInstanceOf[Int])
-          channel.read(ByteBuffer.wrap(buf))
-          val zis = zcodec.compressedInputStream(new ByteArrayInputStream(buf))
-          
-          val arrowData = IOUtils.toByteArray(zis)
-          val zchannel =
-            new NioSeekableByteChannel(ByteBuffer.wrap(arrowData), 0, arrowData.length)
-          new ArrowReaderIterator(zchannel, context)
-        })
-        .map(x => (0, x))
-    }
+    val recordIter = readIpc().flatMap(ipc => {
+      if (ipc.ipcLengthUncompressed > 0) {
+        new ArrowReaderIterator(ipc, context).map((0, _)) // use 0 as key since it's not used
+      } else {
+        Nil
+      }
+    })
 
     // Update the context task metrics for each record read.
     val metricIter = CompletionIterator[(Any, Any), Iterator[(Any, Any)]](
@@ -141,13 +118,6 @@ class ArrowBlockStoreShuffleReader301[K, C](
         // or(and) sorter may have consumed previous interruptible iterator.
         new InterruptibleIterator[Product2[K, C]](context, resultIter)
     }
-  }
-
-  def readIpc(): Iterator[SeekableByteChannel] = {
-    val ipcIterator = fetchIterator.flatMap { blockBuffer =>
-      Converters.readManagedBufferToSegmentByteChannels(blockBuffer._2).toIterator
-    }
-    new InterruptibleIterator(context, ipcIterator)
   }
 
   private def fetchContinuousBlocksInBatch: Boolean = {

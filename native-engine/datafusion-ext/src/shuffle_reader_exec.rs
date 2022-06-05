@@ -15,9 +15,8 @@
 use std::any::Any;
 use std::fmt::Debug;
 use std::fmt::Formatter;
-use std::io::ErrorKind::InvalidData;
 
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
@@ -43,7 +42,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::Stream;
 use jni::objects::{GlobalRef, JObject};
-use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
+use jni::sys::{jboolean, jlong, JNI_TRUE};
 
 use crate::jni_call;
 use crate::jni_call_static;
@@ -114,19 +113,19 @@ impl ExecutionPlan for ShuffleReaderExec {
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
-        let segments_provider = jni_call_static!(
+        let ipcs_provider = jni_call_static!(
             JniBridge.getResource(
                 jni_new_string!(&self.native_shuffle_id)?
             ) -> JObject
         )?;
-        let segments = jni_new_global_ref!(
-            jni_call!(ScalaFunction0(segments_provider).apply() -> JObject)?
+        let ipcs = jni_new_global_ref!(
+            jni_call!(ScalaFunction0(ipcs_provider).apply() -> JObject)?
         )?;
 
         let schema = self.schema.clone();
         Ok(Box::pin(ShuffleReaderStream::new(
             schema,
-            segments,
+            ipcs,
             baseline_metrics,
         )))
     }
@@ -146,67 +145,53 @@ impl ExecutionPlan for ShuffleReaderExec {
 
 struct ShuffleReaderStream {
     schema: SchemaRef,
-    segments: GlobalRef,
+    ipcs: GlobalRef,
     arrow_file_reader: Option<FileReader<Cursor<Vec<u8>>>>,
     baseline_metrics: BaselineMetrics,
 }
-unsafe impl Sync for ShuffleReaderStream {} // safety: segments is safe to be shared
+unsafe impl Sync for ShuffleReaderStream {} // safety: ipcs is safe to be shared
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for ShuffleReaderStream {}
 
 impl ShuffleReaderStream {
     pub fn new(
         schema: SchemaRef,
-        segments: GlobalRef,
+        ipcs: GlobalRef,
         baseline_metrics: BaselineMetrics,
     ) -> ShuffleReaderStream {
         ShuffleReaderStream {
             schema,
-            segments,
+            ipcs,
             arrow_file_reader: None,
             baseline_metrics,
         }
     }
 
-    fn next_segment(&mut self) -> Result<bool> {
+    fn next_ipc(&mut self) -> Result<bool> {
         if jni_call!(
-            ScalaIterator(self.segments.as_obj()).hasNext() -> jboolean
+            ScalaIterator(self.ipcs.as_obj()).hasNext() -> jboolean
         )? != JNI_TRUE
         {
             self.arrow_file_reader = None;
             return Ok(false);
         }
 
-        let channel = jni_call!(ScalaIterator(self.segments.as_obj()).next() -> JObject)?;
-        let len = jni_call!(JavaSeekableByteChannel(channel).size() -> jlong)? as u64;
+        // get ipc data object
+        let ipc = jni_call!(ScalaIterator(self.ipcs.as_obj()).next() -> JObject)?;
 
-        // read compressed data
-        let mut zdata = vec![0; len as usize];
-        let mut zdata_read_bytes = 0;
-        while zdata_read_bytes < len as usize {
-            let buf = jni_new_direct_byte_buffer!(&mut zdata[zdata_read_bytes..])?;
-            let read_bytes = jni_call!(
-                JavaSeekableByteChannel(channel).read(buf) -> jint
-            )?;
-            if read_bytes < 0 {
-                return Err(DataFusionError::IoError(std::io::Error::new(
-                    InvalidData,
-                    "unexpected EOF",
-                )));
-            }
-            zdata_read_bytes += read_bytes as usize;
-        }
-
-        // decompress one segment of IPC into memory
-        let mut arrow_data = vec![];
-        let mut zreader = zstd::stream::Decoder::new(&zdata[..])?;
-        zreader.read_to_end(&mut arrow_data)?;
+        // allocate direct byte buffer to store uncompressed data
+        let len_uncompressed =
+            jni_call!(BlazeIpcData(ipc).ipcLengthUncompressed() -> jlong)?;
+        let mut arrow_data = vec![0u8; len_uncompressed as usize];
+        jni_call!(BlazeIpcData(ipc).readArrowData(
+            jni_new_direct_byte_buffer!(&mut arrow_data)?
+        ) -> ())?;
 
         self.arrow_file_reader =
             Some(FileReader::try_new(Cursor::new(arrow_data), None)?);
 
-        // channel ref must be explicitly deleted to avoid OOM
-        jni_delete_local_ref!(channel)?;
+        // ipc ref must be explicitly deleted to avoid OOM
+        jni_delete_local_ref!(ipc)?;
         Ok(true)
     }
 }
@@ -230,7 +215,7 @@ impl Stream for ShuffleReaderStream {
         }
 
         // current arrow file reader reaches EOF, try next ipc
-        if self.next_segment()? {
+        if self.next_ipc()? {
             return self.poll_next(cx);
         }
         Poll::Ready(None)

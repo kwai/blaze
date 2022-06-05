@@ -17,15 +17,23 @@
 package org.apache.spark.sql.blaze.execution
 
 import java.nio.channels.SeekableByteChannel
+import java.nio.ByteBuffer
 
 import org.apache.arrow.vector.ipc.ArrowFileReader
+import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.blaze.FFIHelper
 import org.apache.spark.sql.util2.ArrowUtils2
 
-class ArrowReaderIterator(channel: SeekableByteChannel, taskContext: TaskContext)
-    extends Iterator[InternalRow] {
+class ArrowReaderIterator(ipc: IpcData, taskContext: TaskContext) extends Iterator[InternalRow] {
+
+  // decompress ipc into memory
+  private val channel: SeekableByteChannel = {
+    val buf = new Array[Byte](ipc.ipcLengthUncompressed.toInt)
+    ipc.readArrowData(ByteBuffer.wrap(buf))
+    new ByteArrayReadableSeekableByteChannel(buf)
+  }
 
   private val allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowReaderIterator", 0, Long.MaxValue)

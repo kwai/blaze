@@ -326,10 +326,14 @@ impl ShuffleRepartitioner {
         task::spawn_blocking(move || {
             let _timer = elapsed_compute.timer();
             let mut offsets = vec![0; num_output_partitions + 1];
-            let mut output_data = File::create(data_file)?;
+            let mut output_data = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(data_file)?;
 
             for i in 0..num_output_partitions {
-                offsets[i] = output_data.seek(SeekFrom::Current(0))?;
+                offsets[i] = output_data.stream_position()?;
                 let in_mem_batches = &output_batches[i];
                 if in_mem_batches.iter().any(|batch| batch.num_rows() > 0) {
                     write_compressed_ipc(
@@ -346,12 +350,13 @@ impl ShuffleRepartitioner {
                         let mut spill_file = File::open(&spill.file.path())?;
                         spill_file.seek(SeekFrom::Start(spill.offsets[i]))?;
                         std::io::copy(&mut spill_file.take(length), &mut output_data)?;
-                        output_data.flush()?;
                     }
                 }
             }
+            output_data.flush()?;
+
             // add one extra offset at last to ease partition length computation
-            offsets[num_output_partitions] = output_data.seek(SeekFrom::Current(0))?;
+            offsets[num_output_partitions] = output_data.stream_position()?;
             let mut output_index = File::create(index_file)?;
             for offset in offsets {
                 output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
@@ -405,17 +410,21 @@ async fn spill_into(
 
     let res = task::spawn_blocking(move || {
         let mut offsets = vec![0; num_output_partitions + 1];
-        let mut spill_data = OpenOptions::new().read(true).append(true).open(path)?;
+        let mut spill_data = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
 
         for i in 0..num_output_partitions {
-            offsets[i] = spill_data.seek(SeekFrom::Current(0))?;
+            offsets[i] = spill_data.seek(SeekFrom::End(0))?;
             let partition_batches = &output_batches[i];
             if partition_batches.iter().any(|batch| batch.num_rows() > 0) {
                 write_compressed_ipc(schema.clone(), partition_batches, &mut spill_data)?;
             }
         }
         // add one extra offset at last to ease partition length computation
-        offsets[num_output_partitions] = spill_data.seek(SeekFrom::Current(0))?;
+        offsets[num_output_partitions] = spill_data.seek(SeekFrom::End(0))?;
         Ok(offsets)
     })
     .await
@@ -658,10 +667,31 @@ fn write_compressed_ipc(
     batches: &[RecordBatch],
     output: &mut File,
 ) -> Result<()> {
-    let start = output.seek(SeekFrom::Current(0))?;
+    let start = output.stream_position()?;
+    output.write_all(&[0u8; 16])?; // ipc_length placeholder
 
+    struct CountedWriter<W: Write> {
+        inner: W,
+        count: usize,
+    }
+    impl<W: Write> Write for CountedWriter<W> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let written = self.inner.write(buf)?;
+            self.count += written;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    // write ipc data
     let mut arrow_writer = FileWriter::try_new(
-        zstd::Encoder::new(output.try_clone()?, 1)?,
+        CountedWriter {
+            inner: zstd::Encoder::new(output, 1)?,
+            count: 0,
+        },
         schema.as_ref(),
     )?;
     for batch in batches {
@@ -670,12 +700,20 @@ fn write_compressed_ipc(
         }
     }
     arrow_writer.finish()?;
-    let mut zwriter = arrow_writer.into_inner()?;
-    zwriter.flush()?;
-    zwriter.finish()?;
+    let CountedWriter {
+        inner: zwriter,
+        count: written_length,
+    } = arrow_writer.into_inner()?;
 
-    let ipc_length = output.seek(SeekFrom::Current(0))? - start;
+    let ipc_length_uncompressed = written_length as u64;
+    let output = zwriter.finish()?;
+
+    // fill ipc length
+    let ipc_length = output.stream_position()? - start - 16;
+    output.seek(SeekFrom::Start(start))?;
     output.write_all(&ipc_length.to_le_bytes()[..])?;
-    output.flush()?;
+    output.write_all(&ipc_length_uncompressed.to_le_bytes()[..])?;
+
+    output.seek(SeekFrom::End(0))?;
     Ok(())
 }

@@ -20,18 +20,18 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import java.nio.channels.ClosedByInterruptException
+import java.nio.ByteOrder
 
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.arrow.vector.ipc.ArrowFileWriter
-import org.apache.arrow.vector.ipc.message.MessageSerializer
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.commons.io.output.CountingOutputStream
-import org.apache.commons.io.FileUtils
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.catalyst.InternalRow
@@ -43,7 +43,6 @@ import org.apache.spark.storage.FileSegment
 import org.apache.spark.storage.TimeTrackingOutputStream
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkEnv
-import org.apache.spark.io.CompressionCodec
 
 /**
  * A class for writing JVM objects directly to a file on disk. This class allows data to be appended
@@ -73,13 +72,13 @@ private[spark] class DiskBlockArrowIPCWriter(
     ArrowUtils2.rootAllocator.newChildAllocator("row2ArrowBatchWrite", 0, Long.MaxValue)
   private val root: VectorSchemaRoot = VectorSchemaRoot.create(arrowSchema, allocator)
   private val arrowBuffer: ArrowWriter = ArrowWriter.create(root)
-
-  private val zcodec: CompressionCodec = Util.getZCodecForShuffle
-  private val leLength = new Array[Byte](8)
+  private val ipcLengthBuffer = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
 
   /** The file channel, used for repositioning / truncating the file. */
-  private var fos: FileOutputStream = _
+  private var randomAccessFile: RandomAccessFile = _
+  private var countingUncompressed: CountingOutputStream = _
   private var mcs: ManualCloseBufferedOutputStream = _
+
   private var initialized = false
   private var streamOpen = false
   private var hasBeenClosed = false
@@ -109,7 +108,8 @@ private[spark] class DiskBlockArrowIPCWriter(
    */
   private var numRecordsWritten = 0
   private var currentRowCount = 0
-  private var writer: ArrowFileWriter = null
+  private var currentPartitionRowCount = 0
+  private var writer: ArrowFileWriter = _
 
   /**
    * Commits any remaining partial writes and closes resources.
@@ -133,10 +133,11 @@ private[spark] class DiskBlockArrowIPCWriter(
   private def closeResources(): Unit = {
     if (initialized) {
       Utils.tryWithSafeFinally {
-        mcs.getInner.close()
+        randomAccessFile.close()
       } {
+        randomAccessFile = null
         mcs = null
-        fos = null
+        countingUncompressed = null
         initialized = false
         streamOpen = false
         hasBeenClosed = true
@@ -161,11 +162,11 @@ private[spark] class DiskBlockArrowIPCWriter(
       if (syncWrites) {
         // Force outstanding writes to disk and track how long it takes
         val start = System.nanoTime()
-        fos.getFD.sync()
+        randomAccessFile.getFD.sync()
         writeMetrics.incWriteTime(System.nanoTime() - start)
       }
 
-      val pos = mcs.getInner.asInstanceOf[CountingOutputStream].getByteCount
+      val pos = randomAccessFile.getFilePointer
       val fileSegment = new FileSegment(file, committedPosition, pos - committedPosition)
       committedPosition = pos
       // In certain compression codecs, more bytes are written after streams are closed
@@ -178,14 +179,15 @@ private[spark] class DiskBlockArrowIPCWriter(
     }
   }
 
-  def endPartition(): Unit = {
+  private def endPartition(): Unit = {
     Utils.tryWithSafeFinally {
-      if (currentRowCount > 0) {
-        // finish current arrow data
-        arrowBuffer.finish()
-        writer.writeBatch()
-        arrowBuffer.reset()
-        currentRowCount = 0
+      if (currentPartitionRowCount > 0) {
+        if (currentRowCount > 0) { // finish current arrow data
+          arrowBuffer.finish()
+          writer.writeBatch()
+          arrowBuffer.reset()
+          currentRowCount = 0
+        }
 
         // write compressed arrow data to file
         writer.end()
@@ -194,15 +196,22 @@ private[spark] class DiskBlockArrowIPCWriter(
         mcs.flush()
 
         // append length
-        val partitionEnd = mcs.getInner.asInstanceOf[CountingOutputStream].getByteCount
-        val partitionLength = partitionEnd - partitionStart
-        MessageSerializer.longToBytes(partitionLength, leLength)
-        mcs.write(leLength)
-        mcs.flush()
+        val current = randomAccessFile.getFilePointer
+        val ipcLength = current - partitionStart - ipcLengthBuffer.capacity()
+        val ipcLengthUncompressed = countingUncompressed.getByteCount
+        ipcLengthBuffer.clear()
+        ipcLengthBuffer.putLong(ipcLength)
+        ipcLengthBuffer.putLong(ipcLengthUncompressed)
+        ipcLengthBuffer.flip()
+        randomAccessFile.seek(partitionStart)
+        randomAccessFile.write(ipcLengthBuffer.array())
+        randomAccessFile.seek(current)
+        currentPartitionRowCount = 0
       }
     } {
       if (writer != null) {
         writer.close()
+        writer = null
       }
     }
   }
@@ -235,10 +244,9 @@ private[spark] class DiskBlockArrowIPCWriter(
         // See: SPARK-28340
         case ce: ClosedByInterruptException =>
           logError(
-            "Exception occurred while reverting partial writes to file "
-              + file + ", " + ce.getMessage)
+            s"Exception occurred while reverting partial writes to file $file}, ${ce.getMessage}")
         case e: Exception =>
-          logError("Uncaught exception while reverting partial writes to file " + file, e)
+          logError(s"Uncaught exception while reverting partial writes to file $file", e)
       } finally {
         if (truncateStream != null) {
           truncateStream.close()
@@ -259,8 +267,22 @@ private[spark] class DiskBlockArrowIPCWriter(
       open()
     }
 
+    // setup arrow writer only when partition is not empty
+    if (currentPartitionRowCount == 0) {
+      ipcLengthBuffer.clear()
+      mcs.write(ipcLengthBuffer.array()) // ipc length placeholder
+      countingUncompressed = new CountingOutputStream(
+        ArrowShuffleManager301.compressionCodecForShuffling.compressedOutputStream(mcs))
+
+      val channel = Channels.newChannel(countingUncompressed)
+      writer = new ArrowFileWriter(root, new MapDictionaryProvider(), channel)
+      writer.start()
+    }
+
     currentRowCount += 1
+    currentPartitionRowCount += 1
     arrowBuffer.write(row)
+
     if (currentRowCount == maxRecordsPerBatch) {
       arrowBuffer.finish()
       writer.writeBatch()
@@ -269,7 +291,7 @@ private[spark] class DiskBlockArrowIPCWriter(
     }
   }
 
-  def open(): DiskBlockArrowIPCWriter = {
+  private def open(): DiskBlockArrowIPCWriter = {
     if (hasBeenClosed) {
       throw new IllegalStateException("Writer already closed. Cannot be reopened.")
     }
@@ -284,16 +306,16 @@ private[spark] class DiskBlockArrowIPCWriter(
   }
 
   private def initialize(): Unit = {
-    fos = new FileOutputStream(file, true)
-    mcs = new ManualCloseBufferedOutputStream(
-      new CountingOutputStream(new TimeTrackingOutputStream(writeMetrics, fos)))
+    randomAccessFile = new RandomAccessFile(file, "rw")
+
+    val os = Channels.newOutputStream(randomAccessFile.getChannel)
+    mcs = new ManualCloseBufferedOutputStream(new TimeTrackingOutputStream(writeMetrics, os))
   }
 
-  def startPartition(): Unit = {
-    partitionStart = mcs.getInner.asInstanceOf[CountingOutputStream].getByteCount
-    val channel = Channels.newChannel(zcodec.compressedOutputStream(mcs))
-    writer = new ArrowFileWriter(root, new MapDictionaryProvider(), channel)
-    writer.start()
+  private def startPartition(): Unit = {
+    partitionStart = randomAccessFile.getFilePointer
+    currentRowCount = 0
+    currentPartitionRowCount = 0
   }
 
   /**
@@ -309,7 +331,7 @@ private[spark] class DiskBlockArrowIPCWriter(
    * Note that this is only valid before the underlying streams are closed.
    */
   private def updateBytesWritten(): Unit = {
-    val pos = mcs.getInner.asInstanceOf[CountingOutputStream].getByteCount
+    val pos = randomAccessFile.getFilePointer
     writeMetrics.incBytesWritten(pos - reportedPosition)
     reportedPosition = pos
   }
@@ -320,13 +342,15 @@ private[spark] class DiskBlockArrowIPCWriter(
    * Commit uses this trait to close object streams without paying the
    * cost of closing and opening the underlying file.
    */
-  private trait ManualCloseOutputStream extends OutputStream {
-    override def close(): Unit = {}
-  }
-
   private class ManualCloseBufferedOutputStream(inner: OutputStream)
-      extends BufferedOutputStream(inner)
-      with ManualCloseOutputStream {
-    def getInner: OutputStream = inner
+      extends BufferedOutputStream(inner) {
+
+    override def close(): Unit = {
+      inner.flush()
+    }
+
+    def manualClose(): Unit = {
+      inner.close()
+    }
   }
 }
