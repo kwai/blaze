@@ -29,11 +29,11 @@ import org.apache.spark.internal.config.IO_COMPRESSION_CODEC
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
+import org.apache.spark.shuffle.sort.ArrowShuffleWriter301
 import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
 import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.sort.SortShuffleWriter
-import org.apache.spark.shuffle.sort.ArrowShuffleWriter301
 import org.apache.spark.util.collection.OpenHashSet
 
 class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Logging {

@@ -23,7 +23,6 @@ import scala.util.Try
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.execution.ArrowShuffleExchangeExec301
 import org.apache.spark.sql.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.blaze.plan.NativeParquetScanExec
@@ -47,26 +46,17 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.sql.blaze.plan.NativeSortMergeJoinExec
-import org.apache.spark.sql.blaze.NativeSupports.isNative
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ColumnarRule
-import org.apache.spark.sql.execution.RowToColumnarExec
-import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
-import org.apache.spark.sql.vectorized.ColumnarBatch
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {

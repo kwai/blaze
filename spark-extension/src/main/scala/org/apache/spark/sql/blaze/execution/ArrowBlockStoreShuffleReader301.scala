@@ -17,9 +17,7 @@
 package org.apache.spark.sql.blaze.execution
 
 import java.io.InputStream
-import java.nio.ByteBuffer
 
-import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv

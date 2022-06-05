@@ -16,9 +16,6 @@
 
 package org.apache.spark.sql.blaze
 
-import java.util.concurrent.SynchronousQueue
-import java.util.concurrent.TimeUnit
-
 import scala.collection.JavaConverters._
 
 import org.apache.arrow.c.ArrowArray

@@ -16,8 +16,11 @@
 
 package org.apache.spark.sql.blaze
 
-import java.io.{File, FileNotFoundException, IOException}
-import java.nio.file.{Files, StandardCopyOption}
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
