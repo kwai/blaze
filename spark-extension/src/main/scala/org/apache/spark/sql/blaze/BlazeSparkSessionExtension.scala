@@ -64,33 +64,9 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
     SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_FORCE_APPLY.key, "true")
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
 
-    extensions.injectQueryStagePrepRule(sparkSession => {
-      BlazeQueryStagePrepOverrides(sparkSession)
-    })
-
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)
     })
-  }
-}
-
-case class BlazeQueryStagePrepOverrides(sparkSession: SparkSession)
-    extends Rule[SparkPlan]
-    with Logging {
-  import org.apache.spark.sql.blaze.Util._
-
-  override def apply(sparkPlan: SparkPlan): SparkPlan = {
-    val sparkPlanTransformed = sparkPlan
-      .transformUp { // transform supported plans to native
-        case exec: ShuffleExchangeExec if enableNativeShuffle =>
-          tryConvert(exec, convertShuffleExchangeExec)
-        case exec: FileSourceScanExec if enableScan => tryConvert(exec, convertFileSourceScanExec)
-        case exec => exec
-      }
-
-    logDebug(s"Transformed spark plan after QueryStagePrep:\n${sparkPlanTransformed
-      .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
-    sparkPlanTransformed
   }
 }
 
@@ -117,6 +93,10 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
       // transform supported plans to native
       var sparkPlanTransformed = sparkPlan
         .transformUp {
+          case exec: ShuffleExchangeExec if enableNativeShuffle =>
+            tryConvert(exec, convertShuffleExchangeExec)
+          case exec: FileSourceScanExec if enableScan =>
+            tryConvert(exec, convertFileSourceScanExec)
           case exec: ProjectExec if Util.enableProject =>
             tryConvert(exec, convertProjectExec)
           case exec: FilterExec if Util.enableFilter =>
@@ -177,8 +157,14 @@ private object Util extends Logging {
 
   def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan =
     try {
-      val convertedExec = convert(exec)
-      convertedExec
+      def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
+        if (basedExec.logicalLink.isDefined && exec.logicalLink.isEmpty) {
+          exec.setLogicalLink(basedExec.logicalLink.get)
+          exec.children.foreach(setLogicalLink(_, basedExec))
+        }
+        exec
+      }
+      setLogicalLink(convert(exec), exec)
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
         logWarning(s"Error converting exec: ${exec.getClass.getSimpleName}: ${e.getMessage}")
