@@ -177,8 +177,14 @@ private object Util extends Logging {
 
   def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan =
     try {
-      val convertedExec = convert(exec)
-      convertedExec
+      def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
+        if (basedExec.logicalLink.isDefined && exec.logicalLink.isEmpty) {
+          exec.setLogicalLink(basedExec.logicalLink.get)
+          exec.children.foreach(setLogicalLink(_, basedExec))
+        }
+        exec
+      }
+      setLogicalLink(convert(exec), exec)
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
         logWarning(s"Error converting exec: ${exec.getClass.getSimpleName}: ${e.getMessage}")
