@@ -266,7 +266,7 @@ pub struct JavaClasses<'a> {
     pub cJniBridge: JniBridge<'a>,
     pub cClass: JavaClass<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
-    pub cJavaSeekableByteChannel: JavaSeekableByteChannel<'a>,
+    pub cJavaReadableByteChannel: JavaReadableByteChannel<'a>,
     pub cJavaBoolean: JavaBoolean<'a>,
     pub cJavaLong: JavaLong<'a>,
     pub cJavaList: JavaList<'a>,
@@ -319,7 +319,7 @@ impl JavaClasses<'static> {
 
                 cClass: JavaClass::new(env).unwrap(),
                 cJavaRuntimeException: JavaRuntimeException::new(env).unwrap(),
-                cJavaSeekableByteChannel: JavaSeekableByteChannel::new(env).unwrap(),
+                cJavaReadableByteChannel: JavaReadableByteChannel::new(env).unwrap(),
                 cJavaBoolean: JavaBoolean::new(env).unwrap(),
                 cJavaLong: JavaLong::new(env).unwrap(),
                 cJavaList: JavaList::new(env).unwrap(),
@@ -478,32 +478,24 @@ impl<'a> JavaRuntimeException<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct JavaSeekableByteChannel<'a> {
+pub struct JavaReadableByteChannel<'a> {
     pub class: JClass<'a>,
     pub method_read: JMethodID<'a>,
     pub method_read_ret: JavaType,
-    pub method_setPosition: JMethodID<'a>,
-    pub method_setPosition_ret: JavaType,
-    pub method_size: JMethodID<'a>,
-    pub method_size_ret: JavaType,
+    pub method_close: JMethodID<'a>,
+    pub method_close_ret: JavaType,
 }
-impl<'a> JavaSeekableByteChannel<'a> {
-    pub const SIG_TYPE: &'static str = "java/nio/channels/SeekableByteChannel";
+impl<'a> JavaReadableByteChannel<'a> {
+    pub const SIG_TYPE: &'static str = "java/nio/channels/ReadableByteChannel";
 
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaSeekableByteChannel<'a>> {
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaReadableByteChannel<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaSeekableByteChannel {
+        Ok(JavaReadableByteChannel {
             class,
             method_read: env.get_method_id(class, "read", "(Ljava/nio/ByteBuffer;)I")?,
             method_read_ret: JavaType::Primitive(Primitive::Int),
-            method_setPosition: env.get_method_id(
-                class,
-                "position",
-                "(J)Ljava/nio/channels/SeekableByteChannel;",
-            )?,
-            method_setPosition_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
-            method_size: env.get_method_id(class, "size", "()J")?,
-            method_size_ret: JavaType::Primitive(Primitive::Long),
+            method_close: env.get_method_id(class, "close", "()V")?,
+            method_close_ret: JavaType::Primitive(Primitive::Void),
         })
     }
 }
@@ -912,9 +904,15 @@ impl<'a> BlazeIpcData<'a> {
         Ok(BlazeIpcData {
             class,
             method_readArrowData: env
-                .get_method_id(class, "readArrowData", "(Ljava/nio/ByteBuffer;)V")
+                .get_method_id(
+                    class,
+                    "readArrowData",
+                    "()Ljava/nio/channels/ReadableByteChannel;",
+                )
                 .unwrap(),
-            method_readArrowData_ret: JavaType::Primitive(Primitive::Void),
+            method_readArrowData_ret: JavaType::Object(
+                "java/nio/channels/ReadableByteChannel".to_owned(),
+            ),
             method_ipcLength: env.get_method_id(class, "ipcLength", "()J").unwrap(),
             method_ipcLength_ret: JavaType::Primitive(Primitive::Long),
             method_ipcLengthUncompressed: env

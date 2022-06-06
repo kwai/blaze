@@ -29,7 +29,7 @@ import java.nio.ByteOrder
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
-import org.apache.arrow.vector.ipc.ArrowFileWriter
+import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.commons.io.output.CountingOutputStream
 import org.apache.spark.internal.Logging
@@ -109,7 +109,7 @@ private[spark] class DiskBlockArrowIPCWriter(
   private var numRecordsWritten = 0
   private var currentRowCount = 0
   private var currentPartitionRowCount = 0
-  private var writer: ArrowFileWriter = _
+  private var writer: ArrowStreamWriter = _
 
   /**
    * Commits any remaining partial writes and closes resources.
@@ -275,7 +275,7 @@ private[spark] class DiskBlockArrowIPCWriter(
         ArrowShuffleManager301.compressionCodecForShuffling.compressedOutputStream(mcs))
 
       val channel = Channels.newChannel(countingUncompressed)
-      writer = new ArrowFileWriter(root, new MapDictionaryProvider(), channel)
+      writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
       writer.start()
     }
 

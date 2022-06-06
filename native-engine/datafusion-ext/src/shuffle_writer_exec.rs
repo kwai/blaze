@@ -34,7 +34,7 @@ use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::error::ArrowError;
-use datafusion::arrow::ipc::writer::FileWriter;
+use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -687,7 +687,7 @@ fn write_compressed_ipc(
     }
 
     // write ipc data
-    let mut arrow_writer = FileWriter::try_new(
+    let mut arrow_writer = StreamWriter::try_new(
         CountedWriter {
             inner: zstd::Encoder::new(output, 1)?,
             count: 0,

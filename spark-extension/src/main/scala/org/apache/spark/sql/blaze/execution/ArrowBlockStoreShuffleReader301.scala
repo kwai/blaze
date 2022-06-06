@@ -70,7 +70,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
   def readIpc(): Iterator[IpcData] = {
     fetchIterator.flatMap {
       case (_, inputStream) =>
-        IpcInputStreamIterator(inputStream)
+        IpcInputStreamIterator(inputStream, context)
     }
   }
 
