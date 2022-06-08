@@ -289,6 +289,23 @@ object NativeConverters {
 
       // in
       case In(value, list) =>
+        // TODO:
+        //  some types are not yet supported if datafusion (like Date32), keep
+        //  this code until they are implemented
+        val supportedTypes = Seq(
+          FloatType,
+          DoubleType,
+          ByteType,
+          ShortType,
+          IntegerType,
+          LongType,
+          BooleanType,
+          StringType)
+        if (!supportedTypes.contains(value.dataType)) {
+          throw new NotImplementedError(
+            s"native In() does not support data type: ${value.dataType}")
+        }
+
         buildExprNode {
           _.setInList(
             PhysicalInListNode
@@ -299,6 +316,23 @@ object NativeConverters {
 
       // in
       case InSet(value, set) =>
+        // TODO:
+        //  some types are not yet supported if datafusion (like Date32), keep
+        //  this code until they are implemented
+        val supportedTypes = Seq(
+          FloatType,
+          DoubleType,
+          ByteType,
+          ShortType,
+          IntegerType,
+          LongType,
+          BooleanType,
+          StringType)
+        if (!supportedTypes.contains(value.dataType)) {
+          throw new NotImplementedError(
+            s"native InSet() does not support data type: ${value.dataType}")
+        }
+
         buildExprNode {
           _.setInList(
             PhysicalInListNode
@@ -478,6 +512,23 @@ object NativeConverters {
 
       // in
       case In(value, list) =>
+        // TODO:
+        //  some types are not yet supported if datafusion (like Date32), keep
+        //  this code until they are implemented
+        val supportedTypes = Seq(
+          FloatType,
+          DoubleType,
+          ByteType,
+          ShortType,
+          IntegerType,
+          LongType,
+          BooleanType,
+          StringType)
+        if (!supportedTypes.contains(value.dataType)) {
+          throw new NotImplementedError(
+            s"native In() does not support data type: ${value.dataType}")
+        }
+
         buildExprNode {
           _.setInList(
             InListNode
@@ -488,6 +539,23 @@ object NativeConverters {
 
       // inset
       case InSet(value, set) =>
+        // TODO:
+        //  some types are not yet supported if datafusion (like Date32), keep
+        //  this code until they are implemented
+        val supportedTypes = Seq(
+          FloatType,
+          DoubleType,
+          ByteType,
+          ShortType,
+          IntegerType,
+          LongType,
+          BooleanType,
+          StringType)
+        if (!supportedTypes.contains(value.dataType)) {
+          throw new NotImplementedError(
+            s"native InSet() does not support data type: ${value.dataType}")
+        }
+
         buildExprNode {
           _.setInList(
             InListNode
