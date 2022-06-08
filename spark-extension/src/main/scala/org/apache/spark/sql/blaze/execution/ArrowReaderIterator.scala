@@ -16,45 +16,29 @@
 
 package org.apache.spark.sql.blaze.execution
 
-import java.nio.channels.SeekableByteChannel
-import java.nio.ByteBuffer
-
-import org.apache.arrow.vector.ipc.ArrowFileReader
-import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
+import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.blaze.FFIHelper
 import org.apache.spark.sql.util2.ArrowUtils2
 
 class ArrowReaderIterator(ipc: IpcData, taskContext: TaskContext) extends Iterator[InternalRow] {
-
-  // decompress ipc into memory
-  private val channel: SeekableByteChannel = {
-    val buf = new Array[Byte](ipc.ipcLengthUncompressed.toInt)
-    ipc.readArrowData(ByteBuffer.wrap(buf))
-    new ByteArrayReadableSeekableByteChannel(buf)
-  }
-
-  private val allocator =
+  private var allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowReaderIterator", 0, Long.MaxValue)
-  private val arrowReader = new ArrowFileReader(channel, allocator)
-  private val root = arrowReader.getVectorSchemaRoot
-  private var closed = false
+  private var arrowReader = new ArrowStreamReader(ipc.readArrowData, allocator)
+  private var root = arrowReader.getVectorSchemaRoot
   private var rowIter = nextBatch()
 
-  taskContext.addTaskCompletionListener[Unit] { _ =>
-    if (!closed) {
-      root.close()
-      allocator.close()
-      arrowReader.close()
-      closed = true
-    }
-  }
+  taskContext.addTaskCompletionListener[Unit](_ => close())
 
   override def hasNext: Boolean =
-    rowIter.hasNext || {
+    (root != null && rowIter.hasNext) || {
       rowIter = nextBatch()
-      rowIter.nonEmpty
+      if (rowIter.isEmpty) {
+        close()
+        return false
+      }
+      true
     }
 
   override def next(): InternalRow = rowIter.next()
@@ -66,4 +50,16 @@ class ArrowReaderIterator(ipc: IpcData, taskContext: TaskContext) extends Iterat
       Iterator.empty
     }
   }
+
+  private def close(): Unit =
+    synchronized {
+      if (root != null) {
+        root.close()
+        allocator.close()
+        arrowReader.close()
+        root = null
+        allocator = null
+        arrowReader = null
+      }
+    }
 }

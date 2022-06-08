@@ -15,8 +15,8 @@
 use std::any::Any;
 use std::fmt::Debug;
 use std::fmt::Formatter;
+use std::io::Read;
 
-use std::io::Cursor;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
@@ -25,7 +25,7 @@ use std::task::Poll;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::ipc::reader::FileReader;
+use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -42,7 +42,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::Stream;
 use jni::objects::{GlobalRef, JObject};
-use jni::sys::{jboolean, jlong, JNI_TRUE};
+use jni::sys::{jboolean, jint, JNI_TRUE};
 
 use crate::jni_call;
 use crate::jni_call_static;
@@ -50,6 +50,7 @@ use crate::jni_delete_local_ref;
 use crate::jni_new_direct_byte_buffer;
 use crate::jni_new_global_ref;
 use crate::jni_new_string;
+use crate::ResultExt;
 
 #[derive(Debug, Clone)]
 pub struct ShuffleReaderExec {
@@ -113,19 +114,19 @@ impl ExecutionPlan for ShuffleReaderExec {
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
-        let ipcs_provider = jni_call_static!(
+        let segments_provider = jni_call_static!(
             JniBridge.getResource(
                 jni_new_string!(&self.native_shuffle_id)?
             ) -> JObject
         )?;
-        let ipcs = jni_new_global_ref!(
-            jni_call!(ScalaFunction0(ipcs_provider).apply() -> JObject)?
+        let segments = jni_new_global_ref!(
+            jni_call!(ScalaFunction0(segments_provider).apply() -> JObject)?
         )?;
 
         let schema = self.schema.clone();
         Ok(Box::pin(ShuffleReaderStream::new(
             schema,
-            ipcs,
+            segments,
             baseline_metrics,
         )))
     }
@@ -145,52 +146,52 @@ impl ExecutionPlan for ShuffleReaderExec {
 
 struct ShuffleReaderStream {
     schema: SchemaRef,
-    ipcs: GlobalRef,
-    arrow_file_reader: Option<FileReader<Cursor<Vec<u8>>>>,
+    segments: GlobalRef,
+    reader: Option<StreamReader<ReadableByteChannelReader>>,
     baseline_metrics: BaselineMetrics,
 }
-unsafe impl Sync for ShuffleReaderStream {} // safety: ipcs is safe to be shared
+unsafe impl Sync for ShuffleReaderStream {} // safety: segments is safe to be shared
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for ShuffleReaderStream {}
 
 impl ShuffleReaderStream {
     pub fn new(
         schema: SchemaRef,
-        ipcs: GlobalRef,
+        segments: GlobalRef,
         baseline_metrics: BaselineMetrics,
     ) -> ShuffleReaderStream {
         ShuffleReaderStream {
             schema,
-            ipcs,
-            arrow_file_reader: None,
+            segments,
+            reader: None,
             baseline_metrics,
         }
     }
 
-    fn next_ipc(&mut self) -> Result<bool> {
-        if jni_call!(
-            ScalaIterator(self.ipcs.as_obj()).hasNext() -> jboolean
-        )? != JNI_TRUE
-        {
-            self.arrow_file_reader = None;
+    fn next_segment(&mut self) -> Result<bool> {
+        let has_next = jni_call!(
+            ScalaIterator(self.segments.as_obj()).hasNext() -> jboolean
+        )?;
+        if has_next != JNI_TRUE {
+            self.reader = None;
             return Ok(false);
         }
 
-        // get ipc data object
-        let ipc = jni_call!(ScalaIterator(self.ipcs.as_obj()).next() -> JObject)?;
+        let ipc = jni_call!(
+            ScalaIterator(self.segments.as_obj()).next() -> JObject
+        )?;
 
-        // allocate direct byte buffer to store uncompressed data
-        let len_uncompressed =
-            jni_call!(BlazeIpcData(ipc).ipcLengthUncompressed() -> jlong)?;
-        let mut arrow_data = vec![0u8; len_uncompressed as usize];
-        jni_call!(BlazeIpcData(ipc).readArrowData(
-            jni_new_direct_byte_buffer!(&mut arrow_data)?
-        ) -> ())?;
+        let channel = jni_call!(
+            BlazeIpcData(ipc).readArrowData() -> JObject
+        )?;
 
-        self.arrow_file_reader =
-            Some(FileReader::try_new(Cursor::new(arrow_data), None)?);
+        self.reader = Some(StreamReader::try_new(
+            ReadableByteChannelReader(jni_new_global_ref!(channel)?),
+            None,
+        )?);
 
-        // ipc ref must be explicitly deleted to avoid OOM
+        // channel ref must be explicitly deleted to avoid OOM
+        jni_delete_local_ref!(channel)?;
         jni_delete_local_ref!(ipc)?;
         Ok(true)
     }
@@ -206,8 +207,8 @@ impl Stream for ShuffleReaderStream {
         let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
-        if let Some(arrow_file_reader) = &mut self.arrow_file_reader {
-            if let Some(record_batch) = arrow_file_reader.next() {
+        if let Some(reader) = &mut self.reader {
+            if let Some(record_batch) = reader.next() {
                 return self
                     .baseline_metrics
                     .record_poll(Poll::Ready(Some(record_batch)));
@@ -215,7 +216,7 @@ impl Stream for ShuffleReaderStream {
         }
 
         // current arrow file reader reaches EOF, try next ipc
-        if self.next_ipc()? {
+        if self.next_segment()? {
             return self.poll_next(cx);
         }
         Poll::Ready(None)
@@ -224,5 +225,25 @@ impl Stream for ShuffleReaderStream {
 impl RecordBatchStream for ShuffleReaderStream {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
+    }
+}
+
+struct ReadableByteChannelReader(GlobalRef);
+
+impl Read for ReadableByteChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(jni_call!(
+            JavaReadableByteChannel(self.0.as_obj()).read(
+                jni_new_direct_byte_buffer!(buf).to_io_result()?
+            ) -> jint
+        )
+        .to_io_result()? as usize)
+    }
+}
+impl Drop for ReadableByteChannelReader {
+    fn drop(&mut self) {
+        let _ = jni_call!( // ignore errors to avoid double panic problem
+            JavaReadableByteChannel(self.0.as_obj()).close() -> ()
+        );
     }
 }

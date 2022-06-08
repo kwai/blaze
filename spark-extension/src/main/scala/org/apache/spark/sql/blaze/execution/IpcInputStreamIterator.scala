@@ -23,8 +23,12 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.TaskContext
 
-case class IpcInputStreamIterator(in: InputStream) extends Iterator[IpcData] with Logging {
+case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
+    extends Iterator[IpcData]
+    with Logging {
+
   private val channel = Channels.newChannel(in)
   private val ipcLengthsBuf = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
 
@@ -37,6 +41,10 @@ case class IpcInputStreamIterator(in: InputStream) extends Iterator[IpcData] wit
   private var currentIpcLength = 0L
   private var currentIpcLengthUncompressed = 0L
 
+  taskContext.addTaskCompletionListener[Unit](_ => {
+    closeInputStream()
+  })
+
   override def hasNext: Boolean = {
     !finished && {
       if (!consumed) {
@@ -48,6 +56,7 @@ case class IpcInputStreamIterator(in: InputStream) extends Iterator[IpcData] wit
       if (ipcLengthsBuf.hasRemaining) {
         if (ipcLengthsBuf.position() == 0) {
           finished = true
+          closeInputStream()
           return false
         }
         throw new EOFException(
@@ -65,4 +74,14 @@ case class IpcInputStreamIterator(in: InputStream) extends Iterator[IpcData] wit
     consumed = true
     IpcData(channel, compressed = true, currentIpcLength, currentIpcLengthUncompressed)
   }
+
+  private def closeInputStream(): Unit =
+    synchronized {
+      if (in != null) {
+        in.close()
+        in = null
+      }
+    }
 }
+
+

@@ -21,7 +21,7 @@ import java.nio.channels.Channels
 
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
-import org.apache.arrow.vector.ipc.ArrowFileWriter
+import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types.StructType
@@ -60,7 +60,7 @@ class ArrowWriterIterator(
     val outputStream = new ByteArrayOutputStream()
     Utils.tryWithResource(outputStream) { outputStream =>
       Utils.tryWithResource(Channels.newChannel(outputStream)) { channel =>
-        val writer = new ArrowFileWriter(root, new MapDictionaryProvider(), channel)
+        val writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
         writer.start()
         writer.writeBatch()
         writer.end()
