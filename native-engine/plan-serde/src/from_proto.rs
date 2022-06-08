@@ -18,50 +18,39 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use datafusion::arrow::datatypes::SchemaRef;
+
 use datafusion::datafusion_data_access::{FileMeta, SizedFile};
-use datafusion::datasource::listing::{FileRange, PartitionedFile};
+use datafusion::datasource::listing::{FileRange, ListingTableUrl, PartitionedFile};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::{BuiltinScalarFunction, WindowFunction};
+
+use datafusion::logical_expr::BuiltinScalarFunction;
 use datafusion::logical_plan;
-use datafusion::logical_plan::window_frames::WindowFrame;
+
 use datafusion::logical_plan::*;
-use datafusion::physical_plan::aggregates::create_aggregate_expr;
-use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
-use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
-use datafusion::physical_plan::file_format::{
-    AvroExec, CsvExec, FileScanConfig, ParquetExec,
-};
-use datafusion::physical_plan::hash_join::PartitionMode;
+use datafusion::physical_expr::{functions, ScalarFunctionExpr};
+use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
+
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
 use datafusion::physical_plan::union::UnionExec;
-use datafusion::physical_plan::windows::{create_window_expr, WindowAggExec};
+
 use datafusion::physical_plan::{
-    coalesce_batches::CoalesceBatchesExec,
-    cross_join::CrossJoinExec,
-    empty::EmptyExec,
     expressions::{
         BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr,
         Literal, NegativeExpr, NotExpr, PhysicalSortExpr, TryCastExpr,
         DEFAULT_DATAFUSION_CAST_OPTIONS,
     },
     filter::FilterExec,
-    functions::{self, ScalarFunctionExpr},
-    hash_join::HashJoinExec,
-    limit::{GlobalLimitExec, LocalLimitExec},
     projection::ProjectionExec,
-    repartition::RepartitionExec,
     sort_merge_join::SortMergeJoinExec,
     Partitioning,
 };
 use datafusion::physical_plan::{
-    AggregateExpr, ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, WindowExpr,
+    ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
 use datafusion::scalar::ScalarValue;
 
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
-use datafusion_ext::global_object_store_registry;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
@@ -69,9 +58,8 @@ use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 use crate::error::{FromOptionalField, PlanSerDeError};
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
-use crate::protobuf::repartition_exec_node::PartitionMethod;
 use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
-use crate::{from_proto_binary_op, proto_error, str_to_byte};
+use crate::{from_proto_binary_op, proto_error};
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -209,11 +197,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     input,
                 )?))
             }
-            PhysicalPlanType::CsvScan(scan) => Ok(Arc::new(CsvExec::new(
-                scan.base_conf.as_ref().unwrap().try_into()?,
-                scan.has_header,
-                str_to_byte(&scan.delimiter)?,
-            ))),
             PhysicalPlanType::ParquetScan(scan) => {
                 let predicate = scan
                     .pruning_predicate
@@ -224,260 +207,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     scan.base_conf.as_ref().unwrap().try_into()?,
                     predicate,
                 )))
-            }
-            PhysicalPlanType::AvroScan(scan) => Ok(Arc::new(AvroExec::new(
-                scan.base_conf.as_ref().unwrap().try_into()?,
-            ))),
-            PhysicalPlanType::CoalesceBatches(coalesce_batches) => {
-                let input: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(coalesce_batches.input)?;
-                Ok(Arc::new(CoalesceBatchesExec::new(
-                    input,
-                    coalesce_batches.target_batch_size as usize,
-                )))
-            }
-            PhysicalPlanType::Merge(merge) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(merge.input)?;
-                Ok(Arc::new(CoalescePartitionsExec::new(input)))
-            }
-            PhysicalPlanType::Repartition(repart) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(repart.input)?;
-                let schema = input.schema();
-                match repart.partition_method {
-                    Some(PartitionMethod::Hash(ref hash_part)) => {
-                        let expr = hash_part
-                            .hash_expr
-                            .iter()
-                            .map(|e| bind(e.try_into().unwrap(), &schema))
-                            .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
-
-                        Ok(Arc::new(RepartitionExec::try_new(
-                            input,
-                            Partitioning::Hash(
-                                expr,
-                                hash_part.partition_count.try_into().unwrap(),
-                            ),
-                        )?))
-                    }
-                    Some(PartitionMethod::RoundRobin(partition_count)) => {
-                        Ok(Arc::new(RepartitionExec::try_new(
-                            input,
-                            Partitioning::RoundRobinBatch(
-                                partition_count.try_into().unwrap(),
-                            ),
-                        )?))
-                    }
-                    Some(PartitionMethod::Unknown(partition_count)) => {
-                        Ok(Arc::new(RepartitionExec::try_new(
-                            input,
-                            Partitioning::UnknownPartitioning(
-                                partition_count.try_into().unwrap(),
-                            ),
-                        )?))
-                    }
-                    _ => Err(PlanSerDeError::General(
-                        "Invalid partitioning scheme".to_owned(),
-                    )),
-                }
-            }
-            PhysicalPlanType::GlobalLimit(limit) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(limit.input)?;
-                Ok(Arc::new(GlobalLimitExec::new(input, limit.limit as usize)))
-            }
-            PhysicalPlanType::LocalLimit(limit) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(limit.input)?;
-                Ok(Arc::new(LocalLimitExec::new(input, limit.limit as usize)))
-            }
-            PhysicalPlanType::Window(window_agg) => {
-                let input: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(window_agg.input)?;
-                let input_schema = window_agg
-                    .input_schema
-                    .as_ref()
-                    .ok_or_else(|| {
-                        PlanSerDeError::General(
-                            "input_schema in WindowAggrNode is missing.".to_owned(),
-                        )
-                    })?
-                    .clone();
-                let physical_schema: SchemaRef =
-                    SchemaRef::new((&input_schema).try_into()?);
-
-                let physical_window_expr: Vec<Arc<dyn WindowExpr>> = window_agg
-                    .window_expr
-                    .iter()
-                    .zip(window_agg.window_expr_name.iter())
-                    .map(|(expr, name)| {
-                        let expr_type = expr.expr_type.as_ref().ok_or_else(|| {
-                            proto_error("Unexpected empty window physical expression")
-                        })?;
-
-                        match expr_type {
-                            ExprType::WindowExpr(window_node) => {
-                                let window_node_expr = bind(
-                                    convert_box_required!(window_node.expr)?,
-                                    &input.schema(),
-                                )?;
-                                Ok(create_window_expr(
-                                    &convert_required!(window_node.window_function)?,
-                                    name.to_owned(),
-                                    &[window_node_expr],
-                                    &[],
-                                    &[],
-                                    Some(WindowFrame::default()),
-                                    &physical_schema,
-                                )?)
-                            }
-                            _ => Err(PlanSerDeError::General(
-                                "Invalid expression for WindowAggrExec".to_string(),
-                            )),
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(Arc::new(WindowAggExec::try_new(
-                    physical_window_expr,
-                    input,
-                    Arc::new((&input_schema).try_into()?),
-                )?))
-            }
-            PhysicalPlanType::HashAggregate(hash_agg) => {
-                let input: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(hash_agg.input)?;
-                let mode = protobuf::AggregateMode::from_i32(hash_agg.mode).ok_or_else(|| {
-                    proto_error(format!(
-                        "Received a HashAggregateNode message with unknown AggregateMode {}",
-                        hash_agg.mode
-                    ))
-                })?;
-                let agg_mode: AggregateMode = match mode {
-                    protobuf::AggregateMode::Partial => AggregateMode::Partial,
-                    protobuf::AggregateMode::Final => AggregateMode::Final,
-                    protobuf::AggregateMode::FinalPartitioned => {
-                        AggregateMode::FinalPartitioned
-                    }
-                };
-                let group = hash_agg
-                    .group_expr
-                    .iter()
-                    .zip(hash_agg.group_expr_name.iter())
-                    .map(|(expr, name)| {
-                        expr.try_into().and_then(|expr: Arc<dyn PhysicalExpr>| {
-                            bind(expr, &input.schema())
-                                .map(|expr| (expr, name.to_string()))
-                                .map_err(PlanSerDeError::DataFusionError)
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                let input_schema = hash_agg
-                    .input_schema
-                    .as_ref()
-                    .ok_or_else(|| {
-                        PlanSerDeError::General(
-                            "input_schema in HashAggregateNode is missing.".to_owned(),
-                        )
-                    })?
-                    .clone();
-                let physical_schema: SchemaRef =
-                    SchemaRef::new((&input_schema).try_into()?);
-
-                let physical_aggr_expr: Vec<Arc<dyn AggregateExpr>> = hash_agg
-                    .aggr_expr
-                    .iter()
-                    .zip(hash_agg.aggr_expr_name.iter())
-                    .map(|(expr, name)| {
-                        let expr_type = expr.expr_type.as_ref().ok_or_else(|| {
-                            proto_error("Unexpected empty aggregate physical expression")
-                        })?;
-
-                        match expr_type {
-                            ExprType::AggregateExpr(agg_node) => {
-                                let aggr_function =
-                                    protobuf::AggregateFunction::from_i32(
-                                        agg_node.aggr_function,
-                                    )
-                                    .ok_or_else(
-                                        || {
-                                            proto_error(format!(
-                                            "Received an unknown aggregate function: {}",
-                                            agg_node.aggr_function
-                                        ))
-                                        },
-                                    )?;
-                                let agg_expr = bind(
-                                    convert_box_required!(agg_node.expr)?,
-                                    &input.schema(),
-                                )?;
-                                Ok(create_aggregate_expr(
-                                    &aggr_function.into(),
-                                    false,
-                                    &[agg_expr],
-                                    &physical_schema,
-                                    name.to_string(),
-                                )?)
-                            }
-                            _ => Err(PlanSerDeError::General(
-                                "Invalid aggregate  expression for AggregateExec"
-                                    .to_string(),
-                            )),
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(Arc::new(AggregateExec::try_new(
-                    agg_mode,
-                    group,
-                    physical_aggr_expr,
-                    input,
-                    Arc::new((&input_schema).try_into()?),
-                )?))
-            }
-            PhysicalPlanType::HashJoin(hashjoin) => {
-                let left: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.left)?;
-                let right: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(hashjoin.right)?;
-                let on: Vec<(Column, Column)> = hashjoin
-                    .on
-                    .iter()
-                    .map(|col| {
-                        let left_col: Column = into_required!(col.left)?;
-                        let left_col_binded: Column =
-                            Column::new_with_schema(left_col.name(), &left.schema())?;
-                        let right_col: Column = into_required!(col.right)?;
-                        let right_col_binded: Column =
-                            Column::new_with_schema(right_col.name(), &right.schema())?;
-                        Ok((left_col_binded, right_col_binded))
-                    })
-                    .collect::<Result<_, Self::Error>>()?;
-                let join_type = protobuf::JoinType::from_i32(hashjoin.join_type)
-                    .ok_or_else(|| {
-                        proto_error(format!(
-                            "Received a HashJoinNode message with unknown JoinType {}",
-                            hashjoin.join_type
-                        ))
-                    })?;
-
-                let partition_mode =
-                    protobuf::PartitionMode::from_i32(hashjoin.partition_mode)
-                        .ok_or_else(|| {
-                            proto_error(format!(
-                        "Received a HashJoinNode message with unknown PartitionMode {}",
-                        hashjoin.partition_mode
-                    ))
-                        })?;
-                let partition_mode = match partition_mode {
-                    protobuf::PartitionMode::CollectLeft => PartitionMode::CollectLeft,
-                    protobuf::PartitionMode::Partitioned => PartitionMode::Partitioned,
-                };
-                Ok(Arc::new(HashJoinExec::try_new(
-                    left,
-                    right,
-                    on,
-                    &join_type.into(),
-                    partition_mode,
-                    &hashjoin.null_equals_null,
-                )?))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let left: Arc<dyn ExecutionPlan> =
@@ -524,12 +253,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     sort_merge_join.null_equals_null,
                 )?))
             }
-            PhysicalPlanType::CrossJoin(crossjoin) => {
-                let left: Arc<dyn ExecutionPlan> = convert_box_required!(crossjoin.left)?;
-                let right: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(crossjoin.right)?;
-                Ok(Arc::new(CrossJoinExec::try_new(left, right)?))
-            }
             PhysicalPlanType::ShuffleWriter(shuffle_writer) => {
                 let input: Arc<dyn ExecutionPlan> =
                     convert_box_required!(shuffle_writer.input)?;
@@ -553,10 +276,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     shuffle_reader.native_shuffle_id.clone(),
                     schema,
                 )))
-            }
-            PhysicalPlanType::Empty(empty) => {
-                let schema = Arc::new(convert_required!(empty.schema)?);
-                Ok(Arc::new(EmptyExec::new(empty.produce_one_row, schema)))
             }
             PhysicalPlanType::Sort(sort) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(sort.input)?;
@@ -623,9 +342,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     input,
                     rename_columns.renamed_column_names.clone(),
                 )?))
-            }
-            PhysicalPlanType::Unresolved(_unresolved_shuffle) => {
-                unreachable!()
             }
         }
     }
@@ -827,38 +543,6 @@ impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
     }
 }
 
-impl TryFrom<&protobuf::physical_window_expr_node::WindowFunction> for WindowFunction {
-    type Error = PlanSerDeError;
-
-    fn try_from(
-        expr: &protobuf::physical_window_expr_node::WindowFunction,
-    ) -> Result<Self, Self::Error> {
-        match expr {
-            protobuf::physical_window_expr_node::WindowFunction::AggrFunction(n) => {
-                let f = protobuf::AggregateFunction::from_i32(*n).ok_or_else(|| {
-                    proto_error(format!(
-                        "Received an unknown window aggregate function: {}",
-                        n
-                    ))
-                })?;
-
-                Ok(WindowFunction::AggregateFunction(f.into()))
-            }
-            protobuf::physical_window_expr_node::WindowFunction::BuiltInFunction(n) => {
-                let f =
-                    protobuf::BuiltInWindowFunction::from_i32(*n).ok_or_else(|| {
-                        proto_error(format!(
-                            "Received an unknown window builtin function: {}",
-                            n
-                        ))
-                    })?;
-
-                Ok(WindowFunction::BuiltInWindowFunction(f.into()))
-            }
-        }
-    }
-}
-
 pub fn parse_protobuf_hash_partitioning(
     input: Arc<dyn ExecutionPlan>,
     partitioning: Option<&protobuf::PhysicalHashRepartition>,
@@ -984,17 +668,13 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         let statistics = convert_required!(self.statistics)?;
 
         Ok(FileScanConfig {
-            // use datafusion_ext::global_object_store_registry to get object score
-            // decide object store scheme using first input file
-            object_store: global_object_store_registry()
-                .get_by_uri(
-                    self.file_groups
-                        .get(0)
-                        .and_then(|file_group| file_group.files.get(0))
-                        .map(|file| file.path.as_ref())
-                        .unwrap_or("default"),
-                )?
-                .0,
+            object_store_url: ListingTableUrl::parse(
+                self.file_groups
+                    .get(0)
+                    .and_then(|file_group| file_group.files.get(0))
+                    .map(|file| file.path.as_ref())
+                    .unwrap_or("default"),
+                )?.object_store(),
             file_schema: schema,
             file_groups: self
                 .file_groups
