@@ -40,6 +40,7 @@ use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
 use tokio::runtime::Runtime;
+use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
 
 use crate::metrics::update_spark_metric_node;
 
@@ -89,7 +90,12 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
                     memory_fraction,
                 })
                 .with_disk_manager(DiskManagerConfig::NewSpecified(dirs));
+
             let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
+            let hdfs_object_store = Arc::new(HDFSSingleFileObjectStore);
+            runtime.register_object_store("hdfs".to_owned(), hdfs_object_store.clone());
+            runtime.register_object_store("viewfs".to_owned(), hdfs_object_store);
+
             let config = SessionConfig::new().with_batch_size(batch_size);
             SessionContext::with_config_rt(config, runtime)
         });
