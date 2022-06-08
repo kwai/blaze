@@ -83,5 +83,3 @@ case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
       }
     }
 }
-
-

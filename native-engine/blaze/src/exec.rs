@@ -285,7 +285,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                     log::error!("panic message: {}", panic_message);
                     jni_new_object!(
                         JavaRuntimeException,
-                        jni_new_string!("blaze native panics")?,
+                        jni_new_string!(format!("native executing panics: {}", panic_message))?,
                         JObject::null()
                     )?
                 };
