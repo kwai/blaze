@@ -16,8 +16,10 @@
 
 package org.apache.spark.sql.blaze.execution
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.channels.Channels
+import java.nio.channels.ReadableByteChannel
 
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
@@ -36,29 +38,38 @@ class ArrowWriterIterator(
     timeZoneId: String,
     taskContext: TaskContext,
     recordBatchSize: Int = 10000)
-    extends Iterator[IpcData] {
+    extends Iterator[ReadableByteChannel] {
 
   private val allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowWriterIterator", 0, Long.MaxValue)
   private val arrowSchema = ArrowUtils2.toArrowSchema(schema, timeZoneId)
   private val root = VectorSchemaRoot.create(arrowSchema, allocator)
+  private var finished = false
 
   taskContext.addTaskCompletionListener[Unit] { _ =>
     root.close()
     allocator.close()
   }
 
-  override def hasNext: Boolean = rowIter.hasNext
+  override def hasNext: Boolean =
+    !finished && {
+      if (!rowIter.hasNext) {
+        close()
+        return false
+      }
+      true
+    }
 
-  override def next(): IpcData = {
+  override def next(): ReadableByteChannel = {
     val arrowWriter = ArrowWriter.create(root)
-    while (rowIter.hasNext && root.getRowCount < recordBatchSize) {
+    var rowCount = 0
+    while (rowIter.hasNext && rowCount < recordBatchSize) {
       arrowWriter.write(rowIter.next())
+      rowCount += 1
     }
     arrowWriter.finish()
 
-    val outputStream = new ByteArrayOutputStream()
-    Utils.tryWithResource(outputStream) { outputStream =>
+    Utils.tryWithResource(new ByteArrayOutputStream()) { outputStream =>
       Utils.tryWithResource(Channels.newChannel(outputStream)) { channel =>
         val writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
         writer.start()
@@ -66,13 +77,17 @@ class ArrowWriterIterator(
         writer.end()
         writer.close()
       }
+      root.clear()
+      new SeekableInMemoryByteChannel(outputStream.toByteArray)
     }
-    val bytes = outputStream.toByteArray
-
-    IpcData(
-      new SeekableInMemoryByteChannel(bytes),
-      compressed = false,
-      bytes.length,
-      bytes.length)
   }
+
+  private def close(): Unit =
+    synchronized {
+      if (!finished) {
+        root.close()
+        allocator.close()
+        finished = true
+      }
+    }
 }

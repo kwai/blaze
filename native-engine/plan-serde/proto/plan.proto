@@ -33,8 +33,9 @@ message PhysicalPlanNode {
     FilterExecNode filter = 6;
     UnionExecNode union = 7;
     SortMergeJoinExecNode sort_merge_join = 8;
-    RenameColumnsExecNode rename_columns = 9;
-    EmptyPartitionsExecNode empty_partitions = 10;
+    HashJoinExecNode hash_join = 9;
+    RenameColumnsExecNode rename_columns = 10;
+    EmptyPartitionsExecNode empty_partitions = 11;
   }
 }
 
@@ -317,6 +318,16 @@ message SortMergeJoinExecNode {
   bool null_equals_null = 6;
 }
 
+message HashJoinExecNode {
+  PhysicalPlanNode left = 1;
+  PhysicalPlanNode right = 2;
+  repeated JoinOn on = 3;
+  JoinType join_type = 4;
+  PartitionMode partition_mode = 6;
+  bool null_equals_null = 7;
+  JoinFilter filter = 8;
+}
+
 message RenameColumnsExecNode {
   PhysicalPlanNode input = 1;
   repeated string renamed_column_names = 2;
@@ -381,6 +392,22 @@ message SortExecNode {
 message PhysicalHashRepartition {
   repeated PhysicalExprNode hash_expr = 1;
   uint64 partition_count = 2;
+}
+
+message JoinFilter {
+  PhysicalExprNode expression = 1;
+  repeated ColumnIndex column_indices = 2;
+  Schema schema = 3;
+}
+
+message ColumnIndex {
+  uint32 index = 1;
+  JoinSide side = 2;
+}
+
+enum JoinSide {
+  LEFT_SIDE = 0;
+  RIGHT_SIDE = 1;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

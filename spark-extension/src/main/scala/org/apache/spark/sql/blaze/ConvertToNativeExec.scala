@@ -50,6 +50,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = child.execute()
+    val numInputPartitions = inputRDD.getNumPartitions
     val timeZoneId = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
     val nativeMetrics = MetricNode(metrics, Nil)
 
@@ -59,17 +60,14 @@ case class ConvertToNativeExec(override val child: SparkPlan)
       inputRDD.partitions,
       inputRDD.dependencies,
       (partition, context) => {
-        val resourceId = "ConvertToNativeExec" +
-          s":stage=${context.stageId()}" +
-          s":partition=${context.partitionId()}" +
-          s":taskAttempt=${context.taskAttemptId()}" +
-          s":uuid=${UUID.randomUUID().toString}"
-        val provideIpcIterator = () => {
-          val inputRowIter = inputRDD.compute(partition, context)
-          val ipcIterator = new ArrowWriterIterator(inputRowIter, schema, timeZoneId, context)
-          new InterruptibleIterator(context, ipcIterator)
-        }
-        JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
+        val resourceId = s"ConvertToNativeExec:${UUID.randomUUID().toString}"
+        JniBridge.resourcesMap.put(
+          resourceId,
+          () => {
+            val inputRowIter = inputRDD.compute(partition, context)
+            val ipcIterator = new ArrowWriterIterator(inputRowIter, schema, timeZoneId, context)
+            new InterruptibleIterator(context, ipcIterator)
+          })
 
         PhysicalPlanNode
           .newBuilder()
@@ -77,7 +75,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
             ShuffleReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
-              .setNumPartitions(inputRDD.getNumPartitions)
+              .setNumPartitions(numInputPartitions)
               .setNativeShuffleId(resourceId)
               .build())
           .build()

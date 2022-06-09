@@ -16,19 +16,15 @@
 
 package org.apache.spark.sql.blaze
 
+import java.util.UUID
+
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-import scala.util.Try
 
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.execution.ArrowShuffleExchangeExec301
-import org.apache.spark.sql.blaze.plan.NativeFilterExec
-import org.apache.spark.sql.blaze.plan.NativeParquetScanExec
-import org.apache.spark.sql.blaze.plan.NativeProjectExec
-import org.apache.spark.sql.blaze.plan.NativeSortExec
-import org.apache.spark.sql.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.CollectLimitExec
 import org.apache.spark.sql.execution.FileSourceScanExec
@@ -44,20 +40,37 @@ import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.blaze.plan.NativeRenameColumnsExec
-import org.apache.spark.sql.blaze.plan.NativeSortMergeJoinExec
+import org.apache.spark.sql.blaze.execution.ArrowBroadcastExchangeExec
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
+import org.apache.spark.sql.catalyst.plans.FullOuter
+import org.apache.spark.sql.catalyst.plans.Inner
+import org.apache.spark.sql.catalyst.plans.LeftOuter
+import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
+import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
+import org.apache.spark.sql.execution.joins.BuildLeft
+import org.apache.spark.sql.execution.joins.BuildRight
+import org.apache.spark.sql.execution.plan.NativeBroadcastHashJoinExec
+import org.apache.spark.sql.execution.plan.NativeFilterExec
+import org.apache.spark.sql.execution.plan.NativeParquetScanExec
+import org.apache.spark.sql.execution.plan.NativeProjectExec
+import org.apache.spark.sql.execution.plan.NativeRenameColumnsExec
+import org.apache.spark.sql.execution.plan.NativeSortExec
+import org.apache.spark.sql.execution.plan.NativeSortMergeJoinExec
+import org.apache.spark.sql.execution.plan.NativeUnionExec
+import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
@@ -96,6 +109,8 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
         .transformUp {
           case exec: ShuffleExchangeExec if enableNativeShuffle =>
             tryConvert(exec, convertShuffleExchangeExec)
+          case exec: BroadcastExchangeExec if enableBhj =>
+            tryConvert(exec, convertBroadcastExchangeExec)
           case exec: FileSourceScanExec if enableScan =>
             tryConvert(exec, convertFileSourceScanExec)
           case exec: ProjectExec if Util.enableProject =>
@@ -108,6 +123,8 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
             tryConvert(exec, convertUnionExec)
           case exec: SortMergeJoinExec if enableSmj =>
             tryConvert(exec, convertSortMergeJoinExec)
+          case exec: BroadcastHashJoinExec if enableBhj =>
+            tryConvert(exec, convertBroadcastHashJoinExec)
           case exec => exec
         }
         .transformUp {
@@ -120,15 +137,20 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
         }
 
       // wrap with ConvertUnsafeRowExec if top exec is native
-      val topNeededConvertToUnsafeRow =
-        !Try(NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed))
-          .getOrElse(null)
-          .isInstanceOf[ShuffleExchangeLike]
-      if (topNeededConvertToUnsafeRow) {
-        sparkPlanTransformed = convertToUnsafeRow(sparkPlanTransformed)
+      // val topNeededConvertToUnsafeRow =
+      if (NativeSupports.isNative(sparkPlanTransformed)) {
+        val topNative = NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed)
+        val topNeededConvertToUnsafeRow = topNative match {
+          case _: ShuffleExchangeLike => false
+          case _: BroadcastExchangeLike => false
+          case _ => true
+        }
+        if (topNeededConvertToUnsafeRow) {
+          sparkPlanTransformed = convertToUnsafeRow(sparkPlanTransformed)
+        }
       }
 
-      logDebug(s"Transformed spark plan after postColumnarTransitions:\n${sparkPlanTransformed
+      logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
         .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
       sparkPlanTransformed
     }
@@ -151,8 +173,12 @@ private object Util extends Logging {
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "union", defaultValue = true)
   val enableSmj: Boolean =
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sortmergejoin", defaultValue = true)
+  val enableBhj: Boolean =
+    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "broadcasthashjoin", defaultValue = true)
   val preferNativeShuffle: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeShuffle", defaultValue = true)
+  val preferNativeBhj: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeBroadcastHashJoin", defaultValue = true)
 
   val skewJoinSortChildrenTag: TreeNodeTag[Boolean] = TreeNodeTag("skewJoinSortChildren")
 
@@ -271,43 +297,6 @@ private object Util extends Logging {
         if (Seq(left, right).exists(NativeSupports.isNative)) {
           logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
 
-          val extraColumnPrefix = s"__dummy_smjkey_"
-          var extraColumnId = 0
-
-          def buildJoinColumnsProject(
-              child: SparkPlan,
-              joinKeys: Seq[Expression]): (Seq[AttributeReference], NativeProjectExec) = {
-            val extraProjectList = ArrayBuffer[NamedExpression]()
-            val transformedKeys = ArrayBuffer[AttributeReference]()
-
-            joinKeys.foreach {
-              case attr: AttributeReference => transformedKeys.append(attr)
-              case expr =>
-                val aliasExpr = Alias(expr, s"${extraColumnPrefix}_${extraColumnId}")()
-                extraColumnId += 1
-                extraProjectList.append(aliasExpr)
-
-                val attr = AttributeReference(
-                  aliasExpr.name,
-                  aliasExpr.dataType,
-                  aliasExpr.nullable,
-                  aliasExpr.metadata)(aliasExpr.exprId, aliasExpr.qualifier)
-                transformedKeys.append(attr)
-            }
-            (transformedKeys, NativeProjectExec(child.output ++ extraProjectList, child))
-          }
-
-          def buildPostProject(child: NativeSortMergeJoinExec): NativeProjectExec = {
-            val projectList = child.output
-              .filter(!_.name.startsWith(extraColumnPrefix))
-              .map(
-                attr =>
-                  AttributeReference(attr.name, attr.dataType, attr.nullable, attr.metadata)(
-                    attr.exprId,
-                    attr.qualifier))
-            NativeProjectExec(projectList, child)
-          }
-
           var nativeLeft = left match {
             case l if !NativeSupports.isNative(l) => ConvertToNativeExec(l)
             case l => l
@@ -344,7 +333,7 @@ private object Util extends Logging {
             joinType)
 
           val postProjectedSmj = if (needPostProject) {
-            buildPostProject(smj)
+            buildPostJoinProject(smj)
           } else {
             smj
           }
@@ -365,6 +354,116 @@ private object Util extends Logging {
     exec
   }
 
+  def convertBroadcastHashJoinExec(exec: BroadcastHashJoinExec): SparkPlan = {
+    try {
+      exec match {
+        case BroadcastHashJoinExec(
+              leftKeys,
+              rightKeys,
+              joinType,
+              buildSide,
+              condition,
+              left,
+              right) =>
+          var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
+            case BuildRight if preferNativeBhj || NativeSupports.isNative(left) =>
+              val convertedLeft = left match {
+                case left if NativeSupports.isNative(left) => left
+                case left => ConvertToNativeExec(left)
+              }
+              (right, rightKeys, convertedLeft, leftKeys)
+
+            case BuildLeft if preferNativeBhj || NativeSupports.isNative(right) =>
+              val convertedRight = right match {
+                case right if NativeSupports.isNative(right) => right
+                case right => ConvertToNativeExec(right)
+              }
+              (left, leftKeys, convertedRight, rightKeys)
+
+            case _ =>
+              throw new NotImplementedError(
+                "Ignore BroadcastHashJoin with unsupported children structure")
+          }
+
+          var modifiedHashedKeys = hashedKeys
+          var modifiedProbedKeys = probedKeys
+          var needPostProject = false
+
+          if (hashedKeys.exists(!_.isInstanceOf[AttributeReference])) {
+            val (keys, exec) = buildJoinColumnsProject(hashed, hashedKeys)
+            modifiedHashedKeys = keys
+            hashed = exec
+            needPostProject = true
+          }
+          if (probedKeys.exists(!_.isInstanceOf[AttributeReference])) {
+            val (keys, exec) = buildJoinColumnsProject(nativeProbed, probedKeys)
+            modifiedProbedKeys = keys
+            nativeProbed = exec
+            needPostProject = true
+          }
+
+          val modifiedJoinType = buildSide match {
+            case BuildLeft => joinType
+            case BuildRight =>
+              joinType match { // reverse join type
+                case Inner => Inner
+                case FullOuter => FullOuter
+                case LeftOuter => RightOuter
+                case RightOuter => LeftOuter
+                case _ =>
+                  throw new NotImplementedError(
+                    "BHJ Semi/Anti join with BuildRight is not yet supported")
+              }
+          }
+
+          val bhj = NativeBroadcastHashJoinExec(
+            addRenameColumnsExec(hashed),
+            addRenameColumnsExec(nativeProbed),
+            modifiedHashedKeys,
+            modifiedProbedKeys,
+            exec.outputPartitioning,
+            exec.outputOrdering,
+            modifiedJoinType)
+
+          val postProjectedBhj = if (needPostProject) {
+            buildPostJoinProject(bhj)
+          } else {
+            bhj
+          }
+
+          val conditionedBhj = condition match {
+            case Some(condition) =>
+              if (condition.references.exists(a => !bhj.output.contains(a))) {
+                throw new NotImplementedError(
+                  "BHJ post filter with columns not existed in join output is not yet supported")
+              }
+              NativeFilterExec(condition, postProjectedBhj)
+            case None => postProjectedBhj
+          }
+          return conditionedBhj
+      }
+    } catch {
+      case e @ (_: NotImplementedError | _: Exception) =>
+        val underlyingBroadcast = exec.buildSide match {
+          case BuildLeft => getUnderlyingBroadcast(exec.left)
+          case BuildRight => getUnderlyingBroadcast(exec.right)
+        }
+        underlyingBroadcast.setTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag, false)
+    }
+    logDebug(s"Ignoring BroadcastHashJoinExec: ${exec.simpleStringWithNodeId()}")
+    exec
+  }
+
+  def convertBroadcastExchangeExec(exec: SparkPlan): SparkPlan = {
+    exec match {
+      case exec: BroadcastExchangeExec =>
+        val converted = ArrowBroadcastExchangeExec(exec.mode, convertToUnsafeRow(exec.child))
+        converted.setTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag, true)
+        return converted
+    }
+    exec
+  }
+
   def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
     if (!NativeSupports.isNative(exec)) {
       return exec
@@ -379,6 +478,40 @@ private object Util extends Logging {
     exec
   }
 
+  def buildJoinColumnsProject(
+      child: SparkPlan,
+      joinKeys: Seq[Expression]): (Seq[AttributeReference], NativeProjectExec) = {
+    val extraProjectList = ArrayBuffer[NamedExpression]()
+    val transformedKeys = ArrayBuffer[AttributeReference]()
+
+    joinKeys.foreach {
+      case attr: AttributeReference => transformedKeys.append(attr)
+      case expr =>
+        val aliasExpr =
+          Alias(expr, s"JOIN_KEY:${expr.toString()} (${UUID.randomUUID().toString})")()
+        extraProjectList.append(aliasExpr)
+
+        val attr = AttributeReference(
+          aliasExpr.name,
+          aliasExpr.dataType,
+          aliasExpr.nullable,
+          aliasExpr.metadata)(aliasExpr.exprId, aliasExpr.qualifier)
+        transformedKeys.append(attr)
+    }
+    (transformedKeys, NativeProjectExec(child.output ++ extraProjectList, child))
+  }
+
+  def buildPostJoinProject(child: SparkPlan): NativeProjectExec = {
+    val projectList = child.output
+      .filter(!_.name.startsWith("JOIN_KEY:"))
+      .map(
+        attr =>
+          AttributeReference(attr.name, attr.dataType, attr.nullable, attr.metadata)(
+            attr.exprId,
+            attr.qualifier))
+    NativeProjectExec(projectList, child)
+  }
+
   @tailrec
   def needRenameColumns(exec: SparkPlan): Boolean = {
     exec match {
@@ -387,6 +520,18 @@ private object Util extends Logging {
       case exec: CustomShuffleReaderExec => needRenameColumns(exec.child)
       case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec => true
       case _ => false
+    }
+  }
+
+  @tailrec
+  def getUnderlyingBroadcast(exec: SparkPlan): SparkPlan = {
+    exec match {
+      case exec: BroadcastExchangeLike =>
+        exec
+      case exec: BroadcastQueryStageExec =>
+        exec.plan
+      case exec: UnaryExecNode =>
+        getUnderlyingBroadcast(exec.child)
     }
   }
 }

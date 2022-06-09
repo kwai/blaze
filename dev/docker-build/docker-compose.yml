@@ -8,4 +8,6 @@ services:
       - ~/.cargo/registry:/root/.cargo/registry:rw
       - ~/.gradle:/root/.gradle:rw
       - ./../../:/blaze:rw
+      - ./../../target-docker:/blaze/target:rw
+      - ./../../target-docker/spark-extension-build:/blaze/spark-extension/build:rw
     command: "bash -c 'source ~/.bashrc && cd /blaze && ./release.sh'"

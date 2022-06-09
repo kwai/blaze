@@ -47,6 +47,8 @@ import org.apache.spark.sql.blaze.execution.ArrowBlockStoreShuffleReader301
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.CoalescedPartitionSpec
+import org.apache.spark.sql.execution.PartialMapperPartitionSpec
+import org.apache.spark.sql.execution.PartialReducerPartitionSpec
 import org.apache.spark.sql.execution.ShuffledRowRDD
 import org.apache.spark.sql.execution.ShufflePartitionSpec
 import org.apache.spark.sql.types.StructField
@@ -145,46 +147,63 @@ object NativeSupports extends Logging {
           (partition, taskContext) => {
 
             // use reflection to get partitionSpec because ShuffledRowRDDPartition is private
+            val shuffleManager = SparkEnv.get.shuffleManager
             val shuffledRDDPartitionClass =
               Class.forName("org.apache.spark.sql.execution.ShuffledRowRDDPartition")
             val specField = shuffledRDDPartitionClass.getDeclaredField("spec")
             specField.setAccessible(true)
+            val sqlMetricsReporter = taskContext.taskMetrics().createTempShuffleReadMetrics()
             val spec = specField.get(partition).asInstanceOf[ShufflePartitionSpec]
-
-            spec match {
+            val reader = spec match {
               case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
-                // store fetch iterator in jni resource before native compute
-                val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
-                JniBridge.resourcesMap.put(
-                  jniResourceId,
-                  () => {
-                    val shuffleManager = SparkEnv.get.shuffleManager
-                    shuffleManager
-                      .getReader(
-                        shuffleHandle,
-                        startReducerIndex,
-                        endReducerIndex,
-                        taskContext,
-                        taskContext.taskMetrics().createTempShuffleReadMetrics())
-                      .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
-                      .readIpc()
-                  })
+                SparkEnv.get.shuffleManager
+                  .getReader(
+                    shuffleHandle,
+                    startReducerIndex,
+                    endReducerIndex,
+                    taskContext,
+                    sqlMetricsReporter)
+                  .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
 
-                PhysicalPlanNode
-                  .newBuilder()
-                  .setShuffleReader(
-                    ShuffleReaderExecNode
-                      .newBuilder()
-                      .setSchema(nativeSchema)
-                      .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
-                      .setNativeShuffleId(jniResourceId)
-                      .build())
-                  .build()
+              case PartialReducerPartitionSpec(reducerIndex, startMapIndex, endMapIndex) =>
+                SparkEnv.get.shuffleManager
+                  .getReaderForRange(
+                    shuffleHandle,
+                    startMapIndex,
+                    endMapIndex,
+                    reducerIndex,
+                    reducerIndex + 1,
+                    taskContext,
+                    sqlMetricsReporter)
+                  .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
 
-              case unsupported =>
-                throw new NotImplementedError(
-                  s"CustomShuffleReader partition spec is not yet supported: ${unsupported}")
+              case PartialMapperPartitionSpec(mapIndex, startReducerIndex, endReducerIndex) =>
+                SparkEnv.get.shuffleManager
+                  .getReaderForRange(
+                    shuffleHandle,
+                    mapIndex,
+                    mapIndex + 1,
+                    startReducerIndex,
+                    endReducerIndex,
+                    taskContext,
+                    sqlMetricsReporter)
+                  .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
             }
+
+            // store fetch iterator in jni resource before native compute
+            val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
+            JniBridge.resourcesMap.put(jniResourceId, () => reader.readIpc())
+
+            PhysicalPlanNode
+              .newBuilder()
+              .setShuffleReader(
+                ShuffleReaderExecNode
+                  .newBuilder()
+                  .setSchema(nativeSchema)
+                  .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
+                  .setNativeShuffleId(jniResourceId)
+                  .build())
+              .build()
           })
     }
   }

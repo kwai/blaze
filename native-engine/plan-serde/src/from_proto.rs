@@ -23,17 +23,15 @@ use datafusion::datafusion_data_access::{FileMeta, SizedFile};
 use datafusion::datasource::listing::{FileRange, ListingTableUrl, PartitionedFile};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-
 use datafusion::logical_expr::BuiltinScalarFunction;
 use datafusion::logical_plan;
-
 use datafusion::logical_plan::*;
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
 use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
-
+use datafusion::physical_plan::hash_join::{HashJoinExec, PartitionMode};
+use datafusion::physical_plan::join_utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
 use datafusion::physical_plan::union::UnionExec;
-
 use datafusion::physical_plan::{
     expressions::{
         BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr,
@@ -49,7 +47,6 @@ use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
 use datafusion::scalar::ScalarValue;
-
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
@@ -319,6 +316,88 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(SortExec::new_with_partitioning(
                     exprs, input, true,
                 )))
+            }
+            PhysicalPlanType::HashJoin(hashjoin) => {
+                let left: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.left)?;
+                let right: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(hashjoin.right)?;
+                let on: Vec<(Column, Column)> = hashjoin
+                    .on
+                    .iter()
+                    .map(|col| {
+                        let left_col: Column = into_required!(col.left)?;
+                        let left_col_binded: Column =
+                            Column::new_with_schema(left_col.name(), &left.schema())?;
+                        let right_col: Column = into_required!(col.right)?;
+                        let right_col_binded: Column =
+                            Column::new_with_schema(right_col.name(), &right.schema())?;
+                        Ok((left_col_binded, right_col_binded))
+                    })
+                    .collect::<Result<_, Self::Error>>()?;
+
+                let join_type = protobuf::JoinType::from_i32(hashjoin.join_type)
+                    .ok_or_else(|| {
+                        proto_error(format!(
+                            "Received a HashJoinNode message with unknown JoinType {}",
+                            hashjoin.join_type
+                        ))
+                    })?;
+                let filter = hashjoin
+                    .filter
+                    .as_ref()
+                    .map(|f| {
+                        let schema = Arc::new(convert_required!(f.schema)?);
+                        let expression = f.expression
+                            .as_ref()
+                            .ok_or_else(|| {
+                                proto_error("Unexpected empty filter expression")
+                            })?
+                            .try_into()?;
+                        let column_indices = f.column_indices
+                            .iter()
+                            .map(|i| {
+                                let side = protobuf::JoinSide::from_i32(i.side)
+                                    .ok_or_else(|| proto_error(format!(
+                                        "Received a HashJoinNode message with JoinSide in Filter {}",
+                                        i.side))
+                                    )?;
+
+                                Ok(ColumnIndex {
+                                    index: i.index as usize,
+                                    side: side.into(),
+                                })
+                            })
+                            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
+
+                        Ok(JoinFilter::new(
+                            bind(expression, &schema)?,
+                            column_indices,
+                            schema.as_ref().clone()
+                        ))
+                    })
+                    .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
+
+                let partition_mode =
+                    protobuf::PartitionMode::from_i32(hashjoin.partition_mode)
+                        .ok_or_else(|| {
+                            proto_error(format!(
+                        "Received a HashJoinNode message with unknown PartitionMode {}",
+                        hashjoin.partition_mode
+                    ))
+                        })?;
+                let partition_mode = match partition_mode {
+                    protobuf::PartitionMode::CollectLeft => PartitionMode::CollectLeft,
+                    protobuf::PartitionMode::Partitioned => PartitionMode::Partitioned,
+                };
+                Ok(Arc::new(HashJoinExec::try_new(
+                    left,
+                    right,
+                    on,
+                    filter,
+                    &join_type.into(),
+                    partition_mode,
+                    &hashjoin.null_equals_null,
+                )?))
             }
             PhysicalPlanType::Union(union) => {
                 let inputs: Vec<Arc<dyn ExecutionPlan>> = union

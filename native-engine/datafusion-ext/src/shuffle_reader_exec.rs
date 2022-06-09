@@ -176,13 +176,8 @@ impl ShuffleReaderStream {
             self.reader = None;
             return Ok(false);
         }
-
-        let ipc = jni_call!(
-            ScalaIterator(self.segments.as_obj()).next() -> JObject
-        )?;
-
         let channel = jni_call!(
-            BlazeIpcData(ipc).readArrowData() -> JObject
+            ScalaIterator(self.segments.as_obj()).next() -> JObject
         )?;
 
         self.reader = Some(StreamReader::try_new(
@@ -192,7 +187,6 @@ impl ShuffleReaderStream {
 
         // channel ref must be explicitly deleted to avoid OOM
         jni_delete_local_ref!(channel)?;
-        jni_delete_local_ref!(ipc)?;
         Ok(true)
     }
 }

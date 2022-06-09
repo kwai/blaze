@@ -48,7 +48,7 @@ public class JniBridge {
   }
 
   public static Object getResource(String key) {
-    return resourcesMap.get(key);
+    return resourcesMap.remove(key);
   }
 
   public static TaskContext getTaskContext() {
@@ -65,19 +65,16 @@ public class JniBridge {
    * @return bytes read
    * @throws IOException
    */
-  public static int readFSDataInputStream(FSDataInputStream in, ByteBuffer bb, long pos)
-      throws IOException {
-    int bytesRead;
+  public static synchronized int readFSDataInputStream(
+      FSDataInputStream in, ByteBuffer bb, long pos) throws IOException {
 
-    synchronized (in) {
+    if (pos != in.getPos()) {
       in.seek(pos);
-      try {
-        bytesRead = in.read(bb);
-      } catch (UnsupportedOperationException e) {
-        ReadableByteChannel channel = Channels.newChannel(in);
-        bytesRead = channel.read(bb);
-      }
-      return bytesRead;
     }
+    ReadableByteChannel channel = Channels.newChannel(in);
+    int bbStartPosition = bb.position();
+
+    while (bb.hasRemaining() && channel.read(bb) >= 0) {}
+    return bb.position() - bbStartPosition;
   }
 }

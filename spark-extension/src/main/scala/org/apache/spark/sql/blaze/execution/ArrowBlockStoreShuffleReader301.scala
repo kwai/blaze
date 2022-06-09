@@ -17,6 +17,7 @@
 package org.apache.spark.sql.blaze.execution
 
 import java.io.InputStream
+import java.nio.channels.ReadableByteChannel
 
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
@@ -67,7 +68,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
       fetchContinuousBlocksInBatch).toCompletionIterator
   }
 
-  def readIpc(): Iterator[IpcData] = {
+  def readIpc(): Iterator[ReadableByteChannel] = {
     fetchIterator.flatMap {
       case (_, inputStream) =>
         IpcInputStreamIterator(inputStream, context)
@@ -76,12 +77,8 @@ class ArrowBlockStoreShuffleReader301[K, C](
 
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
-    val recordIter = readIpc().flatMap(ipc => {
-      if (ipc.ipcLengthUncompressed > 0) {
-        new ArrowReaderIterator(ipc, context).map((0, _)) // use 0 as key since it's not used
-      } else {
-        Nil
-      }
+    val recordIter = readIpc().flatMap(channel => {
+      new ArrowReaderIterator(channel, context).map((0, _)) // use 0 as key since it's not used
     })
 
     // Update the context task metrics for each record read.

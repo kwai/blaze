@@ -21,25 +21,28 @@ import java.io.InputStream
 import java.nio.channels.Channels
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.ReadableByteChannel
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.TaskContext
+import org.apache.spark.network.util.LimitedInputStream
 
 case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
-    extends Iterator[IpcData]
+    extends Iterator[ReadableByteChannel]
     with Logging {
 
-  private val channel = Channels.newChannel(in)
+  private[execution] val channel: ReadableByteChannel = Channels.newChannel(in)
   private val ipcLengthsBuf = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
 
   // NOTE:
   // since all ipcs are sharing the same input stream and channel, the second
   // hasNext() must be called after the first ipc has been completely processed.
 
-  private var consumed = true
+  private[execution] var consumed = true
   private var finished = false
   private var currentIpcLength = 0L
   private var currentIpcLengthUncompressed = 0L
+  private var currentLimitedInputStream: LimitedInputStream = _
 
   taskContext.addTaskCompletionListener[Unit](_ => {
     closeInputStream()
@@ -50,6 +53,11 @@ case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
       if (!consumed) {
         return true
       }
+      if (currentLimitedInputStream != null) {
+        currentLimitedInputStream.skip(Int.MaxValue)
+        currentLimitedInputStream = null
+      }
+
       ipcLengthsBuf.clear()
       while (ipcLengthsBuf.hasRemaining && channel.read(ipcLengthsBuf) >= 0) {}
 
@@ -65,14 +73,22 @@ case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
       ipcLengthsBuf.flip()
       currentIpcLength = ipcLengthsBuf.getLong
       currentIpcLengthUncompressed = ipcLengthsBuf.getLong
+
+      if (currentIpcLengthUncompressed == 0) { // skip empty ipc
+        return hasNext
+      }
       consumed = false
       return true
     }
   }
 
-  override def next(): IpcData = {
+  override def next(): ReadableByteChannel = {
+    assert(!consumed)
     consumed = true
-    IpcData(channel, compressed = true, currentIpcLength, currentIpcLengthUncompressed)
+    val is = new LimitedInputStream(Channels.newInputStream(channel), currentIpcLength, false)
+    val zs = ArrowShuffleManager301.compressionCodecForShuffling.compressedInputStream(is)
+    currentLimitedInputStream = is
+    Channels.newChannel(zs)
   }
 
   private def closeInputStream(): Unit =
