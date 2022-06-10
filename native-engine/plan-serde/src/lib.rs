@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::error::PlanSerDeError;
 use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 use datafusion::logical_plan::Operator;
 use datafusion::prelude::JoinType;
 use datafusion::scalar::ScalarValue;
-use crate::error::PlanSerDeError;
 
 // include the generated protobuf source as a submodule
 #[allow(clippy::all)]
