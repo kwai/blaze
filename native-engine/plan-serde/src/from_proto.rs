@@ -674,7 +674,8 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
                     .and_then(|file_group| file_group.files.get(0))
                     .map(|file| file.path.as_ref())
                     .unwrap_or("default"),
-                )?.object_store(),
+            )?
+            .object_store(),
             file_schema: schema,
             file_groups: self
                 .file_groups

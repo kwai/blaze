@@ -27,6 +27,7 @@ use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
+use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
 use futures::{FutureExt, StreamExt};
@@ -40,7 +41,6 @@ use plan_serde::protobuf::TaskDefinition;
 use prost::Message;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
 use tokio::runtime::Runtime;
-use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
 
 use crate::metrics::update_spark_metric_node;
 

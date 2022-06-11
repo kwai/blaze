@@ -50,6 +50,7 @@ import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
@@ -136,8 +137,6 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
 private object Util extends Logging {
   private val ENABLE_OPERATION = "spark.blaze.enable."
 
-  val enableWholeStage: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "wholestagewrapper", defaultValue = true)
   val enableNativeShuffle: Boolean =
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "shuffle", defaultValue = true)
   val enableScan: Boolean =
@@ -152,6 +151,8 @@ private object Util extends Logging {
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "union", defaultValue = true)
   val enableSmj: Boolean =
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sortmergejoin", defaultValue = true)
+  val preferNativeShuffle: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeShuffle", defaultValue = true)
 
   val skewJoinSortChildrenTag: TreeNodeTag[Boolean] = TreeNodeTag("skewJoinSortChildren")
 
@@ -174,9 +175,17 @@ private object Util extends Logging {
   def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
     val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
+
+    // NOTE: prefer native shuffling because we found it faster than jvm at the moment.
+    val convertedChild = outputPartitioning match {
+      case _: HashPartitioning if preferNativeShuffle && !NativeSupports.isNative(child) =>
+        ConvertToNativeExec(child)
+      case _ =>
+        child
+    }
     ArrowShuffleExchangeExec301(
       outputPartitioning,
-      addRenameColumnsExec(child),
+      addRenameColumnsExec(convertedChild),
       noUserSpecifiedNumPartition)
   }
 

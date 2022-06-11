@@ -44,7 +44,6 @@ use datafusion::execution::memory_manager::MemoryConsumerId;
 use datafusion::execution::memory_manager::MemoryManager;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::from_slice::FromSlice;
-use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::BaselineMetrics;
@@ -66,30 +65,72 @@ use crate::spark_hash::{create_hashes, pmod};
 
 #[derive(Default)]
 struct PartitionBuffer {
-    frozen: Vec<RecordBatch>,
+    frozen: Vec<u8>,
     active: Option<MutableRecordBatch>,
 }
 
 impl PartitionBuffer {
-    fn output_all(&mut self) -> Result<Vec<RecordBatch>> {
-        let mut output: Vec<RecordBatch> = vec![];
-        output.append(&mut self.frozen);
-        if let Some(mut mutable) = self.active.take() {
-            let result = mutable.output_and_reset()?;
-            output.push(result);
-            self.active = Some(mutable);
+    fn add_batch(&mut self, batch: RecordBatch) -> Result<usize> {
+        let output = &mut self.frozen;
+        let mem_used_old = output.capacity();
+        let start_pos = output.len();
+
+        // write ipc_length placeholder
+        output.write_all(&[0u8; 16])?;
+
+        struct CountedWriter<W: Write> {
+            inner: W,
+            count: usize,
         }
-        Ok(output)
+        impl<W: Write> Write for CountedWriter<W> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let written = self.inner.write(buf)?;
+                self.count += written;
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.inner.flush()
+            }
+        }
+
+        // write ipc data
+        let mut arrow_writer = StreamWriter::try_new(
+            CountedWriter {
+                inner: zstd::Encoder::new(output, 1)?,
+                count: 0,
+            },
+            batch.schema().as_ref(),
+        )?;
+        arrow_writer.write(&batch)?;
+        arrow_writer.finish()?;
+
+        let CountedWriter {
+            inner: zwriter,
+            count: written_length,
+        } = arrow_writer.into_inner()?;
+
+        let output = zwriter.finish()?;
+        let ipc_length_uncompressed = written_length as u64;
+        let ipc_length = output.len() - start_pos - 16;
+
+        // fill ipc length
+        let mut output_ipc_length = &mut output[start_pos..];
+        output_ipc_length.write_all(&ipc_length.to_le_bytes()[..])?;
+        output_ipc_length.write_all(&ipc_length_uncompressed.to_le_bytes()[..])?;
+
+        // return the increased amount of memory used
+        let mem_used_new = output.capacity();
+        Ok(mem_used_new - mem_used_old)
     }
 
-    fn output_clean(&mut self) -> Result<Vec<RecordBatch>> {
-        let mut output: Vec<RecordBatch> = vec![];
-        output.append(&mut self.frozen);
+    fn finish(&mut self) -> Result<()> {
         if let Some(mut mutable) = self.active.take() {
-            let result = mutable.output()?;
-            output.push(result);
+            let result = mutable.output_and_reset()?;
+            self.add_batch(result)?;
+            self.active = Some(mutable);
         }
-        Ok(output)
+        Ok(())
     }
 }
 
@@ -215,13 +256,6 @@ impl ShuffleRepartitioner {
         }
         let _timer = self.metrics.elapsed_compute().timer();
 
-        // TODO: this is a rough estimation of memory consumed for a input batch
-        // for example, for first batch seen, we need to open as much output buffer
-        // as we encountered in this batch, thus the memory consumption is `rough`.
-        let size = batch_byte_size(&input);
-        self.try_grow(size).await?;
-        self.metrics.mem_used().add(size);
-
         let num_output_partitions = self.num_output_partitions;
         match &self.partitioning {
             Partitioning::Hash(exprs, _) => {
@@ -260,7 +294,13 @@ impl ShuffleRepartitioner {
                     if partition_indices.len() > self.batch_size {
                         let output_batch =
                             RecordBatch::try_new(input.schema().clone(), columns)?;
-                        output.frozen.push(output_batch);
+                        let increase_mem_used = output.add_batch(output_batch)?;
+
+                        // increase memory usage
+                        // NOTE: memory usage increasing should be executed before
+                        //  allocating. so this counter is not accurate.
+                        self.try_grow(increase_mem_used).await?;
+                        self.metrics.mem_used().add(increase_mem_used);
                     } else {
                         if output.active.is_none() {
                             let buffer = MutableRecordBatch::new(
@@ -283,7 +323,13 @@ impl ShuffleRepartitioner {
 
                         if batch.is_full() {
                             let result = batch.output_and_reset()?;
-                            output.frozen.push(result);
+                            let increase_mem_used = output.add_batch(result)?;
+
+                            // increase memory usage
+                            // NOTE: memory usage increasing should be executed before
+                            //  allocating. so this counter is not accurate.
+                            self.try_grow(increase_mem_used).await?;
+                            self.metrics.mem_used().add(increase_mem_used);
                         }
                         output.active = Some(batch);
                     }
@@ -305,12 +351,11 @@ impl ShuffleRepartitioner {
         let _timer = self.metrics.elapsed_compute().timer();
         let num_output_partitions = self.num_output_partitions;
         let mut buffered_partitions = self.buffered_partitions.lock().await;
-        let mut output_batches: Vec<Vec<RecordBatch>> =
-            vec![vec![]; num_output_partitions];
+        let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
 
         for i in 0..num_output_partitions {
-            let partition_batches = buffered_partitions[i].output_clean()?;
-            output_batches[i] = partition_batches;
+            buffered_partitions[i].finish()?;
+            output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
         }
 
         let mut spills = self.spills.lock().await;
@@ -318,7 +363,6 @@ impl ShuffleRepartitioner {
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
-        let input_schema = self.schema.clone();
 
         std::mem::drop(_timer);
         let elapsed_compute = self.metrics.elapsed_compute().clone();
@@ -334,14 +378,7 @@ impl ShuffleRepartitioner {
 
             for i in 0..num_output_partitions {
                 offsets[i] = output_data.stream_position()?;
-                let in_mem_batches = &output_batches[i];
-                if in_mem_batches.iter().any(|batch| batch.num_rows() > 0) {
-                    write_compressed_ipc(
-                        input_schema.clone(),
-                        in_mem_batches,
-                        &mut output_data,
-                    )?;
-                }
+                output_data.write_all(&output_batches[i])?;
 
                 // append partition in each spills
                 for spill in &output_spills {
@@ -396,15 +433,14 @@ impl ShuffleRepartitioner {
 /// consume the `buffered_partitions` and do spill into a single temp shuffle output file
 async fn spill_into(
     buffered_partitions: &mut [PartitionBuffer],
-    schema: SchemaRef,
     path: &Path,
     num_output_partitions: usize,
 ) -> Result<Vec<u64>> {
-    let mut output_batches: Vec<Vec<RecordBatch>> = vec![vec![]; num_output_partitions];
+    let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
 
     for i in 0..num_output_partitions {
-        let partition_batches = buffered_partitions[i].output_all()?;
-        output_batches[i] = partition_batches;
+        buffered_partitions[i].finish()?;
+        output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
     }
     let path = path.to_owned();
 
@@ -418,10 +454,7 @@ async fn spill_into(
 
         for i in 0..num_output_partitions {
             offsets[i] = spill_data.seek(SeekFrom::End(0))?;
-            let partition_batches = &output_batches[i];
-            if partition_batches.iter().any(|batch| batch.num_rows() > 0) {
-                write_compressed_ipc(schema.clone(), partition_batches, &mut spill_data)?;
-            }
+            spill_data.write_all(&output_batches[i])?;
         }
         // add one extra offset at last to ease partition length computation
         offsets[num_output_partitions] = spill_data.seek(SeekFrom::End(0))?;
@@ -482,7 +515,6 @@ impl MemoryConsumer for ShuffleRepartitioner {
         let spillfile = self.runtime.disk_manager.create_tmp_file()?;
         let offsets = spill_into(
             &mut *buffered_partitions,
-            self.schema.clone(),
             spillfile.path(),
             self.num_output_partitions,
         )
@@ -660,60 +692,4 @@ pub async fn external_shuffle(
     }
 
     repartitioner.shuffle_write().await
-}
-
-fn write_compressed_ipc(
-    schema: SchemaRef,
-    batches: &[RecordBatch],
-    output: &mut File,
-) -> Result<()> {
-    let start = output.stream_position()?;
-    output.write_all(&[0u8; 16])?; // ipc_length placeholder
-
-    struct CountedWriter<W: Write> {
-        inner: W,
-        count: usize,
-    }
-    impl<W: Write> Write for CountedWriter<W> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let written = self.inner.write(buf)?;
-            self.count += written;
-            Ok(written)
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.inner.flush()
-        }
-    }
-
-    // write ipc data
-    let mut arrow_writer = StreamWriter::try_new(
-        CountedWriter {
-            inner: zstd::Encoder::new(output, 1)?,
-            count: 0,
-        },
-        schema.as_ref(),
-    )?;
-    for batch in batches {
-        if batch.num_rows() > 0 {
-            arrow_writer.write(batch)?;
-        }
-    }
-    arrow_writer.finish()?;
-    let CountedWriter {
-        inner: zwriter,
-        count: written_length,
-    } = arrow_writer.into_inner()?;
-
-    let ipc_length_uncompressed = written_length as u64;
-    let output = zwriter.finish()?;
-
-    // fill ipc length
-    let ipc_length = output.stream_position()? - start - 16;
-    output.seek(SeekFrom::Start(start))?;
-    output.write_all(&ipc_length.to_le_bytes()[..])?;
-    output.write_all(&ipc_length_uncompressed.to_le_bytes()[..])?;
-
-    output.seek(SeekFrom::End(0))?;
-    Ok(())
 }

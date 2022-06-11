@@ -17,10 +17,10 @@
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
-    Array, ArrayRef, BooleanArray, Date32Array, Date64Array, DictionaryArray, Int16Array,
-    Int32Array, Int64Array, Int8Array, LargeStringArray, StringArray,
-    TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
-    TimestampSecondArray,
+    Array, ArrayRef, BooleanArray, Date32Array, Date64Array, DecimalArray,
+    DictionaryArray, Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray,
+    StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+    TimestampNanosecondArray, TimestampSecondArray,
 };
 use datafusion::arrow::datatypes::{
     ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type,
@@ -166,6 +166,28 @@ macro_rules! hash_array_primitive_i64 {
     };
 }
 
+macro_rules! hash_array_decimal {
+    ($array_type:ident, $column: ident, $hashes: ident) => {
+        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+
+        if array.null_count() == 0 {
+            for (i, hash) in $hashes.iter_mut().enumerate() {
+                *hash =
+                    spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *hash);
+            }
+        } else {
+            for (i, hash) in $hashes.iter_mut().enumerate() {
+                if !array.is_null(i) {
+                    *hash = spark_compatible_murmur3_hash(
+                        array.value(i).to_le_bytes(),
+                        *hash,
+                    );
+                }
+            }
+        }
+    };
+}
+
 /// Hash the values in a dictionary array
 fn create_hashes_dictionary<K: ArrowDictionaryKeyType>(
     array: &ArrayRef,
@@ -277,6 +299,9 @@ pub fn create_hashes<'a>(
             }
             DataType::LargeUtf8 => {
                 hash_array!(LargeStringArray, col, str, hashes_buffer);
+            }
+            DataType::Decimal(_, _) => {
+                hash_array_decimal!(DecimalArray, col, hashes_buffer);
             }
             DataType::Dictionary(index_type, _) => match **index_type {
                 DataType::Int8 => {
