@@ -338,9 +338,10 @@ private object Util extends Logging {
             smj
           }
 
+          val postProjectExprIds = postProjectedSmj.output.map(_.exprId.id).toSet
           val conditionedSmj = condition match {
             case Some(condition) =>
-              if (condition.references.exists(a => !smj.output.contains(a))) {
+              if (!condition.references.map(_.exprId.id).toSet.subsetOf(postProjectExprIds)) {
                 throw new NotImplementedError(
                   "SMJ post filter with columns not existed in join output is not yet supported")
               }
@@ -431,9 +432,10 @@ private object Util extends Logging {
             bhj
           }
 
+          val postProjectExprIds = postProjectedBhj.output.map(_.exprId.id).toSet
           val conditionedBhj = condition match {
             case Some(condition) =>
-              if (condition.references.exists(a => !bhj.output.contains(a))) {
+              if (!condition.references.map(_.exprId.id).toSet.subsetOf(postProjectExprIds)) {
                 throw new NotImplementedError(
                   "BHJ post filter with columns not existed in join output is not yet supported")
               }
