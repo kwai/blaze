@@ -25,6 +25,7 @@ import java.util.function.Supplier
 import java.util.UUID
 
 import scala.collection.JavaConverters._
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 
@@ -93,12 +94,36 @@ case class ArrowShuffleExchangeExec301(
         SQLMetrics.createSizeMetric(sparkContext, "data size")) ++ readMetrics ++ writeMetrics
 
   @transient lazy val inputRDD: RDD[InternalRow] = child.execute()
+
+  private val estimatedIpcCount: Int =
+    Math.max(child.outputPartitioning.numPartitions * outputPartitioning.numPartitions, 1)
+
   // 'mapOutputStatisticsFuture' is only needed when enable AQE.
   @transient override lazy val mapOutputStatisticsFuture: Future[MapOutputStatistics] = {
     if (inputRDD.getNumPartitions == 0) {
       Future.successful(null)
     } else {
-      sparkContext.submitMapStage(shuffleDependency)
+      sparkContext
+        .submitMapStage(shuffleDependency)
+        .map(stat => {
+          // NOTE:
+          //  in the case that one ipc contains little number of records, the data size may
+          //  be much more larger than unsafe row shuffle (because of a lot of redundant
+          //  arrow headers). so a data size factor is needed here to prevent incorrect
+          //  conversion to later SMJ/BHJ.
+          //
+          // assume compressed ipc size is smaller than unsafe rows only when the number of
+          //  records are larger than 5
+          //
+          val totalShuffleRecordsWritten =
+            metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN).value
+          val avgRecordsPerIpc = totalShuffleRecordsWritten / estimatedIpcCount
+          val dataSizeFactor = Math.min(Math.max(avgRecordsPerIpc / 5.0, 0.1), 1.0)
+
+          new MapOutputStatistics(
+            stat.shuffleId,
+            stat.bytesByPartitionId.map(n => (n * dataSizeFactor).ceil.toLong))
+        })
     }
   }
 
@@ -176,10 +201,9 @@ case class ArrowShuffleExchangeExec301(
     val rdd = doExecute()
     val nativeMetrics =
       MetricNode(
-        metrics
-          .filterKeys(key => !key.startsWith("shufle_write"))
-          .updated("output_rows", metrics("shuffle_read_rows"))
-          .updated("elapsed_compute", metrics("shuffle_read_elapsed_compute")),
+        Map(
+          "output_rows" -> metrics("shuffle_read_rows"),
+          "elapsed_compute" -> metrics("shuffle_read_elapsed_compute")),
         Nil)
 
     new NativeRDD(
@@ -191,20 +215,15 @@ case class ArrowShuffleExchangeExec301(
 
         // store fetch iterator in jni resource before native compute
         val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
-        JniBridge.resourcesMap.put(
-          jniResourceId,
-          () => {
-            val shuffleManager = SparkEnv.get.shuffleManager
-            shuffleManager
-              .getReader(
-                shuffleHandle,
-                partition.index,
-                partition.index + 1,
-                taskContext,
-                taskContext.taskMetrics().createTempShuffleReadMetrics())
-              .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
-              .readIpc()
-          })
+        val reader = SparkEnv.get.shuffleManager
+          .getReader(
+            shuffleHandle,
+            partition.index,
+            partition.index + 1,
+            taskContext,
+            taskContext.taskMetrics().createTempShuffleReadMetrics())
+          .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
+        JniBridge.resourcesMap.put(jniResourceId, () => reader.readIpc())
 
         PhysicalPlanNode
           .newBuilder()
@@ -242,10 +261,9 @@ object ArrowShuffleExchangeExec301 {
       outputPartitioning.asInstanceOf[HashPartitioning]
 
     val nativeMetrics = MetricNode(
-      metrics
-        .filterKeys(key => !key.startsWith("shufle_read"))
-        .updated("output_rows", metrics("shuffle_write_rows"))
-        .updated("elapsed_compute", metrics("shuffle_write_elapsed_compute")),
+      Map(
+        "output_rows" -> metrics("shuffle_write_rows"),
+        "elapsed_compute" -> metrics("shuffle_write_elapsed_compute")),
       Seq(nativeInputRDD.metrics))
 
     val nativeShuffleRDD = new NativeRDD(

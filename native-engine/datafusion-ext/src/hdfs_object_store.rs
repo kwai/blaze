@@ -98,9 +98,9 @@ impl ObjectReader for HDFSObjectReader {
     fn sync_chunk_reader(
         &self,
         start: u64,
-        _: usize,
+        length: usize,
     ) -> Result<Box<dyn Read + Send + Sync>> {
-        self.get_reader(start)
+        self.get_reader(start, length)
     }
 
     fn sync_reader(&self) -> Result<Box<dyn Read + Send + Sync>> {
@@ -113,11 +113,19 @@ impl ObjectReader for HDFSObjectReader {
 }
 
 impl HDFSObjectReader {
-    fn get_reader(&self, start: u64) -> Result<Box<dyn Read + Send + Sync>> {
-        let reader = BufReader::new(HDFSFileReader {
-            hdfs_input_stream: self.hdfs_input_stream.clone(),
-            pos: start,
-        });
+    fn get_reader(
+        &self,
+        start: u64,
+        length: usize,
+    ) -> Result<Box<dyn Read + Send + Sync>> {
+        let buf_len = length.max(1048576);
+        let reader = BufReader::with_capacity(
+            buf_len,
+            HDFSFileReader {
+                hdfs_input_stream: self.hdfs_input_stream.clone(),
+                pos: start,
+            },
+        );
         Ok(Box::new(reader))
     }
 }

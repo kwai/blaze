@@ -166,7 +166,7 @@ private[spark] class DiskBlockArrowIPCWriter(
         writeMetrics.incWriteTime(System.nanoTime() - start)
       }
 
-      val pos = randomAccessFile.getFilePointer
+      val pos = randomAccessFile.length()
       val fileSegment = new FileSegment(file, committedPosition, pos - committedPosition)
       committedPosition = pos
       // In certain compression codecs, more bytes are written after streams are closed
@@ -196,7 +196,7 @@ private[spark] class DiskBlockArrowIPCWriter(
         mcs.flush()
 
         // append length
-        val current = randomAccessFile.getFilePointer
+        val current = randomAccessFile.length()
         val ipcLength = current - partitionStart - ipcLengthBuffer.capacity()
         val ipcLengthUncompressed = countingUncompressed.getByteCount
         ipcLengthBuffer.clear()
@@ -313,7 +313,7 @@ private[spark] class DiskBlockArrowIPCWriter(
   }
 
   private def startPartition(): Unit = {
-    partitionStart = randomAccessFile.getFilePointer
+    partitionStart = randomAccessFile.length()
     currentRowCount = 0
     currentPartitionRowCount = 0
   }
@@ -331,7 +331,7 @@ private[spark] class DiskBlockArrowIPCWriter(
    * Note that this is only valid before the underlying streams are closed.
    */
   private def updateBytesWritten(): Unit = {
-    val pos = randomAccessFile.getFilePointer
+    val pos = randomAccessFile.length()
     writeMetrics.incBytesWritten(pos - reportedPosition)
     reportedPosition = pos
   }

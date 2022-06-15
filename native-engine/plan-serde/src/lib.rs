@@ -15,6 +15,7 @@
 use crate::error::PlanSerDeError;
 use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 use datafusion::logical_plan::Operator;
+use datafusion::physical_plan::join_utils::JoinSide;
 use datafusion::prelude::JoinType;
 use datafusion::scalar::ScalarValue;
 
@@ -97,6 +98,15 @@ impl From<protobuf::JoinType> for JoinType {
             protobuf::JoinType::Full => JoinType::Full,
             protobuf::JoinType::Semi => JoinType::Semi,
             protobuf::JoinType::Anti => JoinType::Anti,
+        }
+    }
+}
+
+impl From<protobuf::JoinSide> for JoinSide {
+    fn from(t: protobuf::JoinSide) -> Self {
+        match t {
+            protobuf::JoinSide::LeftSide => JoinSide::Left,
+            protobuf::JoinSide::RightSide => JoinSide::Right,
         }
     }
 }

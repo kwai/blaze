@@ -44,11 +44,11 @@ use datafusion::execution::memory_manager::MemoryConsumerId;
 use datafusion::execution::memory_manager::MemoryManager;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::from_slice::FromSlice;
+use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::memory::MemoryStream;
-use datafusion::physical_plan::metrics::BaselineMetrics;
-use datafusion::physical_plan::metrics::CompositeMetricsSet;
 use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
@@ -71,6 +71,9 @@ struct PartitionBuffer {
 
 impl PartitionBuffer {
     fn add_batch(&mut self, batch: RecordBatch) -> Result<usize> {
+        if batch.num_rows() == 0 {
+            return Ok(0);
+        }
         let output = &mut self.frozen;
         let mem_used_old = output.capacity();
         let start_pos = output.len();
@@ -256,6 +259,16 @@ impl ShuffleRepartitioner {
         }
         let _timer = self.metrics.elapsed_compute().timer();
 
+        // NOTE: in shuffle writer exec, the output_rows metrics represents the
+        // number of rows those are written to output data file.
+        self.metrics.record_output(input.num_rows());
+
+        // a batch is inserted into active builder of each partition, so the
+        // uncompressed memory size of the batch must be consumed first
+        let batch_mem_size = batch_byte_size(&input);
+        self.try_grow(batch_mem_size).await?;
+        self.metrics.mem_used().add(batch_mem_size);
+
         let num_output_partitions = self.num_output_partitions;
         match &self.partitioning {
             Partitioning::Hash(exprs, _) => {
@@ -294,13 +307,18 @@ impl ShuffleRepartitioner {
                     if partition_indices.len() > self.batch_size {
                         let output_batch =
                             RecordBatch::try_new(input.schema().clone(), columns)?;
-                        let increase_mem_used = output.add_batch(output_batch)?;
 
-                        // increase memory usage
-                        // NOTE: memory usage increasing should be executed before
-                        //  allocating. so this counter is not accurate.
-                        self.try_grow(increase_mem_used).await?;
-                        self.metrics.mem_used().add(increase_mem_used);
+                        let output_batch_mem_size = batch_byte_size(&output_batch);
+                        let increase_mem_used = output.add_batch(output_batch)?;
+                        let to_shrink = self
+                            .mem_used()
+                            .min(output_batch_mem_size - increase_mem_used);
+
+                        // to_shrink = (compressed - uncompressed)
+                        self.shrink(to_shrink);
+                        self.metrics
+                            .mem_used()
+                            .set(self.metrics.mem_used().value() - to_shrink);
                     } else {
                         if output.active.is_none() {
                             let buffer = MutableRecordBatch::new(
@@ -323,13 +341,17 @@ impl ShuffleRepartitioner {
 
                         if batch.is_full() {
                             let result = batch.output_and_reset()?;
+                            let result_batch_mem_size = batch_byte_size(&result);
                             let increase_mem_used = output.add_batch(result)?;
+                            let to_shrink = self
+                                .mem_used()
+                                .min(result_batch_mem_size - increase_mem_used);
 
-                            // increase memory usage
-                            // NOTE: memory usage increasing should be executed before
-                            //  allocating. so this counter is not accurate.
-                            self.try_grow(increase_mem_used).await?;
-                            self.metrics.mem_used().add(increase_mem_used);
+                            // to_shrink = (compressed - uncompressed)
+                            self.shrink(to_shrink);
+                            self.metrics
+                                .mem_used()
+                                .set(self.metrics.mem_used().value() - to_shrink);
                         }
                         output.active = Some(batch);
                     }
@@ -379,6 +401,7 @@ impl ShuffleRepartitioner {
             for i in 0..num_output_partitions {
                 offsets[i] = output_data.stream_position()?;
                 output_data.write_all(&output_batches[i])?;
+                output_batches[i].clear();
 
                 // append partition in each spills
                 for spill in &output_spills {
@@ -453,11 +476,12 @@ async fn spill_into(
             .open(path)?;
 
         for i in 0..num_output_partitions {
-            offsets[i] = spill_data.seek(SeekFrom::End(0))?;
+            offsets[i] = spill_data.stream_position()?;
             spill_data.write_all(&output_batches[i])?;
+            output_batches[i].clear();
         }
         // add one extra offset at last to ease partition length computation
-        offsets[num_output_partitions] = spill_data.seek(SeekFrom::End(0))?;
+        offsets[num_output_partitions] = spill_data.stream_position()?;
         Ok(offsets)
     })
     .await
@@ -553,8 +577,8 @@ pub struct ShuffleWriterExec {
     output_data_file: String,
     /// Output index file path
     output_index_file: String,
-    /// Containing all metrics set created during sort
-    all_metrics: CompositeMetricsSet,
+    /// Metrics
+    metrics: ExecutionPlanMetricsSet,
 }
 
 #[async_trait]
@@ -604,7 +628,7 @@ impl ExecutionPlan for ShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let input = self.input.execute(partition, context.clone())?;
-        let metrics = self.all_metrics.new_intermediate_baseline(partition);
+        let metrics = BaselineMetrics::new(&self.metrics, 0);
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
@@ -625,7 +649,7 @@ impl ExecutionPlan for ShuffleWriterExec {
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
-        Some(self.all_metrics.aggregate_all())
+        Some(self.metrics.clone_inner())
     }
 
     fn fmt_as(
@@ -656,7 +680,7 @@ impl ShuffleWriterExec {
         Ok(ShuffleWriterExec {
             input,
             partitioning,
-            all_metrics: CompositeMetricsSet::new(),
+            metrics: ExecutionPlanMetricsSet::new(),
             output_data_file,
             output_index_file,
         })
@@ -690,6 +714,5 @@ pub async fn external_shuffle(
         let batch = batch?;
         repartitioner.insert_batch(batch).await?;
     }
-
     repartitioner.shuffle_write().await
 }

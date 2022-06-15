@@ -14,32 +14,35 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.plan
-
-import scala.collection.JavaConverters._
+package org.apache.spark.sql.execution.plan
 
 import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.FilterExec
+import org.blaze.protobuf.FilterExecNode
 import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.RenameColumnsExecNode
 
-case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnNames: Seq[String])
+case class NativeFilterExec(condition: Expression, override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
+
+  override lazy val metrics: Map[String, SQLMetric] =
+    NativeSupports.getDefaultNativeMetrics(sparkContext)
 
   override def output: Seq[Attribute] = child.output
   override def outputPartitioning: Partitioning = child.outputPartitioning
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+  private val nativeFilterExpr = NativeConverters.convertExpr(condition)
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
@@ -52,14 +55,15 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
       inputRDD.dependencies,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
-        val nativeRenameColumnsExec = RenameColumnsExecNode
+        val nativeFilterExec = FilterExecNode
           .newBuilder()
           .setInput(inputRDD.nativePlan(inputPartition, taskContext))
-          .addAllRenamedColumnNames(renamedColumnNames.asJava)
+          .setExpr(nativeFilterExpr)
           .build()
-        PhysicalPlanNode.newBuilder().setRenameColumns(nativeRenameColumnsExec).build()
+        PhysicalPlanNode.newBuilder().setFilter(nativeFilterExec).build()
       })
   }
 
-  override def doCanonicalize(): SparkPlan = child.canonicalized
+  override def doCanonicalize(): SparkPlan =
+    FilterExec(condition, child).canonicalized
 }

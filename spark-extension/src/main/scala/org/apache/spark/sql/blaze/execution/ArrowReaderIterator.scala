@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.blaze.execution
 
+import java.nio.channels.ReadableByteChannel
+
 import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.blaze.FFIHelper
 import org.apache.spark.sql.util2.ArrowUtils2
 
-class ArrowReaderIterator(ipc: IpcData, taskContext: TaskContext) extends Iterator[InternalRow] {
+class ArrowReaderIterator(channel: ReadableByteChannel, taskContext: TaskContext)
+    extends Iterator[InternalRow] {
+
   private var allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowReaderIterator", 0, Long.MaxValue)
-  private var arrowReader = new ArrowStreamReader(ipc.readArrowData, allocator)
+  private var arrowReader = new ArrowStreamReader(channel, allocator)
   private var root = arrowReader.getVectorSchemaRoot
   private var rowIter = nextBatch()
 

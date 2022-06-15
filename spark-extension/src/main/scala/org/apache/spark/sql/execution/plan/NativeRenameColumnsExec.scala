@@ -14,66 +14,32 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.plan
+package org.apache.spark.sql.execution.plan
 
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.NullsFirst
 import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.plans.physical.Distribution
-import org.apache.spark.sql.catalyst.plans.physical.OrderedDistribution
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.SortExec
-import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.PhysicalSortExprNode
-import org.blaze.protobuf.SortExecNode
+import org.blaze.protobuf.RenameColumnsExecNode
 
-case class NativeSortExec(
-    sortOrder: Seq[SortOrder],
-    global: Boolean,
-    override val child: SparkPlan)
+case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnNames: Seq[String])
     extends UnaryExecNode
     with NativeSupports {
 
+  override def output: Seq[Attribute] = child.output
+  override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
-
-  override def output: Seq[Attribute] = child.output
-
-  override def outputOrdering: Seq[SortOrder] = sortOrder
-
-  override def outputPartitioning: Partitioning = child.outputPartitioning
-
-  override def requiredChildDistribution: Seq[Distribution] =
-    if (global) {
-      OrderedDistribution(sortOrder) :: Nil
-    } else {
-      UnspecifiedDistribution :: Nil
-    }
-
-  private val nativeSortExprs = sortOrder.map { sortOrder =>
-    PhysicalExprNode
-      .newBuilder()
-      .setSort(
-        PhysicalSortExprNode
-          .newBuilder()
-          .setExpr(NativeConverters.convertExpr(sortOrder.child))
-          .setAsc(sortOrder.direction == Ascending)
-          .setNullsFirst(sortOrder.nullOrdering == NullsFirst)
-          .build())
-      .build()
-  }
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
@@ -86,15 +52,14 @@ case class NativeSortExec(
       inputRDD.dependencies,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
-        val nativeSortExec = SortExecNode
+        val nativeRenameColumnsExec = RenameColumnsExecNode
           .newBuilder()
           .setInput(inputRDD.nativePlan(inputPartition, taskContext))
-          .addAllExpr(nativeSortExprs.asJava)
+          .addAllRenamedColumnNames(renamedColumnNames.asJava)
           .build()
-        PhysicalPlanNode.newBuilder().setSort(nativeSortExec).build()
+        PhysicalPlanNode.newBuilder().setRenameColumns(nativeRenameColumnsExec).build()
       })
   }
 
-  override def doCanonicalize(): SparkPlan =
-    SortExec(sortOrder, global, child, testSpillFrequency = 0).canonicalized
+  override def doCanonicalize(): SparkPlan = child.canonicalized
 }

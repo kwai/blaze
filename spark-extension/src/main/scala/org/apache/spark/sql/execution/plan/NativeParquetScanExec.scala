@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.plan
+package org.apache.spark.sql.execution.plan
 
 import scala.collection.JavaConverters._
 
