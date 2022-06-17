@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution
+package org.apache.spark.sql.blaze.execution.shuffle
 
 import java.io.InputStream
 import java.nio.channels.ReadableByteChannel
@@ -30,6 +30,9 @@ import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
+import org.apache.spark.sql.blaze.execution.arrowio
+import org.apache.spark.sql.blaze.execution.arrowio.ArrowReaderIterator
+import org.apache.spark.sql.blaze.execution.arrowio.IpcInputStreamIterator
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.BlockManagerId
@@ -71,7 +74,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
   def readIpc(): Iterator[ReadableByteChannel] = {
     fetchIterator.flatMap {
       case (_, inputStream) =>
-        IpcInputStreamIterator(inputStream, context)
+        arrowio.IpcInputStreamIterator(inputStream, context)
     }
   }
 

@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution
+package org.apache.spark.sql.blaze.execution.arrowio
 
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.channels.Channels
 import java.nio.channels.ReadableByteChannel
@@ -27,8 +26,8 @@ import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util2.ArrowUtils2
-import org.apache.spark.sql.util2.ArrowWriter
+import org.apache.spark.sql.blaze.execution.arrowio.util2.ArrowUtils2
+import org.apache.spark.sql.blaze.execution.arrowio.util2.ArrowWriter
 import org.apache.spark.util.Utils
 import org.apache.spark.TaskContext
 

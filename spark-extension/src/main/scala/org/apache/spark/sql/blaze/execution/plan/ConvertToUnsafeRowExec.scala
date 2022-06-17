@@ -14,29 +14,32 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze
+package org.apache.spark.sql.blaze.execution.plan
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
-import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.BoundReference
+import org.apache.spark.sql.catalyst.expressions.UnsafeRow
+import org.apache.spark.sql.execution.CodegenSupport
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.sql.execution.CodegenSupport
+import org.apache.spark.sql.execution.UnaryExecNode
 
 case class ConvertToUnsafeRowExec(override val child: SparkPlan)
     extends UnaryExecNode
     with CodegenSupport {
   override def nodeName: String = "ConvertToUnsafeRow"
+
   override def logicalLink: Option[LogicalPlan] = child.logicalLink
+
   override def output: Seq[Attribute] = child.output
+
   override def outputPartitioning: Partitioning = child.outputPartitioning
 
   override lazy val metrics: Map[String, SQLMetric] = Map(

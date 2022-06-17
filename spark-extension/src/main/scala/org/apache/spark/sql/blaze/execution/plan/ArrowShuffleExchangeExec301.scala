@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution
+package org.apache.spark.sql.blaze.execution.plan
 
 import java.nio.file.Paths
 import java.nio.ByteBuffer
@@ -27,7 +27,6 @@ import java.util.UUID
 import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.reflect.ClassTag
 
 import org.apache.spark._
 import org.apache.spark.internal.config
@@ -39,12 +38,14 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
+import org.apache.spark.sql.blaze.JniBridge
+import org.apache.spark.sql.blaze.execution.plan.ArrowShuffleExchangeExec301.canUseNativeShuffleWrite
+import org.apache.spark.sql.blaze.execution.shuffle.ArrowBlockStoreShuffleReader301
+import org.apache.spark.sql.blaze.execution.shuffle.ShuffleDependencySchema
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.blaze.execution.ArrowShuffleExchangeExec301.canUseNativeShuffleWrite
-import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.errors.attachTree
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -613,21 +614,3 @@ object ArrowShuffleExchangeExec301 {
     }
   }
 }
-
-class ShuffleDependencySchema[K: ClassTag, V: ClassTag, C: ClassTag](
-    @transient private val _rdd: RDD[_ <: Product2[K, V]],
-    override val partitioner: Partitioner,
-    override val serializer: Serializer = SparkEnv.get.serializer,
-    override val keyOrdering: Option[Ordering[K]] = None,
-    override val aggregator: Option[Aggregator[K, V, C]] = None,
-    override val mapSideCombine: Boolean = false,
-    override val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
-    val schema: StructType)
-    extends ShuffleDependency[K, V, C](
-      _rdd,
-      partitioner,
-      serializer,
-      keyOrdering,
-      aggregator,
-      mapSideCombine,
-      shuffleWriterProcessor) {}

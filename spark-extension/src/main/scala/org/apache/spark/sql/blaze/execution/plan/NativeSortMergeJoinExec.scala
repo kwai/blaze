@@ -14,61 +14,44 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.plan
+package org.apache.spark.sql.blaze.execution.plan
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.JoinType
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.BinaryExecNode
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
-import org.apache.spark.sql.execution.joins.BuildLeft
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.Partition
-import org.apache.spark.sql.catalyst.plans.ExistenceJoin
-import org.apache.spark.sql.catalyst.plans.InnerLike
-import org.apache.spark.sql.catalyst.plans.LeftExistence
-import org.apache.spark.sql.catalyst.plans.LeftOuter
-import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.blaze.protobuf.HashJoinExecNode
+import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.blaze.protobuf.JoinOn
 import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.SortMergeJoinExecNode
+import org.blaze.protobuf.SortOptions
 
-case class NativeBroadcastHashJoinExec(
+case class NativeSortMergeJoinExec(
     override val left: SparkPlan,
     override val right: SparkPlan,
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
+    override val output: Seq[Attribute],
     override val outputPartitioning: Partitioning,
     override val outputOrdering: Seq[SortOrder],
     joinType: JoinType)
     extends BinaryExecNode
     with NativeSupports {
 
-  override def output: Seq[Attribute] = {
-    joinType match {
-      case _: InnerLike =>
-        left.output ++ right.output
-      case LeftOuter =>
-        left.output ++ right.output.map(_.withNullability(true))
-      case RightOuter =>
-        left.output.map(_.withNullability(true)) ++ right.output
-      case j: ExistenceJoin =>
-        left.output :+ j.exists
-      case LeftExistence(_) =>
-        left.output
-      case x =>
-        throw new IllegalArgumentException(s"HashJoin should not take $x as the JoinType")
-    }
-  }
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
@@ -76,12 +59,12 @@ case class NativeBroadcastHashJoinExec(
     case (leftKey, rightKey) =>
       val leftColumn = NativeConverters.convertExpr(leftKey).getColumn match {
         case column if column.getName.isEmpty =>
-          throw new NotImplementedError(s"BHJ leftKey is not column: ${leftKey}")
+          throw new NotImplementedError(s"SMJ leftKey is not column: ${leftKey}")
         case column => column
       }
       val rightColumn = NativeConverters.convertExpr(rightKey).getColumn match {
         case column if column.getName.isEmpty =>
-          throw new NotImplementedError(s"BHJ leftKey is not column: ${rightKey}")
+          throw new NotImplementedError(s"SMJ leftKey is not column: ${rightKey}")
         case column => column
       }
       JoinOn
@@ -91,46 +74,61 @@ case class NativeBroadcastHashJoinExec(
         .build()
   }
 
+  private val nativeSortOptions = nativeJoinOn.map(_ => {
+    SortOptions
+      .newBuilder()
+      .setAsc(true)
+      .setNullsFirst(true)
+      .build()
+  })
+
   private val nativeJoinType = NativeConverters.convertJoinType(joinType)
 
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeSupports.executeNative(left)
     val rightRDD = NativeSupports.executeNative(right)
     val nativeMetrics = MetricNode(metrics, Seq(leftRDD.metrics, rightRDD.metrics))
-    val partitions = rightRDD.partitions
-    val dependencies = rightRDD.dependencies
 
+    val partitions = if (joinType != RightOuter) {
+      leftRDD.partitions
+    } else {
+      rightRDD.partitions
+    }
+
+    val dependencies = Seq(
+      new OneToOneDependency[InternalRow](leftRDD.asInstanceOf[RDD[InternalRow]]),
+      new OneToOneDependency[InternalRow](rightRDD.asInstanceOf[RDD[InternalRow]]))
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       partitions,
       dependencies,
-      (partition, context) => {
-        val partition0 = new Partition() {
-          override def index: Int = 0
-        }
-        val rightPartition = rightRDD.partitions(partition.index)
-        val leftChild = leftRDD.nativePlan(partition0, context)
-        val rightChild = rightRDD.nativePlan(rightPartition, context)
+      (partition, taskContext) => {
+        val leftPartition = leftRDD.partitions(partition.index)
+        val leftChild = leftRDD.nativePlan(leftPartition, taskContext)
 
-        val hashJoinExec = HashJoinExecNode
+        val rightPartition = rightRDD.partitions(partition.index)
+        val rightChild = rightRDD.nativePlan(rightPartition, taskContext)
+
+        val sortMergeJoinExec = SortMergeJoinExecNode
           .newBuilder()
           .setLeft(leftChild)
           .setRight(rightChild)
           .setJoinType(nativeJoinType)
           .addAllOn(nativeJoinOn.asJava)
+          .addAllSortOptions(nativeSortOptions.asJava)
           .setNullEqualsNull(false)
-        PhysicalPlanNode.newBuilder().setHashJoin(hashJoinExec).build()
+        PhysicalPlanNode.newBuilder().setSortMergeJoin(sortMergeJoinExec).build()
       })
   }
 
   override def doCanonicalize(): SparkPlan =
-    BroadcastHashJoinExec(
+    SortMergeJoinExec(
       leftKeys,
       rightKeys,
       joinType,
-      buildSide = BuildLeft,
       condition = None,
       left,
-      right).canonicalized
+      right,
+      isSkewJoin = false).canonicalized
 }

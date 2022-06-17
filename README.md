@@ -86,7 +86,7 @@ You could enable Blaze accelerator through:
 $SPARK_HOME/bin/spark-[sql|submit] \
   --jars "/path/to/blaze-engine-1.0-SNAPSHOT.jar" \
   --conf spark.sql.extensions=org.apache.spark.sql.blaze.BlazeSparkSessionExtension \
-  --conf spark.shuffle.manager=org.apache.spark.sql.blaze.execution.ArrowShuffleManager301 \
+  --conf spark.shuffle.manager=org.apache.spark.sql.blaze.execution.shuffle.ArrowShuffleManager301 \
   --conf spark.executor.extraClassPath="./blaze-engine-1.0-SNAPSHOT.jar" \
   .... # your original arguments goes here
 ```

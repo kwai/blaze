@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.plan
+package org.apache.spark.sql.blaze.execution.plan
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._

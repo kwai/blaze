@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution
+package org.apache.spark.sql.blaze.execution.shuffle
 
 import java.util.concurrent.ConcurrentHashMap
 

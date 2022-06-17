@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.plan
+package org.apache.spark.sql.blaze.execution.plan
 
 import java.util.UUID
 

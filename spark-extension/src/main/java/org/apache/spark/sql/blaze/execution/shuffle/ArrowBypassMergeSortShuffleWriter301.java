@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution;
+package org.apache.spark.sql.blaze.execution.shuffle;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.io.Closeables;
