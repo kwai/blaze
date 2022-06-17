@@ -70,7 +70,7 @@ import org.apache.spark.sql.execution.plan.NativeSortExec
 import org.apache.spark.sql.execution.plan.NativeSortMergeJoinExec
 import org.apache.spark.sql.execution.plan.NativeUnionExec
 import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.execution.aggregate.HashAggregateExec
+import org.apache.spark.sql.execution.CodegenSupport
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
@@ -89,6 +89,9 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
 
   override def preColumnarTransitions: Rule[SparkPlan] =
     sparkPlan => {
+      // count continuous plan with codegen supports
+      countContinuousCodegens(sparkPlan)
+
       // mark all skewed SMJ sorters
       sparkPlan.foreachUp {
         case SortMergeJoinExec(
@@ -107,23 +110,29 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
       // transform supported plans to native
       var sparkPlanTransformed = sparkPlan
         .transformUp {
-          case exec: ShuffleExchangeExec if enableNativeShuffle =>
+          case exec: ShuffleExchangeExec =>
             tryConvert(exec, convertShuffleExchangeExec)
           case exec: BroadcastExchangeExec if enableBhj =>
             tryConvert(exec, convertBroadcastExchangeExec)
-          case exec: FileSourceScanExec if enableScan =>
+
+          case exec: FileSourceScanExec
+              if enableScan && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertFileSourceScanExec)
-          case exec: ProjectExec if Util.enableProject =>
+          case exec: ProjectExec
+              if Util.enableProject && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertProjectExec)
-          case exec: FilterExec if Util.enableFilter =>
+          case exec: FilterExec
+              if Util.enableFilter && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertFilterExec)
-          case exec: SortExec if Util.enableSort =>
+          case exec: SortExec if Util.enableSort && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertSortExec)
-          case exec: UnionExec if Util.enableUnion =>
+          case exec: UnionExec if Util.enableUnion && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertUnionExec)
-          case exec: SortMergeJoinExec if enableSmj =>
+          case exec: SortMergeJoinExec
+              if enableSmj && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertSortMergeJoinExec)
-          case exec: BroadcastHashJoinExec if enableBhj =>
+          case exec: BroadcastHashJoinExec
+              if enableBhj && getCountinuousCodegensCount(exec) < 5 =>
             tryConvert(exec, convertBroadcastHashJoinExec)
           case exec => exec
         }
@@ -179,8 +188,11 @@ private object Util extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeShuffle", defaultValue = true)
   val preferNativeBhj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeBroadcastHashJoin", defaultValue = true)
+  val continuousCodegenThreshold: Int =
+    SparkEnv.get.conf.getInt("spark.blze.continuousCodegenThreshold", 5)
 
   val skewJoinSortChildrenTag: TreeNodeTag[Boolean] = TreeNodeTag("skewJoinSortChildren")
+  val continuousCodegenCountTag: TreeNodeTag[Int] = TreeNodeTag("continuousCodegenCount")
 
   def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan =
     try {
@@ -535,5 +547,43 @@ private object Util extends Logging {
       case exec: UnaryExecNode =>
         getUnderlyingBroadcast(exec.child)
     }
+  }
+
+  def getCountinuousCodegensCount(exec: SparkPlan): Int = {
+    exec.getTagValue(continuousCodegenCountTag).getOrElse(0)
+  }
+
+  def countContinuousCodegens(exec: SparkPlan): Unit = {
+    if (exec.isInstanceOf[CodegenSupport]) {
+      exec.setTagValue(continuousCodegenCountTag, 1)
+    }
+
+    // fill
+    exec.foreach { exec =>
+      val current = getCountinuousCodegensCount(exec)
+      exec.children.foreach {
+        case child: CodegenSupport =>
+          child.setTagValue(continuousCodegenCountTag, current + 1)
+
+        // also stop transforming file scan if successors reach codegen count limits
+        case child: FileSourceScanExec =>
+          child.setTagValue(continuousCodegenCountTag, current)
+        case _ =>
+      }
+    }
+
+    // count
+    exec.foreachUp {
+      case exec: CodegenSupport if exec.children.nonEmpty =>
+        val max = exec.children.map(getCountinuousCodegensCount).max
+        if (getCountinuousCodegensCount(exec) < max) {
+          exec.setTagValue(continuousCodegenCountTag, max)
+        }
+      case _ =>
+    }
+  }
+
+  def reachedContinuousCodegensThreshold(exec: SparkPlan): Boolean = {
+    getCountinuousCodegensCount(exec) >= continuousCodegenThreshold
   }
 }
