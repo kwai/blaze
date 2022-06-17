@@ -39,8 +39,8 @@ import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.blaze.execution.plan._
-import org.apache.spark.sql.blaze.execution.shuffle.ArrowShuffleManager301
+import org.apache.spark.sql.execution.blaze.plan._
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleManager301
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
