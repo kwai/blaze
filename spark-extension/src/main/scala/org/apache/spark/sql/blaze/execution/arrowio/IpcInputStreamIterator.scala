@@ -14,18 +14,19 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution
+package org.apache.spark.sql.blaze.execution.arrowio
 
 import java.io.EOFException
 import java.io.InputStream
 import java.nio.channels.Channels
+import java.nio.channels.ReadableByteChannel
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.channels.ReadableByteChannel
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.TaskContext
 import org.apache.spark.network.util.LimitedInputStream
+import org.apache.spark.TaskContext
+import org.apache.spark.sql.blaze.execution.shuffle.ArrowShuffleManager301
 
 case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
     extends Iterator[ReadableByteChannel]

@@ -21,8 +21,8 @@ members = [
 ]
 
 [profile.release]
-lto = true
-codegen-units = 1
+#lto = true
+#codegen-units = 1
 
 [profile.dev]
 overflow-checks = false

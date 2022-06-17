@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze
+package org.apache.spark.sql.blaze.execution.arrowio
 
 import scala.collection.JavaConverters._
 
@@ -23,11 +23,12 @@ import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.CDataDictionaryProvider
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.util2.ArrowColumnVector
-import org.apache.spark.sql.util2.ArrowUtils2
-import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.sql.blaze.execution.arrowio.util2.ArrowColumnVector
+import org.apache.spark.sql.blaze.execution.arrowio.util2.ArrowUtils2
+import org.apache.spark.sql.blaze.BlazeCallNativeWrapper
 import org.apache.spark.sql.vectorized.ColumnVector
 import org.apache.spark.util.CompletionIterator
 

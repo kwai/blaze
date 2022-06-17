@@ -24,7 +24,6 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.blaze.execution.ArrowShuffleExchangeExec301
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.CollectLimitExec
 import org.apache.spark.sql.execution.FileSourceScanExec
@@ -40,7 +39,8 @@ import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.blaze.execution.ArrowBroadcastExchangeExec
+import org.apache.spark.sql.blaze.execution.plan._
+import org.apache.spark.sql.blaze.execution.shuffle.ArrowShuffleManager301
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -61,21 +61,16 @@ import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.joins.BuildRight
-import org.apache.spark.sql.execution.plan.NativeBroadcastHashJoinExec
-import org.apache.spark.sql.execution.plan.NativeFilterExec
-import org.apache.spark.sql.execution.plan.NativeParquetScanExec
-import org.apache.spark.sql.execution.plan.NativeProjectExec
-import org.apache.spark.sql.execution.plan.NativeRenameColumnsExec
-import org.apache.spark.sql.execution.plan.NativeSortExec
-import org.apache.spark.sql.execution.plan.NativeSortMergeJoinExec
-import org.apache.spark.sql.execution.plan.NativeUnionExec
-import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.CodegenSupport
+import org.apache.spark.sql.execution.UnaryExecNode
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "true")
     SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_FORCE_APPLY.key, "true")
+    SparkEnv.get.conf.set(
+      org.apache.spark.internal.config.SHUFFLE_MANAGER.key,
+      classOf[ArrowShuffleManager301].getName)
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
 
     extensions.injectColumnar(sparkSession => {

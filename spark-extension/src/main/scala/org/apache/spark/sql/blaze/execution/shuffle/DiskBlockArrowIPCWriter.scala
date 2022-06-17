@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution
+package org.apache.spark.sql.blaze.execution.shuffle
 
 import java.io.BufferedOutputStream
 import java.io.File
@@ -37,8 +37,8 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util2.ArrowUtils2
-import org.apache.spark.sql.util2.ArrowWriter
+import org.apache.spark.sql.blaze.execution.arrowio.util2.ArrowUtils2
+import org.apache.spark.sql.blaze.execution.arrowio.util2.ArrowWriter
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.storage.TimeTrackingOutputStream
 import org.apache.spark.util.Utils

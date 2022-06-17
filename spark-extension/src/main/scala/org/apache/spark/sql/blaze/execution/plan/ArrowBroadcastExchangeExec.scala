@@ -14,14 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.execution
+package org.apache.spark.sql.blaze.execution.plan
 
 import java.util.UUID
 import java.util.concurrent.Future
 
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -34,8 +32,6 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.IdentityBroadcastMode
@@ -44,6 +40,11 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.Partition
+import org.apache.spark.sql.blaze.execution.arrowio.ArrowWriterIterator
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.ShuffleReaderExecNode

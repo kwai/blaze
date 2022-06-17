@@ -14,20 +14,20 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.plan
+package org.apache.spark.sql.blaze.execution.plan
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.And
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.Partition
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
