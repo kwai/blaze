@@ -21,8 +21,15 @@ members = [
 ]
 
 [profile.release]
-#lto = true
-#codegen-units = 1
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.pre]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 16
 
 [profile.dev]
 overflow-checks = false
