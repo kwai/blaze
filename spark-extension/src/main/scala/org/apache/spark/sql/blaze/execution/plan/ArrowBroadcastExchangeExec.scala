@@ -19,6 +19,8 @@ package org.apache.spark.sql.blaze.execution.plan
 import java.util.UUID
 import java.util.concurrent.Future
 
+import scala.concurrent.Promise
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.InternalRow
@@ -75,7 +77,9 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
     NativeSupports.getDefaultNativeMetrics(sparkContext) ++ broadcastExec.metrics
   }
 
-  override def doPrepare(): Unit = relationFuture
+  override def doPrepare(): Unit = {
+    // do not prepare anything
+  }
 
   override def doExecuteBroadcast[T](): Broadcast[T] =
     broadcastExec.doExecuteBroadcast()
@@ -127,8 +131,11 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
   override lazy val relationFuture: Future[Broadcast[Any]] = broadcastExec.relationFuture
 
   @transient
-  override lazy val completionFuture: concurrent.Future[Broadcast[Any]] =
-    broadcastExec.completionFuture
+  override lazy val completionFuture: concurrent.Future[Broadcast[Any]] = {
+    // return a dummy future here. because we cannot decide whether we should
+    // broadcast the HashRelation or arrow data
+    Promise.successful(null).future
+  }
 
   override def runtimeStatistics: Statistics = broadcastExec.runtimeStatistics
 
