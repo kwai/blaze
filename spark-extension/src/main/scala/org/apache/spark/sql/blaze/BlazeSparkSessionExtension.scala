@@ -184,7 +184,7 @@ private object Util extends Logging {
   val preferNativeBhj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeBroadcastHashJoin", defaultValue = true)
   val continuousCodegenThreshold: Int =
-    SparkEnv.get.conf.getInt("spark.blze.continuousCodegenThreshold", 5)
+    SparkEnv.get.conf.getInt("spark.blaze.continuousCodegenThreshold", 5)
 
   val skewJoinSortChildrenTag: TreeNodeTag[Boolean] = TreeNodeTag("skewJoinSortChildren")
   val continuousCodegenCountTag: TreeNodeTag[Int] = TreeNodeTag("continuousCodegenCount")
