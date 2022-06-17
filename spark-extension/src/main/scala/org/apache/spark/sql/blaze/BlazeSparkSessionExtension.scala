@@ -107,28 +107,36 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
         .transformUp {
           case exec: ShuffleExchangeExec =>
             tryConvert(exec, convertShuffleExchangeExec)
-          case exec: BroadcastExchangeExec if enableBhj =>
+
+          case exec: BroadcastExchangeExec =>
             tryConvert(exec, convertBroadcastExchangeExec)
 
           case exec: FileSourceScanExec
               if enableScan && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertFileSourceScanExec)
+
           case exec: ProjectExec
               if Util.enableProject && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertProjectExec)
+
           case exec: FilterExec
               if Util.enableFilter && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertFilterExec)
+
           case exec: SortExec if Util.enableSort && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertSortExec)
+
           case exec: UnionExec if Util.enableUnion && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertUnionExec)
+
           case exec: SortMergeJoinExec
               if enableSmj && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertSortMergeJoinExec)
+
           case exec: BroadcastHashJoinExec
-              if enableBhj && getCountinuousCodegensCount(exec) < 5 =>
+              if enableBhj && !reachedContinuousCodegensThreshold(exec) =>
             tryConvert(exec, convertBroadcastHashJoinExec)
+
           case exec => exec
         }
         .transformUp {
