@@ -110,7 +110,7 @@ case class NativeBroadcastHashJoinExec(
           override def index: Int = 0
         }
         val rightPartition = rightRDD.partitions(partition.index)
-        val leftChild = leftRDD.nativePlan(partition0, context)
+        val leftChild = leftRDD.nativePlan(null, context)
         val rightChild = rightRDD.nativePlan(rightPartition, context)
 
         val hashJoinExec = HashJoinExecNode

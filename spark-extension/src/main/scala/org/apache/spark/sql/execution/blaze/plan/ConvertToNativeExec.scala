@@ -53,8 +53,9 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
-  val nativeSchema: Schema = NativeConverters.convertSchema(
-    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+  val renamedSchema: StructType =
+    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata)))
+  val nativeSchema: Schema = NativeConverters.convertSchema(renamedSchema)
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = child.execute()
@@ -73,7 +74,8 @@ case class ConvertToNativeExec(override val child: SparkPlan)
           resourceId,
           () => {
             val inputRowIter = inputRDD.compute(partition, context)
-            val ipcIterator = new ArrowWriterIterator(inputRowIter, schema, timeZoneId, context)
+            val ipcIterator =
+              new ArrowWriterIterator(inputRowIter, renamedSchema, timeZoneId, context)
             new InterruptibleIterator(context, ipcIterator)
           })
 

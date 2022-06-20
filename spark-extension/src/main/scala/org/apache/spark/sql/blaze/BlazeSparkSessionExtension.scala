@@ -474,7 +474,7 @@ private object Util extends Logging {
   def convertBroadcastExchangeExec(exec: SparkPlan): SparkPlan = {
     exec match {
       case exec: BroadcastExchangeExec =>
-        val converted = ArrowBroadcastExchangeExec(exec.mode, convertToUnsafeRow(exec.child))
+        val converted = ArrowBroadcastExchangeExec(exec.mode, exec.child)
         converted.setTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag, true)
         return converted
     }
