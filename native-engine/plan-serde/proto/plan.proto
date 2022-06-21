@@ -25,17 +25,19 @@ option java_outer_classname = "BlazeProto";
 // PhysicalPlanNode is a nested type
 message PhysicalPlanNode {
   oneof PhysicalPlanType {
-    ShuffleReaderExecNode shuffle_reader = 1;
-    ShuffleWriterExecNode shuffle_writer = 2;
-    ParquetScanExecNode parquet_scan = 3;
-    ProjectionExecNode projection = 4;
-    SortExecNode sort = 5;
-    FilterExecNode filter = 6;
-    UnionExecNode union = 7;
-    SortMergeJoinExecNode sort_merge_join = 8;
-    HashJoinExecNode hash_join = 9;
-    RenameColumnsExecNode rename_columns = 10;
-    EmptyPartitionsExecNode empty_partitions = 11;
+    DebugExecNode debug = 1;
+    ShuffleReaderExecNode shuffle_reader = 2;
+    ShuffleWriterExecNode shuffle_writer = 3;
+    IpcWriterExecNode ipc_writer = 4;
+    ParquetScanExecNode parquet_scan = 5;
+    ProjectionExecNode projection = 6;
+    SortExecNode sort = 7;
+    FilterExecNode filter = 8;
+    UnionExecNode union = 9;
+    SortMergeJoinExecNode sort_merge_join = 10;
+    HashJoinExecNode hash_join = 11;
+    RenameColumnsExecNode rename_columns = 12;
+    EmptyPartitionsExecNode empty_partitions = 13;
   }
 }
 
@@ -376,6 +378,16 @@ message ShuffleWriterExecNode {
   PhysicalHashRepartition output_partitioning = 2;
   string output_data_file = 3;
   string output_index_file = 4;
+}
+
+message IpcWriterExecNode {
+  PhysicalPlanNode input = 1;
+  string ipc_consumer_resource_id = 2;
+}
+
+message DebugExecNode {
+  PhysicalPlanNode input = 1;
+  string debug_id = 2;
 }
 
 message ShuffleReaderExecNode {

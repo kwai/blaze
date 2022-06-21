@@ -47,7 +47,9 @@ use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
 use datafusion::scalar::ScalarValue;
+use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
@@ -265,6 +267,19 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     shuffle_writer.output_data_file.clone(),
                     shuffle_writer.output_index_file.clone(),
                 )?))
+            }
+            PhysicalPlanType::IpcWriter(ipc_writer) => {
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(ipc_writer.input)?;
+
+                Ok(Arc::new(IpcWriterExec::new(
+                    input,
+                    ipc_writer.ipc_consumer_resource_id.clone(),
+                )))
+            }
+            PhysicalPlanType::Debug(debug) => {
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(debug.input)?;
+                Ok(Arc::new(DebugExec::new(input, debug.debug_id.clone())))
             }
             PhysicalPlanType::ShuffleReader(shuffle_reader) => {
                 let schema = Arc::new(convert_required!(shuffle_reader.schema)?);

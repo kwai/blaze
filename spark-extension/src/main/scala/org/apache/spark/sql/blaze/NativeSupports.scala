@@ -43,8 +43,8 @@ import org.apache.spark.Partition
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.execution.arrowio.FFIHelper
-import org.apache.spark.sql.blaze.execution.shuffle.ArrowBlockStoreShuffleReader301
+import org.apache.spark.sql.execution.blaze.arrowio.FFIHelper
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader301
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.CoalescedPartitionSpec
