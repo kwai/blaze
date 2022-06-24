@@ -171,8 +171,6 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
 private object Util extends Logging {
   private val ENABLE_OPERATION = "spark.blaze.enable."
 
-  val enableNativeShuffle: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "shuffle", defaultValue = true)
   val enableScan: Boolean =
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "scan", defaultValue = true)
   val enableProject: Boolean =
@@ -187,10 +185,18 @@ private object Util extends Logging {
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sortmergejoin", defaultValue = true)
   val enableBhj: Boolean =
     SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "broadcasthashjoin", defaultValue = true)
+
   val preferNativeShuffle: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeShuffle", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.shuffle", defaultValue = true)
+  val preferNativeProject: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.project", defaultValue = true)
+  val preferNativeFilter: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.filter", defaultValue = true)
+  val preferNativeSort: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.sort", defaultValue = true)
   val preferNativeBhj: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.preferNativeBroadcastHashJoin", defaultValue = true)
+    SparkEnv.get.conf
+      .getBoolean("spark.blaze.prefer.native.broadcasthashjoin", defaultValue = true)
   val continuousCodegenThreshold: Int =
     SparkEnv.get.conf.getInt("spark.blaze.continuousCodegenThreshold", 5)
 
@@ -217,10 +223,9 @@ private object Util extends Logging {
     val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
 
-    // NOTE: prefer native shuffling because we found it faster than jvm at the moment.
     val convertedChild = outputPartitioning match {
-      case _: HashPartitioning if preferNativeShuffle && !NativeSupports.isNative(child) =>
-        ConvertToNativeExec(child)
+      case _: HashPartitioning if preferNativeShuffle =>
+        convertToNative(child)
       case _ =>
         child
     }
@@ -256,10 +261,10 @@ private object Util extends Logging {
 
   def convertProjectExec(exec: ProjectExec): SparkPlan =
     exec match {
-      case ProjectExec(projectList, child) if NativeSupports.isNative(child) =>
+      case exec: ProjectExec if preferNativeProject || NativeSupports.isNative(exec.child) =>
         logDebug(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
         exec.projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
-        NativeProjectExec(projectList, addRenameColumnsExec(child))
+        NativeProjectExec(exec.projectList, addRenameColumnsExec(convertToNative(exec.child)))
       case _ =>
         logDebug(s"Ignoring ProjectExec: ${exec.simpleStringWithNodeId()}")
         exec
@@ -267,9 +272,9 @@ private object Util extends Logging {
 
   def convertFilterExec(exec: FilterExec): SparkPlan =
     exec match {
-      case FilterExec(condition, child) if NativeSupports.isNative(child) =>
+      case exec: FilterExec if preferNativeFilter || NativeSupports.isNative(exec.child) =>
         logDebug(s"  condition: ${exec.condition}")
-        NativeFilterExec(condition, addRenameColumnsExec(child))
+        NativeFilterExec(exec.condition, addRenameColumnsExec(convertToNative(exec.child)))
       case _ =>
         logDebug(s"Ignoring FilterExec: ${exec.simpleStringWithNodeId()}")
         exec
@@ -280,7 +285,8 @@ private object Util extends Logging {
       return exec // do not convert skewed join SMJ sorters
     }
     exec match {
-      case SortExec(sortOrder, global, child, _) if NativeSupports.isNative(child) =>
+      case SortExec(sortOrder, global, child, _)
+          if preferNativeSort || NativeSupports.isNative(child) =>
         logDebug(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
         logDebug(s"  global: ${global}")
         exec.sortOrder.foreach(s => logDebug(s"  sortOrder: ${s}"))
@@ -486,6 +492,13 @@ private object Util extends Logging {
       return exec
     }
     ConvertToUnsafeRowExec(exec)
+  }
+
+  def convertToNative(exec: SparkPlan): SparkPlan = {
+    if (NativeSupports.isNative(exec)) {
+      return exec
+    }
+    ConvertToNativeExec(exec)
   }
 
   def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {

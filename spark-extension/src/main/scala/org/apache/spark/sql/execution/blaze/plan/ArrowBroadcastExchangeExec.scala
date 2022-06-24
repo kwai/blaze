@@ -77,6 +77,12 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
     BroadcastExchangeExec(mode, ConvertToUnsafeRowExec(child))
   }
 
+  override lazy val runId: UUID = if (isNative) {
+    UUID.randomUUID()
+  } else {
+    nonNativeBroadcastExec.runId
+  }
+
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext) ++ Map(
       "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
@@ -251,6 +257,9 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
       }
     }
   }
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
 }
 
 object ArrowBroadcastExchangeExec {
