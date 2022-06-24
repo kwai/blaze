@@ -96,7 +96,7 @@ case class NativeBroadcastHashJoinExec(
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeSupports.executeNative(left)
     val rightRDD = NativeSupports.executeNative(right)
-    val nativeMetrics = MetricNode(metrics, Seq(leftRDD.metrics, rightRDD.metrics))
+    val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
     val partitions = rightRDD.partitions
     val dependencies = rightRDD.dependencies
 

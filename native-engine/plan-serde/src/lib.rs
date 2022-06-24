@@ -14,6 +14,7 @@
 
 use crate::error::PlanSerDeError;
 use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
+use datafusion::logical_expr::AggregateFunction;
 use datafusion::logical_plan::Operator;
 use datafusion::physical_plan::join_utils::JoinSide;
 use datafusion::prelude::JoinType;
@@ -110,6 +111,32 @@ impl From<protobuf::JoinSide> for JoinSide {
         }
     }
 }
+
+impl From<protobuf::AggregateFunction> for AggregateFunction {
+    fn from(agg_fun: protobuf::AggregateFunction) -> AggregateFunction {
+        match agg_fun {
+            protobuf::AggregateFunction::Min => AggregateFunction::Min,
+            protobuf::AggregateFunction::Max => AggregateFunction::Max,
+            protobuf::AggregateFunction::Sum => AggregateFunction::Sum,
+            protobuf::AggregateFunction::Avg => AggregateFunction::Avg,
+            protobuf::AggregateFunction::Count => AggregateFunction::Count,
+            protobuf::AggregateFunction::ApproxDistinct => {
+                AggregateFunction::ApproxDistinct
+            }
+            protobuf::AggregateFunction::ArrayAgg => AggregateFunction::ArrayAgg,
+            protobuf::AggregateFunction::Variance => AggregateFunction::Variance,
+            protobuf::AggregateFunction::VariancePop => AggregateFunction::VariancePop,
+            protobuf::AggregateFunction::Covariance => AggregateFunction::Covariance,
+            protobuf::AggregateFunction::CovariancePop => {
+                AggregateFunction::CovariancePop
+            }
+            protobuf::AggregateFunction::Stddev => AggregateFunction::Stddev,
+            protobuf::AggregateFunction::StddevPop => AggregateFunction::StddevPop,
+            protobuf::AggregateFunction::Correlation => AggregateFunction::Correlation,
+        }
+    }
+}
+
 
 impl protobuf::TimeUnit {
     pub fn from_arrow_time_unit(val: &TimeUnit) -> Self {
@@ -315,6 +342,20 @@ impl Into<datafusion::arrow::datatypes::DataType> for protobuf::PrimitiveScalarT
                 DataType::Time64(TimeUnit::Nanosecond)
             }
             protobuf::PrimitiveScalarType::Null => DataType::Null,
+            protobuf::PrimitiveScalarType::Decimal128 => DataType::Decimal(0, 0),
+            protobuf::PrimitiveScalarType::Date64 => DataType::Date64,
+            protobuf::PrimitiveScalarType::TimeSecond => {
+                DataType::Timestamp(TimeUnit::Second, None)
+            }
+            protobuf::PrimitiveScalarType::TimeMillisecond => {
+                DataType::Timestamp(TimeUnit::Millisecond, None)
+            }
+            protobuf::PrimitiveScalarType::IntervalYearmonth => {
+                DataType::Interval(IntervalUnit::YearMonth)
+            }
+            protobuf::PrimitiveScalarType::IntervalDaytime => {
+                DataType::Interval(IntervalUnit::DayTime)
+            }
         }
     }
 }
@@ -824,6 +865,23 @@ fn typechecked_scalar_value_conversion(
                             "Untyped scalar null is not a valid scalar value",
                         ))
                     }
+                    PrimitiveScalarType::Decimal128 => {
+                        ScalarValue::Decimal128(None, 0, 0)
+                    }
+                    PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
+                    PrimitiveScalarType::TimeSecond => {
+                        ScalarValue::TimestampSecond(None, None)
+                    }
+                    PrimitiveScalarType::TimeMillisecond => {
+                        ScalarValue::TimestampMillisecond(None, None)
+                    }
+                    PrimitiveScalarType::IntervalYearmonth => {
+                        ScalarValue::IntervalYearMonth(None)
+                    }
+                    PrimitiveScalarType::IntervalDaytime => {
+                        ScalarValue::IntervalDayTime(None)
+                    }
+
                 };
                 scalar_value
             } else {
@@ -861,6 +919,14 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
             protobuf::PrimitiveScalarType::TimeNanosecond => {
                 ScalarValue::TimestampNanosecond(None, None)
             }
+            protobuf::PrimitiveScalarType::Decimal128 => ScalarValue::Decimal128(None, 0, 0),
+            protobuf::PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
+            protobuf::PrimitiveScalarType::TimeSecond => ScalarValue::TimestampSecond(None, None),
+            protobuf::PrimitiveScalarType::TimeMillisecond => {
+                ScalarValue::TimestampMillisecond(None, None)
+            }
+            protobuf::PrimitiveScalarType::IntervalYearmonth => ScalarValue::IntervalYearMonth(None),
+            protobuf::PrimitiveScalarType::IntervalDaytime => ScalarValue::IntervalDayTime(None),
         })
     }
 }

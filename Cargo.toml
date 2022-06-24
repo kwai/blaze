@@ -20,14 +20,12 @@ members = [
     "native-engine/blaze",
 ]
 
-[profile.release]
+[profile.release-lto]
+inherits = "release"
 lto = true
 codegen-units = 1
 
-[profile.pre]
-inherits = "release"
-lto = false
-codegen-units = 16
+[profile.release]
 
 [profile.dev]
 overflow-checks = false

@@ -200,12 +200,11 @@ case class ArrowShuffleExchangeExec301(
   override def doExecuteNative(): NativeRDD = {
     val shuffleHandle = shuffleDependency.shuffleHandle
     val rdd = doExecute()
-    val nativeMetrics =
-      MetricNode(
-        Map(
-          "output_rows" -> metrics("shuffle_read_rows"),
-          "elapsed_compute" -> metrics("shuffle_read_elapsed_compute")),
-        Nil)
+
+    val modifiedMetrics = Map(
+      "output_rows" -> metrics("shuffle_read_rows"),
+      "elapsed_compute" -> metrics("shuffle_read_elapsed_compute"))
+    val nativeMetrics = MetricNode(modifiedMetrics, Nil)
 
     new NativeRDD(
       sparkContext,
@@ -261,11 +260,10 @@ object ArrowShuffleExchangeExec301 {
     val HashPartitioning(expressions, numPartitions) =
       outputPartitioning.asInstanceOf[HashPartitioning]
 
-    val nativeMetrics = MetricNode(
-      Map(
-        "output_rows" -> metrics("shuffle_write_rows"),
-        "elapsed_compute" -> metrics("shuffle_write_elapsed_compute")),
-      Seq(nativeInputRDD.metrics))
+    val modifiedMetrics = Map(
+      "output_rows" -> metrics("shuffle_write_rows"),
+      "elapsed_compute" -> metrics("shuffle_write_elapsed_compute"))
+    val nativeMetrics = MetricNode(modifiedMetrics, nativeInputRDD.metrics :: Nil)
 
     val nativeShuffleRDD = new NativeRDD(
       nativeInputRDD.sparkContext,

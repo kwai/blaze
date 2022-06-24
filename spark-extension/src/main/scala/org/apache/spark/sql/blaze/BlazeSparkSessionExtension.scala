@@ -39,18 +39,19 @@ import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.blaze.plan._
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleManager301
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
+import org.apache.spark.sql.catalyst.optimizer.DecimalAggregates
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
@@ -63,15 +64,19 @@ import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.joins.BuildRight
 import org.apache.spark.sql.execution.CodegenSupport
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "true")
     SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_FORCE_APPLY.key, "true")
-    SparkEnv.get.conf.set(
-      org.apache.spark.internal.config.SHUFFLE_MANAGER.key,
-      classOf[ArrowShuffleManager301].getName)
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
+
+    // skip some optimizers
+    SparkEnv.get.conf.set(
+      SQLConf.OPTIMIZER_EXCLUDED_RULES,
+      SparkEnv.get.conf.get(
+        SQLConf.OPTIMIZER_EXCLUDED_RULES) + DecimalAggregates.getClass.getName)
 
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)
@@ -82,109 +87,85 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
 case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule with Logging {
   import org.apache.spark.sql.blaze.Util._
 
-  override def preColumnarTransitions: Rule[SparkPlan] =
-    sparkPlan => {
-      // count continuous plan with codegen supports
-      countContinuousCodegens(sparkPlan)
+  override def preColumnarTransitions: Rule[SparkPlan] = { sparkPlan =>
+    // fill ids
+    fillAllIds(sparkPlan)
 
-      // mark all skewed SMJ sorters
-      sparkPlan.foreachUp {
-        case SortMergeJoinExec(
-              _,
-              _,
-              _,
-              _,
-              SortExec(_, _, sortChild1, _),
-              SortExec(_, _, sortChild2, _),
-              true) =>
-          sortChild1.setTagValue(skewJoinSortChildrenTag, true)
-          sortChild2.setTagValue(skewJoinSortChildrenTag, true)
-        case _ =>
-      }
-
-      // transform supported plans to native
-      var sparkPlanTransformed = sparkPlan
-        .transformUp {
-          case exec: ShuffleExchangeExec =>
-            tryConvert(exec, convertShuffleExchangeExec)
-
-          case exec: BroadcastExchangeExec =>
-            tryConvert(exec, convertBroadcastExchangeExec)
-
-          case exec: FileSourceScanExec
-              if enableScan && !reachedContinuousCodegensThreshold(exec) =>
-            tryConvert(exec, convertFileSourceScanExec)
-
-          case exec: ProjectExec
-              if Util.enableProject && !reachedContinuousCodegensThreshold(exec) =>
-            tryConvert(exec, convertProjectExec)
-
-          case exec: FilterExec
-              if Util.enableFilter && !reachedContinuousCodegensThreshold(exec) =>
-            tryConvert(exec, convertFilterExec)
-
-          case exec: SortExec if Util.enableSort && !reachedContinuousCodegensThreshold(exec) =>
-            tryConvert(exec, convertSortExec)
-
-          case exec: UnionExec if Util.enableUnion && !reachedContinuousCodegensThreshold(exec) =>
-            tryConvert(exec, convertUnionExec)
-
-          case exec: SortMergeJoinExec
-              if enableSmj && !reachedContinuousCodegensThreshold(exec) =>
-            tryConvert(exec, convertSortMergeJoinExec)
-
-          case exec: BroadcastHashJoinExec
-              if enableBhj && !reachedContinuousCodegensThreshold(exec) =>
-            tryConvert(exec, convertBroadcastHashJoinExec)
-
-          case exec => exec
-        }
-        .transformUp {
-          // add ConvertToUnsafeRow before specified plans those require consuming unsafe rows
-          case exec @ (
-                _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
-                _: SortMergeJoinExec | _: WindowExec
-              ) =>
-            exec.mapChildren(child => convertToUnsafeRow(child))
-        }
-
-      // wrap with ConvertUnsafeRowExec if top exec is native
-      // val topNeededConvertToUnsafeRow =
-      if (NativeSupports.isNative(sparkPlanTransformed)) {
-        val topNative = NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed)
-        val topNeededConvertToUnsafeRow = topNative match {
-          case _: ShuffleExchangeLike => false
-          case _: BroadcastExchangeLike => false
-          case _ => true
-        }
-        if (topNeededConvertToUnsafeRow) {
-          sparkPlanTransformed = convertToUnsafeRow(sparkPlanTransformed)
-        }
-      }
-
-      logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
-        .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
-      sparkPlanTransformed
+    // mark all skewed SMJ sorters
+    sparkPlan.foreachUp {
+      case SortMergeJoinExec(
+            _,
+            _,
+            _,
+            _,
+            SortExec(_, _, sortChild1, _),
+            SortExec(_, _, sortChild2, _),
+            true) =>
+        sortChild1.setTagValue(skewJoinSortChildrenTag, true)
+        sortChild2.setTagValue(skewJoinSortChildrenTag, true)
+      case _ =>
     }
+
+    // try to convert and fill inconvertible tags back to original plans
+    convertAllSparkPlans(sparkPlan).foreach {
+      case exec if exec.getTagValue(inconvertibleTag).getOrElse(false) =>
+        val id = exec.getTagValue(idTag)
+        sparkPlan
+          .find(_.getTagValue(idTag) == id)
+          .foreach(_.setTagValue(inconvertibleTag, true))
+      case _ =>
+    }
+
+    // count continuous plan with codegen supports
+    countContinuousCodegens(sparkPlan)
+
+    var sparkPlanTransformed = convertAllSparkPlans(sparkPlan)
+      .transformUp {
+        // add ConvertToUnsafeRow before specified plans those require consuming unsafe rows
+        case exec @ (
+              _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
+              _: SortMergeJoinExec | _: WindowExec
+            ) =>
+          exec.mapChildren(child => convertToUnsafeRow(child))
+      }
+
+    // wrap with ConvertUnsafeRowExec if top exec is native
+    // val topNeededConvertToUnsafeRow =
+    if (NativeSupports.isNative(sparkPlanTransformed)) {
+      val topNative = NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed)
+      val topNeededConvertToUnsafeRow = topNative match {
+        case _: ShuffleExchangeLike => false
+        case _: BroadcastExchangeLike => false
+        case _ => true
+      }
+      if (topNeededConvertToUnsafeRow) {
+        sparkPlanTransformed = convertToUnsafeRow(sparkPlanTransformed)
+      }
+    }
+
+    logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
+      .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
+    sparkPlanTransformed
+  }
 }
 
 private object Util extends Logging {
-  private val ENABLE_OPERATION = "spark.blaze.enable."
-
   val enableScan: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "scan", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan", defaultValue = true)
   val enableProject: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "project", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.project", defaultValue = true)
   val enableFilter: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "filter", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.filter", defaultValue = true)
   val enableSort: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sort", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.sort", defaultValue = true)
   val enableUnion: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "union", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.union", defaultValue = true)
   val enableSmj: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "sortmergejoin", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.smj", defaultValue = true)
   val enableBhj: Boolean =
-    SparkEnv.get.conf.getBoolean(ENABLE_OPERATION + "broadcasthashjoin", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.bhj", defaultValue = true)
+  val enableAggr: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = true)
 
   val preferNativeShuffle: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.shuffle", defaultValue = true)
@@ -194,16 +175,70 @@ private object Util extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.filter", defaultValue = true)
   val preferNativeSort: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.sort", defaultValue = true)
+  val preferNativeSmj: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.smj", defaultValue = true)
   val preferNativeBhj: Boolean =
-    SparkEnv.get.conf
-      .getBoolean("spark.blaze.prefer.native.broadcasthashjoin", defaultValue = true)
-  val continuousCodegenThreshold: Int =
-    SparkEnv.get.conf.getInt("spark.blaze.continuousCodegenThreshold", 5)
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.bhj", defaultValue = true)
+  val preferNativeAggr: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.aggr", defaultValue = true)
 
+  val continuousCodegenThreshold: Int =
+    SparkEnv.get.conf.getInt("spark.blaze.continuous.codegen.threshold", 5)
+  val continuousCodegenWithInconversibleThreshold: Int =
+    SparkEnv.get.conf.getInt("spark.blaze.continuous.codegen.with.inconversible.threshold", 5)
+
+  val idTag: TreeNodeTag[UUID] = TreeNodeTag("id")
+  val inconvertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("inconvertible")
   val skewJoinSortChildrenTag: TreeNodeTag[Boolean] = TreeNodeTag("skewJoinSortChildren")
   val continuousCodegenCountTag: TreeNodeTag[Int] = TreeNodeTag("continuousCodegenCount")
+  val continuousCodegenContainsInconvertibleTag: TreeNodeTag[Boolean] =
+    TreeNodeTag("continuousCodegenCountContainsInconvertible")
 
-  def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan =
+  def convertAllSparkPlans(exec: SparkPlan): SparkPlan = {
+    exec.transformUp {
+      // transform supported plans to native
+      case exec: ShuffleExchangeExec =>
+        tryConvert(exec, convertShuffleExchangeExec)
+
+      case exec: BroadcastExchangeExec =>
+        tryConvert(exec, convertBroadcastExchangeExec)
+
+      case exec: FileSourceScanExec if enableScan && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertFileSourceScanExec)
+
+      case exec: ProjectExec if enableProject && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertProjectExec)
+
+      case exec: FilterExec if enableFilter && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertFilterExec)
+
+      case exec: SortExec if enableSort && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertSortExec)
+
+      case exec: UnionExec if enableUnion && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertUnionExec)
+
+      case exec: SortMergeJoinExec if enableSmj && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertSortMergeJoinExec)
+
+      case exec: BroadcastHashJoinExec
+          if enableBhj && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertBroadcastHashJoinExec)
+
+      case exec: HashAggregateExec if enableAggr && !reachedContinuousCodegensThreshold(exec) =>
+        tryConvert(exec, convertHashAggregateExec)
+
+      case exec =>
+        exec.setTagValue(inconvertibleTag, true)
+        exec
+    }
+  }
+
+  def fillAllIds(exec: SparkPlan): Unit = {
+    exec.foreach(_.setTagValue(idTag, UUID.randomUUID()))
+  }
+
+  def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan = {
     try {
       def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
         if (basedExec.logicalLink.isDefined && exec.logicalLink.isEmpty) {
@@ -214,10 +249,12 @@ private object Util extends Logging {
       }
       setLogicalLink(convert(exec), exec)
     } catch {
-      case e @ (_: NotImplementedError | _: Exception) =>
+      case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
         logWarning(s"Error converting exec: ${exec.getClass.getSimpleName}: ${e.getMessage}")
+        exec.setTagValue(inconvertibleTag, true)
         exec
     }
+  }
 
   def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
     val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
@@ -315,7 +352,7 @@ private object Util extends Logging {
     }
     exec match {
       case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, _) =>
-        if (Seq(left, right).exists(NativeSupports.isNative)) {
+        if (preferNativeSmj || Seq(left, right).exists(NativeSupports.isNative)) {
           logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
 
           var nativeLeft = left match {
@@ -487,6 +524,28 @@ private object Util extends Logging {
     exec
   }
 
+  def convertHashAggregateExec(exec: SparkPlan): SparkPlan = {
+    exec match {
+      case exec: HashAggregateExec if preferNativeAggr || NativeSupports.isNative(exec.child) =>
+        val converted = NativeHashAggregateExec(
+          exec.requiredChildDistributionExpressions,
+          exec.groupingExpressions,
+          exec.aggregateExpressions,
+          exec.aggregateAttributes,
+          exec.resultExpressions,
+          exec.child)
+
+        if (converted.aggrMode == Partial) {
+          return converted
+        }
+        NativeProjectExec(exec.resultExpressions, converted, addTypeCast = true)
+
+      case exec =>
+        return exec
+    }
+    exec
+  }
+
   def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
     if (!NativeSupports.isNative(exec)) {
       return exec
@@ -565,25 +624,26 @@ private object Util extends Logging {
     }
   }
 
-  def getCountinuousCodegensCount(exec: SparkPlan): Int = {
-    exec.getTagValue(continuousCodegenCountTag).getOrElse(0)
-  }
-
   def countContinuousCodegens(exec: SparkPlan): Unit = {
-    if (exec.isInstanceOf[CodegenSupport]) {
+    if (exec.isInstanceOf[CodegenSupport] || exec.isInstanceOf[FileSourceScanExec]) {
       exec.setTagValue(continuousCodegenCountTag, 1)
+      exec.setTagValue(
+        continuousCodegenContainsInconvertibleTag,
+        exec.getTagValue(inconvertibleTag).getOrElse(false))
     }
 
     // fill
     exec.foreach { exec =>
-      val current = getCountinuousCodegensCount(exec)
-      exec.children.foreach {
-        case child: CodegenSupport =>
-          child.setTagValue(continuousCodegenCountTag, current + 1)
+      val current =
+        exec.getTagValue(continuousCodegenCountTag).getOrElse(0)
+      val currentInconvertible =
+        exec.getTagValue(continuousCodegenContainsInconvertibleTag).getOrElse(false)
 
-        // also stop transforming file scan if successors reach codegen count limits
-        case child: FileSourceScanExec =>
-          child.setTagValue(continuousCodegenCountTag, current)
+      exec.children.foreach {
+        case child
+            if child.isInstanceOf[CodegenSupport] || child.isInstanceOf[FileSourceScanExec] =>
+          child.setTagValue(continuousCodegenCountTag, current + 1)
+          child.setTagValue(continuousCodegenContainsInconvertibleTag, currentInconvertible)
         case _ =>
       }
     }
@@ -591,15 +651,26 @@ private object Util extends Logging {
     // count
     exec.foreachUp {
       case exec: CodegenSupport if exec.children.nonEmpty =>
-        val max = exec.children.map(getCountinuousCodegensCount).max
-        if (getCountinuousCodegensCount(exec) < max) {
+        val max = exec.children.map(_.getTagValue(continuousCodegenCountTag).getOrElse(0)).max
+        val containsInconvertible = exec.children
+          .exists(_.getTagValue(continuousCodegenContainsInconvertibleTag).getOrElse(false))
+
+        if (exec.getTagValue(continuousCodegenCountTag).getOrElse(0) < max) {
           exec.setTagValue(continuousCodegenCountTag, max)
+          exec.setTagValue(continuousCodegenContainsInconvertibleTag, containsInconvertible)
         }
       case _ =>
     }
   }
 
   def reachedContinuousCodegensThreshold(exec: SparkPlan): Boolean = {
-    getCountinuousCodegensCount(exec) >= continuousCodegenThreshold
+    val continuousCount =
+      exec.getTagValue(continuousCodegenCountTag).getOrElse(0)
+    val containsInconvertible =
+      exec.getTagValue(continuousCodegenContainsInconvertibleTag).getOrElse(false)
+
+    continuousCount >= continuousCodegenThreshold || (
+      containsInconvertible && continuousCount >= continuousCodegenWithInconversibleThreshold
+    )
   }
 }

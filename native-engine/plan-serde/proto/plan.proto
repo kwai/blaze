@@ -38,6 +38,7 @@ message PhysicalPlanNode {
     HashJoinExecNode hash_join = 11;
     RenameColumnsExecNode rename_columns = 12;
     EmptyPartitionsExecNode empty_partitions = 13;
+    HashAggregateExecNode hash_aggregate = 14;
   }
 }
 
@@ -422,6 +423,23 @@ enum JoinSide {
   RIGHT_SIDE = 1;
 }
 
+message HashAggregateExecNode {
+  repeated PhysicalExprNode group_expr = 1;
+  repeated PhysicalExprNode aggr_expr = 2;
+  AggregateMode mode = 3;
+  PhysicalPlanNode input = 4;
+  repeated string group_expr_name = 5;
+  repeated string aggr_expr_name = 6;
+  // we need the input schema to the partial aggregate to pass to the final aggregate
+  Schema input_schema = 7;
+}
+
+enum AggregateMode {
+  PARTIAL = 0;
+  FINAL = 1;
+  FINAL_PARTITIONED = 2;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Task related
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -623,6 +641,12 @@ enum PrimitiveScalarType {
     TIME_MICROSECOND = 14;
     TIME_NANOSECOND = 15;
     NULL = 16;
+    DECIMAL128 = 17;
+    DATE64 = 20;
+    TIME_SECOND = 21;
+    TIME_MILLISECOND = 22;
+    INTERVAL_YEARMONTH = 23;
+    INTERVAL_DAYTIME = 24;
 }
 
 message ScalarType {

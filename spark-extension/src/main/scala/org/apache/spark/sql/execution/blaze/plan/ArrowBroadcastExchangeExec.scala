@@ -194,11 +194,10 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
             metrics("dataSize") += byteArray.length
           })
 
-        val nativeMetrics = MetricNode(
-          metrics -- Set("ipc_write_rows", "ipc_write_time") ++ Map(
-            "output_rows" -> metrics("ipc_write_rows"),
-            "elapsed_compute" -> metrics("ipc_write_time")),
-          Seq(inputRDD.metrics))
+        val modifiedMetrics = metrics ++ Map(
+          "output_rows" -> metrics("ipc_write_rows"),
+          "elapsed_compute" -> metrics("ipc_write_time"))
+        val nativeMetrics = MetricNode(modifiedMetrics, inputRDD.metrics :: Nil)
 
         val nativeIpcWriterExec = PhysicalPlanNode
           .newBuilder()

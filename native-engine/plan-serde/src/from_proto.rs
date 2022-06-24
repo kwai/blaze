@@ -18,6 +18,7 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
+use datafusion::arrow::datatypes::SchemaRef;
 
 use datafusion::datafusion_data_access::{FileMeta, SizedFile};
 use datafusion::datasource::listing::{FileRange, ListingTableUrl, PartitionedFile};
@@ -26,7 +27,8 @@ use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::BuiltinScalarFunction;
 use datafusion::logical_plan;
 use datafusion::logical_plan::*;
-use datafusion::physical_expr::{functions, ScalarFunctionExpr};
+use datafusion::physical_expr::{AggregateExpr, functions, ScalarFunctionExpr};
+use datafusion::physical_expr::expressions::create_aggregate_expr;
 use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
 use datafusion::physical_plan::hash_join::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::join_utils::{ColumnIndex, JoinFilter};
@@ -46,6 +48,7 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
+use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
@@ -435,6 +438,98 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(RenameColumnsExec::try_new(
                     input,
                     rename_columns.renamed_column_names.clone(),
+                )?))
+            }
+            PhysicalPlanType::HashAggregate(hash_agg) => {
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(hash_agg.input)?;
+                let mode = protobuf::AggregateMode::from_i32(hash_agg.mode).ok_or_else(|| {
+                    proto_error(format!(
+                        "Received a HashAggregateNode message with unknown AggregateMode {}",
+                        hash_agg.mode
+                    ))
+                })?;
+                let agg_mode: AggregateMode = match mode {
+                    protobuf::AggregateMode::Partial => AggregateMode::Partial,
+                    protobuf::AggregateMode::Final => AggregateMode::Final,
+                    protobuf::AggregateMode::FinalPartitioned => {
+                        AggregateMode::FinalPartitioned
+                    }
+                };
+                let group = hash_agg
+                    .group_expr
+                    .iter()
+                    .zip(hash_agg.group_expr_name.iter())
+                    .map(|(expr, name)| {
+                        expr.try_into().and_then(|expr: Arc<dyn PhysicalExpr>| {
+                            bind(expr, &input.schema())
+                                .map(|expr| (expr, name.to_string()))
+                                .map_err(PlanSerDeError::DataFusionError)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let input_schema = hash_agg
+                    .input_schema
+                    .as_ref()
+                    .ok_or_else(|| {
+                        PlanSerDeError::General(
+                            "input_schema in HashAggregateNode is missing.".to_owned(),
+                        )
+                    })?
+                    .clone();
+                let physical_schema: SchemaRef =
+                    SchemaRef::new((&input_schema).try_into()?);
+
+                let physical_aggr_expr: Vec<Arc<dyn AggregateExpr>> = hash_agg
+                    .aggr_expr
+                    .iter()
+                    .zip(hash_agg.aggr_expr_name.iter())
+                    .map(|(expr, name)| {
+                        let expr_type = expr.expr_type.as_ref().ok_or_else(|| {
+                            proto_error("Unexpected empty aggregate physical expression")
+                        })?;
+
+                        match expr_type {
+                            ExprType::AggregateExpr(agg_node) => {
+                                let aggr_function =
+                                    protobuf::AggregateFunction::from_i32(
+                                        agg_node.aggr_function,
+                                    )
+                                        .ok_or_else(
+                                            || {
+                                                proto_error(format!(
+                                                    "Received an unknown aggregate function: {}",
+                                                    agg_node.aggr_function
+                                                ))
+                                            },
+                                        )?;
+                                let agg_expr = bind(
+                                    convert_box_required!(agg_node.expr)?,
+                                    &input.schema(),
+                                )?;
+                                Ok(create_aggregate_expr(
+                                    &aggr_function.into(),
+                                    false,
+                                    &[agg_expr],
+                                    &physical_schema,
+                                    name.to_string(),
+                                )?)
+                            }
+                            _ => Err(PlanSerDeError::General(
+                                "Invalid aggregate  expression for AggregateExec"
+                                    .to_string(),
+                            )),
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(Arc::new(AggregateExec::try_new(
+                    agg_mode,
+                    group,
+                    physical_aggr_expr,
+                    input,
+                    Arc::new((&input_schema).try_into()?),
                 )?))
             }
         }
