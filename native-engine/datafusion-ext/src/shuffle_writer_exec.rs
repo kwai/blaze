@@ -20,13 +20,14 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::{Cursor, Read};
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::arrowio;
 use async_trait::async_trait;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::take;
@@ -58,7 +59,6 @@ use futures::lock::Mutex;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use tempfile::NamedTempFile;
 use tokio::task;
-use crate::arrowio;
 
 use crate::batch_buffer::MutableRecordBatch;
 use crate::spark_hash::{create_hashes, pmod};

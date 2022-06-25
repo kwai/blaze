@@ -26,8 +26,8 @@ option java_outer_classname = "BlazeProto";
 message PhysicalPlanNode {
   oneof PhysicalPlanType {
     DebugExecNode debug = 1;
-    ShuffleReaderExecNode shuffle_reader = 2;
-    ShuffleWriterExecNode shuffle_writer = 3;
+    ShuffleWriterExecNode shuffle_writer = 2;
+    IpcReaderExecNode ipc_reader = 3;
     IpcWriterExecNode ipc_writer = 4;
     ParquetScanExecNode parquet_scan = 5;
     ProjectionExecNode projection = 6;
@@ -391,10 +391,10 @@ message DebugExecNode {
   string debug_id = 2;
 }
 
-message ShuffleReaderExecNode {
+message IpcReaderExecNode {
   uint32 num_partitions = 1;
   Schema schema = 2;
-  string nativeShuffleId = 3;
+  string ipc_provider_resource_id = 3;
 }
 
 message SortExecNode {

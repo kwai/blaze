@@ -57,7 +57,7 @@ import org.apache.spark.sql.types.StructType
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleReaderExecNode
+import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.TaskDefinition
 
 trait NativeSupports extends SparkPlan {
@@ -197,12 +197,12 @@ object NativeSupports extends Logging {
 
             PhysicalPlanNode
               .newBuilder()
-              .setShuffleReader(
-                ShuffleReaderExecNode
+              .setIpcReader(
+                IpcReaderExecNode
                   .newBuilder()
                   .setSchema(nativeSchema)
                   .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
-                  .setNativeShuffleId(jniResourceId)
+                  .setIpcProviderResourceId(jniResourceId)
                   .build())
               .build()
           })

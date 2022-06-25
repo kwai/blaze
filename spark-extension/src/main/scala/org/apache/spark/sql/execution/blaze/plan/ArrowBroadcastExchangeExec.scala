@@ -61,7 +61,7 @@ import org.apache.spark.sql.SparkSession
 import org.blaze.protobuf.IpcWriterExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleReaderExecNode
+import org.blaze.protobuf.IpcReaderExecNode
 
 case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike
@@ -159,12 +159,12 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
         PhysicalPlanNode
           .newBuilder()
-          .setShuffleReader(
-            ShuffleReaderExecNode
+          .setIpcReader(
+            IpcReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(1)
-              .setNativeShuffleId(resourceId)
+              .setIpcProviderResourceId(resourceId)
               .build())
           .build()
       })

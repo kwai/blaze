@@ -37,7 +37,7 @@ import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleReaderExecNode
+import org.blaze.protobuf.IpcReaderExecNode
 
 case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode
@@ -81,12 +81,12 @@ case class ConvertToNativeExec(override val child: SparkPlan)
 
         PhysicalPlanNode
           .newBuilder()
-          .setShuffleReader(
-            ShuffleReaderExecNode
+          .setIpcReader(
+            IpcReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(numInputPartitions)
-              .setNativeShuffleId(resourceId)
+              .setIpcProviderResourceId(resourceId)
               .build())
           .build()
       })

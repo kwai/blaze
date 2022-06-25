@@ -27,8 +27,9 @@ use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::BuiltinScalarFunction;
 use datafusion::logical_plan;
 use datafusion::logical_plan::*;
-use datafusion::physical_expr::{AggregateExpr, functions, ScalarFunctionExpr};
 use datafusion::physical_expr::expressions::create_aggregate_expr;
+use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
+use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
 use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
 use datafusion::physical_plan::hash_join::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::join_utils::{ColumnIndex, JoinFilter};
@@ -48,13 +49,12 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
-use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
-use datafusion_ext::shuffle_reader_exec::ShuffleReaderExec;
+use datafusion_ext::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 
 use crate::error::{FromOptionalField, PlanSerDeError};
@@ -280,17 +280,17 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     ipc_writer.ipc_consumer_resource_id.clone(),
                 )))
             }
+            PhysicalPlanType::IpcReader(shuffle_reader) => {
+                let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
+                Ok(Arc::new(IpcReaderExec::new(
+                    shuffle_reader.num_partitions as usize,
+                    shuffle_reader.ipc_provider_resource_id.clone(),
+                    schema,
+                )))
+            }
             PhysicalPlanType::Debug(debug) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(debug.input)?;
                 Ok(Arc::new(DebugExec::new(input, debug.debug_id.clone())))
-            }
-            PhysicalPlanType::ShuffleReader(shuffle_reader) => {
-                let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
-                Ok(Arc::new(ShuffleReaderExec::new(
-                    shuffle_reader.num_partitions as usize,
-                    shuffle_reader.native_shuffle_id.clone(),
-                    schema,
-                )))
             }
             PhysicalPlanType::Sort(sort) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(sort.input)?;

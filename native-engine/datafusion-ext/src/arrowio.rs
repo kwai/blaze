@@ -30,10 +30,8 @@ pub fn write_ipc_compressed<W: Write + Seek>(
     output.write_all(&[0u8; 8])?;
 
     // write ipc data
-    let mut arrow_writer = StreamWriter::try_new(
-        zstd::Encoder::new(output, 1)?,
-        &batch.schema(),
-    )?;
+    let mut arrow_writer =
+        StreamWriter::try_new(zstd::Encoder::new(output, 1)?, &batch.schema())?;
     arrow_writer.write(batch)?;
     arrow_writer.finish()?;
 

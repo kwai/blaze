@@ -53,21 +53,21 @@ use crate::jni_new_string;
 use crate::ResultExt;
 
 #[derive(Debug, Clone)]
-pub struct ShuffleReaderExec {
+pub struct IpcReaderExec {
     pub num_partitions: usize,
-    pub native_shuffle_id: String,
+    pub ipc_provider_resource_id: String,
     pub schema: SchemaRef,
     pub metrics: ExecutionPlanMetricsSet,
 }
-impl ShuffleReaderExec {
+impl IpcReaderExec {
     pub fn new(
         num_partitions: usize,
-        native_shuffle_id: String,
+        ipc_provider_resource_id: String,
         schema: SchemaRef,
-    ) -> ShuffleReaderExec {
-        ShuffleReaderExec {
+    ) -> IpcReaderExec {
+        IpcReaderExec {
             num_partitions,
-            native_shuffle_id,
+            ipc_provider_resource_id,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
         }
@@ -75,7 +75,7 @@ impl ShuffleReaderExec {
 }
 
 #[async_trait]
-impl ExecutionPlan for ShuffleReaderExec {
+impl ExecutionPlan for IpcReaderExec {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -116,7 +116,7 @@ impl ExecutionPlan for ShuffleReaderExec {
 
         let segments_provider = jni_call_static!(
             JniBridge.getResource(
-                jni_new_string!(&self.native_shuffle_id)?
+                jni_new_string!(&self.ipc_provider_resource_id)?
             ) -> JObject
         )?;
         let segments = jni_new_global_ref!(
@@ -124,7 +124,7 @@ impl ExecutionPlan for ShuffleReaderExec {
         )?;
 
         let schema = self.schema.clone();
-        Ok(Box::pin(ShuffleReaderStream::new(
+        Ok(Box::pin(IpcReaderStream::new(
             schema,
             segments,
             baseline_metrics,
@@ -144,23 +144,23 @@ impl ExecutionPlan for ShuffleReaderExec {
     }
 }
 
-struct ShuffleReaderStream {
+struct IpcReaderStream {
     schema: SchemaRef,
     segments: GlobalRef,
     reader: Option<StreamReader<ReadableByteChannelReader>>,
     baseline_metrics: BaselineMetrics,
 }
-unsafe impl Sync for ShuffleReaderStream {} // safety: segments is safe to be shared
+unsafe impl Sync for IpcReaderStream {} // safety: segments is safe to be shared
 #[allow(clippy::non_send_fields_in_send_ty)]
-unsafe impl Send for ShuffleReaderStream {}
+unsafe impl Send for IpcReaderStream {}
 
-impl ShuffleReaderStream {
+impl IpcReaderStream {
     pub fn new(
         schema: SchemaRef,
         segments: GlobalRef,
         baseline_metrics: BaselineMetrics,
-    ) -> ShuffleReaderStream {
-        ShuffleReaderStream {
+    ) -> IpcReaderStream {
+        IpcReaderStream {
             schema,
             segments,
             reader: None,
@@ -191,7 +191,7 @@ impl ShuffleReaderStream {
     }
 }
 
-impl Stream for ShuffleReaderStream {
+impl Stream for IpcReaderStream {
     type Item = ArrowResult<RecordBatch>;
 
     fn poll_next(
@@ -203,9 +203,7 @@ impl Stream for ShuffleReaderStream {
 
         if let Some(reader) = &mut self.reader {
             if let Some(batch) = reader.next() {
-                return self
-                    .baseline_metrics
-                    .record_poll(Poll::Ready(Some(batch)));
+                return self.baseline_metrics.record_poll(Poll::Ready(Some(batch)));
             }
         }
 
@@ -216,7 +214,7 @@ impl Stream for ShuffleReaderStream {
         Poll::Ready(None)
     }
 }
-impl RecordBatchStream for ShuffleReaderStream {
+impl RecordBatchStream for IpcReaderStream {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

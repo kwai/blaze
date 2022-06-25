@@ -137,7 +137,6 @@ impl From<protobuf::AggregateFunction> for AggregateFunction {
     }
 }
 
-
 impl protobuf::TimeUnit {
     pub fn from_arrow_time_unit(val: &TimeUnit) -> Self {
         match val {
@@ -881,7 +880,6 @@ fn typechecked_scalar_value_conversion(
                     PrimitiveScalarType::IntervalDaytime => {
                         ScalarValue::IntervalDayTime(None)
                     }
-
                 };
                 scalar_value
             } else {
@@ -919,14 +917,22 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
             protobuf::PrimitiveScalarType::TimeNanosecond => {
                 ScalarValue::TimestampNanosecond(None, None)
             }
-            protobuf::PrimitiveScalarType::Decimal128 => ScalarValue::Decimal128(None, 0, 0),
+            protobuf::PrimitiveScalarType::Decimal128 => {
+                ScalarValue::Decimal128(None, 0, 0)
+            }
             protobuf::PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
-            protobuf::PrimitiveScalarType::TimeSecond => ScalarValue::TimestampSecond(None, None),
+            protobuf::PrimitiveScalarType::TimeSecond => {
+                ScalarValue::TimestampSecond(None, None)
+            }
             protobuf::PrimitiveScalarType::TimeMillisecond => {
                 ScalarValue::TimestampMillisecond(None, None)
             }
-            protobuf::PrimitiveScalarType::IntervalYearmonth => ScalarValue::IntervalYearMonth(None),
-            protobuf::PrimitiveScalarType::IntervalDaytime => ScalarValue::IntervalDayTime(None),
+            protobuf::PrimitiveScalarType::IntervalYearmonth => {
+                ScalarValue::IntervalYearMonth(None)
+            }
+            protobuf::PrimitiveScalarType::IntervalDaytime => {
+                ScalarValue::IntervalDayTime(None)
+            }
         })
     }
 }

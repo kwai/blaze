@@ -71,7 +71,7 @@ import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.blaze.protobuf.PhysicalHashRepartition
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleReaderExecNode
+import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.ShuffleWriterExecNode
 
 case class ArrowShuffleExchangeExec301(
@@ -227,12 +227,12 @@ case class ArrowShuffleExchangeExec301(
 
         PhysicalPlanNode
           .newBuilder()
-          .setShuffleReader(
-            ShuffleReaderExecNode
+          .setIpcReader(
+            IpcReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(rdd.getNumPartitions)
-              .setNativeShuffleId(jniResourceId)
+              .setIpcProviderResourceId(jniResourceId)
               .build())
           .build()
       })
