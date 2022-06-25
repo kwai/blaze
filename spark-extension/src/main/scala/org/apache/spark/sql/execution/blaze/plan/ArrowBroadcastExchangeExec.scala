@@ -136,7 +136,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val broadcast = doExecuteBroadcastNative[Array[InternalRow]]()
+    val broadcast = doExecuteBroadcastNative[Array[Array[Byte]]]()
     val nativeMetrics = MetricNode(metrics, Nil)
     val partitions = Array(new Partition() {
       override def index: Int = 0
@@ -150,8 +150,8 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
       (_, context) => {
         val resourceId = s"ArrowBroadcastExchangeExec:${UUID.randomUUID()}"
         val provideIpcIterator = () => {
-          val ipcIterator = broadcast.value.iterator.flatMap { row =>
-            val inputStream = new ByteArrayInputStream(row.getBinary(0))
+          val ipcIterator = broadcast.value.iterator.flatMap { bytes =>
+            val inputStream = new ByteArrayInputStream(bytes)
             IpcInputStreamIterator(inputStream, context)
           }
           new InterruptibleIterator(context, ipcIterator)
@@ -173,24 +173,23 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
   val nativeSchema: Schema = NativeConverters.convertSchema(
     StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
 
-  def collectNative(): Array[InternalRow] = {
+  def collectNative(): Array[Array[Byte]] = {
     val inputRDD = NativeSupports.executeNative(child match {
       case child if NativeSupports.isNative(child) => child
       case child => ConvertToNativeExec(child)
     })
-    val ipcRDD = new RDD[InternalRow](sparkContext, inputRDD.dependencies) {
+    val ipcRDD = new RDD[Array[Byte]](sparkContext, inputRDD.dependencies) {
       override protected def getPartitions: Array[Partition] = inputRDD.partitions
 
-      override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
+      override def compute(split: Partition, context: TaskContext): Iterator[Array[Byte]] = {
         val resourceId = s"ArrowBroadcastExchangeExec.input:${UUID.randomUUID()}"
-        val ipcs = ArrayBuffer[InternalRow]()
-        val unsafeConverter = UnsafeProjection.create(Array[DataType](BinaryType))
+        val ipcs = ArrayBuffer[Array[Byte]]()
         JniBridge.resourcesMap.put(
           resourceId,
           (byteBuffer: ByteBuffer) => {
             val byteArray = new Array[Byte](byteBuffer.capacity())
             byteBuffer.get(byteArray)
-            ipcs += unsafeConverter(InternalRow(byteArray)).copy()
+            ipcs += byteArray
             metrics("dataSize") += byteArray.length
           })
 
@@ -234,8 +233,8 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
   }
 
   @transient
-  private lazy val nativeRelationFuture: Future[Broadcast[Array[InternalRow]]] = {
-    SQLExecution.withThreadLocalCaptured[Broadcast[Array[InternalRow]]](
+  private lazy val nativeRelationFuture: Future[Broadcast[Array[Array[Byte]]]] = {
+    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Array[Byte]]]](
       sqlContext.sparkSession,
       BroadcastExchangeExec.executionContext) {
       try {
@@ -244,11 +243,11 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
           s"native broadcast exchange (runId $runId)",
           interruptOnCancel = true)
         val broadcasted = sparkContext.broadcast(collectNative())
-        Promise[Broadcast[Array[InternalRow]]].trySuccess(broadcasted)
+        Promise[Broadcast[Array[Array[Byte]]]].trySuccess(broadcasted)
         broadcasted
       } catch {
         case e: Throwable =>
-          Promise[Broadcast[Array[InternalRow]]].tryFailure(e)
+          Promise[Broadcast[Array[Array[Byte]]]].tryFailure(e)
           throw e
       }
     }

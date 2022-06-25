@@ -31,7 +31,6 @@ import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.pojo.Schema
-import org.apache.commons.io.output.CountingOutputStream
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.catalyst.InternalRow
@@ -72,11 +71,10 @@ private[spark] class DiskBlockArrowIPCWriter(
     ArrowUtils2.rootAllocator.newChildAllocator("row2ArrowBatchWrite", 0, Long.MaxValue)
   private val root: VectorSchemaRoot = VectorSchemaRoot.create(arrowSchema, allocator)
   private val arrowBuffer: ArrowWriter = ArrowWriter.create(root)
-  private val ipcLengthBuffer = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
+  private val ipcLengthBuffer = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
 
   /** The file channel, used for repositioning / truncating the file. */
   private var randomAccessFile: RandomAccessFile = _
-  private var countingUncompressed: CountingOutputStream = _
   private var mcs: ManualCloseBufferedOutputStream = _
 
   private var initialized = false
@@ -137,7 +135,6 @@ private[spark] class DiskBlockArrowIPCWriter(
       } {
         randomAccessFile = null
         mcs = null
-        countingUncompressed = null
         initialized = false
         streamOpen = false
         hasBeenClosed = true
@@ -198,10 +195,8 @@ private[spark] class DiskBlockArrowIPCWriter(
         // append length
         val current = randomAccessFile.length()
         val ipcLength = current - partitionStart - ipcLengthBuffer.capacity()
-        val ipcLengthUncompressed = countingUncompressed.getByteCount
         ipcLengthBuffer.clear()
         ipcLengthBuffer.putLong(ipcLength)
-        ipcLengthBuffer.putLong(ipcLengthUncompressed)
         ipcLengthBuffer.flip()
         randomAccessFile.seek(partitionStart)
         randomAccessFile.write(ipcLengthBuffer.array())
@@ -271,10 +266,9 @@ private[spark] class DiskBlockArrowIPCWriter(
     if (currentPartitionRowCount == 0) {
       ipcLengthBuffer.clear()
       mcs.write(ipcLengthBuffer.array()) // ipc length placeholder
-      countingUncompressed = new CountingOutputStream(
-        ArrowShuffleManager301.compressionCodecForShuffling.compressedOutputStream(mcs))
 
-      val channel = Channels.newChannel(countingUncompressed)
+      val channel = Channels.newChannel(
+        ArrowShuffleManager301.compressionCodecForShuffling.compressedOutputStream(mcs))
       writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
       writer.start()
     }

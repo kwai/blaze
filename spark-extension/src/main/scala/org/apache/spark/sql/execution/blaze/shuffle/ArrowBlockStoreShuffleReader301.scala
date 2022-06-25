@@ -74,7 +74,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
   def readIpc(): Iterator[ReadableByteChannel] = {
     fetchIterator.flatMap {
       case (_, inputStream) =>
-        arrowio.IpcInputStreamIterator(inputStream, context)
+        IpcInputStreamIterator(inputStream, context)
     }
   }
 

@@ -44,7 +44,6 @@ import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
-import org.apache.spark.sql.catalyst.optimizer.DecimalAggregates
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
@@ -71,12 +70,6 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
     SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "true")
     SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_FORCE_APPLY.key, "true")
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
-
-    // skip some optimizers
-    SparkEnv.get.conf.set(
-      SQLConf.OPTIMIZER_EXCLUDED_RULES,
-      SparkEnv.get.conf.get(
-        SQLConf.OPTIMIZER_EXCLUDED_RULES) + DecimalAggregates.getClass.getName)
 
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)

@@ -33,7 +33,7 @@ case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
     with Logging {
 
   private[execution] val channel: ReadableByteChannel = Channels.newChannel(in)
-  private val ipcLengthsBuf = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
+  private val ipcLengthsBuf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
 
   // NOTE:
   // since all ipcs are sharing the same input stream and channel, the second
@@ -42,7 +42,6 @@ case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
   private[execution] var consumed = true
   private var finished = false
   private var currentIpcLength = 0L
-  private var currentIpcLengthUncompressed = 0L
   private var currentLimitedInputStream: LimitedInputStream = _
 
   taskContext.addTaskCompletionListener[Unit](_ => {
@@ -73,9 +72,8 @@ case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
       }
       ipcLengthsBuf.flip()
       currentIpcLength = ipcLengthsBuf.getLong
-      currentIpcLengthUncompressed = ipcLengthsBuf.getLong
 
-      if (currentIpcLengthUncompressed == 0) { // skip empty ipc
+      if (currentIpcLength == 0) { // skip empty ipc
         return hasNext
       }
       consumed = false
