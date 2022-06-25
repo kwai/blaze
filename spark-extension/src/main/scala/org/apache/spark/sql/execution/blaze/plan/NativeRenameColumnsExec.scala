@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec.buildRenameColumnsExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.RenameColumnsExecNode
@@ -43,7 +44,7 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
-    val nativeMetrics = MetricNode(metrics, Seq(inputRDD.metrics))
+    val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
 
     new NativeRDD(
       sparkContext,
@@ -51,15 +52,25 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
       inputRDD.partitions,
       inputRDD.dependencies,
       (partition, taskContext) => {
-        val inputPartition = inputRDD.partitions(partition.index)
-        val nativeRenameColumnsExec = RenameColumnsExecNode
-          .newBuilder()
-          .setInput(inputRDD.nativePlan(inputPartition, taskContext))
-          .addAllRenamedColumnNames(renamedColumnNames.asJava)
-          .build()
-        PhysicalPlanNode.newBuilder().setRenameColumns(nativeRenameColumnsExec).build()
+        val inputPlan = inputRDD.nativePlan(inputRDD.partitions(partition.index), taskContext)
+        buildRenameColumnsExec(inputPlan, renamedColumnNames)
       })
   }
 
   override def doCanonicalize(): SparkPlan = child.canonicalized
+}
+
+object NativeRenameColumnsExec {
+  def buildRenameColumnsExec(
+      input: PhysicalPlanNode,
+      newColumnNames: Seq[String]): PhysicalPlanNode = {
+    PhysicalPlanNode
+      .newBuilder()
+      .setRenameColumns(
+        RenameColumnsExecNode
+          .newBuilder()
+          .setInput(input)
+          .addAllRenamedColumnNames(newColumnNames.asJava))
+      .build()
+  }
 }

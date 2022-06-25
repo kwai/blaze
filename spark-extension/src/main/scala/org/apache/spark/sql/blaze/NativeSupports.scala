@@ -138,7 +138,7 @@ object NativeSupports extends Logging {
         val inputRDD = NativeSupports.executeNative(exec.child)
         val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
           StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
-        val metrics = MetricNode(Map(), Seq(inputRDD.metrics))
+        val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
 
         new NativeRDD(
           inputShuffledRowRDD.sparkContext,
@@ -212,6 +212,7 @@ object NativeSupports extends Logging {
 
 case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])
     extends Logging {
+
   def getChild(i: Int): MetricNode =
     children(i)
 

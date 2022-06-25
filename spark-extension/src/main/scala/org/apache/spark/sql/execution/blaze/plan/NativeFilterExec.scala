@@ -46,7 +46,7 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
-    val nativeMetrics = MetricNode(metrics, Seq(inputRDD.metrics))
+    val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
 
     new NativeRDD(
       sparkContext,

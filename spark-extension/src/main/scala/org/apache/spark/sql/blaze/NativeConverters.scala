@@ -72,6 +72,17 @@ import org.apache.spark.sql.catalyst.expressions.Subtract
 import org.apache.spark.sql.catalyst.expressions.Tan
 import org.apache.spark.sql.catalyst.expressions.TruncDate
 import org.apache.spark.sql.catalyst.expressions.Upper
+import org.apache.spark.sql.catalyst.expressions.aggregate.Average
+import org.apache.spark.sql.catalyst.expressions.aggregate.Count
+import org.apache.spark.sql.catalyst.expressions.aggregate.Max
+import org.apache.spark.sql.catalyst.expressions.aggregate.Min
+import org.apache.spark.sql.catalyst.expressions.aggregate.StddevPop
+import org.apache.spark.sql.catalyst.expressions.aggregate.StddevSamp
+import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
+import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
+import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
+import org.apache.spark.sql.catalyst.expressions.MakeDecimal
+import org.apache.spark.sql.catalyst.expressions.UnscaledValue
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -111,6 +122,7 @@ object NativeConverters {
       case FloatType => pb.PrimitiveScalarType.FLOAT32
       case DoubleType => pb.PrimitiveScalarType.FLOAT64
       case StringType => pb.PrimitiveScalarType.UTF8
+      case _: DecimalType => pb.PrimitiveScalarType.DECIMAL128
       case _ => throw new NotImplementedError(s"convert $dt to DF scalar type not supported")
     }
   }
@@ -201,6 +213,18 @@ object NativeConverters {
     def buildExprNode(buildFn: (pb.PhysicalExprNode.Builder) => pb.PhysicalExprNode.Builder)
         : pb.PhysicalExprNode =
       buildFn(pb.PhysicalExprNode.newBuilder()).build()
+
+    def buildAggrExprNode(
+        aggrFunction: pb.AggregateFunction,
+        child: Expression): pb.PhysicalExprNode =
+      buildExprNode {
+        _.setAggregateExpr(
+          pb.PhysicalAggregateExprNode
+            .newBuilder()
+            .setAggrFunction(aggrFunction)
+            .setExpr(convertExpr(child))
+            .build())
+      }
 
     def buildBinaryExprNode(
         left: Expression,
@@ -421,8 +445,27 @@ object NativeConverters {
         }
         buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
+
+      // aggr bypass
+      case UnscaledValue(_1) => convertExpr(_1)
+      case MakeDecimal(_1, _, _, _) => convertExpr(_1)
+
+      // aggr
+      case Min(_1) => buildAggrExprNode(pb.AggregateFunction.MIN, _1)
+      case Max(_1) => buildAggrExprNode(pb.AggregateFunction.MAX, _1)
+      case Sum(_1) => buildAggrExprNode(pb.AggregateFunction.SUM, _1)
+      case Average(_1) => buildAggrExprNode(pb.AggregateFunction.AVG, _1)
+      case Count(Seq(_1)) => buildAggrExprNode(pb.AggregateFunction.COUNT, _1)
+      case Count(_n) if !_n.exists(_.nullable) =>
+        buildAggrExprNode(pb.AggregateFunction.COUNT, Literal(1))
+      case VarianceSamp(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE, _1)
+      case VariancePop(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE_POP, _1)
+      case StddevSamp(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV, _1)
+      case StddevPop(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV_POP, _1)
+
       case unsupportedExpression =>
-        throw new NotImplementedError(s"unsupported exception: ${unsupportedExpression}")
+        throw new NotImplementedError(
+          s"unsupported exception: ${unsupportedExpression} (${unsupportedExpression.getClass.getName})")
     }
   }
 

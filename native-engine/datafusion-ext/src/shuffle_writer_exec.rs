@@ -20,7 +20,7 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
@@ -34,7 +34,6 @@ use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::error::ArrowError;
-use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -59,6 +58,7 @@ use futures::lock::Mutex;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use tempfile::NamedTempFile;
 use tokio::task;
+use crate::arrowio;
 
 use crate::batch_buffer::MutableRecordBatch;
 use crate::spark_hash::{create_hashes, pmod};
@@ -76,53 +76,13 @@ impl PartitionBuffer {
         }
         let output = &mut self.frozen;
         let mem_used_old = output.capacity();
-        let start_pos = output.len();
 
-        // write ipc_length placeholder
-        output.write_all(&[0u8; 16])?;
-
-        struct CountedWriter<W: Write> {
-            inner: W,
-            count: usize,
-        }
-        impl<W: Write> Write for CountedWriter<W> {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                let written = self.inner.write(buf)?;
-                self.count += written;
-                Ok(written)
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                self.inner.flush()
-            }
-        }
-
-        // write ipc data
-        let mut arrow_writer = StreamWriter::try_new(
-            CountedWriter {
-                inner: zstd::Encoder::new(output, 1)?,
-                count: 0,
-            },
-            batch.schema().as_ref(),
-        )?;
-        arrow_writer.write(&batch)?;
-        arrow_writer.finish()?;
-
-        let CountedWriter {
-            inner: zwriter,
-            count: written_length,
-        } = arrow_writer.into_inner()?;
-
-        let output = zwriter.finish()?;
-        let ipc_length_uncompressed = written_length as u64;
-        let ipc_length = output.len() - start_pos - 16;
-
-        // fill ipc length
-        let mut output_ipc_length = &mut output[start_pos..];
-        output_ipc_length.write_all(&ipc_length.to_le_bytes()[..])?;
-        output_ipc_length.write_all(&ipc_length_uncompressed.to_le_bytes()[..])?;
+        let mut cursor = Cursor::new(output);
+        cursor.seek(SeekFrom::End(0))?;
+        arrowio::write_ipc_compressed(&batch, &mut cursor)?;
 
         // return the increased amount of memory used
+        let output = cursor.into_inner();
         let mem_used_new = output.capacity();
         Ok(mem_used_new - mem_used_old)
     }

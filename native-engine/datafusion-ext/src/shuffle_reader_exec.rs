@@ -202,10 +202,10 @@ impl Stream for ShuffleReaderStream {
         let _timer = elapsed_compute.timer();
 
         if let Some(reader) = &mut self.reader {
-            if let Some(record_batch) = reader.next() {
+            if let Some(batch) = reader.next() {
                 return self
                     .baseline_metrics
-                    .record_poll(Poll::Ready(Some(record_batch)));
+                    .record_poll(Poll::Ready(Some(batch)));
             }
         }
 
