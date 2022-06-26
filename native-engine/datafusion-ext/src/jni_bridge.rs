@@ -283,6 +283,7 @@ pub struct JavaClasses<'a> {
     pub cHadoopFileStatus: HadoopFileStatus<'a>,
     pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
 
+    pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
 
@@ -336,6 +337,7 @@ impl JavaClasses<'static> {
                 cHadoopFileStatus: HadoopFileStatus::new(env).unwrap(),
                 cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env).unwrap(),
 
+                cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
 
@@ -797,6 +799,33 @@ impl<'a> HadoopFSDataInputStream<'a> {
             method_read_ret: JavaType::Primitive(Primitive::Int),
             method_close: env.get_method_id(class, "close", "()V")?,
             method_close_ret: JavaType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkFileSegment<'a> {
+    pub class: JClass<'a>,
+    pub method_file: JMethodID<'a>,
+    pub method_file_ret: JavaType,
+    pub method_offset: JMethodID<'a>,
+    pub method_offset_ret: JavaType,
+    pub method_length: JMethodID<'a>,
+    pub method_length_ret: JavaType,
+}
+impl<'a> SparkFileSegment<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/storage/FileSegment";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkFileSegment<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkFileSegment {
+            class,
+            method_file: env.get_method_id(class, "file", "()Ljava/io/File;")?,
+            method_file_ret: JavaType::Object("java/io/File".to_owned()),
+            method_offset: env.get_method_id(class, "offset", "()J")?,
+            method_offset_ret: JavaType::Primitive(Primitive::Long),
+            method_length: env.get_method_id(class, "length", "()J")?,
+            method_length_ret: JavaType::Primitive(Primitive::Long),
         })
     }
 }

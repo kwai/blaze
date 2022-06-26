@@ -52,9 +52,10 @@ use datafusion::physical_plan::{
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext::ipc_reader_exec::IpcReadMode;
+use datafusion_ext::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
-use datafusion_ext::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 
 use crate::error::{FromOptionalField, PlanSerDeError};
@@ -280,12 +281,23 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     ipc_writer.ipc_consumer_resource_id.clone(),
                 )))
             }
-            PhysicalPlanType::IpcReader(shuffle_reader) => {
-                let schema = Arc::new(convert_required!(shuffle_reader.schema)?);
+            PhysicalPlanType::IpcReader(ipc_reader) => {
+                let schema = Arc::new(convert_required!(ipc_reader.schema)?);
+                let mode = match protobuf::IpcReadMode::from_i32(ipc_reader.mode).unwrap()
+                {
+                    protobuf::IpcReadMode::ChannelUncompressed => {
+                        IpcReadMode::ChannelUncompressed
+                    }
+                    protobuf::IpcReadMode::Channel => IpcReadMode::Channel,
+                    protobuf::IpcReadMode::ChannelAndFileSegment => {
+                        IpcReadMode::ChannelAndFileSegment
+                    }
+                };
                 Ok(Arc::new(IpcReaderExec::new(
-                    shuffle_reader.num_partitions as usize,
-                    shuffle_reader.ipc_provider_resource_id.clone(),
+                    ipc_reader.num_partitions as usize,
+                    ipc_reader.ipc_provider_resource_id.clone(),
                     schema,
+                    mode,
                 )))
             }
             PhysicalPlanType::Debug(debug) => {

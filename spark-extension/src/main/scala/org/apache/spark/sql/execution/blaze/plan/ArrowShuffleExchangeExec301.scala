@@ -72,6 +72,7 @@ import org.blaze.protobuf.PhysicalHashRepartition
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.ShuffleWriterExecNode
 
 case class ArrowShuffleExchangeExec301(
@@ -233,6 +234,7 @@ case class ArrowShuffleExchangeExec301(
               .setSchema(nativeSchema)
               .setNumPartitions(rdd.getNumPartitions)
               .setIpcProviderResourceId(jniResourceId)
+              .setMode(IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
               .build())
           .build()
       })
