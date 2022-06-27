@@ -16,9 +16,16 @@
 
 package org.apache.spark.sql.execution.blaze.shuffle
 
+import java.io.File
+import java.io.FileInputStream
+import java.io.FilterInputStream
 import java.io.InputStream
+import java.lang.reflect.Field
 import java.nio.channels.ReadableByteChannel
+import java.nio.file.Files
+import java.nio.file.Paths
 
+import org.apache.commons.lang3.ClassUtils
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
@@ -26,6 +33,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
 import org.apache.spark.io.CompressionCodec
+import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
@@ -36,6 +44,7 @@ import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.BlockManagerId
+import org.apache.spark.storage.FileSegment
 import org.apache.spark.storage.ShuffleBlockFetcherIterator
 import org.apache.spark.util.CompletionIterator
 
@@ -71,18 +80,58 @@ class ArrowBlockStoreShuffleReader301[K, C](
       fetchContinuousBlocksInBatch).toCompletionIterator
   }
 
-  def readIpc(): Iterator[ReadableByteChannel] = {
+  def readIpc(): Iterator[Object] = { // FileSegment | ReadableByteChannel
+    def getFileSegmentFromInputStream(in: InputStream): Option[FileSegment] = {
+      object Helper {
+        val bufferReleasingInputStreamClass: Class[_] =
+          Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
+        val delegateField: Field = bufferReleasingInputStreamClass.getDeclaredField("delegate")
+        val inField: Field = classOf[FilterInputStream].getDeclaredField("in")
+        val limitField: Field = classOf[LimitedInputStream].getDeclaredField("left")
+        val pathField: Field = classOf[FileInputStream].getDeclaredField("path")
+        delegateField.setAccessible(true)
+        inField.setAccessible(true)
+        limitField.setAccessible(true)
+        pathField.setAccessible(true)
+      }
+      Helper.delegateField.get(in) match {
+        case in: LimitedInputStream =>
+          val limit = Helper.limitField.getLong(in)
+          Helper.inField.get(in) match {
+            case in: FileInputStream =>
+              val path = Helper.pathField.get(in).asInstanceOf[String]
+              val offset = in.getChannel.position()
+              val fileSegment = new FileSegment(new File(path), offset, limit)
+              Some(fileSegment)
+            case _ =>
+              None
+          }
+        case _ =>
+          None
+      }
+    }
+
     fetchIterator.flatMap {
       case (_, inputStream) =>
-        IpcInputStreamIterator(inputStream, context)
+        getFileSegmentFromInputStream(inputStream) match {
+          case Some(fileSegment) =>
+            Iterator.single(fileSegment)
+          case None =>
+            IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
+        }
     }
   }
 
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
-    val recordIter = readIpc().flatMap(channel => {
-      new ArrowReaderIterator(channel, context).map((0, _)) // use 0 as key since it's not used
-    })
+    val recordIter = fetchIterator
+      .flatMap {
+        case (_, inputStream) =>
+          IpcInputStreamIterator(inputStream, decompressingNeeded = true, context)
+      }
+      .flatMap { channel =>
+        new ArrowReaderIterator(channel, context).map((0, _)) // use 0 as key since it's not used
+      }
 
     // Update the context task metrics for each record read.
     val metricIter = CompletionIterator[(Any, Any), Iterator[(Any, Any)]](

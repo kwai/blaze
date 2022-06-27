@@ -28,7 +28,10 @@ import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleManager301
 
-case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
+case class IpcInputStreamIterator(
+    var in: InputStream,
+    decompressingNeeded: Boolean,
+    taskContext: TaskContext)
     extends Iterator[ReadableByteChannel]
     with Logging {
 
@@ -84,10 +87,16 @@ case class IpcInputStreamIterator(var in: InputStream, taskContext: TaskContext)
   override def next(): ReadableByteChannel = {
     assert(!consumed)
     consumed = true
+
     val is = new LimitedInputStream(Channels.newInputStream(channel), currentIpcLength, false)
-    val zs = ArrowShuffleManager301.compressionCodecForShuffling.compressedInputStream(is)
     currentLimitedInputStream = is
-    Channels.newChannel(zs)
+
+    if (decompressingNeeded) {
+      val zs = ArrowShuffleManager301.compressionCodecForShuffling.compressedInputStream(is)
+      Channels.newChannel(zs)
+    } else {
+      Channels.newChannel(is)
+    }
   }
 
   private def closeInputStream(): Unit =

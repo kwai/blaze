@@ -38,6 +38,7 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
 
 case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode
@@ -87,6 +88,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
               .setSchema(nativeSchema)
               .setNumPartitions(numInputPartitions)
               .setIpcProviderResourceId(resourceId)
+              .setMode(IpcReadMode.CHANNEL_UNCOMPRESSED)
               .build())
           .build()
       })

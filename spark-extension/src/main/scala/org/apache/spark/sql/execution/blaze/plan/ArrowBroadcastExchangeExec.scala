@@ -62,6 +62,7 @@ import org.blaze.protobuf.IpcWriterExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
 
 case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike
@@ -152,7 +153,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
         val provideIpcIterator = () => {
           val ipcIterator = broadcast.value.iterator.flatMap { bytes =>
             val inputStream = new ByteArrayInputStream(bytes)
-            IpcInputStreamIterator(inputStream, context)
+            IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
           }
           new InterruptibleIterator(context, ipcIterator)
         }
@@ -165,6 +166,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
               .setSchema(nativeSchema)
               .setNumPartitions(1)
               .setIpcProviderResourceId(resourceId)
+              .setMode(IpcReadMode.CHANNEL)
               .build())
           .build()
       })

@@ -386,15 +386,22 @@ message IpcWriterExecNode {
   string ipc_consumer_resource_id = 2;
 }
 
-message DebugExecNode {
-  PhysicalPlanNode input = 1;
-  string debug_id = 2;
-}
-
 message IpcReaderExecNode {
   uint32 num_partitions = 1;
   Schema schema = 2;
-  string ipc_provider_resource_id = 3;
+  IpcReadMode mode = 3;
+  string ipc_provider_resource_id = 4;
+}
+
+enum IpcReadMode {
+  CHANNEL_UNCOMPRESSED = 0;
+  CHANNEL = 1;
+  CHANNEL_AND_FILE_SEGMENT = 2;
+}
+
+message DebugExecNode {
+  PhysicalPlanNode input = 1;
+  string debug_id = 2;
 }
 
 message SortExecNode {

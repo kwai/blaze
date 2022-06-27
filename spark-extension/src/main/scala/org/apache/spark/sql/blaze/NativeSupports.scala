@@ -54,10 +54,11 @@ import org.apache.spark.sql.execution.ShuffledRowRDD
 import org.apache.spark.sql.execution.ShufflePartitionSpec
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.TaskDefinition
 
 trait NativeSupports extends SparkPlan {
@@ -203,6 +204,7 @@ object NativeSupports extends Logging {
                   .setSchema(nativeSchema)
                   .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
                   .setIpcProviderResourceId(jniResourceId)
+                  .setMode(IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
                   .build())
               .build()
           })
