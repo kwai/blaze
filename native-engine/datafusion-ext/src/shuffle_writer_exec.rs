@@ -666,7 +666,7 @@ pub async fn external_shuffle(
         partitioning,
         metrics,
         context.runtime_env(),
-        context.session_config().batch_size,
+        context.session_config().batch_size(),
     );
     context.runtime_env().register_requester(repartitioner.id());
 

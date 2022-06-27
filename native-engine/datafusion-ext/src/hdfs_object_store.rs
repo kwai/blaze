@@ -59,7 +59,7 @@ impl ObjectStore for HDFSSingleFileObjectStore {
     }
 
     fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
-        log::debug!("HDFSSingleFileStore.file_reader: {:?}", file);
+        log::warn!("HDFSSingleFileStore.file_reader: {:?}", file);
 
         let path = file.path.clone();
         let get_hdfs_input_stream = || -> datafusion::error::Result<GlobalRef> {
@@ -118,11 +118,17 @@ impl HDFSObjectReader {
         start: u64,
         length: usize,
     ) -> Result<Box<dyn Read + Send + Sync>> {
-        let buf_len = length.max(1048576);
+        let max_read_size = length.min(
+            self.file.size.saturating_sub(start + length as u64) as usize
+        );
+        let buf_len = max_read_size.min(1048576);
+
         let reader = BufReader::with_capacity(
             buf_len,
             HDFSFileReader {
                 hdfs_input_stream: self.hdfs_input_stream.clone(),
+                length,
+                start,
                 pos: start,
             },
         );
@@ -133,13 +139,17 @@ impl HDFSObjectReader {
 #[derive(Clone)]
 struct HDFSFileReader {
     pub hdfs_input_stream: Arc<FSInputStreamWrapper>,
+    pub length: usize,
+    pub start: u64,
     pub pos: u64,
 }
 
 impl Read for HDFSFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        log::debug!("HDFSFileReader.read: size={}", buf.len());
-        let buf = jni_new_direct_byte_buffer!(buf).to_io_result()?;
+        let read = self.pos.saturating_sub(self.start) as usize;
+        let rest = self.length.saturating_sub(read);
+
+        let buf = jni_new_direct_byte_buffer!(&mut buf[..rest]).to_io_result()?;
         let read_size = jni_call_static!(
             JniBridge.readFSDataInputStream(
                 self.hdfs_input_stream.as_obj(),
@@ -149,7 +159,6 @@ impl Read for HDFSFileReader {
         )
         .to_io_result()? as usize;
 
-        log::debug!("HDFSFileReader.read result: read_size={}", read_size);
         self.pos += read_size as u64;
         Ok(read_size)
     }

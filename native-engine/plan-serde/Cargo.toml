@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1.56"
 chrono = { version = "0.4", default-features = false }
-datafusion = { version = "8.0.0", features = ["simd"] }
+datafusion = { version = "9.0.0", features = ["simd"] }
 datafusion-ext = { path = "../datafusion-ext" }
 log = "0.4.14"
 prost = "0.10"

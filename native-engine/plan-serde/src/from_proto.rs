@@ -29,7 +29,7 @@ use datafusion::logical_plan;
 use datafusion::logical_plan::*;
 use datafusion::physical_expr::expressions::create_aggregate_expr;
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
-use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
+use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode, PhysicalGroupBy};
 use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
 use datafusion::physical_plan::hash_join::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::join_utils::{ColumnIndex, JoinFilter};
@@ -468,7 +468,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         AggregateMode::FinalPartitioned
                     }
                 };
-                let group = hash_agg
+
+                let group_expr = hash_agg
                     .group_expr
                     .iter()
                     .zip(hash_agg.group_expr_name.iter())
@@ -538,7 +539,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
 
                 Ok(Arc::new(AggregateExec::try_new(
                     agg_mode,
-                    group,
+                    PhysicalGroupBy::new(group_expr, vec![], vec![]),
                     physical_aggr_expr,
                     input,
                     Arc::new((&input_schema).try_into()?),

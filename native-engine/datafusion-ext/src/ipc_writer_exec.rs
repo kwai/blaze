@@ -113,7 +113,7 @@ impl ExecutionPlan for IpcWriterExec {
             futures::stream::once(
                 write_ipc(
                     input,
-                    context.session_config().batch_size,
+                    context.session_config().batch_size(),
                     ipc_consumer,
                     baseline_metrics,
                 )
