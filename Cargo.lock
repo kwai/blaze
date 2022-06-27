@@ -2303,8 +2303,3 @@ dependencies = [
  "cc",
  "libc",
 ]
-
-[[patch.unused]]
-name = "parquet"
-version = "17.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=55d60730d287ac66314f7c3801a5e8bb4fc7a2d5#55d60730d287ac66314f7c3801a5e8bb4fc7a2d5"

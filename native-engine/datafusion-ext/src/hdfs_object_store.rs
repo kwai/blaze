@@ -148,8 +148,9 @@ impl Read for HDFSFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let read = self.pos.saturating_sub(self.start) as usize;
         let rest = self.length.saturating_sub(read);
+        let buf_len = buf.len().min(rest);
 
-        let buf = jni_new_direct_byte_buffer!(&mut buf[..rest]).to_io_result()?;
+        let buf = jni_new_direct_byte_buffer!(&mut buf[..buf_len]).to_io_result()?;
         let read_size = jni_call_static!(
             JniBridge.readFSDataInputStream(
                 self.hdfs_input_stream.as_obj(),
