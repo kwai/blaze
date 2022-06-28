@@ -472,6 +472,7 @@ dependencies = [
  "dashmap",
  "datafusion",
  "futures",
+ "itertools",
  "jni",
  "log",
  "once_cell",
