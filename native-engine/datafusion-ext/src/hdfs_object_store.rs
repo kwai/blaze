@@ -118,9 +118,8 @@ impl HDFSObjectReader {
         start: u64,
         length: usize,
     ) -> Result<Box<dyn Read + Send + Sync>> {
-        let max_read_size = length.min(
-            self.file.size.saturating_sub(start + length as u64) as usize
-        );
+        let max_read_size =
+            length.min(self.file.size.saturating_sub(start + length as u64) as usize);
         let buf_len = max_read_size.min(1048576);
 
         let reader = BufReader::with_capacity(

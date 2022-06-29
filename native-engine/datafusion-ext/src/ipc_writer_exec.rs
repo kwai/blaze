@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::{
-    arrowio, jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
+    jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
     jni_new_string,
 };
 use async_trait::async_trait;
@@ -159,7 +159,7 @@ pub async fn write_ipc(
             num_rows = 0;
 
             let mut buffer = vec![];
-            arrowio::write_ipc_compressed(
+            crate::util::ipc::write_ipc_compressed(
                 &batch,
                 &mut Cursor::new(&mut buffer),
             )?;

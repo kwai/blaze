@@ -29,7 +29,9 @@ use datafusion::logical_plan;
 use datafusion::logical_plan::*;
 use datafusion::physical_expr::expressions::create_aggregate_expr;
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
-use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode, PhysicalGroupBy};
+use datafusion::physical_plan::aggregates::{
+    AggregateExec, AggregateMode, PhysicalGroupBy,
+};
 use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
 use datafusion::physical_plan::hash_join::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::join_utils::{ColumnIndex, JoinFilter};

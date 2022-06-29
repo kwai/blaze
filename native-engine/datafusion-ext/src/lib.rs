@@ -21,9 +21,8 @@ pub mod jni_bridge;
 pub mod rename_columns_exec;
 pub mod shuffle_writer_exec;
 
-mod arrowio;
-mod batch_buffer;
 mod spark_hash;
+mod util;
 
 pub trait ResultExt<T> {
     fn unwrap_or_fatal(self) -> T;
