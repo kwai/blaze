@@ -146,3 +146,5 @@ of our community. We hope that you:
 
 Blaze is licensed under the Apache 2.0 License. A copy of the license
 [can be found here.](LICENSE.txt)
+
+--test
