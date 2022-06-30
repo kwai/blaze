@@ -116,6 +116,8 @@ impl PartitionBuffer {
             &mut self.active,
             new_array_builders(&self.schema, self.batch_size),
         );
+        self.active_num_rows = 0;
+
         let batch = make_batch(self.schema.clone(), active)?;
         let batch_bytes_size = batch_byte_size(&batch);
         write_ipc_compressed(&batch, &mut cursor)?;
@@ -341,12 +343,10 @@ impl ShuffleRepartitioner {
                     )?;
 
                     if mem_diff < 0 {
-                        let to_shrink =
-                            self.metrics.mem_used().value().min(-mem_diff as usize);
+                        let mem_used = self.metrics.mem_used().value();
+                        let to_shrink = mem_used.min(-mem_diff as usize);
                         self.shrink(to_shrink);
-                        self.metrics
-                            .mem_used()
-                            .set(self.metrics.mem_used().value() - to_shrink);
+                        self.metrics.mem_used().set(mem_used - to_shrink);
                     }
                 }
             }
