@@ -460,7 +460,7 @@ async fn spill_into(
     }
     let path = path.to_owned();
 
-    let res = task::spawn_blocking(move || {
+    task::spawn_blocking(move || {
         let mut offsets = vec![0; num_output_partitions + 1];
         let mut spill_data = OpenOptions::new()
             .write(true)
@@ -480,9 +480,7 @@ async fn spill_into(
     .await
     .map_err(|e| {
         DataFusionError::Execution(format!("Error occurred while spilling {}", e))
-    })?;
-
-    res
+    })?
 }
 
 impl Debug for ShuffleRepartitioner {
