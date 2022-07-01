@@ -52,7 +52,6 @@ echo "Using \`spark-submit\` from path: $SPARK_HOME" 1>&2
 exec "${SPARK_HOME}"/bin/spark-submit                                   \
   --class org.apache.spark.sql.execution.benchmark.TPCDSQueryValidator  \
   --conf spark.sql.extensions=org.apache.spark.sql.blaze.BlazeSparkSessionExtension \
-  --conf spark.shuffle.manager=org.apache.spark.sql.blaze.execution.ArrowShuffleManager301 \
   $(join_by " " ${SPARK_CONF[@]})                                       \
   ${RESOURCE}                                                           \
   $(join_by " " ${ARGS[@]})

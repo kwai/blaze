@@ -28,7 +28,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64]
-        rust: [nightly-2022-05-22]
+        rust: [nightly]
     container:
       image: ${{ matrix.arch }}/rust
       env:
@@ -38,14 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Cache Cargo
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           # these represent dependencies downloaded by cargo
           # and thus do not depend on the OS, arch nor rust version.
           path: /github/home/.cargo
           key: cargo-cache-
       - name: Cache Rust dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           # these represent compiled steps of both dependencies and arrow
           # and thus are specific for a particular OS, arch and rust version.
@@ -73,7 +73,7 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest]
-        rust: [nightly-2022-05-22]
+        rust: [nightly]
     steps:
       - uses: actions/checkout@v2
         with:
@@ -115,7 +115,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64]
-        rust: [nightly-2022-05-22]
+        rust: [nightly]
     container:
       image: ${{ matrix.arch }}/rust
       env:
@@ -127,13 +127,13 @@ jobs:
         with:
           submodules: true
       - name: Cache Cargo
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /github/home/.cargo
           # this key equals the ones on `linux-build-lib` for re-use
           key: cargo-cache-
       - name: Cache Rust dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /github/home/target
           # this key equals the ones on `linux-build-lib` for re-use
@@ -160,19 +160,19 @@ jobs:
   #   strategy:
   #     matrix:
   #       arch: [amd64]
-  #       rust: [nightly-2022-05-22]
+  #       rust: [nightly]
   #   steps:
   #     - uses: actions/checkout@v2
   #       with:
   #         submodules: true
   #     - name: Cache Cargo
-  #       uses: actions/cache@v2
+  #       uses: actions/cache@v3
   #       with:
   #         path: /home/runner/.cargo
   #         # this key is not equal because the user is different than on a container (runner vs github)
   #         key: cargo-coverage-cache-
   #     - name: Cache Rust dependencies
-  #       uses: actions/cache@v2
+  #       uses: actions/cache@v3
   #       with:
   #         path: /home/runner/target
   #         # this key is not equal because coverage uses different compilation flags.

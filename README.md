@@ -70,7 +70,7 @@ _You could either build Blaze in debug mode for testing purposes or in release m
 Blaze._
 
 ```shell
-./gradlew -Pmode=[debug|release] build
+./gradlew -Pmode=[dev|release-lto] build
 ```
 
 After the build is finished, a fat Jar package that contains all the dependencies will be generated in the `target`

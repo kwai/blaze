@@ -37,7 +37,7 @@ jobs:
     strategy:
       matrix:
         arch: [ amd64 ]
-        rust: [ nightly-2022-05-22 ]
+        rust: [ nightly ]
     container:
       image: ${{ matrix.arch }}/rust
       env:
@@ -47,14 +47,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Cache Cargo
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           # these represent dependencies downloaded by cargo
           # and thus do not depend on the OS, arch nor rust version.
           path: /github/home/.cargo
           key: cargo-cache-
       - name: Cache Rust dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           # these represent compiled steps of both dependencies and arrow
           # and thus are specific for a particular OS, arch and rust version.

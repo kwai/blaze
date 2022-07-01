@@ -3,7 +3,7 @@
 profile="$1"
 
 echo "Building native with [$profile] profile..."
-cargo +nightly-2022-05-22 build --features=mm --profile="$profile"
+cargo +nightly build --features=mm --profile="$profile"
 
 rt=$?
 if [[ "$rt" != 0 ]]; then
@@ -11,10 +11,15 @@ if [[ "$rt" != 0 ]]; then
   exit $rt
 fi
 rm -rf `pwd`/../lib/*
+
+[[ $profile == "dev" ]] \
+  && libdir="debug" \
+  || libdir="$profile"
+
 if [ "$(uname)" == "Darwin" ]; then
-  mkdir -p `pwd`/../lib/ && cp `pwd`/../target/$profile/*.dylib `pwd`/../lib/
+  mkdir -p `pwd`/../lib/ && cp `pwd`/../target/$libdir/*.dylib `pwd`/../lib/
 elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
-  mkdir -p `pwd`/../lib/ && cp `pwd`/../target/$profile/*.so `pwd`/../lib/
+  mkdir -p `pwd`/../lib/ && cp `pwd`/../target/$libdir/*.so `pwd`/../lib/
 else
     echo "Unsupported platform $(uname)"
     exit 1
