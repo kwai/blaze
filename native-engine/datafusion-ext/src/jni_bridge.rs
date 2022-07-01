@@ -276,12 +276,14 @@ pub struct JavaClasses<'a> {
     pub cScalaIterator: ScalaIterator<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
     pub cScalaFunction0: ScalaFunction0<'a>,
+    pub cScalaFunction1: ScalaFunction1<'a>,
 
     pub cHadoopFileSystem: HadoopFileSystem<'a>,
     pub cHadoopPath: HadoopPath<'a>,
     pub cHadoopFileStatus: HadoopFileStatus<'a>,
     pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
 
+    pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
 
@@ -328,12 +330,14 @@ impl JavaClasses<'static> {
                 cScalaIterator: ScalaIterator::new(env).unwrap(),
                 cScalaTuple2: ScalaTuple2::new(env).unwrap(),
                 cScalaFunction0: ScalaFunction0::new(env).unwrap(),
+                cScalaFunction1: ScalaFunction1::new(env).unwrap(),
 
                 cHadoopFileSystem: HadoopFileSystem::new(env).unwrap(),
                 cHadoopPath: HadoopPath::new(env).unwrap(),
                 cHadoopFileStatus: HadoopFileStatus::new(env).unwrap(),
                 cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env).unwrap(),
 
+                cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
 
@@ -679,6 +683,29 @@ impl<'a> ScalaFunction0<'a> {
 }
 
 #[allow(non_snake_case)]
+pub struct ScalaFunction1<'a> {
+    pub class: JClass<'a>,
+    pub method_apply: JMethodID<'a>,
+    pub method_apply_ret: JavaType,
+}
+impl<'a> ScalaFunction1<'a> {
+    pub const SIG_TYPE: &'static str = "scala/Function1";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaFunction1<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(ScalaFunction1 {
+            class,
+            method_apply: env.get_method_id(
+                class,
+                "apply",
+                "(Ljava/lang/Object;)Ljava/lang/Object;",
+            )?,
+            method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
 pub struct HadoopFileSystem<'a> {
     pub class: JClass<'a>,
     pub method_getFileStatus: JMethodID<'a>,
@@ -772,6 +799,33 @@ impl<'a> HadoopFSDataInputStream<'a> {
             method_read_ret: JavaType::Primitive(Primitive::Int),
             method_close: env.get_method_id(class, "close", "()V")?,
             method_close_ret: JavaType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkFileSegment<'a> {
+    pub class: JClass<'a>,
+    pub method_file: JMethodID<'a>,
+    pub method_file_ret: JavaType,
+    pub method_offset: JMethodID<'a>,
+    pub method_offset_ret: JavaType,
+    pub method_length: JMethodID<'a>,
+    pub method_length_ret: JavaType,
+}
+impl<'a> SparkFileSegment<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/storage/FileSegment";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkFileSegment<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkFileSegment {
+            class,
+            method_file: env.get_method_id(class, "file", "()Ljava/io/File;")?,
+            method_file_ret: JavaType::Object("java/io/File".to_owned()),
+            method_offset: env.get_method_id(class, "offset", "()J")?,
+            method_offset_ret: JavaType::Primitive(Primitive::Long),
+            method_length: env.get_method_id(class, "length", "()J")?,
+            method_length_ret: JavaType::Primitive(Primitive::Long),
         })
     }
 }

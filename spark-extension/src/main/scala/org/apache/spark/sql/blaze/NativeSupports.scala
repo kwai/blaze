@@ -43,8 +43,8 @@ import org.apache.spark.Partition
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.execution.arrowio.FFIHelper
-import org.apache.spark.sql.blaze.execution.shuffle.ArrowBlockStoreShuffleReader301
+import org.apache.spark.sql.execution.blaze.arrowio.FFIHelper
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader301
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.CoalescedPartitionSpec
@@ -54,10 +54,11 @@ import org.apache.spark.sql.execution.ShuffledRowRDD
 import org.apache.spark.sql.execution.ShufflePartitionSpec
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleReaderExecNode
 import org.blaze.protobuf.TaskDefinition
 
 trait NativeSupports extends SparkPlan {
@@ -138,7 +139,7 @@ object NativeSupports extends Logging {
         val inputRDD = NativeSupports.executeNative(exec.child)
         val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
           StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
-        val metrics = MetricNode(Map(), Seq(inputRDD.metrics))
+        val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
 
         new NativeRDD(
           inputShuffledRowRDD.sparkContext,
@@ -197,12 +198,13 @@ object NativeSupports extends Logging {
 
             PhysicalPlanNode
               .newBuilder()
-              .setShuffleReader(
-                ShuffleReaderExecNode
+              .setIpcReader(
+                IpcReaderExecNode
                   .newBuilder()
                   .setSchema(nativeSchema)
                   .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
-                  .setNativeShuffleId(jniResourceId)
+                  .setIpcProviderResourceId(jniResourceId)
+                  .setMode(IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
                   .build())
               .build()
           })
@@ -212,6 +214,7 @@ object NativeSupports extends Logging {
 
 case class MetricNode(metrics: Map[String, SQLMetric], children: Seq[MetricNode])
     extends Logging {
+
   def getChild(i: Int): MetricNode =
     children(i)
 

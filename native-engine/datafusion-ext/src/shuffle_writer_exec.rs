@@ -20,21 +20,19 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::arrow::array::*;
-use datafusion::arrow::compute::take;
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::error::ArrowError;
-use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -43,7 +41,6 @@ use datafusion::execution::memory_manager::MemoryConsumer;
 use datafusion::execution::memory_manager::MemoryConsumerId;
 use datafusion::execution::memory_manager::MemoryManager;
 use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::from_slice::FromSlice;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::memory::MemoryStream;
@@ -57,83 +54,160 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::lock::Mutex;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use itertools::Itertools;
 use tempfile::NamedTempFile;
 use tokio::task;
 
-use crate::batch_buffer::MutableRecordBatch;
 use crate::spark_hash::{create_hashes, pmod};
+use crate::util::array_builder::{make_batch, new_array_builders};
+use crate::util::ipc::write_ipc_compressed;
 
-#[derive(Default)]
 struct PartitionBuffer {
+    schema: SchemaRef,
     frozen: Vec<u8>,
-    active: Option<MutableRecordBatch>,
+    active: Vec<Box<dyn ArrayBuilder>>,
+    active_num_rows: usize,
+    batch_size: usize,
 }
 
 impl PartitionBuffer {
-    fn add_batch(&mut self, batch: RecordBatch) -> Result<usize> {
-        if batch.num_rows() == 0 {
-            return Ok(0);
+    fn new(schema: SchemaRef, batch_size: usize) -> Self {
+        let array_builders = new_array_builders(&schema, batch_size);
+        Self {
+            schema,
+            frozen: vec![],
+            active: array_builders,
+            active_num_rows: 0,
+            batch_size,
         }
-        let output = &mut self.frozen;
-        let mem_used_old = output.capacity();
-        let start_pos = output.len();
-
-        // write ipc_length placeholder
-        output.write_all(&[0u8; 16])?;
-
-        struct CountedWriter<W: Write> {
-            inner: W,
-            count: usize,
-        }
-        impl<W: Write> Write for CountedWriter<W> {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                let written = self.inner.write(buf)?;
-                self.count += written;
-                Ok(written)
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                self.inner.flush()
-            }
-        }
-
-        // write ipc data
-        let mut arrow_writer = StreamWriter::try_new(
-            CountedWriter {
-                inner: zstd::Encoder::new(output, 1)?,
-                count: 0,
-            },
-            batch.schema().as_ref(),
-        )?;
-        arrow_writer.write(&batch)?;
-        arrow_writer.finish()?;
-
-        let CountedWriter {
-            inner: zwriter,
-            count: written_length,
-        } = arrow_writer.into_inner()?;
-
-        let output = zwriter.finish()?;
-        let ipc_length_uncompressed = written_length as u64;
-        let ipc_length = output.len() - start_pos - 16;
-
-        // fill ipc length
-        let mut output_ipc_length = &mut output[start_pos..];
-        output_ipc_length.write_all(&ipc_length.to_le_bytes()[..])?;
-        output_ipc_length.write_all(&ipc_length_uncompressed.to_le_bytes()[..])?;
-
-        // return the increased amount of memory used
-        let mem_used_new = output.capacity();
-        Ok(mem_used_new - mem_used_old)
     }
 
-    fn finish(&mut self) -> Result<()> {
-        if let Some(mut mutable) = self.active.take() {
-            let result = mutable.output_and_reset()?;
-            self.add_batch(result)?;
-            self.active = Some(mutable);
+    fn append_rows(
+        &mut self,
+        appenders: &Appenders,
+        columns: &[ArrayRef],
+        indices: &[usize],
+    ) -> Result<isize> {
+        // returns estimated memory diff
+        self.active.iter_mut().zip(columns).enumerate().for_each(
+            |(i, (builder, column))| {
+                appenders
+                    .append_column(i, builder, column, indices)
+                    .unwrap();
+            },
+        );
+        self.active_num_rows += indices.len();
+        if self.active_num_rows >= self.batch_size {
+            return self.flush();
         }
-        Ok(())
+        Ok(0) // assume no memory growing if not flushed
+    }
+
+    fn flush(&mut self) -> Result<isize> {
+        // returns estimated memory diff
+        if self.active_num_rows == 0 {
+            return Ok(0);
+        }
+        let frozen_capacity_old = self.frozen.capacity();
+        let mut cursor = Cursor::new(&mut self.frozen);
+        cursor.seek(SeekFrom::End(0))?;
+
+        let active = std::mem::replace(
+            &mut self.active,
+            new_array_builders(&self.schema, self.batch_size),
+        );
+        let batch = make_batch(self.schema.clone(), active)?;
+        let batch_bytes_size = batch_byte_size(&batch);
+        write_ipc_compressed(&batch, &mut cursor)?;
+
+        // return the increased amount of memory used
+        Ok((self.frozen.capacity() - frozen_capacity_old) as isize
+            - batch_bytes_size as isize)
+    }
+}
+
+type AppendFn =
+    &'static dyn Fn(&mut Box<dyn ArrayBuilder>, &Arc<dyn Array>, &[usize]) -> Result<()>;
+
+#[derive(Clone)]
+struct Appenders(Vec<AppendFn>);
+
+unsafe impl Send for Appenders {}
+unsafe impl Sync for Appenders {}
+
+impl Appenders {
+    fn new(schema: &SchemaRef) -> Self {
+        macro_rules! define_appender {
+            ($arrowty:ident) => {{
+                paste::paste! {
+                    fn append(
+                        t: &mut Box<dyn ArrayBuilder>,
+                        f: &Arc<dyn Array>,
+                        indices: &[usize],
+                    ) -> Result<()> {
+                        type B = [< $arrowty Builder >];
+                        type A = [< $arrowty Array >];
+                        let t = t.as_any_mut().downcast_mut::<B>().unwrap();
+                        let f = f.as_any().downcast_ref::<A>().unwrap();
+                        for &i in indices {
+                            if f.is_valid(i) {
+                                t.append_value(f.value(i))?;
+                            } else {
+                                t.append_null()?;
+                            }
+                        }
+                        Ok(())
+                    }
+                    &append as AppendFn
+                }
+            }};
+        }
+
+        Self(
+            schema
+                .fields()
+                .iter()
+                .map(|field| match field.data_type() {
+                    DataType::Boolean => define_appender!(Boolean),
+                    DataType::Int8 => define_appender!(Int8),
+                    DataType::Int16 => define_appender!(Int16),
+                    DataType::Int32 => define_appender!(Int32),
+                    DataType::Int64 => define_appender!(Int64),
+                    DataType::UInt8 => define_appender!(UInt8),
+                    DataType::UInt16 => define_appender!(UInt16),
+                    DataType::UInt32 => define_appender!(UInt32),
+                    DataType::UInt64 => define_appender!(UInt64),
+                    DataType::Float32 => define_appender!(Float32),
+                    DataType::Float64 => define_appender!(Float64),
+                    DataType::Date32 => define_appender!(Date32),
+                    DataType::Date64 => define_appender!(Date64),
+                    DataType::Time32(TimeUnit::Second) => define_appender!(Time32Second),
+                    DataType::Time32(TimeUnit::Millisecond) => {
+                        define_appender!(Time32Millisecond)
+                    }
+                    DataType::Time64(TimeUnit::Microsecond) => {
+                        define_appender!(Time64Microsecond)
+                    }
+                    DataType::Time64(TimeUnit::Nanosecond) => {
+                        define_appender!(Time64Nanosecond)
+                    }
+                    DataType::Utf8 => define_appender!(String),
+                    DataType::LargeUtf8 => define_appender!(LargeString),
+                    DataType::Decimal(_, _) => define_appender!(Decimal),
+                    _ => unimplemented!("unsupported data types in shuffle write"),
+                })
+                .collect(),
+        )
+    }
+
+    fn append_column(
+        &self,
+        column_index: usize,
+        to: &mut Box<dyn ArrayBuilder>,
+        from: &Arc<dyn Array>,
+        indices: &[usize],
+    ) -> Result<()> {
+        (self.0[column_index])(to, from, indices)
     }
 }
 
@@ -142,72 +216,11 @@ struct SpillInfo {
     offsets: Vec<u64>,
 }
 
-macro_rules! append {
-    ($TO:ty, $FROM:ty, $to: ident, $from: ident) => {{
-        let to = $to.as_any_mut().downcast_mut::<$TO>().unwrap();
-        let from = $from.as_any().downcast_ref::<$FROM>().unwrap();
-        for i in from.into_iter() {
-            to.append_option(i)?;
-        }
-    }};
-}
-
-fn append_column(
-    to: &mut Box<dyn ArrayBuilder>,
-    from: &Arc<dyn Array>,
-    data_type: &DataType,
-) -> Result<()> {
-    // output buffered start `buffered_idx`, len `rows_to_output`
-    match data_type {
-        DataType::Null => unimplemented!(),
-        DataType::Boolean => append!(BooleanBuilder, BooleanArray, to, from),
-        DataType::Int8 => append!(Int8Builder, Int8Array, to, from),
-        DataType::Int16 => append!(Int16Builder, Int16Array, to, from),
-        DataType::Int32 => append!(Int32Builder, Int32Array, to, from),
-        DataType::Int64 => append!(Int64Builder, Int64Array, to, from),
-        DataType::UInt8 => append!(UInt8Builder, UInt8Array, to, from),
-        DataType::UInt16 => append!(UInt16Builder, UInt16Array, to, from),
-        DataType::UInt32 => append!(UInt32Builder, UInt32Array, to, from),
-        DataType::UInt64 => append!(UInt64Builder, UInt64Array, to, from),
-        DataType::Float32 => append!(Float32Builder, Float32Array, to, from),
-        DataType::Float64 => append!(Float64Builder, Float64Array, to, from),
-        DataType::Date32 => append!(Date32Builder, Date32Array, to, from),
-        DataType::Date64 => append!(Date64Builder, Date64Array, to, from),
-        DataType::Time32(TimeUnit::Second) => {
-            append!(Time32SecondBuilder, Time32SecondArray, to, from)
-        }
-        DataType::Time32(TimeUnit::Millisecond) => {
-            append!(Time32MillisecondBuilder, Time32SecondArray, to, from)
-        }
-        DataType::Time64(TimeUnit::Microsecond) => {
-            append!(Time64MicrosecondBuilder, Time64MicrosecondArray, to, from)
-        }
-        DataType::Time64(TimeUnit::Nanosecond) => {
-            append!(Time64NanosecondBuilder, Time64NanosecondArray, to, from)
-        }
-        DataType::Utf8 => append!(StringBuilder, StringArray, to, from),
-        DataType::LargeUtf8 => append!(LargeStringBuilder, LargeStringArray, to, from),
-        DataType::Decimal(_precision, _scale) => {
-            let decimal_builder =
-                to.as_any_mut().downcast_mut::<DecimalBuilder>().unwrap();
-            let decimal_array = from.as_any().downcast_ref::<DecimalArray>().unwrap();
-            for i in 0..decimal_array.len() {
-                if decimal_array.is_valid(i) {
-                    decimal_builder.append_value(decimal_array.value(i))?;
-                } else {
-                    decimal_builder.append_null()?;
-                }
-            }
-        }
-        _ => todo!(),
-    }
-    Ok(())
-}
-
 struct ShuffleRepartitioner {
     id: MemoryConsumerId,
     output_data_file: String,
     output_index_file: String,
+    appenders: Appenders,
     schema: SchemaRef,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     spills: Mutex<Vec<SpillInfo>>,
@@ -217,7 +230,6 @@ struct ShuffleRepartitioner {
     num_output_partitions: usize,
     runtime: Arc<RuntimeEnv>,
     metrics: BaselineMetrics,
-    batch_size: usize,
 }
 
 impl ShuffleRepartitioner {
@@ -237,10 +249,11 @@ impl ShuffleRepartitioner {
             id: MemoryConsumerId::new(partition_id),
             output_data_file,
             output_index_file,
-            schema,
+            appenders: Appenders::new(&schema),
+            schema: schema.clone(),
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
-                    .map(|_| Default::default())
+                    .map(|_| PartitionBuffer::new(schema.clone(), batch_size))
                     .collect::<Vec<_>>(),
             ),
             spills: Mutex::new(vec![]),
@@ -248,7 +261,6 @@ impl ShuffleRepartitioner {
             num_output_partitions,
             runtime,
             metrics,
-            batch_size,
         }
     }
 
@@ -277,83 +289,64 @@ impl ShuffleRepartitioner {
                     .iter()
                     .map(|expr| Ok(expr.evaluate(&input)?.into_array(input.num_rows())))
                     .collect::<Result<Vec<_>>>()?;
+
                 // use identical seed as spark hash partition
                 hashes_buf.resize(arrays[0].len(), 42);
+
                 // Hash arrays and compute buckets based on number of partitions
-                let hashes = create_hashes(&arrays, hashes_buf)?;
-                let mut indices = vec![vec![]; num_output_partitions];
-                for (index, hash) in hashes.iter().enumerate() {
-                    indices[pmod(*hash, num_output_partitions)].push(index as u64)
+                let partition_ids = create_hashes(&arrays, hashes_buf)?
+                    .iter_mut()
+                    .map(|hash| pmod(*hash, num_output_partitions) as u64)
+                    .collect::<Vec<_>>();
+
+                // count each partition size
+                let mut partition_counters = vec![0usize; num_output_partitions];
+                for &partition_id in &partition_ids {
+                    partition_counters[partition_id as usize] += 1
                 }
 
-                for (num_output_partition, partition_indices) in indices
-                    .into_iter()
+                // accumulate partition counters into partition ends
+                let mut partition_ends = partition_counters;
+                let mut accum = 0;
+                partition_ends.iter_mut().for_each(|v| {
+                    *v += accum;
+                    accum = *v;
+                });
+
+                // calculate shuffled partition ids
+                let mut shuffled_partition_ids = vec![0usize; input.num_rows()];
+                for (index, &partition_id) in partition_ids.iter().enumerate().rev() {
+                    partition_ends[partition_id as usize] -= 1;
+                    let end = partition_ends[partition_id as usize];
+                    shuffled_partition_ids[end] = index;
+                }
+
+                // after calculating, partition ends become partition starts
+                let mut partition_starts = partition_ends;
+                partition_starts.push(input.num_rows());
+
+                for (partition_id, (&start, &end)) in partition_starts
+                    .iter()
+                    .tuple_windows()
                     .enumerate()
-                    .filter(|(_, indices)| !indices.is_empty())
+                    .filter(|(_, (start, end))| start < end)
                 {
                     let mut buffered_partitions = self.buffered_partitions.lock().await;
-                    let output = &mut buffered_partitions[num_output_partition];
-                    let indices = UInt64Array::from_slice(&partition_indices);
-                    // Produce batches based on indices
-                    let columns = input
-                        .columns()
-                        .iter()
-                        .map(|c| {
-                            take(c.as_ref(), &indices, None)
-                                .map_err(|e| DataFusionError::Execution(e.to_string()))
-                        })
-                        .collect::<Result<Vec<Arc<dyn Array>>>>()?;
+                    let output = &mut buffered_partitions[partition_id];
 
-                    if partition_indices.len() > self.batch_size {
-                        let output_batch =
-                            RecordBatch::try_new(input.schema().clone(), columns)?;
+                    let mem_diff = output.append_rows(
+                        &self.appenders,
+                        input.columns(),
+                        &shuffled_partition_ids[start..end],
+                    )?;
 
-                        let output_batch_mem_size = batch_byte_size(&output_batch);
-                        let increase_mem_used = output.add_batch(output_batch)?;
-                        let to_shrink = self
-                            .mem_used()
-                            .min(output_batch_mem_size - increase_mem_used);
-
-                        // to_shrink = (compressed - uncompressed)
+                    if mem_diff < 0 {
+                        let to_shrink =
+                            self.metrics.mem_used().value().min(-mem_diff as usize);
                         self.shrink(to_shrink);
                         self.metrics
                             .mem_used()
                             .set(self.metrics.mem_used().value() - to_shrink);
-                    } else {
-                        if output.active.is_none() {
-                            let buffer = MutableRecordBatch::new(
-                                self.batch_size,
-                                self.schema.clone(),
-                            );
-                            output.active = Some(buffer);
-                        };
-
-                        let mut batch = output.active.take().unwrap();
-                        batch
-                            .arrays
-                            .iter_mut()
-                            .zip(columns.iter())
-                            .zip(self.schema.fields().iter().map(|f| f.data_type()))
-                            .for_each(|((to, from), dt)| {
-                                append_column(to, from, dt).unwrap()
-                            });
-                        batch.append(partition_indices.len());
-
-                        if batch.is_full() {
-                            let result = batch.output_and_reset()?;
-                            let result_batch_mem_size = batch_byte_size(&result);
-                            let increase_mem_used = output.add_batch(result)?;
-                            let to_shrink = self
-                                .mem_used()
-                                .min(result_batch_mem_size - increase_mem_used);
-
-                            // to_shrink = (compressed - uncompressed)
-                            self.shrink(to_shrink);
-                            self.metrics
-                                .mem_used()
-                                .set(self.metrics.mem_used().value() - to_shrink);
-                        }
-                        output.active = Some(batch);
                     }
                 }
             }
@@ -376,7 +369,7 @@ impl ShuffleRepartitioner {
         let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
 
         for i in 0..num_output_partitions {
-            buffered_partitions[i].finish()?;
+            buffered_partitions[i].flush()?;
             output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
         }
 
@@ -462,7 +455,7 @@ async fn spill_into(
     let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
 
     for i in 0..num_output_partitions {
-        buffered_partitions[i].finish()?;
+        buffered_partitions[i].flush()?;
         output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
     }
     let path = path.to_owned();
@@ -687,7 +680,6 @@ impl ShuffleWriterExec {
     }
 }
 
-// TODO: reconsider memory consumption for shuffle buffers, unrevealed usage?
 pub async fn external_shuffle(
     mut input: SendableRecordBatchStream,
     partition_id: usize,
@@ -706,7 +698,7 @@ pub async fn external_shuffle(
         partitioning,
         metrics,
         context.runtime_env(),
-        context.session_config().batch_size,
+        context.session_config().batch_size(),
     );
     context.runtime_env().register_requester(repartitioner.id());
 
