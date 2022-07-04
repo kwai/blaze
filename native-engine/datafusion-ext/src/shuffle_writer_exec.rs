@@ -90,17 +90,32 @@ impl PartitionBuffer {
     }
 
     fn append_rows(&mut self, columns: &[ArrayRef], indices: &[usize]) -> Result<isize> {
-        self.active
-            .iter_mut()
-            .zip(columns)
-            .for_each(|(builder, column)| {
-                append_columns(builder, column, indices, column.data_type());
-            });
-        self.num_active_rows += indices.len();
-        if self.num_active_rows >= self.staging_size {
-            return self.flush_to_staging();
+        let mut start = 0;
+        let mut rest = indices.len();
+        let mut mem_diff = 0;
+
+        while rest > 0 {
+            let len = rest.min(self.staging_size.saturating_sub(self.num_active_rows));
+
+            self.active
+                .iter_mut()
+                .zip(columns)
+                .for_each(|(builder, column)| {
+                    append_columns(
+                        builder,
+                        column,
+                        &indices[start..][..len],
+                        column.data_type()
+                    );
+                });
+            self.num_active_rows += len;
+            if self.num_active_rows >= self.staging_size {
+                mem_diff += self.flush_to_staging()?;
+            }
+            start += len;
+            rest -= len;
         }
-        Ok(0) // assume no memory growing if not flushed
+        Ok(mem_diff)
     }
 
     /// flush active data into one staging batch
@@ -311,6 +326,7 @@ impl ShuffleRepartitioner {
                 let mut partition_starts = partition_ends;
                 partition_starts.push(input.num_rows());
 
+                let mut mem_diff = 0;
                 for (partition_id, (&start, &end)) in partition_starts
                     .iter()
                     .tuple_windows()
@@ -320,23 +336,26 @@ impl ShuffleRepartitioner {
                     let mut buffered_partitions = self.buffered_partitions.lock().await;
                     let output = &mut buffered_partitions[partition_id];
 
-                    let mem_diff = output.append_rows(
+                    let part_mem_diff = output.append_rows(
                         input.columns(),
                         &shuffled_partition_ids[start..end],
                     )?;
-                    std::mem::drop(buffered_partitions);
+                    mem_diff += part_mem_diff;
+                }
 
-                    if mem_diff > 0 {
-                        let mem_increase = mem_diff as usize;
-                        self.try_grow(mem_increase).await?;
-                        self.metrics.mem_used().add(mem_increase);
-                    }
-                    if mem_diff < 0 {
-                        let mem_used = self.metrics.mem_used().value();
-                        let mem_decrease = mem_used.min(-mem_diff as usize);
-                        self.shrink(mem_decrease);
-                        self.metrics.mem_used().set(mem_used - mem_decrease);
-                    }
+                if mem_diff > 0 {
+                    let mem_increase = mem_diff as usize;
+                    self.try_grow(mem_increase).await?;
+                    self.metrics.mem_used().add(mem_increase);
+                }
+                if mem_diff < 0 {
+                    // if shuffle for current batch triggers a lot of staging
+                    // batches to be flushed to compressed bytes, the memory
+                    // usage can be less than before.
+                    let mem_used = self.metrics.mem_used().value();
+                    let mem_decrease = mem_used.min(-mem_diff as usize);
+                    self.shrink(mem_decrease);
+                    self.metrics.mem_used().set(mem_used - mem_decrease);
                 }
             }
             other => {
@@ -541,7 +560,7 @@ impl MemoryConsumer for ShuffleRepartitioner {
 
 impl Drop for ShuffleRepartitioner {
     fn drop(&mut self) {
-        self.runtime.drop_consumer(self.id(), self.used());
+        self.runtime.drop_consumer(self);
     }
 }
 
@@ -677,7 +696,7 @@ pub async fn external_shuffle(
     context: Arc<TaskContext>,
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
-    let repartitioner = ShuffleRepartitioner::new(
+    let repartitioner = Arc::new(ShuffleRepartitioner::new(
         partition_id,
         output_data_file,
         output_index_file,
@@ -686,8 +705,8 @@ pub async fn external_shuffle(
         metrics,
         context.runtime_env(),
         context.session_config().batch_size(),
-    );
-    context.runtime_env().register_requester(repartitioner.id());
+    ));
+    context.runtime_env().register_requester(repartitioner.clone());
 
     while let Some(batch) = input.next().await {
         let batch = batch?;
