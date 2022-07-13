@@ -20,6 +20,7 @@ pub mod ipc_writer_exec;
 pub mod jni_bridge;
 pub mod rename_columns_exec;
 pub mod shuffle_writer_exec;
+pub mod sort_merge_join_exec;
 
 mod spark_hash;
 mod util;

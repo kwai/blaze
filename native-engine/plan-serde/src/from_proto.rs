@@ -45,7 +45,6 @@ use datafusion::physical_plan::{
     },
     filter::FilterExec,
     projection::ProjectionExec,
-    sort_merge_join::SortMergeJoinExec,
     Partitioning,
 };
 use datafusion::physical_plan::{
@@ -59,6 +58,7 @@ use datafusion_ext::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
+use datafusion_ext::sort_merge_join_exec::SortMergeJoinExec;
 
 use crate::error::{FromOptionalField, PlanSerDeError};
 use crate::protobuf::physical_expr_node::ExprType;
