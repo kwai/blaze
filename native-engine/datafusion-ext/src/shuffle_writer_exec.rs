@@ -33,6 +33,7 @@ use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::TimeUnit;
 use datafusion::arrow::error::ArrowError;
+use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -75,7 +76,7 @@ struct PartitionBuffer {
 
 impl PartitionBuffer {
     fn new(schema: SchemaRef, batch_size: usize) -> Self {
-        let staging_size = (batch_size as f64).sqrt() as usize;
+        let staging_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
         let array_builders = new_array_builders(&schema, staging_size);
         Self {
             schema,
@@ -90,17 +91,44 @@ impl PartitionBuffer {
     }
 
     fn append_rows(&mut self, columns: &[ArrayRef], indices: &[usize]) -> Result<isize> {
-        self.active
-            .iter_mut()
-            .zip(columns)
-            .for_each(|(builder, column)| {
-                append_columns(builder, column, indices, column.data_type());
-            });
-        self.num_active_rows += indices.len();
-        if self.num_active_rows >= self.staging_size {
-            return self.flush_to_staging();
+        let mut mem_diff = 0;
+        let mut start = 0;
+
+        while start < indices.len() {
+            let end = (start + self.batch_size).min(indices.len());
+            self.active
+                .iter_mut()
+                .zip(columns)
+                .for_each(|(builder, column)| {
+                    append_columns(
+                        builder,
+                        column,
+                        &indices[start..end],
+                        column.data_type(),
+                    );
+                });
+            self.num_active_rows += indices.len();
+            if self.num_active_rows >= self.staging_size {
+                mem_diff += self.flush_to_staging()?;
+            }
+            start = end;
         }
-        Ok(0) // assume no memory growing if not flushed
+        Ok(mem_diff)
+    }
+
+    /// append a whole batch directly to staging
+    /// this will break the appending order when mixing with append_rows(), but
+    /// it does not affect the shuffle output result.
+    fn append_batch(&mut self, batch: RecordBatch) -> Result<isize> {
+        let mut mem_diff = batch_byte_size(&batch) as isize;
+        self.num_staging_rows += batch.num_rows();
+        self.staging.push(batch);
+
+        // staging -> frozen
+        if self.num_staging_rows >= self.batch_size {
+            mem_diff += self.flush()?;
+        }
+        Ok(mem_diff)
     }
 
     /// flush active data into one staging batch
@@ -115,17 +143,10 @@ impl PartitionBuffer {
             &mut self.active,
             new_array_builders(&self.schema, self.staging_size),
         );
-        self.num_staging_rows += self.num_active_rows;
         self.num_active_rows = 0;
 
         let staging_batch = make_batch(self.schema.clone(), active)?;
-        mem_diff += batch_byte_size(&staging_batch) as isize;
-        self.staging.push(staging_batch);
-
-        // staging -> frozen
-        if self.num_staging_rows >= self.batch_size {
-            mem_diff += self.flush()?;
-        }
+        mem_diff += self.append_batch(staging_batch)?;
         Ok(mem_diff)
     }
 
@@ -311,6 +332,7 @@ impl ShuffleRepartitioner {
                 let mut partition_starts = partition_ends;
                 partition_starts.push(input.num_rows());
 
+                let mut mem_diff = 0;
                 for (partition_id, (&start, &end)) in partition_starts
                     .iter()
                     .tuple_windows()
@@ -320,23 +342,45 @@ impl ShuffleRepartitioner {
                     let mut buffered_partitions = self.buffered_partitions.lock().await;
                     let output = &mut buffered_partitions[partition_id];
 
-                    let mem_diff = output.append_rows(
-                        input.columns(),
-                        &shuffled_partition_ids[start..end],
-                    )?;
-                    std::mem::drop(buffered_partitions);
 
-                    if mem_diff > 0 {
-                        let mem_increase = mem_diff as usize;
-                        self.try_grow(mem_increase).await?;
-                        self.metrics.mem_used().add(mem_increase);
+                    if end - start < output.batch_size {
+                        mem_diff += output.append_rows(
+                            input.columns(),
+                            &shuffled_partition_ids[start..end],
+                        )?;
+                        std::mem::drop(buffered_partitions);
+
+                    } else {
+                        // for bigger slice, we can use column based operation
+                        // to build batches and directly append to output.
+                        // so that we can get rid of column <-> row conversion.
+                        let indices = PrimitiveArray::from_iter(
+                            shuffled_partition_ids[start..end].iter().map(|&idx| idx as u64)
+                        );
+                        let batch = RecordBatch::try_new(
+                            input.schema(),
+                            input
+                                .columns()
+                                .iter()
+                                .map(|c| {
+                                    datafusion::arrow::compute::take(c, &indices, None)
+                                })
+                                .collect::<ArrowResult<Vec<ArrayRef>>>()?
+                        )?;
+                        mem_diff += output.append_batch(batch)?;
                     }
-                    if mem_diff < 0 {
-                        let mem_used = self.metrics.mem_used().value();
-                        let mem_decrease = mem_used.min(-mem_diff as usize);
-                        self.shrink(mem_decrease);
-                        self.metrics.mem_used().set(mem_used - mem_decrease);
-                    }
+                }
+
+                if mem_diff > 0 {
+                    let mem_increase = mem_diff as usize;
+                    self.try_grow(mem_increase).await?;
+                    self.metrics.mem_used().add(mem_increase);
+                }
+                if mem_diff < 0 {
+                    let mem_used = self.metrics.mem_used().value();
+                    let mem_decrease = mem_used.min(-mem_diff as usize);
+                    self.shrink(mem_decrease);
+                    self.metrics.mem_used().set(mem_used - mem_decrease);
                 }
             }
             other => {
