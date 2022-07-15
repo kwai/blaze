@@ -83,6 +83,7 @@ object BlazeConvertStrategy extends Logging {
     alwaysConvertDirectSortMergeJoin(exec)
     neverConvertContinuousCodegens(exec)
     neverConvertScanWithInconvertibleChildren(exec)
+    neverConvertAggregate(exec)
 
     def hasMoreInconvertibleChildren(e: SparkPlan) =
       e.children.count(isNeverConvert) > e.children.count(isAlwaysConvert)
@@ -194,7 +195,38 @@ object BlazeConvertStrategy extends Logging {
       case _ =>
     }
   }
+  private def neverConvertAggregate(exec: SparkPlan): Unit = {
+    val aggrAheadFlag = TreeNodeTag[Boolean](name = "blaze.aggregate")
+    def needPutFlag(exec: SparkPlan): Boolean = {
+      if (isNeverConvert(exec) || isAlwaysConvert(exec)) {
+        return false
+      } else {
+        return true
+      }
+    }
+    exec.foreach {
+      case exec: HashAggregateExec if isNeverConvert(exec) => {
+        exec.children.foreach {
+          case child if needPutFlag(child) =>
+            child.setTagValue(aggrAheadFlag, true)
+          case _ =>
+        }
+      }
+      case f if f.getTagValue(aggrAheadFlag).contains(true) =>
+        f.children.foreach {
+          case child if needPutFlag(child) =>
+            child.setTagValue(aggrAheadFlag, true)
+          case _ =>
+        }
+      case _ =>
+    }
+    exec.foreach {
+      case e if e.getTagValue(aggrAheadFlag).contains(true) =>
+        e.setTagValue(convertStrategyTag, NeverConvert)
+      case _ =>
+    }
 
+  }
   private def isSuccssorOfExchange(exec: SparkPlan): Boolean = {
     exec.children.forall(child => {
       child.isInstanceOf[Exchange] ||
