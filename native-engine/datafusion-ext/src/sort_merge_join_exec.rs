@@ -355,6 +355,7 @@ async fn join_combined(
     macro_rules! cartesian_join_columnar {
         ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
             let mut lindices = UInt64Builder::new(0);
+            let mut rindices = UInt64Builder::new(0);
 
             for l in $range1.clone() {
                 for r in $range2.clone() {
@@ -363,29 +364,41 @@ async fn join_combined(
                 }
 
                 if lindices.len() >= join_params.batch_size || l + 1 == $range1.end {
-                    let mut cols = Vec::with_capacity(
-                        join_params.output_schema.fields().len()
-                    );
+                    let mut cols =
+                        Vec::with_capacity(join_params.output_schema.fields().len());
                     let larray = lindices.finish();
                     let rarray = rindices.finish();
                     cols.extend(
-                        $batch1.columns().iter().map(|c| {
-                            datafusion::arrow::compute::take(c.as_ref(), &larray, None)
-                        })
-                        .collect::<datafusion::arrow::error::Result<Vec<_>>>()?
+                        $batch1
+                            .columns()
+                            .iter()
+                            .map(|c| {
+                                datafusion::arrow::compute::take(
+                                    c.as_ref(),
+                                    &larray,
+                                    None,
+                                )
+                            })
+                            .collect::<datafusion::arrow::error::Result<Vec<_>>>()?,
                     );
                     cols.extend(
-                        $batch2.columns().iter().map(|c| {
-                            datafusion::arrow::compute::take(c.as_ref(), &rarray, None)
-                        })
-                        .collect::<datafusion::arrow::error::Result<Vec<_>>>()?
+                        $batch2
+                            .columns()
+                            .iter()
+                            .map(|c| {
+                                datafusion::arrow::compute::take(
+                                    c.as_ref(),
+                                    &rarray,
+                                    None,
+                                )
+                            })
+                            .collect::<datafusion::arrow::error::Result<Vec<_>>>()?,
                     );
-                    let batch = RecordBatch::try_new(
-                        join_params.output_schema.clone(),
-                        cols,
-                    )?;
+                    let batch =
+                        RecordBatch::try_new(join_params.output_schema.clone(), cols)?;
 
-                    if staging_len > 0 { // for keeping input order
+                    if staging_len > 0 {
+                        // for keeping input order
                         flush_staging!();
                     }
 
@@ -482,7 +495,6 @@ async fn join_combined(
                 if finished[0] || finished[1] {
                     for (batch1, range1) in &buffers[0] {
                         for (batch2, range2) in &buffers[1] {
-
                             if range1.len() * range2.len() < 64 {
                                 cartesian_join!(
                                     &batch1,

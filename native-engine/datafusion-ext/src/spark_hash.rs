@@ -88,11 +88,11 @@ fn spark_compatible_murmur3_hash<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
 
 #[test]
 fn test_murmur3() {
-    let hashes = ["", "a", "ab", "abc", "abcd", "abcde"]
+    let _hashes = ["", "a", "ab", "abc", "abcd", "abcde"]
         .into_iter()
         .map(|s| spark_compatible_murmur3_hash(s.as_bytes(), 42) as i32)
         .collect::<Vec<_>>();
-    let expected = vec![
+    let _expected = vec![
         142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928,
     ];
 }
@@ -166,8 +166,10 @@ macro_rules! hash_array_decimal {
 
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash =
-                    spark_compatible_murmur3_hash(array.value(i).as_i128().to_le_bytes(), *hash);
+                *hash = spark_compatible_murmur3_hash(
+                    array.value(i).as_i128().to_le_bytes(),
+                    *hash,
+                );
             }
         } else {
             for (i, hash) in $hashes.iter_mut().enumerate() {

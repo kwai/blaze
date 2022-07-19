@@ -178,7 +178,13 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .iter()
                     .zip(projection.expr_name.iter())
                     .map(|(expr, name)| {
-                        Ok((bind(try_parse_physical_expr(expr, &input.schema())?, &input.schema())?, name.to_string()))
+                        Ok((
+                            bind(
+                                try_parse_physical_expr(expr, &input.schema())?,
+                                &input.schema(),
+                            )?,
+                            name.to_string(),
+                        ))
                     })
                     .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>(
                     )?;
@@ -186,10 +192,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::Filter(filter) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(filter.input)?;
-                let predicate = try_parse_physical_expr_required(
-                    &filter.expr,
-                    &input.schema(),
-                )?;
+                let predicate =
+                    try_parse_physical_expr_required(&filter.expr, &input.schema())?;
                 Ok(Arc::new(FilterExec::try_new(
                     bind(predicate, &input.schema())?,
                     input,
@@ -467,11 +471,13 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .iter()
                     .zip(hash_agg.group_expr_name.iter())
                     .map(|(expr, name)| {
-                        try_parse_physical_expr(expr, &input.schema()).and_then(|expr: Arc<dyn PhysicalExpr>| {
-                            bind(expr, &input.schema())
-                                .map(|expr| (expr, name.to_string()))
-                                .map_err(PlanSerDeError::DataFusionError)
-                        })
+                        try_parse_physical_expr(expr, &input.schema()).and_then(
+                            |expr: Arc<dyn PhysicalExpr>| {
+                                bind(expr, &input.schema())
+                                    .map(|expr| (expr, name.to_string()))
+                                    .map_err(PlanSerDeError::DataFusionError)
+                            },
+                        )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
@@ -647,8 +653,7 @@ fn try_parse_physical_expr(
         )),
         ExprType::AggregateExpr(_) => {
             return Err(PlanSerDeError::General(
-                "Cannot convert aggregate expr node to physical expression"
-                    .to_owned(),
+                "Cannot convert aggregate expr node to physical expression".to_owned(),
             ));
         }
         ExprType::WindowExpr(_) => {
@@ -661,22 +666,18 @@ fn try_parse_physical_expr(
                 "Cannot convert sort expr node to physical expression".to_owned(),
             ));
         }
-        ExprType::IsNullExpr(e) => {
-            Arc::new(IsNullExpr::new(
-                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
-        }
-        ExprType::IsNotNullExpr(e) => {
-            Arc::new(IsNotNullExpr::new(
-                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
-        }
-        ExprType::NotExpr(e) => {
-            Arc::new(NotExpr::new(
-                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
-        }
-        ExprType::Negative(e) => {
-            Arc::new(NegativeExpr::new(
-                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
-        }
+        ExprType::IsNullExpr(e) => Arc::new(IsNullExpr::new(
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+        )),
+        ExprType::IsNotNullExpr(e) => Arc::new(IsNotNullExpr::new(
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+        )),
+        ExprType::NotExpr(e) => Arc::new(NotExpr::new(
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+        )),
+        ExprType::Negative(e) => Arc::new(NegativeExpr::new(
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+        )),
         ExprType::InList(e) => Arc::new(InListExpr::new(
             try_parse_physical_expr_box_required(&e.expr, input_schema)?,
             e.list
@@ -687,7 +688,10 @@ fn try_parse_physical_expr(
             input_schema,
         )),
         ExprType::Case(e) => Arc::new(CaseExpr::try_new(
-            e.expr.as_ref().map(|e| try_parse_physical_expr(e.as_ref(), input_schema)).transpose()?,
+            e.expr
+                .as_ref()
+                .map(|e| try_parse_physical_expr(e.as_ref(), input_schema))
+                .transpose()?,
             e.when_then_expr
                 .iter()
                 .map(|e| {
@@ -712,12 +716,11 @@ fn try_parse_physical_expr(
             convert_required!(e.arrow_type)?,
         )),
         ExprType::ScalarFunction(e) => {
-            let scalar_function = protobuf::ScalarFunction::from_i32(e.fun)
-                .ok_or_else(|| {
-                    proto_error(format!(
-                        "Received an unknown scalar function: {}",
-                        e.fun,
-                    ))
+            let scalar_function =
+                protobuf::ScalarFunction::from_i32(e.fun).ok_or_else(|| {
+                    proto_error(
+                        format!("Received an unknown scalar function: {}", e.fun,),
+                    )
                 })?;
 
             let args = e

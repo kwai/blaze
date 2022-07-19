@@ -99,10 +99,11 @@ impl PartitionBuffer {
         if self.active.is_empty() {
             self.active = new_array_builders(&self.schema, self.staging_size);
             if self.active_slots_mem_size == 0 {
-                self.active_slots_mem_size = self.active
+                self.active_slots_mem_size = self
+                    .active
                     .iter()
                     .zip(self.schema.fields())
-                    .map(|(ab, field)| slot_size(self.staging_size, field.data_type()))
+                    .map(|(_ab, field)| slot_size(self.staging_size, field.data_type()))
                     .sum::<usize>();
             }
             mem_diff += self.active_slots_mem_size as isize;
