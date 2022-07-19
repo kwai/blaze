@@ -25,7 +25,6 @@ use datafusion::error::DataFusionError;
 
 pub type Result<T> = result::Result<T, PlanSerDeError>;
 
-/// Ballista error
 #[derive(Debug)]
 pub enum PlanSerDeError {
     NotImplemented(String),
@@ -86,7 +85,7 @@ impl Display for PlanSerDeError {
             }
             PlanSerDeError::IoError(ref desc) => write!(f, "IO error: {}", desc),
             PlanSerDeError::Internal(desc) => {
-                write!(f, "Internal Ballista error: {}", desc)
+                write!(f, "Internal error: {}", desc)
             }
             Self::MissingRequiredField(name) => {
                 write!(f, "Missing required field {}", name)

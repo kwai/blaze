@@ -81,6 +81,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.StddevSamp
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
+import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.MakeDecimal
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
 import org.apache.spark.sql.catalyst.plans.FullOuter
@@ -109,6 +110,8 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.blaze.{protobuf => pb}
+import org.blaze.protobuf.PhysicalExprNode
+import org.blaze.protobuf.ScalarFunction
 
 object NativeConverters {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -250,6 +253,21 @@ object NativeConverters {
             .newBuilder()
             .setName(fn.name())
             .setFun(fn)
+            .addAllArgs(args.map(convertExpr).asJava)
+            .setReturnType(convertDataType(dataType))
+            .build())
+      }
+
+    def buildExtScalarFunction(
+        name: String,
+        args: Seq[Expression],
+        dataType: DataType): pb.PhysicalExprNode =
+      buildExprNode {
+        _.setScalarFunction(
+          pb.PhysicalScalarFunctionNode
+            .newBuilder()
+            .setName(name)
+            .setFun(ScalarFunction.SparkExtFunctions)
             .addAllArgs(args.map(convertExpr).asJava)
             .setReturnType(convertDataType(dataType))
             .build())
@@ -424,6 +442,31 @@ object NativeConverters {
       // case Nothing => buildScalarFunction(pb.ScalarFunction.TOTIMESTAMPMILLIS, Nil)
       case StartsWith(_1, _2) =>
         buildScalarFunction(pb.ScalarFunction.StartsWith, Seq(_1, _2), BooleanType)
+      case e: Substring =>
+        val newChildren = e.children.head +: e.children.tail.map {
+          case c =>
+            if (c.dataType != LongType) {
+              Cast(c, LongType)
+            } else c
+        }
+        buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
+      case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
+
+      case If(predicate, trueValue, falseValue) =>
+        PhysicalExprNode
+          .newBuilder()
+          .setCase(
+            pb.PhysicalCaseNode
+              .newBuilder()
+              .addWhenThenExpr(
+                pb.PhysicalWhenThen
+                  .newBuilder()
+                  .setWhenExpr(convertExpr(predicate))
+                  .setThenExpr(convertExpr(trueValue)))
+              .setElseExpr(convertExpr(falseValue))
+              .build())
+          .build()
+
       case CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()
         val whenThens = branches.map {
@@ -436,19 +479,13 @@ object NativeConverters {
         caseExpr.addAllWhenThenExpr(whenThens.asJava)
         elseValue.foreach(el => caseExpr.setElseExpr(convertExpr(el)))
         pb.PhysicalExprNode.newBuilder().setCase(caseExpr).build()
-      case e: Substring =>
-        val newChildren = e.children.head +: e.children.tail.map {
-          case c =>
-            if (c.dataType != LongType) {
-              Cast(c, LongType)
-            } else c
-        }
-        buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
-      case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
 
       // aggr bypass
-      case UnscaledValue(_1) => convertExpr(_1)
-      case MakeDecimal(_1, _, _, _) => convertExpr(_1)
+      case UnscaledValue(_1) =>
+        buildExtScalarFunction("UnscaledValue", Seq(_1), LongType)
+      case MakeDecimal(_1, precision, scale, _) =>
+        val args = Seq(_1, Literal(precision), Literal(scale))
+        buildExtScalarFunction("MakeDecimal", args, DecimalType(precision, scale))
 
       // aggr
       case Min(_1) => buildAggrExprNode(pb.AggregateFunction.MIN, _1)
@@ -474,6 +511,12 @@ object NativeConverters {
         buildFn: (pb.LogicalExprNode.Builder) => pb.LogicalExprNode.Builder): pb.LogicalExprNode =
       buildFn(pb.LogicalExprNode.newBuilder()).build()
 
+    def buildAggrExprNode(
+        aggrFunction: pb.AggregateFunction,
+        child: Expression): pb.LogicalExprNode = {
+      throw new NotImplementedError("logical AggrExpr not implemented")
+    }
+
     def buildBinaryExprNode(left: Expression, right: Expression, op: String): pb.LogicalExprNode =
       buildExprNode {
         _.setBinaryExpr(
@@ -495,6 +538,13 @@ object NativeConverters {
             .setFun(fn)
             .addAllArgs(args.map(convertExprLogical).asJava))
       }
+
+    def buildExtScalarFunction(
+        name: String,
+        args: Seq[Expression],
+        dataType: DataType): pb.LogicalExprNode = {
+      throw new NotImplementedError("logical SparkExtFunction not implemented")
+    }
 
     def unpackBinaryTypeCast(expr: Expression) =
       expr match {
@@ -669,6 +719,24 @@ object NativeConverters {
       // case Nothing => buildScalarFunction(pb.ScalarFunction.TOTIMESTAMPMILLIS, Nil)
       case StartsWith(_1, _2) =>
         buildScalarFunction(pb.ScalarFunction.StartsWith, Seq(_1, _2), BooleanType)
+      case e: Substring => buildScalarFunction(pb.ScalarFunction.Substr, e.children, e.dataType)
+      case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
+
+      case If(predicate, trueValue, falseValue) =>
+        pb.LogicalExprNode
+          .newBuilder()
+          .setCase(
+            pb.CaseNode
+              .newBuilder()
+              .addWhenThenExpr(
+                pb.WhenThen
+                  .newBuilder()
+                  .setWhenExpr(convertExprLogical(predicate))
+                  .setThenExpr(convertExprLogical(trueValue)))
+              .setElseExpr(convertExprLogical(falseValue))
+              .build())
+          .build()
+
       case CaseWhen(branches, elseValue) =>
         val caseExpr = pb.CaseNode.newBuilder()
         val whenThens = branches.map {
@@ -681,8 +749,27 @@ object NativeConverters {
         caseExpr.addAllWhenThenExpr(whenThens.asJava)
         elseValue.foreach(el => caseExpr.setElseExpr(convertExprLogical(el)))
         pb.LogicalExprNode.newBuilder().setCase(caseExpr).build()
-      case e: Substring => buildScalarFunction(pb.ScalarFunction.Substr, e.children, e.dataType)
-      case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
+
+      // aggr bypass
+      case UnscaledValue(_1) =>
+        buildExtScalarFunction("UnscaledValue", Seq(_1), LongType)
+      case MakeDecimal(_1, precision, scale, _) =>
+        val args = Seq(_1, Literal(precision), Literal(scale))
+        buildExtScalarFunction("MakeDecimal", args, DecimalType(precision, scale))
+
+      // aggr
+      case Min(_1) => buildAggrExprNode(pb.AggregateFunction.MIN, _1)
+      case Max(_1) => buildAggrExprNode(pb.AggregateFunction.MAX, _1)
+      case Sum(_1) => buildAggrExprNode(pb.AggregateFunction.SUM, _1)
+      case Average(_1) => buildAggrExprNode(pb.AggregateFunction.AVG, _1)
+      case Count(Seq(_1)) => buildAggrExprNode(pb.AggregateFunction.COUNT, _1)
+      case Count(_n) if !_n.exists(_.nullable) =>
+        buildAggrExprNode(pb.AggregateFunction.COUNT, Literal(1))
+      case VarianceSamp(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE, _1)
+      case VariancePop(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE_POP, _1)
+      case StddevSamp(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV, _1)
+      case StddevPop(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV_POP, _1)
+
       case unsupportedExpression =>
         throw new NotImplementedError(s"unsupported exception: ${unsupportedExpression}")
     }

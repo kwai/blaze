@@ -12,31 +12,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use async_trait::async_trait;
-use datafusion::datafusion_data_access::object_store::{
-    FileMetaStream, ListEntryStream, ObjectReader, ObjectStore,
-};
-use datafusion::datafusion_data_access::Result;
-use datafusion::datafusion_data_access::SizedFile;
-use futures::AsyncRead;
 use jni::objects::{GlobalRef, JObject};
 use jni::sys::jint;
 
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::fmt::Formatter;
-use std::io::{BufReader, Read};
+use std::ops::Range;
 use std::sync::Arc;
+use futures::stream::BoxStream;
+use object_store::{GetResult, ListResult, ObjectMeta, ObjectStore};
+use object_store::path::Path;
 
-use crate::jni_call;
+use crate::{jni_call, jni_new_global_ref};
 use crate::jni_call_static;
 use crate::jni_new_direct_byte_buffer;
-use crate::jni_new_global_ref;
 use crate::jni_new_object;
 use crate::jni_new_string;
-use crate::ResultExt;
+use jni::sys::jlong;
+
+const NUM_HDFS_WORKER_THREADS: usize = 64;
 
 #[derive(Clone)]
-pub struct HDFSSingleFileObjectStore;
+pub struct HDFSSingleFileObjectStore {
+    spawner: Arc<tokio::runtime::Runtime>,
+    fs: GlobalRef,
+}
+
+impl HDFSSingleFileObjectStore {
+    pub fn try_new() -> datafusion::error::Result<Self> {
+        let spawner = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(NUM_HDFS_WORKER_THREADS)
+                .build()?
+        );
+        let fs = jni_new_global_ref!(
+            jni_call_static!(JniBridge.getHDFSFileSystem() -> JObject)?
+        )?;
+        Ok(Self {
+            spawner,
+            fs,
+        })
+    }
+}
 
 impl Debug for HDFSSingleFileObjectStore {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -44,137 +62,110 @@ impl Debug for HDFSSingleFileObjectStore {
     }
 }
 
+impl Display for HDFSSingleFileObjectStore {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HDFSObjectStore")
+    }
+}
+
 #[async_trait::async_trait]
 impl ObjectStore for HDFSSingleFileObjectStore {
-    async fn list_file(&self, _prefix: &str) -> Result<FileMetaStream> {
-        unreachable!()
+
+    async fn put(&self, _location: &Path, _bytes: bytes::Bytes) -> object_store::Result<()> {
+        todo!()
     }
 
-    async fn list_dir(
-        &self,
-        _prefix: &str,
-        _delimiter: Option<String>,
-    ) -> Result<ListEntryStream> {
-        unreachable!()
+    async fn get(&self, _location: &Path) -> object_store::Result<GetResult> {
+        todo!()
     }
 
-    fn file_reader(&self, file: SizedFile) -> Result<Arc<dyn ObjectReader>> {
-        log::warn!("HDFSSingleFileStore.file_reader: {:?}", file);
+    async fn get_range(&self, location: &Path, range: Range<usize>) -> object_store::Result<bytes::Bytes> {
+        let fs = self.fs.clone();
+        let location = normalize_location(location);
 
-        let path = file.path.clone();
-        let get_hdfs_input_stream = || -> datafusion::error::Result<GlobalRef> {
-            let fs = jni_call_static!(JniBridge.getHDFSFileSystem() -> JObject)?;
-            let path_str = jni_new_string!(path)?;
-            let path = jni_new_object!(HadoopPath, path_str)?;
-            Ok(jni_new_global_ref!(
-                jni_call!(HadoopFileSystem(fs).open(path) -> JObject)?
-            )?)
-        };
-        Ok(Arc::new(HDFSObjectReader {
-            file,
-            hdfs_input_stream: Arc::new(FSInputStreamWrapper(
-                get_hdfs_input_stream().to_io_result()?,
-            )),
-        }))
-    }
-}
+        self.spawner.spawn_blocking(move || -> datafusion::error::Result<bytes::Bytes> {
+            let fs = fs.as_obj();
+            let path = jni_new_object!(HadoopPath, jni_new_string!(location.clone())?)?;
+            let fin = jni_call!(HadoopFileSystem(fs).open(path) -> JObject)?;
 
-#[derive(Clone)]
-struct HDFSObjectReader {
-    file: SizedFile,
-    hdfs_input_stream: Arc<FSInputStreamWrapper>,
-}
+            let mut buf = vec![0; range.len()];
 
-#[async_trait]
-impl ObjectReader for HDFSObjectReader {
-    async fn chunk_reader(
-        &self,
-        _start: u64,
-        _length: usize,
-    ) -> Result<Box<dyn AsyncRead>> {
-        unimplemented!()
+            jni_call_static!(
+                JniBridge.readFSDataInputStream(
+                    fin,
+                    jni_new_direct_byte_buffer!(&mut buf)?,
+                    range.start as i64,
+                ) -> jint
+            )?;
+            jni_call!(HadoopFSDataInputStream(fin).close() -> ())?;
+            Ok(bytes::Bytes::from(buf))
+        })
+        .await?
+        .map_err(|err| object_store::Error::Generic {
+            store: "HDFSObjectStore",
+            source: Box::new(err),
+        })
     }
 
-    fn sync_chunk_reader(
-        &self,
-        start: u64,
-        length: usize,
-    ) -> Result<Box<dyn Read + Send + Sync>> {
-        self.get_reader(start, length)
+    async fn head(&self, location: &Path) -> object_store::Result<ObjectMeta> {
+        let fs = self.fs.clone();
+        let location = normalize_location(location);
+
+        self.spawner.spawn_blocking(move || -> datafusion::error::Result<ObjectMeta> {
+            let fs = fs.as_obj();
+            let path = jni_new_object!(HadoopPath, jni_new_string!(location.clone())?)?;
+            let fstatus = jni_call!(HadoopFileSystem(fs).getFileStatus(path) -> JObject)?;
+            let flen = jni_call!(HadoopFileStatus(fstatus).getLen() -> jlong)?;
+
+            Ok(ObjectMeta {
+                location: location.clone().into(),
+                last_modified: chrono::MIN_DATETIME,
+                size: flen as usize,
+            })
+        })
+        .await?
+        .map_err(|err| object_store::Error::Generic {
+            store: "HDFSObjectStore",
+            source: Box::new(err),
+        })
     }
 
-    fn sync_reader(&self) -> Result<Box<dyn Read + Send + Sync>> {
-        self.sync_chunk_reader(0, 0)
+    async fn delete(&self, _location: &Path) -> object_store::Result<()> {
+        todo!()
     }
 
-    fn length(&self) -> u64 {
-        self.file.size
+    async fn list(&self, _prefix: Option<&Path>) -> object_store::Result<BoxStream<'_, object_store::Result<ObjectMeta>>> {
+        todo!()
     }
-}
 
-impl HDFSObjectReader {
-    fn get_reader(
-        &self,
-        start: u64,
-        length: usize,
-    ) -> Result<Box<dyn Read + Send + Sync>> {
-        let max_read_size =
-            length.min(self.file.size.saturating_sub(start + length as u64) as usize);
-        let buf_len = max_read_size.min(1048576);
+    async fn list_with_delimiter(&self, _prefix: Option<&Path>) -> object_store::Result<ListResult> {
+        todo!()
+    }
 
-        let reader = BufReader::with_capacity(
-            buf_len,
-            HDFSFileReader {
-                hdfs_input_stream: self.hdfs_input_stream.clone(),
-                length,
-                start,
-                pos: start,
-            },
-        );
-        Ok(Box::new(reader))
+    async fn copy(&self, _from: &Path, _to: &Path) -> object_store::Result<()> {
+        todo!()
+    }
+
+    async fn copy_if_not_exists(&self, _from: &Path, _to: &Path) -> object_store::Result<()> {
+        todo!()
     }
 }
 
-#[derive(Clone)]
-struct HDFSFileReader {
-    pub hdfs_input_stream: Arc<FSInputStreamWrapper>,
-    pub length: usize,
-    pub start: u64,
-    pub pos: u64,
-}
+fn normalize_location(location: impl AsRef<str>) -> String {
+    const HDFS_LOCATION_PREFIX: &str = "hdfs:/-/";
 
-impl Read for HDFSFileReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.pos.saturating_sub(self.start) as usize;
-        let rest = self.length.saturating_sub(read);
-        let buf_len = buf.len().min(rest);
-
-        let buf = jni_new_direct_byte_buffer!(&mut buf[..buf_len]).to_io_result()?;
-        let read_size = jni_call_static!(
-            JniBridge.readFSDataInputStream(
-                self.hdfs_input_stream.as_obj(),
-                buf,
-                self.pos as i64,
-            ) -> jint
-        )
-        .to_io_result()? as usize;
-
-        self.pos += read_size as u64;
-        Ok(read_size)
+    // NOTE:
+    //  all input hdfs locations shoule be prefixed with this string. see object
+    //  store registration codes.
+    let location = location.as_ref();
+    if location.starts_with(HDFS_LOCATION_PREFIX) {
+        let trimmed = location
+            .to_string()
+            .trim_start_matches(HDFS_LOCATION_PREFIX)
+            .trim_start_matches("/")
+            .to_owned();
+        let decoded = String::from_utf8(base64::decode(trimmed).unwrap()).unwrap();
+        return decoded;
     }
-}
-
-struct FSInputStreamWrapper(GlobalRef);
-
-impl FSInputStreamWrapper {
-    pub fn as_obj(&self) -> JObject {
-        self.0.as_obj()
-    }
-}
-
-impl Drop for FSInputStreamWrapper {
-    fn drop(&mut self) {
-        // never panic in drop, otherwise the jvm process will be aborted
-        let _ = jni_call!(HadoopFSDataInputStream(self.0.as_obj()).close() -> ());
-    }
+    location.to_string()
 }

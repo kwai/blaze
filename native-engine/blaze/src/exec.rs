@@ -92,9 +92,14 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
                 .with_disk_manager(DiskManagerConfig::NewSpecified(dirs));
 
             let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
-            let hdfs_object_store = Arc::new(HDFSSingleFileObjectStore);
-            runtime.register_object_store("hdfs".to_owned(), hdfs_object_store.clone());
-            runtime.register_object_store("viewfs".to_owned(), hdfs_object_store);
+
+            // NOTE:
+            //  datafusion 10.0 introduced required `host` when registering
+            //  object store, so it is necessary to wrap hdfs path with a unique
+            //  prefix "hdfs://-/".
+            //  for example: hdfs://-/(base64-encoded:hdfs://localhost:9000/xxx)
+            let hdfs_object_store = Arc::new(HDFSSingleFileObjectStore::try_new().unwrap());
+            runtime.register_object_store("hdfs", "-", hdfs_object_store.clone());
 
             let config = SessionConfig::new().with_batch_size(batch_size);
             SessionContext::with_config_rt(config, runtime)

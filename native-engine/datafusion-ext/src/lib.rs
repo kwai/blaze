@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
+use datafusion::common::DataFusionError;
+use datafusion::logical_expr::ScalarFunctionImplementation;
+
 pub mod debug_exec;
 pub mod empty_partitions_exec;
 pub mod hdfs_object_store; // note: can be changed to priv once plan transforming is removed
@@ -22,6 +27,7 @@ pub mod rename_columns_exec;
 pub mod shuffle_writer_exec;
 pub mod sort_merge_join_exec;
 
+mod spark_ext_function;
 mod spark_hash;
 mod util;
 
@@ -58,4 +64,17 @@ where
             )),
         }
     }
+}
+
+pub fn create_spark_ext_function(
+    name: &str,
+) -> datafusion::error::Result<ScalarFunctionImplementation> {
+    Ok(match name {
+        "UnscaledValue" => Arc::new(spark_ext_function::spark_unscaled_value),
+        "MakeDecimal" => Arc::new(spark_ext_function::spark_make_decimal),
+        _ => Err(DataFusionError::NotImplemented(format!(
+            "spark ext function not implemented: {}",
+            name
+        )))?,
+    })
 }

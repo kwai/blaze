@@ -68,6 +68,7 @@ struct PartitionBuffer {
     frozen: Vec<u8>,
     staging: Vec<RecordBatch>,
     active: Vec<Box<dyn ArrayBuilder>>,
+    active_slots_mem_size: usize,
     num_active_rows: usize,
     num_staging_rows: usize,
     batch_size: usize,
@@ -77,12 +78,12 @@ struct PartitionBuffer {
 impl PartitionBuffer {
     fn new(schema: SchemaRef, batch_size: usize) -> Self {
         let staging_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
-        let array_builders = new_array_builders(&schema, staging_size);
         Self {
             schema,
             frozen: vec![],
             staging: vec![],
-            active: array_builders,
+            active: vec![],
+            active_slots_mem_size: 0,
             num_active_rows: 0,
             num_staging_rows: 0,
             batch_size,
@@ -93,6 +94,19 @@ impl PartitionBuffer {
     fn append_rows(&mut self, columns: &[ArrayRef], indices: &[usize]) -> Result<isize> {
         let mut mem_diff = 0;
         let mut start = 0;
+
+        // lazy init because some partition may be empty
+        if self.active.is_empty() {
+            self.active = new_array_builders(&self.schema, self.staging_size);
+            if self.active_slots_mem_size == 0 {
+                self.active_slots_mem_size = self.active
+                    .iter()
+                    .zip(self.schema.fields())
+                    .map(|(ab, field)| slot_size(self.staging_size, field.data_type()))
+                    .sum::<usize>();
+            }
+            mem_diff += self.active_slots_mem_size as isize;
+        }
 
         while start < indices.len() {
             let end = (start + self.batch_size).min(indices.len());
@@ -139,11 +153,9 @@ impl PartitionBuffer {
         let mut mem_diff = 0isize;
 
         // active -> staging
-        let active = std::mem::replace(
-            &mut self.active,
-            new_array_builders(&self.schema, self.staging_size),
-        );
+        let active = std::mem::take(&mut self.active);
         self.num_active_rows = 0;
+        mem_diff -= self.active_slots_mem_size as isize;
 
         let staging_batch = make_batch(self.schema.clone(), active)?;
         mem_diff += self.append_batch(staging_batch)?;
@@ -177,6 +189,32 @@ impl PartitionBuffer {
 
         mem_diff += (self.frozen.capacity() - frozen_capacity_old) as isize;
         Ok(mem_diff)
+    }
+}
+
+fn slot_size(len: usize, data_type: &DataType) -> usize {
+    match data_type {
+        DataType::Boolean => len / 8,
+        DataType::Int8 => len,
+        DataType::Int16 => len * 2,
+        DataType::Int32 => len * 4,
+        DataType::Int64 => len * 8,
+        DataType::UInt8 => len,
+        DataType::UInt16 => len * 2,
+        DataType::UInt32 => len * 4,
+        DataType::UInt64 => len * 8,
+        DataType::Float32 => len * 4,
+        DataType::Float64 => len * 8,
+        DataType::Date32 => len * 4,
+        DataType::Date64 => len * 8,
+        DataType::Time32(TimeUnit::Second) => len * 4,
+        DataType::Time32(TimeUnit::Millisecond) => len * 4,
+        DataType::Time64(TimeUnit::Microsecond) => len * 4,
+        DataType::Time64(TimeUnit::Nanosecond) => len * 4,
+        DataType::Utf8 => len * 4,
+        DataType::LargeUtf8 => len * 8,
+        DataType::Decimal(_, _) => len * 16,
+        _ => unimplemented!("data type not supported in shuffle write"),
     }
 }
 
@@ -342,20 +380,20 @@ impl ShuffleRepartitioner {
                     let mut buffered_partitions = self.buffered_partitions.lock().await;
                     let output = &mut buffered_partitions[partition_id];
 
-
                     if end - start < output.batch_size {
                         mem_diff += output.append_rows(
                             input.columns(),
                             &shuffled_partition_ids[start..end],
                         )?;
                         std::mem::drop(buffered_partitions);
-
                     } else {
                         // for bigger slice, we can use column based operation
                         // to build batches and directly append to output.
                         // so that we can get rid of column <-> row conversion.
                         let indices = PrimitiveArray::from_iter(
-                            shuffled_partition_ids[start..end].iter().map(|&idx| idx as u64)
+                            shuffled_partition_ids[start..end]
+                                .iter()
+                                .map(|&idx| idx as u64),
                         );
                         let batch = RecordBatch::try_new(
                             input.schema(),
@@ -365,7 +403,7 @@ impl ShuffleRepartitioner {
                                 .map(|c| {
                                     datafusion::arrow::compute::take(c, &indices, None)
                                 })
-                                .collect::<ArrowResult<Vec<ArrayRef>>>()?
+                                .collect::<ArrowResult<Vec<ArrayRef>>>()?,
                         )?;
                         mem_diff += output.append_batch(batch)?;
                     }
@@ -562,7 +600,7 @@ impl MemoryConsumer for ShuffleRepartitioner {
 
         let spillfile = self.runtime.disk_manager.create_tmp_file()?;
         let offsets = spill_into(
-            &mut *buffered_partitions,
+            &mut buffered_partitions,
             spillfile.path(),
             self.num_output_partitions,
         )

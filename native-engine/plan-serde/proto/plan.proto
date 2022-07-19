@@ -235,6 +235,7 @@ enum ScalarFunction {
   Trim=61;
   Upper=62;
   Coalesce=63;
+  SparkExtFunctions=10000;
 }
 
 message PhysicalScalarFunctionNode {

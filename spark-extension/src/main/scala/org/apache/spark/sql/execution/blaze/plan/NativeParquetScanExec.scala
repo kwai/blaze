@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
+import java.util.Base64
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.catalyst.expressions.And
@@ -65,11 +67,19 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       .groupBy(_.filePath)
       .mapValues(_.map(_.length).sum)
 
+    def formatFilePath(path: String): String = {
+      if (path.startsWith("hdfs://") || path.startsWith("viewfs://")) {
+        // NOTE: see native object store registration codes
+        return s"hdfs://-/${Base64.getEncoder.encodeToString(path.getBytes)}"
+      }
+      path
+    }
+
     // list input file statuses
     def nativePartitionedFile(file: org.apache.spark.sql.execution.datasources.PartitionedFile) =
       PartitionedFile
         .newBuilder()
-        .setPath(file.filePath.replaceFirst("^file://", ""))
+        .setPath(formatFilePath(file.filePath))
         .setSize(fileSizes(file.filePath))
         .setLastModifiedNs(0)
         .setRange(

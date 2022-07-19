@@ -1,14 +1,10 @@
 use std::any::Any;
-use std::borrow::{BorrowMut};
+use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 
 use std::fmt::Formatter;
 
-
-
 use std::sync::Arc;
-
-
 
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::SortOptions;
@@ -16,12 +12,9 @@ use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::error::Result as ArrowResult;
 
-
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-
-
 
 use datafusion::logical_plan::JoinType;
 use datafusion::physical_expr::expressions::Column;
@@ -40,8 +33,8 @@ use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
 
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use itertools::{izip};
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use itertools::izip;
 
 use tokio::sync::mpsc::Sender;
 
@@ -359,6 +352,51 @@ async fn join_combined(
         }};
     }
 
+    macro_rules! cartesian_join_columnar {
+        ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
+            let mut lindices = UInt64Builder::new(0);
+
+            for l in $range1.clone() {
+                for r in $range2.clone() {
+                    lindices.append_value(l as u64).unwrap();
+                    rindices.append_value(r as u64).unwrap();
+                }
+
+                if lindices.len() >= join_params.batch_size || l + 1 == $range1.end {
+                    let mut cols = Vec::with_capacity(
+                        join_params.output_schema.fields().len()
+                    );
+                    let larray = lindices.finish();
+                    let rarray = rindices.finish();
+                    cols.extend(
+                        $batch1.columns().iter().map(|c| {
+                            datafusion::arrow::compute::take(c.as_ref(), &larray, None)
+                        })
+                        .collect::<datafusion::arrow::error::Result<Vec<_>>>()?
+                    );
+                    cols.extend(
+                        $batch2.columns().iter().map(|c| {
+                            datafusion::arrow::compute::take(c.as_ref(), &rarray, None)
+                        })
+                        .collect::<datafusion::arrow::error::Result<Vec<_>>>()?
+                    );
+                    let batch = RecordBatch::try_new(
+                        join_params.output_schema.clone(),
+                        cols,
+                    )?;
+
+                    if staging_len > 0 { // for keeping input order
+                        flush_staging!();
+                    }
+
+                    let batch_num_rows = batch.num_rows();
+                    sender.send(Ok(batch)).await.ok();
+                    metrics.record_output(batch_num_rows);
+                }
+            }
+        }};
+    }
+
     loop {
         let left_finished = left_cursor.current().is_none();
         let right_finished = right_cursor.current().is_none();
@@ -444,12 +482,22 @@ async fn join_combined(
                 if finished[0] || finished[1] {
                     for (batch1, range1) in &buffers[0] {
                         for (batch2, range2) in &buffers[1] {
-                            cartesian_join!(
-                                &batch1,
-                                range1.clone(),
-                                &batch2,
-                                range2.clone()
-                            );
+
+                            if range1.len() * range2.len() < 64 {
+                                cartesian_join!(
+                                    &batch1,
+                                    range1.clone(),
+                                    &batch2,
+                                    range2.clone()
+                                );
+                            } else {
+                                cartesian_join_columnar!(
+                                    &batch1,
+                                    range1.clone(),
+                                    &batch2,
+                                    range2.clone()
+                                );
+                            }
                         }
                     }
                     if finished[0] {
