@@ -32,4 +32,4 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev= "7afd4377309eba65100b7bfc07e0c6cd5bf3d780" }
+#datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev= "7afd4377309eba65100b7bfc07e0c6cd5bf3d780" }

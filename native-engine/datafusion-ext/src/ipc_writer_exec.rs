@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
-    jni_new_string,
-};
+use crate::{jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::ArrowError;
@@ -165,11 +162,12 @@ pub async fn write_ipc(
             )?;
             std::mem::drop(timer);
 
-            jni_call!(
-                ScalaFunction1(ipc_consumer.as_obj()).apply(
-                    jni_new_direct_byte_buffer!(&mut buffer)?
-                ) -> JObject
+            let jbuf = jni_new_direct_byte_buffer!(&mut buffer)?;
+            let consumed = jni_call!(
+                ScalaFunction1(ipc_consumer.as_obj()).apply(jbuf) -> JObject
             )?;
+            jni_delete_local_ref!(consumed)?;
+            jni_delete_local_ref!(jbuf.into())?;
         }}
     }
 

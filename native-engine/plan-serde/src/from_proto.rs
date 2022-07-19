@@ -17,10 +17,8 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use chrono::{TimeZone, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 
-use datafusion::datafusion_data_access::{FileMeta, SizedFile};
 use datafusion::datasource::listing::{FileRange, ListingTableUrl, PartitionedFile};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
@@ -59,6 +57,7 @@ use datafusion_ext::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 use datafusion_ext::sort_merge_join_exec::SortMergeJoinExec;
+use object_store::ObjectMeta;
 
 use crate::error::{FromOptionalField, PlanSerDeError};
 use crate::protobuf::physical_expr_node::ExprType;
@@ -98,8 +97,7 @@ fn bind(
                         bind(then_expr.clone(), input_schema).unwrap(),
                     )
                 })
-                .collect::<Vec<_>>()
-                .as_slice(),
+                .collect::<Vec<_>>(),
             expr.else_expr()
                 .as_ref()
                 .map(|exp| bind((**exp).clone(), input_schema))
@@ -124,6 +122,7 @@ fn bind(
                 .map(|a| bind(a.clone(), input_schema))
                 .collect::<Result<Vec<_>, DataFusionError>>()?,
             expr.negated(),
+            input_schema,
         ));
         Ok(in_list)
     } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
@@ -179,7 +178,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .iter()
                     .zip(projection.expr_name.iter())
                     .map(|(expr, name)| {
-                        Ok((bind(expr.try_into()?, &input.schema())?, name.to_string()))
+                        Ok((bind(try_parse_physical_expr(expr, &input.schema())?, &input.schema())?, name.to_string()))
                     })
                     .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>(
                     )?;
@@ -187,16 +186,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::Filter(filter) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(filter.input)?;
-                let predicate = filter
-                    .expr
-                    .as_ref()
-                    .ok_or_else(|| {
-                        PlanSerDeError::General(
-                            "filter (FilterExecNode) in PhysicalPlanNode is missing."
-                                .to_owned(),
-                        )
-                    })?
-                    .try_into()?;
+                let predicate = try_parse_physical_expr_required(
+                    &filter.expr,
+                    &input.schema(),
+                )?;
                 Ok(Arc::new(FilterExec::try_new(
                     bind(predicate, &input.schema())?,
                     input,
@@ -330,7 +323,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 })?
                                 .as_ref();
                             Ok(PhysicalSortExpr {
-                                expr: bind(expr.try_into()?, &input.schema()).unwrap(),
+                                expr: bind(try_parse_physical_expr(expr, &input.schema())?, &input.schema()).unwrap(),
                                 options: SortOptions {
                                     descending: !sort_expr.asc,
                                     nulls_first: sort_expr.nulls_first,
@@ -379,12 +372,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .as_ref()
                     .map(|f| {
                         let schema = Arc::new(convert_required!(f.schema)?);
-                        let expression = f.expression
-                            .as_ref()
-                            .ok_or_else(|| {
-                                proto_error("Unexpected empty filter expression")
-                            })?
-                            .try_into()?;
+                        let expression = try_parse_physical_expr_required(
+                            &f.expression,
+                            &schema,
+                        )?;
                         let column_indices = f.column_indices
                             .iter()
                             .map(|i| {
@@ -476,7 +467,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .iter()
                     .zip(hash_agg.group_expr_name.iter())
                     .map(|(expr, name)| {
-                        expr.try_into().and_then(|expr: Arc<dyn PhysicalExpr>| {
+                        try_parse_physical_expr(expr, &input.schema()).and_then(|expr: Arc<dyn PhysicalExpr>| {
                             bind(expr, &input.schema())
                                 .map(|expr| (expr, name.to_string()))
                                 .map_err(PlanSerDeError::DataFusionError)
@@ -520,7 +511,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                             },
                                         )?;
                                 let agg_expr = bind(
-                                    convert_box_required!(agg_node.expr)?,
+                                    try_parse_physical_expr_box_required(&agg_node.expr, &physical_schema)?,
                                     &input.schema(),
                                 )?;
                                 Ok(create_aggregate_expr(
@@ -625,125 +616,158 @@ impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
             ScalarFunction::Translate => Self::Translate,
             ScalarFunction::RegexpMatch => Self::RegexpMatch,
             ScalarFunction::Coalesce => Self::Coalesce,
+            ScalarFunction::SparkExtFunctions => {
+                unreachable!()
+            }
         }
     }
 }
 
-impl TryFrom<&protobuf::PhysicalExprNode> for Arc<dyn PhysicalExpr> {
-    type Error = PlanSerDeError;
+fn try_parse_physical_expr(
+    expr: &protobuf::PhysicalExprNode,
+    input_schema: &SchemaRef,
+) -> Result<Arc<dyn PhysicalExpr>, PlanSerDeError> {
+    let expr_type = expr
+        .expr_type
+        .as_ref()
+        .ok_or_else(|| proto_error("Unexpected empty physical expression"))?;
 
-    fn try_from(expr: &protobuf::PhysicalExprNode) -> Result<Self, Self::Error> {
-        let expr_type = expr
-            .expr_type
-            .as_ref()
-            .ok_or_else(|| proto_error("Unexpected empty physical expression"))?;
+    let pexpr: Arc<dyn PhysicalExpr> = match expr_type {
+        ExprType::Column(c) => {
+            let pcol: Column = c.into();
+            Arc::new(pcol)
+        }
+        ExprType::Literal(scalar) => {
+            Arc::new(Literal::new(convert_required!(scalar.value)?))
+        }
+        ExprType::BinaryExpr(binary_expr) => Arc::new(BinaryExpr::new(
+            try_parse_physical_expr_box_required(&binary_expr.l.clone(), input_schema)?,
+            from_proto_binary_op(&binary_expr.op)?,
+            try_parse_physical_expr_box_required(&binary_expr.r.clone(), input_schema)?,
+        )),
+        ExprType::AggregateExpr(_) => {
+            return Err(PlanSerDeError::General(
+                "Cannot convert aggregate expr node to physical expression"
+                    .to_owned(),
+            ));
+        }
+        ExprType::WindowExpr(_) => {
+            return Err(PlanSerDeError::General(
+                "Cannot convert window expr node to physical expression".to_owned(),
+            ));
+        }
+        ExprType::Sort(_) => {
+            return Err(PlanSerDeError::General(
+                "Cannot convert sort expr node to physical expression".to_owned(),
+            ));
+        }
+        ExprType::IsNullExpr(e) => {
+            Arc::new(IsNullExpr::new(
+                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
+        }
+        ExprType::IsNotNullExpr(e) => {
+            Arc::new(IsNotNullExpr::new(
+                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
+        }
+        ExprType::NotExpr(e) => {
+            Arc::new(NotExpr::new(
+                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
+        }
+        ExprType::Negative(e) => {
+            Arc::new(NegativeExpr::new(
+                try_parse_physical_expr_box_required(&e.expr, input_schema)?))
+        }
+        ExprType::InList(e) => Arc::new(InListExpr::new(
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+            e.list
+                .iter()
+                .map(|x| try_parse_physical_expr(x, input_schema))
+                .collect::<Result<Vec<_>, _>>()?,
+            e.negated,
+            input_schema,
+        )),
+        ExprType::Case(e) => Arc::new(CaseExpr::try_new(
+            e.expr.as_ref().map(|e| try_parse_physical_expr(e.as_ref(), input_schema)).transpose()?,
+            e.when_then_expr
+                .iter()
+                .map(|e| {
+                    Ok((
+                        try_parse_physical_expr_required(&e.when_expr, input_schema)?,
+                        try_parse_physical_expr_required(&e.then_expr, input_schema)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, PlanSerDeError>>()?,
+            e.else_expr
+                .as_ref()
+                .map(|e| try_parse_physical_expr(e.as_ref(), input_schema))
+                .transpose()?,
+        )?),
+        ExprType::Cast(e) => Arc::new(CastExpr::new(
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+            convert_required!(e.arrow_type)?,
+            DEFAULT_DATAFUSION_CAST_OPTIONS,
+        )),
+        ExprType::TryCast(e) => Arc::new(TryCastExpr::new(
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+            convert_required!(e.arrow_type)?,
+        )),
+        ExprType::ScalarFunction(e) => {
+            let scalar_function = protobuf::ScalarFunction::from_i32(e.fun)
+                .ok_or_else(|| {
+                    proto_error(format!(
+                        "Received an unknown scalar function: {}",
+                        e.fun,
+                    ))
+                })?;
 
-        let pexpr: Arc<dyn PhysicalExpr> = match expr_type {
-            ExprType::Column(c) => {
-                let pcol: Column = c.into();
-                Arc::new(pcol)
-            }
-            ExprType::Literal(scalar) => {
-                Arc::new(Literal::new(convert_required!(scalar.value)?))
-            }
-            ExprType::BinaryExpr(binary_expr) => Arc::new(BinaryExpr::new(
-                convert_box_required!(&binary_expr.l)?,
-                from_proto_binary_op(&binary_expr.op)?,
-                convert_box_required!(&binary_expr.r)?,
-            )),
-            ExprType::AggregateExpr(_) => {
-                return Err(PlanSerDeError::General(
-                    "Cannot convert aggregate expr node to physical expression"
-                        .to_owned(),
-                ));
-            }
-            ExprType::WindowExpr(_) => {
-                return Err(PlanSerDeError::General(
-                    "Cannot convert window expr node to physical expression".to_owned(),
-                ));
-            }
-            ExprType::Sort(_) => {
-                return Err(PlanSerDeError::General(
-                    "Cannot convert sort expr node to physical expression".to_owned(),
-                ));
-            }
-            ExprType::IsNullExpr(e) => {
-                Arc::new(IsNullExpr::new(convert_box_required!(e.expr)?))
-            }
-            ExprType::IsNotNullExpr(e) => {
-                Arc::new(IsNotNullExpr::new(convert_box_required!(e.expr)?))
-            }
-            ExprType::NotExpr(e) => {
-                Arc::new(NotExpr::new(convert_box_required!(e.expr)?))
-            }
-            ExprType::Negative(e) => {
-                Arc::new(NegativeExpr::new(convert_box_required!(e.expr)?))
-            }
-            ExprType::InList(e) => Arc::new(InListExpr::new(
-                convert_box_required!(e.expr)?,
-                e.list
-                    .iter()
-                    .map(|x| x.try_into())
-                    .collect::<Result<Vec<_>, _>>()?,
-                e.negated,
-            )),
-            ExprType::Case(e) => Arc::new(CaseExpr::try_new(
-                e.expr.as_ref().map(|e| e.as_ref().try_into()).transpose()?,
-                e.when_then_expr
-                    .iter()
-                    .map(|e| {
-                        Ok((
-                            convert_required!(e.when_expr)?,
-                            convert_required!(e.then_expr)?,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, PlanSerDeError>>()?
-                    .as_slice(),
-                e.else_expr
-                    .as_ref()
-                    .map(|e| e.as_ref().try_into())
-                    .transpose()?,
-            )?),
-            ExprType::Cast(e) => Arc::new(CastExpr::new(
-                convert_box_required!(e.expr)?,
-                convert_required!(e.arrow_type)?,
-                DEFAULT_DATAFUSION_CAST_OPTIONS,
-            )),
-            ExprType::TryCast(e) => Arc::new(TryCastExpr::new(
-                convert_box_required!(e.expr)?,
-                convert_required!(e.arrow_type)?,
-            )),
-            ExprType::ScalarFunction(e) => {
-                let scalar_function = protobuf::ScalarFunction::from_i32(e.fun)
-                    .ok_or_else(|| {
-                        proto_error(format!(
-                            "Received an unknown scalar function: {}",
-                            e.fun,
-                        ))
-                    })?;
+            let args = e
+                .args
+                .iter()
+                .map(|x| try_parse_physical_expr(&x, input_schema))
+                .collect::<Result<Vec<_>, _>>()?;
 
-                let args = e
-                    .args
-                    .iter()
-                    .map(|x| x.try_into())
-                    .collect::<Result<Vec<_>, _>>()?;
+            let execution_props = ExecutionProps::new();
+            let fun_expr =
+                if scalar_function == protobuf::ScalarFunction::SparkExtFunctions {
+                    datafusion_ext::create_spark_ext_function(&e.name)?
+                } else {
+                    functions::create_physical_fun(
+                        &(&scalar_function).into(),
+                        &execution_props,
+                    )?
+                };
 
-                let execution_props = ExecutionProps::new();
-                let fun_expr = functions::create_physical_fun(
-                    &(&scalar_function).into(),
-                    &execution_props,
-                )?;
+            Arc::new(ScalarFunctionExpr::new(
+                &e.name,
+                fun_expr,
+                args,
+                &convert_required!(e.return_type)?,
+            ))
+        }
+    };
 
-                Arc::new(ScalarFunctionExpr::new(
-                    &e.name,
-                    fun_expr,
-                    args,
-                    &convert_required!(e.return_type)?,
-                ))
-            }
-        };
+    Ok(pexpr)
+}
 
-        Ok(pexpr)
+fn try_parse_physical_expr_required(
+    proto: &Option<protobuf::PhysicalExprNode>,
+    input_schema: &SchemaRef,
+) -> Result<Arc<dyn PhysicalExpr>, PlanSerDeError> {
+    if let Some(field) = proto.as_ref() {
+        try_parse_physical_expr(field, input_schema)
+    } else {
+        Err(proto_error("Missing required field in protobuf"))
+    }
+}
+
+fn try_parse_physical_expr_box_required(
+    proto: &Option<Box<protobuf::PhysicalExprNode>>,
+    input_schema: &SchemaRef,
+) -> Result<Arc<dyn PhysicalExpr>, PlanSerDeError> {
+    if let Some(field) = proto.as_ref() {
+        try_parse_physical_expr(field, input_schema)
+    } else {
+        Err(proto_error("Missing required field in protobuf"))
     }
 }
 
@@ -757,7 +781,7 @@ pub fn parse_protobuf_hash_partitioning(
                 .hash_expr
                 .iter()
                 .map(|e| {
-                    e.try_into().and_then(|e| {
+                    try_parse_physical_expr(e, &input.schema()).and_then(|e| {
                         bind(e, &input.schema()).map_err(PlanSerDeError::DataFusionError)
                     })
                 })
@@ -777,16 +801,10 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
 
     fn try_from(val: &protobuf::PartitionedFile) -> Result<Self, Self::Error> {
         Ok(PartitionedFile {
-            file_meta: FileMeta {
-                sized_file: SizedFile {
-                    path: val.path.clone(),
-                    size: val.size,
-                },
-                last_modified: if val.last_modified_ns == 0 {
-                    None
-                } else {
-                    Some(Utc.timestamp_nanos(val.last_modified_ns as i64))
-                },
+            object_meta: ObjectMeta {
+                location: val.path.clone().into(),
+                size: val.size as usize,
+                last_modified: chrono::MIN_DATETIME,
             },
             partition_values: val
                 .partition_values
