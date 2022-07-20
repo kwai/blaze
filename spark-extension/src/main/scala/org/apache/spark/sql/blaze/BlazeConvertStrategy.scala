@@ -141,7 +141,10 @@ object BlazeConvertStrategy extends Logging {
         }
       case e: HashAggregateExec if isAlwaysConvert(e.child) || preferNativeAggr =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case _ =>
+
+      case e =>
+        // not marked -- default to NeverConvert
+        e.setTagValue(convertStrategyTag, NeverConvert)
     }
   }
 
@@ -168,6 +171,7 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, NeverConvert)
       case e: BroadcastHashJoinExec if e.condition.nonEmpty =>
         e.setTagValue(convertStrategyTag, NeverConvert)
+      case _ =>
     }
   }
 
