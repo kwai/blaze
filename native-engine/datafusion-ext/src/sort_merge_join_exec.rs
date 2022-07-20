@@ -1,25 +1,22 @@
 use std::any::Any;
 use std::borrow::BorrowMut;
 use std::cmp::Ordering;
-
 use std::fmt::Formatter;
-
 use std::sync::Arc;
 
+use crate::util::array_builder::{make_batch, new_array_builders};
 use datafusion::arrow::array::*;
+use datafusion::arrow::compute::take;
 use datafusion::arrow::compute::SortOptions;
 use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::error::Result as ArrowResult;
-
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-
 use datafusion::logical_plan::JoinType;
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::PhysicalSortExpr;
-
 use datafusion::physical_plan::join_utils::{
     build_join_schema, check_join_is_valid, JoinOn,
 };
@@ -32,13 +29,9 @@ use datafusion::physical_plan::stream::{
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
-
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use itertools::izip;
-
 use tokio::sync::mpsc::Sender;
-
-use crate::util::array_builder::{make_batch, new_array_builders};
 
 #[derive(Debug)]
 pub struct SortMergeJoinExec {
@@ -330,7 +323,8 @@ async fn join_combined(
             let _ = staging_len; // suppress value unused warnings
         }};
     }
-    macro_rules! cartesian_join {
+
+    macro_rules! cartesian_join_lr {
         ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
             for l in $range1.clone() {
                 for r in $range2.clone() {
@@ -352,7 +346,29 @@ async fn join_combined(
         }};
     }
 
-    macro_rules! cartesian_join_columnar {
+    macro_rules! cartesian_join_rl {
+        ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
+            for r in $range2.clone() {
+                for l in $range1.clone() {
+                    let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
+
+                    $batch1.columns().iter().enumerate().for_each(|(i, c)| {
+                        append_column(&mut staging_l[i], c, l, c.data_type())
+                    });
+                    $batch2.columns().iter().enumerate().for_each(|(i, c)| {
+                        append_column(&mut staging_r[i], c, r, c.data_type())
+                    });
+
+                    staging_len += 1;
+                    if staging_len >= join_params.batch_size {
+                        flush_staging!();
+                    }
+                }
+            }
+        }};
+    }
+
+    macro_rules! cartesian_join_columnar_lr {
         ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
             let mut lindices = UInt64Builder::new(0);
             let mut rindices = UInt64Builder::new(0);
@@ -368,32 +384,52 @@ async fn join_combined(
                         Vec::with_capacity(join_params.output_schema.fields().len());
                     let larray = lindices.finish();
                     let rarray = rindices.finish();
-                    cols.extend(
-                        $batch1
-                            .columns()
-                            .iter()
-                            .map(|c| {
-                                datafusion::arrow::compute::take(
-                                    c.as_ref(),
-                                    &larray,
-                                    None,
-                                )
-                            })
-                            .collect::<datafusion::arrow::error::Result<Vec<_>>>()?,
-                    );
-                    cols.extend(
-                        $batch2
-                            .columns()
-                            .iter()
-                            .map(|c| {
-                                datafusion::arrow::compute::take(
-                                    c.as_ref(),
-                                    &rarray,
-                                    None,
-                                )
-                            })
-                            .collect::<datafusion::arrow::error::Result<Vec<_>>>()?,
-                    );
+
+                    for c in $batch1.columns() {
+                        cols.push(take(c.as_ref(), &larray, None)?);
+                    }
+                    for c in $batch1.columns() {
+                        cols.push(take(c.as_ref(), &rarray, None)?);
+                    }
+                    let batch =
+                        RecordBatch::try_new(join_params.output_schema.clone(), cols)?;
+
+                    if staging_len > 0 {
+                        // for keeping input order
+                        flush_staging!();
+                    }
+
+                    let batch_num_rows = batch.num_rows();
+                    sender.send(Ok(batch)).await.ok();
+                    metrics.record_output(batch_num_rows);
+                }
+            }
+        }};
+    }
+
+    macro_rules! cartesian_join_columnar_rl {
+        ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
+            let mut lindices = UInt64Builder::new(0);
+            let mut rindices = UInt64Builder::new(0);
+
+            for r in $range2.clone() {
+                for l in $range1.clone() {
+                    lindices.append_value(l as u64).unwrap();
+                    rindices.append_value(r as u64).unwrap();
+                }
+
+                if rindices.len() >= join_params.batch_size || r + 1 == $range2.end {
+                    let mut cols =
+                        Vec::with_capacity(join_params.output_schema.fields().len());
+                    let larray = lindices.finish();
+                    let rarray = rindices.finish();
+
+                    for c in $batch1.columns() {
+                        cols.push(take(c.as_ref(), &larray, None)?);
+                    }
+                    for c in $batch1.columns() {
+                        cols.push(take(c.as_ref(), &rarray, None)?);
+                    }
                     let batch =
                         RecordBatch::try_new(join_params.output_schema.clone(), cols)?;
 
@@ -496,19 +532,39 @@ async fn join_combined(
                     for (batch1, range1) in &buffers[0] {
                         for (batch2, range2) in &buffers[1] {
                             if range1.len() * range2.len() < 64 {
-                                cartesian_join!(
-                                    &batch1,
-                                    range1.clone(),
-                                    &batch2,
-                                    range2.clone()
-                                );
+                                // respects spark smj ordering
+                                if join_params.join_type == JoinType::Right {
+                                    cartesian_join_rl!(
+                                        &batch1,
+                                        range1.clone(),
+                                        &batch2,
+                                        range2.clone()
+                                    );
+                                } else {
+                                    cartesian_join_lr!(
+                                        &batch1,
+                                        range1.clone(),
+                                        &batch2,
+                                        range2.clone()
+                                    );
+                                }
                             } else {
-                                cartesian_join_columnar!(
-                                    &batch1,
-                                    range1.clone(),
-                                    &batch2,
-                                    range2.clone()
-                                );
+                                // respects spark smj ordering
+                                if join_params.join_type == JoinType::Right {
+                                    cartesian_join_columnar_rl!(
+                                        &batch1,
+                                        range1.clone(),
+                                        &batch2,
+                                        range2.clone()
+                                    );
+                                } else {
+                                    cartesian_join_columnar_lr!(
+                                        &batch1,
+                                        range1.clone(),
+                                        &batch2,
+                                        range2.clone()
+                                    );
+                                }
                             }
                         }
                     }
