@@ -28,7 +28,7 @@ use std::task::Poll;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::ipc::reader::StreamReader;
+
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -52,6 +52,7 @@ use crate::jni_delete_local_ref;
 use crate::jni_new_direct_byte_buffer;
 use crate::jni_new_global_ref;
 use crate::jni_new_string;
+use crate::util::ipc::HeadlessStreamReader;
 use crate::ResultExt;
 use crate::{jni_call, jni_get_object_class, jni_get_string};
 
@@ -203,18 +204,21 @@ impl IpcReaderStream {
             ScalaIterator(self.segments.as_obj()).next() -> JObject
         )?;
 
+        let schema = self.schema.clone();
         self.reader = Some(match self.mode {
-            IpcReadMode::ChannelUncompressed => get_channel_reader(segment, false)?,
-            IpcReadMode::Channel => get_channel_reader(segment, true)?,
+            IpcReadMode::ChannelUncompressed => {
+                get_channel_reader(segment, schema, false)?
+            }
+            IpcReadMode::Channel => get_channel_reader(segment, schema, true)?,
             IpcReadMode::ChannelAndFileSegment => {
                 let segment_class = jni_get_object_class!(segment)?;
                 let segment_classname =
                     jni_call!(Class(segment_class).getName() -> JObject)?;
                 let segment_classname = jni_get_string!(segment_classname.into())?;
                 if segment_classname == "org.apache.spark.storage.FileSegment" {
-                    get_file_segment_reader(segment)?
+                    get_file_segment_reader(segment, schema)?
                 } else {
-                    get_channel_reader(segment, true)?
+                    get_channel_reader(segment, schema, true)?
                 }
             }
         });
@@ -224,16 +228,20 @@ impl IpcReaderStream {
 
 fn get_channel_reader(
     channel: JObject,
+    schema: SchemaRef,
     compressed: bool,
 ) -> Result<Box<dyn RecordBatchReader>> {
     let global_ref = jni_new_global_ref!(channel)?;
     jni_delete_local_ref!(channel)?;
     Ok(Box::new(ReadableByteChannelBatchReader::try_new(
-        global_ref, compressed,
+        global_ref, schema, compressed,
     )?))
 }
 
-fn get_file_segment_reader(file_segment: JObject) -> Result<Box<dyn RecordBatchReader>> {
+fn get_file_segment_reader(
+    file_segment: JObject,
+    schema: SchemaRef,
+) -> Result<Box<dyn RecordBatchReader>> {
     let file = jni_call!(SparkFileSegment(file_segment).file() -> JObject)?;
     let path = jni_call!(JavaFile(file).getPath() -> JObject)?;
     let path = jni_get_string!(path.into())?;
@@ -241,6 +249,7 @@ fn get_file_segment_reader(file_segment: JObject) -> Result<Box<dyn RecordBatchR
     let length = jni_call!(SparkFileSegment(file_segment).length() -> jlong)?;
     Ok(Box::new(FileSegmentBatchReader::try_new(
         path,
+        schema,
         offset as u64,
         length as u64,
     )?))
@@ -281,11 +290,15 @@ trait RecordBatchReader {
 
 // record batch reader for byte channel
 struct ReadableByteChannelBatchReader {
-    inner: StreamReader<Box<dyn Read>>,
+    inner: HeadlessStreamReader<Box<dyn Read>>,
 }
 
 impl ReadableByteChannelBatchReader {
-    fn try_new(channel: GlobalRef, compressed: bool) -> ArrowResult<Self> {
+    fn try_new(
+        channel: GlobalRef,
+        schema: SchemaRef,
+        compressed: bool,
+    ) -> ArrowResult<Self> {
         let channel_reader = ReadableByteChannelReader(channel);
         let buffered = BufReader::new(channel_reader);
         let decompressed: Box<dyn Read> = if compressed {
@@ -295,7 +308,7 @@ impl ReadableByteChannelBatchReader {
         };
 
         Ok(Self {
-            inner: StreamReader::try_new(decompressed, None)?,
+            inner: HeadlessStreamReader::new(decompressed, schema),
         })
     }
 }
@@ -309,12 +322,17 @@ pub struct ReadableByteChannelReader(pub GlobalRef);
 
 impl Read for ReadableByteChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Ok(jni_call!(
+        let read = jni_call!(
             JavaReadableByteChannel(self.0.as_obj()).read(
                 jni_new_direct_byte_buffer!(buf).to_io_result()?
             ) -> jint
         )
-        .to_io_result()? as usize)
+        .to_io_result()?;
+
+        if read == -1 {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+        }
+        Ok(read as usize)
     }
 }
 impl Drop for ReadableByteChannelReader {
@@ -328,15 +346,22 @@ impl Drop for ReadableByteChannelReader {
 // record batch reader for file segment
 struct FileSegmentBatchReader {
     file: File,
-    segment_reader: Option<StreamReader<Box<dyn Read>>>,
+    schema: SchemaRef,
+    segment_reader: Option<HeadlessStreamReader<Box<dyn Read>>>,
     current_ipc_length: u64,
     current_start: u64,
     limit: u64,
 }
 impl FileSegmentBatchReader {
-    fn try_new(path: impl AsRef<Path>, offset: u64, length: u64) -> ArrowResult<Self> {
+    fn try_new(
+        path: impl AsRef<Path>,
+        schema: SchemaRef,
+        offset: u64,
+        length: u64,
+    ) -> ArrowResult<Self> {
         Ok(Self {
             file: File::open(path)?,
+            schema,
             segment_reader: None,
             current_ipc_length: 0,
             current_start: offset,
@@ -367,7 +392,7 @@ impl FileSegmentBatchReader {
             let zstd_decoder: Box<dyn Read> =
                 Box::new(zstd::stream::Decoder::new(BufReader::new(ipc))?);
             self.segment_reader =
-                Some(StreamReader::try_new(zstd_decoder, None).unwrap());
+                Some(HeadlessStreamReader::new(zstd_decoder, self.schema.clone()));
             return self.next_batch_impl();
         }
         Ok(None)

@@ -21,15 +21,14 @@ import java.nio.channels.Channels
 import java.nio.channels.ReadableByteChannel
 
 import org.apache.arrow.vector.VectorSchemaRoot
-import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
-import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 import org.apache.spark.TaskContext
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowHeadlessStreamWriter
 
 class ArrowWriterIterator(
     rowIter: Iterator[InternalRow],
@@ -70,7 +69,7 @@ class ArrowWriterIterator(
 
     Utils.tryWithResource(new ByteArrayOutputStream()) { outputStream =>
       Utils.tryWithResource(Channels.newChannel(outputStream)) { channel =>
-        val writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
+        val writer = new ArrowHeadlessStreamWriter(root, channel)
         writer.start()
         writer.writeBatch()
         writer.end()
