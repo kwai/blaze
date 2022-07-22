@@ -41,6 +41,7 @@ import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.blaze.arrowio
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowReaderIterator
 import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.BlockManagerId
@@ -61,6 +62,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
     with Logging {
 
   private val dep = handle.dependency
+  private var schema: StructType = dep.asInstanceOf[ShuffleDependencySchema[_, _, _]].schema
 
   private def fetchIterator: Iterator[(BlockId, InputStream)] = {
     new ShuffleBlockFetcherIterator(
@@ -130,7 +132,9 @@ class ArrowBlockStoreShuffleReader301[K, C](
           IpcInputStreamIterator(inputStream, decompressingNeeded = true, context)
       }
       .flatMap { channel =>
-        new ArrowReaderIterator(channel, context).map((0, _)) // use 0 as key since it's not used
+        new ArrowReaderIterator(channel, schema, context).map(
+          (0, _)
+        ) // use 0 as key since it's not used
       }
 
     // Update the context task metrics for each record read.
