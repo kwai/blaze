@@ -264,6 +264,7 @@ pub struct JavaClasses<'a> {
     pub classloader: JObject<'a>,
 
     pub cJniBridge: JniBridge<'a>,
+    pub cHDFSObjectStoreBridge: HDFSObjectStoreBridge<'a>,
     pub cClass: JavaClass<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
     pub cJavaReadableByteChannel: JavaReadableByteChannel<'a>,
@@ -277,11 +278,6 @@ pub struct JavaClasses<'a> {
     pub cScalaTuple2: ScalaTuple2<'a>,
     pub cScalaFunction0: ScalaFunction0<'a>,
     pub cScalaFunction1: ScalaFunction1<'a>,
-
-    pub cHadoopFileSystem: HadoopFileSystem<'a>,
-    pub cHadoopPath: HadoopPath<'a>,
-    pub cHadoopFileStatus: HadoopFileStatus<'a>,
-    pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
 
     pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
@@ -318,6 +314,7 @@ impl JavaClasses<'static> {
                 classloader: get_global_ref_jobject(env, classloader).unwrap(),
                 cJniBridge: jni_bridge,
 
+                cHDFSObjectStoreBridge: HDFSObjectStoreBridge::new(env).unwrap(),
                 cClass: JavaClass::new(env).unwrap(),
                 cJavaRuntimeException: JavaRuntimeException::new(env).unwrap(),
                 cJavaReadableByteChannel: JavaReadableByteChannel::new(env).unwrap(),
@@ -331,11 +328,6 @@ impl JavaClasses<'static> {
                 cScalaTuple2: ScalaTuple2::new(env).unwrap(),
                 cScalaFunction0: ScalaFunction0::new(env).unwrap(),
                 cScalaFunction1: ScalaFunction1::new(env).unwrap(),
-
-                cHadoopFileSystem: HadoopFileSystem::new(env).unwrap(),
-                cHadoopPath: HadoopPath::new(env).unwrap(),
-                cHadoopFileStatus: HadoopFileStatus::new(env).unwrap(),
-                cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env).unwrap(),
 
                 cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
@@ -363,16 +355,12 @@ pub struct JniBridge<'a> {
     pub method_getContextClassLoader_ret: JavaType,
     pub method_setContextClassLoader: JStaticMethodID<'a>,
     pub method_setContextClassLoader_ret: JavaType,
-    pub method_getHDFSFileSystem: JStaticMethodID<'a>,
-    pub method_getHDFSFileSystem_ret: JavaType,
     pub method_getResource: JStaticMethodID<'a>,
     pub method_getResource_ret: JavaType,
     pub method_setTaskContext: JStaticMethodID<'a>,
     pub method_setTaskContext_ret: JavaType,
     pub method_getTaskContext: JStaticMethodID<'a>,
     pub method_getTaskContext_ret: JavaType,
-    pub method_readFSDataInputStream: JStaticMethodID<'a>,
-    pub method_readFSDataInputStream_ret: JavaType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -395,22 +383,12 @@ impl<'a> JniBridge<'a> {
                 "(Ljava/lang/ClassLoader;)V",
             )?,
             method_setContextClassLoader_ret: JavaType::Primitive(Primitive::Void),
-            method_getHDFSFileSystem: env.get_static_method_id(
-                class,
-                "getHDFSFileSystem",
-                "()Lorg/apache/hadoop/fs/FileSystem;",
-            )?,
-            method_getHDFSFileSystem_ret: JavaType::Object(
-                HadoopFileSystem::SIG_TYPE.to_owned(),
-            ),
             method_getResource: env.get_static_method_id(
                 class,
                 "getResource",
                 "(Ljava/lang/String;)Ljava/lang/Object;",
             )?,
-            method_getResource_ret: JavaType::Object(
-                HadoopFileSystem::SIG_TYPE.to_owned(),
-            ),
+            method_getResource_ret: JavaType::Object("java/lang/Object".to_owned()),
             method_getTaskContext: env.get_static_method_id(
                 class,
                 "getTaskContext",
@@ -425,12 +403,37 @@ impl<'a> JniBridge<'a> {
                 "(Lorg/apache/spark/TaskContext;)V",
             )?,
             method_setTaskContext_ret: JavaType::Primitive(Primitive::Void),
-            method_readFSDataInputStream: env.get_static_method_id(
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct HDFSObjectStoreBridge<'a> {
+    pub class: JClass<'a>,
+    pub method_size: JStaticMethodID<'a>,
+    pub method_size_ret: JavaType,
+    pub method_read: JStaticMethodID<'a>,
+    pub method_read_ret: JavaType,
+}
+impl<'a> HDFSObjectStoreBridge<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/HDFSObjectStoreBridge";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<HDFSObjectStoreBridge<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(HDFSObjectStoreBridge {
+            class,
+            method_size: env.get_static_method_id(
                 class,
-                "readFSDataInputStream",
-                "(Lorg/apache/hadoop/fs/FSDataInputStream;Ljava/nio/ByteBuffer;J)I",
+                "size",
+                "(Ljava/lang/String;)J",
             )?,
-            method_readFSDataInputStream_ret: JavaType::Primitive(Primitive::Int),
+            method_size_ret: JavaType::Primitive(Primitive::Long),
+            method_read: env.get_static_method_id(
+                class,
+                "read",
+                "(Ljava/lang/String;JLjava/nio/ByteBuffer;)V",
+            )?,
+            method_read_ret: JavaType::Primitive(Primitive::Void),
         })
     }
 }
@@ -701,104 +704,6 @@ impl<'a> ScalaFunction1<'a> {
                 "(Ljava/lang/Object;)Ljava/lang/Object;",
             )?,
             method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct HadoopFileSystem<'a> {
-    pub class: JClass<'a>,
-    pub method_getFileStatus: JMethodID<'a>,
-    pub method_getFileStatus_ret: JavaType,
-    pub method_open: JMethodID<'a>,
-    pub method_open_ret: JavaType,
-}
-impl<'a> HadoopFileSystem<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FileSystem";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopFileSystem<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(HadoopFileSystem {
-            class,
-            method_getFileStatus: env.get_method_id(
-                class,
-                "getFileStatus",
-                "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FileStatus;",
-            )?,
-            method_getFileStatus_ret: JavaType::Object(
-                HadoopFileStatus::SIG_TYPE.to_owned(),
-            ),
-            method_open: env.get_method_id(
-                class,
-                "open",
-                "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataInputStream;",
-            )?,
-            method_open_ret: JavaType::Object(
-                HadoopFSDataInputStream::SIG_TYPE.to_owned(),
-            ),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct HadoopPath<'a> {
-    pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
-}
-impl<'a> HadoopPath<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/Path";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopPath<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(HadoopPath {
-            class,
-            ctor: env.get_method_id(class, "<init>", "(Ljava/lang/String;)V")?,
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct HadoopFileStatus<'a> {
-    pub class: JClass<'a>,
-    pub method_getLen: JMethodID<'a>,
-    pub method_getLen_ret: JavaType,
-}
-impl<'a> HadoopFileStatus<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FileStatus";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopFileStatus<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(HadoopFileStatus {
-            class,
-            method_getLen: env.get_method_id(class, "getLen", "()J")?,
-            method_getLen_ret: JavaType::Primitive(Primitive::Long),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct HadoopFSDataInputStream<'a> {
-    pub class: JClass<'a>,
-    pub method_seek: JMethodID<'a>,
-    pub method_seek_ret: JavaType,
-    pub method_read: JMethodID<'a>,
-    pub method_read_ret: JavaType,
-    pub method_close: JMethodID<'a>,
-    pub method_close_ret: JavaType,
-}
-impl<'a> HadoopFSDataInputStream<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FSDataInputStream";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<HadoopFSDataInputStream<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(HadoopFSDataInputStream {
-            class,
-            method_seek: env.get_method_id(class, "seek", "(J)V")?,
-            method_seek_ret: JavaType::Primitive(Primitive::Void),
-            method_read: env.get_method_id(class, "read", "(Ljava/nio/ByteBuffer;)I")?,
-            method_read_ret: JavaType::Primitive(Primitive::Int),
-            method_close: env.get_method_id(class, "close", "()V")?,
-            method_close_ret: JavaType::Primitive(Primitive::Void),
         })
     }
 }

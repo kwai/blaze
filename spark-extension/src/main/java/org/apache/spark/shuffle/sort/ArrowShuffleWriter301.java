@@ -56,7 +56,7 @@ import org.apache.spark.shuffle.api.WritableByteChannelWrapper;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
-import org.apache.spark.sql.execution.blaze.shuffle.ShuffleDependencySchema;
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.storage.BlockManager;
 import org.apache.spark.storage.TimeTrackingOutputStream;
@@ -128,7 +128,7 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
     this.shuffleId = dep.shuffleId();
     this.serializer = dep.serializer().newInstance();
     this.partitioner = dep.partitioner();
-    this.schema = ((ShuffleDependencySchema) dep).schema();
+    this.schema = ((ArrowShuffleDependency) dep).schema();
     this.unsafeProjection = UnsafeProjection.create(this.schema);
     this.writeMetrics = writeMetrics;
     this.shuffleExecutorComponents = shuffleExecutorComponents;
