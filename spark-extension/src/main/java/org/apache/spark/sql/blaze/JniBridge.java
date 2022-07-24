@@ -16,16 +16,9 @@
 
 package org.apache.spark.sql.blaze;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
-import org.apache.spark.deploy.SparkHadoopUtil;
 
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
@@ -43,10 +36,6 @@ public class JniBridge {
     Thread.currentThread().setContextClassLoader(cl);
   }
 
-  public static FileSystem getHDFSFileSystem() throws IOException {
-    return FileSystem.get(SparkHadoopUtil.get().conf());
-  }
-
   public static Object getResource(String key) {
     return resourcesMap.remove(key);
   }
@@ -57,24 +46,5 @@ public class JniBridge {
 
   public static void setTaskContext(TaskContext tc) {
     TaskContext$.MODULE$.setTaskContext(tc);
-  }
-
-  /**
-   * shim method to FSDataInputStream.read()
-   *
-   * @return bytes read
-   * @throws IOException
-   */
-  public static synchronized int readFSDataInputStream(
-      FSDataInputStream in, ByteBuffer bb, long pos) throws IOException {
-
-    if (pos != in.getPos()) {
-      in.seek(pos);
-    }
-    ReadableByteChannel channel = Channels.newChannel(in);
-    int bbStartPosition = bb.position();
-
-    while (bb.hasRemaining() && channel.read(bb) >= 0) {}
-    return bb.position() - bbStartPosition;
   }
 }

@@ -12,44 +12,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use jni::objects::{GlobalRef, JObject};
-use jni::sys::jint;
-
-use futures::stream::BoxStream;
-use object_store::path::Path;
-use object_store::{GetResult, ListResult, ObjectMeta, ObjectStore};
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::ops::Range;
-use std::sync::Arc;
+
+use datafusion::error::Result;
+use futures::stream::BoxStream;
+use jni::sys::jlong;
+use object_store::path::Path;
+use object_store::{GetResult, ListResult, ObjectMeta, ObjectStore};
+use once_cell::sync::OnceCell;
 
 use crate::jni_call_static;
 use crate::jni_new_direct_byte_buffer;
-use crate::jni_new_object;
 use crate::jni_new_string;
-use crate::{jni_call, jni_new_global_ref};
-use jni::sys::jlong;
 
 const NUM_HDFS_WORKER_THREADS: usize = 64;
 
-#[derive(Clone)]
 pub struct HDFSSingleFileObjectStore {
-    spawner: Arc<tokio::runtime::Runtime>,
-    fs: GlobalRef,
+    spawner: OnceCell<tokio::runtime::Runtime>,
 }
 
 impl HDFSSingleFileObjectStore {
-    pub fn try_new() -> datafusion::error::Result<Self> {
-        let spawner = Arc::new(
+    pub fn new() -> Self {
+        Self {
+            spawner: OnceCell::new()
+        }
+    }
+
+    fn spawner(&self) -> &tokio::runtime::Runtime {
+        self.spawner.get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(NUM_HDFS_WORKER_THREADS)
-                .build()?,
-        );
-        let fs = jni_new_global_ref!(
-            jni_call_static!(JniBridge.getHDFSFileSystem() -> JObject)?
-        )?;
-        Ok(Self { spawner, fs })
+                .build()
+                .unwrap()
+        })
     }
 }
 
@@ -84,59 +82,45 @@ impl ObjectStore for HDFSSingleFileObjectStore {
         location: &Path,
         range: Range<usize>,
     ) -> object_store::Result<bytes::Bytes> {
-        let fs = self.fs.clone();
         let location = normalize_location(location);
 
-        self.spawner
-            .spawn_blocking(move || -> datafusion::error::Result<bytes::Bytes> {
-                let fs = fs.as_obj();
-                let path =
-                    jni_new_object!(HadoopPath, jni_new_string!(location.clone())?)?;
-                let fin = jni_call!(HadoopFileSystem(fs).open(path) -> JObject)?;
+        self.spawner().spawn_blocking(move || -> Result<bytes::Bytes> {
+            let mut buf = vec![0; range.len()];
 
-                let mut buf = vec![0; range.len()];
-
-                jni_call_static!(
-                    JniBridge.readFSDataInputStream(
-                        fin,
-                        jni_new_direct_byte_buffer!(&mut buf)?,
-                        range.start as i64,
-                    ) -> jint
-                )?;
-                jni_call!(HadoopFSDataInputStream(fin).close() -> ())?;
-                Ok(bytes::Bytes::from(buf))
-            })
-            .await?
-            .map_err(|err| object_store::Error::Generic {
-                store: "HDFSObjectStore",
-                source: Box::new(err),
-            })
+            jni_call_static!(
+                HDFSObjectStoreBridge.read(
+                    jni_new_string!(&location)?,
+                    range.start as i64,
+                    jni_new_direct_byte_buffer!(&mut buf)?,
+                ) -> ()
+            )?;
+            Ok(bytes::Bytes::from(buf))
+        })
+        .await?
+        .map_err(|err| object_store::Error::Generic {
+            store: "HDFSObjectStore",
+            source: Box::new(err),
+        })
     }
 
     async fn head(&self, location: &Path) -> object_store::Result<ObjectMeta> {
-        let fs = self.fs.clone();
         let location = normalize_location(location);
 
-        self.spawner
-            .spawn_blocking(move || -> datafusion::error::Result<ObjectMeta> {
-                let fs = fs.as_obj();
-                let path =
-                    jni_new_object!(HadoopPath, jni_new_string!(location.clone())?)?;
-                let fstatus =
-                    jni_call!(HadoopFileSystem(fs).getFileStatus(path) -> JObject)?;
-                let flen = jni_call!(HadoopFileStatus(fstatus).getLen() -> jlong)?;
-
-                Ok(ObjectMeta {
-                    location: location.clone().into(),
-                    last_modified: chrono::MIN_DATETIME,
-                    size: flen as usize,
-                })
+        self.spawner().spawn_blocking(move || -> Result<ObjectMeta> {
+            let size = jni_call_static!(
+                HDFSObjectStoreBridge.size(jni_new_string!(&location)?) -> jlong
+            )?;
+            Ok(ObjectMeta {
+                location: location.into(),
+                last_modified: chrono::MIN_DATETIME,
+                size: size as usize,
             })
-            .await?
-            .map_err(|err| object_store::Error::Generic {
-                store: "HDFSObjectStore",
-                source: Box::new(err),
-            })
+        })
+        .await?
+        .map_err(|err| object_store::Error::Generic {
+            store: "HDFSObjectStore",
+            source: Box::new(err),
+        })
     }
 
     async fn delete(&self, _location: &Path) -> object_store::Result<()> {

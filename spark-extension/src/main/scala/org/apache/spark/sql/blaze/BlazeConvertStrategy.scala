@@ -36,6 +36,7 @@ import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
+import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -72,11 +73,15 @@ object BlazeConvertStrategy extends Logging {
     SparkEnv.get.conf.getBoolean(
       "spark.blaze.strategy.enable.neverConvertContinuousCodegens",
       defaultValue = true)
-  val neverConvertScanWithInconvertibleChildren: Boolean =
+  val neverConvertScanWithInconvertibleChildrenEnabled: Boolean =
     SparkEnv.get.conf.getBoolean(
       "spark.blaze.strategy.enable.neverConvertScanWithInconvertibleChildren",
       defaultValue = true)
-  val neverConvertAggregatesChildren: Boolean =
+  val neverConvertAggregatesChildrenEnabled: Boolean =
+    SparkEnv.get.conf.getBoolean(
+      "spark.blaze.strategy.enable.neverConvertAggregatesChildren",
+      defaultValue = true)
+  val neverConvertPartialAggregateShuffleExchangeEnabled: Boolean =
     SparkEnv.get.conf.getBoolean(
       "spark.blaze.strategy.enable.neverConvertAggregatesChildren",
       defaultValue = true)
@@ -101,12 +106,20 @@ object BlazeConvertStrategy extends Logging {
     }
 
     // execute some special strategies
-    neverConvertSkewJoin(exec)
-    neverConvertJoinsWithPostCondition(exec)
-    alwaysConvertDirectSortMergeJoin(exec)
-    neverConvertContinuousCodegens(exec)
-    neverConvertScanWithInconvertibleChildren(exec)
-    neverConvertAggregatesChildren(exec)
+    if (neverConvertSkewJoinEnabled)
+      neverConvertSkewJoin(exec)
+    if (neverConvertJoinsWithPostConditionEnabled)
+      neverConvertJoinsWithPostCondition(exec)
+    if (alwaysConvertDirectSortMergeJoinEnabled)
+      alwaysConvertDirectSortMergeJoin(exec)
+    if (neverConvertContinuousCodegensEnabled)
+      neverConvertContinuousCodegens(exec)
+    if (neverConvertScanWithInconvertibleChildrenEnabled)
+      neverConvertScanWithInconvertibleChildren(exec)
+    if (neverConvertAggregatesChildrenEnabled)
+      neverConvertAggregatesChildren(exec)
+    if (neverConvertPartialAggregateShuffleExchangeEnabled)
+      neverConvertPartialAggregateShuffleExchange(exec)
 
     def hasMoreInconvertibleChildren(e: SparkPlan) =
       e.children.count(isNeverConvert) > e.children.count(isAlwaysConvert)
@@ -261,8 +274,21 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, NeverConvert)
       case _ =>
     }
-
   }
+
+  private def neverConvertPartialAggregateShuffleExchange(exec: SparkPlan): Unit = {
+    exec.foreach {
+      case exec: ShuffleExchangeExec
+          if exec.child.isInstanceOf[HashAggregateExec] &&
+            exec.child
+              .asInstanceOf[HashAggregateExec]
+              .aggregateExpressions
+              .exists(_.mode == Partial) =>
+        exec.setTagValue(convertStrategyTag, NeverConvert)
+      case _ =>
+    }
+  }
+
   private def isSuccssorOfExchange(exec: SparkPlan): Boolean = {
     exec.children.forall(child => {
       child.isInstanceOf[Exchange] ||

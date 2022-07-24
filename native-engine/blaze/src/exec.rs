@@ -98,8 +98,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
             //  object store, so it is necessary to wrap hdfs path with a unique
             //  prefix "hdfs://-/".
             //  for example: hdfs://-/(base64-encoded:hdfs://localhost:9000/xxx)
-            let hdfs_object_store =
-                Arc::new(HDFSSingleFileObjectStore::try_new().unwrap());
+            let hdfs_object_store = Arc::new(HDFSSingleFileObjectStore::new());
             runtime.register_object_store("hdfs", "-", hdfs_object_store);
 
             let config = SessionConfig::new().with_batch_size(batch_size);

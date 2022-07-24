@@ -21,11 +21,7 @@ import java.io.FileInputStream
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.lang.reflect.Field
-import java.nio.channels.ReadableByteChannel
-import java.nio.file.Files
-import java.nio.file.Paths
 
-import org.apache.commons.lang3.ClassUtils
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
@@ -38,7 +34,6 @@ import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
-import org.apache.spark.sql.execution.blaze.arrowio
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowReaderIterator
 import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
 import org.apache.spark.sql.types.StructType
@@ -62,7 +57,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
     with Logging {
 
   private val dep = handle.dependency
-  private var schema: StructType = dep.asInstanceOf[ShuffleDependencySchema[_, _, _]].schema
+  private var schema: StructType = dep.asInstanceOf[ArrowShuffleDependency[_, _, _]].schema
 
   private def fetchIterator: Iterator[(BlockId, InputStream)] = {
     new ShuffleBlockFetcherIterator(
