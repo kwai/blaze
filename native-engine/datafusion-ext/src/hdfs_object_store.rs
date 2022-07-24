@@ -28,8 +28,6 @@ use crate::jni_call_static;
 use crate::jni_new_direct_byte_buffer;
 use crate::jni_new_string;
 
-const NUM_HDFS_WORKER_THREADS: usize = 64;
-
 pub struct HDFSSingleFileObjectStore {
     spawner: OnceCell<tokio::runtime::Runtime>,
 }
@@ -43,8 +41,7 @@ impl HDFSSingleFileObjectStore {
 
     fn spawner(&self) -> &tokio::runtime::Runtime {
         self.spawner.get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(NUM_HDFS_WORKER_THREADS)
+            tokio::runtime::Builder::new_current_thread()
                 .build()
                 .unwrap()
         })
