@@ -41,7 +41,7 @@ import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec301.canUseNativeShuffleWrite
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader301
-import org.apache.spark.sql.execution.blaze.shuffle.ShuffleDependencySchema
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
@@ -291,7 +291,7 @@ object ArrowShuffleExchangeExec301 {
           .build()
       })
 
-    val dependency = new ShuffleDependencySchema[Int, InternalRow, InternalRow](
+    val dependency = new ArrowShuffleDependency[Int, InternalRow, InternalRow](
       nativeShuffleRDD.map((0, _)),
       serializer = serializer,
       shuffleWriterProcessor = createNativeShuffleWriteProcessor(metrics),
@@ -460,7 +460,7 @@ object ArrowShuffleExchangeExec301 {
       Class.forName("org.apache.spark.sql.execution.PartitionIdPassthrough").getConstructors.head
 
     val dependency =
-      new ShuffleDependencySchema[Int, InternalRow, InternalRow](
+      new ArrowShuffleDependency[Int, InternalRow, InternalRow](
         rddWithPartitionIds,
         newPartitionIdPassThrough
           .newInstance(part.numPartitions.asInstanceOf[AnyRef])

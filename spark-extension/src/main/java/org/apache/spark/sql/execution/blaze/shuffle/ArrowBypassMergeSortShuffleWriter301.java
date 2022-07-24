@@ -131,7 +131,7 @@ final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, 
     this.writeMetrics = writeMetrics;
     this.serializer = dep.serializer();
     this.shuffleExecutorComponents = shuffleExecutorComponents;
-    this.schema = ((ShuffleDependencySchema) dep).schema();
+    this.schema = ((ArrowShuffleDependency) dep).schema();
     this.maxRecordsPerBatch = conf.getInt("spark.blaze.shuffle.maxRecordsPerBatch", 8192);
     this.shuffleSync = (boolean) conf.get(package$.MODULE$.SHUFFLE_SYNC());
   }

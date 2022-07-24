@@ -27,7 +27,7 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 
-class ShuffleDependencySchema[K: ClassTag, V: ClassTag, C: ClassTag](
+class ArrowShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     @transient private val _rdd: RDD[_ <: Product2[K, V]],
     override val partitioner: Partitioner,
     override val serializer: Serializer = SparkEnv.get.serializer,
