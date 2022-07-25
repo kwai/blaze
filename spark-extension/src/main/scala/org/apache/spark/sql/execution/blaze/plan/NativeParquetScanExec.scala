@@ -56,7 +56,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
   private val nativeFileSchema = NativeConverters.convertSchema(basedFileScan.relation.schema)
   private val nativePruningPredicateFilter = basedFileScan.dataFilters
     .reduceOption(And)
-    .map(NativeConverters.convertExprLogical)
+    .map(NativeConverters.convertExpr)
 
   private val nativeFileGroups: Array[FileGroup] = {
     val partitions = inputFileScanRDD.filePartitions.toArray

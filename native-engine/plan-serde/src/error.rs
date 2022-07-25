@@ -103,13 +103,6 @@ impl PlanSerDeError {
     pub(crate) fn required(field: impl Into<String>) -> PlanSerDeError {
         PlanSerDeError::MissingRequiredField(field.into())
     }
-
-    pub(crate) fn unknown(name: impl Into<String>, value: i32) -> PlanSerDeError {
-        PlanSerDeError::UnknownEnumVariant {
-            name: name.into(),
-            value,
-        }
-    }
 }
 
 /// An extension trait that adds the methods `optional` and `required` to any
