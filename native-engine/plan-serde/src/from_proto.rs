@@ -23,8 +23,7 @@ use datafusion::datasource::listing::{FileRange, ListingTableUrl, PartitionedFil
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::BuiltinScalarFunction;
-use datafusion::logical_plan;
-use datafusion::logical_plan::*;
+use datafusion::logical_expr::Expr;
 use datafusion::physical_expr::expressions::create_aggregate_expr;
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
@@ -59,11 +58,13 @@ use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 use datafusion_ext::sort_merge_join_exec::SortMergeJoinExec;
 use object_store::ObjectMeta;
 
-use crate::error::{FromOptionalField, PlanSerDeError};
+use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
 use crate::{from_proto_binary_op, proto_error};
+use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
+use datafusion::arrow::datatypes::Field;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -200,15 +201,56 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::ParquetScan(scan) => {
-                let predicate = scan
-                    .pruning_predicate
-                    .as_ref()
-                    .map(|expr| expr.try_into())
-                    .transpose()?;
-                Ok(Arc::new(ParquetExec::new(
+                #[allow(unused)]
+                enum StatisticsType {
+                    Min,
+                    Max,
+                    NullCount,
+                }
+                #[allow(unused)]
+                struct XRequiredStatColumns {
+                    columns: Vec<(Column, StatisticsType, Field)>,
+                }
+                #[allow(unused)]
+                pub struct XPruningPredicate {
+                    schema: SchemaRef,
+                    predicate_expr: Arc<dyn PhysicalExpr>,
+                    required_columns: XRequiredStatColumns,
+                    logical_expr: Expr,
+                }
+                #[allow(unused)]
+                pub struct XParquetExec {
+                    base_config: FileScanConfig,
+                    projected_statistics: Statistics,
+                    projected_schema: SchemaRef,
+                    metrics: ExecutionPlanMetricsSet,
+                    pruning_predicate: Option<XPruningPredicate>,
+                }
+
+                // fast path for parquet scan without pruning predicates
+                if scan.pruning_predicate.is_none() {
+                    return Ok(Arc::new(ParquetExec::new(
+                        scan.base_conf.as_ref().unwrap().try_into()?,
+                        None,
+                    )));
+                }
+
+                // process with pruning predicates
+                let mut parquet_scan = ParquetExec::new(
                     scan.base_conf.as_ref().unwrap().try_into()?,
-                    predicate,
-                )))
+                    Some(Expr::Literal(ScalarValue::Null)), // placeholder
+                );
+                let predicate = try_parse_physical_expr_required(
+                    &scan.pruning_predicate,
+                    &parquet_scan.schema(),
+                )?;
+                unsafe { // safety - visit private fields in ParquetExec
+                    let xparquet: &mut XParquetExec
+                        = std::mem::transmute(&mut parquet_scan);
+                    let pruning = xparquet.pruning_predicate.as_mut().unwrap();
+                    pruning.predicate_expr = predicate;
+                }
+                Ok(Arc::new(parquet_scan))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let left: Arc<dyn ExecutionPlan> =
@@ -912,279 +954,5 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
             table_partition_cols: vec![],
         })
-    }
-}
-
-impl TryFrom<&protobuf::LogicalExprNode> for Expr {
-    type Error = PlanSerDeError;
-
-    fn try_from(expr: &protobuf::LogicalExprNode) -> Result<Self, Self::Error> {
-        use crate::protobuf::logical_expr_node::ExprType;
-        use crate::protobuf::ScalarFunction;
-
-        let expr_type = expr
-            .expr_type
-            .as_ref()
-            .ok_or_else(|| PlanSerDeError::required("expr_type"))?;
-
-        match expr_type {
-            ExprType::BinaryExpr(binary_expr) => Ok(Self::BinaryExpr {
-                left: Box::new(binary_expr.l.as_deref().required("l")?),
-                op: from_proto_binary_op(&binary_expr.op)?,
-                right: Box::new(binary_expr.r.as_deref().required("r")?),
-            }),
-            ExprType::Column(column) => Ok(Self::Column(column.into())),
-            ExprType::Literal(literal) => {
-                let scalar_value: ScalarValue = literal.try_into()?;
-                Ok(Self::Literal(scalar_value))
-            }
-            ExprType::Alias(alias) => Ok(Self::Alias(
-                Box::new(alias.expr.as_deref().required("expr")?),
-                alias.alias.clone(),
-            )),
-            ExprType::IsNullExpr(is_null) => Ok(Self::IsNull(Box::new(
-                is_null.expr.as_deref().required("expr")?,
-            ))),
-            ExprType::IsNotNullExpr(is_not_null) => Ok(Self::IsNotNull(Box::new(
-                is_not_null.expr.as_deref().required("expr")?,
-            ))),
-            ExprType::NotExpr(not) => {
-                Ok(Self::Not(Box::new(not.expr.as_deref().required("expr")?)))
-            }
-            ExprType::Between(between) => Ok(Self::Between {
-                expr: Box::new(between.expr.as_deref().required("expr")?),
-                negated: between.negated,
-                low: Box::new(between.low.as_deref().required("low")?),
-                high: Box::new(between.high.as_deref().required("high")?),
-            }),
-            ExprType::Case(case) => {
-                let when_then_expr = case
-                    .when_then_expr
-                    .iter()
-                    .map(|e| {
-                        let when_expr = e.when_expr.as_ref().required("when_expr")?;
-                        let then_expr = e.then_expr.as_ref().required("then_expr")?;
-                        Ok((Box::new(when_expr), Box::new(then_expr)))
-                    })
-                    .collect::<Result<Vec<(Box<Expr>, Box<Expr>)>, PlanSerDeError>>()?;
-                Ok(Self::Case {
-                    expr: parse_optional_expr(&case.expr)?.map(Box::new),
-                    when_then_expr,
-                    else_expr: parse_optional_expr(&case.else_expr)?.map(Box::new),
-                })
-            }
-            ExprType::Cast(cast) => {
-                let expr = Box::new(cast.expr.as_deref().required("expr")?);
-                let data_type = cast.arrow_type.as_ref().required("arrow_type")?;
-                Ok(Self::Cast { expr, data_type })
-            }
-            ExprType::TryCast(cast) => {
-                let expr = Box::new(cast.expr.as_deref().required("expr")?);
-                let data_type = cast.arrow_type.as_ref().required("arrow_type")?;
-                Ok(Self::TryCast { expr, data_type })
-            }
-            ExprType::Negative(negative) => Ok(Self::Negative(Box::new(
-                negative.expr.as_deref().required("expr")?,
-            ))),
-            ExprType::InList(in_list) => Ok(Self::InList {
-                expr: Box::new(in_list.expr.as_deref().required("expr")?),
-                list: in_list
-                    .list
-                    .iter()
-                    .map(|expr| expr.try_into())
-                    .collect::<Result<Vec<_>, _>>()?,
-                negated: in_list.negated,
-            }),
-            ExprType::Wildcard(_) => Ok(Self::Wildcard),
-            ExprType::ScalarFunction(expr) => {
-                let scalar_function = protobuf::ScalarFunction::from_i32(expr.fun)
-                    .ok_or_else(|| PlanSerDeError::unknown("ScalarFunction", expr.fun))?;
-                let args = &expr.args;
-
-                match scalar_function {
-                    ScalarFunction::Asin => Ok(asin((&args[0]).try_into()?)),
-                    ScalarFunction::Acos => Ok(acos((&args[0]).try_into()?)),
-                    ScalarFunction::Array => Ok(array(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::Sqrt => Ok(sqrt((&args[0]).try_into()?)),
-                    ScalarFunction::Sin => Ok(sin((&args[0]).try_into()?)),
-                    ScalarFunction::Cos => Ok(cos((&args[0]).try_into()?)),
-                    ScalarFunction::Tan => Ok(tan((&args[0]).try_into()?)),
-                    ScalarFunction::Atan => Ok(atan((&args[0]).try_into()?)),
-                    ScalarFunction::Exp => Ok(exp((&args[0]).try_into()?)),
-                    ScalarFunction::Log2 => Ok(log2((&args[0]).try_into()?)),
-                    ScalarFunction::Ln => Ok(ln((&args[0]).try_into()?)),
-                    ScalarFunction::Log10 => Ok(log10((&args[0]).try_into()?)),
-                    ScalarFunction::Floor => Ok(floor((&args[0]).try_into()?)),
-                    ScalarFunction::Ceil => Ok(ceil((&args[0]).try_into()?)),
-                    ScalarFunction::Round => Ok(round((&args[0]).try_into()?)),
-                    ScalarFunction::Trunc => Ok(trunc((&args[0]).try_into()?)),
-                    ScalarFunction::Abs => Ok(abs((&args[0]).try_into()?)),
-                    ScalarFunction::Signum => Ok(signum((&args[0]).try_into()?)),
-                    ScalarFunction::OctetLength => {
-                        Ok(octet_length((&args[0]).try_into()?))
-                    }
-                    ScalarFunction::Lower => Ok(lower((&args[0]).try_into()?)),
-                    ScalarFunction::Upper => Ok(upper((&args[0]).try_into()?)),
-                    ScalarFunction::Trim => Ok(trim((&args[0]).try_into()?)),
-                    ScalarFunction::Ltrim => Ok(ltrim((&args[0]).try_into()?)),
-                    ScalarFunction::Rtrim => Ok(rtrim((&args[0]).try_into()?)),
-                    ScalarFunction::DatePart => {
-                        Ok(date_part((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::DateTrunc => {
-                        Ok(date_trunc((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::Sha224 => Ok(sha224((&args[0]).try_into()?)),
-                    ScalarFunction::Sha256 => Ok(sha256((&args[0]).try_into()?)),
-                    ScalarFunction::Sha384 => Ok(sha384((&args[0]).try_into()?)),
-                    ScalarFunction::Sha512 => Ok(sha512((&args[0]).try_into()?)),
-                    ScalarFunction::Md5 => Ok(md5((&args[0]).try_into()?)),
-                    ScalarFunction::NullIf => Ok(nullif((&args[0]).try_into()?)),
-                    ScalarFunction::Digest => {
-                        Ok(digest((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::Ascii => Ok(ascii((&args[0]).try_into()?)),
-                    ScalarFunction::BitLength => Ok((&args[0]).try_into()?),
-                    ScalarFunction::CharacterLength => {
-                        Ok(character_length((&args[0]).try_into()?))
-                    }
-                    ScalarFunction::Chr => Ok(chr((&args[0]).try_into()?)),
-                    ScalarFunction::InitCap => Ok(ascii((&args[0]).try_into()?)),
-                    ScalarFunction::Left => {
-                        Ok(left((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::Random => Ok(random()),
-                    ScalarFunction::Repeat => {
-                        Ok(repeat((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::Replace => Ok(replace(
-                        (&args[0]).try_into()?,
-                        (&args[1]).try_into()?,
-                        (&args[2]).try_into()?,
-                    )),
-                    ScalarFunction::Reverse => Ok(reverse((&args[0]).try_into()?)),
-                    ScalarFunction::Right => {
-                        Ok(right((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::Concat => Ok(concat_expr(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::ConcatWithSeparator => Ok(concat_ws_expr(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::Lpad => Ok(lpad(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::Rpad => Ok(rpad(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::RegexpReplace => Ok(regexp_replace(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::RegexpMatch => Ok(regexp_match(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::Btrim => Ok(btrim(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::SplitPart => Ok(split_part(
-                        (&args[0]).try_into()?,
-                        (&args[1]).try_into()?,
-                        (&args[2]).try_into()?,
-                    )),
-                    ScalarFunction::StartsWith => {
-                        Ok(starts_with((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::Strpos => {
-                        Ok(strpos((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::Substr => {
-                        Ok(substr((&args[0]).try_into()?, (&args[1]).try_into()?))
-                    }
-                    ScalarFunction::ToHex => Ok(to_hex((&args[0]).try_into()?)),
-                    ScalarFunction::ToTimestampMillis => {
-                        Ok(to_timestamp_millis((&args[0]).try_into()?))
-                    }
-                    ScalarFunction::ToTimestampMicros => {
-                        Ok(to_timestamp_micros((&args[0]).try_into()?))
-                    }
-                    ScalarFunction::ToTimestampSeconds => {
-                        Ok(to_timestamp_seconds((&args[0]).try_into()?))
-                    }
-                    ScalarFunction::Now => Ok(now_expr(
-                        args.to_owned()
-                            .iter()
-                            .map(|e| e.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    ScalarFunction::Translate => Ok(translate(
-                        (&args[0]).try_into()?,
-                        (&args[1]).try_into()?,
-                        (&args[2]).try_into()?,
-                    )),
-                    ScalarFunction::Coalesce => Ok(coalesce(
-                        args.to_owned()
-                            .iter()
-                            .map(|expr| expr.try_into())
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )),
-                    _ => Err(proto_error(
-                        "Protobuf deserialization error: Unsupported scalar function",
-                    )),
-                }
-            }
-        }
-    }
-}
-
-fn parse_optional_expr(
-    p: &Option<Box<protobuf::LogicalExprNode>>,
-) -> Result<Option<Expr>, PlanSerDeError> {
-    match p {
-        Some(expr) => expr.as_ref().try_into().map(Some),
-        None => Ok(None),
-    }
-}
-
-impl From<protobuf::Column> for logical_plan::Column {
-    fn from(c: protobuf::Column) -> Self {
-        let protobuf::Column { relation, name } = c;
-
-        Self {
-            relation: relation.map(|r| r.relation),
-            name,
-        }
-    }
-}
-
-impl From<&protobuf::Column> for logical_plan::Column {
-    fn from(c: &protobuf::Column) -> Self {
-        c.clone().into()
     }
 }
