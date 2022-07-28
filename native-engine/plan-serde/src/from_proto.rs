@@ -65,6 +65,7 @@ use crate::{convert_box_required, convert_required, into_required, protobuf, Sch
 use crate::{from_proto_binary_op, proto_error};
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion::arrow::datatypes::Field;
+use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -155,6 +156,19 @@ fn bind(
             expr.return_type(),
         ));
         Ok(sfe)
+    } else if let Some(expr) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
+        let params = expr.params
+            .iter()
+            .map(|param| bind(param.clone(), input_schema))
+            .collect::<Result<Vec<_>, _>>()?;
+        let expr = Arc::new(SparkFallbackToJvmExpr::try_new(
+            expr.serialized.clone(),
+            expr.return_type.clone(),
+            expr.return_nullable,
+            params,
+            input_schema.clone(),
+        )?);
+        Ok(expr)
     } else {
         unimplemented!("Expression binding not implemented yet")
     }
@@ -788,6 +802,18 @@ fn try_parse_physical_expr(
                 args,
                 &convert_required!(e.return_type)?,
             ))
+        }
+        ExprType::FallbackToJvmExpr(e) => {
+            Arc::new(SparkFallbackToJvmExpr::try_new(
+                e.serialized.clone(),
+                convert_required!(e.return_type)?,
+                e.return_nullable,
+                e.params
+                    .iter()
+                    .map(|x| try_parse_physical_expr(x, input_schema))
+                    .collect::<Result<Vec<_>, _>>()?,
+                input_schema.clone(),
+            )?)
         }
     };
 

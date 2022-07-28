@@ -40,6 +40,7 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::io::Cursor;
 use std::sync::Arc;
+use crate::util::ipc::write_one_batch;
 
 #[derive(Debug)]
 pub struct IpcWriterExec {
@@ -159,9 +160,10 @@ pub async fn write_ipc(
             num_rows = 0;
 
             let mut buffer = vec![];
-            crate::util::ipc::write_ipc_compressed(
+            write_one_batch(
                 &batch,
                 &mut Cursor::new(&mut buffer),
+                true,
             )?;
             std::mem::drop(timer);
 
