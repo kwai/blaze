@@ -70,6 +70,7 @@ dependencies {
 	compileOnly 'org.scala-lang:scala-library:2.12.10'
 	compileOnly 'org.apache.spark:spark-core_2.12:3.0.3'
 	compileOnly 'org.apache.spark:spark-sql_2.12:3.0.3'
+	compileOnly 'org.apache.spark:spark-hive_2.12:3.0.3'
 }
 
 shadowJar {

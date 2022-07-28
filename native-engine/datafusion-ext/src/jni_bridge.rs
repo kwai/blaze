@@ -282,6 +282,7 @@ pub struct JavaClasses<'a> {
     pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
+    pub cSparkFallbackToJvmExprContext: SparkFallbackToJvmExprContext<'a>,
 
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
 }
@@ -332,6 +333,7 @@ impl JavaClasses<'static> {
                 cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
+                cSparkFallbackToJvmExprContext: SparkFallbackToJvmExprContext::new(env).unwrap(),
 
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
             };
@@ -781,6 +783,33 @@ impl<'a> SparkMetricNode<'a> {
                 .get_method_id(class, "add", "(Ljava/lang/String;J)V")
                 .unwrap(),
             method_add_ret: JavaType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkFallbackToJvmExprContext<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID<'a>,
+    pub method_eval: JMethodID<'a>,
+    pub method_eval_ret: JavaType,
+}
+impl<'a> SparkFallbackToJvmExprContext<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/FallbackToJvmExprContext";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkFallbackToJvmExprContext<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkFallbackToJvmExprContext {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
+            method_eval: env
+                .get_method_id(
+                    class,
+                    "eval",
+                    "(Ljava/nio/ByteBuffer;)Ljava/nio/channels/ReadableByteChannel;",
+                )
+                .unwrap(),
+            method_eval_ret: JavaType::Object(JavaReadableByteChannel::SIG_TYPE.to_owned()),
         })
     }
 }

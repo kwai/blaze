@@ -39,6 +39,7 @@ class ArrowReaderIterator(
   private var arrowReader = new ArrowHeadlessStreamReader(channel, allocator, schema, timeZoneId)
   private var root = arrowReader.getVectorSchemaRoot
   private var rowIter = nextBatch()
+  private var inited = true
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
@@ -55,8 +56,14 @@ class ArrowReaderIterator(
   override def next(): InternalRow = rowIter.next()
 
   private def nextBatch(): Iterator[InternalRow] = {
-    if (arrowReader.loadNextBatch()) {
-      FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
+    if (inited && arrowReader.loadNextBatch()) {
+      inited = true
+      val iter = FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
+      if (iter.isEmpty) {
+        return nextBatch()
+      }
+      iter
+
     } else {
       Iterator.empty
     }

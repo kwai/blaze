@@ -61,7 +61,7 @@ use tokio::task;
 
 use crate::spark_hash::{create_hashes, pmod};
 use crate::util::array_builder::{make_batch, new_array_builders};
-use crate::util::ipc::write_ipc_compressed;
+use crate::util::ipc::write_one_batch;
 
 struct PartitionBuffer {
     schema: SchemaRef,
@@ -186,7 +186,7 @@ impl PartitionBuffer {
         let frozen_capacity_old = self.frozen.capacity();
         let mut cursor = Cursor::new(&mut self.frozen);
         cursor.seek(SeekFrom::End(0))?;
-        write_ipc_compressed(&frozen_batch, &mut cursor)?;
+        write_one_batch(&frozen_batch, &mut cursor, true)?;
 
         mem_diff += (self.frozen.capacity() - frozen_capacity_old) as isize;
         Ok(mem_diff)
