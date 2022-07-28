@@ -76,6 +76,9 @@ message PhysicalExprNode {
 
     // window expressions
     PhysicalWindowExprNode window_expr = 15;
+
+    // Fallback to VJM expression
+    PhysicalFallbackToJvmExprNode fallback_to_jvm_expr = 10000;
   }
 }
 
@@ -257,6 +260,13 @@ message PhysicalCastNode {
 
 message PhysicalNegativeNode {
   PhysicalExprNode expr = 1;
+}
+
+message PhysicalFallbackToJvmExprNode {
+  bytes serialized = 1;
+  ArrowType return_type = 2;
+  bool return_nullable = 3;
+  repeated PhysicalExprNode params = 4;
 }
 
 message FilterExecNode {

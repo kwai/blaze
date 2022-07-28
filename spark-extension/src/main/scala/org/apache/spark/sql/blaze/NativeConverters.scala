@@ -16,8 +16,14 @@
 
 package org.apache.spark.sql.blaze
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
 
+import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
 import org.apache.spark.sql.catalyst.expressions.Add
@@ -81,6 +87,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.StddevSamp
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
+import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.MakeDecimal
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
@@ -91,6 +98,9 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.hive.HiveGenericUDF
+import org.apache.spark.sql.hive.blaze.HiveUDFConverters
+import org.apache.spark.sql.hive.HiveGenericUDF
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
 import org.apache.spark.sql.types.ByteType
@@ -109,8 +119,10 @@ import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
+import org.apache.spark.util.Utils
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalExprNode
+import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
 
 object NativeConverters {
@@ -500,6 +512,27 @@ object NativeConverters {
       case StddevSamp(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV, _1)
       case StddevPop(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV_POP, _1)
 
+      // hive UDF
+      case e
+          if Seq(
+            "org.apache.spark.sql.hive.HiveSimpleUDF",
+            "org.apache.spark.sql.hive.HiveGenericUDF").contains(e.getClass.getName) =>
+        val bounded = e.withNewChildren(e.children.zipWithIndex.map {
+          case (param, index) => BoundReference(index, param.dataType, param.nullable)
+        })
+        val serialized = serializeExpression(bounded.asInstanceOf[Expression with Serializable])
+
+        pb.PhysicalExprNode
+          .newBuilder()
+          .setFallbackToJvmExpr(
+            PhysicalFallbackToJvmExprNode
+              .newBuilder()
+              .setSerialized(ByteString.copyFrom(serialized))
+              .setReturnType(convertDataType(bounded.dataType))
+              .setReturnNullable(bounded.nullable)
+              .addAllParams(e.children.map(convertExpr).asJava))
+          .build()
+
       case unsupportedExpression =>
         throw new NotImplementedError(
           s"unsupported exception: ${unsupportedExpression} (${unsupportedExpression.getClass.getName})")
@@ -515,6 +548,24 @@ object NativeConverters {
       case LeftSemi => org.blaze.protobuf.JoinType.SEMI
       case LeftAnti => org.blaze.protobuf.JoinType.ANTI
       case _ => throw new NotImplementedError(s"unsupported join type: ${joinType}")
+    }
+  }
+
+  def serializeExpression(udf: Expression with Serializable): Array[Byte] = {
+    Utils.tryWithResource(new ByteArrayOutputStream()) { bos =>
+      Utils.tryWithResource(new ObjectOutputStream(bos)) { oos =>
+        oos.writeObject(udf)
+        null
+      }
+      bos.toByteArray
+    }
+  }
+
+  def deserializeExpression(serialized: Array[Byte]): Expression with Serializable = {
+    Utils.tryWithResource(new ByteArrayInputStream(serialized)) { bis =>
+      Utils.tryWithResource(new ObjectInputStream(bis)) { ois =>
+        ois.readObject().asInstanceOf[Expression with Serializable]
+      }
     }
   }
 }

@@ -30,9 +30,10 @@ use std::io::BufWriter;
 use std::io::Read;
 use std::io::{Seek, SeekFrom, Write};
 
-pub fn write_ipc_compressed<W: Write + Seek>(
+pub fn write_one_batch<W: Write + Seek>(
     batch: &RecordBatch,
     output: &mut W,
+    compress: bool,
 ) -> ArrowResult<usize> {
     if batch.num_rows() == 0 {
         return Ok(0);
@@ -43,13 +44,21 @@ pub fn write_ipc_compressed<W: Write + Seek>(
     output.write_all(&[0u8; 8])?;
 
     // write ipc data
-    let mut arrow_writer =
-        HeadlessStreamWriter::new(zstd::Encoder::new(output, 1)?, &batch.schema());
-    arrow_writer.write(batch)?;
-    arrow_writer.finish()?;
+    let output = if compress {
+        let mut arrow_writer =
+            HeadlessStreamWriter::new(zstd::Encoder::new(output, 1)?, &batch.schema());
+        arrow_writer.write(batch)?;
+        arrow_writer.finish()?;
+        let zwriter = arrow_writer.into_inner()?;
+        zwriter.finish()?
+    } else {
+        let mut arrow_writer =
+            HeadlessStreamWriter::new(output, &batch.schema());
+        arrow_writer.write(batch)?;
+        arrow_writer.finish()?;
+        arrow_writer.into_inner()?
+    };
 
-    let zwriter = arrow_writer.into_inner()?;
-    let output = zwriter.finish()?;
     let end_pos = output.stream_position()?;
     let ipc_length = end_pos - start_pos - 8;
 
@@ -59,6 +68,33 @@ pub fn write_ipc_compressed<W: Write + Seek>(
 
     output.seek(SeekFrom::Start(end_pos))?;
     Ok((end_pos - start_pos) as usize)
+}
+
+pub fn read_one_batch<R: Read>(
+    input: &mut R,
+    schema: SchemaRef,
+    compress: bool,
+    has_length_header: bool,
+) -> ArrowResult<RecordBatch> {
+    let input: Box<dyn Read> = if has_length_header {
+        let mut len_buf = [0u8; 8];
+        input.read_exact(&mut len_buf)?;
+        let len = u64::from_le_bytes(len_buf);
+        Box::new(input.take(len))
+    } else {
+        Box::new(input)
+    };
+
+    // read
+    Ok(if compress {
+        let mut arrow_reader =
+            HeadlessStreamReader::new(zstd::Decoder::new(input)?, schema);
+        arrow_reader.next().unwrap()?
+    } else {
+        let mut arrow_reader =
+            HeadlessStreamReader::new(input, schema);
+        arrow_reader.next().unwrap()?
+    })
 }
 
 /// Simplified from arrow StreamReader
