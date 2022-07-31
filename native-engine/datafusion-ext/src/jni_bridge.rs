@@ -333,7 +333,8 @@ impl JavaClasses<'static> {
                 cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
-                cSparkFallbackToJvmExprContext: SparkFallbackToJvmExprContext::new(env).unwrap(),
+                cSparkFallbackToJvmExprContext: SparkFallbackToJvmExprContext::new(env)
+                    .unwrap(),
 
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
             };
@@ -795,7 +796,8 @@ pub struct SparkFallbackToJvmExprContext<'a> {
     pub method_eval_ret: JavaType,
 }
 impl<'a> SparkFallbackToJvmExprContext<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/FallbackToJvmExprContext";
+    pub const SIG_TYPE: &'static str =
+        "org/apache/spark/sql/blaze/FallbackToJvmExprContext";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkFallbackToJvmExprContext<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
@@ -809,7 +811,9 @@ impl<'a> SparkFallbackToJvmExprContext<'a> {
                     "(Ljava/nio/ByteBuffer;)Ljava/nio/channels/ReadableByteChannel;",
                 )
                 .unwrap(),
-            method_eval_ret: JavaType::Object(JavaReadableByteChannel::SIG_TYPE.to_owned()),
+            method_eval_ret: JavaType::Object(
+                JavaReadableByteChannel::SIG_TYPE.to_owned(),
+            ),
         })
     }
 }

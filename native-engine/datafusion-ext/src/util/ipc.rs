@@ -17,7 +17,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::ipc;
-use datafusion::arrow::ipc::reader::read_record_batch;
+use datafusion::arrow::ipc::reader::{read_dictionary, read_record_batch};
 use datafusion::arrow::ipc::writer::write_message;
 use datafusion::arrow::ipc::writer::DictionaryTracker;
 use datafusion::arrow::ipc::writer::IpcDataGenerator;
@@ -52,8 +52,7 @@ pub fn write_one_batch<W: Write + Seek>(
         let zwriter = arrow_writer.into_inner()?;
         zwriter.finish()?
     } else {
-        let mut arrow_writer =
-            HeadlessStreamWriter::new(output, &batch.schema());
+        let mut arrow_writer = HeadlessStreamWriter::new(output, &batch.schema());
         arrow_writer.write(batch)?;
         arrow_writer.finish()?;
         arrow_writer.into_inner()?
@@ -91,8 +90,7 @@ pub fn read_one_batch<R: Read>(
             HeadlessStreamReader::new(zstd::Decoder::new(input)?, schema);
         arrow_reader.next().unwrap()?
     } else {
-        let mut arrow_reader =
-            HeadlessStreamReader::new(input, schema);
+        let mut arrow_reader = HeadlessStreamReader::new(input, schema);
         arrow_reader.next().unwrap()?
     })
 }
@@ -103,7 +101,7 @@ pub struct HeadlessStreamReader<R: Read> {
     reader: BufReader<R>,
     schema: SchemaRef,
     finished: bool,
-    empty_dictionaries: HashMap<i64, ArrayRef>,
+    dictionaries_by_id: HashMap<i64, ArrayRef>,
 }
 
 impl<R: Read> HeadlessStreamReader<R> {
@@ -112,7 +110,7 @@ impl<R: Read> HeadlessStreamReader<R> {
             reader: BufReader::new(reader),
             schema,
             finished: false,
-            empty_dictionaries: HashMap::new(),
+            dictionaries_by_id: HashMap::new(),
         }
     }
 
@@ -173,10 +171,27 @@ impl<R: Read> HeadlessStreamReader<R> {
                     &buf,
                     batch,
                     self.schema.clone(),
-                    &self.empty_dictionaries,
+                    &self.dictionaries_by_id,
                     None,
                     &message.version()
                 ).map(Some)
+            }
+            ipc::MessageHeader::DictionaryBatch => {
+                let batch = message.header_as_dictionary_batch().ok_or_else(|| {
+                    ArrowError::IoError(
+                        "Unable to read IPC message as dictionary batch".to_string(),
+                    )
+                })?;
+                // read the block that makes up the dictionary batch into a buffer
+                let mut buf = vec![0; message.bodyLength() as usize];
+                self.reader.read_exact(&mut buf)?;
+
+                read_dictionary(
+                    &buf, batch, &self.schema, &mut self.dictionaries_by_id, &message.version()
+                )?;
+
+                // read the next message until we encounter a RecordBatch
+                self.maybe_next()
             }
             ipc::MessageHeader::NONE => {
                 Ok(None)
@@ -240,11 +255,9 @@ impl<W: Write> HeadlessStreamWriter<W> {
             &self.write_options,
         )?;
 
-        assert_eq!(
-            encoded_dictionaries.len(),
-            0,
-            "Writing with dictionary is not yet supported"
-        );
+        for encoded_dictionary in encoded_dictionaries {
+            write_message(&mut self.writer, encoded_dictionary, &self.write_options)?;
+        }
         write_message(&mut self.writer, encoded_message, &self.write_options)?;
         Ok(())
     }

@@ -1,7 +1,5 @@
-use std::any::Any;
-use std::fmt::{Debug, Display, Formatter};
-use std::io::Cursor;
-use std::sync::Arc;
+use crate::util::ipc::{read_one_batch, write_one_batch};
+use crate::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
@@ -9,8 +7,10 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_plan::PhysicalExpr;
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
-use crate::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
-use crate::util::ipc::{read_one_batch, write_one_batch};
+use std::any::Any;
+use std::fmt::{Debug, Display, Formatter};
+use std::io::Cursor;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SparkFallbackToJvmExpr {
@@ -33,12 +33,11 @@ impl SparkFallbackToJvmExpr {
     ) -> Result<Self> {
         let mut param_fields = Vec::with_capacity(params.len());
         for param in &params {
-            param_fields.push(
-                Field::new(
-                    &format!("_c{}", param_fields.len()),
-                    param.data_type(&input_schema)?,
-                    param.nullable(&input_schema)?,
-                ));
+            param_fields.push(Field::new(
+                &format!("_c{}", param_fields.len()),
+                param.data_type(&input_schema)?,
+                param.nullable(&input_schema)?,
+            ));
         }
         let params_schema = Arc::new(Schema::new(param_fields));
 
@@ -81,14 +80,15 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let jcontext = self.jcontext.get_or_try_init(|| {
-            let jcontext = jni_new_object!(SparkFallbackToJvmExprContext,
-                jni_new_direct_byte_buffer!(
-                    unsafe { // safety - byte buffer is not mutated in jvm side
-                         std::slice::from_raw_parts_mut(
-                            self.serialized.as_ptr() as *mut u8,
-                            self.serialized.len())
-                    }
-                )?
+            let jcontext = jni_new_object!(
+                SparkFallbackToJvmExprContext,
+                jni_new_direct_byte_buffer!(unsafe {
+                    // safety - byte buffer is not mutated in jvm side
+                    std::slice::from_raw_parts_mut(
+                        self.serialized.as_ptr() as *mut u8,
+                        self.serialized.len(),
+                    )
+                })?
             )?;
             Result::Ok(jni_new_global_ref!(jcontext)?)
         })?;
@@ -100,7 +100,7 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
                 ColumnarValue::Array(array) => param_arrays.push(array.clone()),
                 ColumnarValue::Scalar(_) => {
                     return Err(DataFusionError::NotImplemented(
-                        format!("SparkFallbackToJvmExpr.children.evaluate() returning ScalarValue is not supported")
+                        "SparkFallbackToJvmExpr.children.evaluate() returning ScalarValue is not supported".to_string()
                     ));
                 }
             }
@@ -116,13 +116,14 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
         )?;
 
         let mut reader = crate::ipc_reader_exec::ReadableByteChannelReader(
-            jni_new_global_ref!(output_channel)?
+            jni_new_global_ref!(output_channel)?,
         );
 
-        let output_schema = Arc::new(
-            Schema::new(vec![
-                Field::new("_c0", self.return_type.clone(), self.return_nullable)
-            ]));
+        let output_schema = Arc::new(Schema::new(vec![Field::new(
+            "_c0",
+            self.return_type.clone(),
+            self.return_nullable,
+        )]));
         let output_batch = read_one_batch(&mut reader, output_schema, false, false)?;
         Ok(ColumnarValue::Array(output_batch.column(0).clone()))
     }
