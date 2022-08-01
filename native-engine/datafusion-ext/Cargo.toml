@@ -9,7 +9,7 @@ edition = "2021"
 ahash = "0.7.6"
 async-trait = "0.1.56"
 base64 = "0.13.0"
-bytes = "1.2.0"
+bytes = "1.2.1"
 chrono = "0.4.19"
 dashmap = "5.3.4"
 datafusion = { version = "10.0.0", features = ["simd"] }
