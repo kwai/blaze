@@ -19,7 +19,8 @@ use datafusion::logical_expr::ScalarFunctionImplementation;
 
 pub mod debug_exec;
 pub mod empty_partitions_exec;
-pub mod hdfs_object_store; // note: can be changed to priv once plan transforming is removed
+pub mod file_format;
+pub mod hdfs_object_store;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod jni_bridge;

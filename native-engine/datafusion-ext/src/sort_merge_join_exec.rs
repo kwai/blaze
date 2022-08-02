@@ -4,7 +4,9 @@ use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
-use crate::util::array_builder::{make_batch, new_array_builders};
+use crate::util::array_builder::{
+    builder_append_null, builder_extend, make_batch, new_array_builders,
+};
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::take;
 use datafusion::arrow::compute::SortOptions;
@@ -331,10 +333,10 @@ async fn join_combined(
                     let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
 
                     $batch1.columns().iter().enumerate().for_each(|(i, c)| {
-                        append_column(&mut staging_l[i], c, l, c.data_type())
+                        builder_extend(&mut staging_l[i], c, &[l], c.data_type());
                     });
                     $batch2.columns().iter().enumerate().for_each(|(i, c)| {
-                        append_column(&mut staging_r[i], c, r, c.data_type())
+                        builder_extend(&mut staging_r[i], c, &[r], c.data_type())
                     });
 
                     staging_len += 1;
@@ -353,10 +355,10 @@ async fn join_combined(
                     let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
 
                     $batch1.columns().iter().enumerate().for_each(|(i, c)| {
-                        append_column(&mut staging_l[i], c, l, c.data_type())
+                        builder_extend(&mut staging_l[i], c, &[l], c.data_type());
                     });
                     $batch2.columns().iter().enumerate().for_each(|(i, c)| {
-                        append_column(&mut staging_r[i], c, r, c.data_type())
+                        builder_extend(&mut staging_r[i], c, &[r], c.data_type())
                     });
 
                     staging_len += 1;
@@ -469,10 +471,10 @@ async fn join_combined(
 
                 // append <left-columns + nulls> for left/full joins
                 left_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                    append_column(&mut staging_l[i], c, idx, c.data_type());
+                    builder_extend(&mut staging_l[i], c, &[idx], c.data_type());
                 });
                 right_dts.iter().enumerate().for_each(|(i, dt)| {
-                    append_null(&mut staging_r[i], dt);
+                    builder_append_null(&mut staging_r[i], dt);
                 });
 
                 staging_len += 1;
@@ -490,10 +492,10 @@ async fn join_combined(
 
                 // append <nulls + right-columns> for right/full joins
                 left_dts.iter().enumerate().for_each(|(i, dt)| {
-                    append_null(&mut staging_l[i], dt);
+                    builder_append_null(&mut staging_l[i], dt);
                 });
                 right_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                    append_column(&mut staging_r[i], c, idx, c.data_type());
+                    builder_extend(&mut staging_r[i], c, &[idx], c.data_type());
                 });
 
                 staging_len += 1;
@@ -686,7 +688,7 @@ async fn join_semi(
         () => {{
             let (left_batch, idx) = left_cursor.current().unwrap();
             left_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                append_column(&mut staging[i], c, idx, c.data_type());
+                builder_extend(&mut staging[i], c, &[idx], c.data_type());
             });
             staging_len += 1;
             if staging_len >= join_params.batch_size {
@@ -939,83 +941,6 @@ fn row_equal(
         }
     }
     true
-}
-
-fn append_column(
-    to: &mut Box<dyn ArrayBuilder>,
-    from: &Arc<dyn Array>,
-    idx: usize,
-    data_type: &DataType,
-) {
-    macro_rules! append {
-        ($arrowty:ident) => {{
-            type B = paste::paste! {[< $arrowty Builder >]};
-            type A = paste::paste! {[< $arrowty Array >]};
-            let t = to.as_any_mut().downcast_mut::<B>().unwrap();
-            let f = from.as_any().downcast_ref::<A>().unwrap();
-            if f.is_valid(idx) {
-                t.append_value(f.value(idx)).unwrap();
-            } else {
-                t.append_null().unwrap();
-            }
-        }};
-    }
-    match data_type {
-        DataType::Boolean => append!(Boolean),
-        DataType::Int8 => append!(Int8),
-        DataType::Int16 => append!(Int16),
-        DataType::Int32 => append!(Int32),
-        DataType::Int64 => append!(Int64),
-        DataType::UInt8 => append!(UInt8),
-        DataType::UInt16 => append!(UInt16),
-        DataType::UInt32 => append!(UInt32),
-        DataType::UInt64 => append!(UInt64),
-        DataType::Float32 => append!(Float32),
-        DataType::Float64 => append!(Float64),
-        DataType::Date32 => append!(Date32),
-        DataType::Date64 => append!(Date64),
-        DataType::Time32(TimeUnit::Second) => append!(Time32Second),
-        DataType::Time32(TimeUnit::Millisecond) => append!(Time32Millisecond),
-        DataType::Time64(TimeUnit::Microsecond) => append!(Time64Microsecond),
-        DataType::Time64(TimeUnit::Nanosecond) => append!(Time64Nanosecond),
-        DataType::Utf8 => append!(String),
-        DataType::LargeUtf8 => append!(LargeString),
-        DataType::Decimal(_, _) => append!(Decimal),
-        _ => unimplemented!("data type not supported in sort-merge join"),
-    }
-}
-
-fn append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType) {
-    macro_rules! append {
-        ($arrowty:ident) => {{
-            type B = paste::paste! {[< $arrowty Builder >]};
-            let t = to.as_any_mut().downcast_mut::<B>().unwrap();
-            t.append_null().unwrap();
-        }};
-    }
-    match data_type {
-        DataType::Boolean => append!(Boolean),
-        DataType::Int8 => append!(Int8),
-        DataType::Int16 => append!(Int16),
-        DataType::Int32 => append!(Int32),
-        DataType::Int64 => append!(Int64),
-        DataType::UInt8 => append!(UInt8),
-        DataType::UInt16 => append!(UInt16),
-        DataType::UInt32 => append!(UInt32),
-        DataType::UInt64 => append!(UInt64),
-        DataType::Float32 => append!(Float32),
-        DataType::Float64 => append!(Float64),
-        DataType::Date32 => append!(Date32),
-        DataType::Date64 => append!(Date64),
-        DataType::Time32(TimeUnit::Second) => append!(Time32Second),
-        DataType::Time32(TimeUnit::Millisecond) => append!(Time32Millisecond),
-        DataType::Time64(TimeUnit::Microsecond) => append!(Time64Microsecond),
-        DataType::Time64(TimeUnit::Nanosecond) => append!(Time64Nanosecond),
-        DataType::Utf8 => append!(String),
-        DataType::LargeUtf8 => append!(LargeString),
-        DataType::Decimal(_, _) => append!(Decimal),
-        _ => unimplemented!("data type not supported in sort-merge join"),
-    }
 }
 
 #[cfg(test)]

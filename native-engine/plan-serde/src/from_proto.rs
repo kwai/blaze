@@ -29,7 +29,6 @@ use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
     AggregateExec, AggregateMode, PhysicalGroupBy,
 };
-use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
 use datafusion::physical_plan::hash_join::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::join_utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
@@ -50,6 +49,7 @@ use datafusion::physical_plan::{
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext::file_format::{FileScanConfig, ParquetExec};
 use datafusion_ext::ipc_reader_exec::IpcReadMode;
 use datafusion_ext::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::ipc_writer_exec::IpcWriterExec;
@@ -63,8 +63,8 @@ use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
 use crate::{from_proto_binary_op, proto_error};
-use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion::arrow::datatypes::Field;
+use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 
 fn bind(
@@ -157,7 +157,8 @@ fn bind(
         ));
         Ok(sfe)
     } else if let Some(expr) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
-        let params = expr.params
+        let params = expr
+            .params
             .iter()
             .map(|param| bind(param.clone(), input_schema))
             .collect::<Result<Vec<_>, _>>()?;
@@ -258,9 +259,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     &scan.pruning_predicate,
                     &parquet_scan.schema(),
                 )?;
-                unsafe { // safety - visit private fields in ParquetExec
-                    let xparquet: &mut XParquetExec
-                        = std::mem::transmute(&mut parquet_scan);
+                unsafe {
+                    // safety - visit private fields in ParquetExec
+                    let xparquet: &mut XParquetExec =
+                        std::mem::transmute(&mut parquet_scan);
                     let pruning = xparquet.pruning_predicate.as_mut().unwrap();
                     pruning.predicate_expr = predicate;
                 }
@@ -803,18 +805,16 @@ fn try_parse_physical_expr(
                 &convert_required!(e.return_type)?,
             ))
         }
-        ExprType::FallbackToJvmExpr(e) => {
-            Arc::new(SparkFallbackToJvmExpr::try_new(
-                e.serialized.clone(),
-                convert_required!(e.return_type)?,
-                e.return_nullable,
-                e.params
-                    .iter()
-                    .map(|x| try_parse_physical_expr(x, input_schema))
-                    .collect::<Result<Vec<_>, _>>()?,
-                input_schema.clone(),
-            )?)
-        }
+        ExprType::FallbackToJvmExpr(e) => Arc::new(SparkFallbackToJvmExpr::try_new(
+            e.serialized.clone(),
+            convert_required!(e.return_type)?,
+            e.return_nullable,
+            e.params
+                .iter()
+                .map(|x| try_parse_physical_expr(x, input_schema))
+                .collect::<Result<Vec<_>, _>>()?,
+            input_schema.clone(),
+        )?),
     };
 
     Ok(pexpr)
@@ -978,7 +978,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             statistics,
             projection,
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
-            table_partition_cols: vec![],
+            table_partition_cols: vec!["dt".to_owned()],
         })
     }
 }

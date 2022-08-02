@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util::ipc::write_one_batch;
 use crate::{
     jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer,
     jni_new_global_ref, jni_new_string,
@@ -40,7 +41,6 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::io::Cursor;
 use std::sync::Arc;
-use crate::util::ipc::write_one_batch;
 
 #[derive(Debug)]
 pub struct IpcWriterExec {

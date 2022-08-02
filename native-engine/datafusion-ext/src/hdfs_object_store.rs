@@ -35,7 +35,7 @@ pub struct HDFSSingleFileObjectStore {
 impl HDFSSingleFileObjectStore {
     pub fn new() -> Self {
         Self {
-            spawner: OnceCell::new()
+            spawner: OnceCell::new(),
         }
     }
 
@@ -81,43 +81,45 @@ impl ObjectStore for HDFSSingleFileObjectStore {
     ) -> object_store::Result<bytes::Bytes> {
         let location = normalize_location(location);
 
-        self.spawner().spawn_blocking(move || -> Result<bytes::Bytes> {
-            let mut buf = vec![0; range.len()];
+        self.spawner()
+            .spawn_blocking(move || -> Result<bytes::Bytes> {
+                let mut buf = vec![0; range.len()];
 
-            jni_call_static!(
-                HDFSObjectStoreBridge.read(
-                    jni_new_string!(&location)?,
-                    range.start as i64,
-                    jni_new_direct_byte_buffer!(&mut buf)?,
-                ) -> ()
-            )?;
-            Ok(bytes::Bytes::from(buf))
-        })
-        .await?
-        .map_err(|err| object_store::Error::Generic {
-            store: "HDFSObjectStore",
-            source: Box::new(err),
-        })
+                jni_call_static!(
+                    HDFSObjectStoreBridge.read(
+                        jni_new_string!(&location)?,
+                        range.start as i64,
+                        jni_new_direct_byte_buffer!(&mut buf)?,
+                    ) -> ()
+                )?;
+                Ok(bytes::Bytes::from(buf))
+            })
+            .await?
+            .map_err(|err| object_store::Error::Generic {
+                store: "HDFSObjectStore",
+                source: Box::new(err),
+            })
     }
 
     async fn head(&self, location: &Path) -> object_store::Result<ObjectMeta> {
         let location = normalize_location(location);
 
-        self.spawner().spawn_blocking(move || -> Result<ObjectMeta> {
-            let size = jni_call_static!(
-                HDFSObjectStoreBridge.size(jni_new_string!(&location)?) -> jlong
-            )?;
-            Ok(ObjectMeta {
-                location: location.into(),
-                last_modified: chrono::MIN_DATETIME,
-                size: size as usize,
+        self.spawner()
+            .spawn_blocking(move || -> Result<ObjectMeta> {
+                let size = jni_call_static!(
+                    HDFSObjectStoreBridge.size(jni_new_string!(&location)?) -> jlong
+                )?;
+                Ok(ObjectMeta {
+                    location: location.into(),
+                    last_modified: chrono::MIN_DATETIME,
+                    size: size as usize,
+                })
             })
-        })
-        .await?
-        .map_err(|err| object_store::Error::Generic {
-            store: "HDFSObjectStore",
-            source: Box::new(err),
-        })
+            .await?
+            .map_err(|err| object_store::Error::Generic {
+                store: "HDFSObjectStore",
+                source: Box::new(err),
+            })
     }
 
     async fn delete(&self, _location: &Path) -> object_store::Result<()> {

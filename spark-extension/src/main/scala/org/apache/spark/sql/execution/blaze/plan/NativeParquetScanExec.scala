@@ -33,13 +33,8 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
-import org.blaze.protobuf.FileGroup
-import org.blaze.protobuf.FileRange
-import org.blaze.protobuf.FileScanExecConf
-import org.blaze.protobuf.ParquetScanExecNode
-import org.blaze.protobuf.PartitionedFile
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Statistics
+import org.apache.spark.sql.execution.datasources.PartitionedFile
+import org.blaze.{protobuf => pb}
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     extends LeafExecNode
@@ -52,13 +47,12 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
   override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning
 
   private val inputFileScanRDD = basedFileScan.inputRDD.asInstanceOf[FileScanRDD]
-
-  private val nativeFileSchema = NativeConverters.convertSchema(basedFileScan.relation.schema)
   private val nativePruningPredicateFilter = basedFileScan.dataFilters
     .reduceOption(And)
     .map(NativeConverters.convertExpr)
 
-  private val nativeFileGroups: Array[FileGroup] = {
+  private val nativeFileSchema = NativeConverters.convertSchema(basedFileScan.relation.dataSchema)
+  private val nativeFileGroups: Array[pb.FileGroup] = {
     val partitions = inputFileScanRDD.filePartitions.toArray
 
     // compute file sizes
@@ -76,22 +70,33 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     }
 
     // list input file statuses
-    def nativePartitionedFile(file: org.apache.spark.sql.execution.datasources.PartitionedFile) =
-      PartitionedFile
+    def nativePartitionedFile(file: PartitionedFile) = {
+      val nativePartitionValues =
+        basedFileScan.relation.partitionSchema.zipWithIndex
+          .map {
+            case (field, index) =>
+              NativeConverters.convertValue(
+                file.partitionValues.get(index, field.dataType),
+                field.dataType)
+          }
+
+      pb.PartitionedFile
         .newBuilder()
         .setPath(formatFilePath(file.filePath))
         .setSize(fileSizes(file.filePath))
+        .addAllPartitionValues(nativePartitionValues.asJava)
         .setLastModifiedNs(0)
         .setRange(
-          FileRange
+          pb.FileRange
             .newBuilder()
             .setStart(file.start)
             .setEnd(file.start + file.length)
             .build())
         .build()
+    }
 
     partitions.map { partition =>
-      FileGroup
+      pb.FileGroup
         .newBuilder()
         .addAllFiles(partition.files.map(nativePartitionedFile).toList.asJava)
         .build()
@@ -101,26 +106,23 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
   override def doExecuteNative(): NativeRDD = {
     val partitions = inputFileScanRDD.filePartitions.toArray
     val nativeMetrics = MetricNode(metrics, Nil)
-
-    val fileSchema = basedFileScan.relation.schema
-    val outputSchema = basedFileScan.requiredSchema.fields
-    val projection = outputSchema.map(field => fileSchema.fieldIndex(field.name))
+    val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       partitions.asInstanceOf[Array[Partition]],
       Nil,
-      (partition, _) => {
-        val nativeParquetScanConf = FileScanExecConf
+      (_, _) => {
+        val nativeParquetScanConf = pb.FileScanExecConf
           .newBuilder()
-          .setStatistics(Statistics.getDefaultInstance)
+          .setStatistics(pb.Statistics.getDefaultInstance)
           .setSchema(nativeFileSchema)
           .addAllFileGroups(nativeFileGroups.toList.asJava)
-          .addAllProjection(projection.map(Integer.valueOf).toSeq.asJava)
+          .addAllProjection(projection.map(Integer.valueOf).asJava)
           .build()
 
-        val nativeParquetScanExecBuilder = ParquetScanExecNode
+        val nativeParquetScanExecBuilder = pb.ParquetScanExecNode
           .newBuilder()
           .setBaseConf(nativeParquetScanConf)
 
@@ -129,7 +131,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
           case None => // no nothing
         }
 
-        PhysicalPlanNode
+        pb.PhysicalPlanNode
           .newBuilder()
           .setParquetScan(nativeParquetScanExecBuilder.build())
           .build()

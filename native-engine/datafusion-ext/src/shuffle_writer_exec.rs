@@ -60,7 +60,7 @@ use tempfile::NamedTempFile;
 use tokio::task;
 
 use crate::spark_hash::{create_hashes, pmod};
-use crate::util::array_builder::{make_batch, new_array_builders};
+use crate::util::array_builder::{builder_extend, make_batch, new_array_builders};
 use crate::util::ipc::write_one_batch;
 
 struct PartitionBuffer {
@@ -115,7 +115,7 @@ impl PartitionBuffer {
                 .iter_mut()
                 .zip(columns)
                 .for_each(|(builder, column)| {
-                    append_columns(
+                    builder_extend(
                         builder,
                         column,
                         &indices[start..end],
@@ -215,52 +215,17 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
         DataType::Utf8 => len * 4,
         DataType::LargeUtf8 => len * 8,
         DataType::Decimal(_, _) => len * 16,
-        _ => unimplemented!("data type not supported in shuffle write"),
-    }
-}
-
-fn append_columns(
-    to: &mut Box<dyn ArrayBuilder>,
-    from: &Arc<dyn Array>,
-    indices: &[usize],
-    data_type: &DataType,
-) {
-    macro_rules! append {
-        ($arrowty:ident) => {{
-            type B = paste::paste! {[< $arrowty Builder >]};
-            type A = paste::paste! {[< $arrowty Array >]};
-            let t = to.as_any_mut().downcast_mut::<B>().unwrap();
-            let f = from.as_any().downcast_ref::<A>().unwrap();
-            for &i in indices {
-                if f.is_valid(i) {
-                    t.append_value(f.value(i)).unwrap();
-                } else {
-                    t.append_null().unwrap();
-                }
-            }
-        }};
-    }
-    match data_type {
-        DataType::Boolean => append!(Boolean),
-        DataType::Int8 => append!(Int8),
-        DataType::Int16 => append!(Int16),
-        DataType::Int32 => append!(Int32),
-        DataType::Int64 => append!(Int64),
-        DataType::UInt8 => append!(UInt8),
-        DataType::UInt16 => append!(UInt16),
-        DataType::UInt32 => append!(UInt32),
-        DataType::UInt64 => append!(UInt64),
-        DataType::Float32 => append!(Float32),
-        DataType::Float64 => append!(Float64),
-        DataType::Date32 => append!(Date32),
-        DataType::Date64 => append!(Date64),
-        DataType::Time32(TimeUnit::Second) => append!(Time32Second),
-        DataType::Time32(TimeUnit::Millisecond) => append!(Time32Millisecond),
-        DataType::Time64(TimeUnit::Microsecond) => append!(Time64Microsecond),
-        DataType::Time64(TimeUnit::Nanosecond) => append!(Time64Nanosecond),
-        DataType::Utf8 => append!(String),
-        DataType::LargeUtf8 => append!(LargeString),
-        DataType::Decimal(_, _) => append!(Decimal),
+        DataType::Dictionary(key_type, _) => match key_type.as_ref() {
+            DataType::Int8 => len,
+            DataType::Int16 => len * 2,
+            DataType::Int32 => len * 4,
+            DataType::Int64 => len * 8,
+            DataType::UInt8 => len,
+            DataType::UInt16 => len * 2,
+            DataType::UInt32 => len * 4,
+            DataType::UInt64 => len * 8,
+            _ => unimplemented!("dictionary key type not supported in shuffle write"),
+        },
         _ => unimplemented!("data type not supported in shuffle write"),
     }
 }
