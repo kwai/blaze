@@ -1389,8 +1389,6 @@ dependencies = [
 [[package]]
 name = "parquet-format"
 version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f0c06cdcd5460967c485f9c40a821746f5955ad81990533c7fae95dbd9bc0b5"
 dependencies = [
  "thrift",
 ]

@@ -34,10 +34,7 @@ import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.PartitionedFile
-import org.apache.spark.sql.types.StructField
-import org.apache.spark.sql.types.StructType
 import org.blaze.{protobuf => pb}
-import org.blaze.protobuf.Schema
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     extends LeafExecNode

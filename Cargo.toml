@@ -18,6 +18,7 @@ members = [
     "native-engine/datafusion-ext",
     "native-engine/plan-serde",
     "native-engine/blaze",
+    "native-engine/parquet-format-rs-kwai",
 ]
 
 [profile.release-lto]
@@ -32,4 +33,5 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-#datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev= "7afd4377309eba65100b7bfc07e0c6cd5bf3d780" }
+## parquet format customized by kuaishou inc
+parquet-format = { path = "native-engine/parquet-format-rs-kwai" }
