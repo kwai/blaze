@@ -390,7 +390,7 @@ async fn join_combined(
                     for c in $batch1.columns() {
                         cols.push(take(c.as_ref(), &larray, None)?);
                     }
-                    for c in $batch1.columns() {
+                    for c in $batch2.columns() {
                         cols.push(take(c.as_ref(), &rarray, None)?);
                     }
                     let batch =
@@ -429,7 +429,7 @@ async fn join_combined(
                     for c in $batch1.columns() {
                         cols.push(take(c.as_ref(), &larray, None)?);
                     }
-                    for c in $batch1.columns() {
+                    for c in $batch2.columns() {
                         cols.push(take(c.as_ref(), &rarray, None)?);
                     }
                     let batch =
