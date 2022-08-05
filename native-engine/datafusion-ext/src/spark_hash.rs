@@ -114,7 +114,7 @@ macro_rules! hash_array {
     };
 }
 
-macro_rules! hash_array_primitive_i32 {
+macro_rules! hash_array_primitive {
     ($array_type:ident, $column: ident, $ty: ident, $hashes: ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         let values = array.values();
@@ -122,36 +122,13 @@ macro_rules! hash_array_primitive_i32 {
         if array.null_count() == 0 {
             for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
                 *hash =
-                    spark_compatible_murmur3_hash((*value as i32).to_le_bytes(), *hash);
+                    spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *hash);
             }
         } else {
             for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
                 if !array.is_null(i) {
                     *hash = spark_compatible_murmur3_hash(
                         (*value as i32).to_le_bytes(),
-                        *hash,
-                    );
-                }
-            }
-        }
-    };
-}
-
-macro_rules! hash_array_primitive_i64 {
-    ($array_type:ident, $column: ident, $ty: ident, $hashes: ident) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        let values = array.values();
-
-        if array.null_count() == 0 {
-            for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
-                *hash =
-                    spark_compatible_murmur3_hash((*value as i64).to_le_bytes(), *hash);
-            }
-        } else {
-            for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
-                if !array.is_null(i) {
-                    *hash = spark_compatible_murmur3_hash(
-                        (*value as i64).to_le_bytes(),
                         *hash,
                     );
                 }
@@ -246,22 +223,28 @@ pub fn create_hashes<'a>(
                 }
             }
             DataType::Int8 => {
-                hash_array_primitive_i32!(Int8Array, col, i8, hashes_buffer);
+                hash_array_primitive!(Int8Array, col, i32, hashes_buffer);
             }
             DataType::Int16 => {
-                hash_array_primitive_i32!(Int16Array, col, i16, hashes_buffer);
+                hash_array_primitive!(Int16Array, col, i32, hashes_buffer);
             }
             DataType::Int32 => {
-                hash_array_primitive_i32!(Int32Array, col, i32, hashes_buffer);
+                hash_array_primitive!(Int32Array, col, i32, hashes_buffer);
             }
             DataType::Int64 => {
-                hash_array_primitive_i64!(Int64Array, col, i64, hashes_buffer);
+                hash_array_primitive!(Int64Array, col, i64, hashes_buffer);
+            }
+            DataType::Float32 => {
+                hash_array_primitive!(Float32Array, col, f32, hashes_buffer);
+            }
+            DataType::Float64 => {
+                hash_array_primitive!(Float64Array, col, f64, hashes_buffer);
             }
             DataType::Timestamp(TimeUnit::Second, None) => {
-                hash_array_primitive_i64!(TimestampSecondArray, col, i64, hashes_buffer);
+                hash_array_primitive!(TimestampSecondArray, col, i64, hashes_buffer);
             }
             DataType::Timestamp(TimeUnit::Millisecond, None) => {
-                hash_array_primitive_i64!(
+                hash_array_primitive!(
                     TimestampMillisecondArray,
                     col,
                     i64,
@@ -269,7 +252,7 @@ pub fn create_hashes<'a>(
                 );
             }
             DataType::Timestamp(TimeUnit::Microsecond, None) => {
-                hash_array_primitive_i64!(
+                hash_array_primitive!(
                     TimestampMicrosecondArray,
                     col,
                     i64,
@@ -277,7 +260,7 @@ pub fn create_hashes<'a>(
                 );
             }
             DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-                hash_array_primitive_i64!(
+                hash_array_primitive!(
                     TimestampNanosecondArray,
                     col,
                     i64,
@@ -285,10 +268,10 @@ pub fn create_hashes<'a>(
                 );
             }
             DataType::Date32 => {
-                hash_array_primitive_i32!(Date32Array, col, i32, hashes_buffer);
+                hash_array_primitive!(Date32Array, col, i32, hashes_buffer);
             }
             DataType::Date64 => {
-                hash_array_primitive_i64!(Date64Array, col, i64, hashes_buffer);
+                hash_array_primitive!(Date64Array, col, i64, hashes_buffer);
             }
             DataType::Utf8 => {
                 hash_array!(StringArray, col, str, hashes_buffer);

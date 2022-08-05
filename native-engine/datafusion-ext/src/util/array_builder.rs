@@ -76,6 +76,7 @@ pub fn new_array_builders(
                 ))
             }};
         }
+
         match dt {
             DataType::Dictionary(key_type, value_type) => {
                 make_dictionary_builder!(key_type, value_type)
