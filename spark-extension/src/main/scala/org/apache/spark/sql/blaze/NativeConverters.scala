@@ -20,7 +20,9 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
+
 import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -86,6 +88,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
 import org.apache.spark.sql.catalyst.expressions.BoundReference
+import org.apache.spark.sql.catalyst.expressions.CreateArray
 import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.MakeDecimal
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
@@ -492,6 +495,28 @@ object NativeConverters {
         }
         buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
+
+      case e: CreateArray =>
+        buildExprNode {
+          _.setScalarFunction(
+            pb.PhysicalScalarFunctionNode
+              .newBuilder()
+              .setFun(pb.ScalarFunction.Array)
+              .setName(pb.ScalarFunction.Array.name())
+              .addAllArgs(e.children.map(convertExpr).asJava)
+              .setReturnType(
+                pb.ArrowType
+                  .newBuilder()
+                  .setFIXEDSIZELIST(
+                    pb.FixedSizeList
+                      .newBuilder()
+                      .setFieldType(pb.Field
+                        .newBuilder()
+                        .setName("item")
+                        .setArrowType(convertDataType(e.dataType.elementType))
+                        .setNullable(true))
+                      .setListSize(e.children.length))))
+        }
 
       case If(predicate, trueValue, falseValue) =>
         PhysicalExprNode

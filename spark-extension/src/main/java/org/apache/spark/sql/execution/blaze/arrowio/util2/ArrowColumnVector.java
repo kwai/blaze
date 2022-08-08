@@ -29,6 +29,7 @@ import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.complex.FixedSizeListVector;
 import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.MapVector;
 import org.apache.arrow.vector.complex.StructVector;
@@ -178,6 +179,9 @@ public final class ArrowColumnVector extends ColumnVector {
     } else if (vector instanceof ListVector) {
       ListVector listVector = (ListVector) vector;
       accessor = new ArrayAccessor(listVector);
+    } else if (vector instanceof FixedSizeListVector) {
+      FixedSizeListVector listVector = (FixedSizeListVector) vector;
+      accessor = new FixedSizeArrayAccessor(listVector);
     } else if (vector instanceof StructVector) {
       StructVector structVector = (StructVector) vector;
       accessor = new StructAccessor(structVector);
@@ -460,6 +464,25 @@ public final class ArrowColumnVector extends ColumnVector {
     private final ArrowColumnVector arrayData;
 
     ArrayAccessor(ListVector vector) {
+      super(vector);
+      this.accessor = vector;
+      this.arrayData = new ArrowColumnVector(vector.getDataVector());
+    }
+
+    @Override
+    final ColumnarArray getArray(int rowId) {
+      int start = accessor.getElementStartIndex(rowId);
+      int end = accessor.getElementEndIndex(rowId);
+      return new ColumnarArray(arrayData, start, end - start);
+    }
+  }
+
+  private static class FixedSizeArrayAccessor extends ArrowVectorAccessor {
+
+    private final FixedSizeListVector accessor;
+    private final ArrowColumnVector arrayData;
+
+    FixedSizeArrayAccessor(FixedSizeListVector vector) {
       super(vector);
       this.accessor = vector;
       this.arrayData = new ArrowColumnVector(vector.getDataVector());
