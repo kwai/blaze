@@ -129,10 +129,12 @@ object ArrowUtils2 {
         val keyType = fromArrowField(elementField.getChildren.get(0))
         val valueType = fromArrowField(elementField.getChildren.get(1))
         MapType(keyType, valueType, elementField.getChildren.get(1).isNullable)
-      case ArrowType.List.INSTANCE =>
-        val elementField = field.getChildren().get(0)
+
+      case _: ArrowType.List | _: ArrowType.FixedSizeList =>
+        val elementField = field.getChildren.get(0)
         val elementType = fromArrowField(elementField)
         ArrayType(elementType, containsNull = elementField.isNullable)
+
       case ArrowType.Struct.INSTANCE =>
         val fields = field.getChildren().asScala.map { child =>
           val dt = fromArrowField(child)
