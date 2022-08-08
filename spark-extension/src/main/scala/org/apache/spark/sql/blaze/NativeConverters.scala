@@ -20,9 +20,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
-
 import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -98,6 +96,7 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.catalyst.util.{ArrayData, MapData}
 import org.apache.spark.sql.hive.HiveGenericUDF
 import org.apache.spark.sql.hive.blaze.HiveUDFConverters
 import org.apache.spark.sql.hive.HiveGenericUDF
@@ -117,6 +116,8 @@ import org.apache.spark.sql.types.ShortType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.ArrayType
+import org.apache.spark.sql.types.MapType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
@@ -170,6 +171,17 @@ object NativeConverters {
             .build())
 
       // TODO: support complex data types
+      case a: ArrayType =>
+        arrowTypeBuilder.setLIST(
+          org.blaze.protobuf.List
+            .newBuilder()
+            .setFieldType(
+              pb.Field
+                .newBuilder()
+                .setName("element")
+                .setArrowType(convertDataType(a.elementType))
+                .setNullable(a.containsNull))
+            .build())
       case _ =>
         throw new NotImplementedError(s"Data type conversion not implemented ${sparkDataType}")
     }
@@ -202,6 +214,23 @@ object NativeConverters {
             .setLongValue(decimalValue.toUnscaledLong))
       }
       // TODO: support complex data types
+      case arrayType: ArrayType =>
+        val arrayData = sparkValue.asInstanceOf[ArrayData]
+        val elements = arrayData.toSeq(arrayType.elementType)
+        val pbListValue = pb.ScalarListValue
+          .newBuilder()
+          .addAllValues(
+            elements.map(element => convertValue(element, arrayType.elementType)).asJava)
+          .build()
+        pb.ScalarValue.newBuilder().setListValue(pbListValue)
+//      case mapType: MapType =>
+//        val mapData = sparkValue.asInstanceOf[MapData]
+//        val keyData = mapData.keyArray()
+//        val valueData = mapData.valueArray()
+//        val pbKeyValue = pb.ScalarDic.newBuilder()
+//          .add
+//      case structType: StructType => scalarValueBuilder.setStr
+//      case structType: StructType =>
       case _ => throw new NotImplementedError(s"Value conversion not implemented ${dataType}")
     }
 
