@@ -89,6 +89,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
 import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.CreateArray
+import org.apache.spark.sql.catalyst.expressions.GetArrayItem
 import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.MakeDecimal
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
@@ -99,10 +100,7 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.apache.spark.sql.catalyst.util.{ArrayData, MapData}
-import org.apache.spark.sql.hive.HiveGenericUDF
-import org.apache.spark.sql.hive.blaze.HiveUDFConverters
-import org.apache.spark.sql.hive.HiveGenericUDF
+import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
 import org.apache.spark.sql.types.ByteType
@@ -114,18 +112,16 @@ import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.sql.types.FloatType
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.LongType
+import org.apache.spark.sql.types.MapType
 import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.types.ShortType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.types.ArrayType
-import org.apache.spark.sql.types.MapType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 import org.blaze.{protobuf => pb}
-import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
 
@@ -142,6 +138,7 @@ object NativeConverters {
       case DoubleType => pb.PrimitiveScalarType.FLOAT64
       case StringType => pb.PrimitiveScalarType.UTF8
       case _: DecimalType => pb.PrimitiveScalarType.DECIMAL128
+      case _: ArrayType => pb.PrimitiveScalarType.UTF8 // FIXME
       case _ => throw new NotImplementedError(s"convert $dt to DF scalar type not supported")
     }
   }
@@ -217,23 +214,8 @@ object NativeConverters {
             .setLongValue(decimalValue.toUnscaledLong))
       }
       // TODO: support complex data types
-      case arrayType: ArrayType =>
-        val arrayData = sparkValue.asInstanceOf[ArrayData]
-        val elements = arrayData.toSeq(arrayType.elementType)
-        val pbListValue = pb.ScalarListValue
-          .newBuilder()
-          .addAllValues(
-            elements.map(element => convertValue(element, arrayType.elementType)).asJava)
-          .build()
-        pb.ScalarValue.newBuilder().setListValue(pbListValue)
-//      case mapType: MapType =>
-//        val mapData = sparkValue.asInstanceOf[MapData]
-//        val keyData = mapData.keyArray()
-//        val valueData = mapData.valueArray()
-//        val pbKeyValue = pb.ScalarDic.newBuilder()
-//          .add
-//      case structType: StructType => scalarValueBuilder.setStr
-//      case structType: StructType =>
+      case _: ArrayType | _: StructType | _: MapType if sparkValue == null =>
+        pb.PrimitiveScalarType.NULL
       case _ => throw new NotImplementedError(s"Value conversion not implemented ${dataType}")
     }
 
@@ -257,7 +239,7 @@ object NativeConverters {
   }
 
   def convertExpr(sparkExpr: Expression): pb.PhysicalExprNode = {
-    def buildExprNode(buildFn: (pb.PhysicalExprNode.Builder) => pb.PhysicalExprNode.Builder)
+    def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => pb.PhysicalExprNode.Builder)
         : pb.PhysicalExprNode =
       buildFn(pb.PhysicalExprNode.newBuilder()).build()
 
@@ -269,8 +251,7 @@ object NativeConverters {
           pb.PhysicalAggregateExprNode
             .newBuilder()
             .setAggrFunction(aggrFunction)
-            .setExpr(convertExpr(child))
-            .build())
+            .setExpr(convertExpr(child)))
       }
 
     def buildBinaryExprNode(
@@ -283,8 +264,7 @@ object NativeConverters {
             .newBuilder()
             .setL(convertExpr(left))
             .setR(convertExpr(right))
-            .setOp(op)
-            .build())
+            .setOp(op))
       }
 
     def buildScalarFunction(
@@ -298,8 +278,7 @@ object NativeConverters {
             .setName(fn.name())
             .setFun(fn)
             .addAllArgs(args.map(convertExpr).asJava)
-            .setReturnType(convertDataType(dataType))
-            .build())
+            .setReturnType(convertDataType(dataType)))
       }
 
     def buildExtScalarFunction(
@@ -313,8 +292,7 @@ object NativeConverters {
             .setName(name)
             .setFun(ScalarFunction.SparkExtFunctions)
             .addAllArgs(args.map(convertExpr).asJava)
-            .setReturnType(convertDataType(dataType))
-            .build())
+            .setReturnType(convertDataType(dataType)))
       }
 
     def unpackBinaryTypeCast(expr: Expression) =
@@ -326,10 +304,23 @@ object NativeConverters {
     sparkExpr match {
       case l @ Literal(value, dataType) =>
         buildExprNode { b =>
-          if (!l.nullable) {
-            b.setLiteral(convertValue(value, dataType))
+          if (value == null) {
+            dataType match {
+              case at: ArrayType =>
+                b.setCast(
+                  pb.PhysicalCastNode
+                    .newBuilder()
+                    .setArrowType(convertDataType(at))
+                    .setExpr(buildExprNode {
+                      _.setLiteral(
+                        pb.ScalarValue.newBuilder().setNullValue(convertToScalarType(NullType)))
+                    }))
+              case _ =>
+                b.setLiteral(
+                  pb.ScalarValue.newBuilder().setNullValue(convertToScalarType(dataType)))
+            }
           } else {
-            b.setLiteral(pb.ScalarValue.newBuilder().setNullValue(convertToScalarType(dataType)))
+            b.setLiteral(convertValue(value, dataType))
           }
         }
       case ar: AttributeReference =>
@@ -488,13 +479,22 @@ object NativeConverters {
         buildScalarFunction(pb.ScalarFunction.StartsWith, Seq(_1, _2), BooleanType)
       case e: Substring =>
         val newChildren = e.children.head +: e.children.tail.map {
-          case c =>
-            if (c.dataType != LongType) {
-              Cast(c, LongType)
-            } else c
+          case c if c.dataType != LongType => Cast(c, LongType)
+          case c => c
         }
         buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
+
+      case GetArrayItem(child, Literal(ordinalValue: Number, _)) =>
+        buildExprNode {
+          _.setGetIndexedFieldExpr(
+            pb.GetIndexedFieldExprNode
+              .newBuilder()
+              .setExpr(convertExpr(child))
+              .setKey(convertValue(
+                ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
+                LongType)))
+        }
 
       case e: CreateArray =>
         buildExprNode {
@@ -519,9 +519,8 @@ object NativeConverters {
         }
 
       case If(predicate, trueValue, falseValue) =>
-        PhysicalExprNode
-          .newBuilder()
-          .setCase(
+        buildExprNode {
+          _.setCase(
             pb.PhysicalCaseNode
               .newBuilder()
               .addWhenThenExpr(
@@ -529,10 +528,8 @@ object NativeConverters {
                   .newBuilder()
                   .setWhenExpr(convertExpr(predicate))
                   .setThenExpr(convertExpr(trueValue)))
-              .setElseExpr(convertExpr(falseValue))
-              .build())
-          .build()
-
+              .setElseExpr(convertExpr(falseValue)))
+        }
       case CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()
         val whenThens = branches.map {

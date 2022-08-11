@@ -859,10 +859,13 @@ fn typechecked_scalar_value_conversion(
                     PrimitiveScalarType::TimeNanosecond => {
                         ScalarValue::TimestampNanosecond(None, None)
                     }
+                    //PrimitiveScalarType::Null => {
+                    //    return Err(proto_error(
+                    //        "Untyped scalar null is not a valid scalar value",
+                    //    ))
+                    //}
                     PrimitiveScalarType::Null => {
-                        return Err(proto_error(
-                            "Untyped scalar null is not a valid scalar value",
-                        ))
+                        ScalarValue::Null
                     }
                     PrimitiveScalarType::Decimal128 => {
                         ScalarValue::Decimal128(None, 0, 0)
@@ -894,9 +897,10 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<datafusion::scalar::ScalarValue, Self::Error> {
         Ok(match self {
-            protobuf::PrimitiveScalarType::Null => {
-                return Err(proto_error("Untyped null is an invalid scalar value"))
-            }
+            // protobuf::PrimitiveScalarType::Null => {
+            //     return Err(proto_error("Untyped null is an invalid scalar value"))
+            // }
+            protobuf::PrimitiveScalarType::Null => ScalarValue::Null,
             protobuf::PrimitiveScalarType::Bool => ScalarValue::Boolean(None),
             protobuf::PrimitiveScalarType::Uint8 => ScalarValue::UInt8(None),
             protobuf::PrimitiveScalarType::Int8 => ScalarValue::Int8(None),
