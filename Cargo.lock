@@ -29,6 +29,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57e6e951cfbb2db8de1828d49073a113a29fd7117b1596caa781a258c7e38d72"
+dependencies = [
+ "cfg-if",
+ "getrandom",
+ "once_cell",
+ "version_check",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -76,7 +88,7 @@ version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5f89d2bc04fa746ee395d20c4cbfa508e4cce5c00bae816f0fae434fcfb9853"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
  "bitflags",
  "chrono",
  "comfy-table",
@@ -399,7 +411,7 @@ version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54617e523e447c9a139fdf3682eeca8f909934bd28cdd0032ebd0ff9783775e1"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
  "arrow",
  "async-trait",
  "bytes",
@@ -452,7 +464,7 @@ version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0087a4e55a861c7040314f217672259304fd26b5f174a065867df6b4ac659896"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
  "arrow",
  "datafusion-common",
  "sqlparser",
@@ -462,7 +474,7 @@ dependencies = [
 name = "datafusion-ext"
 version = "0.1.0"
 dependencies = [
- "ahash",
+ "ahash 0.8.0",
  "async-trait",
  "base64",
  "bytes",
@@ -503,7 +515,7 @@ version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2328a0e901a89c46391be9445e6e55b6dd8002d4d177e578b0c4a2486ef07cda"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
  "arrow",
  "blake2",
  "blake3",
@@ -540,7 +552,7 @@ version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb9ae561d6c3dcd09d253ff28f71396b576fca05fe4d0f4fb0e75ee2fc951c72"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
  "arrow",
  "datafusion-common",
  "datafusion-expr",
@@ -777,7 +789,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db0d4cf898abf0081f964436dc980e96670a0f36863e4b83aaacdb65c9d7ccc3"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
 ]
 
 [[package]]
