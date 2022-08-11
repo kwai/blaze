@@ -19,6 +19,7 @@ use datafusion::logical_expr::ScalarFunctionImplementation;
 
 pub mod debug_exec;
 pub mod empty_partitions_exec;
+pub mod expr;
 pub mod file_format;
 pub mod hdfs_object_store;
 pub mod ipc_reader_exec;
