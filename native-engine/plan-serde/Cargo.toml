@@ -11,7 +11,7 @@ chrono = { version = "0.4", default-features = false }
 datafusion = { version = "10.0.0", features = ["simd"] }
 datafusion-ext = { path = "../datafusion-ext" }
 log = "0.4.14"
-object_store = "0.3.0"
+object_store = "0.4.0"
 prost = "0.10"
 tonic = "0.6"
 
