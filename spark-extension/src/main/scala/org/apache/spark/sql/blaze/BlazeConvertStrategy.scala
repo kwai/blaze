@@ -17,7 +17,6 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ProjectExec
@@ -37,6 +36,7 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -85,6 +85,10 @@ object BlazeConvertStrategy extends Logging {
     SparkEnv.get.conf.getBoolean(
       "spark.blaze.strategy.enable.neverConvertAggregatesChildren",
       defaultValue = true)
+  val neverConvertNestingStructEnabled: Boolean =
+    SparkEnv.get.conf.getBoolean(
+      key = "spark.blaze.strategy.enable.neverConvertNestingStructEnabled",
+      defaultValue = true)
 
   val idTag: TreeNodeTag[UUID] = TreeNodeTag("blaze.id")
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
@@ -120,6 +124,8 @@ object BlazeConvertStrategy extends Logging {
       neverConvertAggregatesChildren(exec)
     if (neverConvertPartialAggregateShuffleExchangeEnabled)
       neverConvertPartialAggregateShuffleExchange(exec)
+    if (neverConvertNestingStructEnabled)
+      neverConvertNestingStructEnabled(exec)
 
     def hasMoreInconvertibleChildren(e: SparkPlan) =
       e.children.count(isNeverConvert) > e.children.count(isAlwaysConvert)
@@ -286,6 +292,35 @@ object BlazeConvertStrategy extends Logging {
               .exists(_.mode == Partial) =>
         exec.setTagValue(convertStrategyTag, NeverConvert)
       case _ =>
+    }
+  }
+
+  private def neverConvertNestingStructEnabled(exec: SparkPlan): Unit = {
+
+    def getDataTypeNestedDepth(dataType: DataType, currentDepth: Int = 0): Int = {
+      dataType match {
+        case StructType(fields) =>
+          fields
+            .map(field => getDataTypeNestedDepth(field.dataType, currentDepth + 1))
+            .max
+
+        case ArrayType(elementType, _) =>
+          getDataTypeNestedDepth(elementType, currentDepth + 1)
+
+        case MapType(keyType, valueType, _) =>
+          Seq(
+            getDataTypeNestedDepth(keyType, currentDepth + 1),
+            getDataTypeNestedDepth(valueType, currentDepth + 1)).max
+        case _ => currentDepth
+      }
+    }
+
+    exec.foreach { e =>
+      for (s <- e.output) {
+        if (getDataTypeNestedDepth(s.dataType) >= 2) {
+          e.setTagValue(convertStrategyTag, NeverConvert)
+        }
+      }
     }
   }
 
