@@ -77,6 +77,9 @@ message PhysicalExprNode {
     // window expressions
     PhysicalWindowExprNode window_expr = 15;
 
+    //named_struct expression
+    PhysicalNamedStructNode named_struct = 16;
+
     // Fallback to VJM expression
     PhysicalFallbackToJvmExprNode fallback_to_jvm_expr = 10000;
 
@@ -270,6 +273,12 @@ message PhysicalFallbackToJvmExprNode {
   ArrowType return_type = 2;
   bool return_nullable = 3;
   repeated PhysicalExprNode params = 4;
+}
+
+message PhysicalNamedStructNode {
+  repeated string names = 1;
+  repeated PhysicalExprNode values = 2;
+  ArrowType return_type = 3;
 }
 
 message GetIndexedFieldExprNode {

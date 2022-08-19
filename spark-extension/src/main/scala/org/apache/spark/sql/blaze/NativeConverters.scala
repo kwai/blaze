@@ -20,64 +20,65 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
-
 import com.google.protobuf.ByteString
-import org.apache.spark.sql.catalyst.expressions.Abs
-import org.apache.spark.sql.catalyst.expressions.Acos
-import org.apache.spark.sql.catalyst.expressions.Add
-import org.apache.spark.sql.catalyst.expressions.And
-import org.apache.spark.sql.catalyst.expressions.Asin
-import org.apache.spark.sql.catalyst.expressions.Atan
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
-import org.apache.spark.sql.catalyst.expressions.CaseWhen
-import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.catalyst.expressions.Ceil
-import org.apache.spark.sql.catalyst.expressions.Coalesce
-import org.apache.spark.sql.catalyst.expressions.Concat
-import org.apache.spark.sql.catalyst.expressions.Cos
-import org.apache.spark.sql.catalyst.expressions.DatePart
-import org.apache.spark.sql.catalyst.expressions.Divide
-import org.apache.spark.sql.catalyst.expressions.EqualTo
-import org.apache.spark.sql.catalyst.expressions.Exp
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.Floor
-import org.apache.spark.sql.catalyst.expressions.GreaterThan
-import org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual
-import org.apache.spark.sql.catalyst.expressions.In
-import org.apache.spark.sql.catalyst.expressions.InSet
-import org.apache.spark.sql.catalyst.expressions.IsNotNull
-import org.apache.spark.sql.catalyst.expressions.IsNull
-import org.apache.spark.sql.catalyst.expressions.LessThan
-import org.apache.spark.sql.catalyst.expressions.LessThanOrEqual
-import org.apache.spark.sql.catalyst.expressions.Like
-import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.catalyst.expressions.Log
-import org.apache.spark.sql.catalyst.expressions.Log10
-import org.apache.spark.sql.catalyst.expressions.Log2
-import org.apache.spark.sql.catalyst.expressions.Lower
-import org.apache.spark.sql.catalyst.expressions.Md5
-import org.apache.spark.sql.catalyst.expressions.Multiply
-import org.apache.spark.sql.catalyst.expressions.Not
-import org.apache.spark.sql.catalyst.expressions.NullIf
-import org.apache.spark.sql.catalyst.expressions.OctetLength
-import org.apache.spark.sql.catalyst.expressions.Or
-import org.apache.spark.sql.catalyst.expressions.Remainder
-import org.apache.spark.sql.catalyst.expressions.Round
-import org.apache.spark.sql.catalyst.expressions.Sha2
-import org.apache.spark.sql.catalyst.expressions.Signum
-import org.apache.spark.sql.catalyst.expressions.Sin
-import org.apache.spark.sql.catalyst.expressions.Sqrt
-import org.apache.spark.sql.catalyst.expressions.StartsWith
-import org.apache.spark.sql.catalyst.expressions.StringTrim
-import org.apache.spark.sql.catalyst.expressions.StringTrimLeft
-import org.apache.spark.sql.catalyst.expressions.StringTrimRight
-import org.apache.spark.sql.catalyst.expressions.Substring
-import org.apache.spark.sql.catalyst.expressions.Subtract
-import org.apache.spark.sql.catalyst.expressions.Tan
-import org.apache.spark.sql.catalyst.expressions.TruncDate
-import org.apache.spark.sql.catalyst.expressions.Upper
+import org.apache.spark.sql.catalyst.expressions.{
+  Abs,
+  Acos,
+  Add,
+  And,
+  Asin,
+  Atan,
+  AttributeReference,
+  BoundReference,
+  CaseWhen,
+  Cast,
+  Ceil,
+  Coalesce,
+  Concat,
+  Cos,
+  DatePart,
+  Divide,
+  EqualTo,
+  Exp,
+  Expression,
+  Floor,
+  GreaterThan,
+  GreaterThanOrEqual,
+  In,
+  InSet,
+  IsNotNull,
+  IsNull,
+  LessThan,
+  LessThanOrEqual,
+  Like,
+  Literal,
+  Log,
+  Log10,
+  Log2,
+  Lower,
+  Md5,
+  Multiply,
+  Not,
+  NullIf,
+  OctetLength,
+  Or,
+  Remainder,
+  Round,
+  Sha2,
+  Signum,
+  Sin,
+  Sqrt,
+  StartsWith,
+  StringTrim,
+  StringTrimLeft,
+  StringTrimRight,
+  Substring,
+  Subtract,
+  Tan,
+  TruncDate,
+  Upper
+}
 import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
@@ -87,9 +88,10 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.StddevSamp
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
-import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.CreateArray
 import org.apache.spark.sql.catalyst.expressions.GetArrayItem
+import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
+import org.apache.spark.sql.catalyst.expressions.CreateStruct
 import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.MakeDecimal
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
@@ -100,6 +102,7 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
@@ -124,6 +127,8 @@ import org.apache.spark.util.Utils
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
+
+import scala.collection.mutable.ArrayBuffer
 
 object NativeConverters {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -182,6 +187,23 @@ object NativeConverters {
                 .setArrowType(convertDataType(a.elementType))
                 .setNullable(a.containsNull))
             .build())
+      case s: StructType =>
+        arrowTypeBuilder.setSTRUCT(
+          org.blaze.protobuf.Struct
+            .newBuilder()
+            .addAllSubFieldTypes(
+              s.fields
+                .map(
+                  e =>
+                    pb.Field
+                      .newBuilder()
+                      .setArrowType(convertDataType(e.dataType))
+                      .setName(e.name)
+                      .setNullable(e.nullable)
+                      .build())
+                .toList
+                .asJava)
+            .build())
       case _ =>
         throw new NotImplementedError(s"Data type conversion not implemented ${sparkDataType}")
     }
@@ -214,8 +236,27 @@ object NativeConverters {
             .setLongValue(decimalValue.toUnscaledLong))
       }
       // TODO: support complex data types
+      case arrayType: ArrayType =>
+        val arrayData = sparkValue.asInstanceOf[ArrayData]
+        val elements = arrayData.toSeq(arrayType.elementType)
+        val pbListValue = pb.ScalarListValue
+          .newBuilder()
+          .addAllValues(
+            elements.map(element => convertValue(element, arrayType.elementType)).asJava)
+          .build()
+        pb.ScalarValue.newBuilder().setListValue(pbListValue)
+//      case mapType: MapType =>
+//        val mapData = sparkValue.asInstanceOf[MapData]
+//        val keyData = mapData.keyArray()
+//        val valueData = mapData.valueArray()
+//        val pbKeclearyValue = pb.ScalarDic.newBuilder()
+//          .add
+//      case structType: StructType => scalarValueBuilder.setStr
+//      case structType: StructType =>
+
       case _: ArrayType | _: StructType | _: MapType if sparkValue == null =>
         pb.PrimitiveScalarType.NULL
+
       case _ => throw new NotImplementedError(s"Value conversion not implemented ${dataType}")
     }
 
@@ -518,6 +559,23 @@ object NativeConverters {
                       .setListSize(e.children.length))))
         }
 
+      case e: CreateNamedStruct =>
+        val NameVec = new ArrayBuffer[String]()
+        val ValuesVec = new ArrayBuffer[Expression]()
+        for (Seq(name, value) <- e.children.grouped(2)) {
+          assert(name.isInstanceOf[Literal])
+          NameVec += name.toString()
+          ValuesVec += value
+        }
+
+        buildExprNode {
+          _.setNamedStruct(
+            pb.PhysicalNamedStructNode
+              .newBuilder()
+              .addAllNames(NameVec.toList.asJava)
+              .addAllValues(ValuesVec.map(convertExpr).toList.asJava)
+              .setReturnType(convertDataType(e.dataType)))
+        }
       case If(predicate, trueValue, falseValue) =>
         buildExprNode {
           _.setCase(
