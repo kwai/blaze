@@ -37,14 +37,20 @@ import org.apache.spark.sql.catalyst.expressions.{
   Coalesce,
   Concat,
   Cos,
+  CreateArray,
+  CreateNamedStruct,
+  CreateStruct,
   DatePart,
   Divide,
   EqualTo,
   Exp,
   Expression,
   Floor,
+  GetArrayItem,
+  GetStructField,
   GreaterThan,
   GreaterThanOrEqual,
+  If,
   In,
   InSet,
   IsNotNull,
@@ -57,6 +63,7 @@ import org.apache.spark.sql.catalyst.expressions.{
   Log10,
   Log2,
   Lower,
+  MakeDecimal,
   Md5,
   Multiply,
   Not,
@@ -77,6 +84,7 @@ import org.apache.spark.sql.catalyst.expressions.{
   Subtract,
   Tan,
   TruncDate,
+  UnscaledValue,
   Upper
 }
 import org.apache.spark.sql.catalyst.expressions.aggregate.Average
@@ -88,13 +96,6 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.StddevSamp
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
-import org.apache.spark.sql.catalyst.expressions.CreateArray
-import org.apache.spark.sql.catalyst.expressions.GetArrayItem
-import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
-import org.apache.spark.sql.catalyst.expressions.CreateStruct
-import org.apache.spark.sql.catalyst.expressions.If
-import org.apache.spark.sql.catalyst.expressions.MakeDecimal
-import org.apache.spark.sql.catalyst.expressions.UnscaledValue
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -535,6 +536,15 @@ object NativeConverters {
               .setKey(convertValue(
                 ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
                 LongType)))
+        }
+
+      case GetStructField(child, _, name) =>
+        buildExprNode {
+          _.setGetIndexedFieldExpr(
+            pb.GetIndexedFieldExprNode
+              .newBuilder()
+              .setExpr(convertExpr(child))
+              .setKey(convertValue(name.get, StringType)))
         }
 
       case e: CreateArray =>
