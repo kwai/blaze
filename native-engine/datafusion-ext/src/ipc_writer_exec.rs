@@ -101,7 +101,7 @@ impl ExecutionPlan for IpcWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
         let ipc_consumer = jni_new_global_ref!(jni_call_static!(
             JniBridge.getResource(
                 jni_new_string!(&self.ipc_consumer_resource_id)?

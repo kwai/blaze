@@ -26,6 +26,7 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.Partition
+import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
@@ -46,7 +47,13 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
   override def output: Seq[Attribute] = basedFileScan.output
   override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning
 
-  private val inputFileScanRDD = basedFileScan.inputRDD.asInstanceOf[FileScanRDD]
+  private val inputFileScanRDD = {
+    basedFileScan.inputRDDs().head match {
+      case rdd: FileScanRDD => rdd
+      case rdd: MapPartitionsRDD[_, _] => rdd.prev.asInstanceOf[FileScanRDD]
+    }
+  }
+
   private val nativePruningPredicateFilter = basedFileScan.dataFilters
     .reduceOption(And)
     .map(NativeConverters.convertExpr)
@@ -113,6 +120,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       nativeMetrics,
       partitions.asInstanceOf[Array[Partition]],
       Nil,
+      rddShuffleReadFull = true,
       (_, _) => {
         val nativeParquetScanConf = pb.FileScanExecConf
           .newBuilder()
@@ -135,13 +143,14 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
           .newBuilder()
           .setParquetScan(nativeParquetScanExecBuilder.build())
           .build()
-      })
+      },
+      friendlyName = "NativeRDD.ParquetScan")
   }
 
   override val nodeName: String =
     s"NativeParquetScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
 
-  override def simpleString(maxFields: Int): String =
+  def simpleString(maxFields: Int): String =
     s"$nodeName (${basedFileScan.simpleString(maxFields)})"
 
   override def doCanonicalize(): SparkPlan = basedFileScan.canonicalized

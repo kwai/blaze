@@ -103,6 +103,7 @@ case class NativeSortMergeJoinExec(
       nativeMetrics,
       partitions,
       dependencies,
+      leftRDD.shuffleReadFull && rightRDD.shuffleReadFull,
       (partition, taskContext) => {
         val leftPartition = leftRDD.partitions(partition.index)
         val leftChild = leftRDD.nativePlan(leftPartition, taskContext)
@@ -119,16 +120,10 @@ case class NativeSortMergeJoinExec(
           .addAllSortOptions(nativeSortOptions.asJava)
           .setNullEqualsNull(false)
         PhysicalPlanNode.newBuilder().setSortMergeJoin(sortMergeJoinExec).build()
-      })
+      },
+      friendlyName = "NativeRDD.SortMergeJoin")
   }
 
   override def doCanonicalize(): SparkPlan =
-    SortMergeJoinExec(
-      leftKeys,
-      rightKeys,
-      joinType,
-      condition = None,
-      left,
-      right,
-      isSkewJoin = false).canonicalized
+    SortMergeJoinExec(leftKeys, rightKeys, joinType, condition = None, left, right).canonicalized
 }

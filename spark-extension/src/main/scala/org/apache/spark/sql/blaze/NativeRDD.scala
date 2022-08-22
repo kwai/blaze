@@ -31,9 +31,16 @@ class NativeRDD(
     val metrics: MetricNode,
     private val rddPartitions: Array[Partition],
     private val rddDependencies: Seq[Dependency[_]],
-    val nativePlan: (Partition, TaskContext) => PhysicalPlanNode)
+    private val rddShuffleReadFull: Boolean,
+    val nativePlan: (Partition, TaskContext) => PhysicalPlanNode,
+    val friendlyName: String = null)
     extends RDD[InternalRow](rddSparkContext, rddDependencies)
     with Logging {
+
+  if (friendlyName != null) {
+    setName(friendlyName)
+  }
+  this.shuffleReadFull = rddShuffleReadFull
 
   override protected def getPartitions: Array[Partition] = rddPartitions
   override protected def getDependencies: Seq[Dependency[_]] = rddDependencies

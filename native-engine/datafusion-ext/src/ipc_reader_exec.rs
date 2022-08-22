@@ -126,10 +126,10 @@ impl ExecutionPlan for IpcReaderExec {
 
     fn execute(
         &self,
-        _partition: usize,
+        partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 

@@ -37,7 +37,6 @@ import org.apache.spark.sql.catalyst.expressions.Ceil
 import org.apache.spark.sql.catalyst.expressions.Coalesce
 import org.apache.spark.sql.catalyst.expressions.Concat
 import org.apache.spark.sql.catalyst.expressions.Cos
-import org.apache.spark.sql.catalyst.expressions.DatePart
 import org.apache.spark.sql.catalyst.expressions.Divide
 import org.apache.spark.sql.catalyst.expressions.EqualTo
 import org.apache.spark.sql.catalyst.expressions.Exp
@@ -422,7 +421,7 @@ object NativeConverters {
       case Multiply(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Multiply")
       case Divide(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Divide")
       case Remainder(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Modulo")
-      case Like(lhs, rhs, '\\') => buildBinaryExprNode(lhs, rhs, "Like")
+      case Like(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Like")
       case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
       case Or(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Or")
 
@@ -459,7 +458,7 @@ object NativeConverters {
       // case Nothing => buildScalarFunction(pb.ScalarFunction.TOTIMESTAMP, Nil)
       // case Nothing => buildScalarFunction(pb.ScalarFunction.ARRAY, Nil)
       case e: NullIf => buildScalarFunction(pb.ScalarFunction.NullIf, e.children, e.dataType)
-      case e: DatePart => buildScalarFunction(pb.ScalarFunction.DatePart, e.children, e.dataType)
+      // case e: DatePart => buildScalarFunction(pb.ScalarFunction.DatePart, e.children, e.dataType)
       case e: TruncDate =>
         buildScalarFunction(pb.ScalarFunction.DateTrunc, e.children, e.dataType)
       case Md5(_1) =>
@@ -546,7 +545,7 @@ object NativeConverters {
       // aggr bypass
       case UnscaledValue(_1) =>
         buildExtScalarFunction("UnscaledValue", Seq(_1), LongType)
-      case MakeDecimal(_1, precision, scale, _) =>
+      case MakeDecimal(_1, precision, scale) =>
         val args = Seq(_1, Literal(precision), Literal(scale))
         buildExtScalarFunction("MakeDecimal", args, DecimalType(precision, scale))
 

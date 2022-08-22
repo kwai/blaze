@@ -125,9 +125,9 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
     this.writeMetrics = writeMetrics;
     this.inMemSorter =
         new ShuffleInMemorySorter(
-            this, initialSize, (boolean) conf.get(package$.MODULE$.SHUFFLE_SORT_USE_RADIXSORT()));
+            this, initialSize, conf.getBoolean("spark.shuffle.sort.useRadixSort", true));
     this.peakMemoryUsedBytes = getMemoryUsage();
-    this.shuffleSync = (boolean) conf.get(package$.MODULE$.SHUFFLE_SYNC());
+    this.shuffleSync = conf.getBoolean("spark.shuffle.sync", false);
   }
 
   /**
@@ -202,7 +202,6 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
         recordReadPosition += 4;
         current.pointTo(recordPage, recordReadPosition, recordSizeInBytes);
         writer.write(current);
-        writer.recordWritten();
       }
 
       committedSegment = writer.commitAndGet();

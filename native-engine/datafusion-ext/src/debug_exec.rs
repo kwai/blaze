@@ -99,7 +99,7 @@ impl ExecutionPlan for DebugExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, 0);
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
         let input = self.input.execute(partition, context)?;
 
         Ok(Box::pin(DebugStream {

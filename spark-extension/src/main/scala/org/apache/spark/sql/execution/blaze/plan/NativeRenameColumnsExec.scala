@@ -51,10 +51,12 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
       nativeMetrics,
       inputRDD.partitions,
       inputRDD.dependencies,
+      inputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val inputPlan = inputRDD.nativePlan(inputRDD.partitions(partition.index), taskContext)
         buildRenameColumnsExec(inputPlan, renamedColumnNames)
-      })
+      },
+      friendlyName = "NativeRDD.RenameColumns")
   }
 
   override def doCanonicalize(): SparkPlan = child.canonicalized

@@ -656,7 +656,7 @@ impl ExecutionPlan for ShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let input = self.input.execute(partition, context.clone())?;
-        let metrics = BaselineMetrics::new(&self.metrics, 0);
+        let metrics = BaselineMetrics::new(&self.metrics, partition);
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),

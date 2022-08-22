@@ -31,7 +31,6 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.sql.execution.AliasAwareOutputPartitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -47,13 +46,13 @@ case class NativeProjectExec(
     override val child: SparkPlan,
     addTypeCast: Boolean = false)
     extends UnaryExecNode
-    with NativeSupports
-    with AliasAwareOutputPartitioning {
+    with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
-  override def outputExpressions: Seq[NamedExpression] = projectList
+  private def outputExpressions: Seq[NamedExpression] = projectList
+
   override def output: Seq[Attribute] = outputExpressions.map(_.toAttribute)
 
   private val nativeProject = getNativeProjectBuilder(projectList, addTypeCast).buildPartial()
@@ -67,13 +66,15 @@ case class NativeProjectExec(
       nativeMetrics,
       inputRDD.partitions,
       inputRDD.dependencies,
+      inputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
         val nativeProjectExec = nativeProject.toBuilder
           .setInput(inputRDD.nativePlan(inputPartition, taskContext))
           .build()
         PhysicalPlanNode.newBuilder().setProjection(nativeProjectExec).build()
-      })
+      },
+      friendlyName = "NativeRDD.Project")
   }
 
   override def doCanonicalize(): SparkPlan = ProjectExec(projectList, child).canonicalized
