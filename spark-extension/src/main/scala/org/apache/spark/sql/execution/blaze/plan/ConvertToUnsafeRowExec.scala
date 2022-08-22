@@ -17,6 +17,7 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.blaze.BlazeConverters
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -37,7 +38,7 @@ case class ConvertToUnsafeRowExec(override val child: SparkPlan)
     with CodegenSupport {
   override def nodeName: String = "ConvertToUnsafeRow"
 
-  override def logicalLink: Option[LogicalPlan] = child.logicalLink
+  def logicalLink: Option[LogicalPlan] = child.logicalLink
 
   override def output: Seq[Attribute] = child.output
 
@@ -83,11 +84,11 @@ case class ConvertToUnsafeRowExec(override val child: SparkPlan)
     }
 
     s"""
-       | while ($limitNotReachedCond $input.hasNext()) {
+       | while ($input.hasNext()) {
        |   InternalRow $row = (InternalRow) $input.next();
-       |   ${consume(ctx, outputVars).trim}
        |   $numOutputRows.add(1);
-       |   $shouldStopCheckCode
+       |   ${consume(ctx, outputVars).trim}
+       |   if (shouldStop()) return;
        | }
      """.stripMargin
   }
@@ -95,4 +96,7 @@ case class ConvertToUnsafeRowExec(override val child: SparkPlan)
   override def inputRDDs(): Seq[RDD[InternalRow]] = inputRDD :: Nil
 
   override def doCanonicalize(): SparkPlan = child.canonicalized
+
+  implicit class ImplicitLogicalLink(sparkPlan: SparkPlan)
+      extends BlazeConverters.ImplicitLogicalLink(sparkPlan)
 }

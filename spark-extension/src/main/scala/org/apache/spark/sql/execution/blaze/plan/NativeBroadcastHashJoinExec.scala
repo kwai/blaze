@@ -47,11 +47,15 @@ case class NativeBroadcastHashJoinExec(
     override val right: SparkPlan,
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
-    override val outputPartitioning: Partitioning,
-    override val outputOrdering: Seq[SortOrder],
     joinType: JoinType)
     extends BinaryExecNode
     with NativeSupports {
+
+  override val outputPartitioning: Partitioning = {
+    right.outputPartitioning // right side is always the streamed plan
+  }
+
+  override val outputOrdering: Seq[SortOrder] = Nil
 
   override def output: Seq[Attribute] = {
     joinType match {
@@ -98,13 +102,14 @@ case class NativeBroadcastHashJoinExec(
     val rightRDD = NativeSupports.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
     val partitions = rightRDD.partitions
-    val dependencies = rightRDD.dependencies
+    val dependencies = leftRDD.dependencies ++ rightRDD.dependencies
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       partitions,
       dependencies,
+      rightRDD.shuffleReadFull,
       (partition, context) => {
         val partition0 = new Partition() {
           override def index: Int = 0
@@ -121,7 +126,8 @@ case class NativeBroadcastHashJoinExec(
           .addAllOn(nativeJoinOn.asJava)
           .setNullEqualsNull(false)
         PhysicalPlanNode.newBuilder().setHashJoin(hashJoinExec).build()
-      })
+      },
+      friendlyName = "NativeRDD.BroadcastHashJoin")
   }
 
   override def doCanonicalize(): SparkPlan =

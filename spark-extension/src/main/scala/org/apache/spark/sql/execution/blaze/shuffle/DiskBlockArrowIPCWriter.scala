@@ -64,6 +64,23 @@ private[spark] class DiskBlockArrowIPCWriter(
     extends OutputStream
     with Logging {
 
+  /**
+   * Guards against close calls, e.g. from a wrapping stream.
+   * Call manualClose to close the stream that was extended by this trait.
+   * Commit uses this trait to close object streams without paying the
+   * cost of closing and opening the underlying file.
+   */
+  private class ManualCloseBufferedOutputStream(inner: OutputStream)
+      extends BufferedOutputStream(inner) {
+
+    override def close(): Unit = {
+      inner.flush()
+    }
+
+    def manualClose(): Unit = {
+      inner.close()
+    }
+  }
   private val timezoneId: String = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
   private val arrowSchema: Schema = ArrowUtils2.toArrowSchema(schema, timezoneId)
   private val allocator: BufferAllocator =
@@ -163,7 +180,8 @@ private[spark] class DiskBlockArrowIPCWriter(
       }
 
       val pos = randomAccessFile.length()
-      val fileSegment = new FileSegment(file, committedPosition, pos - committedPosition)
+      val fileSegment =
+        new FileSegment(file, committedPosition, pos - committedPosition, numRecordsWritten)
       committedPosition = pos
       // In certain compression codecs, more bytes are written after streams are closed
       writeMetrics.incBytesWritten(committedPosition - reportedPosition)
@@ -171,7 +189,7 @@ private[spark] class DiskBlockArrowIPCWriter(
       numRecordsWritten = 0
       fileSegment
     } else {
-      new FileSegment(file, committedPosition, 0)
+      new FileSegment(file, committedPosition, 0, 0)
     }
   }
 
@@ -282,6 +300,7 @@ private[spark] class DiskBlockArrowIPCWriter(
       arrowBuffer.reset()
       currentRowCount = 0
     }
+    recordWritten()
   }
 
   private def open(): DiskBlockArrowIPCWriter = {
@@ -327,23 +346,5 @@ private[spark] class DiskBlockArrowIPCWriter(
     val pos = randomAccessFile.length()
     writeMetrics.incBytesWritten(pos - reportedPosition)
     reportedPosition = pos
-  }
-
-  /**
-   * Guards against close calls, e.g. from a wrapping stream.
-   * Call manualClose to close the stream that was extended by this trait.
-   * Commit uses this trait to close object streams without paying the
-   * cost of closing and opening the underlying file.
-   */
-  private class ManualCloseBufferedOutputStream(inner: OutputStream)
-      extends BufferedOutputStream(inner) {
-
-    override def close(): Unit = {
-      inner.flush()
-    }
-
-    def manualClose(): Unit = {
-      inner.close()
-    }
   }
 }

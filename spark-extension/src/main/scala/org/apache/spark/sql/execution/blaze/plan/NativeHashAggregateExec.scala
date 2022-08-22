@@ -16,9 +16,7 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import scala.annotation.tailrec
 import scala.collection.JavaConverters._
-import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -40,14 +38,9 @@ import org.apache.spark.sql.catalyst.plans.physical.ClusteredDistribution
 import org.apache.spark.sql.catalyst.plans.physical.Distribution
 import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.aggregate.BaseAggregateExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.UnionExec
-import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
-import org.apache.spark.sql.execution.adaptive.QueryStageExec
-import org.apache.spark.sql.execution.exchange.Exchange
-import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.blaze.protobuf.AggregateMode
@@ -58,12 +51,12 @@ import org.blaze.protobuf.Schema
 
 case class NativeHashAggregateExec(
     requiredChildDistributionExpressions: Option[Seq[Expression]],
-    override val groupingExpressions: Seq[NamedExpression],
-    override val aggregateExpressions: Seq[AggregateExpression],
-    override val aggregateAttributes: Seq[Attribute],
-    override val resultExpressions: Seq[NamedExpression],
+    groupingExpressions: Seq[NamedExpression],
+    aggregateExpressions: Seq[AggregateExpression],
+    aggregateAttributes: Seq[Attribute],
+    resultExpressions: Seq[NamedExpression],
     override val child: SparkPlan)
-    extends BaseAggregateExec
+    extends UnaryExecNode
     with NativeSupports {
 
   val aggrMode: aggregate.AggregateMode = aggregateExpressions.head.mode
@@ -114,6 +107,7 @@ case class NativeHashAggregateExec(
       nativeMetrics,
       inputRDD.partitions,
       inputRDD.dependencies,
+      inputRDD.shuffleReadFull,
       (partition, taskContext) => {
 
         lazy val partialInputPlan =
@@ -158,7 +152,8 @@ case class NativeHashAggregateExec(
                 .setMode(AggregateMode.FINAL)
                 .addAllAggrExpr(nativeFinalAggrExprs.asJava))
         }
-      })
+      },
+      friendlyName = "NativeRDD.HashAggregate")
   }
 
   val nativeInputSchema: Schema = NativeConverters.convertSchema(StructType(child.output.map(a =>
@@ -169,7 +164,7 @@ case class NativeHashAggregateExec(
   }
 
   val nativePartialAggrExprs: Seq[PhysicalExprNode] = aggregateExpressions.map { expr =>
-    assert(expr.filter.isEmpty && !expr.isDistinct)
+    assert(!expr.isDistinct)
     NativeConverters.convertExpr(expr.aggregateFunction)
   }
 
@@ -196,13 +191,13 @@ case class NativeHashAggregateExec(
   override val nodeName: String =
     s"NativeHashAggregate.${aggrMode.getClass.getSimpleName}"
 
-  override def simpleString(maxFields: Int): String = {
-    if (aggrMode == Partial) {
-      s"$nodeName grouping=[${groupingExpressions.mkString(", ")}], aggr=[${aggregateExpressions.mkString(", ")}]"
-    } else {
-      s"$nodeName output=[${resultExpressions.map(_.toAttribute.toString).mkString(", ")}]"
-    }
-  }
+  //override def simpleString(maxFields: Int): String = {
+  //  if (aggrMode == Partial) {
+  //    s"$nodeName grouping=[${groupingExpressions.mkString(", ")}], aggr=[${aggregateExpressions.mkString(", ")}]"
+  //  } else {
+  //    s"$nodeName output=[${resultExpressions.map(_.toAttribute.toString).mkString(", ")}]"
+  //  }
+  //}
 
-  override def simpleStringWithNodeId(): String = super.simpleStringWithNodeId()
+  //override def simpleStringWithNodeId(): String = super.simpleStringWithNodeId()
 }

@@ -149,7 +149,7 @@ impl ExecutionPlan for SortMergeJoinExec {
     ) -> Result<SendableRecordBatchStream> {
         let left = self.left.execute(partition, context.clone())?;
         let right = self.right.execute(partition, context.clone())?;
-        let metrics = Arc::new(BaselineMetrics::new(&self.metrics, 0));
+        let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
 
         let on_left = self.on.iter().map(|on| on.0.clone()).collect();
         let on_right = self.on.iter().map(|on| on.1.clone()).collect();

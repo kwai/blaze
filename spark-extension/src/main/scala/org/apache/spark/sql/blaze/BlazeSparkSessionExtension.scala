@@ -21,15 +21,14 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.exchange.Exchange
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
   override def apply(extensions: SparkSessionExtensions): Unit = {
-    SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "true")
-    SparkEnv.get.conf.set(SQLConf.ADAPTIVE_EXECUTION_FORCE_APPLY.key, "true")
+    SparkEnv.get.conf.set("spark.sql.adaptive.enabled", "true")
+    SparkEnv.get.conf.set("spark.sql.adaptive.forceApply", "true")
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
 
     extensions.injectColumnar(sparkSession => {
@@ -39,24 +38,27 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
 }
 
 case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule with Logging {
-  override def preColumnarTransitions: Rule[SparkPlan] = { sparkPlan =>
-    BlazeConvertStrategy.apply(sparkPlan)
-    var sparkPlanTransformed = BlazeConverters.convertSparkPlanRecursively(sparkPlan)
+  override def preColumnarTransitions: Rule[SparkPlan] =
+    new Rule[SparkPlan] {
+      override def apply(sparkPlan: SparkPlan): SparkPlan = {
+        BlazeConvertStrategy.apply(sparkPlan)
+        var sparkPlanTransformed = BlazeConverters.convertSparkPlanRecursively(sparkPlan)
 
-    // wrap with ConvertUnsafeRowExec if top exec is native
-    if (NativeSupports.isNative(sparkPlanTransformed)) {
-      val topNative = NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed)
-      val topNeededConvertToUnsafeRow = topNative match {
-        case _: Exchange => false
-        case _ => true
-      }
-      if (topNeededConvertToUnsafeRow) {
-        sparkPlanTransformed = BlazeConverters.convertToUnsafeRow(sparkPlanTransformed)
+        // wrap with ConvertUnsafeRowExec if top exec is native
+        if (NativeSupports.isNative(sparkPlanTransformed)) {
+          val topNative = NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed)
+          val topNeededConvertToUnsafeRow = topNative match {
+            case _: Exchange => false
+            case _ => true
+          }
+          if (topNeededConvertToUnsafeRow) {
+            sparkPlanTransformed = BlazeConverters.convertToUnsafeRow(sparkPlanTransformed)
+          }
+        }
+
+        logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
+          .treeString(verbose = true, addSuffix = true)}")
+        sparkPlanTransformed
       }
     }
-
-    logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
-      .treeString(verbose = true, addSuffix = true, printOperatorId = true)}")
-    sparkPlanTransformed
-  }
 }

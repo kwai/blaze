@@ -38,19 +38,15 @@ class ArrowWriterIterator(
     recordBatchSize: Int = 10000)
     extends Iterator[ReadableByteChannel] {
 
-  private val allocator =
-    ArrowUtils2.rootAllocator.newChildAllocator("arrowWriterIterator", 0, Long.MaxValue)
   private val arrowSchema = ArrowUtils2.toArrowSchema(schema, timeZoneId)
-  private val root = VectorSchemaRoot.create(arrowSchema, allocator)
-  private var finished = false
+  private var allocator =
+    ArrowUtils2.rootAllocator.newChildAllocator("arrowWriterIterator", 0, Long.MaxValue)
+  private var root = VectorSchemaRoot.create(arrowSchema, allocator)
 
-  taskContext.addTaskCompletionListener[Unit] { _ =>
-    root.close()
-    allocator.close()
-  }
+  taskContext.addTaskCompletionListener[Unit](_ => close())
 
   override def hasNext: Boolean =
-    !finished && {
+    root != null && {
       if (!rowIter.hasNext) {
         close()
         return false
@@ -82,10 +78,11 @@ class ArrowWriterIterator(
 
   private def close(): Unit =
     synchronized {
-      if (!finished) {
+      if (root != null) {
         root.close()
         allocator.close()
-        finished = true
+        root = null
+        allocator = null
       }
     }
 }

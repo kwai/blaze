@@ -833,6 +833,8 @@ pub struct BlazeCallNativeWrapper<'a> {
     pub method_enqueueError_ret: JavaType,
     pub method_dequeueWithTimeout: JMethodID<'a>,
     pub method_dequeueWithTimeout_ret: JavaType,
+    pub method_finishNativeThread: JMethodID<'a>,
+    pub method_finishNativeThread_ret: JavaType,
 }
 impl<'a> BlazeCallNativeWrapper<'a> {
     pub const SIG_TYPE: &'static str =
@@ -872,6 +874,10 @@ impl<'a> BlazeCallNativeWrapper<'a> {
             method_dequeueWithTimeout_ret: JavaType::Object(
                 "java/lang/Object".to_owned(),
             ),
+            method_finishNativeThread: env
+                .get_method_id(class, "finishNativeThread", "()V")
+                .unwrap(),
+            method_finishNativeThread_ret: JavaType::Primitive(Primitive::Void),
         })
     }
 }

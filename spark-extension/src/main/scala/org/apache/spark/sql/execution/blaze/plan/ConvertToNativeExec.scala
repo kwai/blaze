@@ -30,6 +30,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.blaze.BlazeConverters
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowWriterIterator
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -46,7 +47,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
     with NativeSupports {
   override def nodeName: String = "ConvertToNative"
 
-  override def logicalLink: Option[LogicalPlan] = child.logicalLink
+  def logicalLink: Option[LogicalPlan] = child.logicalLink
 
   override def output: Seq[Attribute] = child.output
 
@@ -72,6 +73,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
       nativeMetrics,
       inputRDD.partitions,
       inputRDD.dependencies,
+      inputRDD.shuffleReadFull,
       (partition, context) => {
         val resourceId = s"ConvertToNativeExec:${UUID.randomUUID().toString}"
         JniBridge.resourcesMap.put(
@@ -94,7 +96,8 @@ case class ConvertToNativeExec(override val child: SparkPlan)
               .setMode(IpcReadMode.CHANNEL_UNCOMPRESSED)
               .build())
           .build()
-      })
+      },
+      friendlyName = "NativeRDD.ConvertToNative")
   }
 
   override def doCanonicalize(): SparkPlan = child.canonicalized

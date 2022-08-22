@@ -28,7 +28,6 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
-import org.apache.spark.io.CompressionCodec
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.shuffle.BaseShuffleHandle
@@ -39,66 +38,87 @@ import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
-import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.storage.ShuffleBlockFetcherIterator
 import org.apache.spark.util.CompletionIterator
 
 class ArrowBlockStoreShuffleReader301[K, C](
     handle: BaseShuffleHandle[K, _, C],
-    blocksByAddress: () => Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
+    startPartition: Int,
+    endPartition: Int,
     context: TaskContext,
     readMetrics: ShuffleReadMetricsReporter,
     serializerManager: SerializerManager = SparkEnv.get.serializerManager,
     blockManager: BlockManager = SparkEnv.get.blockManager,
     mapOutputTracker: MapOutputTracker = SparkEnv.get.mapOutputTracker,
-    shouldBatchFetch: Boolean = false)
+    startMapId: Option[Int] = None,
+    endMapId: Option[Int] = None,
+    isLocalShuffleReader: Boolean = false)
     extends ShuffleReader[K, C]
     with Logging {
 
   private val dep = handle.dependency
-  private var schema: StructType = dep.asInstanceOf[ArrowShuffleDependency[_, _, _]].schema
+  private val schema: StructType = dep.asInstanceOf[ArrowShuffleDependency[_, _, _]].schema
 
-  private def fetchIterator: Iterator[(BlockId, InputStream)] = {
+  private val blocksByAddress = (startMapId, endMapId) match {
+    case (Some(startId), Some(endId)) =>
+      mapOutputTracker.getMapSizesByExecutorId(
+        handle.shuffleId,
+        startPartition,
+        endPartition,
+        startId,
+        endId,
+        dep.serializer.supportsRelocationOfSerializedObjects)
+    case (None, None) =>
+      mapOutputTracker.getMapSizesByExecutorId(
+        handle.shuffleId,
+        startPartition,
+        endPartition,
+        dep.serializer.supportsRelocationOfSerializedObjects)
+    case (_, _) =>
+      throw new IllegalArgumentException("startMapId and endMapId should be both set or unset")
+  }
+
+  private def fetchIterator: Iterator[(BlockId, InputStream)] =
     new ShuffleBlockFetcherIterator(
       context,
-      SparkEnv.get.blockManager.blockStoreClient,
-      SparkEnv.get.blockManager,
-      blocksByAddress(),
-      (_, inputStream) => inputStream,
+      blockManager.shuffleClient,
+      blockManager,
+      blocksByAddress,
+      streamWrapper = (_, in) => in,
       // Note: we use getSizeAsMb when no suffix is provided for backwards compatibility
-      SparkEnv.get.conf.get(config.REDUCER_MAX_SIZE_IN_FLIGHT) * 1024 * 1024,
-      SparkEnv.get.conf.get(config.REDUCER_MAX_REQS_IN_FLIGHT),
+      SparkEnv.get.conf.getSizeAsMb("spark.reducer.maxSizeInFlight", "48m") * 1024 * 1024,
+      SparkEnv.get.conf.getInt("spark.reducer.maxReqsInFlight", Int.MaxValue),
       SparkEnv.get.conf.get(config.REDUCER_MAX_BLOCKS_IN_FLIGHT_PER_ADDRESS),
       SparkEnv.get.conf.get(config.MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM),
-      SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT),
-      SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT_MEMORY),
+      SparkEnv.get.conf.getBoolean("spark.shuffle.detectCorrupt", true),
       readMetrics,
-      fetchContinuousBlocksInBatch).toCompletionIterator
-  }
+      localShuffle = isLocalShuffleReader &&
+        SparkEnv.get.conf.getBoolean("spark.kwai.localShuffle.readHdfs.enabled", false))
 
   def readIpc(): Iterator[Object] = { // FileSegment | ReadableByteChannel
     def getFileSegmentFromInputStream(in: InputStream): Option[FileSegment] = {
       object Helper {
         val bufferReleasingInputStreamClass: Class[_] =
           Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
-        val delegateField: Field = bufferReleasingInputStreamClass.getDeclaredField("delegate")
-        val inField: Field = classOf[FilterInputStream].getDeclaredField("in")
-        val limitField: Field = classOf[LimitedInputStream].getDeclaredField("left")
-        val pathField: Field = classOf[FileInputStream].getDeclaredField("path")
-        delegateField.setAccessible(true)
+        val delegateFn = bufferReleasingInputStreamClass.getDeclaredMethod(
+          "org$apache$spark$storage$BufferReleasingInputStream$$delegate")
+        val inField = classOf[FilterInputStream].getDeclaredField("in")
+        val limitField = classOf[LimitedInputStream].getDeclaredField("left")
+        val pathField = classOf[FileInputStream].getDeclaredField("path")
+        delegateFn.setAccessible(true)
         inField.setAccessible(true)
         limitField.setAccessible(true)
         pathField.setAccessible(true)
       }
-      Helper.delegateField.get(in) match {
+      Helper.delegateFn.invoke(in) match {
         case in: LimitedInputStream =>
           val limit = Helper.limitField.getLong(in)
           Helper.inField.get(in) match {
             case in: FileInputStream =>
               val path = Helper.pathField.get(in).asInstanceOf[String]
               val offset = in.getChannel.position()
-              val fileSegment = new FileSegment(new File(path), offset, limit)
+              val fileSegment = new FileSegment(new File(path), offset, limit, 0)
               Some(fileSegment)
             case _ =>
               None
@@ -123,7 +143,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
   override def read(): Iterator[Product2[K, C]] = {
     val recordIter = fetchIterator
       .flatMap {
-        case (_, inputStream) =>
+        case (blockId, inputStream) =>
           IpcInputStreamIterator(inputStream, decompressingNeeded = true, context)
       }
       .flatMap { channel =>
@@ -138,7 +158,7 @@ class ArrowBlockStoreShuffleReader301[K, C](
         readMetrics.incRecordsRead(1)
         record
       },
-      context.taskMetrics().mergeShuffleReadMetrics())
+      context.taskMetrics().mergeShuffleReadMetrics(true))
 
     // An interruptible iterator must be used here in order to support task cancellation
     val interruptibleIter = new InterruptibleIterator[(Any, Any)](context, metricIter)
@@ -164,30 +184,5 @@ class ArrowBlockStoreShuffleReader301[K, C](
         // or(and) sorter may have consumed previous interruptible iterator.
         new InterruptibleIterator[Product2[K, C]](context, resultIter)
     }
-  }
-
-  private def fetchContinuousBlocksInBatch: Boolean = {
-    val conf = SparkEnv.get.conf
-    val serializerRelocatable = dep.serializer.supportsRelocationOfSerializedObjects
-    val compressed = conf.get(config.SHUFFLE_COMPRESS)
-    val codecConcatenation = if (compressed) {
-      CompressionCodec.supportsConcatenationOfSerializedStreams(
-        CompressionCodec.createCodec(conf))
-    } else {
-      true
-    }
-    val useOldFetchProtocol = conf.get(config.SHUFFLE_USE_OLD_FETCH_PROTOCOL)
-
-    val doBatchFetch = shouldBatchFetch && serializerRelocatable &&
-      (!compressed || codecConcatenation) && !useOldFetchProtocol
-    if (shouldBatchFetch && !doBatchFetch) {
-      logDebug(
-        "The feature tag of continuous shuffle block fetching is set to true, but " +
-          "we can not enable the feature because other conditions are not satisfied. " +
-          s"Shuffle compress: $compressed, serializer relocatable: $serializerRelocatable, " +
-          s"codec concatenation: $codecConcatenation, use old shuffle fetch protocol: " +
-          s"$useOldFetchProtocol.")
-    }
-    doBatchFetch
   }
 }

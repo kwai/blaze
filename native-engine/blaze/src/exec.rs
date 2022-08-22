@@ -14,6 +14,7 @@
 
 use std::any::Any;
 use std::error::Error;
+use std::fmt::Debug;
 
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -119,7 +120,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     _: JClass,
     wrapper: JObject,
 ) {
-    if let Err(err) = std::panic::catch_unwind(|| {
+    handle_unwinded_scope(|| {
         log::info!("Entering blaze callNative()");
 
         let wrapper = Arc::new(jni_new_global_ref!(wrapper).unwrap());
@@ -281,10 +282,14 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 log::info!("  total loaded batches: {}", total_batches);
                 log::info!("  total loaded rows: {}", total_rows);
                 std::mem::drop(runtime);
+
+                jni_call!(
+                    BlazeCallNativeWrapper(wrapper.as_obj()).finishNativeThread() -> ()
+                ).unwrap();
             })
             .catch_unwind()
             .await
-            .map_err(|err| {
+            .unwrap_or_else(|err| handle_unwinded_scope(|| {
                 let panic_message = panic_message::panic_message(&err);
 
                 let e = if jni_exception_check!()? {
@@ -316,18 +321,31 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 log::info!("Blaze native executing exited with error.");
                 std::mem::drop(runtime_clone);
                 datafusion::error::Result::Ok(())
-            })
-            .unwrap();
+            }));
         });
 
         log::info!("Blaze native thread created");
-    }) {
-        handle_unwinded(err);
-    }
+        datafusion::error::Result::Ok(())
+    });
 }
 
 fn is_jvm_interrupted() -> datafusion::error::Result<bool> {
     let interrupted_exception_class = "java.lang.InterruptedException";
+    if jni_exception_check!()? {
+        let e: JObject = jni_exception_occurred!()?.into();
+        let class = jni_get_object_class!(e)?;
+        let classname_obj = jni_call!(Class(class).getName() -> JObject)?;
+        let classname = jni_get_string!(classname_obj.into())?;
+
+        if classname == interrupted_exception_class {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_spark_task_killed() -> datafusion::error::Result<bool> {
+    let interrupted_exception_class = "org.apache.spark.TaskKilledException";
     if jni_exception_check!()? {
         let e: JObject = jni_exception_occurred!()?.into();
         let class = jni_get_object_class!(e)?;
@@ -356,10 +374,15 @@ fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Resu
 
 fn handle_unwinded(err: Box<dyn Any + Send>) {
     // default handling:
-    //  * caused by InterruptedException: do nothing but just print a message.
+    //  * caused by Interrupted/TaskKilled: do nothing but just print a message.
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
+        if is_spark_task_killed()? {
+            jni_exception_clear!()?;
+            log::info!("native execution interrupted by Spark TaskKilledException");
+            return Ok(());
+        }
         if is_jvm_interrupted()? {
             jni_exception_clear!()?;
             log::info!("native execution interrupted by JVM");
@@ -384,4 +407,10 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
             err
         ));
     });
+}
+
+fn handle_unwinded_scope<E: Debug>(scope: impl FnOnce() -> Result<(), E>) {
+    if let Err(err) = std::panic::catch_unwind(AssertUnwindSafe(|| scope().unwrap())) {
+        handle_unwinded(err);
+    }
 }

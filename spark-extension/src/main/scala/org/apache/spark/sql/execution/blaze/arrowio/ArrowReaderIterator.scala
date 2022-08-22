@@ -38,36 +38,26 @@ class ArrowReaderIterator(
   private val timeZoneId = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
   private var arrowReader = new ArrowHeadlessStreamReader(channel, allocator, schema, timeZoneId)
   private var root = arrowReader.getVectorSchemaRoot
-  private var rowIter = nextBatch()
-  private var inited = true
+  private var rowIter: Iterator[InternalRow] = Iterator.empty
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
-  override def hasNext: Boolean =
-    (root != null && rowIter.hasNext) || {
-      rowIter = nextBatch()
-      if (rowIter.isEmpty) {
-        close()
-        return false
-      }
-      true
-    }
+  override def hasNext: Boolean = rowIter.hasNext || nextBatch()
 
   override def next(): InternalRow = rowIter.next()
 
-  private def nextBatch(): Iterator[InternalRow] = {
-    if (inited && arrowReader.loadNextBatch()) {
-      inited = true
-      val iter = FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
-      if (iter.isEmpty) {
-        return nextBatch()
+  private def nextBatch(): Boolean =
+    root != null && {
+      while (!rowIter.hasNext) {
+        if (!arrowReader.loadNextBatch()) {
+          rowIter = Iterator.empty
+          close()
+          return false
+        }
+        rowIter = FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
       }
-      iter
-
-    } else {
-      Iterator.empty
+      true
     }
-  }
 
   private def close(): Unit =
     synchronized {

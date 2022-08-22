@@ -53,6 +53,7 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
       nativeMetrics,
       inputRDD.partitions,
       inputRDD.dependencies,
+      inputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
         val nativeFilterExec = FilterExecNode
@@ -61,7 +62,8 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
           .setExpr(nativeFilterExpr)
           .build()
         PhysicalPlanNode.newBuilder().setFilter(nativeFilterExec).build()
-      })
+      },
+      friendlyName = "NativeRDD.Filter")
   }
 
   override def doCanonicalize(): SparkPlan =

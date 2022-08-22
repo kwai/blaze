@@ -24,8 +24,7 @@ import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
-import org.apache.spark.sql.execution.adaptive.QueryStageExec
+import org.apache.spark.sql.execution.adaptive.{QueryStage => QueryStageExec}
 import org.apache.spark.sql.execution.exchange.Exchange
 import org.apache.spark.sql.execution.CodegenSupport
 import org.apache.spark.SparkEnv
@@ -37,6 +36,8 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
+import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
+import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -171,9 +172,9 @@ object BlazeConvertStrategy extends Logging {
 
   private def neverConvertSkewJoin(exec: SparkPlan): Unit = {
     exec.foreach {
-      case e: SortMergeJoinExec if e.isSkewJoin =>
-        e.setTagValue(convertStrategyTag, NeverConvert)
-        e.children.foreach(_.setTagValue(convertStrategyTag, NeverConvert))
+      // case e: SortMergeJoinExec if e.isSkewJoin =>
+      //   e.setTagValue(convertStrategyTag, NeverConvert)
+      //   e.children.foreach(_.setTagValue(convertStrategyTag, NeverConvert))
       case _ =>
     }
   }
@@ -190,7 +191,7 @@ object BlazeConvertStrategy extends Logging {
 
   private def alwaysConvertDirectSortMergeJoin(exec: SparkPlan): Unit = {
     exec.foreach {
-      case e: SortMergeJoinExec if !e.isSkewJoin && !isNeverConvert(e) =>
+      case e: SortMergeJoinExec if /* !e.isSkewJoin && */ !isNeverConvert(e) =>
         if (e.children.forall(child => {
             isSuccssorOfExchange(child) && !isNeverConvert(child)
           })) {
@@ -292,7 +293,8 @@ object BlazeConvertStrategy extends Logging {
   private def isSuccssorOfExchange(exec: SparkPlan): Boolean = {
     exec.children.forall(child => {
       child.isInstanceOf[Exchange] ||
-        child.isInstanceOf[CustomShuffleReaderExec] ||
+        child.isInstanceOf[ShuffleQueryStageInput] ||
+        child.isInstanceOf[SkewedShuffleQueryStageInput] ||
         child.isInstanceOf[QueryStageExec]
     })
   }

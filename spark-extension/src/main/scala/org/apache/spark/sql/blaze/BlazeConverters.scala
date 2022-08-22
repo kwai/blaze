@@ -59,18 +59,20 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.joins.BuildRight
 import org.apache.spark.sql.execution.ProjectExec
-import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
-import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
+import org.apache.spark.sql.execution.adaptive.ShuffleQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
+import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.idTag
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.CollectLimitExec
+import org.apache.spark.sql.execution.adaptive.QueryStage
+import org.apache.spark.sql.execution.adaptive.QueryStageInput
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -157,17 +159,14 @@ object BlazeConverters extends Logging {
   }
 
   def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
-    val ShuffleExchangeExec(outputPartitioning, child, noUserSpecifiedNumPartition) = exec
+    val ShuffleExchangeExec(outputPartitioning, child) = exec
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
 
     val convertedChild = outputPartitioning match {
       case _: HashPartitioning => convertToNative(child)
       case _ => child
     }
-    ArrowShuffleExchangeExec301(
-      outputPartitioning,
-      addRenameColumnsExec(convertedChild),
-      noUserSpecifiedNumPartition)
+    ArrowShuffleExchangeExec301(outputPartitioning, addRenameColumnsExec(convertedChild))
   }
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
@@ -178,7 +177,8 @@ object BlazeConverters extends Logging {
       partitionFilters,
       optionalBucketSet,
       dataFilters,
-      tableIdentifier) = exec
+      tableIdentifier,
+      isHive) = exec
     logDebug(s"Converting FileSourceScanExec: ${exec.simpleStringWithNodeId}")
     logDebug(s"  relation: ${relation}")
     logDebug(s"  relation.location: ${relation.location}")
@@ -242,11 +242,11 @@ object BlazeConverters extends Logging {
   }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
-    if (exec.isSkewJoin) {
-      throw new NotImplementedError("skew join is not yet supported")
-    }
+    // if (exec.isSkewJoin) {
+    //   throw new NotImplementedError("skew join is not yet supported")
+    // }
     exec match {
-      case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, _) =>
+      case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right) =>
         logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
 
         var nativeLeft = convertToNative(left)
@@ -279,7 +279,7 @@ object BlazeConverters extends Logging {
           joinType)
 
         val postProjectedSmj = if (needPostProject) {
-          buildPostJoinProject(smj)
+          buildPostJoinProject(smj, exec.output)
         } else {
           smj
         }
@@ -345,6 +345,7 @@ object BlazeConverters extends Logging {
           val modifiedJoinType = buildSide match {
             case BuildLeft => joinType
             case BuildRight =>
+              needPostProject = true
               joinType match { // reverse join type
                 case Inner => Inner
                 case FullOuter => FullOuter
@@ -361,12 +362,10 @@ object BlazeConverters extends Logging {
             addRenameColumnsExec(nativeProbed),
             modifiedHashedKeys,
             modifiedProbedKeys,
-            exec.outputPartitioning,
-            exec.outputOrdering,
             modifiedJoinType)
 
           val postProjectedBhj = if (needPostProject) {
-            buildPostJoinProject(bhj)
+            buildPostJoinProject(bhj, exec.output)
           } else {
             bhj
           }
@@ -471,8 +470,10 @@ object BlazeConverters extends Logging {
     (transformedKeys, NativeProjectExec(child.output ++ extraProjectList, child))
   }
 
-  private def buildPostJoinProject(child: SparkPlan): NativeProjectExec = {
-    val projectList = child.output
+  private def buildPostJoinProject(
+      child: SparkPlan,
+      output: Seq[Attribute]): NativeProjectExec = {
+    val projectList = output
       .filter(!_.name.startsWith("JOIN_KEY:"))
       .map(
         attr =>
@@ -482,12 +483,12 @@ object BlazeConverters extends Logging {
     NativeProjectExec(projectList, child)
   }
 
-  @tailrec
   private def needRenameColumns(exec: SparkPlan): Boolean = {
     exec match {
-      case exec: ShuffleQueryStageExec => needRenameColumns(exec.plan)
-      case exec: BroadcastQueryStageExec => needRenameColumns(exec.plan)
-      case exec: CustomShuffleReaderExec => needRenameColumns(exec.child)
+      case exec: QueryStageInput =>
+        needRenameColumns(exec.childStage) || exec.output != exec.childStage.output
+      case exec: QueryStage =>
+        needRenameColumns(exec.child)
       case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec => true
       case _ => false
     }
@@ -496,12 +497,21 @@ object BlazeConverters extends Logging {
   @tailrec
   private def getUnderlyingBroadcast(exec: SparkPlan): SparkPlan = {
     exec match {
-      case exec: BroadcastExchangeLike =>
-        exec
-      case exec: BroadcastQueryStageExec =>
-        exec.plan
+      case _: BroadcastExchangeExec | _: ArrowBroadcastExchangeExec => exec
+      case exec: BroadcastQueryStage => exec.child
       case exec: UnaryExecNode =>
         getUnderlyingBroadcast(exec.child)
     }
+  }
+
+  implicit class ImplicitSimpleStringWithNodeId(sparkPlan: SparkPlan) {
+    def simpleStringWithNodeId(): String = {
+      sparkPlan.simpleString
+    }
+  }
+
+  implicit class ImplicitLogicalLink(sparkPlan: SparkPlan) {
+    def logicalLink: Option[LogicalPlan] = None
+    def setLogicalLink(logicalPlan: LogicalPlan): Unit = {}
   }
 }

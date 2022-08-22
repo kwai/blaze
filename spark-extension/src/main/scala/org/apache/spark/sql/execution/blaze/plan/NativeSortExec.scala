@@ -84,6 +84,7 @@ case class NativeSortExec(
       nativeMetrics,
       inputRDD.partitions,
       inputRDD.dependencies,
+      inputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
         val nativeSortExec = SortExecNode
@@ -92,7 +93,8 @@ case class NativeSortExec(
           .addAllExpr(nativeSortExprs.asJava)
           .build()
         PhysicalPlanNode.newBuilder().setSort(nativeSortExec).build()
-      })
+      },
+      friendlyName = "NativeRDD.Sort")
   }
 
   override def doCanonicalize(): SparkPlan =
