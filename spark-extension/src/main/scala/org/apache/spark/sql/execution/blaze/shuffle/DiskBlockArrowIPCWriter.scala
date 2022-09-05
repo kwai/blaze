@@ -28,19 +28,20 @@ import java.nio.ByteOrder
 
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
+import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.storage.TimeTrackingOutputStream
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowHeadlessStreamWriter
 
 /**
  * A class for writing JVM objects directly to a file on disk. This class allows data to be appended
@@ -123,7 +124,7 @@ private[spark] class DiskBlockArrowIPCWriter(
   private var numRecordsWritten = 0
   private var currentRowCount = 0
   private var currentPartitionRowCount = 0
-  private var writer: ArrowHeadlessStreamWriter = _
+  private var writer: ArrowStreamWriter = _
 
   /**
    * Commits any remaining partial writes and closes resources.
@@ -286,7 +287,7 @@ private[spark] class DiskBlockArrowIPCWriter(
 
       val channel = Channels.newChannel(
         ArrowShuffleManager301.compressionCodecForShuffling.compressedOutputStream(mcs))
-      writer = new ArrowHeadlessStreamWriter(root, channel)
+      writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
       writer.start()
     }
 

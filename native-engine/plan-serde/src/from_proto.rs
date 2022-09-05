@@ -61,13 +61,15 @@ use object_store::ObjectMeta;
 use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
-use crate::{convert_box_required, convert_required, DataType, into_required, protobuf, Schema};
+use crate::{
+    convert_box_required, convert_required, into_required, protobuf, DataType, Schema,
+};
 use crate::{from_proto_binary_op, proto_error};
 use datafusion::arrow::datatypes::Field;
-use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
-use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
+use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
+use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -175,13 +177,13 @@ fn bind(
     } else if let Some(expr) = expr.downcast_ref::<GetIndexedFieldExpr>() {
         let expr = Arc::new(GetIndexedFieldExpr::new(
             bind(expr.arg().clone(), input_schema)?,
-            expr.key().clone()
+            expr.key().clone(),
         ));
         Ok(expr)
     } else if let Some(expr) = expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>() {
         let expr = Arc::new(FixedSizeListGetIndexedFieldExpr::new(
             bind(expr.arg().clone(), input_schema)?,
-            expr.key().clone()
+            expr.key().clone(),
         ));
         Ok(expr)
     } else {
@@ -819,18 +821,16 @@ fn try_parse_physical_expr(
                 &convert_required!(e.return_type)?,
             ))
         }
-        ExprType::FallbackToJvmExpr(e) => {
-            Arc::new(SparkFallbackToJvmExpr::try_new(
-                e.serialized.clone(),
-                convert_required!(e.return_type)?,
-                e.return_nullable,
-                e.params
-                    .iter()
-                    .map(|x| try_parse_physical_expr(x, input_schema))
-                    .collect::<Result<Vec<_>, _>>()?,
-                input_schema.clone(),
-            )?)
-        }
+        ExprType::FallbackToJvmExpr(e) => Arc::new(SparkFallbackToJvmExpr::try_new(
+            e.serialized.clone(),
+            convert_required!(e.return_type)?,
+            e.return_nullable,
+            e.params
+                .iter()
+                .map(|x| try_parse_physical_expr(x, input_schema))
+                .collect::<Result<Vec<_>, _>>()?,
+            input_schema.clone(),
+        )?),
         ExprType::GetIndexedFieldExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             let key = convert_required!(e.key)?;
@@ -838,9 +838,7 @@ fn try_parse_physical_expr(
                 DataType::FixedSizeList(_, _) => {
                     Arc::new(FixedSizeListGetIndexedFieldExpr::new(expr, key))
                 }
-                _ => {
-                    Arc::new(GetIndexedFieldExpr::new(expr, key))
-                }
+                _ => Arc::new(GetIndexedFieldExpr::new(expr, key)),
             }
         }
     };
