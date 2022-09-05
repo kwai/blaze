@@ -290,8 +290,11 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             .catch_unwind()
             .await
             .unwrap_or_else(|err| handle_unwinded_scope(|| {
-                let panic_message = panic_message::panic_message(&err);
+                let _ = jni_call!(
+                    BlazeCallNativeWrapper(wrapper_clone.as_obj()).finishNativeThread() -> ()
+                );
 
+                let panic_message = panic_message::panic_message(&err);
                 let e = if jni_exception_check!()? {
                     log::error!("native execution panics with an java exception");
                     log::error!("panic message: {}", panic_message);
@@ -319,7 +322,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                     }
                 }
                 log::info!("Blaze native executing exited with error.");
-                std::mem::drop(runtime_clone);
+                drop(runtime_clone);
                 datafusion::error::Result::Ok(())
             }));
         });
