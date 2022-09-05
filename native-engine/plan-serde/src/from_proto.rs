@@ -1006,7 +1006,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             statistics,
             projection,
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
-            table_partition_cols: vec!["dt".to_owned()],
+            table_partition_cols: self.table_partition_cols.clone(),
         })
     }
 }

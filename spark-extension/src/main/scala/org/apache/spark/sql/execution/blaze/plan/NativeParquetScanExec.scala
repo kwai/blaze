@@ -114,6 +114,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     val partitions = inputFileScanRDD.filePartitions.toArray
     val nativeMetrics = MetricNode(metrics, Nil)
     val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
+    val partCols = basedFileScan.relation.partitionSchema.map(_.name)
 
     new NativeRDD(
       sparkContext,
@@ -128,6 +129,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
           .setSchema(nativeFileSchema)
           .addAllFileGroups(nativeFileGroups.toList.asJava)
           .addAllProjection(projection.map(Integer.valueOf).asJava)
+          .addAllTablePartitionCols(partCols.asJava)
           .build()
 
         val nativeParquetScanExecBuilder = pb.ParquetScanExecNode
