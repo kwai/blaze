@@ -864,9 +864,7 @@ fn typechecked_scalar_value_conversion(
                     //        "Untyped scalar null is not a valid scalar value",
                     //    ))
                     //}
-                    PrimitiveScalarType::Null => {
-                        ScalarValue::Null
-                    }
+                    PrimitiveScalarType::Null => ScalarValue::Null,
                     PrimitiveScalarType::Decimal128 => {
                         ScalarValue::Decimal128(None, 0, 0)
                     }

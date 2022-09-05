@@ -244,28 +244,13 @@ pub fn create_hashes<'a>(
                 hash_array_primitive!(TimestampSecondArray, col, i64, hashes_buffer);
             }
             DataType::Timestamp(TimeUnit::Millisecond, None) => {
-                hash_array_primitive!(
-                    TimestampMillisecondArray,
-                    col,
-                    i64,
-                    hashes_buffer
-                );
+                hash_array_primitive!(TimestampMillisecondArray, col, i64, hashes_buffer);
             }
             DataType::Timestamp(TimeUnit::Microsecond, None) => {
-                hash_array_primitive!(
-                    TimestampMicrosecondArray,
-                    col,
-                    i64,
-                    hashes_buffer
-                );
+                hash_array_primitive!(TimestampMicrosecondArray, col, i64, hashes_buffer);
             }
             DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-                hash_array_primitive!(
-                    TimestampNanosecondArray,
-                    col,
-                    i64,
-                    hashes_buffer
-                );
+                hash_array_primitive!(TimestampNanosecondArray, col, i64, hashes_buffer);
             }
             DataType::Date32 => {
                 hash_array_primitive!(Date32Array, col, i32, hashes_buffer);

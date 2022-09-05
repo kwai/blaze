@@ -41,9 +41,6 @@ case class FallbackToJvmExprContext(serialized: ByteBuffer) extends Logging {
   })
   val timeZoneId: String = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
 
-  val inputSchema: StructType = StructType(expr.children.map { param =>
-    StructField(param.toString, param.dataType, param.nullable)
-  })
   val outputSchema: StructType = StructType(
     StructField("_c0", expr.dataType, expr.nullable) :: Nil)
 
@@ -52,7 +49,7 @@ case class FallbackToJvmExprContext(serialized: ByteBuffer) extends Logging {
 
     Utils.tryWithResource(new ByteBufferInputStream(batchBuffer)) { in =>
       val channel = Channels.newChannel(in)
-      val reader = new ArrowReaderIterator(channel, inputSchema, taskContext)
+      val reader = new ArrowReaderIterator(channel, taskContext)
 
       val outputRows = reader
         .map(row => InternalRow(expr.eval(row)))

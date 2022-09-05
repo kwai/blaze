@@ -174,6 +174,21 @@ pub fn builder_extend(
                 }
             }
         }};
+        (@bin: $keyarrowty:ident, $strsizety:ty) => {{
+            type KeyType = paste! {[< $keyarrowty Type >]};
+            type B = BinaryDictionaryBuilder<KeyType>;
+            type A = DictionaryArray<KeyType>;
+            let t = builder.as_any_mut().downcast_mut::<B>().unwrap();
+            let f = array.as_any().downcast_ref::<A>().unwrap();
+            let fv = f.values().as_any().downcast_ref::<GenericStringArray<$strsizety>>().unwrap();
+            for &i in indices {
+                if f.is_valid(i) {
+                    t.append(fv.value(f.key(i).unwrap())).unwrap();
+                } else {
+                    t.append_null().unwrap();
+                }
+            }
+        }};
         (@str: $keyarrowty:ident, $strsizety:ty) => {{
             type KeyType = paste! {[< $keyarrowty Type >]};
             type B = StringDictionaryBuilder<KeyType>;
@@ -209,6 +224,8 @@ pub fn builder_extend(
         DataType::Time32(TimeUnit::Millisecond) => append_simple!(Time32Millisecond),
         DataType::Time64(TimeUnit::Microsecond) => append_simple!(Time64Microsecond),
         DataType::Time64(TimeUnit::Nanosecond) => append_simple!(Time64Nanosecond),
+        DataType::Binary => append_simple!(Binary),
+        DataType::LargeBinary => append_simple!(LargeBinary),
         DataType::Utf8 => append_simple!(String),
         DataType::LargeUtf8 => append_simple!(LargeString),
         DataType::Decimal(_, _) => append_simple!(Decimal),
@@ -243,6 +260,8 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         DataType::Time32(TimeUnit::Millisecond) => append!(Time32Millisecond),
         DataType::Time64(TimeUnit::Microsecond) => append!(Time64Microsecond),
         DataType::Time64(TimeUnit::Nanosecond) => append!(Time64Nanosecond),
+        DataType::Binary => append!(Binary),
+        DataType::LargeBinary => append!(LargeBinary),
         DataType::Utf8 => append!(String),
         DataType::LargeUtf8 => append!(LargeString),
         DataType::Decimal(_, _) => append!(Decimal),

@@ -1,5 +1,6 @@
 use datafusion::arrow::array::{Array, FixedSizeListArray};
 use datafusion::arrow::compute::concat;
+use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::{
     datatypes::{DataType, Schema},
     record_batch::RecordBatch,
@@ -8,11 +9,10 @@ use datafusion::common::DataFusionError;
 use datafusion::common::Result;
 use datafusion::common::ScalarValue;
 use datafusion::logical_expr::ColumnarValue;
+use datafusion::physical_expr::PhysicalExpr;
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::{any::Any, sync::Arc};
-use datafusion::arrow::datatypes::Field;
-use datafusion::physical_expr::PhysicalExpr;
 
 /// expression to get a field of a struct array.
 #[derive(Debug)]

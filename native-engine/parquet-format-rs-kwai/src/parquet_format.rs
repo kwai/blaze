@@ -3,7 +3,7 @@
 
 #![allow(unused_imports)]
 #![allow(unused_extern_crates)]
-#![cfg_attr(feature = "cargo-clippy", allow(too_many_arguments, type_complexity))]
+#![cfg_attr(feature = "cargo-clippy", allow(clippy::too_many_arguments, clippy::type_complexity))]
 #![cfg_attr(rustfmt, rustfmt_skip)]
 
 extern crate thrift;
@@ -575,49 +575,49 @@ impl Statistics {
       o_prot.write_field_begin(&TFieldIdentifier::new("max", TType::String, 1))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.min {
       o_prot.write_field_begin(&TFieldIdentifier::new("min", TType::String, 2))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.null_count {
       o_prot.write_field_begin(&TFieldIdentifier::new("null_count", TType::I64, 3))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.distinct_count {
       o_prot.write_field_begin(&TFieldIdentifier::new("distinct_count", TType::I64, 4))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.max_value {
       o_prot.write_field_begin(&TFieldIdentifier::new("max_value", TType::String, 5))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.min_value {
       o_prot.write_field_begin(&TFieldIdentifier::new("min_value", TType::String, 6))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -657,11 +657,9 @@ impl StringType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -702,11 +700,9 @@ impl UUIDType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -747,11 +743,9 @@ impl MapType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -792,11 +786,9 @@ impl ListType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -837,11 +829,9 @@ impl EnumType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -882,11 +872,9 @@ impl DateType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -932,11 +920,9 @@ impl NullType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -977,8 +963,8 @@ pub struct DecimalType {
 impl DecimalType {
   pub fn new(scale: i32, precision: i32) -> DecimalType {
     DecimalType {
-      scale: scale,
-      precision: precision,
+      scale,
+      precision,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<DecimalType> {
@@ -1049,11 +1035,9 @@ impl MilliSeconds {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -1094,11 +1078,9 @@ impl MicroSeconds {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -1139,11 +1121,9 @@ impl NanoSeconds {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -1280,8 +1260,8 @@ pub struct TimestampType {
 impl TimestampType {
   pub fn new(is_adjusted_to_u_t_c: bool, unit: TimeUnit) -> TimestampType {
     TimestampType {
-      is_adjusted_to_u_t_c: is_adjusted_to_u_t_c,
-      unit: unit,
+      is_adjusted_to_u_t_c,
+      unit,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<TimestampType> {
@@ -1348,8 +1328,8 @@ pub struct TimeType {
 impl TimeType {
   pub fn new(is_adjusted_to_u_t_c: bool, unit: TimeUnit) -> TimeType {
     TimeType {
-      is_adjusted_to_u_t_c: is_adjusted_to_u_t_c,
-      unit: unit,
+      is_adjusted_to_u_t_c,
+      unit,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<TimeType> {
@@ -1418,8 +1398,8 @@ pub struct IntType {
 impl IntType {
   pub fn new(bit_width: i8, is_signed: bool) -> IntType {
     IntType {
-      bit_width: bit_width,
-      is_signed: is_signed,
+      bit_width,
+      is_signed,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<IntType> {
@@ -1492,11 +1472,9 @@ impl JsonType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -1540,11 +1518,9 @@ impl BsonType {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -1845,7 +1821,7 @@ impl SchemaElement {
       type_: type_.into(),
       type_length: type_length.into(),
       repetition_type: repetition_type.into(),
-      name: name,
+      name,
       num_children: num_children.into(),
       converted_type: converted_type.into(),
       scale: scale.into(),
@@ -1942,25 +1918,25 @@ impl SchemaElement {
       o_prot.write_field_begin(&TFieldIdentifier::new("type", TType::I32, 1))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.type_length {
       o_prot.write_field_begin(&TFieldIdentifier::new("type_length", TType::I32, 2))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.repetition_type {
       o_prot.write_field_begin(&TFieldIdentifier::new("repetition_type", TType::I32, 3))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_begin(&TFieldIdentifier::new("name", TType::String, 4))?;
     o_prot.write_string(&self.name)?;
@@ -1969,49 +1945,49 @@ impl SchemaElement {
       o_prot.write_field_begin(&TFieldIdentifier::new("num_children", TType::I32, 5))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.converted_type {
       o_prot.write_field_begin(&TFieldIdentifier::new("converted_type", TType::I32, 6))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.scale {
       o_prot.write_field_begin(&TFieldIdentifier::new("scale", TType::I32, 7))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.precision {
       o_prot.write_field_begin(&TFieldIdentifier::new("precision", TType::I32, 8))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.field_id {
       o_prot.write_field_begin(&TFieldIdentifier::new("field_id", TType::I32, 9))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.logical_type {
       o_prot.write_field_begin(&TFieldIdentifier::new("logicalType", TType::Struct, 10))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -2040,10 +2016,10 @@ pub struct DataPageHeader {
 impl DataPageHeader {
   pub fn new<F5>(num_values: i32, encoding: Encoding, definition_level_encoding: Encoding, repetition_level_encoding: Encoding, statistics: F5) -> DataPageHeader where F5: Into<Option<Statistics>> {
     DataPageHeader {
-      num_values: num_values,
-      encoding: encoding,
-      definition_level_encoding: definition_level_encoding,
-      repetition_level_encoding: repetition_level_encoding,
+      num_values,
+      encoding,
+      definition_level_encoding,
+      repetition_level_encoding,
       statistics: statistics.into(),
     }
   }
@@ -2120,9 +2096,9 @@ impl DataPageHeader {
       o_prot.write_field_begin(&TFieldIdentifier::new("statistics", TType::Struct, 5))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -2148,11 +2124,9 @@ impl IndexPageHeader {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -2191,8 +2165,8 @@ pub struct DictionaryPageHeader {
 impl DictionaryPageHeader {
   pub fn new<F3>(num_values: i32, encoding: Encoding, is_sorted: F3) -> DictionaryPageHeader where F3: Into<Option<bool>> {
     DictionaryPageHeader {
-      num_values: num_values,
-      encoding: encoding,
+      num_values,
+      encoding,
       is_sorted: is_sorted.into(),
     }
   }
@@ -2249,9 +2223,9 @@ impl DictionaryPageHeader {
       o_prot.write_field_begin(&TFieldIdentifier::new("is_sorted", TType::Bool, 3))?;
       o_prot.write_bool(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -2294,12 +2268,12 @@ pub struct DataPageHeaderV2 {
 impl DataPageHeaderV2 {
   pub fn new<F7, F8>(num_values: i32, num_nulls: i32, num_rows: i32, encoding: Encoding, definition_levels_byte_length: i32, repetition_levels_byte_length: i32, is_compressed: F7, statistics: F8) -> DataPageHeaderV2 where F7: Into<Option<bool>>, F8: Into<Option<Statistics>> {
     DataPageHeaderV2 {
-      num_values: num_values,
-      num_nulls: num_nulls,
-      num_rows: num_rows,
-      encoding: encoding,
-      definition_levels_byte_length: definition_levels_byte_length,
-      repetition_levels_byte_length: repetition_levels_byte_length,
+      num_values,
+      num_nulls,
+      num_rows,
+      encoding,
+      definition_levels_byte_length,
+      repetition_levels_byte_length,
       is_compressed: is_compressed.into(),
       statistics: statistics.into(),
     }
@@ -2403,17 +2377,17 @@ impl DataPageHeaderV2 {
       o_prot.write_field_begin(&TFieldIdentifier::new("is_compressed", TType::Bool, 7))?;
       o_prot.write_bool(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.statistics {
       o_prot.write_field_begin(&TFieldIdentifier::new("statistics", TType::Struct, 8))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -2440,11 +2414,9 @@ impl SplitBlockAlgorithm {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -2561,11 +2533,9 @@ impl XxHash {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -2681,11 +2651,9 @@ impl Uncompressed {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -2802,10 +2770,10 @@ pub struct BloomFilterHeader {
 impl BloomFilterHeader {
   pub fn new(num_bytes: i32, algorithm: BloomFilterAlgorithm, hash: BloomFilterHash, compression: BloomFilterCompression) -> BloomFilterHeader {
     BloomFilterHeader {
-      num_bytes: num_bytes,
-      algorithm: algorithm,
-      hash: hash,
-      compression: compression,
+      num_bytes,
+      algorithm,
+      hash,
+      compression,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<BloomFilterHeader> {
@@ -2922,9 +2890,9 @@ pub struct PageHeader {
 impl PageHeader {
   pub fn new<F4, F5, F6, F7, F8>(type_: PageType, uncompressed_page_size: i32, compressed_page_size: i32, crc: F4, data_page_header: F5, index_page_header: F6, dictionary_page_header: F7, data_page_header_v2: F8) -> PageHeader where F4: Into<Option<i32>>, F5: Into<Option<DataPageHeader>>, F6: Into<Option<IndexPageHeader>>, F7: Into<Option<DictionaryPageHeader>>, F8: Into<Option<DataPageHeaderV2>> {
     PageHeader {
-      type_: type_,
-      uncompressed_page_size: uncompressed_page_size,
-      compressed_page_size: compressed_page_size,
+      type_,
+      uncompressed_page_size,
+      compressed_page_size,
       crc: crc.into(),
       data_page_header: data_page_header.into(),
       index_page_header: index_page_header.into(),
@@ -3019,41 +2987,41 @@ impl PageHeader {
       o_prot.write_field_begin(&TFieldIdentifier::new("crc", TType::I32, 4))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.data_page_header {
       o_prot.write_field_begin(&TFieldIdentifier::new("data_page_header", TType::Struct, 5))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.index_page_header {
       o_prot.write_field_begin(&TFieldIdentifier::new("index_page_header", TType::Struct, 6))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.dictionary_page_header {
       o_prot.write_field_begin(&TFieldIdentifier::new("dictionary_page_header", TType::Struct, 7))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.data_page_header_v2 {
       o_prot.write_field_begin(&TFieldIdentifier::new("data_page_header_v2", TType::Struct, 8))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -3074,7 +3042,7 @@ pub struct KeyValue {
 impl KeyValue {
   pub fn new<F2>(key: String, value: F2) -> KeyValue where F2: Into<Option<String>> {
     KeyValue {
-      key: key,
+      key,
       value: value.into(),
     }
   }
@@ -3121,9 +3089,9 @@ impl KeyValue {
       o_prot.write_field_begin(&TFieldIdentifier::new("value", TType::String, 2))?;
       o_prot.write_string(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -3149,9 +3117,9 @@ pub struct SortingColumn {
 impl SortingColumn {
   pub fn new(column_idx: i32, descending: bool, nulls_first: bool) -> SortingColumn {
     SortingColumn {
-      column_idx: column_idx,
-      descending: descending,
-      nulls_first: nulls_first,
+      column_idx,
+      descending,
+      nulls_first,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<SortingColumn> {
@@ -3230,9 +3198,9 @@ pub struct PageEncodingStats {
 impl PageEncodingStats {
   pub fn new(page_type: PageType, encoding: Encoding, count: i32) -> PageEncodingStats {
     PageEncodingStats {
-      page_type: page_type,
-      encoding: encoding,
-      count: count,
+      page_type,
+      encoding,
+      count,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<PageEncodingStats> {
@@ -3337,15 +3305,15 @@ pub struct ColumnMetaData {
 impl ColumnMetaData {
   pub fn new<F8, F10, F11, F12, F13, F14>(type_: Type, encodings: Vec<Encoding>, path_in_schema: Vec<String>, codec: CompressionCodec, num_values: i64, total_uncompressed_size: i64, total_compressed_size: i64, key_value_metadata: F8, data_page_offset: i64, index_page_offset: F10, dictionary_page_offset: F11, statistics: F12, encoding_stats: F13, bloom_filter_offset: F14) -> ColumnMetaData where F8: Into<Option<Vec<KeyValue>>>, F10: Into<Option<i64>>, F11: Into<Option<i64>>, F12: Into<Option<Statistics>>, F13: Into<Option<Vec<PageEncodingStats>>>, F14: Into<Option<i64>> {
     ColumnMetaData {
-      type_: type_,
-      encodings: encodings,
-      path_in_schema: path_in_schema,
-      codec: codec,
-      num_values: num_values,
-      total_uncompressed_size: total_uncompressed_size,
-      total_compressed_size: total_compressed_size,
+      type_,
+      encodings,
+      path_in_schema,
+      codec,
+      num_values,
+      total_uncompressed_size,
+      total_compressed_size,
       key_value_metadata: key_value_metadata.into(),
-      data_page_offset: data_page_offset,
+      data_page_offset,
       index_page_offset: index_page_offset.into(),
       dictionary_page_offset: dictionary_page_offset.into(),
       statistics: statistics.into(),
@@ -3529,9 +3497,9 @@ impl ColumnMetaData {
         o_prot.write_list_end()?;
       }
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_begin(&TFieldIdentifier::new("data_page_offset", TType::I64, 9))?;
     o_prot.write_i64(self.data_page_offset)?;
@@ -3540,25 +3508,25 @@ impl ColumnMetaData {
       o_prot.write_field_begin(&TFieldIdentifier::new("index_page_offset", TType::I64, 10))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.dictionary_page_offset {
       o_prot.write_field_begin(&TFieldIdentifier::new("dictionary_page_offset", TType::I64, 11))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.statistics {
       o_prot.write_field_begin(&TFieldIdentifier::new("statistics", TType::Struct, 12))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.encoding_stats {
       o_prot.write_field_begin(&TFieldIdentifier::new("encoding_stats", TType::List, 13))?;
@@ -3568,17 +3536,17 @@ impl ColumnMetaData {
         o_prot.write_list_end()?;
       }
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.bloom_filter_offset {
       o_prot.write_field_begin(&TFieldIdentifier::new("bloom_filter_offset", TType::I64, 14))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -3604,11 +3572,9 @@ impl EncryptionWithFooterKey {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -3645,7 +3611,7 @@ pub struct EncryptionWithColumnKey {
 impl EncryptionWithColumnKey {
   pub fn new<F2>(path_in_schema: Vec<String>, key_metadata: F2) -> EncryptionWithColumnKey where F2: Into<Option<Vec<u8>>> {
     EncryptionWithColumnKey {
-      path_in_schema: path_in_schema,
+      path_in_schema,
       key_metadata: key_metadata.into(),
     }
   }
@@ -3702,9 +3668,9 @@ impl EncryptionWithColumnKey {
       o_prot.write_field_begin(&TFieldIdentifier::new("key_metadata", TType::String, 2))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -3832,7 +3798,7 @@ impl ColumnChunk {
   pub fn new<F1, F3, F4, F5, F6, F7, F8, F9>(file_path: F1, file_offset: i64, meta_data: F3, offset_index_offset: F4, offset_index_length: F5, column_index_offset: F6, column_index_length: F7, crypto_metadata: F8, encrypted_column_metadata: F9) -> ColumnChunk where F1: Into<Option<String>>, F3: Into<Option<ColumnMetaData>>, F4: Into<Option<i64>>, F5: Into<Option<i32>>, F6: Into<Option<i64>>, F7: Into<Option<i32>>, F8: Into<Option<ColumnCryptoMetaData>>, F9: Into<Option<Vec<u8>>> {
     ColumnChunk {
       file_path: file_path.into(),
-      file_offset: file_offset,
+      file_offset,
       meta_data: meta_data.into(),
       offset_index_offset: offset_index_offset.into(),
       offset_index_length: offset_index_length.into(),
@@ -3924,9 +3890,9 @@ impl ColumnChunk {
       o_prot.write_field_begin(&TFieldIdentifier::new("file_path", TType::String, 1))?;
       o_prot.write_string(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_begin(&TFieldIdentifier::new("file_offset", TType::I64, 2))?;
     o_prot.write_i64(self.file_offset)?;
@@ -3935,57 +3901,57 @@ impl ColumnChunk {
       o_prot.write_field_begin(&TFieldIdentifier::new("meta_data", TType::Struct, 3))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.offset_index_offset {
       o_prot.write_field_begin(&TFieldIdentifier::new("offset_index_offset", TType::I64, 4))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.offset_index_length {
       o_prot.write_field_begin(&TFieldIdentifier::new("offset_index_length", TType::I32, 5))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.column_index_offset {
       o_prot.write_field_begin(&TFieldIdentifier::new("column_index_offset", TType::I64, 6))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.column_index_length {
       o_prot.write_field_begin(&TFieldIdentifier::new("column_index_length", TType::I32, 7))?;
       o_prot.write_i32(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.crypto_metadata {
       o_prot.write_field_begin(&TFieldIdentifier::new("crypto_metadata", TType::Struct, 8))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.encrypted_column_metadata {
       o_prot.write_field_begin(&TFieldIdentifier::new("encrypted_column_metadata", TType::String, 9))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -4022,9 +3988,9 @@ pub struct RowGroup {
 impl RowGroup {
   pub fn new<F4, F5, F6, F7>(columns: Vec<ColumnChunk>, total_byte_size: i64, num_rows: i64, sorting_columns: F4, file_offset: F5, total_compressed_size: F6, ordinal: F7) -> RowGroup where F4: Into<Option<Vec<SortingColumn>>>, F5: Into<Option<i64>>, F6: Into<Option<i64>>, F7: Into<Option<i16>> {
     RowGroup {
-      columns: columns,
-      total_byte_size: total_byte_size,
-      num_rows: num_rows,
+      columns,
+      total_byte_size,
+      num_rows,
       sorting_columns: sorting_columns.into(),
       file_offset: file_offset.into(),
       total_compressed_size: total_compressed_size.into(),
@@ -4132,33 +4098,33 @@ impl RowGroup {
         o_prot.write_list_end()?;
       }
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.file_offset {
       o_prot.write_field_begin(&TFieldIdentifier::new("file_offset", TType::I64, 5))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.total_compressed_size {
       o_prot.write_field_begin(&TFieldIdentifier::new("total_compressed_size", TType::I64, 6))?;
       o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.ordinal {
       o_prot.write_field_begin(&TFieldIdentifier::new("ordinal", TType::I16, 7))?;
       o_prot.write_i16(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -4185,11 +4151,9 @@ impl TypeDefinedOrder {
       if field_ident.field_type == TType::Stop {
         break;
       }
-      let field_id = field_id(&field_ident)?;
-      match field_id {
-        _ => {
-          i_prot.skip(field_ident.field_type)?;
-        },
+      let _field_id = field_id(&field_ident)?;
+      {
+        i_prot.skip(field_ident.field_type)?;
       };
       i_prot.read_field_end()?;
     }
@@ -4303,9 +4267,9 @@ pub struct PageLocation {
 impl PageLocation {
   pub fn new(offset: i64, compressed_page_size: i32, first_row_index: i64) -> PageLocation {
     PageLocation {
-      offset: offset,
-      compressed_page_size: compressed_page_size,
-      first_row_index: first_row_index,
+      offset,
+      compressed_page_size,
+      first_row_index,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<PageLocation> {
@@ -4380,7 +4344,7 @@ pub struct OffsetIndex {
 impl OffsetIndex {
   pub fn new(page_locations: Vec<PageLocation>) -> OffsetIndex {
     OffsetIndex {
-      page_locations: page_locations,
+      page_locations,
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<OffsetIndex> {
@@ -4466,10 +4430,10 @@ pub struct ColumnIndex {
 impl ColumnIndex {
   pub fn new<F5>(null_pages: Vec<bool>, min_values: Vec<Vec<u8>>, max_values: Vec<Vec<u8>>, boundary_order: BoundaryOrder, null_counts: F5) -> ColumnIndex where F5: Into<Option<Vec<i64>>> {
     ColumnIndex {
-      null_pages: null_pages,
-      min_values: min_values,
-      max_values: max_values,
-      boundary_order: boundary_order,
+      null_pages,
+      min_values,
+      max_values,
+      boundary_order,
       null_counts: null_counts.into(),
     }
   }
@@ -4586,9 +4550,9 @@ impl ColumnIndex {
         o_prot.write_list_end()?;
       }
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -4663,25 +4627,25 @@ impl AesGcmV1 {
       o_prot.write_field_begin(&TFieldIdentifier::new("aad_prefix", TType::String, 1))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.aad_file_unique {
       o_prot.write_field_begin(&TFieldIdentifier::new("aad_file_unique", TType::String, 2))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.supply_aad_prefix {
       o_prot.write_field_begin(&TFieldIdentifier::new("supply_aad_prefix", TType::Bool, 3))?;
       o_prot.write_bool(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -4766,25 +4730,25 @@ impl AesGcmCtrV1 {
       o_prot.write_field_begin(&TFieldIdentifier::new("aad_prefix", TType::String, 1))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.aad_file_unique {
       o_prot.write_field_begin(&TFieldIdentifier::new("aad_file_unique", TType::String, 2))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(fld_var) = self.supply_aad_prefix {
       o_prot.write_field_begin(&TFieldIdentifier::new("supply_aad_prefix", TType::Bool, 3))?;
       o_prot.write_bool(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -4938,10 +4902,10 @@ pub struct FileMetaData {
 impl FileMetaData {
   pub fn new<F5, F6, F7, F10, F11>(version: i32, schema: Vec<SchemaElement>, num_rows: i64, row_groups: Vec<RowGroup>, key_value_metadata: F5, created_by: F6, column_orders: F7, encryption_algorithm: F10, footer_signing_key_metadata: F11) -> FileMetaData where F5: Into<Option<Vec<KeyValue>>>, F6: Into<Option<String>>, F7: Into<Option<Vec<ColumnOrder>>>, F10: Into<Option<EncryptionAlgorithm>>, F11: Into<Option<Vec<u8>>> {
     FileMetaData {
-      version: version,
-      schema: schema,
-      num_rows: num_rows,
-      row_groups: row_groups,
+      version,
+      schema,
+      num_rows,
+      row_groups,
       key_value_metadata: key_value_metadata.into(),
       created_by: created_by.into(),
       column_orders: column_orders.into(),
@@ -5082,17 +5046,17 @@ impl FileMetaData {
         o_prot.write_list_end()?;
       }
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.created_by {
       o_prot.write_field_begin(&TFieldIdentifier::new("created_by", TType::String, 6))?;
       o_prot.write_string(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.column_orders {
       o_prot.write_field_begin(&TFieldIdentifier::new("column_orders", TType::List, 7))?;
@@ -5102,25 +5066,25 @@ impl FileMetaData {
         o_prot.write_list_end()?;
       }
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.encryption_algorithm {
       o_prot.write_field_begin(&TFieldIdentifier::new("encryption_algorithm", TType::Struct, 10))?;
       fld_var.write_to_out_protocol(o_prot)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     if let Some(ref fld_var) = self.footer_signing_key_metadata {
       o_prot.write_field_begin(&TFieldIdentifier::new("footer_signing_key_metadata", TType::String, 11))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
@@ -5146,7 +5110,7 @@ pub struct FileCryptoMetaData {
 impl FileCryptoMetaData {
   pub fn new<F2>(encryption_algorithm: EncryptionAlgorithm, key_metadata: F2) -> FileCryptoMetaData where F2: Into<Option<Vec<u8>>> {
     FileCryptoMetaData {
-      encryption_algorithm: encryption_algorithm,
+      encryption_algorithm,
       key_metadata: key_metadata.into(),
     }
   }
@@ -5193,9 +5157,9 @@ impl FileCryptoMetaData {
       o_prot.write_field_begin(&TFieldIdentifier::new("key_metadata", TType::String, 2))?;
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?;
-      ()
+      
     } else {
-      ()
+      
     }
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()

@@ -2,7 +2,8 @@ use crate::util::ipc::{read_one_batch, write_one_batch};
 use crate::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::error::{DataFusionError, Result};
+use datafusion::common::ScalarValue;
+use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_plan::PhysicalExpr;
 use jni::objects::{GlobalRef, JObject};
@@ -95,13 +96,15 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
 
         let mut batch_buffer = vec![];
         let mut param_arrays = Vec::with_capacity(self.params.len());
+        let mut input_contains_array = false;
         for param in &self.params {
             match param.evaluate(batch)? {
-                ColumnarValue::Array(array) => param_arrays.push(array.clone()),
-                ColumnarValue::Scalar(_) => {
-                    return Err(DataFusionError::NotImplemented(
-                        "SparkFallbackToJvmExpr.children.evaluate() returning ScalarValue is not supported".to_string()
-                    ));
+                ColumnarValue::Array(array) => {
+                    param_arrays.push(array.clone());
+                    input_contains_array = true;
+                }
+                ColumnarValue::Scalar(scalar) => {
+                    param_arrays.push(scalar.to_array_of_size(batch.num_rows()));
                 }
             }
         }
@@ -125,6 +128,13 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
             self.return_nullable,
         )]));
         let output_batch = read_one_batch(&mut reader, output_schema, false, false)?;
-        Ok(ColumnarValue::Array(output_batch.column(0).clone()))
+        if input_contains_array {
+            Ok(ColumnarValue::Array(output_batch.column(0).clone()))
+        } else {
+            Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
+                output_batch.column(0),
+                0,
+            )?))
+        }
     }
 }

@@ -1,14 +1,8 @@
-use std::any::Any;
-use std::borrow::BorrowMut;
-use std::cmp::Ordering;
-use std::fmt::Formatter;
-use std::sync::Arc;
-
 use crate::util::array_builder::{
     builder_append_null, builder_extend, make_batch, new_array_builders,
 };
 use datafusion::arrow::array::*;
-use datafusion::arrow::compute::take;
+use datafusion::arrow::compute::kernels::take::take;
 use datafusion::arrow::compute::SortOptions;
 use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use datafusion::arrow::error::ArrowError;
@@ -31,8 +25,15 @@ use datafusion::physical_plan::stream::{
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
+use std::any::Any;
+use std::borrow::BorrowMut;
+use std::cmp::Ordering;
+use std::fmt::Formatter;
+use std::sync::Arc;
+
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use itertools::izip;
+
 use tokio::sync::mpsc::Sender;
 
 #[derive(Debug)]
@@ -325,7 +326,6 @@ async fn join_combined(
             let _ = staging_len; // suppress value unused warnings
         }};
     }
-
     macro_rules! cartesian_join_lr {
         ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
             for l in $range1.clone() {
@@ -432,6 +432,7 @@ async fn join_combined(
                     for c in $batch2.columns() {
                         cols.push(take(c.as_ref(), &rarray, None)?);
                     }
+
                     let batch =
                         RecordBatch::try_new(join_params.output_schema.clone(), cols)?;
 
@@ -534,7 +535,6 @@ async fn join_combined(
                     for (batch1, range1) in &buffers[0] {
                         for (batch2, range2) in &buffers[1] {
                             if range1.len() * range2.len() < 64 {
-                                // respects spark smj ordering
                                 if join_params.join_type == JoinType::Right {
                                     cartesian_join_rl!(
                                         &batch1,
@@ -551,7 +551,6 @@ async fn join_combined(
                                     );
                                 }
                             } else {
-                                // respects spark smj ordering
                                 if join_params.join_type == JoinType::Right {
                                     cartesian_join_columnar_rl!(
                                         &batch1,
@@ -934,6 +933,8 @@ fn row_equal(
             DataType::Time32(TimeUnit::Millisecond) => eq!(Time32Millisecond),
             DataType::Time64(TimeUnit::Microsecond) => eq!(Time64Microsecond),
             DataType::Time64(TimeUnit::Nanosecond) => eq!(Time64Nanosecond),
+            DataType::Binary => eq!(Binary),
+            DataType::LargeBinary => eq!(LargeBinary),
             DataType::Utf8 => eq!(String),
             DataType::LargeUtf8 => eq!(LargeString),
             DataType::Decimal(_, _) => eq!(Decimal),
