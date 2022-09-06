@@ -56,7 +56,8 @@ case class ConvertToNativeExec(override val child: SparkPlan)
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
   val renamedSchema: StructType =
-    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata)))
+    StructType(
+      output.map(a => StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata)))
   val nativeSchema: Schema = NativeConverters.convertSchema(renamedSchema)
 
   override def doExecuteNative(): NativeRDD = {

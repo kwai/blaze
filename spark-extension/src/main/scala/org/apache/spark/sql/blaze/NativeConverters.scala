@@ -87,8 +87,6 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
 import org.apache.spark.sql.catalyst.expressions.BoundReference
-import org.apache.spark.sql.catalyst.expressions.CreateArray
-import org.apache.spark.sql.catalyst.expressions.GetArrayItem
 import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.MakeDecimal
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
@@ -123,6 +121,7 @@ import org.apache.spark.util.Utils
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
+import org.blaze.protobuf.TimeUnit
 
 object NativeConverters {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -157,30 +156,33 @@ object NativeConverters {
       case BinaryType => arrowTypeBuilder.setBINARY(pb.EmptyMessage.getDefaultInstance)
       case DateType => arrowTypeBuilder.setDATE32(pb.EmptyMessage.getDefaultInstance)
       case TimestampType =>
-        // NOTE: microsecond => millisecond
-        arrowTypeBuilder.setTIMESTAMP(pb.Timestamp.getDefaultInstance)
+        arrowTypeBuilder.setTIMESTAMP(
+          pb.Timestamp
+            .newBuilder()
+            .setTimezone("") // convert to native None
+            .setTimeUnit(TimeUnit.Nanosecond))
 
       // decimal
       case t: DecimalType =>
         arrowTypeBuilder.setDECIMAL(
           org.blaze.protobuf.Decimal
             .newBuilder()
-            .setWhole(t.precision) // precision - scale?
+            .setWhole(t.precision)
             .setFractional(t.scale)
             .build())
 
       // TODO: support complex data types
-      case a: ArrayType =>
-        arrowTypeBuilder.setLIST(
-          org.blaze.protobuf.List
-            .newBuilder()
-            .setFieldType(
-              pb.Field
-                .newBuilder()
-                .setName("element")
-                .setArrowType(convertDataType(a.elementType))
-                .setNullable(a.containsNull))
-            .build())
+      // case a: ArrayType =>
+      //   arrowTypeBuilder.setLIST(
+      //     org.blaze.protobuf.List
+      //       .newBuilder()
+      //       .setFieldType(
+      //         pb.Field
+      //           .newBuilder()
+      //           .setName("element")
+      //           .setArrowType(convertDataType(a.elementType))
+      //           .setNullable(a.containsNull))
+      //       .build())
       case _ =>
         throw new NotImplementedError(s"Data type conversion not implemented ${sparkDataType}")
     }
@@ -306,8 +308,8 @@ object NativeConverters {
           if (value == null) {
             dataType match {
               case at: ArrayType =>
-                b.setCast(
-                  pb.PhysicalCastNode
+                b.setTryCast(
+                  pb.PhysicalTryCastNode
                     .newBuilder()
                     .setArrowType(convertDataType(at))
                     .setExpr(buildExprNode {
@@ -324,14 +326,14 @@ object NativeConverters {
         }
       case ar: AttributeReference =>
         buildExprNode {
-          _.setColumn(pb.PhysicalColumn.newBuilder().setName(ar.toString()).build())
+          _.setColumn(pb.PhysicalColumn.newBuilder().setName(s"#${ar.exprId.id}").build())
         }
 
       // cast
       case Cast(child, dataType, _) =>
         buildExprNode {
-          _.setCast(
-            pb.PhysicalCastNode
+          _.setTryCast(
+            pb.PhysicalTryCastNode
               .newBuilder()
               .setExpr(convertExpr(child))
               .setArrowType(convertDataType(dataType))
@@ -484,38 +486,38 @@ object NativeConverters {
         buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
 
-      case GetArrayItem(child, Literal(ordinalValue: Number, _)) =>
-        buildExprNode {
-          _.setGetIndexedFieldExpr(
-            pb.GetIndexedFieldExprNode
-              .newBuilder()
-              .setExpr(convertExpr(child))
-              .setKey(convertValue(
-                ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
-                LongType)))
-        }
-
-      case e: CreateArray =>
-        buildExprNode {
-          _.setScalarFunction(
-            pb.PhysicalScalarFunctionNode
-              .newBuilder()
-              .setFun(pb.ScalarFunction.Array)
-              .setName(pb.ScalarFunction.Array.name())
-              .addAllArgs(e.children.map(convertExpr).asJava)
-              .setReturnType(
-                pb.ArrowType
-                  .newBuilder()
-                  .setFIXEDSIZELIST(
-                    pb.FixedSizeList
-                      .newBuilder()
-                      .setFieldType(pb.Field
-                        .newBuilder()
-                        .setName("item")
-                        .setArrowType(convertDataType(e.dataType.elementType))
-                        .setNullable(true))
-                      .setListSize(e.children.length))))
-        }
+      // case GetArrayItem(child, Literal(ordinalValue: Number, _)) =>
+      //   buildExprNode {
+      //     _.setGetIndexedFieldExpr(
+      //       pb.GetIndexedFieldExprNode
+      //         .newBuilder()
+      //         .setExpr(convertExpr(child))
+      //         .setKey(convertValue(
+      //           ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
+      //           LongType)))
+      //   }
+      //
+      // case e: CreateArray =>
+      //   buildExprNode {
+      //     _.setScalarFunction(
+      //       pb.PhysicalScalarFunctionNode
+      //         .newBuilder()
+      //         .setFun(pb.ScalarFunction.Array)
+      //         .setName(pb.ScalarFunction.Array.name())
+      //         .addAllArgs(e.children.map(convertExpr).asJava)
+      //         .setReturnType(
+      //           pb.ArrowType
+      //             .newBuilder()
+      //             .setFIXEDSIZELIST(
+      //               pb.FixedSizeList
+      //                 .newBuilder()
+      //                 .setFieldType(pb.Field
+      //                   .newBuilder()
+      //                   .setName("item")
+      //                   .setArrowType(convertDataType(e.dataType.elementType))
+      //                   .setNullable(true))
+      //                 .setListSize(e.children.length))))
+      //   }
 
       case If(predicate, trueValue, falseValue) =>
         buildExprNode {

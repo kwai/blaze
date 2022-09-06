@@ -86,10 +86,11 @@ dependencies {
 	compileOnly 'com.kuaishou.dataarch:shuffle-sdk:1.3.75-RELEASE:shaded'
 }
 
-configurations.all {
+configurations.implementation {
 	exclude module: "hive-hbase-handler"
 	exclude module: "htrace-core"
 	exclude module: "htrace-core-t"
+	exclude module: "zstd-jni"
 }
 
 shadowJar {

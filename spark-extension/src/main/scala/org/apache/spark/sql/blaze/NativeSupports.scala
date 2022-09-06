@@ -163,7 +163,7 @@ object NativeSupports extends Logging {
         }
 
         val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
-          StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+          StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
         val metrics = inputRDD.metrics
         val partitionClsName = shuffledRDD.getClass.getSimpleName
 

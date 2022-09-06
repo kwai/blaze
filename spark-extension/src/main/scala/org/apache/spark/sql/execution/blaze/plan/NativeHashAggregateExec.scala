@@ -157,7 +157,7 @@ case class NativeHashAggregateExec(
   }
 
   val nativeInputSchema: Schema = NativeConverters.convertSchema(StructType(child.output.map(a =>
-    StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+    StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
 
   val nativeGroupingExprs: Seq[PhysicalExprNode] = groupingExpressions.map { expr =>
     NativeConverters.convertExpr(expr)

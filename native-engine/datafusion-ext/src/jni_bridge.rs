@@ -53,9 +53,19 @@ macro_rules! jni_map_error_with_env {
         match $result {
             Ok(result) => datafusion::error::Result::Ok(result),
             Err(jni::errors::Error::JavaException) => {
-                let _ = $env.exception_describe();
+                let ex = $env.exception_occurred().unwrap();
+                $env.exception_describe().unwrap();
+                $env.exception_clear().unwrap();
+                let message_obj = $env.call_method_unchecked(
+                    ex,
+                    $crate::jni_bridge::JavaClasses::get().cJavaThrowable.method_getMessage,
+                    $crate::jni_bridge::JavaClasses::get().cJavaThrowable.method_getMessage_ret.clone(),
+                    &[],
+                ).unwrap().l().unwrap();
+                let message = $env.get_string(message_obj.into()).map(|s| String::from(s)).unwrap();
+
                 Err(datafusion::error::DataFusionError::External(
-                    format!("Java exception thrown at {}:{}", file!(), line!()).into(),
+                    format!("Java exception thrown at {}:{}: {}", file!(), line!(), message).into(),
                 ))
             }
             Err(err) => Err(datafusion::error::DataFusionError::External(
@@ -266,6 +276,7 @@ pub struct JavaClasses<'a> {
     pub cJniBridge: JniBridge<'a>,
     pub cHDFSObjectStoreBridge: HDFSObjectStoreBridge<'a>,
     pub cClass: JavaClass<'a>,
+    pub cJavaThrowable: JavaThrowable<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
     pub cJavaReadableByteChannel: JavaReadableByteChannel<'a>,
     pub cJavaBoolean: JavaBoolean<'a>,
@@ -317,6 +328,7 @@ impl JavaClasses<'static> {
 
                 cHDFSObjectStoreBridge: HDFSObjectStoreBridge::new(env).unwrap(),
                 cClass: JavaClass::new(env).unwrap(),
+                cJavaThrowable: JavaThrowable::new(env).unwrap(),
                 cJavaRuntimeException: JavaRuntimeException::new(env).unwrap(),
                 cJavaReadableByteChannel: JavaReadableByteChannel::new(env).unwrap(),
                 cJavaBoolean: JavaBoolean::new(env).unwrap(),
@@ -460,6 +472,29 @@ impl<'a> JavaClass<'a> {
                 "()Ljava/lang/String;",
             )?,
             method_getName_ret: JavaType::Object("java/lang/String".to_owned()),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JavaThrowable<'a> {
+    pub class: JClass<'a>,
+    pub method_getMessage: JMethodID<'a>,
+    pub method_getMessage_ret: JavaType,
+}
+impl<'a> JavaThrowable<'a> {
+    pub const SIG_TYPE: &'static str = "java/lang/Throwable";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaThrowable<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaThrowable {
+            class,
+            method_getMessage: env.get_method_id(
+                class,
+                "getMessage",
+                "()Ljava/lang/String;",
+            )?,
+            method_getMessage_ret: JavaType::Object("java/lang/String".to_owned()),
         })
     }
 }

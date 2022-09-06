@@ -159,8 +159,8 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
       friendlyName = "NativeRDD.BroadcastRead")
   }
 
-  val nativeSchema: Schema = NativeConverters.convertSchema(
-    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+  val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
+    StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
 
   def collectNative(): Array[Array[Byte]] = {
     val inputRDD = NativeSupports.executeNative(child match {

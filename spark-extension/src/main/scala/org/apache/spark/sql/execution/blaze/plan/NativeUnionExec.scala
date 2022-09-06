@@ -118,8 +118,8 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
           .build())
       .build()
 
-  val nativeSchema: Schema = NativeConverters.convertSchema(
-    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+  val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
+    StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
 
   override def doCanonicalize(): SparkPlan = UnionExec(children).canonicalized
 }
