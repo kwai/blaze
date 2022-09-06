@@ -59,7 +59,6 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.joins.BuildRight
 import org.apache.spark.sql.execution.ProjectExec
-import org.apache.spark.sql.execution.adaptive.ShuffleQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.UnaryExecNode
@@ -442,7 +441,7 @@ object BlazeConverters extends Logging {
 
   private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
     if (needRenameColumns(exec)) {
-      return NativeRenameColumnsExec(exec, exec.output.map(_.toString()))
+      return NativeRenameColumnsExec(exec, exec.output.map(a => s"#${a.exprId.id}"))
     }
     exec
   }

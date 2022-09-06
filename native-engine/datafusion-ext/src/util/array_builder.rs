@@ -220,6 +220,10 @@ pub fn builder_extend(
         DataType::Float64 => append_simple!(Float64),
         DataType::Date32 => append_simple!(Date32),
         DataType::Date64 => append_simple!(Date64),
+        DataType::Timestamp(TimeUnit::Second, _) => append_simple!(TimestampSecond),
+        DataType::Timestamp(TimeUnit::Millisecond, _) => append_simple!(TimestampMillisecond),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => append_simple!(TimestampMicrosecond),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => append_simple!(TimestampNanosecond),
         DataType::Time32(TimeUnit::Second) => append_simple!(Time32Second),
         DataType::Time32(TimeUnit::Millisecond) => append_simple!(Time32Millisecond),
         DataType::Time64(TimeUnit::Microsecond) => append_simple!(Time64Microsecond),
@@ -230,7 +234,7 @@ pub fn builder_extend(
         DataType::LargeUtf8 => append_simple!(LargeString),
         DataType::Decimal(_, _) => append_simple!(Decimal),
         DataType::Dictionary(key_type, value_type) => append_dict!(key_type, value_type),
-        _ => unimplemented!("data type not supported in shuffle write"),
+        dt => unimplemented!("data type not supported in builder_extend: {:?}", dt),
     }
 }
 
@@ -256,6 +260,10 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         DataType::Float64 => append!(Float64),
         DataType::Date32 => append!(Date32),
         DataType::Date64 => append!(Date64),
+        DataType::Timestamp(TimeUnit::Second, _) => append!(TimestampSecond),
+        DataType::Timestamp(TimeUnit::Millisecond, _) => append!(TimestampMillisecond),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => append!(TimestampMicrosecond),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => append!(TimestampNanosecond),
         DataType::Time32(TimeUnit::Second) => append!(Time32Second),
         DataType::Time32(TimeUnit::Millisecond) => append!(Time32Millisecond),
         DataType::Time64(TimeUnit::Microsecond) => append!(Time64Microsecond),
@@ -265,6 +273,6 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         DataType::Utf8 => append!(String),
         DataType::LargeUtf8 => append!(LargeString),
         DataType::Decimal(_, _) => append!(Decimal),
-        _ => unimplemented!("data type not supported in sort-merge join"),
+        dt => unimplemented!("data type not supported in builder_append_null: {:?}", dt),
     }
 }

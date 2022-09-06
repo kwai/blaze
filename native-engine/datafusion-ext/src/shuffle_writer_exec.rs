@@ -208,6 +208,7 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
         DataType::Float64 => len * 8,
         DataType::Date32 => len * 4,
         DataType::Date64 => len * 8,
+        DataType::Timestamp(_, _) => len * 8,
         DataType::Time32(TimeUnit::Second) => len * 4,
         DataType::Time32(TimeUnit::Millisecond) => len * 4,
         DataType::Time64(TimeUnit::Microsecond) => len * 4,
@@ -226,9 +227,9 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
             DataType::UInt16 => len * 2,
             DataType::UInt32 => len * 4,
             DataType::UInt64 => len * 8,
-            _ => unimplemented!("dictionary key type not supported in shuffle write"),
+            dt => unimplemented!("dictionary key type not supported in shuffle write: {:?}", dt),
         },
-        _ => unimplemented!("data type not supported in shuffle write"),
+        dt => unimplemented!("data type not supported in shuffle write: {:?}", dt),
     }
 }
 
