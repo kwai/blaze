@@ -109,8 +109,17 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
             }
         }
         let input_batch = RecordBatch::try_new(self.params_schema.clone(), param_arrays)?;
-        write_one_batch(&input_batch, &mut Cursor::new(&mut batch_buffer), false)?;
+        let output_schema = Arc::new(Schema::new(vec![Field::new(
+            "_c0",
+            self.return_type.clone(),
+            self.return_nullable,
+        )]));
 
+        if input_batch.num_rows() == 0 {
+            return Ok(ColumnarValue::from(&RecordBatch::new_empty(output_schema.clone())));
+        }
+
+        write_one_batch(&input_batch, &mut Cursor::new(&mut batch_buffer), false)?;
         let batch_byte_buffer = jni_new_direct_byte_buffer!(
             &mut batch_buffer[8..] // skip length header
         )?;
@@ -121,13 +130,8 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
         let mut reader = crate::ipc_reader_exec::ReadableByteChannelReader(
             jni_new_global_ref!(output_channel)?,
         );
-
-        let output_schema = Arc::new(Schema::new(vec![Field::new(
-            "_c0",
-            self.return_type.clone(),
-            self.return_nullable,
-        )]));
         let output_batch = read_one_batch(&mut reader, output_schema, false, false)?;
+
         if input_contains_array {
             Ok(ColumnarValue::Array(output_batch.column(0).clone()))
         } else {
