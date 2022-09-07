@@ -17,10 +17,8 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
-
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -34,7 +32,7 @@ import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.apache.spark.sql.execution.aggregate.HashAggregateExec
+import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec}
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec301
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
@@ -100,7 +98,7 @@ object BlazeConverters extends Logging {
       .transformUp {
         case exec @ (
               _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
-              _: SortMergeJoinExec | _: WindowExec
+              _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec
             ) =>
           exec.mapChildren(child => convertToUnsafeRow(child))
         case exec => exec
