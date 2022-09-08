@@ -69,7 +69,8 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       .mapValues(_.map(_.length).sum)
 
     def formatFilePath(path: String): String = {
-      if (path.startsWith("hdfs://") || path.startsWith("viewfs://")) {
+      if (path.startsWith("hdfs://") || path.startsWith("viewfs://") || path.startsWith(
+          "har://")) {
         // NOTE: see native object store registration codes
         return s"hdfs://-/${Base64.getEncoder.encodeToString(path.getBytes)}"
       }

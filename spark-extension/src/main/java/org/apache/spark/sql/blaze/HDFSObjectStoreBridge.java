@@ -18,6 +18,8 @@ package org.apache.spark.sql.blaze;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
@@ -29,15 +31,16 @@ import org.apache.spark.deploy.SparkHadoopUtil;
 
 public class HDFSObjectStoreBridge {
 
-  public static long size(String location) throws IOException {
-    FileSystem fs = FileSystem.get(SparkHadoopUtil.get().conf());
+  public static long size(String location) throws IOException, URISyntaxException {
+    FileSystem fs = getFileSystem(location);
     Path path = new Path(location);
     FileStatus fileStatus = fs.getFileStatus(path);
     return fileStatus.getLen();
   }
 
-  public static void read(String location, long offset, ByteBuffer buf) throws IOException {
-    FileSystem fs = FileSystem.get(SparkHadoopUtil.get().conf());
+  public static void read(String location, long offset, ByteBuffer buf)
+      throws IOException, URISyntaxException {
+    FileSystem fs = getFileSystem(location);
     Path path = new Path(location);
 
     try (FSDataInputStream in = fs.open(path)) {
@@ -53,5 +56,11 @@ public class HDFSObjectStoreBridge {
         throw new EOFException();
       }
     }
+  }
+
+  private static FileSystem getFileSystem(String location) throws IOException, URISyntaxException {
+    URI uri = new URI(location);
+    FileSystem fs = FileSystem.get(uri, SparkHadoopUtil.get().conf());
+    return fs;
   }
 }
