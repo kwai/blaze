@@ -17,8 +17,10 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
+
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -70,6 +72,7 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.CollectLimitExec
 import org.apache.spark.sql.execution.adaptive.QueryStage
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
+import org.apache.spark.sql.execution.command.DataWritingCommandExec
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -98,7 +101,8 @@ object BlazeConverters extends Logging {
       .transformUp {
         case exec @ (
               _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
-              _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec
+              _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec |
+              _: DataWritingCommandExec
             ) =>
           exec.mapChildren(child => convertToUnsafeRow(child))
         case exec => exec
