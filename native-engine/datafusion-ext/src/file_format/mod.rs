@@ -41,10 +41,10 @@ use datafusion::datasource::{listing::PartitionedFile, object_store::ObjectStore
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, Statistics};
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     scalar::ScalarValue,
 };
-use log::info;
+use datafusion::arrow::compute::cast;
 use object_store::{ObjectMeta, ObjectStore};
 
 pub use self::parquet::ParquetExec;
@@ -205,13 +205,9 @@ impl SchemaAdapter {
         for idx in projections {
             let field = self.table_schema.field(*idx);
             if let Ok(mapped_idx) = file_schema.index_of(field.name().as_str()) {
-                if file_schema.field(mapped_idx).data_type() == field.data_type() {
-                    mapped.push(mapped_idx)
-                } else {
-                    let msg = format!("Failed to map column projection for field {}. Incompatible data types {:?} and {:?}", field.name(), file_schema.field(mapped_idx).data_type(), field.data_type());
-                    info!("{}", msg);
-                    return Err(DataFusionError::Execution(msg));
-                }
+                // NOTE: blaze data type is not checked here because we will
+                // do some cast in adapt_batch (like binary -> string)
+                mapped.push(mapped_idx)
             }
         }
         Ok(mapped)
@@ -237,7 +233,8 @@ impl SchemaAdapter {
             if let Some((batch_idx, _name)) =
                 batch_schema.column_with_name(table_field.name().as_str())
             {
-                cols.push(batch_cols[batch_idx].clone());
+                // blaze: try to cast if column type does not match table field type
+                cols.push(cast(&batch_cols[batch_idx], table_field.data_type())?);
             } else {
                 cols.push(new_null_array(table_field.data_type(), batch_rows))
             }

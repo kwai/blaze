@@ -116,7 +116,8 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
         )]));
 
         if input_batch.num_rows() == 0 {
-            return Ok(ColumnarValue::from(&RecordBatch::new_empty(output_schema.clone())));
+            let empty_array = RecordBatch::new_empty(output_schema.clone()).column(0).clone();
+            return Ok(ColumnarValue::Array(empty_array));
         }
 
         write_one_batch(&input_batch, &mut Cursor::new(&mut batch_buffer), false)?;

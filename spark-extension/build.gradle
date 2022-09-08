@@ -83,7 +83,6 @@ dependencies {
 	compileOnly 'org.apache.spark:spark-core_2.11:2.4.1U1.9.33-SNAPSHOT'
 	compileOnly 'org.apache.spark:spark-sql_2.11:2.4.1U1.9.33-SNAPSHOT'
 	compileOnly 'org.apache.spark:spark-hive_2.11:2.4.1U1.9.33-SNAPSHOT'
-	compileOnly 'com.kuaishou.dataarch:shuffle-sdk:1.3.75-RELEASE:shaded'
 }
 
 configurations.implementation {
