@@ -210,10 +210,18 @@ struct Statistics {
     */
    1: optional binary max;
    2: optional binary min;
+
+   /**
+    * Blaze: these values are not used in parquet pruning filters, and cause
+    * `negative count` issues, so assign them with unreached ids to ensure
+    * the values are always empty.
+    */
+
    /** count of null value in the column */
-   3: optional i64 null_count;
+   1003: optional i64 null_count;
    /** count of distinct values occurring */
-   4: optional i64 distinct_count;
+   1004: optional i64 distinct_count;
+
    /**
     * Min and max values for the column, determined by its ColumnOrder.
     *
@@ -222,6 +230,7 @@ struct Statistics {
     */
    5: optional binary max_value;
    6: optional binary min_value;
+
 }
 
 /** Empty structs to use as logical type annotations */
