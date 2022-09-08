@@ -13,7 +13,7 @@ datafusion-ext = { path = "../datafusion-ext" }
 log = "0.4.14"
 object_store = "0.3.0"
 prost = "0.10"
-tonic = "0.6"
+tonic = "0.8"
 
 [build-dependencies]
 tonic-build = { version = "0.6" }
