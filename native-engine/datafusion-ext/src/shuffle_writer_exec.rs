@@ -195,6 +195,7 @@ impl PartitionBuffer {
 
 fn slot_size(len: usize, data_type: &DataType) -> usize {
     match data_type {
+        DataType::Null => 0,
         DataType::Boolean => len / 8,
         DataType::Int8 => len,
         DataType::Int16 => len * 2,

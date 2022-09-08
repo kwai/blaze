@@ -39,6 +39,7 @@ object ArrowUtils2 {
   /** Maps data type from Spark to Arrow. NOTE: timeZoneId required for TimestampTypes */
   def toArrowType(dt: DataType, timeZoneId: String): ArrowType =
     dt match {
+      case NullType => ArrowType.Null.INSTANCE
       case BooleanType => ArrowType.Bool.INSTANCE
       case ByteType => new ArrowType.Int(8, true)
       case ShortType => new ArrowType.Int(8 * 2, true)
@@ -63,6 +64,7 @@ object ArrowUtils2 {
 
   def fromArrowType(dt: ArrowType): DataType =
     dt match {
+      case ArrowType.Null.INSTANCE => NullType
       case ArrowType.Bool.INSTANCE => BooleanType
       case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 => ByteType
       case int: ArrowType.Int if int.getIsSigned && int.getBitWidth == 8 * 2 => ShortType
