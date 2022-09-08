@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::any::Any;
+use std::sync::Arc;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
 use datafusion::arrow::error::Result as ArrowResult;
@@ -78,6 +80,7 @@ pub fn new_array_builders(
         }
 
         match dt {
+            DataType::Null => Box::new(NullBuilder::new()),
             DataType::Dictionary(key_type, value_type) => {
                 make_dictionary_builder!(key_type, value_type)
             }
@@ -207,6 +210,9 @@ pub fn builder_extend(
     }
 
     match data_type {
+        DataType::Null => {
+            builder.as_any_mut().downcast_mut::<NullBuilder>().unwrap().extend(indices.len());
+        },
         DataType::Boolean => append_simple!(Boolean),
         DataType::Int8 => append_simple!(Int8),
         DataType::Int16 => append_simple!(Int16),
@@ -247,6 +253,9 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         }};
     }
     match data_type {
+        DataType::Null => {
+            to.as_any_mut().downcast_mut::<NullBuilder>().unwrap().append();
+        },
         DataType::Boolean => append!(Boolean),
         DataType::Int8 => append!(Int8),
         DataType::Int16 => append!(Int16),
@@ -274,5 +283,46 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         DataType::LargeUtf8 => append!(LargeString),
         DataType::Decimal(_, _) => append!(Decimal),
         dt => unimplemented!("data type not supported in builder_append_null: {:?}", dt),
+    }
+}
+
+struct NullBuilder(usize);
+impl NullBuilder {
+    fn new() -> Self {
+        Self(0)
+    }
+
+    fn append(&mut self) {
+        self.0 += 1;
+    }
+
+    fn extend(&mut self, len: usize) {
+        self.0 += len;
+    }
+}
+
+impl ArrayBuilder for NullBuilder {
+    fn len(&self) -> usize {
+        self.0
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    fn finish(&mut self) -> ArrayRef {
+        Arc::new(NullArray::new(self.0))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_box_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }

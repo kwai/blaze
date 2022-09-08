@@ -43,6 +43,7 @@ object ArrowWriter {
   private def createFieldWriter(vector: ValueVector): ArrowFieldWriter = {
     val field = vector.getField()
     (ArrowUtils2.fromArrowField(field), vector) match {
+      case (NullType, vector: NullVector) => new NullWriter(vector)
       case (BooleanType, vector: BitVector) => new BooleanWriter(vector)
       case (ByteType, vector: TinyIntVector) => new ByteWriter(vector)
       case (ShortType, vector: SmallIntVector) => new ShortWriter(vector)
@@ -136,6 +137,11 @@ private[sql] abstract class ArrowFieldWriter {
     valueVector.reset()
     count = 0
   }
+}
+
+private[sql] class NullWriter(val valueVector: NullVector) extends ArrowFieldWriter {
+  override def setNull(): Unit = {}
+  override def setValue(input: SpecializedGetters, ordinal: Int): Unit = {}
 }
 
 private[sql] class BooleanWriter(val valueVector: BitVector) extends ArrowFieldWriter {

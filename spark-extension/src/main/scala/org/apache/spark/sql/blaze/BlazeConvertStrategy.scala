@@ -38,6 +38,7 @@ import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
 import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
+import org.apache.spark.sql.types.TimestampType
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -62,6 +63,11 @@ object BlazeConvertStrategy extends Logging {
   val neverConvertSkewJoinEnabled: Boolean =
     SparkEnv.get.conf
       .getBoolean("spark.blaze.strategy.enable.neverConvertSkewJoin", defaultValue = true)
+  val neverConvertExecWithTimestampEnabled: Boolean =
+    SparkEnv.get.conf
+      .getBoolean(
+        "spark.blaze.strategy.enable.neverConvertExecWithTimestamp",
+        defaultValue = true)
   val neverConvertJoinsWithPostConditionEnabled: Boolean =
     SparkEnv.get.conf.getBoolean(
       "spark.blaze.strategy.enable.neverConvertJoinsWtihCondition",
@@ -109,6 +115,8 @@ object BlazeConvertStrategy extends Logging {
     // execute some special strategies
     if (neverConvertSkewJoinEnabled)
       neverConvertSkewJoin(exec)
+    if (neverConvertExecWithTimestampEnabled)
+      neverConvertExecWithTimestamp(exec)
     if (neverConvertJoinsWithPostConditionEnabled)
       neverConvertJoinsWithPostCondition(exec)
     if (alwaysConvertDirectSortMergeJoinEnabled)
@@ -171,10 +179,18 @@ object BlazeConvertStrategy extends Logging {
   }
 
   private def neverConvertSkewJoin(exec: SparkPlan): Unit = {
+    // exec.foreach {
+    //   case e: SortMergeJoinExec if e.isSkewJoin =>
+    //     e.setTagValue(convertStrategyTag, NeverConvert)
+    //     e.children.foreach(_.setTagValue(convertStrategyTag, NeverConvert))
+    //   case _ =>
+    // }
+  }
+
+  private def neverConvertExecWithTimestamp(exec: SparkPlan): Unit = {
     exec.foreach {
-      // case e: SortMergeJoinExec if e.isSkewJoin =>
-      //   e.setTagValue(convertStrategyTag, NeverConvert)
-      //   e.children.foreach(_.setTagValue(convertStrategyTag, NeverConvert))
+      case e if e.output.exists(_.dataType == TimestampType) =>
+        e.setTagValue(convertStrategyTag, NeverConvert)
       case _ =>
     }
   }
