@@ -98,7 +98,7 @@ fn test_murmur3() {
 }
 
 macro_rules! hash_array {
-    ($array_type:ident, $column: ident, $ty: ident, $hashes: ident) => {
+    ($array_type:ident, $column: ident, $hashes: ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
@@ -258,11 +258,17 @@ pub fn create_hashes<'a>(
             DataType::Date64 => {
                 hash_array_primitive!(Date64Array, col, i64, hashes_buffer);
             }
+            DataType::Binary => {
+                hash_array!(BinaryArray, col, hashes_buffer);
+            }
+            DataType::LargeBinary => {
+                hash_array!(LargeBinaryArray, col, hashes_buffer);
+            }
             DataType::Utf8 => {
-                hash_array!(StringArray, col, str, hashes_buffer);
+                hash_array!(StringArray, col, hashes_buffer);
             }
             DataType::LargeUtf8 => {
-                hash_array!(LargeStringArray, col, str, hashes_buffer);
+                hash_array!(LargeStringArray, col, hashes_buffer);
             }
             DataType::Decimal(_, _) => {
                 hash_array_decimal!(DecimalArray, col, hashes_buffer);
