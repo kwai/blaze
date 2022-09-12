@@ -417,7 +417,7 @@ dependencies = [
  "lazy_static",
  "log",
  "num_cpus",
- "object_store",
+ "object_store 0.3.0",
  "ordered-float 3.0.0",
  "parking_lot",
  "parquet",
@@ -440,7 +440,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "794ca54d3b144038c36b7a31d64c9545abb2edbdda6da055e481fb8a13e4e33b"
 dependencies = [
  "arrow",
- "object_store",
+ "object_store 0.3.0",
  "ordered-float 3.0.0",
  "parquet",
  "sqlparser",
@@ -473,7 +473,7 @@ dependencies = [
  "itertools",
  "jni",
  "log",
- "object_store",
+ "object_store 0.5.0",
  "once_cell",
  "paste",
  "tempfile",
@@ -1297,6 +1297,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "object_store"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2168fee79ee3e7695905bc3a48777d807f82d956f821186fa7a2601c1295a73e"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures",
+ "itertools",
+ "parking_lot",
+ "percent-encoding",
+ "snafu",
+ "tokio",
+ "tracing",
+ "url",
+ "walkdir",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1456,7 +1476,7 @@ dependencies = [
  "datafusion",
  "datafusion-ext",
  "log",
- "object_store",
+ "object_store 0.5.0",
  "prost 0.10.4",
  "tonic",
  "tonic-build",
