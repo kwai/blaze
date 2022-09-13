@@ -23,6 +23,7 @@ import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.NullVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TinyIntVector;
@@ -190,6 +191,8 @@ public final class ArrowColumnVector extends ColumnVector {
       for (int i = 0; i < childColumns.length; ++i) {
         childColumns[i] = new ArrowColumnVector(structVector.getVectorById(i));
       }
+    } else if (vector instanceof NullVector) {
+      accessor = new NullAccessor((NullVector) vector);
     } else {
       throw new UnsupportedOperationException();
     }
@@ -203,7 +206,7 @@ public final class ArrowColumnVector extends ColumnVector {
       this.vector = vector;
     }
 
-    final boolean isNullAt(int rowId) {
+    boolean isNullAt(int rowId) {
       if (vector.getValueCount() > 0 && vector.getValidityBuffer().capacity() == 0) {
         return false;
       } else {
@@ -265,6 +268,21 @@ public final class ArrowColumnVector extends ColumnVector {
 
     ColumnarMap getMap(int rowId) {
       throw new UnsupportedOperationException();
+    }
+  }
+
+  private static class NullAccessor extends ArrowVectorAccessor {
+
+    private final NullVector accessor;
+
+    NullAccessor(NullVector vector) {
+      super(vector);
+      this.accessor = vector;
+    }
+
+    @Override
+    boolean isNullAt(int rowId) {
+      return true;
     }
   }
 
