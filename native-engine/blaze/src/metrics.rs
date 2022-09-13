@@ -20,15 +20,6 @@ use jni::objects::JObject;
 use datafusion_ext::jni_call;
 use datafusion_ext::jni_new_string;
 
-const REPORTED_METRICS: &[&str] = &[
-    "input_rows",
-    "input_batches",
-    "output_rows",
-    "output_batches",
-    "elapsed_compute",
-    "join_time",
-];
-
 pub fn update_spark_metric_node(
     metric_node: JObject,
     execution_plan: Arc<dyn ExecutionPlan>,
@@ -60,10 +51,8 @@ fn update_metrics(
     metric_values: &[(&str, i64)],
 ) -> datafusion::error::Result<()> {
     for &(name, value) in metric_values {
-        if REPORTED_METRICS.contains(&name) {
-            let jname = jni_new_string!(&name)?;
-            jni_call!(SparkMetricNode(metric_node).add(jname, value) -> ())?;
-        }
+        let jname = jni_new_string!(&name)?;
+        jni_call!(SparkMetricNode(metric_node).add(jname, value) -> ())?;
     }
     Ok(())
 }

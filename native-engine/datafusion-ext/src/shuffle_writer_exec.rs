@@ -95,22 +95,24 @@ impl PartitionBuffer {
         let mut mem_diff = 0;
         let mut start = 0;
 
-        // lazy init because some partition may be empty
-        if self.active.is_empty() {
-            self.active = new_array_builders(&self.schema, self.staging_size);
-            if self.active_slots_mem_size == 0 {
-                self.active_slots_mem_size = self
-                    .active
-                    .iter()
-                    .zip(self.schema.fields())
-                    .map(|(_ab, field)| slot_size(self.staging_size, field.data_type()))
-                    .sum::<usize>();
-            }
-            mem_diff += self.active_slots_mem_size as isize;
-        }
-
         while start < indices.len() {
-            let end = (start + self.batch_size).min(indices.len());
+
+            // lazy init because some partition may be empty
+            if self.active.is_empty() {
+                self.active = new_array_builders(&self.schema, self.staging_size);
+                if self.active_slots_mem_size == 0 {
+                    self.active_slots_mem_size = self
+                        .active
+                        .iter()
+                        .zip(self.schema.fields())
+                        .map(|(_ab, field)| slot_size(self.staging_size, field.data_type()))
+                        .sum::<usize>();
+                }
+                mem_diff += self.active_slots_mem_size as isize;
+            }
+
+            let extend_len = (indices.len() - start)
+                .min(self.staging_size.saturating_sub(self.num_active_rows));
             self.active
                 .iter_mut()
                 .zip(columns)
@@ -118,15 +120,15 @@ impl PartitionBuffer {
                     builder_extend(
                         builder,
                         column,
-                        &indices[start..end],
+                        &indices[start..][..extend_len],
                         column.data_type(),
                     );
                 });
-            self.num_active_rows += indices.len();
+            self.num_active_rows += extend_len;
             if self.num_active_rows >= self.staging_size {
                 mem_diff += self.flush_to_staging()?;
             }
-            start = end;
+            start += extend_len;
         }
         Ok(mem_diff)
     }
@@ -174,13 +176,12 @@ impl PartitionBuffer {
             return Ok(mem_diff);
         }
 
-        let frozen_batch = RecordBatch::concat(&self.schema, &self.staging)?;
         mem_diff -= self
             .staging
             .iter()
             .map(|batch| batch_byte_size(batch) as isize)
             .sum::<isize>();
-        self.staging.clear();
+        let frozen_batch = RecordBatch::concat(&self.schema, &std::mem::take(&mut self.staging))?;
         self.num_staging_rows = 0;
 
         let frozen_capacity_old = self.frozen.capacity();
@@ -350,12 +351,11 @@ impl ShuffleRepartitioner {
                     let mut buffered_partitions = self.buffered_partitions.lock().await;
                     let output = &mut buffered_partitions[partition_id];
 
-                    if end - start < output.batch_size {
+                    if end - start < output.staging_size {
                         mem_diff += output.append_rows(
                             input.columns(),
                             &shuffled_partition_ids[start..end],
                         )?;
-                        std::mem::drop(buffered_partitions);
                     } else {
                         // for bigger slice, we can use column based operation
                         // to build batches and directly append to output.
@@ -377,6 +377,7 @@ impl ShuffleRepartitioner {
                         )?;
                         mem_diff += output.append_batch(batch)?;
                     }
+                    std::mem::drop(buffered_partitions);
                 }
 
                 if mem_diff > 0 {

@@ -43,6 +43,7 @@ class ArrowWriterIterator(
   private var allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowWriterIterator", 0, Long.MaxValue)
   private var root = VectorSchemaRoot.create(arrowSchema, allocator)
+  private val arrowWriter: ArrowWriter = ArrowWriter.create(root)
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
@@ -56,8 +57,8 @@ class ArrowWriterIterator(
     }
 
   override def next(): ReadableByteChannel = {
-    val arrowWriter = ArrowWriter.create(root)
     var rowCount = 0
+
     while (rowIter.hasNext && rowCount < recordBatchSize) {
       arrowWriter.write(rowIter.next())
       rowCount += 1
@@ -72,6 +73,7 @@ class ArrowWriterIterator(
         writer.end()
         writer.close()
       }
+      arrowWriter.reset()
       root.clear()
       new SeekableInMemoryByteChannel(outputStream.toByteArray)
     }

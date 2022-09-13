@@ -30,12 +30,12 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.blaze.BlazeConverters
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowWriterIterator
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.IpcReaderExecNode
@@ -53,7 +53,8 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   override def outputPartitioning: Partitioning = child.outputPartitioning
 
   override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+    NativeSupports.getDefaultNativeMetrics(sparkContext) ++ Map(
+      "size" -> SQLMetrics.createSizeMetric(sparkContext, "Native.batch_bytes_size"))
 
   val renamedSchema: StructType =
     StructType(

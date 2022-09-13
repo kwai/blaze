@@ -33,10 +33,11 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::{BaselineMetrics, Count, MetricBuilder};
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::DisplayFormatType;
+use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
@@ -129,6 +130,8 @@ impl ExecutionPlan for IpcReaderExec {
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
+        let size_counter = MetricBuilder::new(&self.metrics).counter("size", partition);
+
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
@@ -148,6 +151,7 @@ impl ExecutionPlan for IpcReaderExec {
             segments,
             mode,
             baseline_metrics,
+            size_counter,
         )))
     }
 
@@ -170,6 +174,7 @@ struct IpcReaderStream {
     segments: GlobalRef,
     reader: Option<Box<dyn RecordBatchReader>>,
     baseline_metrics: BaselineMetrics,
+    size_counter: Count,
 }
 unsafe impl Sync for IpcReaderStream {} // safety: segments is safe to be shared
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -181,6 +186,7 @@ impl IpcReaderStream {
         segments: GlobalRef,
         mode: IpcReadMode,
         baseline_metrics: BaselineMetrics,
+        size_counter: Count,
     ) -> IpcReaderStream {
         IpcReaderStream {
             schema,
@@ -188,6 +194,7 @@ impl IpcReaderStream {
             segments,
             reader: None,
             baseline_metrics,
+            size_counter,
         }
     }
 
@@ -258,6 +265,9 @@ impl Stream for IpcReaderStream {
 
         if let Some(reader) = &mut self.reader {
             if let Some(batch) = reader.next_batch() {
+                if let Ok(batch) = batch.as_ref() {
+                    self.size_counter.add(batch_byte_size(batch));
+                }
                 return self.baseline_metrics.record_poll(Poll::Ready(Some(batch)));
             }
         }

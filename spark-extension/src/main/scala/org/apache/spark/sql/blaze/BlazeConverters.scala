@@ -164,7 +164,8 @@ object BlazeConverters extends Logging {
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
 
     val convertedChild = outputPartitioning match {
-      case _: HashPartitioning => convertToNative(child)
+      case _: HashPartitioning if BlazeConvertStrategy.preferNativeShuffle =>
+        convertToNative(child)
       case _ => child
     }
     ArrowShuffleExchangeExec301(outputPartitioning, addRenameColumnsExec(convertedChild))
