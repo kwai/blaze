@@ -27,6 +27,7 @@ use std::{
     sync::Arc,
     vec,
 };
+use std::borrow::Borrow;
 
 use async_trait::async_trait;
 use datafusion::arrow::array::new_null_array;
@@ -73,6 +74,8 @@ pub struct FileScanConfig {
     pub limit: Option<usize>,
     /// The partitioning column names
     pub table_partition_cols: Vec<String>,
+    /// The partitioning columns schema
+    pub partition_schema: SchemaRef,
 }
 
 impl FileScanConfig {
@@ -103,7 +106,7 @@ impl FileScanConfig {
                 let partition_idx = idx - self.file_schema.fields().len();
                 table_fields.push(Field::new(
                     &self.table_partition_cols[partition_idx],
-                    DataType::Utf8,
+                    self.partition_schema.field(partition_idx).data_type().clone(),
                     false,
                 ));
                 // TODO provide accurate stat for partition column (#1186)

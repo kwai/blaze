@@ -985,7 +985,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             Some(projection)
         };
         let statistics = convert_required!(self.statistics)?;
-
+        let partition_schema = Arc::new(convert_required!(self.partition_schema)?);
         Ok(FileScanConfig {
             object_store_url: ListingTableUrl::parse(
                 self.file_groups
@@ -1005,6 +1005,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             projection,
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
             table_partition_cols: self.table_partition_cols.clone(),
+            partition_schema: partition_schema,
         })
     }
 }
