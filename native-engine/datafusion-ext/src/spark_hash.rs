@@ -128,7 +128,7 @@ macro_rules! hash_array_primitive {
             for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
                 if !array.is_null(i) {
                     *hash = spark_compatible_murmur3_hash(
-                        (*value as i32).to_le_bytes(),
+                        (*value as $ty).to_le_bytes(),
                         *hash,
                     );
                 }

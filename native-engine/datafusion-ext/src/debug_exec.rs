@@ -103,6 +103,7 @@ impl ExecutionPlan for DebugExec {
         let input = self.input.execute(partition, context)?;
 
         Ok(Box::pin(DebugStream {
+            partition,
             input,
             debug_id: self.debug_id.clone(),
             metrics: Arc::new(baseline_metrics),
@@ -127,6 +128,7 @@ impl ExecutionPlan for DebugExec {
 }
 
 struct DebugStream {
+    partition: usize,
     input: SendableRecordBatchStream,
     debug_id: String,
     metrics: Arc<BaselineMetrics>,
@@ -153,7 +155,7 @@ impl Stream for DebugStream {
                     .to_string()
                     .replace('\n', &format!("\n{} - ", self.debug_id));
 
-                log::info!("{}", table_str);
+                log::info!("DebugExec(partition={}):\n{}", self.partition, table_str);
                 Poll::Ready(Some(Ok(batches.pop().unwrap())))
             }
             Poll::Ready(None) => Poll::Ready(None),
