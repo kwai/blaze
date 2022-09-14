@@ -155,12 +155,12 @@ object NativeConverters {
       case StringType => arrowTypeBuilder.setUTF8(pb.EmptyMessage.getDefaultInstance)
       case BinaryType => arrowTypeBuilder.setBINARY(pb.EmptyMessage.getDefaultInstance)
       case DateType => arrowTypeBuilder.setDATE32(pb.EmptyMessage.getDefaultInstance)
-      case TimestampType =>
-        arrowTypeBuilder.setTIMESTAMP(
-          pb.Timestamp
-            .newBuilder()
-            .setTimezone("") // convert to native None
-            .setTimeUnit(TimeUnit.Nanosecond))
+//      case TimestampType =>
+//        arrowTypeBuilder.setTIMESTAMP(
+//          pb.Timestamp
+//            .newBuilder()
+//            .setTimezone("") // convert to native None
+//            .setTimeUnit(TimeUnit.Nanosecond))
 
       // decimal
       case t: DecimalType =>
@@ -254,6 +254,19 @@ object NativeConverters {
             .setAggrFunction(aggrFunction)
             .setExpr(convertExpr(child)))
       }
+
+//    def buildCastExprNode(
+//        castFunction: pb.ScalarFunction,
+//        children: Seq[Expression],
+//        dataType: DataType): pb.PhysicalExprNode =
+//      buildExprNode {
+//        _.setTryCast(
+//          pb.PhysicalTryCastNode
+//            .newBuilder()
+//            .setExpr(buildScalarFunction(castFunction, children, dataType))
+//            .setArrowType(convertDataType(dataType))
+//            .build())
+//      }
 
     def buildBinaryExprNode(
         left: Expression,
@@ -441,8 +454,24 @@ object NativeConverters {
       case e: Log => buildScalarFunction(pb.ScalarFunction.Log, e.children, e.dataType)
       case e: Log2 => buildScalarFunction(pb.ScalarFunction.Log2, e.children, e.dataType)
       case e: Log10 => buildScalarFunction(pb.ScalarFunction.Log10, e.children, e.dataType)
-      case e: Floor => buildScalarFunction(pb.ScalarFunction.Floor, e.children, e.dataType)
-      case e: Ceil => buildScalarFunction(pb.ScalarFunction.Ceil, e.children, e.dataType)
+      case e: Floor =>
+        buildExprNode {
+          _.setTryCast(
+            pb.PhysicalTryCastNode
+              .newBuilder()
+              .setExpr(buildScalarFunction(pb.ScalarFunction.Floor, e.children, e.dataType))
+              .setArrowType(convertDataType(e.dataType))
+              .build())
+        }
+      case e: Ceil =>
+        buildExprNode {
+          _.setTryCast(
+            pb.PhysicalTryCastNode
+              .newBuilder()
+              .setExpr(buildScalarFunction(pb.ScalarFunction.Ceil, e.children, e.dataType))
+              .setArrowType(convertDataType(e.dataType))
+              .build())
+        }
       case Round(_1, Literal(0, _)) =>
         buildScalarFunction(pb.ScalarFunction.Round, Seq(_1), _1.dataType)
       // case Nothing => buildScalarFunction(pb.ScalarFunction.TRUNC, Nil)

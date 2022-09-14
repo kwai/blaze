@@ -189,7 +189,9 @@ object BlazeConvertStrategy extends Logging {
 
   private def neverConvertExecWithTimestamp(exec: SparkPlan): Unit = {
     exec.foreach {
-      case e if e.output.exists(_.dataType == TimestampType) =>
+      case e
+          if e.output.exists(_.dataType == TimestampType) || e.children.exists(
+            _.output.exists(_.dataType == TimestampType)) =>
         e.setTagValue(convertStrategyTag, NeverConvert)
       case _ =>
     }
