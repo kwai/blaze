@@ -421,8 +421,10 @@ object NativeConverters {
       case Add(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Plus")
       case Subtract(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Minus")
       case Multiply(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Multiply")
-      case Divide(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Divide")
-      case Remainder(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Modulo")
+      case Divide(lhs, rhs) =>
+        buildBinaryExprNode(lhs, new NullIf(rhs, Literal.create(0, rhs.dataType)), "Divide")
+      case Remainder(lhs, rhs) =>
+        buildBinaryExprNode(lhs, new NullIf(rhs, Literal.create(0, rhs.dataType)), "Modulo")
       case Like(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Like")
       case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
       case Or(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Or")
