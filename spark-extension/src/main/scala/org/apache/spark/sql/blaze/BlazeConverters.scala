@@ -17,10 +17,8 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
-
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -40,28 +38,32 @@ import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
-import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.FilterExec
-import org.apache.spark.sql.execution.SortExec
+import org.apache.spark.sql.execution.{
+  CollectLimitExec,
+  FileSourceScanExec,
+  FilterExec,
+  ProjectExec,
+  SortExec,
+  SparkPlan,
+  TakeOrderedAndProjectExec,
+  UnaryExecNode,
+  UnionExec
+}
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
-import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToUnsafeRowExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinExec
-import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastHashJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.joins.BuildRight
-import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
-import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
@@ -69,7 +71,6 @@ import org.apache.spark.sql.blaze.BlazeConvertStrategy.idTag
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.window.WindowExec
-import org.apache.spark.sql.execution.CollectLimitExec
 import org.apache.spark.sql.execution.adaptive.QueryStage
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
@@ -102,7 +103,7 @@ object BlazeConverters extends Logging {
         case exec @ (
               _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
               _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec |
-              _: DataWritingCommandExec
+              _: DataWritingCommandExec | _: TakeOrderedAndProjectExec
             ) =>
           exec.mapChildren(child => convertToUnsafeRow(child))
         case exec => exec
