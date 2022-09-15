@@ -316,10 +316,12 @@ object BlazeConverters extends Logging {
               right) =>
           var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
             case BuildRight =>
+              assert(NativeSupports.isNative(right))
               val convertedLeft = convertToNative(left)
               (right, rightKeys, convertedLeft, leftKeys)
 
             case BuildLeft =>
+              assert(NativeSupports.isNative(left))
               val convertedRight = convertToNative(right)
               (left, leftKeys, convertedRight, rightKeys)
 
