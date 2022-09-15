@@ -235,6 +235,10 @@ object BlazeConverters extends Logging {
     exec match {
       case UnionExec(children) =>
         logDebug(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
+        for (a <- children) {
+          assert(a.output.map(_.dataType) == exec.output.map(_.dataType))
+          assert(a.output.map(_.nullable) == exec.output.map(_.nullable))
+        }
         NativeUnionExec(children.map(child => {
           addRenameColumnsExec(convertToNative(child))
         }))
