@@ -493,6 +493,9 @@ object BlazeConverters extends Logging {
   }
 
   private def needRenameColumns(exec: SparkPlan): Boolean = {
+    if (exec.output.isEmpty) {
+      return false
+    }
     exec match {
       case exec: QueryStageInput =>
         needRenameColumns(exec.childStage) || exec.output != exec.childStage.output
