@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.PartitionedFile
+import org.apache.spark.sql.execution.statsEstimation.Statistics
 import org.blaze.{protobuf => pb}
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
@@ -151,6 +152,8 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       },
       friendlyName = "NativeRDD.ParquetScan")
   }
+
+  override def computeStats(): Statistics = basedFileScan.computeStats()
 
   override val nodeName: String =
     s"NativeParquetScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
