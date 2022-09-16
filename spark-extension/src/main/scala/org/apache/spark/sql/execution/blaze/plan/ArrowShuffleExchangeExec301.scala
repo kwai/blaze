@@ -363,7 +363,8 @@ object ArrowShuffleExchangeExec301 {
       outputPartitioning: Partitioning,
       serializer: Serializer,
       metrics: Map[String, SQLMetric],
-      nativeHashExprs: List[PhysicalExprNode]): ShuffleDependency[Int, InternalRow, InternalRow] = {
+      nativeHashExprs: List[PhysicalExprNode])
+      : ShuffleDependency[Int, InternalRow, InternalRow] = {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val HashPartitioning(expressions, numPartitions) =
