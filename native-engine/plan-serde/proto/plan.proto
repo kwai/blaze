@@ -79,9 +79,8 @@ message PhysicalExprNode {
 
     // Fallback to VJM expression
     PhysicalFallbackToJvmExprNode fallback_to_jvm_expr = 10000;
-
     // GetIndexedField
-    GetIndexedFieldExprNode get_indexed_field_expr = 20000;
+    PhysicalGetIndexedFieldExprNode get_indexed_field_expr = 10001;
   }
 }
 
@@ -272,7 +271,7 @@ message PhysicalFallbackToJvmExprNode {
   repeated PhysicalExprNode params = 4;
 }
 
-message GetIndexedFieldExprNode {
+message PhysicalGetIndexedFieldExprNode {
   PhysicalExprNode expr = 1;
   ScalarValue key = 2;
 }

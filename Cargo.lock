@@ -475,6 +475,7 @@ dependencies = [
  "jni",
  "lazy_static",
  "log",
+ "num",
  "object_store",
  "once_cell",
  "paste",
