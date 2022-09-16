@@ -69,6 +69,7 @@ import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.apache.spark.util.CompletionIterator
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
+import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalHashRepartition
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
@@ -116,7 +117,8 @@ case class ArrowShuffleExchangeExec301(
         child.output,
         newPartitioning,
         serializer,
-        metrics)
+        metrics,
+        nativeHashExprs)
     } else {
       ArrowShuffleExchangeExec301.prepareShuffleDependency(
         rdd,
@@ -222,6 +224,12 @@ case class ArrowShuffleExchangeExec301(
 
   val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
     StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
+
+  val nativeHashExprs: List[PhysicalExprNode] = outputPartitioning match {
+    case HashPartitioning(expressions, _) =>
+      expressions.map(NativeConverters.convertExpr).toList
+    case _ => null
+  }
 
   override def doExecuteNative(): NativeRDD = {
     val shuffleDependency = prepareShuffleDependency()
@@ -354,7 +362,8 @@ object ArrowShuffleExchangeExec301 {
       outputAttributes: Seq[Attribute],
       outputPartitioning: Partitioning,
       serializer: Serializer,
-      metrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
+      metrics: Map[String, SQLMetric],
+      nativeHashExprs: List[PhysicalExprNode]): ShuffleDependency[Int, InternalRow, InternalRow] = {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val HashPartitioning(expressions, numPartitions) =
@@ -391,7 +400,7 @@ object ArrowShuffleExchangeExec301 {
                 PhysicalHashRepartition
                   .newBuilder()
                   .setPartitionCount(numPartitions)
-                  .addAllHashExpr(expressions.map(NativeConverters.convertExpr).asJava)
+                  .addAllHashExpr(nativeHashExprs.asJava)
                   .build())
               .buildPartial()
           ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
