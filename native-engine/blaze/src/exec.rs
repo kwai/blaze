@@ -23,14 +23,14 @@ use std::time::Duration;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-use datafusion::execution::context::TaskContext;
+
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
-use datafusion_ext::jni_bridge::{JavaBoolean, JavaClasses, JniBridge};
+use datafusion_ext::jni_bridge::{JavaClasses};
 use datafusion_ext::*;
 use futures::{FutureExt, StreamExt};
 use jni::objects::{JClass, JString};
@@ -382,9 +382,9 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE{
+        if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE {
             jni_exception_clear!()?;
-            log::info!("native execution interrupted by isTaskRunning");
+            log::info!("native execution completed/interrupted");
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);

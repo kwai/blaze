@@ -96,7 +96,6 @@ impl PartitionBuffer {
         let mut start = 0;
 
         while start < indices.len() {
-
             // lazy init because some partition may be empty
             if self.active.is_empty() {
                 self.active = new_array_builders(&self.schema, self.staging_size);
@@ -105,7 +104,9 @@ impl PartitionBuffer {
                         .active
                         .iter()
                         .zip(self.schema.fields())
-                        .map(|(_ab, field)| slot_size(self.staging_size, field.data_type()))
+                        .map(|(_ab, field)| {
+                            slot_size(self.staging_size, field.data_type())
+                        })
                         .sum::<usize>();
                 }
                 mem_diff += self.active_slots_mem_size as isize;
@@ -181,7 +182,8 @@ impl PartitionBuffer {
             .iter()
             .map(|batch| batch_byte_size(batch) as isize)
             .sum::<isize>();
-        let frozen_batch = RecordBatch::concat(&self.schema, &std::mem::take(&mut self.staging))?;
+        let frozen_batch =
+            RecordBatch::concat(&self.schema, &std::mem::take(&mut self.staging))?;
         self.num_staging_rows = 0;
 
         let frozen_capacity_old = self.frozen.capacity();
@@ -229,7 +231,10 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
             DataType::UInt16 => len * 2,
             DataType::UInt32 => len * 4,
             DataType::UInt64 => len * 8,
-            dt => unimplemented!("dictionary key type not supported in shuffle write: {:?}", dt),
+            dt => unimplemented!(
+                "dictionary key type not supported in shuffle write: {:?}",
+                dt
+            ),
         },
         dt => unimplemented!("data type not supported in shuffle write: {:?}", dt),
     }

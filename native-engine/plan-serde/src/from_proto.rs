@@ -68,8 +68,8 @@ use crate::{from_proto_binary_op, proto_error};
 use datafusion::arrow::datatypes::Field;
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
-use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
 use datafusion_ext::expr::cast::TryCastExpr;
+use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
 use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 
 fn bind(
@@ -790,7 +790,7 @@ fn try_parse_physical_expr(
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             let cast_type = convert_required!(e.arrow_type)?;
             Arc::new(TryCastExpr::new(expr, cast_type))
-        },
+        }
         ExprType::ScalarFunction(e) => {
             let scalar_function =
                 protobuf::ScalarFunction::from_i32(e.fun).ok_or_else(|| {
