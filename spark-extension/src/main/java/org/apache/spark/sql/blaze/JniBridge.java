@@ -47,4 +47,8 @@ public class JniBridge {
   public static void setTaskContext(TaskContext tc) {
     TaskContext$.MODULE$.setTaskContext(tc);
   }
+
+  public static boolean isTaskRunning() {
+    return !TaskContext$.MODULE$.get().isCompleted() && !TaskContext$.MODULE$.get().isInterrupted();
+  }
 }
