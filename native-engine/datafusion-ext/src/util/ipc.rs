@@ -12,16 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 use datafusion::arrow::datatypes::SchemaRef;
 
 use datafusion::arrow::error::Result as ArrowResult;
 
 use datafusion::arrow::ipc::reader::StreamReader;
-
-
-
-
 
 use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::record_batch::RecordBatch;

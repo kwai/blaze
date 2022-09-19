@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use datafusion::execution::context::TaskContext;
+
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -20,9 +20,9 @@ use jni::objects::JObject;
 use jni::objects::JStaticMethodID;
 use jni::signature::JavaType;
 use jni::signature::Primitive;
+use jni::signature::Primitive::Boolean;
 use jni::JNIEnv;
 use jni::JavaVM;
-use jni::signature::Primitive::Boolean;
 use once_cell::sync::OnceCell;
 
 use crate::ResultExt;
@@ -58,20 +58,43 @@ macro_rules! jni_map_error_with_env {
                 let ex = $env.exception_occurred().unwrap();
                 $env.exception_describe().unwrap();
                 $env.exception_clear().unwrap();
-                let message_obj = $env.call_method_unchecked(
-                    ex,
-                    $crate::jni_bridge::JavaClasses::get().cJavaThrowable.method_getMessage,
-                    $crate::jni_bridge::JavaClasses::get().cJavaThrowable.method_getMessage_ret.clone(),
-                    &[],
-                ).unwrap().l().unwrap();
+                let message_obj = $env
+                    .call_method_unchecked(
+                        ex,
+                        $crate::jni_bridge::JavaClasses::get()
+                            .cJavaThrowable
+                            .method_getMessage,
+                        $crate::jni_bridge::JavaClasses::get()
+                            .cJavaThrowable
+                            .method_getMessage_ret
+                            .clone(),
+                        &[],
+                    )
+                    .unwrap()
+                    .l()
+                    .unwrap();
                 if !message_obj.is_null() {
-                    let message = $env.get_string(message_obj.into()).map(|s| String::from(s)).unwrap();
+                    let message = $env
+                        .get_string(message_obj.into())
+                        .map(|s| String::from(s))
+                        .unwrap();
                     Err(datafusion::error::DataFusionError::External(
-                        format!("Java exception thrown at {}:{}: {}", file!(), line!(), message).into(),
+                        format!(
+                            "Java exception thrown at {}:{}: {}",
+                            file!(),
+                            line!(),
+                            message
+                        )
+                        .into(),
                     ))
                 } else {
                     Err(datafusion::error::DataFusionError::External(
-                        format!("Java exception thrown at {}:{}: (no message)", file!(), line!()).into(),
+                        format!(
+                            "Java exception thrown at {}:{}: (no message)",
+                            file!(),
+                            line!()
+                        )
+                        .into(),
                     ))
                 }
             }
@@ -430,7 +453,8 @@ impl<'a> JniBridge<'a> {
             method_isTaskRunning: env.get_static_method_id(
                 class,
                 "isTaskRunning",
-                "()Z")?,
+                "()Z",
+            )?,
             method_isTaskRunning_ret: JavaType::Primitive(Boolean),
         })
     }

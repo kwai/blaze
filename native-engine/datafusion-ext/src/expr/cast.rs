@@ -1,6 +1,4 @@
-use std::any::Any;
-use std::fmt::{Display, Formatter};
-use std::sync::Arc;
+use bigdecimal::ToPrimitive;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -9,6 +7,10 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
 use num::{Bounded, FromPrimitive, Integer, Signed};
 use paste::paste;
+use std::any::Any;
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
+use std::sync::Arc;
 
 /// cast expression compatible with spark
 #[derive(Debug)]
@@ -19,10 +21,7 @@ pub struct TryCastExpr {
 
 impl TryCastExpr {
     pub fn new(expr: Arc<dyn PhysicalExpr>, cast_type: DataType) -> Self {
-        Self {
-            expr,
-            cast_type,
-        }
+        Self { expr, cast_type }
     }
 }
 
@@ -51,28 +50,48 @@ impl PhysicalExpr for TryCastExpr {
             (&DataType::Utf8, &DataType::Int8)
             | (&DataType::Utf8, &DataType::Int16)
             | (&DataType::Utf8, &DataType::Int32)
-            | (&DataType::Utf8, &DataType::Int64)
-            => { // spark compatible string to integer cast
+            | (&DataType::Utf8, &DataType::Int64) => {
+                // spark compatible string to integer cast
                 match value {
                     ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                        try_cast_string_array_to_integer(&array, &self.cast_type)?
+                        try_cast_string_array_to_integer(&array, &self.cast_type)?,
                     )),
                     ColumnarValue::Scalar(scalar) => {
                         let scalar_array = scalar.to_array();
-                        let cast_array =
-                            try_cast_string_array_to_integer(&scalar_array, &self.cast_type)?;
+                        let cast_array = try_cast_string_array_to_integer(
+                            &scalar_array,
+                            &self.cast_type,
+                        )?;
                         let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                         Ok(ColumnarValue::Scalar(cast_scalar))
                     }
                 }
             }
-            _ => { // default cast
+            (&DataType::Utf8, &DataType::Decimal(_, _)) => {
+                // spark compatible string to decimal cast
+                match value {
+                    ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
+                        try_cast_string_array_to_decimal(&array, &self.cast_type)?,
+                    )),
+                    ColumnarValue::Scalar(scalar) => {
+                        let scalar_array = scalar.to_array();
+                        let cast_array = try_cast_string_array_to_decimal(
+                            &scalar_array,
+                            &self.cast_type,
+                        )?;
+                        let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
+                        Ok(ColumnarValue::Scalar(cast_scalar))
+                    }
+                }
+            }
+            _ => {
+                // default cast
                 match value {
                     ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
                         datafusion::arrow::compute::kernels::cast::cast(
                             &array,
                             &self.cast_type,
-                        )?
+                        )?,
                     )),
                     ColumnarValue::Scalar(scalar) => {
                         let scalar_array = scalar.to_array();
@@ -89,7 +108,10 @@ impl PhysicalExpr for TryCastExpr {
     }
 }
 
-fn try_cast_string_array_to_integer(array: &ArrayRef, cast_type: &DataType) -> Result<ArrayRef> {
+fn try_cast_string_array_to_integer(
+    array: &ArrayRef,
+    cast_type: &DataType,
+) -> Result<ArrayRef> {
     macro_rules! cast {
         ($target_type:ident) => {{
             type B = paste! {[<$target_type Builder>]};
@@ -102,8 +124,8 @@ fn try_cast_string_array_to_integer(array: &ArrayRef, cast_type: &DataType) -> R
                     None => builder.append_null()?,
                 }
             }
-            std::sync::Arc::new(builder.finish())
-        }}
+            Arc::new(builder.finish())
+        }};
     }
 
     Ok(match cast_type {
@@ -115,8 +137,32 @@ fn try_cast_string_array_to_integer(array: &ArrayRef, cast_type: &DataType) -> R
     })
 }
 
+fn try_cast_string_array_to_decimal(
+    array: &ArrayRef,
+    cast_type: &DataType,
+) -> Result<ArrayRef> {
+    if let &DataType::Decimal(precision, scale) = cast_type {
+        let array = array.as_any().downcast_ref::<StringArray>().unwrap();
+        let mut builder = DecimalBuilder::new(array.len(), precision, scale);
+
+        for v in array.iter() {
+            match v {
+                Some(s) => match to_decimal(s, precision, scale) {
+                    Some(v) => builder.append_value(v)?,
+                    None => builder.append_null()?,
+                },
+                None => builder.append_null()?,
+            }
+        }
+        return Ok(Arc::new(builder.finish()));
+    }
+    unreachable!("cast_type must be DataType::Decimal")
+}
+
 // this implementation is original copied from spark UTF8String.scala
-fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str) -> Option<T> {
+fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(
+    input: &str,
+) -> Option<T> {
     let bytes = input.as_bytes();
 
     if bytes.is_empty() {
@@ -150,7 +196,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
         }
 
         let digit;
-        if b >= b'0' && b <= b'9' {
+        if (b'0'..=b'9').contains(&b) {
             digit = b - b'0';
         } else {
             return None;
@@ -160,7 +206,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
         // this, if the result is already smaller than the stopValue(Long.MIN_VALUE / radix), then
         // result * 10 will definitely be smaller than minValue, and we can stop.
         if result < stop_value {
-            return None
+            return None;
         }
 
         result = result * radix - T::from_u8(digit).unwrap();
@@ -176,7 +222,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
     // is well formed.
     while offset < bytes.len() {
         let current_byte = bytes[offset];
-        if current_byte < b'0' || current_byte > b'9' {
+        if !(b'0'..=b'9').contains(&current_byte) {
             return None;
         }
         offset += 1;
@@ -185,9 +231,19 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
     if !negative {
         result = -result;
         if result < T::zero() {
-        return None;
+            return None;
         }
     }
-    return Some(result);
+    Some(result)
 }
 
+fn to_decimal(input: &str, precision: usize, scale: usize) -> Option<i128> {
+    let precision = precision as u64;
+    let scale = scale as i64;
+    bigdecimal::BigDecimal::from_str(input)
+        .ok().map(|decimal| decimal.with_prec(precision).with_scale(scale))
+        .and_then(|decimal| {
+            let (bigint, _exp) = decimal.as_bigint_and_exponent();
+            bigint.to_i128()
+        })
+}

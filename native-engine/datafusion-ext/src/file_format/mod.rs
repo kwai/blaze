@@ -21,31 +21,28 @@
 //! partition cols.
 
 use std::any::Any;
+
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter, Result as FmtResult},
     sync::Arc,
     vec,
 };
-use std::borrow::Borrow;
 
 use async_trait::async_trait;
 use datafusion::arrow::array::new_null_array;
+use datafusion::arrow::compute::cast;
 use datafusion::arrow::record_batch::RecordBatchOptions;
 use datafusion::arrow::{
     array::ArrayRef,
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::{Field, Schema, SchemaRef},
     error::{ArrowError, Result as ArrowResult},
     record_batch::RecordBatch,
 };
 use datafusion::datasource::{listing::PartitionedFile, object_store::ObjectStoreUrl};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, Statistics};
-use datafusion::{
-    error::Result,
-    scalar::ScalarValue,
-};
-use datafusion::arrow::compute::cast;
+use datafusion::{error::Result, scalar::ScalarValue};
 use object_store::{ObjectMeta, ObjectStore};
 
 pub use self::parquet::ParquetExec;
@@ -106,7 +103,10 @@ impl FileScanConfig {
                 let partition_idx = idx - self.file_schema.fields().len();
                 table_fields.push(Field::new(
                     &self.table_partition_cols[partition_idx],
-                    self.partition_schema.field(partition_idx).data_type().clone(),
+                    self.partition_schema
+                        .field(partition_idx)
+                        .data_type()
+                        .clone(),
                     false,
                 ));
                 // TODO provide accurate stat for partition column (#1186)

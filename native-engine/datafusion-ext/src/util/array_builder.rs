@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::sync::Arc;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use paste::paste;
+use std::any::Any;
+use std::sync::Arc;
 
 pub fn new_array_builders(
     schema: &SchemaRef,
@@ -211,8 +211,12 @@ pub fn builder_extend(
 
     match data_type {
         DataType::Null => {
-            builder.as_any_mut().downcast_mut::<NullBuilder>().unwrap().extend(indices.len());
-        },
+            builder
+                .as_any_mut()
+                .downcast_mut::<NullBuilder>()
+                .unwrap()
+                .extend(indices.len());
+        }
         DataType::Boolean => append_simple!(Boolean),
         DataType::Int8 => append_simple!(Int8),
         DataType::Int16 => append_simple!(Int16),
@@ -227,9 +231,15 @@ pub fn builder_extend(
         DataType::Date32 => append_simple!(Date32),
         DataType::Date64 => append_simple!(Date64),
         DataType::Timestamp(TimeUnit::Second, _) => append_simple!(TimestampSecond),
-        DataType::Timestamp(TimeUnit::Millisecond, _) => append_simple!(TimestampMillisecond),
-        DataType::Timestamp(TimeUnit::Microsecond, _) => append_simple!(TimestampMicrosecond),
-        DataType::Timestamp(TimeUnit::Nanosecond, _) => append_simple!(TimestampNanosecond),
+        DataType::Timestamp(TimeUnit::Millisecond, _) => {
+            append_simple!(TimestampMillisecond)
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, _) => {
+            append_simple!(TimestampMicrosecond)
+        }
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+            append_simple!(TimestampNanosecond)
+        }
         DataType::Time32(TimeUnit::Second) => append_simple!(Time32Second),
         DataType::Time32(TimeUnit::Millisecond) => append_simple!(Time32Millisecond),
         DataType::Time64(TimeUnit::Microsecond) => append_simple!(Time64Microsecond),
@@ -254,8 +264,11 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
     }
     match data_type {
         DataType::Null => {
-            to.as_any_mut().downcast_mut::<NullBuilder>().unwrap().append();
-        },
+            to.as_any_mut()
+                .downcast_mut::<NullBuilder>()
+                .unwrap()
+                .append();
+        }
         DataType::Boolean => append!(Boolean),
         DataType::Int8 => append!(Int8),
         DataType::Int16 => append!(Int16),
