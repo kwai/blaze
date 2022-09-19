@@ -36,7 +36,7 @@ use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
     expressions::{
         BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr,
-        Literal, NegativeExpr, NotExpr, PhysicalSortExpr, TryCastExpr,
+        Literal, NegativeExpr, NotExpr, PhysicalSortExpr,
         DEFAULT_DATAFUSION_CAST_OPTIONS,
     },
     filter::FilterExec,
@@ -69,7 +69,7 @@ use datafusion::arrow::datatypes::Field;
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
-use datafusion_ext::expr::string_cast::StringTryCastExpr;
+use datafusion_ext::expr::cast::TryCastExpr;
 use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 
 fn bind(
@@ -145,14 +145,8 @@ fn bind(
         ));
         Ok(cast)
     } else if let Some(cast) = expr.downcast_ref::<TryCastExpr>() {
-        let try_cast = Arc::new(TryCastExpr::new(
-            bind(cast.expr().clone(), input_schema)?,
-            cast.cast_type().clone(),
-        ));
-        Ok(try_cast)
-    } else if let Some(cast) = expr.downcast_ref::<StringTryCastExpr>() {
-        let string_try_cast = Arc::new(StringTryCastExpr::new(
-            bind(cast.arg.clone(), input_schema)?,
+        let string_try_cast = Arc::new(TryCastExpr::new(
+            bind(cast.expr.clone(), input_schema)?,
             cast.cast_type.clone(),
         ));
         Ok(string_try_cast)
@@ -795,12 +789,7 @@ fn try_parse_physical_expr(
         ExprType::TryCast(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             let cast_type = convert_required!(e.arrow_type)?;
-            match expr.data_type(input_schema)? {
-                DataType::Utf8 =>
-                    Arc::new(StringTryCastExpr::new(expr, cast_type)),
-                _ =>
-                    Arc::new(TryCastExpr::new(expr, cast_type)),
-            }
+            Arc::new(TryCastExpr::new(expr, cast_type))
         },
         ExprType::ScalarFunction(e) => {
             let scalar_function =

@@ -7,33 +7,32 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
-use num::{Bounded, cast, FromPrimitive, Integer, Signed};
+use num::{Bounded, FromPrimitive, Integer, Signed};
 use paste::paste;
 
-/// expression to cast a string into numeric types (as the original
-/// implementation has different behavior than spark)
+/// cast expression compatible with spark
 #[derive(Debug)]
-pub struct StringTryCastExpr {
-    pub arg: Arc<dyn PhysicalExpr>,
+pub struct TryCastExpr {
+    pub expr: Arc<dyn PhysicalExpr>,
     pub cast_type: DataType,
 }
 
-impl StringTryCastExpr {
-    pub fn new(arg: Arc<dyn PhysicalExpr>, cast_type: DataType) -> Self {
+impl TryCastExpr {
+    pub fn new(expr: Arc<dyn PhysicalExpr>, cast_type: DataType) -> Self {
         Self {
-            arg,
+            expr,
             cast_type,
         }
     }
 }
 
-impl Display for StringTryCastExpr {
+impl Display for TryCastExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "StringCast({} AS {:?})", self.arg, self.cast_type)
+        write!(f, "cast({} AS {:?})", self.expr, self.cast_type)
     }
 }
 
-impl PhysicalExpr for StringTryCastExpr {
+impl PhysicalExpr for TryCastExpr {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -47,17 +46,44 @@ impl PhysicalExpr for StringTryCastExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let value = self.arg.evaluate(batch)?;
-        match value {
-            ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                try_cast_string_array_to_integer(&array, &self.cast_type)?
-            )),
-            ColumnarValue::Scalar(scalar) => {
-                let scalar_array = scalar.to_array();
-                let cast_array =
-                    try_cast_string_array_to_integer(&scalar_array, &self.cast_type)?;
-                let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
-                Ok(ColumnarValue::Scalar(cast_scalar))
+        let value = self.expr.evaluate(batch)?;
+        match (&value.data_type(), &self.cast_type) {
+            (&DataType::Utf8, &DataType::Int8)
+            | (&DataType::Utf8, &DataType::Int16)
+            | (&DataType::Utf8, &DataType::Int32)
+            | (&DataType::Utf8, &DataType::Int64)
+            => { // spark compatible string to integer cast
+                match value {
+                    ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
+                        try_cast_string_array_to_integer(&array, &self.cast_type)?
+                    )),
+                    ColumnarValue::Scalar(scalar) => {
+                        let scalar_array = scalar.to_array();
+                        let cast_array =
+                            try_cast_string_array_to_integer(&scalar_array, &self.cast_type)?;
+                        let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
+                        Ok(ColumnarValue::Scalar(cast_scalar))
+                    }
+                }
+            }
+            _ => { // default cast
+                match value {
+                    ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
+                        datafusion::arrow::compute::kernels::cast::cast(
+                            &array,
+                            &self.cast_type,
+                        )?
+                    )),
+                    ColumnarValue::Scalar(scalar) => {
+                        let scalar_array = scalar.to_array();
+                        let cast_array = datafusion::arrow::compute::kernels::cast::cast(
+                            &scalar_array,
+                            &self.cast_type,
+                        )?;
+                        let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
+                        Ok(ColumnarValue::Scalar(cast_scalar))
+                    }
+                }
             }
         }
     }
