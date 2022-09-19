@@ -394,7 +394,9 @@ case class BlazeCallNativeWrapper(
     errorQueue.poll() match {
       case e: Throwable =>
         finish()
-        throw e
+        if (JniBridge.isTaskRunning) {
+          throw e
+        }
       case null =>
       // do nothing
     }

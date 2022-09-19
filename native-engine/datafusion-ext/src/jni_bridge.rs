@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use datafusion::execution::context::TaskContext;
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -21,6 +22,7 @@ use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::JNIEnv;
 use jni::JavaVM;
+use jni::signature::Primitive::Boolean;
 use once_cell::sync::OnceCell;
 
 use crate::ResultExt;
@@ -62,11 +64,16 @@ macro_rules! jni_map_error_with_env {
                     $crate::jni_bridge::JavaClasses::get().cJavaThrowable.method_getMessage_ret.clone(),
                     &[],
                 ).unwrap().l().unwrap();
-                let message = $env.get_string(message_obj.into()).map(|s| String::from(s)).unwrap();
-
-                Err(datafusion::error::DataFusionError::External(
-                    format!("Java exception thrown at {}:{}: {}", file!(), line!(), message).into(),
-                ))
+                if !message_obj.is_null() {
+                    let message = $env.get_string(message_obj.into()).map(|s| String::from(s)).unwrap();
+                    Err(datafusion::error::DataFusionError::External(
+                        format!("Java exception thrown at {}:{}: {}", file!(), line!(), message).into(),
+                    ))
+                } else {
+                    Err(datafusion::error::DataFusionError::External(
+                        format!("Java exception thrown at {}:{}: (no message)", file!(), line!()).into(),
+                    ))
+                }
             }
             Err(err) => Err(datafusion::error::DataFusionError::External(
                 format!(
@@ -376,6 +383,8 @@ pub struct JniBridge<'a> {
     pub method_setTaskContext_ret: JavaType,
     pub method_getTaskContext: JStaticMethodID<'a>,
     pub method_getTaskContext_ret: JavaType,
+    pub method_isTaskRunning: JStaticMethodID<'a>,
+    pub method_isTaskRunning_ret: JavaType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -418,6 +427,11 @@ impl<'a> JniBridge<'a> {
                 "(Lorg/apache/spark/TaskContext;)V",
             )?,
             method_setTaskContext_ret: JavaType::Primitive(Primitive::Void),
+            method_isTaskRunning: env.get_static_method_id(
+                class,
+                "isTaskRunning",
+                "()Z")?,
+            method_isTaskRunning_ret: JavaType::Primitive(Boolean),
         })
     }
 }
