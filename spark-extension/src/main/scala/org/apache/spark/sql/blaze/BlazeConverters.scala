@@ -74,6 +74,7 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.adaptive.QueryStage
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
+import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -103,7 +104,7 @@ object BlazeConverters extends Logging {
         case exec @ (
               _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
               _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec |
-              _: DataWritingCommandExec | _: TakeOrderedAndProjectExec
+              _: DataWritingCommandExec | _: TakeOrderedAndProjectExec | _: ShuffleExchangeExec
             ) =>
           exec.mapChildren(child => convertToUnsafeRow(child))
         case exec => exec
