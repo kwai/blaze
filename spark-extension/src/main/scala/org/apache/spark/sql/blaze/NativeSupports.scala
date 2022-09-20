@@ -55,7 +55,7 @@ import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
 import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 import org.apache.spark.sql.execution.blaze.arrowio.FFIHelper
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader301
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
@@ -258,8 +258,7 @@ object NativeSupports extends Logging {
               jniResourceId,
               () => {
                 CompletionIterator[Object, Iterator[Object]](
-                  readers.flatMap(
-                    _.asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]].readIpc()),
+                  readers.flatMap(_.asInstanceOf[ArrowBlockStoreShuffleReader[_, _]].readIpc()),
                   taskContext.taskMetrics().mergeShuffleReadMetrics(true))
               })
 

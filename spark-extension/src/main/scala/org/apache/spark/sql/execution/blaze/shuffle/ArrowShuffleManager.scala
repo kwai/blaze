@@ -26,7 +26,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.shuffle._
-import org.apache.spark.shuffle.sort.ArrowShuffleWriter301
+import org.apache.spark.shuffle.sort.ArrowShuffleWriter
 import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
 import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.shuffle.sort.SortShuffleManager
@@ -35,8 +35,8 @@ import org.apache.spark.shuffle.sort.UnsafeShuffleWriter
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.util.Utils
 
-class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Logging {
-  import ArrowShuffleManager301._
+class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
+  import ArrowShuffleManager._
 
   if (!conf.getBoolean("spark.shuffle.spill", true)) {
     logWarning(
@@ -139,7 +139,7 @@ class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Loggin
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
 
     if (isArrowShuffle(handle)) {
-      new ArrowBlockStoreShuffleReader301(
+      new ArrowBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
         startPartition,
         endPartition,
@@ -165,7 +165,7 @@ class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Loggin
       endMapId: Int): ShuffleReader[K, C] = {
 
     if (isArrowShuffle(handle)) {
-      new ArrowBlockStoreShuffleReader301(
+      new ArrowBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
         startPartition,
         endPartition,
@@ -198,7 +198,7 @@ class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Loggin
     handle match {
       case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
         if (isArrowShuffle(unsafeShuffleHandle)) {
-          new ArrowShuffleWriter301(
+          new ArrowShuffleWriter(
             env.blockManager,
             shuffleBlockResolver,
             context.taskMemoryManager(),
@@ -220,7 +220,7 @@ class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Loggin
         }
       case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
         if (isArrowShuffle(bypassMergeSortHandle)) {
-          new ArrowBypassMergeSortShuffleWriter301(
+          new ArrowBypassMergeSortShuffleWriter(
             env.blockManager,
             shuffleBlockResolver,
             bypassMergeSortHandle,
@@ -274,7 +274,7 @@ class ArrowShuffleManager301(conf: SparkConf) extends ShuffleManager with Loggin
   }
 }
 
-private[spark] object ArrowShuffleManager301 extends Logging {
+private[spark] object ArrowShuffleManager extends Logging {
   // private def loadShuffleExecutorComponents(conf: SparkConf): ShuffleExecutorComponents = {
   //   val executorComponents = ShuffleDataIOUtils.loadShuffleDataIO(conf).executor()
   //   val extraConfigs = conf.getAllWithPrefix(ShuffleDataIOUtils.SHUFFLE_SPARK_CONF_PREFIX).toMap

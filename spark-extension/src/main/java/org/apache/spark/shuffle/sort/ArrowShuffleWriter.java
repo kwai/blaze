@@ -75,7 +75,7 @@ import scala.reflect.ClassTag;
 import scala.reflect.ClassTag$;
 
 @Private
-public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
+public class ArrowShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
   private static final Logger logger = LoggerFactory.getLogger(UnsafeShuffleWriter.class);
 
@@ -105,7 +105,7 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
   private final int maxRecordsPerBatch;
 
   @Nullable private MapStatus mapStatus;
-  @Nullable private ArrowShuffleExternalSorter301 sorter;
+  @Nullable private ArrowShuffleExternalSorter sorter;
   private long peakMemoryUsedBytes = 0;
 
   /** Subclass of ByteArrayOutputStream that exposes `buf` directly. */
@@ -141,7 +141,7 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
     }
   }
 
-  public ArrowShuffleWriter301(
+  public ArrowShuffleWriter(
       BlockManager blockManager,
       IndexShuffleBlockResolver shuffleBlockResolver,
       TaskMemoryManager memoryManager,
@@ -239,7 +239,7 @@ public class ArrowShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
   private void open() {
     assert (sorter == null);
     sorter =
-        new ArrowShuffleExternalSorter301(
+        new ArrowShuffleExternalSorter(
             memoryManager,
             blockManager,
             taskContext,

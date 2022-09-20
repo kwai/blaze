@@ -41,7 +41,7 @@ import org.apache.spark.storage.FileSegment
 import org.apache.spark.storage.ShuffleBlockFetcherIterator
 import org.apache.spark.util.CompletionIterator
 
-class ArrowBlockStoreShuffleReader301[K, C](
+class ArrowBlockStoreShuffleReader[K, C](
     handle: BaseShuffleHandle[K, _, C],
     startPartition: Int,
     endPartition: Int,

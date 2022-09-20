@@ -33,7 +33,7 @@ import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec}
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec301
+import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
@@ -170,7 +170,7 @@ object BlazeConverters extends Logging {
         convertToNative(child)
       case _ => child
     }
-    ArrowShuffleExchangeExec301(outputPartitioning, addRenameColumnsExec(convertedChild))
+    ArrowShuffleExchangeExec(outputPartitioning, addRenameColumnsExec(convertedChild))
   }
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
