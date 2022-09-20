@@ -50,8 +50,8 @@ import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec301.canUseNativeShuffleWrite
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader301
+import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec.canUseNativeShuffleWrite
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
@@ -75,7 +75,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.ShuffleWriterExecNode
 
-case class ArrowShuffleExchangeExec301(
+case class ArrowShuffleExchangeExec(
     var newPartitioning: Partitioning,
     override val child: SparkPlan)
     extends ShuffleExchangeLike
@@ -112,7 +112,7 @@ case class ArrowShuffleExchangeExec301(
   private def prepareShuffleDependency(): ShuffleDependency[Int, InternalRow, InternalRow] = {
     val rdd: RDD[InternalRow] = child.execute()
     if (canUseNativeShuffleWrite(rdd, newPartitioning)) {
-      ArrowShuffleExchangeExec301.prepareNativeShuffleDependency(
+      ArrowShuffleExchangeExec.prepareNativeShuffleDependency(
         rdd,
         child.output,
         newPartitioning,
@@ -120,7 +120,7 @@ case class ArrowShuffleExchangeExec301(
         metrics,
         nativeHashExprs)
     } else {
-      ArrowShuffleExchangeExec301.prepareShuffleDependency(
+      ArrowShuffleExchangeExec.prepareShuffleDependency(
         rdd,
         child.output,
         newPartitioning,
@@ -266,7 +266,7 @@ case class ArrowShuffleExchangeExec301(
             partition.index + 1,
             taskContext,
             metricReporter)
-          .asInstanceOf[ArrowBlockStoreShuffleReader301[_, _]]
+          .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
         JniBridge.resourcesMap.put(
           jniResourceId,
           () => {
@@ -294,7 +294,7 @@ case class ArrowShuffleExchangeExec301(
     ShuffleExchangeExec(newPartitioning, child).canonicalized
 }
 
-object ArrowShuffleExchangeExec301 {
+object ArrowShuffleExchangeExec {
 
   /**
    * Determines whether records must be defensively copied before being sent to the shuffle.

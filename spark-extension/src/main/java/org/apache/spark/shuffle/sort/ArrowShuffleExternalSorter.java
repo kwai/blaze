@@ -59,9 +59,9 @@ import scala.Tuple2;
  * spill files. Instead, this merging is performed in {@link UnsafeShuffleWriter}, which uses a
  * specialized merge procedure that avoids extra serialization/deserialization.
  */
-final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
+final class ArrowShuffleExternalSorter extends MemoryConsumer {
 
-  private static final Logger logger = LoggerFactory.getLogger(ArrowShuffleExternalSorter301.class);
+  private static final Logger logger = LoggerFactory.getLogger(ArrowShuffleExternalSorter.class);
 
   private final int numPartitions;
   private final TaskMemoryManager taskMemoryManager;
@@ -97,7 +97,7 @@ final class ArrowShuffleExternalSorter301 extends MemoryConsumer {
   @Nullable private MemoryBlock currentPage = null;
   private long pageCursor = -1;
 
-  ArrowShuffleExternalSorter301(
+  ArrowShuffleExternalSorter(
       TaskMemoryManager memoryManager,
       BlockManager blockManager,
       TaskContext taskContext,

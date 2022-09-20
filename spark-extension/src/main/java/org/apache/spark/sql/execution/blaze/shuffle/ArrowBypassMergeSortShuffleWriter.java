@@ -72,10 +72,10 @@ import scala.collection.Iterator;
  *
  * <p>There have been proposals to completely remove this code path; see SPARK-6026 for details.
  */
-final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, V> {
+final class ArrowBypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
   private static final Logger logger =
-      LoggerFactory.getLogger(ArrowBypassMergeSortShuffleWriter301.class);
+      LoggerFactory.getLogger(ArrowBypassMergeSortShuffleWriter.class);
 
   private final int fileBufferSize;
   private final boolean transferToEnabled;
@@ -109,7 +109,7 @@ final class ArrowBypassMergeSortShuffleWriter301<K, V> extends ShuffleWriter<K, 
    */
   private boolean stopping = false;
 
-  ArrowBypassMergeSortShuffleWriter301(
+  ArrowBypassMergeSortShuffleWriter(
       BlockManager blockManager,
       IndexShuffleBlockResolver shuffleBlockResolver,
       BypassMergeSortShuffleHandle<K, V> handle,
