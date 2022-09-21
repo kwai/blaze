@@ -444,10 +444,12 @@ object BlazeConverters extends Logging {
   }
 
   def convertToNative(exec: SparkPlan): SparkPlan = {
-    if (NativeSupports.isNative(exec)) {
-      return exec
+    exec match {
+      case exec if NativeSupports.isNative(exec) => exec
+      case exec =>
+        assert(!exec.isInstanceOf[DataWritingCommandExec]) // not convertible to native
+        ConvertToNativeExec(exec)
     }
-    ConvertToNativeExec(exec)
   }
 
   private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
