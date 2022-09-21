@@ -41,6 +41,7 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::io::Cursor;
 use std::sync::Arc;
+use crate::util::concat_batches::concat_batches;
 
 #[derive(Debug)]
 pub struct IpcWriterExec {
@@ -148,13 +149,13 @@ pub async fn write_ipc(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
-    let mut batches = vec![];
+    let mut batches: Vec<RecordBatch> = vec![];
     let mut num_rows = 0;
 
     macro_rules! flush_batches {
         () => {{
             let timer = metrics.elapsed_compute().timer();
-            let batch = RecordBatch::concat(&schema, &batches)?;
+            let batch = concat_batches(&schema, &batches)?;
             metrics.record_output(num_rows);
             batches.clear();
             num_rows = 0;

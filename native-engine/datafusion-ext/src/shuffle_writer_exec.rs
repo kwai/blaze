@@ -61,6 +61,7 @@ use tokio::task;
 
 use crate::spark_hash::{create_hashes, pmod};
 use crate::util::array_builder::{builder_extend, make_batch, new_array_builders};
+use crate::util::concat_batches::concat_batches;
 use crate::util::ipc::write_one_batch;
 
 struct PartitionBuffer {
@@ -183,7 +184,7 @@ impl PartitionBuffer {
             .map(|batch| batch_byte_size(batch) as isize)
             .sum::<isize>();
         let frozen_batch =
-            RecordBatch::concat(&self.schema, &std::mem::take(&mut self.staging))?;
+            concat_batches(&self.schema, &std::mem::take(&mut self.staging))?;
         self.num_staging_rows = 0;
 
         let frozen_capacity_old = self.frozen.capacity();
