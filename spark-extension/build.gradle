@@ -41,8 +41,9 @@ repositories {
 	mavenCentral()
 }
 
-group = 'com.blaze'
-version = '1.0-SNAPSHOT'
+group = 'blaze-engine'
+description = 'blaze-engine'
+version = '1.0.0'
 
 java.sourceCompatibility = JavaVersion.VERSION_1_8
 java.targetCompatibility = JavaVersion.VERSION_1_8
@@ -220,8 +221,6 @@ task cargo(type: Exec) {
 	executable "${projectDir}/../build-native.sh"
 	args += [project.hasProperty('mode') ? getProperty('mode') : 'debug']
 }
-
-description = 'blaze-engine'
 
 jar.enabled = false
 tasks.compileScala.dependsOn tasks.spotlessApply
