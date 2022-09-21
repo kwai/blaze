@@ -333,36 +333,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     });
 }
 
-fn is_jvm_interrupted() -> datafusion::error::Result<bool> {
-    let interrupted_exception_class = "java.lang.InterruptedException";
-    if jni_exception_check!()? {
-        let e: JObject = jni_exception_occurred!()?.into();
-        let class = jni_get_object_class!(e)?;
-        let classname_obj = jni_call!(Class(class).getName() -> JObject)?;
-        let classname = jni_get_string!(classname_obj.into())?;
-
-        if classname == interrupted_exception_class {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn is_spark_task_killed() -> datafusion::error::Result<bool> {
-    let interrupted_exception_class = "org.apache.spark.TaskKilledException";
-    if jni_exception_check!()? {
-        let e: JObject = jni_exception_occurred!()?.into();
-        let class = jni_get_object_class!(e)?;
-        let classname_obj = jni_call!(Class(class).getName() -> JObject)?;
-        let classname = jni_get_string!(classname_obj.into())?;
-
-        if classname == interrupted_exception_class {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Result<()> {
     let msg = jni_new_string!(msg)?;
     let e = jni_new_object!(JavaRuntimeException, msg, cause)?;
