@@ -447,7 +447,7 @@ object BlazeConverters extends Logging {
     exec match {
       case exec if NativeSupports.isNative(exec) => exec
       case exec =>
-        assert(!exec.isInstanceOf[DataWritingCommandExec]) // not convertible to native
+        assert(exec.find(_.isInstanceOf[DataWritingCommandExec]).isEmpty)
         ConvertToNativeExec(exec)
     }
   }
