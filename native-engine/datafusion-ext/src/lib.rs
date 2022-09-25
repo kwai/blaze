@@ -25,6 +25,7 @@ pub mod hdfs_object_store;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod jni_bridge;
+pub mod limit_exec;
 pub mod rename_columns_exec;
 pub mod shuffle_writer_exec;
 pub mod sort_merge_join_exec;

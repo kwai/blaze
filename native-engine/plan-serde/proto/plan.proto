@@ -39,6 +39,7 @@ message PhysicalPlanNode {
     RenameColumnsExecNode rename_columns = 12;
     EmptyPartitionsExecNode empty_partitions = 13;
     HashAggregateExecNode hash_aggregate = 14;
+    LimitExecNode limit = 15;
   }
 }
 
@@ -464,6 +465,11 @@ enum AggregateMode {
   PARTIAL = 0;
   FINAL = 1;
   FINAL_PARTITIONED = 2;
+}
+
+message LimitExecNode {
+  PhysicalPlanNode input = 1;
+  uint64 limit = 2;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

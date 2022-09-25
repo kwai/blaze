@@ -17,8 +17,10 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
+
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -74,6 +76,10 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.adaptive.QueryStage
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
+import org.apache.spark.sql.execution.LocalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
+import org.apache.spark.sql.execution.GlobalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 
 object BlazeConverters extends Logging {
@@ -91,6 +97,10 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.smj", defaultValue = true)
   val enableBhj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.bhj", defaultValue = true)
+  val enableLocalLimit: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.limit", defaultValue = true)
+  val enableGlobalLimit: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.global.limit", defaultValue = true)
   val enableAggr: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = false)
 
@@ -129,6 +139,10 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertSortMergeJoinExec)
       case e: BroadcastHashJoinExec if enableBhj => // broadcast hash join
         tryConvert(e, convertBroadcastHashJoinExec)
+      case e: LocalLimitExec if enableLocalLimit => // local limit
+        tryConvert(e, convertLocalLimitExec)
+      case e: GlobalLimitExec if enableGlobalLimit => // global limit
+        tryConvert(e, convertGlobalLimitExec)
       case e: HashAggregateExec if enableAggr => // aggregate
         tryConvert(e, convertHashAggregateExec)
 
@@ -212,6 +226,7 @@ object BlazeConverters extends Logging {
   def convertFilterExec(exec: FilterExec): SparkPlan =
     exec match {
       case exec: FilterExec =>
+        logDebug(s"Converting FilterExec: ${exec.simpleStringWithNodeId()}")
         logDebug(s"  condition: ${exec.condition}")
         NativeFilterExec(exec.condition, addRenameColumnsExec(convertToNative(exec.child)))
       case _ =>
@@ -319,6 +334,7 @@ object BlazeConverters extends Logging {
               condition,
               left,
               right) =>
+          logDebug(s"Converting BroadcastHashJoinExec: ${exec.simpleStringWithNodeId()}")
           var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
             case BuildRight =>
               assert(NativeSupports.isNative(right))
@@ -407,6 +423,7 @@ object BlazeConverters extends Logging {
   def convertBroadcastExchangeExec(exec: SparkPlan): SparkPlan = {
     exec match {
       case exec: BroadcastExchangeExec =>
+        logDebug(s"Converting BroadcastExchangeExec: ${exec.simpleStringWithNodeId()}")
         val converted = ArrowBroadcastExchangeExec(exec.mode, exec.child)
         converted.setTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag, true)
         return converted
@@ -414,9 +431,28 @@ object BlazeConverters extends Logging {
     exec
   }
 
+  def convertLocalLimitExec(exec: SparkPlan): SparkPlan = {
+    exec match {
+      case exec: LocalLimitExec =>
+        logDebug(s"Converting LocalLimitExec: ${exec.simpleStringWithNodeId()}")
+        return NativeLocalLimitExec(exec.limit.toLong, exec.child)
+    }
+    exec
+  }
+
+  def convertGlobalLimitExec(exec: SparkPlan): SparkPlan = {
+    exec match {
+      case exec: GlobalLimitExec =>
+        logDebug(s"Converting GlobalLimitExec: ${exec.simpleStringWithNodeId()}")
+        return NativeGlobalLimitExec(exec.limit.toLong, exec.child)
+    }
+    exec
+  }
+
   def convertHashAggregateExec(exec: SparkPlan): SparkPlan = {
     exec match {
       case exec: HashAggregateExec =>
+        logDebug(s"Converting HashAggregateExec: ${exec.simpleStringWithNodeId()}")
         val converted = NativeHashAggregateExec(
           exec.requiredChildDistributionExpressions,
           exec.groupingExpressions,

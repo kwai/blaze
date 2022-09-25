@@ -38,6 +38,8 @@ import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
 import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
+import org.apache.spark.sql.execution.GlobalLimitExec
+import org.apache.spark.sql.execution.LocalLimitExec
 import org.apache.spark.sql.types.TimestampType
 
 object BlazeConvertStrategy extends Logging {
@@ -57,6 +59,10 @@ object BlazeConvertStrategy extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.smj", defaultValue = false)
   val preferNativeBhj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.bhj", defaultValue = false)
+  val preferNativeLocalLimit: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.local.limit", defaultValue = false)
+  val preferNativeGlobalLimit: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.global.limit", defaultValue = false)
   val preferNativeAggr: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.prefer.native.aggr", defaultValue = false)
 
@@ -161,6 +167,10 @@ object BlazeConvertStrategy extends Logging {
         if (!hasMoreInconvertibleChildren(e) || preferNativeBhj) {
           e.setTagValue(convertStrategyTag, AlwaysConvert)
         }
+      case e: LocalLimitExec if isAlwaysConvert(e.child) || preferNativeLocalLimit =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: GlobalLimitExec if isAlwaysConvert(e.child) || preferNativeGlobalLimit =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: HashAggregateExec if isAlwaysConvert(e.child) || preferNativeAggr =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 

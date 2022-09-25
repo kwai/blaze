@@ -70,6 +70,7 @@ use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion_ext::expr::cast::TryCastExpr;
 use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
+use datafusion_ext::limit_exec::LimitExec;
 use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 
 fn bind(
@@ -618,6 +619,11 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     input,
                     Arc::new((&input_schema).try_into()?),
                 )?))
+            }
+            PhysicalPlanType::Limit(limit) => {
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(limit.input)?;
+                Ok(Arc::new(LimitExec::new(input, limit.limit)))
             }
         }
     }
