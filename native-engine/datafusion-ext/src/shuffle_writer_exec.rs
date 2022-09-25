@@ -656,7 +656,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 self.output_index_file.clone(),
             )?)),
             _ => Err(DataFusionError::Internal(
-                "RepartitionExec wrong number of children".to_string(),
+                "ShuffleWriterExec wrong number of children".to_string(),
             )),
         }
     }
