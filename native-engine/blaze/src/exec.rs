@@ -295,6 +295,9 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                     BlazeCallNativeWrapper(wrapper_clone.as_obj()).finishNativeThread() -> ()
                 );
 
+                if !is_task_running()? { // only handle running task
+                    return Ok(());
+                }
                 let panic_message = panic_message::panic_message(&err);
                 let e = if jni_exception_check!()? {
                     log::error!("native execution panics with an java exception");
@@ -352,9 +355,7 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE {
-            jni_exception_clear!()?;
-            log::info!("native execution completed/interrupted");
+        if !is_task_running()? { // only handle running task
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);
@@ -382,4 +383,13 @@ fn handle_unwinded_scope<E: Debug>(scope: impl FnOnce() -> Result<(), E>) {
     if let Err(err) = std::panic::catch_unwind(AssertUnwindSafe(|| scope().unwrap())) {
         handle_unwinded(err);
     }
+}
+
+fn is_task_running() -> datafusion::error::Result<bool> {
+    if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE {
+        jni_exception_clear!()?;
+        log::info!("native execution completed/interrupted");
+        return Ok(false);
+    }
+    Ok(true)
 }
