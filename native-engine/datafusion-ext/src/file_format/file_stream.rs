@@ -32,6 +32,7 @@ use datafusion::common::ScalarValue;
 use datafusion::datasource::listing::{FileRange, PartitionedFile};
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
+use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::RecordBatchStream;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
@@ -73,6 +74,8 @@ pub struct FileStream<F: FormatReader> {
     object_store: Arc<dyn ObjectStore>,
     /// The stream state
     state: FileStreamState,
+    /// Baseline metrics
+    baseline_metrics: BaselineMetrics,
 }
 
 enum FileStreamState {
@@ -106,6 +109,7 @@ impl<F: FormatReader> FileStream<F> {
         partition: usize,
         context: Arc<TaskContext>,
         file_reader: F,
+        baseline_metrics: BaselineMetrics,
     ) -> Result<Self> {
         let (projected_schema, _) = config.project();
         let pc_projector = PartitionColumnProjector::new(
@@ -127,6 +131,7 @@ impl<F: FormatReader> FileStream<F> {
             pc_projector,
             object_store,
             state: FileStreamState::Idle,
+            baseline_metrics,
         })
     }
 
@@ -213,7 +218,8 @@ impl<F: FormatReader> Stream for FileStream<F> {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        self.poll_inner(cx)
+        let result = self.poll_inner(cx);
+        self.baseline_metrics.record_poll(result)
     }
 }
 
