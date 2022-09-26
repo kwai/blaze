@@ -93,11 +93,11 @@ object BlazeConvertStrategy extends Logging {
   val neverConvertAggregatesChildrenEnabled: Boolean =
     SparkEnv.get.conf.getBoolean(
       "spark.blaze.strategy.enable.neverConvertAggregatesChildren",
-      defaultValue = false)
+      defaultValue = true)
   val neverConvertPartialAggregateShuffleExchangeEnabled: Boolean =
     SparkEnv.get.conf.getBoolean(
       "spark.blaze.strategy.enable.neverConvertAggregateShuffleExchange",
-      defaultValue = false)
+      defaultValue = true)
 
   val idTag: TreeNodeTag[UUID] = TreeNodeTag("blaze.id")
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
