@@ -31,10 +31,12 @@ import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.PartitionedFile
+import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.statsEstimation.Statistics
 import org.blaze.{protobuf => pb}
 
@@ -43,7 +45,14 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+    Map(
+      "predicate_evaluation_errors" ->
+        SQLMetrics.createMetric(sparkContext, "Native.predicate_evaluation_errors"),
+      "row_groups_pruned" ->
+        SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned"),
+      "bytes_scanned" ->
+        SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) ++ NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
 
   override def output: Seq[Attribute] = basedFileScan.output
   override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning

@@ -51,6 +51,7 @@ use datafusion::{
     },
     scalar::ScalarValue,
 };
+use datafusion::physical_plan::metrics::BaselineMetrics;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use log::debug;
@@ -211,8 +212,13 @@ impl ExecutionPlan for ParquetExec {
         };
 
         let stream =
-            FileStream::new(&self.base_config, partition_index, context, opener)?;
-
+            FileStream::new(
+                &self.base_config,
+                partition_index,
+                context,
+                opener,
+                BaselineMetrics::new(&self.metrics, partition_index),
+            )?;
         Ok(Box::pin(stream))
     }
 
