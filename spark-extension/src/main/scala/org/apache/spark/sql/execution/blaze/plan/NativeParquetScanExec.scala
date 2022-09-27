@@ -31,7 +31,11 @@ import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.BinaryComparison
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.Predicate
+import org.apache.spark.sql.catalyst.expressions.UnaryExpression
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
@@ -66,7 +70,15 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
 
   private val nativePruningPredicateFilter = basedFileScan.dataFilters
     .reduceOption(And)
-    .map(expr => NativeConverters.convertExpr(expr, useAttrExprId = false))
+    .map(expr => {
+      expr.foreach {
+        case _: Literal | _: AttributeReference | _: BinaryComparison |
+            _: UnaryExpression with Predicate =>
+        case expr =>
+          assert(assertion = false, s"not supported pruning predicate filter expr: $expr")
+      }
+      NativeConverters.convertExpr(expr, useAttrExprId = false)
+    })
 
   private val nativeFileSchema = NativeConverters.convertSchema(basedFileScan.relation.dataSchema)
   private val nativeFileGroups: Array[pb.FileGroup] = {
