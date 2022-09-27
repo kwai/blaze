@@ -68,17 +68,8 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     }
   }
 
-  private val nativePruningPredicateFilter = basedFileScan.dataFilters
-    .reduceOption(And)
-    .map(expr => {
-      expr.foreach {
-        case _: Literal | _: AttributeReference | _: BinaryComparison |
-            _: UnaryExpression with Predicate =>
-        case expr =>
-          assert(assertion = false, s"not supported pruning predicate filter expr: $expr")
-      }
-      NativeConverters.convertExpr(expr, useAttrExprId = false)
-    })
+  private val nativePruningPredicateFilters = basedFileScan.dataFilters
+    .map(expr => NativeConverters.convertExpr(expr, useAttrExprId = false))
 
   private val nativeFileSchema = NativeConverters.convertSchema(basedFileScan.relation.dataSchema)
   private val nativeFileGroups: Array[pb.FileGroup] = {
@@ -160,11 +151,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
         val nativeParquetScanExecBuilder = pb.ParquetScanExecNode
           .newBuilder()
           .setBaseConf(nativeParquetScanConf)
-
-        nativePruningPredicateFilter match {
-          case Some(filter) => nativeParquetScanExecBuilder.setPruningPredicate(filter)
-          case None => // no nothing
-        }
+          .addAllPruningPredicates(nativePruningPredicateFilters.asJava)
 
         pb.PhysicalPlanNode
           .newBuilder()

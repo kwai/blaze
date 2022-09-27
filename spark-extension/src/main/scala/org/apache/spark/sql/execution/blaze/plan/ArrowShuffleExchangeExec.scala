@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
+import java.io.File
 import java.nio.file.Paths
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -36,6 +37,8 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
+import org.apache.spark.shuffle.sort.MapInfo
+import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -63,10 +66,14 @@ import org.apache.spark.sql.execution.SQLExecution.EXECUTION_ID_KEY
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.storage.BlockId
+import org.apache.spark.storage.ShuffleDataBlockId
 import org.apache.spark.util.MutablePair
 import org.apache.spark.util.collection.unsafe.sort.PrefixComparators
 import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.apache.spark.util.CompletionIterator
+import org.apache.spark.util.ExternalBlockStoreUtils
+import org.apache.spark.util.Utils
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PhysicalExprNode
@@ -645,7 +652,44 @@ object ArrowShuffleExchangeExec {
           mapId,
           partitionLengths,
           tempDataFilePath.toFile)
-        MapStatus.apply(SparkEnv.get.blockManager.shuffleServerId, partitionLengths)
+
+        // shuffle write on hdfs
+        val blockManager = SparkEnv.get.blockManager
+        val handle = dep.shuffleHandle.asInstanceOf[SerializedShuffleHandle[_, _]]
+        val output = tempDataFilePath.toFile
+        val mapInfo = new MapInfo(partitionLengths, partitionLengths.map(_ => 0L))
+        val totalPartitionLength = mapInfo.lengths.sum
+        var hasExternalData = false
+
+        if (ExternalBlockStoreUtils.writeRemoteEnabled(
+            SparkEnv.get.conf,
+            totalPartitionLength,
+            handle.numMaps)) {
+          if (dataSize != 0) {
+            logInfo(s"KwaiShuffle: Start to write remote, shuffle block id ${ShuffleDataBlockId(
+              dep.shuffleId,
+              mapId,
+              0).name}, file path is ${output.getPath}/${output.getName}")
+            context.taskMetrics.externalMetrics.writeRemoteShuffle.setValue(1L)
+            val dataBlockId = new ShuffleDataBlockId(
+              dep.shuffleId,
+              mapId,
+              IndexShuffleBlockResolver.NOOP_REDUCE_ID)
+            val indexFile = shuffleBlockResolver.getIndexFile(dep.shuffleId, mapId)
+            blockManager.externalBlockStore.externalBlockManager.get.writeExternalShuffleFile(
+              dep.shuffleId,
+              mapId,
+              dataBlockId,
+              indexFile,
+              output)
+            hasExternalData = true
+          }
+        }
+
+        val mapStatus =
+          MapStatus.apply(SparkEnv.get.blockManager.shuffleServerId, partitionLengths)
+        mapStatus.hasExternal = hasExternalData
+        mapStatus
       }
     }
   }
