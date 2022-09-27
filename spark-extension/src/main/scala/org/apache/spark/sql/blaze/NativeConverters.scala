@@ -121,7 +121,6 @@ import org.apache.spark.util.Utils
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
-import org.blaze.protobuf.TimeUnit
 
 object NativeConverters {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -155,12 +154,6 @@ object NativeConverters {
       case StringType => arrowTypeBuilder.setUTF8(pb.EmptyMessage.getDefaultInstance)
       case BinaryType => arrowTypeBuilder.setBINARY(pb.EmptyMessage.getDefaultInstance)
       case DateType => arrowTypeBuilder.setDATE32(pb.EmptyMessage.getDefaultInstance)
-//      case TimestampType =>
-//        arrowTypeBuilder.setTIMESTAMP(
-//          pb.Timestamp
-//            .newBuilder()
-//            .setTimezone("") // convert to native None
-//            .setTimeUnit(TimeUnit.Nanosecond))
 
       // decimal
       case t: DecimalType =>
@@ -171,18 +164,6 @@ object NativeConverters {
             .setFractional(t.scale)
             .build())
 
-      // TODO: support complex data types
-      // case a: ArrayType =>
-      //   arrowTypeBuilder.setLIST(
-      //     org.blaze.protobuf.List
-      //       .newBuilder()
-      //       .setFieldType(
-      //         pb.Field
-      //           .newBuilder()
-      //           .setName("element")
-      //           .setArrowType(convertDataType(a.elementType))
-      //           .setNullable(a.containsNull))
-      //       .build())
       case _ =>
         throw new NotImplementedError(s"Data type conversion not implemented ${sparkDataType}")
     }
@@ -239,7 +220,7 @@ object NativeConverters {
     schemaBuilder.build()
   }
 
-  def convertExpr(sparkExpr: Expression): pb.PhysicalExprNode = {
+  def convertExpr(sparkExpr: Expression, useAttrExprId: Boolean = true): pb.PhysicalExprNode = {
     def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => pb.PhysicalExprNode.Builder)
         : pb.PhysicalExprNode =
       buildFn(pb.PhysicalExprNode.newBuilder()).build()
@@ -252,21 +233,8 @@ object NativeConverters {
           pb.PhysicalAggregateExprNode
             .newBuilder()
             .setAggrFunction(aggrFunction)
-            .setExpr(convertExpr(child)))
+            .setExpr(convertExpr(child, useAttrExprId)))
       }
-
-//    def buildCastExprNode(
-//        castFunction: pb.ScalarFunction,
-//        children: Seq[Expression],
-//        dataType: DataType): pb.PhysicalExprNode =
-//      buildExprNode {
-//        _.setTryCast(
-//          pb.PhysicalTryCastNode
-//            .newBuilder()
-//            .setExpr(buildScalarFunction(castFunction, children, dataType))
-//            .setArrowType(convertDataType(dataType))
-//            .build())
-//      }
 
     def buildBinaryExprNode(
         left: Expression,
@@ -276,8 +244,8 @@ object NativeConverters {
         _.setBinaryExpr(
           pb.PhysicalBinaryExprNode
             .newBuilder()
-            .setL(convertExpr(left))
-            .setR(convertExpr(right))
+            .setL(convertExpr(left, useAttrExprId))
+            .setR(convertExpr(right, useAttrExprId))
             .setOp(op))
       }
 
@@ -291,7 +259,7 @@ object NativeConverters {
             .newBuilder()
             .setName(fn.name())
             .setFun(fn)
-            .addAllArgs(args.map(convertExpr).asJava)
+            .addAllArgs(args.map(expr => convertExpr(expr, useAttrExprId)).asJava)
             .setReturnType(convertDataType(dataType)))
       }
 
@@ -305,7 +273,7 @@ object NativeConverters {
             .newBuilder()
             .setName(name)
             .setFun(ScalarFunction.SparkExtFunctions)
-            .addAllArgs(args.map(convertExpr).asJava)
+            .addAllArgs(args.map(expr => convertExpr(expr, useAttrExprId)).asJava)
             .setReturnType(convertDataType(dataType)))
       }
 
@@ -339,7 +307,11 @@ object NativeConverters {
         }
       case ar: AttributeReference =>
         buildExprNode {
-          _.setColumn(pb.PhysicalColumn.newBuilder().setName(s"#${ar.exprId.id}").build())
+          if (useAttrExprId) {
+            _.setColumn(pb.PhysicalColumn.newBuilder().setName(s"#${ar.exprId.id}").build())
+          } else {
+            _.setColumn(pb.PhysicalColumn.newBuilder().setName(ar.name).build())
+          }
         }
 
       // cast
@@ -348,7 +320,7 @@ object NativeConverters {
           _.setTryCast(
             pb.PhysicalTryCastNode
               .newBuilder()
-              .setExpr(convertExpr(child))
+              .setExpr(convertExpr(child, useAttrExprId))
               .setArrowType(convertDataType(dataType))
               .build())
         }
@@ -376,8 +348,8 @@ object NativeConverters {
           _.setInList(
             pb.PhysicalInListNode
               .newBuilder()
-              .setExpr(convertExpr(value))
-              .addAllList(list.map(convertExpr).asJava))
+              .setExpr(convertExpr(value, useAttrExprId))
+              .addAllList(list.map(expr => convertExpr(expr, useAttrExprId)).asJava))
         }
 
       // in
@@ -403,26 +375,29 @@ object NativeConverters {
           _.setInList(
             pb.PhysicalInListNode
               .newBuilder()
-              .setExpr(convertExpr(value))
+              .setExpr(convertExpr(value, useAttrExprId))
               .addAllList(set.map {
-                case utf8string: UTF8String => convertExpr(Literal(utf8string, StringType))
-                case v => convertExpr(Literal.apply(v))
+                case utf8string: UTF8String =>
+                  convertExpr(Literal(utf8string, StringType), useAttrExprId)
+                case v => convertExpr(Literal.apply(v), useAttrExprId)
               }.asJava))
         }
 
       // unary ops
       case IsNull(child) =>
         buildExprNode {
-          _.setIsNullExpr(pb.PhysicalIsNull.newBuilder().setExpr(convertExpr(child)).build())
+          _.setIsNullExpr(
+            pb.PhysicalIsNull.newBuilder().setExpr(convertExpr(child, useAttrExprId)).build())
         }
       case IsNotNull(child) =>
         buildExprNode {
           _.setIsNotNullExpr(
-            pb.PhysicalIsNotNull.newBuilder().setExpr(convertExpr(child)).build())
+            pb.PhysicalIsNotNull.newBuilder().setExpr(convertExpr(child, useAttrExprId)).build())
         }
       case Not(child) =>
         buildExprNode {
-          _.setNotExpr(pb.PhysicalNot.newBuilder().setExpr(convertExpr(child)).build())
+          _.setNotExpr(
+            pb.PhysicalNot.newBuilder().setExpr(convertExpr(child, useAttrExprId)).build())
         }
 
       // binary ops
@@ -517,39 +492,6 @@ object NativeConverters {
         buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
 
-      // case GetArrayItem(child, Literal(ordinalValue: Number, _)) =>
-      //   buildExprNode {
-      //     _.setGetIndexedFieldExpr(
-      //       pb.GetIndexedFieldExprNode
-      //         .newBuilder()
-      //         .setExpr(convertExpr(child))
-      //         .setKey(convertValue(
-      //           ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
-      //           LongType)))
-      //   }
-      //
-      // case e: CreateArray =>
-      //   buildExprNode {
-      //     _.setScalarFunction(
-      //       pb.PhysicalScalarFunctionNode
-      //         .newBuilder()
-      //         .setFun(pb.ScalarFunction.Array)
-      //         .setName(pb.ScalarFunction.Array.name())
-      //         .addAllArgs(e.children.map(convertExpr).asJava)
-      //         .setReturnType(
-      //           pb.ArrowType
-      //             .newBuilder()
-      //             .setFIXEDSIZELIST(
-      //               pb.FixedSizeList
-      //                 .newBuilder()
-      //                 .setFieldType(pb.Field
-      //                   .newBuilder()
-      //                   .setName("item")
-      //                   .setArrowType(convertDataType(e.dataType.elementType))
-      //                   .setNullable(true))
-      //                 .setListSize(e.children.length))))
-      //   }
-
       case If(predicate, trueValue, falseValue) =>
         buildExprNode {
           _.setCase(
@@ -558,21 +500,21 @@ object NativeConverters {
               .addWhenThenExpr(
                 pb.PhysicalWhenThen
                   .newBuilder()
-                  .setWhenExpr(convertExpr(predicate))
-                  .setThenExpr(convertExpr(trueValue)))
-              .setElseExpr(convertExpr(falseValue)))
+                  .setWhenExpr(convertExpr(predicate, useAttrExprId))
+                  .setThenExpr(convertExpr(trueValue, useAttrExprId)))
+              .setElseExpr(convertExpr(falseValue, useAttrExprId)))
         }
       case CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()
         val whenThens = branches.map {
           case (w, t) =>
             val whenThen = pb.PhysicalWhenThen.newBuilder()
-            whenThen.setWhenExpr(convertExpr(w))
-            whenThen.setThenExpr(convertExpr(t))
+            whenThen.setWhenExpr(convertExpr(w, useAttrExprId))
+            whenThen.setThenExpr(convertExpr(t, useAttrExprId))
             whenThen.build()
         }
         caseExpr.addAllWhenThenExpr(whenThens.asJava)
-        elseValue.foreach(el => caseExpr.setElseExpr(convertExpr(el)))
+        elseValue.foreach(el => caseExpr.setElseExpr(convertExpr(el, useAttrExprId)))
         pb.PhysicalExprNode.newBuilder().setCase(caseExpr).build()
 
       // aggr bypass
@@ -613,7 +555,7 @@ object NativeConverters {
               .setSerialized(ByteString.copyFrom(serialized))
               .setReturnType(convertDataType(bounded.dataType))
               .setReturnNullable(bounded.nullable)
-              .addAllParams(e.children.map(convertExpr).asJava))
+              .addAllParams(e.children.map(expr => convertExpr(expr, useAttrExprId)).asJava))
           .build()
 
       case unsupportedExpression =>
