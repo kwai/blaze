@@ -46,7 +46,6 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
-use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::file_format::{FileScanConfig, ParquetExec};
@@ -65,9 +64,7 @@ use crate::{
     convert_box_required, convert_required, into_required, protobuf, DataType, Schema,
 };
 use crate::{from_proto_binary_op, proto_error};
-use datafusion::arrow::datatypes::Field;
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
-use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion_ext::expr::cast::TryCastExpr;
 use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
 use datafusion_ext::limit_exec::LimitExec;
@@ -193,6 +190,91 @@ fn bind(
     }
 }
 
+pub fn convert_physical_expr_to_logical_expr(
+    expr: &Arc<dyn PhysicalExpr>
+) -> Result<Expr, DataFusionError> {
+    let expr = expr.as_any();
+
+    if let Some(expr) = expr.downcast_ref::<Column>() {
+        Ok(Expr::Column(datafusion::common::Column::from_name(expr.name())))
+
+    } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
+        Ok(Expr::BinaryExpr {
+            left: Box::new(convert_physical_expr_to_logical_expr(expr.left())?),
+            op: expr.op().clone(),
+            right: Box::new(convert_physical_expr_to_logical_expr(expr.right())?),
+        })
+
+    } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
+        Ok(Expr::Case {
+            expr: expr.expr().as_ref().map(|expr| {
+                convert_physical_expr_to_logical_expr(expr).map(Box::new)
+            }).transpose()?,
+            when_then_expr: expr.when_then_expr()
+                .iter()
+                .map(|wt| -> Result<_, DataFusionError> {
+                    Ok((
+                        Box::new(convert_physical_expr_to_logical_expr(&wt.0)?),
+                        Box::new(convert_physical_expr_to_logical_expr(&wt.1)?),
+                    ))
+                }).collect::<Result<Vec<_>, DataFusionError>>()?,
+            else_expr: expr.else_expr().map(|else_expr| {
+                convert_physical_expr_to_logical_expr(else_expr).map(Box::new)
+            }).transpose()?,
+        })
+
+    } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
+        Ok(Expr::Not(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
+
+    } else if let Some(expr) = expr.downcast_ref::<IsNullExpr>() {
+        Ok(Expr::IsNull(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
+
+    } else if let Some(expr) = expr.downcast_ref::<IsNotNullExpr>() {
+        Ok(Expr::IsNotNull(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
+
+    } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
+        Ok(Expr::InList {
+            expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr())?),
+            list: expr
+                .list()
+                .iter()
+                .map(|e| convert_physical_expr_to_logical_expr(e))
+                .collect::<Result<Vec<_>, DataFusionError>>()?,
+            negated: expr.negated(),
+        })
+    } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
+        Ok(Expr::Negative(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
+
+    } else if let Some(expr) = expr.downcast_ref::<Literal>() {
+        Ok(Expr::Literal(expr.value().clone()))
+
+    } else if let Some(expr) = expr.downcast_ref::<CastExpr>() {
+        Ok(Expr::Cast {
+            expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr())?),
+            data_type: expr.cast_type().clone(),
+        })
+    } else if let Some(expr) = expr.downcast_ref::<TryCastExpr>() {
+        Ok(Expr::TryCast {
+            expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr)?),
+            data_type: expr.cast_type.clone(),
+        })
+    } else if let Some(_) = expr.downcast_ref::<ScalarFunctionExpr>() {
+        unimplemented!("converting physical ScalarFunctionExpr to logical is not supported")
+
+    } else if let Some(_) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
+        unimplemented!("converting physical SparkFallbackToJvmExpr to logical is not supported")
+
+    } else if let Some(_) = expr.downcast_ref::<GetIndexedFieldExpr>() {
+        unimplemented!("converting physical GetIndexedFieldExpr to logical is not supported")
+
+    } else if let Some(_) = expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>() {
+        unimplemented!("converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported")
+
+    } else {
+        unimplemented!("Expression binding not implemented yet")
+    }
+}
+
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
     type Error = PlanSerDeError;
 
@@ -234,57 +316,19 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::ParquetScan(scan) => {
-                #[allow(unused)]
-                enum StatisticsType {
-                    Min,
-                    Max,
-                    NullCount,
-                }
-                #[allow(unused)]
-                struct XRequiredStatColumns {
-                    columns: Vec<(Column, StatisticsType, Field)>,
-                }
-                #[allow(unused)]
-                pub struct XPruningPredicate {
-                    schema: SchemaRef,
-                    predicate_expr: Arc<dyn PhysicalExpr>,
-                    required_columns: XRequiredStatColumns,
-                    logical_expr: Expr,
-                }
-                #[allow(unused)]
-                pub struct XParquetExec {
-                    base_config: FileScanConfig,
-                    projected_statistics: Statistics,
-                    projected_schema: SchemaRef,
-                    metrics: ExecutionPlanMetricsSet,
-                    pruning_predicate: Option<XPruningPredicate>,
-                }
-
-                // fast path for parquet scan without pruning predicates
-                if scan.pruning_predicate.is_none() {
-                    return Ok(Arc::new(ParquetExec::new(
-                        scan.base_conf.as_ref().unwrap().try_into()?,
-                        None,
-                    )));
-                }
-
-                // process with pruning predicates
-                let mut parquet_scan = ParquetExec::new(
-                    scan.base_conf.as_ref().unwrap().try_into()?,
-                    Some(Expr::Literal(ScalarValue::Null)), // placeholder
-                );
-                let predicate = try_parse_physical_expr_required(
-                    &scan.pruning_predicate,
-                    &parquet_scan.schema(),
-                )?;
-                unsafe {
-                    // safety - visit private fields in ParquetExec
-                    let xparquet: &mut XParquetExec =
-                        std::mem::transmute(&mut parquet_scan);
-                    let pruning = xparquet.pruning_predicate.as_mut().unwrap();
-                    pruning.predicate_expr = predicate;
-                }
-                Ok(Arc::new(parquet_scan))
+                let conf: FileScanConfig = scan.base_conf.as_ref().unwrap().try_into()?;
+                Ok(Arc::new(if scan.pruning_predicate.is_none() {
+                    ParquetExec::new(conf, None)
+                } else {
+                    let predicate = try_parse_physical_expr_required(
+                        &scan.pruning_predicate,
+                        &conf.file_schema,
+                    )?;
+                    ParquetExec::new(
+                        conf,
+                        Some(convert_physical_expr_to_logical_expr(&predicate)?),
+                    )
+                }))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let left: Arc<dyn ExecutionPlan> =

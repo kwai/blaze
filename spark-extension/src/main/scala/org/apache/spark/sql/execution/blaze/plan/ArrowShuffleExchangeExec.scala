@@ -227,7 +227,7 @@ case class ArrowShuffleExchangeExec(
 
   val nativeHashExprs: List[PhysicalExprNode] = outputPartitioning match {
     case HashPartitioning(expressions, _) =>
-      expressions.map(NativeConverters.convertExpr).toList
+      expressions.map(expr => NativeConverters.convertExpr(expr)).toList
     case _ => null
   }
 
