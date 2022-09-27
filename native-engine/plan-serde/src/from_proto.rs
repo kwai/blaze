@@ -24,6 +24,7 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::BuiltinScalarFunction;
 use datafusion::logical_expr::Expr;
+use datafusion::logical_plan::Operator;
 use datafusion::physical_expr::expressions::create_aggregate_expr;
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
@@ -46,6 +47,7 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
+use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::file_format::{FileScanConfig, ParquetExec};
@@ -317,18 +319,32 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::ParquetScan(scan) => {
                 let conf: FileScanConfig = scan.base_conf.as_ref().unwrap().try_into()?;
-                Ok(Arc::new(if scan.pruning_predicate.is_none() {
-                    ParquetExec::new(conf, None)
-                } else {
-                    let predicate = try_parse_physical_expr_required(
-                        &scan.pruning_predicate,
-                        &conf.file_schema,
-                    )?;
-                    ParquetExec::new(
-                        conf,
-                        Some(convert_physical_expr_to_logical_expr(&predicate)?),
-                    )
-                }))
+                let predicate = scan.pruning_predicates
+                    .iter()
+                    .filter_map(|predicate| {
+                        try_parse_physical_expr(
+                            &predicate,
+                            &conf.file_schema,
+                        ).and_then(|expr| {
+                            convert_physical_expr_to_logical_expr(&expr)
+                                .map_err(|err| {
+                                    log::warn!("ignore unsupported predicate pruning expr: {:?}: {}",
+                                        expr,
+                                        err.to_string(),
+                                    );
+                                    PlanSerDeError::DataFusionError(err)
+                                })
+                        })
+                        .ok()
+                    })
+                    .fold(Expr::Literal(ScalarValue::from(true)), |a, b| {
+                        Expr::BinaryExpr {
+                            op: Operator::And,
+                            left: Box::new(a),
+                            right: Box::new(b),
+                        }
+                    });
+                Ok(Arc::new(ParquetExec::new(conf, Some(predicate))))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let left: Arc<dyn ExecutionPlan> =

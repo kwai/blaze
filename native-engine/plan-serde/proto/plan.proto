@@ -324,7 +324,7 @@ message FileScanExecConf {
 
 message ParquetScanExecNode {
   FileScanExecConf base_conf = 1;
-  PhysicalExprNode pruning_predicate = 2;
+  repeated PhysicalExprNode pruning_predicates = 2;
 }
 
 enum PartitionMode {
