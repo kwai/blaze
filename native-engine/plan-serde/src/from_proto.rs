@@ -193,47 +193,56 @@ fn bind(
 }
 
 pub fn convert_physical_expr_to_logical_expr(
-    expr: &Arc<dyn PhysicalExpr>
+    expr: &Arc<dyn PhysicalExpr>,
 ) -> Result<Expr, DataFusionError> {
     let expr = expr.as_any();
 
     if let Some(expr) = expr.downcast_ref::<Column>() {
-        Ok(Expr::Column(datafusion::common::Column::from_name(expr.name())))
-
+        Ok(Expr::Column(datafusion::common::Column::from_name(
+            expr.name(),
+        )))
     } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
         Ok(Expr::BinaryExpr {
             left: Box::new(convert_physical_expr_to_logical_expr(expr.left())?),
             op: expr.op().clone(),
             right: Box::new(convert_physical_expr_to_logical_expr(expr.right())?),
         })
-
     } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
         Ok(Expr::Case {
-            expr: expr.expr().as_ref().map(|expr| {
-                convert_physical_expr_to_logical_expr(expr).map(Box::new)
-            }).transpose()?,
-            when_then_expr: expr.when_then_expr()
+            expr: expr
+                .expr()
+                .as_ref()
+                .map(|expr| convert_physical_expr_to_logical_expr(expr).map(Box::new))
+                .transpose()?,
+            when_then_expr: expr
+                .when_then_expr()
                 .iter()
                 .map(|wt| -> Result<_, DataFusionError> {
                     Ok((
                         Box::new(convert_physical_expr_to_logical_expr(&wt.0)?),
                         Box::new(convert_physical_expr_to_logical_expr(&wt.1)?),
                     ))
-                }).collect::<Result<Vec<_>, DataFusionError>>()?,
-            else_expr: expr.else_expr().map(|else_expr| {
-                convert_physical_expr_to_logical_expr(else_expr).map(Box::new)
-            }).transpose()?,
+                })
+                .collect::<Result<Vec<_>, DataFusionError>>()?,
+            else_expr: expr
+                .else_expr()
+                .map(|else_expr| {
+                    convert_physical_expr_to_logical_expr(else_expr).map(Box::new)
+                })
+                .transpose()?,
         })
-
     } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
-        Ok(Expr::Not(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
-
+        Ok(Expr::Not(Box::new(convert_physical_expr_to_logical_expr(
+            &expr.arg(),
+        )?)))
     } else if let Some(expr) = expr.downcast_ref::<IsNullExpr>() {
-        Ok(Expr::IsNull(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
-
+        Ok(Expr::IsNull(Box::new(
+            convert_physical_expr_to_logical_expr(&expr.arg())?,
+        )))
     } else if let Some(expr) = expr.downcast_ref::<IsNotNullExpr>() {
-        Ok(Expr::IsNotNull(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
-
+        Ok(Expr::IsNotNull(Box::new(
+            convert_physical_expr_to_logical_expr(&expr.arg())?,
+        )))
     } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
         Ok(Expr::InList {
             expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr())?),
@@ -245,11 +254,11 @@ pub fn convert_physical_expr_to_logical_expr(
             negated: expr.negated(),
         })
     } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
-        Ok(Expr::Negative(Box::new(convert_physical_expr_to_logical_expr(&expr.arg())?)))
-
+        Ok(Expr::Negative(Box::new(
+            convert_physical_expr_to_logical_expr(&expr.arg())?,
+        )))
     } else if let Some(expr) = expr.downcast_ref::<Literal>() {
         Ok(Expr::Literal(expr.value().clone()))
-
     } else if let Some(expr) = expr.downcast_ref::<CastExpr>() {
         Ok(Expr::Cast {
             expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr())?),
@@ -261,17 +270,19 @@ pub fn convert_physical_expr_to_logical_expr(
             data_type: expr.cast_type.clone(),
         })
     } else if let Some(_) = expr.downcast_ref::<ScalarFunctionExpr>() {
-        unimplemented!("converting physical ScalarFunctionExpr to logical is not supported")
-
+        unimplemented!(
+            "converting physical ScalarFunctionExpr to logical is not supported"
+        )
     } else if let Some(_) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
-        unimplemented!("converting physical SparkFallbackToJvmExpr to logical is not supported")
-
+        unimplemented!(
+            "converting physical SparkFallbackToJvmExpr to logical is not supported"
+        )
     } else if let Some(_) = expr.downcast_ref::<GetIndexedFieldExpr>() {
-        unimplemented!("converting physical GetIndexedFieldExpr to logical is not supported")
-
+        unimplemented!(
+            "converting physical GetIndexedFieldExpr to logical is not supported"
+        )
     } else if let Some(_) = expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>() {
         unimplemented!("converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported")
-
     } else {
         unimplemented!("Expression binding not implemented yet")
     }
@@ -681,8 +692,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::Limit(limit) => {
-                let input: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(limit.input)?;
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(limit.input)?;
                 Ok(Arc::new(LimitExec::new(input, limit.limit)))
             }
         }

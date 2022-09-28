@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
+use crate::ResultExt;
 use jni::errors::Result as JniResult;
 use jni::objects::JClass;
 use jni::objects::JMethodID;
@@ -24,8 +24,6 @@ use jni::signature::Primitive::Boolean;
 use jni::JNIEnv;
 use jni::JavaVM;
 use once_cell::sync::OnceCell;
-
-use crate::ResultExt;
 
 thread_local! {
     pub static THREAD_JNIENV: once_cell::unsync::Lazy<JNIEnv<'static>> =

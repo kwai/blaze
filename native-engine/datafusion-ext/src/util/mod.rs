@@ -14,4 +14,3 @@
 
 pub mod array_builder;
 pub mod ipc;
-pub mod concat_batches;

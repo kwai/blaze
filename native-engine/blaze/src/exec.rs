@@ -30,7 +30,7 @@ use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
-use datafusion_ext::jni_bridge::{JavaClasses};
+use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
 use futures::{FutureExt, StreamExt};
 use jni::objects::{JClass, JString};
@@ -355,7 +355,8 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if !is_task_running()? { // only handle running task
+        if !is_task_running()? {
+            // only handle running task
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);

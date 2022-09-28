@@ -42,6 +42,7 @@ use datafusion::execution::memory_manager::MemoryConsumer;
 use datafusion::execution::memory_manager::MemoryConsumerId;
 use datafusion::execution::memory_manager::MemoryManager;
 use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::memory::MemoryStream;
@@ -61,7 +62,6 @@ use tokio::task;
 
 use crate::spark_hash::{create_hashes, pmod};
 use crate::util::array_builder::{builder_extend, make_batch, new_array_builders};
-use crate::util::concat_batches::concat_batches;
 use crate::util::ipc::write_one_batch;
 
 struct PartitionBuffer {
@@ -183,8 +183,11 @@ impl PartitionBuffer {
             .iter()
             .map(|batch| batch_byte_size(batch) as isize)
             .sum::<isize>();
-        let frozen_batch =
-            concat_batches(&self.schema, &std::mem::take(&mut self.staging))?;
+        let frozen_batch = concat_batches(
+            &self.schema,
+            &std::mem::take(&mut self.staging),
+            self.num_staging_rows,
+        )?;
         self.num_staging_rows = 0;
 
         let frozen_capacity_old = self.frozen.capacity();
