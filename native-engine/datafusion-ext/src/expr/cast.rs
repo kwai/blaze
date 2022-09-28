@@ -241,7 +241,8 @@ fn to_decimal(input: &str, precision: usize, scale: usize) -> Option<i128> {
     let precision = precision as u64;
     let scale = scale as i64;
     bigdecimal::BigDecimal::from_str(input)
-        .ok().map(|decimal| decimal.with_prec(precision).with_scale(scale))
+        .ok()
+        .map(|decimal| decimal.with_prec(precision).with_scale(scale))
         .and_then(|decimal| {
             let (bigint, _exp) = decimal.as_bigint_and_exponent();
             bigint.to_i128()

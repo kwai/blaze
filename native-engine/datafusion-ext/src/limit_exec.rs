@@ -1,17 +1,20 @@
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use crate::DataFusionError;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream, Statistics};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
+};
 use futures::{Stream, StreamExt};
-use crate::DataFusionError;
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct LimitExec {
@@ -51,19 +54,23 @@ impl ExecutionPlan for LimitExec {
         vec![self.input.clone()]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn ExecutionPlan>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         match children.len() {
-            1 => Ok(Arc::new(Self::new(
-                children[0].clone(),
-                self.limit,
-            ))),
+            1 => Ok(Arc::new(Self::new(children[0].clone(), self.limit))),
             _ => Err(DataFusionError::Internal(
                 "LimitExec wrong number of children".to_string(),
             )),
         }
     }
 
-    fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
         let input_stream = self.input.execute(partition, context)?;
         Ok(Box::pin(LimitStream {
             input_stream,
@@ -98,7 +105,10 @@ impl RecordBatchStream for LimitStream {
 impl Stream for LimitStream {
     type Item = datafusion::arrow::error::Result<RecordBatch>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         let rest = self.limit.saturating_sub(self.cur) as usize;
         if rest == 0 {
             return Poll::Ready(None);
@@ -108,17 +118,13 @@ impl Stream for LimitStream {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
-            Poll::Ready(Some(Ok(batch))) => {
-                self.baseline_metrics.record_poll(
-                    Poll::Ready(Some(Ok(
-                        if batch.num_rows() <= rest {
-                            batch
-                        } else {
-                            batch.slice(0, rest)
-                        }
-                    )))
-                )
-            },
+            Poll::Ready(Some(Ok(batch))) => self.baseline_metrics.record_poll(
+                Poll::Ready(Some(Ok(if batch.num_rows() <= rest {
+                    batch
+                } else {
+                    batch.slice(0, rest)
+                }))),
+            ),
         }
     }
 }

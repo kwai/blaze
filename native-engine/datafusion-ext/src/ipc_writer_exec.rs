@@ -25,6 +25,7 @@ use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
+use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
@@ -41,7 +42,6 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::io::Cursor;
 use std::sync::Arc;
-use crate::util::concat_batches::concat_batches;
 
 #[derive(Debug)]
 pub struct IpcWriterExec {
@@ -155,7 +155,7 @@ pub async fn write_ipc(
     macro_rules! flush_batches {
         () => {{
             let timer = metrics.elapsed_compute().timer();
-            let batch = concat_batches(&schema, &batches)?;
+            let batch = concat_batches(&schema, &batches, num_rows)?;
             metrics.record_output(num_rows);
             batches.clear();
             num_rows = 0;

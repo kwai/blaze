@@ -116,9 +116,7 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
         )]));
 
         if input_batch.num_rows() == 0 {
-            let empty_array = RecordBatch::new_empty(output_schema)
-                .column(0)
-                .clone();
+            let empty_array = RecordBatch::new_empty(output_schema).column(0).clone();
             return Ok(ColumnarValue::Array(empty_array));
         }
 

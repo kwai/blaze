@@ -39,6 +39,7 @@ use datafusion::parquet::file::{
     metadata::{ParquetMetaData, RowGroupMetaData},
     statistics::Statistics as ParquetStatistics,
 };
+use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
@@ -51,7 +52,6 @@ use datafusion::{
     },
     scalar::ScalarValue,
 };
-use datafusion::physical_plan::metrics::BaselineMetrics;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use log::{debug, warn};
@@ -211,14 +211,13 @@ impl ExecutionPlan for ParquetExec {
             metrics: self.metrics.clone(),
         };
 
-        let stream =
-            FileStream::new(
-                &self.base_config,
-                partition_index,
-                context,
-                opener,
-                BaselineMetrics::new(&self.metrics, partition_index),
-            )?;
+        let stream = FileStream::new(
+            &self.base_config,
+            partition_index,
+            context,
+            opener,
+            BaselineMetrics::new(&self.metrics, partition_index),
+        )?;
         Ok(Box::pin(stream))
     }
 
