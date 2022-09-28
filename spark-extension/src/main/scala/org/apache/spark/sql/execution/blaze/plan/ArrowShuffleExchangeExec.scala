@@ -656,7 +656,7 @@ object ArrowShuffleExchangeExec {
         // shuffle write on hdfs
         val blockManager = SparkEnv.get.blockManager
         val handle = dep.shuffleHandle.asInstanceOf[SerializedShuffleHandle[_, _]]
-        val output = tempDataFilePath.toFile
+        val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
         val mapInfo = new MapInfo(partitionLengths, partitionLengths.map(_ => 0L))
         val totalPartitionLength = mapInfo.lengths.sum
         var hasExternalData = false
