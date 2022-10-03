@@ -46,7 +46,7 @@ class ArrowReaderIterator(channel: ReadableByteChannel, taskContext: TaskContext
           close()
           return false
         }
-        rowIter = FFIHelper.batchAsRowIter(FFIHelper.rootAsBatch(root))
+        rowIter = ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(root))
       }
       true
     }
@@ -54,12 +54,12 @@ class ArrowReaderIterator(channel: ReadableByteChannel, taskContext: TaskContext
   private def close(): Unit =
     synchronized {
       if (root != null) {
-        root.close()
-        allocator.close()
         arrowReader.close()
-        root = null
-        allocator = null
         arrowReader = null
+        root.close()
+        root = null
+        allocator.close()
+        allocator = null
       }
     }
 }

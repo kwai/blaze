@@ -40,6 +40,7 @@ message PhysicalPlanNode {
     EmptyPartitionsExecNode empty_partitions = 13;
     HashAggregateExecNode hash_aggregate = 14;
     LimitExecNode limit = 15;
+    FFIReaderExecNode ffi_reader = 16;
   }
 }
 
@@ -470,6 +471,12 @@ enum AggregateMode {
 message LimitExecNode {
   PhysicalPlanNode input = 1;
   uint64 limit = 2;
+}
+
+message FFIReaderExecNode {
+  uint32 num_partitions = 1;
+  Schema schema = 2;
+  string export_iter_provider_resource_id = 3;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

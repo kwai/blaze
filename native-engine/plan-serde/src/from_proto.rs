@@ -50,6 +50,7 @@ use datafusion::physical_plan::{
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext::ffi_reader_exec::FFIReaderExec;
 use datafusion_ext::file_format::{FileScanConfig, ParquetExec};
 use datafusion_ext::ipc_reader_exec::IpcReadMode;
 use datafusion_ext::ipc_reader_exec::IpcReaderExec;
@@ -698,6 +699,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             PhysicalPlanType::Limit(limit) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(limit.input)?;
                 Ok(Arc::new(LimitExec::new(input, limit.limit)))
+            }
+            PhysicalPlanType::FfiReader(ffi_reader) => {
+                let schema = Arc::new(convert_required!(ffi_reader.schema)?);
+                Ok(Arc::new(FFIReaderExec::new(
+                    ffi_reader.num_partitions as usize,
+                    ffi_reader.export_iter_provider_resource_id.clone(),
+                    schema,
+                )))
             }
         }
     }

@@ -251,10 +251,6 @@ object BlazeConverters extends Logging {
     exec match {
       case UnionExec(children) =>
         logDebug(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
-        for (a <- children) {
-          assert(a.output.map(_.dataType) == exec.output.map(_.dataType))
-          assert(a.output.map(_.nullable) == exec.output.map(_.nullable))
-        }
         NativeUnionExec(children.map(child => {
           addRenameColumnsExec(convertToNative(child))
         }))
@@ -265,9 +261,6 @@ object BlazeConverters extends Logging {
   }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
-    // if (exec.isSkewJoin) {
-    //   throw new NotImplementedError("skew join is not yet supported")
-    // }
     exec match {
       case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right) =>
         logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
