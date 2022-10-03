@@ -270,8 +270,8 @@ pub fn create_hashes<'a>(
             DataType::LargeUtf8 => {
                 hash_array!(LargeStringArray, col, hashes_buffer);
             }
-            DataType::Decimal(_, _) => {
-                hash_array_decimal!(DecimalArray, col, hashes_buffer);
+            DataType::Decimal128(_, _) => {
+                hash_array_decimal!(Decimal128Array, col, hashes_buffer);
             }
             DataType::Dictionary(index_type, _) => match **index_type {
                 DataType::Int8 => {

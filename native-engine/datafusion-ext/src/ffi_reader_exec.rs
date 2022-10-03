@@ -17,10 +17,10 @@ use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use datafusion::arrow::array::{Array, make_array_from_raw, StructArray};
+use datafusion::arrow::array::{make_array_from_raw, StructArray};
+use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -186,15 +186,15 @@ impl FFIReaderStream {
         jni_delete_local_ref!(consumer)?;
 
         let imported = unsafe {
-            make_array_from_raw(ffi_arrow_array.as_ref(), ffi_arrow_schema.as_ref())?
+            make_array_from_raw(ffi_arrow_array.as_ref(), ffi_arrow_schema.as_ref())
+                .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
         };
         let struct_array = imported
             .as_any()
             .downcast_ref::<StructArray>()
-            .unwrap()
-            .clone();
-
+            .unwrap();
         let batch = RecordBatch::from(struct_array);
+
         self.size_counter.add(batch_byte_size(&batch));
         Ok(Some(batch))
     }

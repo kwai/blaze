@@ -22,7 +22,6 @@ pub mod empty_partitions_exec;
 pub mod expr;
 pub mod ffi_reader_exec;
 pub mod file_format;
-pub mod hdfs_object_store;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod jni_bridge;

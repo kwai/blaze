@@ -67,7 +67,7 @@ impl PhysicalExpr for TryCastExpr {
                     }
                 }
             }
-            (&DataType::Utf8, &DataType::Decimal(_, _)) => {
+            (&DataType::Utf8, &DataType::Decimal128(_, _)) => {
                 // spark compatible string to decimal cast
                 match value {
                     ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
@@ -116,12 +116,12 @@ fn try_cast_string_array_to_integer(
         ($target_type:ident) => {{
             type B = paste! {[<$target_type Builder>]};
             let array = array.as_any().downcast_ref::<StringArray>().unwrap();
-            let mut builder = B::new(array.len());
+            let mut builder = B::new();
 
             for v in array.iter() {
                 match v {
-                    Some(s) => builder.append_option(to_integer(s))?,
-                    None => builder.append_null()?,
+                    Some(s) => builder.append_option(to_integer(s)),
+                    None => builder.append_null(),
                 }
             }
             Arc::new(builder.finish())
@@ -141,17 +141,17 @@ fn try_cast_string_array_to_decimal(
     array: &ArrayRef,
     cast_type: &DataType,
 ) -> Result<ArrayRef> {
-    if let &DataType::Decimal(precision, scale) = cast_type {
+    if let &DataType::Decimal128(precision, scale) = cast_type {
         let array = array.as_any().downcast_ref::<StringArray>().unwrap();
-        let mut builder = DecimalBuilder::new(array.len(), precision, scale);
+        let mut builder = Decimal128Builder::new(precision, scale);
 
         for v in array.iter() {
             match v {
                 Some(s) => match to_decimal(s, precision, scale) {
                     Some(v) => builder.append_value(v)?,
-                    None => builder.append_null()?,
+                    None => builder.append_null(),
                 },
-                None => builder.append_null()?,
+                None => builder.append_null(),
             }
         }
         return Ok(Arc::new(builder.finish()));
@@ -237,7 +237,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(
     Some(result)
 }
 
-fn to_decimal(input: &str, precision: usize, scale: usize) -> Option<i128> {
+fn to_decimal(input: &str, precision: u8, scale: u8) -> Option<i128> {
     let precision = precision as u64;
     let scale = scale as i64;
     bigdecimal::BigDecimal::from_str(input)

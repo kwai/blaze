@@ -17,14 +17,16 @@
 
 //! Parquet format abstractions
 
+use std::sync::Arc;
 use datafusion::common::DataFusionError;
 use datafusion::error::Result;
 use datafusion::parquet::file::footer::{decode_footer, decode_metadata};
 use datafusion::parquet::file::metadata::ParquetMetaData;
-use object_store::{ObjectMeta, ObjectStore};
+use crate::file_format::ObjectMeta;
+use crate::util::fs::FsDataInputStream;
 
 pub(crate) async fn fetch_parquet_metadata(
-    store: &dyn ObjectStore,
+    input: Arc<FsDataInputStream>,
     meta: &ObjectMeta,
 ) -> Result<ParquetMetaData> {
     if meta.size < 8 {
@@ -35,12 +37,8 @@ pub(crate) async fn fetch_parquet_metadata(
     }
 
     let footer_start = meta.size - 8;
-    let suffix = store
-        .get_range(&meta.location, footer_start..meta.size)
-        .await?;
-
     let mut footer = [0; 8];
-    footer.copy_from_slice(suffix.as_ref());
+    input.read_fully(footer_start as u64, &mut footer)?;
 
     let length = decode_footer(&footer)?;
 
@@ -53,9 +51,9 @@ pub(crate) async fn fetch_parquet_metadata(
     }
 
     let metadata_start = meta.size - length - 8;
-    let metadata = store
-        .get_range(&meta.location, metadata_start..footer_start)
-        .await?;
+    let metadata_len = footer_start - metadata_start;
+    let mut metadata = vec![0u8; metadata_len];
+    input.read_fully(metadata_start as u64, &mut metadata)?;
 
     Ok(decode_metadata(metadata.as_ref())?)
 }
