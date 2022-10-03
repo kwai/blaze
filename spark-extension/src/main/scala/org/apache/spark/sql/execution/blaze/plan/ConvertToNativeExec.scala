@@ -18,6 +18,8 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
 
+import org.apache.arrow.c.ArrowArray
+import org.apache.arrow.c.ArrowSchema
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -30,16 +32,15 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.execution.blaze.arrowio.ArrowWriterIterator
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.blaze.protobuf.FFIReaderExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-import org.blaze.protobuf.IpcReaderExecNode
-import org.blaze.protobuf.IpcReadMode
 
 case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode
@@ -74,25 +75,24 @@ case class ConvertToNativeExec(override val child: SparkPlan)
       inputRDD.dependencies,
       inputRDD.shuffleReadFull,
       (partition, context) => {
+        val inputRowIter = inputRDD.compute(partition, context)
         val resourceId = s"ConvertToNativeExec:${UUID.randomUUID().toString}"
         JniBridge.resourcesMap.put(
           resourceId,
           () => {
-            val inputRowIter = inputRDD.compute(partition, context)
-            val ipcIterator =
-              new ArrowWriterIterator(inputRowIter, renamedSchema, timeZoneId, context)
-            new InterruptibleIterator(context, ipcIterator)
+            val exportIter =
+              new ArrowFFIExportIterator(inputRowIter, renamedSchema, timeZoneId, context)
+            new InterruptibleIterator(context, exportIter)
           })
 
         PhysicalPlanNode
           .newBuilder()
-          .setIpcReader(
-            IpcReaderExecNode
+          .setFfiReader(
+            FFIReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(numInputPartitions)
-              .setIpcProviderResourceId(resourceId)
-              .setMode(IpcReadMode.CHANNEL_UNCOMPRESSED)
+              .setExportIterProviderResourceId(resourceId)
               .build())
           .build()
       },

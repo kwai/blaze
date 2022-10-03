@@ -155,18 +155,12 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: SortExec if isAlwaysConvert(e.child) || preferNativeSort =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: UnionExec =>
-        if (!hasMoreInconvertibleChildren(e)) {
-          e.setTagValue(convertStrategyTag, AlwaysConvert)
-        }
-      case e: SortMergeJoinExec =>
-        if (!hasMoreInconvertibleChildren(e) || preferNativeSmj) {
-          e.setTagValue(convertStrategyTag, AlwaysConvert)
-        }
-      case e: BroadcastHashJoinExec =>
-        if (!hasMoreInconvertibleChildren(e) || preferNativeBhj) {
-          e.setTagValue(convertStrategyTag, AlwaysConvert)
-        }
+      case e: UnionExec if !hasMoreInconvertibleChildren(e) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: SortMergeJoinExec if !hasMoreInconvertibleChildren(e) || preferNativeSmj =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: BroadcastHashJoinExec if !hasMoreInconvertibleChildren(e) || preferNativeBhj =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: LocalLimitExec if isAlwaysConvert(e.child) || preferNativeLocalLimit =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: GlobalLimitExec if isAlwaysConvert(e.child) || preferNativeGlobalLimit =>

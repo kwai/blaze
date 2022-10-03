@@ -52,36 +52,37 @@ case class IpcInputStreamIterator(
   })
 
   override def hasNext: Boolean = {
-    !finished && {
-      if (!consumed) {
-        return true
-      }
-      if (currentLimitedInputStream != null) {
-        currentLimitedInputStream.skip(Int.MaxValue)
-        currentLimitedInputStream = null
-      }
-
-      ipcLengthsBuf.clear()
-      while (ipcLengthsBuf.hasRemaining && channel.read(ipcLengthsBuf) >= 0) {}
-
-      if (ipcLengthsBuf.hasRemaining) {
-        if (ipcLengthsBuf.position() == 0) {
-          finished = true
-          closeInputStream()
-          return false
-        }
-        throw new EOFException(
-          "Data corrupt: unexpected EOF while reading compressed ipc lengths")
-      }
-      ipcLengthsBuf.flip()
-      currentIpcLength = ipcLengthsBuf.getLong
-
-      if (currentIpcLength == 0) { // skip empty ipc
-        return hasNext
-      }
-      consumed = false
+    if (finished) {
+      return false
+    }
+    if (!consumed) {
       return true
     }
+    if (currentLimitedInputStream != null) {
+      currentLimitedInputStream.skip(Int.MaxValue)
+      currentLimitedInputStream = null
+    }
+
+    ipcLengthsBuf.clear()
+    while (ipcLengthsBuf.hasRemaining && channel.read(ipcLengthsBuf) >= 0) {}
+
+    if (ipcLengthsBuf.hasRemaining) {
+      if (ipcLengthsBuf.position() == 0) {
+        finished = true
+        closeInputStream()
+        return false
+      }
+      throw new EOFException(
+        "Data corrupt: unexpected EOF while reading compressed ipc lengths")
+    }
+    ipcLengthsBuf.flip()
+    currentIpcLength = ipcLengthsBuf.getLong
+
+    if (currentIpcLength == 0) { // skip empty ipc
+      return hasNext
+    }
+    consumed = false
+    true
   }
 
   override def next(): ReadableByteChannel = {

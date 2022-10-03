@@ -54,7 +54,7 @@ import org.apache.spark.sql.execution.adaptive.QueryStage
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
 import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
-import org.apache.spark.sql.execution.blaze.arrowio.FFIHelper
+import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.types.StructField
@@ -62,6 +62,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.shuffle.ShuffleReader
+import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIImportIterator
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.util.CompletionIterator
 import org.blaze.protobuf.IpcReaderExecNode
@@ -122,7 +123,9 @@ object NativeSupports extends Logging {
       context: TaskContext): Iterator[InternalRow] = {
 
     val wrapper = BlazeCallNativeWrapper(nativePlan, partition, context, metrics)
-    FFIHelper.fromBlazeCallNative(wrapper, context)
+    new ArrowFFIImportIterator(wrapper, context).flatMap { batch =>
+      ColumnarHelper.batchAsRowIter(batch)
+    }
   }
 
   def executeNativePlanColumnar(
@@ -132,7 +135,7 @@ object NativeSupports extends Logging {
       context: TaskContext): Iterator[ColumnarBatch] = {
 
     val wrapper = BlazeCallNativeWrapper(nativePlan, partition, context, metrics)
-    FFIHelper.fromBlazeCallNativeColumnar(wrapper, context)
+    new ArrowFFIImportIterator(wrapper, context)
   }
 
   def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =

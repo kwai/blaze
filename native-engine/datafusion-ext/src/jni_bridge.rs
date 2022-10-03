@@ -317,6 +317,7 @@ pub struct JavaClasses<'a> {
     pub cScalaTuple2: ScalaTuple2<'a>,
     pub cScalaFunction0: ScalaFunction0<'a>,
     pub cScalaFunction1: ScalaFunction1<'a>,
+    pub cScalaFunction2: ScalaFunction2<'a>,
 
     pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
@@ -369,6 +370,7 @@ impl JavaClasses<'static> {
                 cScalaTuple2: ScalaTuple2::new(env).unwrap(),
                 cScalaFunction0: ScalaFunction0::new(env).unwrap(),
                 cScalaFunction1: ScalaFunction1::new(env).unwrap(),
+                cScalaFunction2: ScalaFunction2::new(env).unwrap(),
 
                 cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
@@ -776,6 +778,29 @@ impl<'a> ScalaFunction1<'a> {
                 class,
                 "apply",
                 "(Ljava/lang/Object;)Ljava/lang/Object;",
+            )?,
+            method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct ScalaFunction2<'a> {
+    pub class: JClass<'a>,
+    pub method_apply: JMethodID<'a>,
+    pub method_apply_ret: JavaType,
+}
+impl<'a> ScalaFunction2<'a> {
+    pub const SIG_TYPE: &'static str = "scala/Function2";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<ScalaFunction2<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(ScalaFunction2 {
+            class,
+            method_apply: env.get_method_id(
+                class,
+                "apply",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
             )?,
             method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
         })
