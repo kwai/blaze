@@ -21,15 +21,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use datafusion::arrow::array::{export_array_into_raw, StructArray};
+use datafusion::arrow::array::{StructArray, export_array_into_raw};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_ext::hdfs_object_store::HDFSSingleFileObjectStore;
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
 use futures::{FutureExt, StreamExt};
@@ -94,15 +92,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
                 .with_disk_manager(DiskManagerConfig::NewSpecified(dirs));
 
             let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
-
-            // NOTE:
-            //  datafusion 10.0 introduced required `host` when registering
-            //  object store, so it is necessary to wrap hdfs path with a unique
-            //  prefix "hdfs://-/".
-            //  for example: hdfs://-/(base64-encoded:hdfs://localhost:9000/xxx)
-            let hdfs_object_store = Arc::new(HDFSSingleFileObjectStore::new());
-            runtime.register_object_store("hdfs", "-", hdfs_object_store);
-
             let config = SessionConfig::new().with_batch_size(batch_size);
             SessionContext::with_config_rt(config, runtime)
         });
@@ -233,10 +222,10 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
                             let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                             let out_array = array_ptr as *mut FFI_ArrowArray;
-                            let batch: Arc<StructArray> = Arc::new(batch.into());
+                            let struct_array: Arc<StructArray> = Arc::new(batch.into());
                             unsafe {
                                 export_array_into_raw(
-                                    batch,
+                                    struct_array,
                                     out_array,
                                     out_schema,
                                 )

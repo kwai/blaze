@@ -372,13 +372,13 @@ async fn join_combined(
 
     macro_rules! cartesian_join_columnar_lr {
         ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
-            let mut lindices = UInt64Builder::new(0);
-            let mut rindices = UInt64Builder::new(0);
+            let mut lindices = UInt64Builder::new();
+            let mut rindices = UInt64Builder::new();
 
             for l in $range1.clone() {
                 for r in $range2.clone() {
-                    lindices.append_value(l as u64).unwrap();
-                    rindices.append_value(r as u64).unwrap();
+                    lindices.append_value(l as u64);
+                    rindices.append_value(r as u64);
                 }
 
                 if lindices.len() >= join_params.batch_size || l + 1 == $range1.end {
@@ -411,13 +411,13 @@ async fn join_combined(
 
     macro_rules! cartesian_join_columnar_rl {
         ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
-            let mut lindices = UInt64Builder::new(0);
-            let mut rindices = UInt64Builder::new(0);
+            let mut lindices = UInt64Builder::new();
+            let mut rindices = UInt64Builder::new();
 
             for r in $range2.clone() {
                 for l in $range1.clone() {
-                    lindices.append_value(l as u64).unwrap();
-                    rindices.append_value(r as u64).unwrap();
+                    lindices.append_value(l as u64);
+                    rindices.append_value(r as u64);
                 }
 
                 if rindices.len() >= join_params.batch_size || r + 1 == $range2.end {
@@ -875,7 +875,8 @@ fn row_compare(
             DataType::Time64(TimeUnit::Nanosecond) => compare!(Time64Nanosecond),
             DataType::Utf8 => compare!(String),
             DataType::LargeUtf8 => compare!(LargeString),
-            DataType::Decimal(_, _) => compare!(Decimal),
+            DataType::Decimal128(_, _) => compare!(Decimal128),
+            DataType::Decimal256(_, _) => compare!(Decimal256),
             _ => unimplemented!("data type not supported in sort-merge join"),
         }
     }
@@ -937,7 +938,8 @@ fn row_equal(
             DataType::LargeBinary => eq!(LargeBinary),
             DataType::Utf8 => eq!(String),
             DataType::LargeUtf8 => eq!(LargeString),
-            DataType::Decimal(_, _) => eq!(Decimal),
+            DataType::Decimal128(_, _) => eq!(Decimal256),
+            DataType::Decimal256(_, _) => eq!(Decimal256),
             _ => unimplemented!("data type not supported in sort-merge join"),
         }
     }

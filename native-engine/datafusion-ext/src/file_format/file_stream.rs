@@ -29,7 +29,7 @@ use std::task::{Context, Poll};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
 use datafusion::common::ScalarValue;
-use datafusion::datasource::listing::{FileRange, PartitionedFile};
+use datafusion::datasource::listing::FileRange;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::metrics::BaselineMetrics;
@@ -37,9 +37,10 @@ use datafusion::physical_plan::RecordBatchStream;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{ready, FutureExt, Stream, StreamExt};
-use object_store::{ObjectMeta, ObjectStore};
+use crate::file_format::{ObjectMeta, PartitionedFile};
 
 use crate::file_format::{FileScanConfig, PartitionColumnProjector};
+use crate::util::fs::Fs;
 
 /// A fallible future that resolves to a stream of [`RecordBatch`]
 pub type ReaderFuture =
@@ -48,7 +49,7 @@ pub type ReaderFuture =
 pub trait FormatReader: Unpin {
     fn open(
         &self,
-        store: Arc<dyn ObjectStore>,
+        store: Arc<Fs>,
         file: ObjectMeta,
         range: Option<FileRange>,
     ) -> ReaderFuture;
@@ -70,8 +71,8 @@ pub struct FileStream<F: FormatReader> {
     file_reader: F,
     /// The partition column projector
     pc_projector: PartitionColumnProjector,
-    /// the store from which to source the files.
-    object_store: Arc<dyn ObjectStore>,
+    /// the input fs
+    fs: Arc<Fs>,
     /// The stream state
     state: FileStreamState,
     /// Baseline metrics
@@ -105,9 +106,10 @@ enum FileStreamState {
 
 impl<F: FormatReader> FileStream<F> {
     pub fn new(
+        fs: Arc<Fs>,
         config: &FileScanConfig,
         partition: usize,
-        context: Arc<TaskContext>,
+        _context: Arc<TaskContext>,
         file_reader: F,
         baseline_metrics: BaselineMetrics,
     ) -> Result<Self> {
@@ -119,17 +121,13 @@ impl<F: FormatReader> FileStream<F> {
 
         let files = config.file_groups[partition].clone();
 
-        let object_store = context
-            .runtime_env()
-            .object_store(&config.object_store_url)?;
-
         Ok(Self {
             file_iter: files.into(),
             projected_schema,
             remain: config.limit,
             file_reader,
             pc_projector,
-            object_store,
+            fs,
             state: FileStreamState::Idle,
             baseline_metrics,
         })
@@ -148,7 +146,7 @@ impl<F: FormatReader> FileStream<F> {
                     };
 
                     let future = self.file_reader.open(
-                        self.object_store.clone(),
+                        self.fs.clone(),
                         file.object_meta,
                         file.range,
                     );

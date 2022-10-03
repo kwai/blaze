@@ -19,12 +19,12 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::SchemaRef;
 
-use datafusion::datasource::listing::{FileRange, ListingTableUrl, PartitionedFile};
+use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::BuiltinScalarFunction;
 use datafusion::logical_expr::Expr;
-use datafusion::logical_plan::Operator;
+use datafusion::logical_expr::Operator;
 use datafusion::physical_expr::expressions::create_aggregate_expr;
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
@@ -51,14 +51,13 @@ use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::ffi_reader_exec::FFIReaderExec;
-use datafusion_ext::file_format::{FileScanConfig, ParquetExec};
+use datafusion_ext::file_format::{FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile};
 use datafusion_ext::ipc_reader_exec::IpcReadMode;
 use datafusion_ext::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
 use datafusion_ext::sort_merge_join_exec::SortMergeJoinExec;
-use object_store::ObjectMeta;
 
 use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
@@ -360,7 +359,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             right: Box::new(b),
                         }
                     });
-                Ok(Arc::new(ParquetExec::new(conf, Some(predicate))))
+                Ok(Arc::new(ParquetExec::new(conf, scan.fs_resource_id.clone(), Some(predicate))))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let left: Arc<dyn ExecutionPlan> =
@@ -746,7 +745,7 @@ impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
             ScalarFunction::Ltrim => Self::Ltrim,
             ScalarFunction::Rtrim => Self::Rtrim,
             ScalarFunction::ToTimestamp => Self::ToTimestamp,
-            ScalarFunction::Array => Self::Array,
+            ScalarFunction::Array => Self::MakeArray,
             ScalarFunction::NullIf => Self::NullIf,
             ScalarFunction::DatePart => Self::DatePart,
             ScalarFunction::DateTrunc => Self::DateTrunc,
@@ -990,9 +989,8 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
     fn try_from(val: &protobuf::PartitionedFile) -> Result<Self, Self::Error> {
         Ok(PartitionedFile {
             object_meta: ObjectMeta {
-                location: val.path.clone().into(),
+                location: val.path.clone(),
                 size: val.size as usize,
-                last_modified: chrono::MIN_DATETIME,
             },
             partition_values: val
                 .partition_values
@@ -1000,6 +998,7 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
                 .map(|v| v.try_into())
                 .collect::<Result<Vec<_>, _>>()?,
             range: val.range.as_ref().map(|v| v.try_into()).transpose()?,
+            extensions: None,
         })
     }
 }
@@ -1078,14 +1077,6 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         let statistics = convert_required!(self.statistics)?;
         let partition_schema = Arc::new(convert_required!(self.partition_schema)?);
         Ok(FileScanConfig {
-            object_store_url: ListingTableUrl::parse(
-                self.file_groups
-                    .get(0)
-                    .and_then(|file_group| file_group.files.get(0))
-                    .map(|file| file.path.as_ref())
-                    .unwrap_or("default"),
-            )?
-            .object_store(),
             file_schema: schema,
             file_groups: self
                 .file_groups
@@ -1096,7 +1087,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             projection,
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
             table_partition_cols: self.table_partition_cols.clone(),
-            partition_schema: partition_schema,
+            partition_schema,
         })
     }
 }

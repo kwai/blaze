@@ -53,18 +53,21 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use futures::future::BoxFuture;
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
+use jni::objects::JObject;
 use log::{debug, warn};
-use object_store::{ObjectMeta, ObjectStore};
 
 use crate::file_format::file_stream::{FileStream, FormatReader, ReaderFuture};
 use crate::file_format::parquet_file_format::fetch_parquet_metadata;
-use crate::file_format::{FileScanConfig, SchemaAdapter};
+use crate::file_format::{FileScanConfig, ObjectMeta, SchemaAdapter};
+use crate::{jni_call_static, jni_new_string, jni_new_global_ref};
+use crate::util::fs::{Fs, FsDataInputStream};
 
 /// Execution plan for scanning one or more Parquet partitions
 #[derive(Debug, Clone)]
 pub struct ParquetExec {
     base_config: FileScanConfig,
+    fs_resource_id: String,
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
     /// Execution metrics
@@ -86,7 +89,11 @@ struct ParquetFileMetrics {
 
 impl ParquetExec {
     /// Create a new Parquet reader execution plan provided file list and schema.
-    pub fn new(base_config: FileScanConfig, predicate: Option<Expr>) -> Self {
+    pub fn new(
+        base_config: FileScanConfig,
+        fs_resource_id: String,
+        predicate: Option<Expr>,
+    ) -> Self {
         debug!("Creating ParquetExec, files: {:?}, projection {:?}, predicate: {:?}, limit: {:?}",
         base_config.file_groups, base_config.projection, predicate, base_config.limit);
 
@@ -112,6 +119,7 @@ impl ParquetExec {
 
         Self {
             base_config,
+            fs_resource_id,
             projected_schema,
             projected_statistics,
             metrics,
@@ -197,6 +205,14 @@ impl ExecutionPlan for ParquetExec {
         partition_index: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+
+        // get fs object from jni bridge resource
+        let fs = Arc::new(Fs::new(jni_new_global_ref!(
+            jni_call_static!(
+                JniBridge.getResource(jni_new_string!(&self.fs_resource_id)?) -> JObject
+            )?
+        )?));
+
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,
             None => (0..self.base_config.file_schema.fields().len()).collect(),
@@ -212,6 +228,7 @@ impl ExecutionPlan for ParquetExec {
         };
 
         let stream = FileStream::new(
+            fs,
             &self.base_config,
             partition_index,
             context,
@@ -276,7 +293,7 @@ struct ParquetOpener {
 impl FormatReader for ParquetOpener {
     fn open(
         &self,
-        store: Arc<dyn ObjectStore>,
+        fs: Arc<Fs>,
         meta: ObjectMeta,
         range: Option<FileRange>,
     ) -> ReaderFuture {
@@ -286,8 +303,15 @@ impl FormatReader for ParquetOpener {
             &self.metrics,
         );
 
+        let input = Arc::new(match fs.open(meta.location.as_ref()) {
+            Ok(input) => input,
+            Err(e) => {
+                return futures::future::err(e).boxed();
+            }
+        });
+
         let reader = ParquetFileReader {
-            store,
+            input,
             meta,
             metrics: metrics.clone(),
         };
@@ -333,7 +357,7 @@ impl FormatReader for ParquetOpener {
 
 /// Implements [`AsyncFileReader`] for a parquet file in object storage
 struct ParquetFileReader {
-    store: Arc<dyn ObjectStore>,
+    input: Arc<FsDataInputStream>,
     meta: ObjectMeta,
     metrics: ParquetFileMetrics,
 }
@@ -345,19 +369,22 @@ impl AsyncFileReader for ParquetFileReader {
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Bytes>> {
         self.metrics.bytes_scanned.add(range.end - range.start);
 
-        self.store
-            .get_range(&self.meta.location, range)
+        let mut bytes = vec![0u8; range.len()];
+        let read_result = self.input.read_fully(range.start as u64, &mut bytes)
             .map_err(|e| {
                 ParquetError::General(format!("AsyncChunkReader::get_bytes error: {}", e))
-            })
-            .boxed()
+            });
+        match read_result {
+            Ok(()) => futures::future::ok(Bytes::from(bytes)).boxed(),
+            Err(e) => futures::future::err(e).boxed()
+        }
     }
 
     fn get_metadata(
         &mut self,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
         Box::pin(async move {
-            let metadata = fetch_parquet_metadata(self.store.as_ref(), &self.meta)
+            let metadata = fetch_parquet_metadata(self.input.clone(), &self.meta)
                 .await
                 .map_err(|e| {
                     ParquetError::General(format!(

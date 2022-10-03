@@ -242,7 +242,7 @@ impl TryInto<datafusion::arrow::datatypes::DataType>
             arrow_type::ArrowTypeEnum::Decimal(protobuf::Decimal {
                 whole,
                 fractional,
-            }) => DataType::Decimal(*whole as usize, *fractional as usize),
+            }) => DataType::Decimal128(*whole as u8, *fractional as u8),
             arrow_type::ArrowTypeEnum::List(list) => {
                 let list_type: &protobuf::Field = list
                     .as_ref()
@@ -341,7 +341,7 @@ impl Into<datafusion::arrow::datatypes::DataType> for protobuf::PrimitiveScalarT
                 DataType::Time64(TimeUnit::Nanosecond)
             }
             protobuf::PrimitiveScalarType::Null => DataType::Null,
-            protobuf::PrimitiveScalarType::Decimal128 => DataType::Decimal(0, 0),
+            protobuf::PrimitiveScalarType::Decimal128 => DataType::Decimal128(0, 0),
             protobuf::PrimitiveScalarType::Date64 => DataType::Date64,
             protobuf::PrimitiveScalarType::TimeSecond => {
                 DataType::Timestamp(TimeUnit::Second, None)
@@ -481,8 +481,8 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                 let decimal = v.decimal.as_ref().unwrap();
                 ScalarValue::Decimal128(
                     Some(v.long_value as i128),
-                    decimal.whole as usize,
-                    decimal.fractional as usize,
+                    decimal.whole as u8,
+                    decimal.fractional as u8,
                 )
             }
             protobuf::scalar_value::Value::ListValue(scalar_list) => {
@@ -498,16 +498,15 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                     .map(|val| val.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
                 let scalar_type: DataType = pb_scalar_type.try_into()?;
-                let scalar_type = Box::new(scalar_type);
-                ScalarValue::List(Some(typechecked_values), scalar_type)
+                ScalarValue::List(Some(typechecked_values), Box::new(Field::new("items", scalar_type, true)))
             }
             protobuf::scalar_value::Value::NullListValue(v) => {
                 let pb_datatype = v
                     .datatype
                     .as_ref()
                     .ok_or_else(|| proto_error("Protobuf deserialization error: NullListValue message missing required field 'datatyp'"))?;
-                let pb_datatype = Box::new(pb_datatype.try_into()?);
-                ScalarValue::List(None, pb_datatype)
+                let scalar_type = pb_datatype.try_into()?;
+                ScalarValue::List(None, Box::new(Field::new("items", scalar_type, true)))
             }
             protobuf::scalar_value::Value::NullValue(v) => {
                 let null_type_enum = protobuf::PrimitiveScalarType::from_i32(*v)
@@ -630,7 +629,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
             }
             protobuf::scalar_value::Value::ListValue(v) => v.try_into()?,
             protobuf::scalar_value::Value::NullListValue(v) => {
-                ScalarValue::List(None, Box::new(v.try_into()?))
+                ScalarValue::List(None, Box::new(Field::new("items", v.try_into()?, true)))
             }
             protobuf::scalar_value::Value::NullValue(null_enum) => {
                 PrimitiveScalarType::from_i32(*null_enum)
@@ -641,8 +640,8 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
                 let decimal = v.decimal.as_ref().unwrap();
                 ScalarValue::Decimal128(
                     Some(v.long_value as i128),
-                    decimal.whole as usize,
-                    decimal.fractional as usize,
+                    decimal.whole as u8,
+                    decimal.fractional as u8,
                 )
             }
         };
@@ -683,7 +682,9 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
                     .collect::<Result<Vec<_>, _>>()?;
                 datafusion::scalar::ScalarValue::List(
                     Some(typechecked_values),
-                    Box::new(leaf_scalar_type.into()),
+                    Box::new(Field::new("items", leaf_scalar_type.try_into().map_err(|err| {
+                        PlanSerDeError::General(format!("Error converting scalar list value: {:?}", err))
+                    })?, true)),
                 )
             }
             Datatype::List(list_type) => {
@@ -729,7 +730,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
                         0 => None,
                         _ => Some(typechecked_values),
                     },
-                    Box::new(list_type.try_into()?),
+                    Box::new(Field::new("items", list_type.try_into()?, true)),
                 )
             }
         };

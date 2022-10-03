@@ -225,7 +225,7 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
         DataType::LargeBinary => len * 8,
         DataType::Utf8 => len * 4,
         DataType::LargeUtf8 => len * 8,
-        DataType::Decimal(_, _) => len * 16,
+        DataType::Decimal128(_, _) => len * 16,
         DataType::Dictionary(key_type, _) => match key_type.as_ref() {
             DataType::Int8 => len,
             DataType::Int16 => len * 2,

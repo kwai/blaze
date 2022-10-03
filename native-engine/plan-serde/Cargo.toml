@@ -3,17 +3,15 @@ name = "plan-serde"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
+[features]
+default = ["datafusion/simd", "prost/no-recursion-limit"]
 [dependencies]
-async-trait = "0.1.56"
-chrono = { version = "0.4", default-features = false }
-datafusion = { version = "10.0.0", features = ["simd"] }
-datafusion-ext = { path = "../datafusion-ext" }
+datafusion = "12.0.0"
 log = "0.4.14"
-object_store = "0.3.0"
-prost = { version = "0.10", features = ["no-recursion-limit"] }
-tonic = "0.6"
+prost = "0.11.0"
+
+[dependencies.datafusion-ext]
+path = "../datafusion-ext"
 
 [build-dependencies]
-tonic-build = { version = "0.6" }
+tonic-build = { version = "0.8.2" }

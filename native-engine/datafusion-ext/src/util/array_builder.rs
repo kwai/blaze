@@ -66,15 +66,15 @@ pub fn new_array_builders(
                 type KeyBuilder = paste! {[< $keyarrowty Builder >]};
                 type ValueBuilder = paste! {[< $valuearrowty Builder >]};
                 Box::new(PrimitiveDictionaryBuilder::new(
-                    KeyBuilder::new(0),
-                    ValueBuilder::new(batch_size),
+                    KeyBuilder::new(),
+                    ValueBuilder::new(),
                 ))
             }};
             (@make_str: $keyarrowty:ident) => {{
                 type KeyBuilder = paste! {[< $keyarrowty Builder >]};
                 Box::new(StringDictionaryBuilder::new(
-                    KeyBuilder::new(0),
-                    StringBuilder::new(batch_size),
+                    KeyBuilder::new(),
+                    StringBuilder::new(),
                 ))
             }};
         }
@@ -117,9 +117,24 @@ pub fn builder_extend(
             let f = array.as_any().downcast_ref::<A>().unwrap();
             for &i in indices {
                 if f.is_valid(i) {
-                    t.append_value(f.value(i)).unwrap();
+                    t.append_value(f.value(i));
                 } else {
-                    t.append_null().unwrap();
+                    t.append_null();
+                }
+            }
+        }};
+    }
+    macro_rules! append_decimal {
+        ($arrowty:ident) => {{
+            type B = paste::paste! {[< $arrowty Builder >]};
+            type A = paste::paste! {[< $arrowty Array >]};
+            let t = builder.as_any_mut().downcast_mut::<B>().unwrap();
+            let f = array.as_any().downcast_ref::<A>().unwrap();
+            for &i in indices {
+                if f.is_valid(i) {
+                    let _ = t.append_value(f.value(i).as_i128());
+                } else {
+                    t.append_null();
                 }
             }
         }};
@@ -171,9 +186,9 @@ pub fn builder_extend(
             let fv = f.values().as_any().downcast_ref::<paste! {[<$valuearrowty Array>]} >().unwrap();
             for &i in indices {
                 if f.is_valid(i) {
-                    t.append(fv.value(f.key(i).unwrap())).unwrap();
+                    let _ = t.append(fv.value(f.key(i).unwrap()));
                 } else {
-                    t.append_null().unwrap();
+                    t.append_null();
                 }
             }
         }};
@@ -186,9 +201,9 @@ pub fn builder_extend(
             let fv = f.values().as_any().downcast_ref::<GenericStringArray<$strsizety>>().unwrap();
             for &i in indices {
                 if f.is_valid(i) {
-                    t.append(fv.value(f.key(i).unwrap())).unwrap();
+                    t.append(fv.value(f.key(i).unwrap()));
                 } else {
-                    t.append_null().unwrap();
+                    t.append_null();
                 }
             }
         }};
@@ -201,9 +216,9 @@ pub fn builder_extend(
             let fv = f.values().as_any().downcast_ref::<GenericStringArray<$strsizety>>().unwrap();
             for &i in indices {
                 if f.is_valid(i) {
-                    t.append(fv.value(f.key(i).unwrap())).unwrap();
+                    let _ = t.append(fv.value(f.key(i).unwrap()));
                 } else {
-                    t.append_null().unwrap();
+                    t.append_null();
                 }
             }
         }};
@@ -248,7 +263,7 @@ pub fn builder_extend(
         DataType::LargeBinary => append_simple!(LargeBinary),
         DataType::Utf8 => append_simple!(String),
         DataType::LargeUtf8 => append_simple!(LargeString),
-        DataType::Decimal(_, _) => append_simple!(Decimal),
+        DataType::Decimal128(_, _) => append_decimal!(Decimal128),
         DataType::Dictionary(key_type, value_type) => append_dict!(key_type, value_type),
         dt => unimplemented!("data type not supported in builder_extend: {:?}", dt),
     }
@@ -259,7 +274,7 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         ($arrowty:ident) => {{
             type B = paste::paste! {[< $arrowty Builder >]};
             let t = to.as_any_mut().downcast_mut::<B>().unwrap();
-            t.append_null().unwrap();
+            t.append_null();
         }};
     }
     match data_type {
@@ -294,7 +309,8 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         DataType::LargeBinary => append!(LargeBinary),
         DataType::Utf8 => append!(String),
         DataType::LargeUtf8 => append!(LargeString),
-        DataType::Decimal(_, _) => append!(Decimal),
+        DataType::Decimal128(_, _) => append!(Decimal128),
+        DataType::Decimal256(_, _) => append!(Decimal256),
         dt => unimplemented!("data type not supported in builder_append_null: {:?}", dt),
     }
 }

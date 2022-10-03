@@ -39,12 +39,10 @@ use datafusion::arrow::{
     error::{ArrowError, Result as ArrowResult},
     record_batch::RecordBatch,
 };
-use datafusion::datasource::{listing::PartitionedFile, object_store::ObjectStoreUrl};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, Statistics};
 use datafusion::{error::Result, scalar::ScalarValue};
-use object_store::{ObjectMeta, ObjectStore};
-
+use datafusion::datasource::listing::FileRange;
 pub use self::parquet::ParquetExec;
 
 mod file_stream;
@@ -55,8 +53,6 @@ mod parquet_file_format;
 /// any given file format.
 #[derive(Debug, Clone)]
 pub struct FileScanConfig {
-    /// Object store URL
-    pub object_store_url: ObjectStoreUrl,
     /// Schema before projection. It contains the columns that are expected
     /// to be in the files without the table partition columns.
     pub file_schema: SchemaRef,
@@ -332,30 +328,6 @@ pub trait FileFormat: Send + Sync + std::fmt::Debug {
     /// downcast to a specific implementation.
     fn as_any(&self) -> &dyn Any;
 
-    /// Infer the common schema of the provided objects. The objects will usually
-    /// be analysed up to a given number of records or files (as specified in the
-    /// format config) then give the estimated common schema. This might fail if
-    /// the files have schemas that cannot be merged.
-    async fn infer_schema(
-        &self,
-        store: &Arc<dyn ObjectStore>,
-        objects: &[ObjectMeta],
-    ) -> Result<SchemaRef>;
-
-    /// Infer the statistics for the provided object. The cost and accuracy of the
-    /// estimated statistics might vary greatly between file formats.
-    ///
-    /// `table_schema` is the (combined) schema of the overall table
-    /// and may be a superset of the schema contained in this file.
-    ///
-    /// TODO: should the file source return statistics for only columns referred to in the table schema?
-    async fn infer_stats(
-        &self,
-        store: &Arc<dyn ObjectStore>,
-        table_schema: SchemaRef,
-        object: &ObjectMeta,
-    ) -> Result<Statistics>;
-
     /// Take a list of files and convert it to the appropriate executor
     /// according to this file format.
     async fn create_physical_plan(
@@ -363,4 +335,65 @@ pub trait FileFormat: Send + Sync + std::fmt::Debug {
         conf: FileScanConfig,
         filters: &[Expr],
     ) -> Result<Arc<dyn ExecutionPlan>>;
+}
+
+#[derive(Debug, Clone)]
+/// A single file or part of a file that should be read, along with its schema, statistics
+/// A single file that should be read, along with its schema, statistics
+/// and partition column values that need to be appended to each row.
+pub struct PartitionedFile {
+    /// Path for the file (e.g. URL, filesystem path, etc)
+    pub object_meta: ObjectMeta,
+    /// Values of partition columns to be appended to each row
+    pub partition_values: Vec<ScalarValue>,
+    /// An optional file range for a more fine-grained parallel execution
+    pub range: Option<FileRange>,
+    /// An optional field for user defined per object metadata
+    pub extensions: Option<Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl PartitionedFile {
+    /// Create a simple file without metadata or partition
+    pub fn new(path: String, size: u64) -> Self {
+        Self {
+            object_meta: ObjectMeta {
+                location: path,
+                size: size as usize,
+            },
+            partition_values: vec![],
+            range: None,
+            extensions: None,
+        }
+    }
+
+    /// Create a file range without metadata or partition
+    pub fn new_with_range(path: String, size: u64, start: i64, end: i64) -> Self {
+        Self {
+            object_meta: ObjectMeta {
+                location: path,
+                size: size as usize,
+            },
+            partition_values: vec![],
+            range: Some(FileRange { start, end }),
+            extensions: None,
+        }
+    }
+}
+
+impl From<ObjectMeta> for PartitionedFile {
+    fn from(object_meta: ObjectMeta) -> Self {
+        PartitionedFile {
+            object_meta,
+            partition_values: vec![],
+            range: None,
+            extensions: None,
+        }
+    }
+}
+
+/// object_meta crate replacer that does not parse the location
+#[derive(Debug, Clone)]
+pub struct ObjectMeta {
+    pub location: String,
+    pub size: usize,
 }

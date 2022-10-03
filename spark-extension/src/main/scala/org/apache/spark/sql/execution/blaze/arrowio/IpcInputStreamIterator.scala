@@ -72,8 +72,7 @@ case class IpcInputStreamIterator(
         closeInputStream()
         return false
       }
-      throw new EOFException(
-        "Data corrupt: unexpected EOF while reading compressed ipc lengths")
+      throw new EOFException("Data corrupt: unexpected EOF while reading compressed ipc lengths")
     }
     ipcLengthsBuf.flip()
     currentIpcLength = ipcLengthsBuf.getLong

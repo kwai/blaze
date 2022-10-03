@@ -23,3 +23,8 @@ RUN echo 'export JAVA_HOME="/usr/lib/jvm/java-11-openjdk"' >> ~/.bashrc
 RUN wget -O /gradle-7.4.2-bin.zip https://mirrors.huaweicloud.com/gradle/gradle-7.4.2-bin.zip
 RUN mkdir /gradle-bin && (cd /gradle-bin && unzip /gradle-7.4.2-bin.zip)
 RUN echo 'export PATH="$PATH:/gradle-bin/bin"' >> ~/.bashrc
+
+# install protoc
+RUN wget -O /protobuf-21.7-linux-x86_64.zip https://github.com/protocolbuffers/protobuf/releases/download/v21.7/protoc-21.7-linux-x86_64.zip
+RUN mkdir /protobuf-bin && (cd /protobuf-bin && unzip /protobuf-21.7-linux-x86_64.zip)
+RUN echo 'export PATH="$PATH:/protobuf-bin/bin"' >> ~/.bashrc

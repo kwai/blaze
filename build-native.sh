@@ -3,7 +3,7 @@
 profile="$1"
 
 echo "Building native with [$profile] profile..."
-cargo +nightly build --features=mm --profile="$profile"
+cargo +nightly build --profile="$profile"
 
 rt=$?
 if [[ "$rt" != 0 ]]; then
