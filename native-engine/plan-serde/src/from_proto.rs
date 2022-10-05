@@ -270,21 +270,25 @@ pub fn convert_physical_expr_to_logical_expr(
             data_type: expr.cast_type.clone(),
         })
     } else if let Some(_) = expr.downcast_ref::<ScalarFunctionExpr>() {
-        unimplemented!(
-            "converting physical ScalarFunctionExpr to logical is not supported"
-        )
+        Err(DataFusionError::Plan(
+            format!("converting physical ScalarFunctionExpr to logical is not supported")
+        ))
     } else if let Some(_) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
-        unimplemented!(
-            "converting physical SparkFallbackToJvmExpr to logical is not supported"
-        )
+        Err(DataFusionError::Plan(
+            format!("converting physical SparkFallbackToJvmExpr to logical is not supported")
+        ))
     } else if let Some(_) = expr.downcast_ref::<GetIndexedFieldExpr>() {
-        unimplemented!(
-            "converting physical GetIndexedFieldExpr to logical is not supported"
-        )
+        Err(DataFusionError::Plan(
+            format!("converting physical GetIndexedFieldExpr to logical is not supported")
+        ))
     } else if let Some(_) = expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>() {
-        unimplemented!("converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported")
+        Err(DataFusionError::Plan(
+            format!("converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported")
+        ))
     } else {
-        unimplemented!("Expression binding not implemented yet")
+        Err(DataFusionError::Plan(
+            format!("Expression binding not implemented yet")
+        ))
     }
 }
 
