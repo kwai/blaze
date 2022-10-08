@@ -24,19 +24,20 @@ import java.nio.file.Files
 import java.util.Random
 import java.util.function.Supplier
 import java.util.UUID
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
 import org.apache.spark._
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.serializer.Serializer
-import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.shuffle.ShuffleWriteProcessor
+import org.apache.spark.shuffle.{
+  BaseShuffleHandle,
+  IndexShuffleBlockResolver,
+  ShuffleWriteMetricsReporter,
+  ShuffleWriteProcessor
+}
 import org.apache.spark.shuffle.sort.SortShuffleManager
-import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.shuffle.sort.MapInfo
 import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.sql.blaze.JniBridge
@@ -655,7 +656,7 @@ object ArrowShuffleExchangeExec {
 
         // shuffle write on hdfs
         val blockManager = SparkEnv.get.blockManager
-        val handle = dep.shuffleHandle.asInstanceOf[SerializedShuffleHandle[_, _]]
+        val handle = dep.shuffleHandle.asInstanceOf[BaseShuffleHandle[_, _, _]]
         val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
         val mapInfo = new MapInfo(partitionLengths, partitionLengths.map(_ => 0L))
         val totalPartitionLength = mapInfo.lengths.sum
