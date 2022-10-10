@@ -125,7 +125,7 @@ class ArrowBlockStoreShuffleReader[K, C](
       }
     }
 
-    fetchIterator.flatMap {
+    val ipcIterator = fetchIterator.flatMap {
       case (_, inputStream) =>
         getFileSegmentFromInputStream(inputStream) match {
           case Some(fileSegment) =>
@@ -134,6 +134,9 @@ class ArrowBlockStoreShuffleReader[K, C](
             IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
         }
     }
+
+    // An interruptible iterator must be used here in order to support task cancellation
+    new InterruptibleIterator[Object](context, ipcIterator)
   }
 
   /** Read the combined key-values for this reduce task */
