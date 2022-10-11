@@ -20,6 +20,7 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.FileSourceScanExec
@@ -39,6 +40,9 @@ import org.apache.spark.sql.execution.datasources.FilePartition
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.statsEstimation.Statistics
+import org.apache.spark.sql.types.NullType
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.blaze.{protobuf => pb}
 
@@ -69,7 +73,13 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
   private val nativePruningPredicateFilters = basedFileScan.dataFilters
     .map(expr => NativeConverters.convertExpr(expr, useAttrExprId = false))
 
-  private val nativeFileSchema = NativeConverters.convertSchema(basedFileScan.relation.dataSchema)
+  private val nativeFileSchema =
+    NativeConverters.convertSchema(StructType(basedFileScan.relation.dataSchema.map {
+      case field if basedFileScan.requiredSchema.exists(_.name == field.name) => field
+      case field =>
+        // avoid converting unsupported type in non-used fields
+        StructField(field.name, NullType)
+    }))
   private val nativeFileGroups: Array[pb.FileGroup] = {
     val partitions = inputFileScanRDD.filePartitions.toArray
 
@@ -81,7 +91,6 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
 
     // list input file statuses
     def nativePartitionedFile(file: PartitionedFile) = {
-      logWarning(s"XXX partitionedFile: ${file.filePath}")
       val nativePartitionValues =
         basedFileScan.relation.partitionSchema.zipWithIndex
           .map {
@@ -135,9 +144,8 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       Nil,
       rddShuffleReadFull = true,
       (partition, _) => {
-        val path0 = new Path(partition.asInstanceOf[FilePartition].files.head.filePath)
-        logWarning(s"XXX get Fs with path0: $path0")
-        val fs = path0.getFileSystem(broadcastedHadoopConf.value.value)
+        // FIXME TODO 传入路径来获取实际的fs，不然支持har有问题
+        val fs = FileSystem.get(broadcastedHadoopConf.value.value)
         val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
         JniBridge.resourcesMap.put(resourceId, fs)
 
