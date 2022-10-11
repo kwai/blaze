@@ -143,11 +143,14 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       partitions.asInstanceOf[Array[Partition]],
       Nil,
       rddShuffleReadFull = true,
-      (partition, _) => {
-        // FIXME TODO 传入路径来获取实际的fs，不然支持har有问题
-        val fs = FileSystem.get(broadcastedHadoopConf.value.value)
+      (_, _) => {
         val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
-        JniBridge.resourcesMap.put(resourceId, fs)
+        JniBridge.resourcesMap.put(
+          resourceId,
+          (pathStr: String) => {
+            val path = new Path(pathStr)
+            path.getFileSystem(broadcastedHadoopConf.value.value)
+          })
 
         val nativeParquetScanConf = pb.FileScanExecConf
           .newBuilder()
