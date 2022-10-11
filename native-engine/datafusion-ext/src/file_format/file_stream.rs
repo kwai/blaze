@@ -40,7 +40,7 @@ use futures::{ready, FutureExt, Stream, StreamExt};
 use crate::file_format::{ObjectMeta, PartitionedFile};
 
 use crate::file_format::{FileScanConfig, PartitionColumnProjector};
-use crate::util::fs::Fs;
+use crate::util::fs::FsProvider;
 
 /// A fallible future that resolves to a stream of [`RecordBatch`]
 pub type ReaderFuture =
@@ -49,7 +49,7 @@ pub type ReaderFuture =
 pub trait FormatReader: Unpin {
     fn open(
         &self,
-        store: Arc<Fs>,
+        fs_provider: Arc<FsProvider>,
         file: ObjectMeta,
         range: Option<FileRange>,
     ) -> ReaderFuture;
@@ -72,7 +72,7 @@ pub struct FileStream<F: FormatReader> {
     /// The partition column projector
     pc_projector: PartitionColumnProjector,
     /// the input fs
-    fs: Arc<Fs>,
+    fs_provider: Arc<FsProvider>,
     /// The stream state
     state: FileStreamState,
     /// Baseline metrics
@@ -106,7 +106,7 @@ enum FileStreamState {
 
 impl<F: FormatReader> FileStream<F> {
     pub fn new(
-        fs: Arc<Fs>,
+        fs_provider: Arc<FsProvider>,
         config: &FileScanConfig,
         partition: usize,
         _context: Arc<TaskContext>,
@@ -127,7 +127,7 @@ impl<F: FormatReader> FileStream<F> {
             remain: config.limit,
             file_reader,
             pc_projector,
-            fs,
+            fs_provider,
             state: FileStreamState::Idle,
             baseline_metrics,
         })
@@ -146,7 +146,7 @@ impl<F: FormatReader> FileStream<F> {
                     };
 
                     let future = self.file_reader.open(
-                        self.fs.clone(),
+                        self.fs_provider.clone(),
                         file.object_meta,
                         file.range,
                     );

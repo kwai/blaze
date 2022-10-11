@@ -2,6 +2,22 @@ use datafusion::error::{DataFusionError, Result};
 use jni::objects::{GlobalRef, JObject};
 use crate::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object, jni_new_string};
 
+pub struct FsProvider(GlobalRef);
+
+impl FsProvider {
+    pub fn new(fs_provider: GlobalRef) -> Self {
+        Self(fs_provider)
+    }
+
+    pub fn provide(&self, path: &str) -> Result<Fs> {
+        log::info!("get hadoop filesystem object from path: {}", path);
+        let fs = jni_call!(
+            ScalaFunction1(self.0.as_obj()).apply(jni_new_string!(path)?) -> JObject
+        )?;
+        Ok(Fs::new(jni_new_global_ref!(fs)?))
+    }
+}
+
 pub struct Fs(GlobalRef);
 
 impl Fs {
