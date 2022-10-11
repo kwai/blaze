@@ -29,10 +29,6 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
   override def apply(extensions: SparkSessionExtensions): Unit = {
     SparkEnv.get.conf.set("spark.sql.adaptive.enabled", "true")
     SparkEnv.get.conf.set("spark.sql.adaptive.forceApply", "true")
-    SparkEnv.get.conf.set(
-      "spark.sql.optimizer.excludedRules",
-      s"${SparkEnv.get.conf.get("spark.sql.optimizer.excludedRules", "")},org.apache.spark.sql.catalyst.optimizer.LikeSimplification")
-
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
 
     extensions.injectColumnar(sparkSession => {
