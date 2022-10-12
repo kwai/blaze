@@ -34,6 +34,7 @@ import scala.collection.mutable
 import scala.concurrent.TimeoutException
 import scala.language.reflectiveCalls
 
+import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.SparkException
 import org.apache.spark.sql.catalyst.InternalRow
@@ -64,6 +65,7 @@ import org.apache.spark.ShuffleDependency
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIImportIterator
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
+import org.apache.spark.storage.ExternalBlockStore
 import org.apache.spark.util.CompletionIterator
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
@@ -328,6 +330,15 @@ case class BlazeCallNativeWrapper(
       logInfo(s"Initializing native environment ...")
       BlazeCallNativeWrapper.load("blaze")
       JniBridge.initNative(batchSize, nativeMemory, memoryFraction, tmpDirs)
+
+      // NOTE: eager init external block manager because we found some hadoop fs related issue
+      // if it is initialized in native shuffle reading
+      // val remoteShuffleEnabled = conf.getBoolean(
+      //   ExternalBlockStore.REMOTE_SHUFFLE_ENABLED,
+      //   ExternalBlockStore.REMOTE_SHUFFLE_ENABLED_DEFAULT)
+      // if (remoteShuffleEnabled) {
+      //   assert(SparkEnv.get.blockManager.externalBlockStore.externalBlockManager != null)
+      // }
       BlazeCallNativeWrapper.nativeInitialized = true
     }
   }

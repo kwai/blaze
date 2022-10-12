@@ -172,14 +172,18 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         }
 
         // spawn a thread to poll batches
-        let num_worker_threads_default = 16;
+        let num_worker_threads_default = 4;
         let runtime = Arc::new(RuntimeWrapper {
             runtime: Some(
                 tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(num_worker_threads_default)
                     .thread_keep_alive(Duration::MAX) // always use same thread
                     .on_thread_start(move || {
-                        // propagate task context to spawned children threads
+                        // propagate classloader and task context to spawned
+                        // children threads
+                        jni_call_static!(
+                            JniBridge.setContextClassLoader(JavaClasses::get().classloader) -> ()
+                        ).unwrap();
                         jni_call_static!(
                             JniBridge.setTaskContext(task_context.as_obj()) -> ()
                         ).unwrap();
