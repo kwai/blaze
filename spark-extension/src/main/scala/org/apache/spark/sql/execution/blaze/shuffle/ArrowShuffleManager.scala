@@ -41,7 +41,11 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   /**
    * A mapping from shuffle ids to the number of mappers producing output for those shuffles.
    */
-  private[this] val numMapsForShuffle = new ConcurrentHashMap[Int, Int]()
+  private[this] val numMapsForShuffle: ConcurrentHashMap[Int, Int] = {
+    val field = sortShuffleManager.getClass.getDeclaredField("numMapsForShuffle")
+    field.setAccessible(true)
+    field.get(sortShuffleManager).asInstanceOf[ConcurrentHashMap[Int, Int]]
+  }
 
   /**
    * Obtains a [[ShuffleHandle]] to pass to tasks.
@@ -113,48 +117,43 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       context: TaskContext,
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V] = {
 
-    numMapsForShuffle.putIfAbsent(
-      handle.shuffleId,
-      handle.asInstanceOf[BaseShuffleHandle[_, _, _]].numMaps)
+    if (isArrowShuffle(handle)) {
+      val env = SparkEnv.get
+      numMapsForShuffle.putIfAbsent(
+        handle.shuffleId,
+        handle.asInstanceOf[BaseShuffleHandle[_, _, _]].numMaps)
 
-    handle match {
-      case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
-        if (isArrowShuffle(unsafeShuffleHandle)) {
-          return new ArrowShuffleWriter(
-            SparkEnv.get.blockManager,
+      handle match {
+        case unsafeShuffleHandle: SerializedShuffleHandle[K@unchecked, V@unchecked] =>
+          new ArrowShuffleWriter(
+            env.blockManager,
             shuffleBlockResolver,
             context.taskMemoryManager(),
             unsafeShuffleHandle,
             mapId,
             context,
-            SparkEnv.get.conf,
+            env.conf,
             metrics)
-        }
-      case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
-        if (isArrowShuffle(bypassMergeSortHandle)) {
-          return new ArrowBypassMergeSortShuffleWriter(
-            SparkEnv.get.blockManager,
+        case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K@unchecked, V@unchecked] =>
+          new ArrowBypassMergeSortShuffleWriter(
+            env.blockManager,
             shuffleBlockResolver,
             bypassMergeSortHandle,
             mapId,
             context,
-            SparkEnv.get.conf,
+            env.conf,
             metrics)
-        }
-      case _ =>
+        case _ =>
+          throw new RuntimeException(s"unsupported shuffle handle type: ${handle.getClass}")
+      }
+    } else {
+      sortShuffleManager.getWriter(handle, mapId, context, metrics)
     }
-    sortShuffleManager.getWriter(handle, mapId, context, metrics)
   }
 
   /** Remove a shuffle's metadata from the ShuffleManager. */
   override def unregisterShuffle(shuffleId: Int): Boolean = {
-    Option(numMapsForShuffle.remove(shuffleId)).foreach { numMaps =>
-      (0 until numMaps).foreach { mapId =>
-        shuffleBlockResolver.removeDataByMap(shuffleId, mapId)
-      }
-    }
     sortShuffleManager.unregisterShuffle(shuffleId)
-    true
   }
 
   /** Shut down this ShuffleManager. */

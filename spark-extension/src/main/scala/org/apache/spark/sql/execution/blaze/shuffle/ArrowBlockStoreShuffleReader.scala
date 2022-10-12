@@ -21,6 +21,7 @@ import java.io.FileInputStream
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.lang.reflect.Field
+import java.lang.reflect.Method
 
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.MapOutputTracker
@@ -57,27 +58,31 @@ class ArrowBlockStoreShuffleReader[K, C](
     with Logging {
 
   private val dep = handle.dependency
-  private val blocksByAddress = (startMapId, endMapId) match {
-    case (Some(startId), Some(endId)) =>
-      mapOutputTracker.getMapSizesByExecutorId(
-        handle.shuffleId,
-        startPartition,
-        endPartition,
-        startId,
-        endId,
-        dep.serializer.supportsRelocationOfSerializedObjects)
-    case (None, None) =>
-      mapOutputTracker.getMapSizesByExecutorId(
-        handle.shuffleId,
-        startPartition,
-        endPartition,
-        dep.serializer.supportsRelocationOfSerializedObjects)
-    case (_, _) =>
-      throw new IllegalArgumentException("startMapId and endMapId should be both set or unset")
-  }
 
-  private def fetchIterator: Iterator[(BlockId, InputStream)] =
-    new ShuffleBlockFetcherIterator(
+  private def readBlocks(): Iterator[(BlockId, InputStream)] = {
+    val start = System.currentTimeMillis()
+    val blocksByAddress = (startMapId, endMapId) match {
+      case (Some(startId), Some(endId)) =>
+        mapOutputTracker.getMapSizesByExecutorId(
+          handle.shuffleId,
+          startPartition,
+          endPartition,
+          startId,
+          endId,
+          dep.serializer.supportsRelocationOfSerializedObjects)
+      case (None, None) =>
+        mapOutputTracker.getMapSizesByExecutorId(
+          handle.shuffleId,
+          startPartition,
+          endPartition,
+          dep.serializer.supportsRelocationOfSerializedObjects)
+      case (_, _) =>
+        throw new IllegalArgumentException("startMapId and endMapId should be both set or unset")
+    }
+    val end = System.currentTimeMillis()
+    context.taskMetrics().executionPhaseMetric.incProduceFetchRequestTime(end - start)
+
+    val blockStreams = new ShuffleBlockFetcherIterator(
       context,
       blockManager.shuffleClient,
       blockManager,
@@ -93,57 +98,14 @@ class ArrowBlockStoreShuffleReader[K, C](
       localShuffle = isLocalShuffleReader &&
         SparkEnv.get.conf.getBoolean("spark.kwai.localShuffle.readHdfs.enabled", false))
 
-  def readIpc(): Iterator[Object] = { // FileSegment | ReadableByteChannel
-    def getFileSegmentFromInputStream(in: InputStream): Option[FileSegment] = {
-      object Helper {
-        val bufferReleasingInputStreamClass: Class[_] =
-          Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
-        val delegateFn = bufferReleasingInputStreamClass.getDeclaredMethod(
-          "org$apache$spark$storage$BufferReleasingInputStream$$delegate")
-        val inField = classOf[FilterInputStream].getDeclaredField("in")
-        val limitField = classOf[LimitedInputStream].getDeclaredField("left")
-        val pathField = classOf[FileInputStream].getDeclaredField("path")
-        delegateFn.setAccessible(true)
-        inField.setAccessible(true)
-        limitField.setAccessible(true)
-        pathField.setAccessible(true)
-      }
-      Helper.delegateFn.invoke(in) match {
-        case in: LimitedInputStream =>
-          val limit = Helper.limitField.getLong(in)
-          Helper.inField.get(in) match {
-            case in: FileInputStream =>
-              val path = Helper.pathField.get(in).asInstanceOf[String]
-              val offset = in.getChannel.position()
-              val fileSegment = new FileSegment(new File(path), offset, limit, 0)
-              Some(fileSegment)
-            case _ =>
-              None
-          }
-        case _ =>
-          None
-      }
-    }
-
-    val ipcIterator = fetchIterator.flatMap {
-      case (_, inputStream) =>
-        getFileSegmentFromInputStream(inputStream) match {
-          case Some(fileSegment) =>
-            Iterator.single(fileSegment)
-          case None =>
-            IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
-        }
-    }
-
-    // An interruptible iterator must be used here in order to support task cancellation
-    new InterruptibleIterator[Object](context, ipcIterator)
+    blockStreams
   }
 
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
-    val recordIter = fetchIterator
+    val recordIter = readBlocks()
       .flatMap {
-        case (blockId, inputStream) =>
+        case (_, inputStream) =>
           IpcInputStreamIterator(inputStream, decompressingNeeded = true, context)
       }
       .flatMap { channel =>
@@ -181,6 +143,55 @@ class ArrowBlockStoreShuffleReader[K, C](
         // Use another interruptible iterator here to support task cancellation as aggregator
         // or(and) sorter may have consumed previous interruptible iterator.
         new InterruptibleIterator[Product2[K, C]](context, resultIter)
+    }
+  }
+
+  def readIpc(): Iterator[Object] = { // FileSegment | ReadableByteChannel
+    val ipcIterator = readBlocks().flatMap {
+      case (_, inputStream) =>
+        ArrowBlockStoreShuffleReader.Helper.getFileSegmentFromInputStream(inputStream) match {
+          case Some(fileSegment) =>
+            Iterator.single(fileSegment)
+          case None =>
+            IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
+        }
+    }
+
+    // An interruptible iterator must be used here in order to support task cancellation
+    new InterruptibleIterator[Object](context, ipcIterator)
+  }
+}
+
+object ArrowBlockStoreShuffleReader {
+  private object Helper {
+    val bufferReleasingInputStreamClass: Class[_] =
+      Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
+    val delegateFn: Method = bufferReleasingInputStreamClass.getDeclaredMethod(
+      "org$apache$spark$storage$BufferReleasingInputStream$$delegate")
+    val inField: Field = classOf[FilterInputStream].getDeclaredField("in")
+    val limitField: Field = classOf[LimitedInputStream].getDeclaredField("left")
+    val pathField: Field = classOf[FileInputStream].getDeclaredField("path")
+    delegateFn.setAccessible(true)
+    inField.setAccessible(true)
+    limitField.setAccessible(true)
+    pathField.setAccessible(true)
+
+    def getFileSegmentFromInputStream(in: InputStream): Option[FileSegment] = {
+      delegateFn.invoke(in) match {
+        case in: LimitedInputStream =>
+          val limit = Helper.limitField.getLong(in)
+          Helper.inField.get(in) match {
+            case in: FileInputStream =>
+              val path = Helper.pathField.get(in).asInstanceOf[String]
+              val offset = in.getChannel.position()
+              val fileSegment = new FileSegment(new File(path), offset, limit, 0)
+              Some(fileSegment)
+            case _ =>
+              None
+          }
+        case _ =>
+          None
+      }
     }
   }
 }
