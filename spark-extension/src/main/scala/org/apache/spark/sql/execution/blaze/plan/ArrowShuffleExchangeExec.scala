@@ -275,13 +275,11 @@ case class ArrowShuffleExchangeExec(
             taskContext,
             metricReporter)
           .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
-        JniBridge.resourcesMap.put(
-          jniResourceId,
-          () => {
-            CompletionIterator[Object, Iterator[Object]](
-              reader.readIpc(),
-              taskContext.taskMetrics().mergeShuffleReadMetrics(true))
-          })
+
+        val ipcIterator = CompletionIterator[Object, Iterator[Object]](
+          reader.readIpc(),
+          taskContext.taskMetrics().mergeShuffleReadMetrics(true))
+        JniBridge.resourcesMap.put(jniResourceId, () => ipcIterator)
 
         PhysicalPlanNode
           .newBuilder()

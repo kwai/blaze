@@ -1,20 +1,34 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use datafusion::error::{DataFusionError, Result};
 use jni::objects::{GlobalRef, JObject};
 use crate::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object, jni_new_string};
 
-pub struct FsProvider(GlobalRef);
+pub struct FsProvider(GlobalRef, Mutex<HashMap<String, Arc<Fs>>>);
 
 impl FsProvider {
     pub fn new(fs_provider: GlobalRef) -> Self {
-        Self(fs_provider)
+        Self(fs_provider, Mutex::new(HashMap::new()))
     }
 
-    pub fn provide(&self, path: &str) -> Result<Fs> {
-        log::info!("get hadoop filesystem object from path: {}", path);
-        let fs = jni_call!(
-            ScalaFunction1(self.0.as_obj()).apply(jni_new_string!(path)?) -> JObject
-        )?;
-        Ok(Fs::new(jni_new_global_ref!(fs)?))
+    pub fn provide(&self, path: &str) -> Result<Arc<Fs>> {
+        let scheme = path.split_once("/").map(|split| split.0).unwrap_or("");
+        let cache = &self.1;
+
+        // first try to find an existed fs with same scheme
+        if let Some(fs) = cache.lock().unwrap().get(scheme) {
+            return Ok(fs.clone());
+        }
+
+        // provide and cache a new fs
+        let fs = Arc::new(Fs::new(jni_new_global_ref!(
+            jni_call!(
+                ScalaFunction1(self.0.as_obj()).apply(jni_new_string!(path)?) -> JObject
+            )?
+        )?));
+        cache.lock().unwrap().insert(scheme.to_owned(), fs.clone());
+        Ok(fs)
     }
 }
 
@@ -26,7 +40,6 @@ impl Fs {
     }
 
     pub fn open(&self, path: &str) -> Result<FsDataInputStream> {
-        log::info!("hadoop fs opening {}", &path);
         let path = jni_new_object!(HadoopPath, jni_new_string!(path)?)?;
         let fin = jni_call!(
             HadoopFileSystem(self.0.as_obj()).open(path) -> JObject
