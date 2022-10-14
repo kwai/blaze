@@ -29,9 +29,14 @@ import org.apache.spark.shuffle.sort.ArrowShuffleWriter
 import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
 import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.shuffle.sort.SortShuffleManager
+import org.apache.spark.sql.blaze.kwai.KwaiPrivilegedHDFSBlockManager
 
 class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   import ArrowShuffleManager._
+
+  // introduce a wrapped HDFSBlockManager because we found some permission issues
+  // if the original HDFSBlockManager is initialized inside a native thread.
+  KwaiPrivilegedHDFSBlockManager.setup(conf)
 
   val sortShuffleManager = new SortShuffleManager(conf)
 
@@ -124,7 +129,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
         handle.asInstanceOf[BaseShuffleHandle[_, _, _]].numMaps)
 
       handle match {
-        case unsafeShuffleHandle: SerializedShuffleHandle[K@unchecked, V@unchecked] =>
+        case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
           new ArrowShuffleWriter(
             env.blockManager,
             shuffleBlockResolver,
@@ -134,7 +139,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
             context,
             env.conf,
             metrics)
-        case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K@unchecked, V@unchecked] =>
+        case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
           new ArrowBypassMergeSortShuffleWriter(
             env.blockManager,
             shuffleBlockResolver,
