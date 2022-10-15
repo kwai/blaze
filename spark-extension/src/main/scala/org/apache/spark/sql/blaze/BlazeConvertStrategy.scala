@@ -301,12 +301,8 @@ object BlazeConvertStrategy extends Logging {
 
   private def neverConvertPartialAggregateShuffleExchange(exec: SparkPlan): Unit = {
     exec.foreach {
-      case exec: ShuffleExchangeExec
-          if exec.child.isInstanceOf[HashAggregateExec] &&
-            exec.child
-              .asInstanceOf[HashAggregateExec]
-              .aggregateExpressions
-              .exists(_.mode == Partial) =>
+      case exec @ ShuffleExchangeExec(_, HashAggregateExec(None, _, _, _, _, _, _)) =>
+        // shuffle of partial hash aggregate without requiring child distribution
         exec.setTagValue(convertStrategyTag, NeverConvert)
       case _ =>
     }
