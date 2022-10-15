@@ -63,19 +63,13 @@ pub fn new_array_builders(
                 }
             }};
             (@make: $keyarrowty:ident, $valuearrowty:ident) => {{
-                type KeyBuilder = paste! {[< $keyarrowty Builder >]};
-                type ValueBuilder = paste! {[< $valuearrowty Builder >]};
-                Box::new(PrimitiveDictionaryBuilder::new(
-                    KeyBuilder::new(),
-                    ValueBuilder::new(),
-                ))
+                type KeyType = paste! {[< $keyarrowty Type >]};
+                type ValueType = paste! {[< $valuearrowty Type >]};
+                Box::new(PrimitiveDictionaryBuilder::<KeyType, ValueType>::new())
             }};
             (@make_str: $keyarrowty:ident) => {{
-                type KeyBuilder = paste! {[< $keyarrowty Builder >]};
-                Box::new(StringDictionaryBuilder::new(
-                    KeyBuilder::new(),
-                    StringBuilder::new(),
-                ))
+                type KeyType = paste! {[< $keyarrowty Type >]};
+                Box::new(StringDictionaryBuilder::<KeyType>::new())
             }};
         }
 

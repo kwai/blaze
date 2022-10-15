@@ -494,7 +494,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .collect::<Result<Vec<_>, _>>()?;
                 // always preserve partitioning
                 Ok(Arc::new(SortExec::new_with_partitioning(
-                    exprs, input, true,
+                    exprs,
+                    input,
+                    true,
+                    sort.fetch_limit.map(|limit| limit as usize),
                 )))
             }
             PhysicalPlanType::HashJoin(hashjoin) => {

@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["datafusion/simd", "prost/no-recursion-limit"]
 [dependencies]
-datafusion = "12.0.0"
+datafusion = "13.0.0"
 log = "0.4.14"
 prost = "0.11.0"
 
