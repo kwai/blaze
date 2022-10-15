@@ -51,7 +51,9 @@ use datafusion::scalar::ScalarValue;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::ffi_reader_exec::FFIReaderExec;
-use datafusion_ext::file_format::{FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile};
+use datafusion_ext::file_format::{
+    FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
+};
 use datafusion_ext::ipc_reader_exec::IpcReadMode;
 use datafusion_ext::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::ipc_writer_exec::IpcWriterExec;
@@ -270,25 +272,25 @@ pub fn convert_physical_expr_to_logical_expr(
             data_type: expr.cast_type.clone(),
         })
     } else if let Some(_) = expr.downcast_ref::<ScalarFunctionExpr>() {
-        Err(DataFusionError::Plan(
-            format!("converting physical ScalarFunctionExpr to logical is not supported")
-        ))
+        Err(DataFusionError::Plan(format!(
+            "converting physical ScalarFunctionExpr to logical is not supported"
+        )))
     } else if let Some(_) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
-        Err(DataFusionError::Plan(
-            format!("converting physical SparkFallbackToJvmExpr to logical is not supported")
-        ))
+        Err(DataFusionError::Plan(format!(
+            "converting physical SparkFallbackToJvmExpr to logical is not supported"
+        )))
     } else if let Some(_) = expr.downcast_ref::<GetIndexedFieldExpr>() {
-        Err(DataFusionError::Plan(
-            format!("converting physical GetIndexedFieldExpr to logical is not supported")
-        ))
+        Err(DataFusionError::Plan(format!(
+            "converting physical GetIndexedFieldExpr to logical is not supported"
+        )))
     } else if let Some(_) = expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>() {
         Err(DataFusionError::Plan(
             format!("converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported")
         ))
     } else {
-        Err(DataFusionError::Plan(
-            format!("Expression binding not implemented yet")
-        ))
+        Err(DataFusionError::Plan(format!(
+            "Expression binding not implemented yet"
+        )))
     }
 }
 
@@ -359,7 +361,11 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             right: Box::new(b),
                         }
                     });
-                Ok(Arc::new(ParquetExec::new(conf, scan.fs_resource_id.clone(), Some(predicate))))
+                Ok(Arc::new(ParquetExec::new(
+                    conf,
+                    scan.fs_resource_id.clone(),
+                    Some(predicate),
+                )))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let left: Arc<dyn ExecutionPlan> =

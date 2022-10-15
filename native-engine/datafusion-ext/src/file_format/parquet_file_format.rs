@@ -17,13 +17,13 @@
 
 //! Parquet format abstractions
 
-use std::sync::Arc;
+use crate::file_format::ObjectMeta;
+use crate::util::fs::FsDataInputStream;
 use datafusion::common::DataFusionError;
 use datafusion::error::Result;
 use datafusion::parquet::file::footer::{decode_footer, decode_metadata};
 use datafusion::parquet::file::metadata::ParquetMetaData;
-use crate::file_format::ObjectMeta;
-use crate::util::fs::FsDataInputStream;
+use std::sync::Arc;
 
 pub(crate) async fn fetch_parquet_metadata(
     input: Arc<FsDataInputStream>,
