@@ -548,8 +548,14 @@ impl<'a> JavaChannels<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaChannels {
             class,
-            method_newChannel: env.get_static_method_id(class, "newChannel", "(Ljava/io/InputStream;)Ljava/nio/channels/ReadableByteChannel;")?,
-            method_newChannel_ret: JavaType::Object("java/nio/channels/ReadableByteChannel".to_owned()),
+            method_newChannel: env.get_static_method_id(
+                class,
+                "newChannel",
+                "(Ljava/io/InputStream;)Ljava/nio/channels/ReadableByteChannel;",
+            )?,
+            method_newChannel_ret: JavaType::Object(
+                "java/nio/channels/ReadableByteChannel".to_owned(),
+            ),
         })
     }
 }
@@ -816,8 +822,14 @@ impl<'a> HadoopFileSystem<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(HadoopFileSystem {
             class,
-            method_open: env.get_method_id(class, "open", "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataInputStream;")?,
-            method_open_ret: JavaType::Object("org/apache/hadoop/fs/FSDataInputStream".to_owned()),
+            method_open: env.get_method_id(
+                class,
+                "open",
+                "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataInputStream;",
+            )?,
+            method_open_ret: JavaType::Object(
+                "org/apache/hadoop/fs/FSDataInputStream".to_owned(),
+            ),
         })
     }
 }

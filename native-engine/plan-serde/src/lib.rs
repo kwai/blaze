@@ -498,7 +498,10 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                     .map(|val| val.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
                 let scalar_type: DataType = pb_scalar_type.try_into()?;
-                ScalarValue::List(Some(typechecked_values), Box::new(Field::new("items", scalar_type, true)))
+                ScalarValue::List(
+                    Some(typechecked_values),
+                    Box::new(Field::new("items", scalar_type, true)),
+                )
             }
             protobuf::scalar_value::Value::NullListValue(v) => {
                 let pb_datatype = v
@@ -628,9 +631,10 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
                 ScalarValue::TimestampNanosecond(Some(*v), None)
             }
             protobuf::scalar_value::Value::ListValue(v) => v.try_into()?,
-            protobuf::scalar_value::Value::NullListValue(v) => {
-                ScalarValue::List(None, Box::new(Field::new("items", v.try_into()?, true)))
-            }
+            protobuf::scalar_value::Value::NullListValue(v) => ScalarValue::List(
+                None,
+                Box::new(Field::new("items", v.try_into()?, true)),
+            ),
             protobuf::scalar_value::Value::NullValue(null_enum) => {
                 PrimitiveScalarType::from_i32(*null_enum)
                     .ok_or_else(|| proto_error("Invalid scalar type"))?
@@ -682,9 +686,16 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
                     .collect::<Result<Vec<_>, _>>()?;
                 datafusion::scalar::ScalarValue::List(
                     Some(typechecked_values),
-                    Box::new(Field::new("items", leaf_scalar_type.try_into().map_err(|err| {
-                        PlanSerDeError::General(format!("Error converting scalar list value: {:?}", err))
-                    })?, true)),
+                    Box::new(Field::new(
+                        "items",
+                        leaf_scalar_type.try_into().map_err(|err| {
+                            PlanSerDeError::General(format!(
+                                "Error converting scalar list value: {:?}",
+                                err
+                            ))
+                        })?,
+                        true,
+                    )),
                 )
             }
             Datatype::List(list_type) => {

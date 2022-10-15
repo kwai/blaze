@@ -61,8 +61,8 @@ use once_cell::sync::OnceCell;
 use crate::file_format::file_stream::{FileStream, FormatReader, ReaderFuture};
 use crate::file_format::parquet_file_format::fetch_parquet_metadata;
 use crate::file_format::{FileScanConfig, ObjectMeta, SchemaAdapter};
-use crate::{jni_call_static, jni_new_string, jni_new_global_ref};
 use crate::util::fs::{FsDataInputStream, FsProvider};
+use crate::{jni_call_static, jni_new_global_ref, jni_new_string};
 
 /// Execution plan for scanning one or more Parquet partitions
 #[derive(Debug, Clone)]
@@ -206,13 +206,11 @@ impl ExecutionPlan for ParquetExec {
         partition_index: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-
         // get fs object from jni bridge resource
-        let fs_provider = Arc::new(FsProvider::new(jni_new_global_ref!(
-            jni_call_static!(
+        let fs_provider =
+            Arc::new(FsProvider::new(jni_new_global_ref!(jni_call_static!(
                 JniBridge.getResource(jni_new_string!(&self.fs_resource_id)?) -> JObject
-            )?
-        )?));
+            )?)?));
 
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,
@@ -360,12 +358,18 @@ struct ParquetFileReader {
 
 impl ParquetFileReader {
     fn get_input(&self) -> datafusion::parquet::errors::Result<Arc<FsDataInputStream>> {
-        let input = self.input.get_or_try_init(|| -> Result<Arc<FsDataInputStream>> {
-            let fs = self.fs_provider.provide(&self.meta.location)?;
-            Ok(Arc::new(fs.open(&self.meta.location)?))
-        }).map_err(|e| {
-            ParquetError::General(format!("ParquetFileReader: get FSDataInputStream error: {}", e))
-        })?;
+        let input = self
+            .input
+            .get_or_try_init(|| -> Result<Arc<FsDataInputStream>> {
+                let fs = self.fs_provider.provide(&self.meta.location)?;
+                Ok(Arc::new(fs.open(&self.meta.location)?))
+            })
+            .map_err(|e| {
+                ParquetError::General(format!(
+                    "ParquetFileReader: get FSDataInputStream error: {}",
+                    e
+                ))
+            })?;
         Ok(input.clone())
     }
 }
@@ -376,14 +380,20 @@ impl AsyncFileReader for ParquetFileReader {
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Bytes>> {
         self.metrics.bytes_scanned.add(range.end - range.start);
 
-        futures::future::ready(()).map(move |_| -> datafusion::parquet::errors::Result<Bytes> {
-            let mut bytes = vec![0u8; range.len()];
-            self.get_input()?.read_fully(range.start as u64, &mut bytes)
-                .map_err(|e| {
-                    ParquetError::General(format!("parquetFileReader::get_bytes error: {}", e))
-                })?;
-            Ok(Bytes::from(bytes))
-        }).boxed()
+        futures::future::ready(())
+            .map(move |_| -> datafusion::parquet::errors::Result<Bytes> {
+                let mut bytes = vec![0u8; range.len()];
+                self.get_input()?
+                    .read_fully(range.start as u64, &mut bytes)
+                    .map_err(|e| {
+                        ParquetError::General(format!(
+                            "parquetFileReader::get_bytes error: {}",
+                            e
+                        ))
+                    })?;
+                Ok(Bytes::from(bytes))
+            })
+            .boxed()
     }
 
     fn get_metadata(

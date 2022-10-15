@@ -29,6 +29,7 @@ use std::{
     vec,
 };
 
+pub use self::parquet::ParquetExec;
 use async_trait::async_trait;
 use datafusion::arrow::array::new_null_array;
 use datafusion::arrow::compute::cast;
@@ -39,11 +40,10 @@ use datafusion::arrow::{
     error::{ArrowError, Result as ArrowResult},
     record_batch::RecordBatch,
 };
+use datafusion::datasource::listing::FileRange;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, Statistics};
 use datafusion::{error::Result, scalar::ScalarValue};
-use datafusion::datasource::listing::FileRange;
-pub use self::parquet::ParquetExec;
 
 mod file_stream;
 mod parquet;

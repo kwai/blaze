@@ -12,27 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::{
+    jni_call, jni_call_static, jni_delete_local_ref, jni_new_global_ref, jni_new_object,
+    jni_new_string,
+};
+use datafusion::arrow::array::{make_array_from_raw, StructArray};
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::error::Result as ArrowResult;
+use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::error::{DataFusionError, Result};
+use datafusion::execution::context::TaskContext;
+use datafusion::physical_expr::PhysicalSortExpr;
+use datafusion::physical_plan::common::batch_byte_size;
+use datafusion::physical_plan::metrics::{
+    BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
+};
+use datafusion::physical_plan::Partitioning::UnknownPartitioning;
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
+};
+use futures::Stream;
+use jni::objects::{GlobalRef, JObject};
+use jni::sys::{jboolean, JNI_TRUE};
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use datafusion::arrow::array::{make_array_from_raw, StructArray};
-use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream, Statistics};
-use datafusion::physical_plan::common::batch_byte_size;
-use datafusion::physical_plan::metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet};
-use datafusion::physical_plan::Partitioning::UnknownPartitioning;
-use futures::Stream;
-use jni::objects::{GlobalRef, JObject};
-use jni::sys::{jboolean, JNI_TRUE};
-use crate::{jni_call, jni_call_static, jni_delete_local_ref, jni_new_global_ref, jni_new_object, jni_new_string};
 
 pub struct FFIReaderExec {
     num_partitions: usize,
@@ -83,7 +91,10 @@ impl ExecutionPlan for FFIReaderExec {
         vec![]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn ExecutionPlan>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         if !children.is_empty() {
             return Err(DataFusionError::Plan(
                 "Blaze FFIReaderExec expects 0 children".to_owned(),
@@ -92,7 +103,11 @@ impl ExecutionPlan for FFIReaderExec {
         Ok(self)
     }
 
-    fn execute(&self, partition: usize, _context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        partition: usize,
+        _context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
         let export_iter_provider = jni_call_static!(
             JniBridge.getResource(
                 jni_new_string!(&self.export_iter_provider_resource_id)?
@@ -147,9 +162,14 @@ impl RecordBatchStream for FFIReaderStream {
 impl Stream for FFIReaderStream {
     type Item = ArrowResult<RecordBatch>;
 
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         if let Some(batch) = self.next_batch()? {
-            return self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(batch))));
+            return self
+                .baseline_metrics
+                .record_poll(Poll::Ready(Some(Ok(batch))));
         }
         Poll::Ready(None)
     }
@@ -172,10 +192,12 @@ impl FFIReaderStream {
         let mut ffi_arrow_array = Box::new(FFI_ArrowArray::empty());
 
         let ffi_arrow_schema_ptr = jni_new_object!(
-            JavaLong, ffi_arrow_schema.as_mut() as *mut FFI_ArrowSchema as i64
+            JavaLong,
+            ffi_arrow_schema.as_mut() as *mut FFI_ArrowSchema as i64
         )?;
         let ffi_arrow_array_ptr = jni_new_object!(
-            JavaLong, ffi_arrow_array.as_mut() as *mut FFI_ArrowArray as i64
+            JavaLong,
+            ffi_arrow_array.as_mut() as *mut FFI_ArrowArray as i64
         )?;
         let _unit = jni_call!(ScalaFunction2(consumer).apply(
             ffi_arrow_schema_ptr,
@@ -189,10 +211,7 @@ impl FFIReaderStream {
             make_array_from_raw(ffi_arrow_array.as_ref(), ffi_arrow_schema.as_ref())
                 .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
         };
-        let struct_array = imported
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
+        let struct_array = imported.as_any().downcast_ref::<StructArray>().unwrap();
         let batch = RecordBatch::from(struct_array);
 
         self.size_counter.add(batch_byte_size(&batch));
