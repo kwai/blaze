@@ -118,6 +118,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
+import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
@@ -542,6 +543,9 @@ object NativeConverters {
           if Seq(
             "org.apache.spark.sql.hive.HiveSimpleUDF",
             "org.apache.spark.sql.hive.HiveGenericUDF").contains(e.getClass.getName) =>
+        assert(
+          SparkEnv.get.conf.getBoolean("spark.blaze.udf.enabled", defaultValue = false),
+          "stop converting UDF because spark.blaze.udf.enabled = false")
         val bounded = e.withNewChildren(e.children.zipWithIndex.map {
           case (param, index) => BoundReference(index, param.dataType, param.nullable)
         })
