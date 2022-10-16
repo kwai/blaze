@@ -527,6 +527,7 @@ dependencies = [
  "once_cell",
  "paste",
  "tempfile",
+ "thrift",
  "tokio",
  "zstd",
 ]
@@ -849,12 +850,6 @@ checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
 dependencies = [
  "cfg-if",
 ]
-
-[[package]]
-name = "integer-encoding"
-version = "1.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48dc51180a9b377fd75814d0cc02199c20f8e99433d6762f650d39cdbbd3b56f"
 
 [[package]]
 name = "integer-encoding"
@@ -1286,8 +1281,6 @@ dependencies = [
 [[package]]
 name = "parquet"
 version = "24.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74fd590f0672998df84503d1bcbebc69732583d03cc3495c7dd8d3e5a1d8437f"
 dependencies = [
  "ahash 0.8.0",
  "arrow",
@@ -1304,16 +1297,9 @@ dependencies = [
  "rand",
  "seq-macro",
  "snap",
- "thrift 0.16.0",
+ "thrift",
  "tokio",
  "zstd",
-]
-
-[[package]]
-name = "parquet-format"
-version = "4.0.0"
-dependencies = [
- "thrift 0.13.0",
 ]
 
 [[package]]
@@ -1748,26 +1734,15 @@ dependencies = [
 
 [[package]]
 name = "thrift"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6d965454947cc7266d22716ebfd07b18d84ebaf35eec558586bbb2a8cb6b5b"
-dependencies = [
- "byteorder",
- "integer-encoding 1.1.7",
- "log",
- "ordered-float 1.1.1",
- "threadpool",
-]
-
-[[package]]
-name = "thrift"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09678c4cdbb4eed72e18b7c2af1329c69825ed16fcbac62d083fc3e2b0590ff0"
 dependencies = [
  "byteorder",
- "integer-encoding 3.0.4",
+ "integer-encoding",
+ "log",
  "ordered-float 1.1.1",
+ "threadpool",
 ]
 
 [[package]]

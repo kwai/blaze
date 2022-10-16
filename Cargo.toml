@@ -18,7 +18,6 @@ members = [
     "native-engine/datafusion-ext",
     "native-engine/plan-serde",
     "native-engine/blaze",
-    "native-engine/parquet-format-rs-kwai",
 ]
 
 [profile.release-lto]
@@ -33,5 +32,4 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-## parquet format customized by kuaishou inc
-parquet-format = { path = "native-engine/parquet-format-rs-kwai" }
+parquet = { path = "patched/parquet-24.0.0-kwai" }
