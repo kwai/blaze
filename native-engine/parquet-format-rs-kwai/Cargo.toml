@@ -1,7 +1,0 @@
-[package]
-name = "parquet-format"
-version = "4.0.0"
-edition = "2021"
-
-[dependencies]
-thrift = "0.13.0"
