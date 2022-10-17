@@ -16,9 +16,11 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
+import java.security.PrivilegedExceptionAction
 import java.util.UUID
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -148,8 +150,12 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
         JniBridge.resourcesMap.put(
           resourceId,
           (pathStr: String) => {
-            val path = new Path(pathStr)
-            path.getFileSystem(broadcastedHadoopConf.value.value)
+            NativeSupports.currentUser.doAs(new PrivilegedExceptionAction[FileSystem] {
+              override def run(): FileSystem = {
+                val path = new Path(pathStr)
+                path.getFileSystem(broadcastedHadoopConf.value.value)
+              }
+            })
           })
 
         val nativeParquetScanConf = pb.FileScanExecConf
