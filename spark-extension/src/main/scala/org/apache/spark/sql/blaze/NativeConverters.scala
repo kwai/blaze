@@ -395,6 +395,7 @@ object NativeConverters {
           _.setIsNotNullExpr(
             pb.PhysicalIsNotNull.newBuilder().setExpr(convertExpr(child, useAttrExprId)).build())
         }
+      case Not(EqualTo(lhs, rhs)) => buildBinaryExprNode(lhs, rhs, "NotEq")
       case Not(child) =>
         buildExprNode {
           _.setNotExpr(
