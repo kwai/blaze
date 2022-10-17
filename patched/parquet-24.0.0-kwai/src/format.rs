@@ -23,7 +23,7 @@ use thrift::protocol::verify_expected_message_type;
 use thrift::protocol::verify_expected_sequence_number;
 use thrift::protocol::verify_expected_service_call;
 use thrift::protocol::verify_required_field_exists;
-// use thrift::server::TProcessor;
+use thrift::server::TProcessor;
 
 /// Types supported by Parquet.  These types are intended to be used in combination
 /// with the encodings to control the on disk storage format.
@@ -114,12 +114,12 @@ impl ConvertedType {
   /// an enum is converted into a binary field
   pub const ENUM: ConvertedType = ConvertedType(4);
   /// A decimal value.
-  ///
+  /// 
   /// This may be used to annotate binary or fixed primitive types. The
   /// underlying byte array stores the unscaled value encoded as two's
   /// complement using big-endian byte order (the most significant byte is the
   /// zeroth element). The value of the decimal is the value * 10^{-scale}.
-  ///
+  /// 
   /// This must be accompanied by a (maximum) precision and a scale in the
   /// SchemaElement. The precision specifies the number of digits in the decimal
   /// and the scale stores the location of the decimal point. For example 1.23
@@ -127,62 +127,62 @@ impl ConvertedType {
   /// 2 digits over).
   pub const DECIMAL: ConvertedType = ConvertedType(5);
   /// A Date
-  ///
+  /// 
   /// Stored as days since Unix epoch, encoded as the INT32 physical type.
-  ///
+  /// 
   pub const DATE: ConvertedType = ConvertedType(6);
   /// A time
-  ///
+  /// 
   /// The total number of milliseconds since midnight.  The value is stored
   /// as an INT32 physical type.
   pub const TIME_MILLIS: ConvertedType = ConvertedType(7);
   /// A time.
-  ///
+  /// 
   /// The total number of microseconds since midnight.  The value is stored as
   /// an INT64 physical type.
   pub const TIME_MICROS: ConvertedType = ConvertedType(8);
   /// A date/time combination
-  ///
+  /// 
   /// Date and time recorded as milliseconds since the Unix epoch.  Recorded as
   /// a physical type of INT64.
   pub const TIMESTAMP_MILLIS: ConvertedType = ConvertedType(9);
   /// A date/time combination
-  ///
+  /// 
   /// Date and time recorded as microseconds since the Unix epoch.  The value is
   /// stored as an INT64 physical type.
   pub const TIMESTAMP_MICROS: ConvertedType = ConvertedType(10);
   /// An unsigned integer value.
-  ///
+  /// 
   /// The number describes the maximum number of meaningful data bits in
   /// the stored value. 8, 16 and 32 bit values are stored using the
   /// INT32 physical type.  64 bit values are stored using the INT64
   /// physical type.
-  ///
+  /// 
   pub const UINT_8: ConvertedType = ConvertedType(11);
   pub const UINT_16: ConvertedType = ConvertedType(12);
   pub const UINT_32: ConvertedType = ConvertedType(13);
   pub const UINT_64: ConvertedType = ConvertedType(14);
   /// A signed integer value.
-  ///
+  /// 
   /// The number describes the maximum number of meaningful data bits in
   /// the stored value. 8, 16 and 32 bit values are stored using the
   /// INT32 physical type.  64 bit values are stored using the INT64
   /// physical type.
-  ///
+  /// 
   pub const INT_8: ConvertedType = ConvertedType(15);
   pub const INT_16: ConvertedType = ConvertedType(16);
   pub const INT_32: ConvertedType = ConvertedType(17);
   pub const INT_64: ConvertedType = ConvertedType(18);
   /// An embedded JSON document
-  ///
+  /// 
   /// A JSON document embedded within a single UTF8 column.
   pub const JSON: ConvertedType = ConvertedType(19);
   /// An embedded BSON document
-  ///
+  /// 
   /// A BSON document embedded within a single BINARY column.
   pub const BSON: ConvertedType = ConvertedType(20);
   /// An interval of time
-  ///
+  /// 
   /// This type annotates data stored as a FIXED_LEN_BYTE_ARRAY of length 12
   /// This data is composed of three separate little endian unsigned
   /// integers.  Each stores a component of a duration of time.  The first
@@ -431,7 +431,7 @@ impl From<&Encoding> for i32 {
 }
 
 /// Supported compression algorithms.
-///
+/// 
 /// Codecs added in 2.4 can be read by readers based on 2.4 and later.
 /// Codec support may vary between readers based on the format version and
 /// libraries available at runtime. Gzip, Snappy, and LZ4 codecs are
@@ -615,49 +615,49 @@ impl From<&BoundaryOrder> for i32 {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Statistics {
   /// DEPRECATED: min and max value of the column. Use min_value and max_value.
-  ///
+  /// 
   /// Values are encoded using PLAIN encoding, except that variable-length byte
   /// arrays do not include a length prefix.
-  ///
+  /// 
   /// These fields encode min and max values determined by signed comparison
   /// only. New files should use the correct order for a column's logical type
   /// and store the values in the min_value and max_value fields.
-  ///
+  /// 
   /// To support older readers, these may be set when the column order is
   /// signed.
   pub max: Option<Vec<u8>>,
   pub min: Option<Vec<u8>>,
-  /// Min and max values for the column, determined by its ColumnOrder.
-  ///
-  /// Values are encoded using PLAIN encoding, except that variable-length byte
-  /// arrays do not include a length prefix.
-  pub max_value: Option<Vec<u8>>,
-  pub min_value: Option<Vec<u8>>,
   /// count of null value in the column
   pub null_count: Option<i64>,
   /// count of distinct values occurring
   pub distinct_count: Option<i64>,
+  /// Min and max values for the column, determined by its ColumnOrder.
+  /// 
+  /// Values are encoded using PLAIN encoding, except that variable-length byte
+  /// arrays do not include a length prefix.
+  pub max_value: Option<Vec<u8>>,
+  pub min_value: Option<Vec<u8>>,
 }
 
 impl Statistics {
-  pub fn new<F1, F2, F5, F6, F1003, F1004>(max: F1, min: F2, max_value: F5, min_value: F6, null_count: F1003, distinct_count: F1004) -> Statistics where F1: Into<Option<Vec<u8>>>, F2: Into<Option<Vec<u8>>>, F5: Into<Option<Vec<u8>>>, F6: Into<Option<Vec<u8>>>, F1003: Into<Option<i64>>, F1004: Into<Option<i64>> {
+  pub fn new<F1, F2, F3, F4, F5, F6>(max: F1, min: F2, null_count: F3, distinct_count: F4, max_value: F5, min_value: F6) -> Statistics where F1: Into<Option<Vec<u8>>>, F2: Into<Option<Vec<u8>>>, F3: Into<Option<i64>>, F4: Into<Option<i64>>, F5: Into<Option<Vec<u8>>>, F6: Into<Option<Vec<u8>>> {
     Statistics {
       max: max.into(),
       min: min.into(),
-      max_value: max_value.into(),
-      min_value: min_value.into(),
       null_count: null_count.into(),
       distinct_count: distinct_count.into(),
+      max_value: max_value.into(),
+      min_value: min_value.into(),
     }
   }
   pub fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<Statistics> {
     i_prot.read_struct_begin()?;
     let mut f_1: Option<Vec<u8>> = None;
     let mut f_2: Option<Vec<u8>> = None;
+    let mut f_3: Option<i64> = None;
+    let mut f_4: Option<i64> = None;
     let mut f_5: Option<Vec<u8>> = None;
     let mut f_6: Option<Vec<u8>> = None;
-    let mut f_1003: Option<i64> = None;
-    let mut f_1004: Option<i64> = None;
     loop {
       let field_ident = i_prot.read_field_begin()?;
       if field_ident.field_type == TType::Stop {
@@ -673,6 +673,14 @@ impl Statistics {
           let val = i_prot.read_bytes()?;
           f_2 = Some(val);
         },
+        3 => {
+          let val = i_prot.read_i64()?;
+          f_3 = Some(val);
+        },
+        4 => {
+          let val = i_prot.read_i64()?;
+          f_4 = Some(val);
+        },
         5 => {
           let val = i_prot.read_bytes()?;
           f_5 = Some(val);
@@ -680,14 +688,6 @@ impl Statistics {
         6 => {
           let val = i_prot.read_bytes()?;
           f_6 = Some(val);
-        },
-        1003 => {
-          let val = i_prot.read_i64()?;
-          f_1003 = Some(val);
-        },
-        1004 => {
-          let val = i_prot.read_i64()?;
-          f_1004 = Some(val);
         },
         _ => {
           i_prot.skip(field_ident.field_type)?;
@@ -699,10 +699,10 @@ impl Statistics {
     let ret = Statistics {
       max: f_1,
       min: f_2,
+      null_count: f_3,
+      distinct_count: f_4,
       max_value: f_5,
       min_value: f_6,
-      null_count: f_1003,
-      distinct_count: f_1004,
     };
     Ok(ret)
   }
@@ -719,6 +719,16 @@ impl Statistics {
       o_prot.write_bytes(fld_var)?;
       o_prot.write_field_end()?
     }
+    if let Some(fld_var) = self.null_count {
+      o_prot.write_field_begin(&TFieldIdentifier::new("null_count", TType::I64, 3))?;
+      o_prot.write_i64(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.distinct_count {
+      o_prot.write_field_begin(&TFieldIdentifier::new("distinct_count", TType::I64, 4))?;
+      o_prot.write_i64(fld_var)?;
+      o_prot.write_field_end()?
+    }
     if let Some(ref fld_var) = self.max_value {
       o_prot.write_field_begin(&TFieldIdentifier::new("max_value", TType::String, 5))?;
       o_prot.write_bytes(fld_var)?;
@@ -727,16 +737,6 @@ impl Statistics {
     if let Some(ref fld_var) = self.min_value {
       o_prot.write_field_begin(&TFieldIdentifier::new("min_value", TType::String, 6))?;
       o_prot.write_bytes(fld_var)?;
-      o_prot.write_field_end()?
-    }
-    if let Some(fld_var) = self.null_count {
-      o_prot.write_field_begin(&TFieldIdentifier::new("null_count", TType::I64, 1003))?;
-      o_prot.write_i64(fld_var)?;
-      o_prot.write_field_end()?
-    }
-    if let Some(fld_var) = self.distinct_count {
-      o_prot.write_field_begin(&TFieldIdentifier::new("distinct_count", TType::I64, 1004))?;
-      o_prot.write_i64(fld_var)?;
       o_prot.write_field_end()?
     }
     o_prot.write_field_stop()?;
@@ -749,10 +749,10 @@ impl Default for Statistics {
     Statistics{
       max: Some(Vec::new()),
       min: Some(Vec::new()),
-      max_value: Some(Vec::new()),
-      min_value: Some(Vec::new()),
       null_count: Some(0),
       distinct_count: Some(0),
+      max_value: Some(Vec::new()),
+      min_value: Some(Vec::new()),
     }
   }
 }
@@ -1033,7 +1033,7 @@ impl Default for DateType {
 //
 
 /// Logical type to annotate a column that is always null.
-///
+/// 
 /// Sometimes when discovering the schema of existing data, values are always
 /// null and the physical type can't be determined. This annotation signals
 /// the case where the physical type was guessed from all null values.
@@ -1083,10 +1083,10 @@ impl Default for NullType {
 //
 
 /// Decimal logical type annotation
-///
+/// 
 /// To maintain forward-compatibility in v1, implementations using this logical
 /// type must also set scale and precision on the annotated SchemaElement.
-///
+/// 
 /// Allowed for physical types: INT32, INT64, FIXED, and BINARY
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DecimalType {
@@ -1389,7 +1389,7 @@ impl TimeUnit {
 //
 
 /// Timestamp logical type annotation
-///
+/// 
 /// Allowed for physical types: INT64
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TimestampType {
@@ -1457,7 +1457,7 @@ impl TimestampType {
 //
 
 /// Time logical type annotation
-///
+/// 
 /// Allowed for physical types: INT32 (millis), INT64 (micros, nanos)
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TimeType {
@@ -1525,9 +1525,9 @@ impl TimeType {
 //
 
 /// Integer logical type annotation
-///
+/// 
 /// bitWidth must be 8, 16, 32, or 64.
-///
+/// 
 /// Allowed for physical types: INT32, INT64
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IntType {
@@ -1595,7 +1595,7 @@ impl IntType {
 //
 
 /// Embedded JSON logical type annotation
-///
+/// 
 /// Allowed for physical types: BINARY
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct JsonType {
@@ -1643,7 +1643,7 @@ impl Default for JsonType {
 //
 
 /// Embedded BSON logical type annotation
-///
+/// 
 /// Allowed for physical types: BINARY
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BsonType {
@@ -1953,7 +1953,7 @@ pub struct SchemaElement {
   /// original field id in the parquet schema
   pub field_id: Option<i32>,
   /// The logical type of this SchemaElement;
-  ///
+  /// 
   /// LogicalType replaces ConvertedType, but ConvertedType is still required
   /// for some logical types to ensure forward-compatibility in format v1.
   pub logical_type: Option<LogicalType>,
@@ -2352,7 +2352,7 @@ impl DictionaryPageHeader {
 /// New page format allowing reading levels without decompressing the data
 /// Repetition and definition levels are uncompressed
 /// The remaining section containing the data is compressed if is_compressed is true
-///
+/// 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DataPageHeaderV2 {
   /// Number of values, including NULLs, in this data page. *
@@ -2626,7 +2626,7 @@ impl BloomFilterAlgorithm {
 
 /// Hash strategy type annotation. xxHash is an extremely fast non-cryptographic hash
 /// algorithm. It uses 64 bits version of xxHash.
-///
+/// 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct XxHash {
 }
@@ -2746,7 +2746,7 @@ impl BloomFilterHash {
 //
 
 /// The compression used in the Bloom filter.
-///
+/// 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Uncompressed {
 }
@@ -2867,7 +2867,7 @@ impl BloomFilterCompression {
 
 /// Bloom filter header is stored at beginning of Bloom filter data of each column
 /// and followed by its bitset.
-///
+/// 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BloomFilterHeader {
   /// The size of bitset in bytes *
@@ -2992,7 +2992,7 @@ pub struct PageHeader {
   ///     the uncompressed concatenation.
   /// If enabled, this allows for disabling checksumming in HDFS if only a few
   /// pages need to be read.
-  ///
+  /// 
   pub crc: Option<i32>,
   pub data_page_header: Option<DataPageHeader>,
   pub index_page_header: Option<IndexPageHeader>,
@@ -3847,14 +3847,14 @@ impl ColumnCryptoMetaData {
 pub struct ColumnChunk {
   /// File where column data is stored.  If not set, assumed to be same file as
   /// metadata.  This path is relative to the current file.
-  ///
+  /// 
   pub file_path: Option<String>,
   /// Byte offset in file_path to the ColumnMetaData *
   pub file_offset: i64,
   /// Column metadata for this chunk. This is the same content as what is at
   /// file_path/file_offset.  Having it here has it replicated in the file
   /// metadata.
-  ///
+  /// 
   pub meta_data: Option<ColumnMetaData>,
   /// File offset of ColumnChunk's OffsetIndex *
   pub offset_index_offset: Option<i64>,
@@ -4018,7 +4018,7 @@ impl ColumnChunk {
 pub struct RowGroup {
   /// Metadata for each column chunk in this row group.
   /// This list must have the same order as the SchemaElement list in FileMetaData.
-  ///
+  /// 
   pub columns: Vec<ColumnChunk>,
   /// Total byte size of all the uncompressed column data in this row group *
   pub total_byte_size: i64,
@@ -4897,17 +4897,17 @@ pub struct FileMetaData {
   /// String for application that wrote this file.  This should be in the format
   /// <Application> version <App Version> (build <App Build Hash>).
   /// e.g. impala version 1.0 (build 6cf94d29b2b7115df4de2c06e2ab4326d721eb55)
-  ///
+  /// 
   pub created_by: Option<String>,
   /// Sort order used for the min_value and max_value fields of each column in
   /// this file. Sort orders are listed in the order matching the columns in the
   /// schema. The indexes are not necessary the same though, because only leaf
   /// nodes of the schema are represented in the list of sort orders.
-  ///
+  /// 
   /// Without column_orders, the meaning of the min_value and max_value fields is
   /// undefined. To ensure well-defined behaviour, if min_value and max_value are
   /// written to a Parquet file, column_orders must be written as well.
-  ///
+  /// 
   /// The obsolete min and max fields are always sorted by signed comparison
   /// regardless of column_orders.
   pub column_orders: Option<Vec<ColumnOrder>>,

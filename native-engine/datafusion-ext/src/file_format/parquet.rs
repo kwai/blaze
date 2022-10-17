@@ -43,7 +43,6 @@ use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_optimizer::pruning::{PruningPredicate, PruningStatistics},
     physical_plan::{
         expressions::PhysicalSortExpr,
         metrics::{self, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
@@ -60,6 +59,7 @@ use once_cell::sync::OnceCell;
 
 use crate::file_format::file_stream::{FileStream, FormatReader, ReaderFuture};
 use crate::file_format::parquet_file_format::fetch_parquet_metadata;
+use crate::file_format::pruning::{PruningPredicate, PruningStatistics};
 use crate::file_format::{FileScanConfig, ObjectMeta, SchemaAdapter};
 use crate::util::fs::{FsDataInputStream, FsProvider};
 use crate::{jni_call_static, jni_new_global_ref, jni_new_string};
@@ -96,7 +96,7 @@ impl ParquetExec {
         predicate: Option<Expr>,
     ) -> Self {
         debug!("Creating ParquetExec, files: {:?}, projection {:?}, predicate: {:?}, limit: {:?}",
-        base_config.file_groups, base_config.projection, predicate, base_config.limit);
+            base_config.file_groups, base_config.projection, predicate, base_config.limit);
 
         let metrics = ExecutionPlanMetricsSet::new();
         let predicate_creation_errors =
@@ -495,6 +495,11 @@ macro_rules! get_null_count_values {
 }
 
 impl<'a> PruningStatistics for RowGroupPruningStatistics<'a> {
+    fn num_rows(&self, _column: &Column) -> Option<ArrayRef> {
+        let num_rows = self.row_group_metadata.num_rows();
+        Some(ScalarValue::UInt64(Some(num_rows as u64)).to_array())
+    }
+
     fn min_values(&self, column: &Column) -> Option<ArrayRef> {
         get_min_max_values!(self, column, min, min_bytes)
     }

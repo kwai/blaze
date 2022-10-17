@@ -124,11 +124,17 @@ pub fn from_thrift(
         Some(stats) => {
             // Number of nulls recorded, when it is not available, we just mark it as 0.
             let null_count = stats.null_count.unwrap_or(0);
-            assert!(
-                null_count >= 0,
-                "Statistics null count is negative ({})",
-                null_count
-            );
+
+            // TODO: (kwai)
+            // null_count can sometimes unexpectedly be -1. we will not fail the process
+            // in such case, and null_count is later converted to u64::max() so not
+            // parquet prunes will happen.
+            //
+            // assert!(
+            //     null_count >= 0,
+            //     "Statistics null count is negative ({})",
+            //     null_count
+            // );
 
             // Generic null count.
             let null_count = null_count as u64;

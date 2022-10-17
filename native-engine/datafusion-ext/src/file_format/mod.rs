@@ -48,6 +48,7 @@ use datafusion::{error::Result, scalar::ScalarValue};
 mod file_stream;
 mod parquet;
 mod parquet_file_format;
+mod pruning;
 
 /// The base configurations to provide when creating a physical plan for
 /// any given file format.
