@@ -43,7 +43,6 @@ use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_optimizer::pruning::{PruningPredicate, PruningStatistics},
     physical_plan::{
         expressions::PhysicalSortExpr,
         metrics::{self, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
@@ -60,6 +59,7 @@ use once_cell::sync::OnceCell;
 
 use crate::file_format::file_stream::{FileStream, FormatReader, ReaderFuture};
 use crate::file_format::parquet_file_format::fetch_parquet_metadata;
+use crate::file_format::pruning::{PruningPredicate, PruningStatistics};
 use crate::file_format::{FileScanConfig, ObjectMeta, SchemaAdapter};
 use crate::util::fs::{FsDataInputStream, FsProvider};
 use crate::{jni_call_static, jni_new_global_ref, jni_new_string};
@@ -420,6 +420,26 @@ struct RowGroupPruningStatistics<'a> {
     parquet_schema: &'a Schema,
 }
 
+// Extract the number of values on the ColumnMetData
+macro_rules! get_num_values {
+    ($self:expr, $column:expr) => {{
+        let value = ScalarValue::UInt64(
+            if let Some(col) = $self
+                .row_group_metadata
+                .columns()
+                .iter()
+                .find(|c| c.column_descr().name() == &$column.name)
+            {
+                Some(col.num_values() as u64)
+            } else {
+                Some($self.row_group_metadata.num_rows() as u64)
+            },
+        );
+
+        Some(value.to_array())
+    }};
+}
+
 /// Extract the min/max statistics from a `ParquetStatistics` object
 macro_rules! get_statistic {
     ($column_statistics:expr, $func:ident, $bytes_func:ident) => {{
@@ -495,6 +515,10 @@ macro_rules! get_null_count_values {
 }
 
 impl<'a> PruningStatistics for RowGroupPruningStatistics<'a> {
+    fn num_values(&self, column: &Column) -> Option<ArrayRef> {
+        get_num_values!(self, column)
+    }
+
     fn min_values(&self, column: &Column) -> Option<ArrayRef> {
         get_min_max_values!(self, column, min, min_bytes)
     }
