@@ -1,3 +1,17 @@
+// Copyright 2022 The Blaze Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -17,10 +31,10 @@ impl FsProvider {
 
     pub fn provide(&self, path: &str) -> Result<Arc<Fs>> {
         let scheme = path.split_once('/').map(|split| split.0).unwrap_or("");
-        let cache = &self.1;
+        let mut cache = self.1.lock().unwrap();
 
         // first try to find an existed fs with same scheme
-        if let Some(fs) = cache.lock().unwrap().get(scheme) {
+        if let Some(fs) = cache.get(scheme) {
             return Ok(fs.clone());
         }
 
@@ -28,7 +42,7 @@ impl FsProvider {
         let fs = Arc::new(Fs::new(jni_new_global_ref!(jni_call!(
             ScalaFunction1(self.0.as_obj()).apply(jni_new_string!(path)?) -> JObject
         )?)?));
-        cache.lock().unwrap().insert(scheme.to_owned(), fs.clone());
+        cache.insert(scheme.to_owned(), fs.clone());
         Ok(fs)
     }
 }
