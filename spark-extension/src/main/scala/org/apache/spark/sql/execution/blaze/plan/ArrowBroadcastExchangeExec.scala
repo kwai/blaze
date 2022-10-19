@@ -16,49 +16,32 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
+import org.apache.spark._
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.blaze._
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.plans.physical.{
+  BroadcastMode,
+  BroadcastPartitioning,
+  Partitioning
+}
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.execution.{SQLExecution, SparkPlan}
+import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, BroadcastExchangeLike}
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.types.{StructField, StructType}
+import org.blaze.protobuf._
+
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.util.UUID
-import java.util.concurrent.Future
-import java.util.concurrent.TimeoutException
-import java.util.concurrent.TimeUnit
-
+import java.util.concurrent.{Future, TimeUnit, TimeoutException}
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Promise
-
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.InterruptibleIterator
-import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
-import org.apache.spark.sql.catalyst.trees.TreeNodeTag
-import org.apache.spark.sql.types.StructField
-import org.apache.spark.sql.types.StructType
-import org.apache.spark.Partition
-import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.TaskContext
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.SparkException
-import org.apache.spark.broadcast
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
-import org.blaze.protobuf.IpcReaderExecNode
-import org.blaze.protobuf.IpcReadMode
-import org.blaze.protobuf.IpcWriterExecNode
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Schema
 
 case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike

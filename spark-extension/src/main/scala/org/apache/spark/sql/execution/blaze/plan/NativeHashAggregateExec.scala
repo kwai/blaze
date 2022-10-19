@@ -16,38 +16,35 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import scala.collection.JavaConverters._
-
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
-import org.apache.spark.sql.catalyst.expressions.AttributeSeq
-import org.apache.spark.sql.catalyst.expressions.aggregate
-import org.apache.spark.sql.catalyst.expressions.aggregate.Complete
-import org.apache.spark.sql.catalyst.expressions.aggregate.Final
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
-import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
-import org.apache.spark.sql.catalyst.plans.physical.AllTuples
-import org.apache.spark.sql.catalyst.plans.physical.ClusteredDistribution
-import org.apache.spark.sql.catalyst.plans.physical.Distribution
-import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.blaze.{MetricNode, NativeConverters, NativeRDD, NativeSupports}
+import org.apache.spark.sql.catalyst.expressions.{
+  Attribute,
+  AttributeReference,
+  AttributeSeq,
+  Expression,
+  NamedExpression,
+  aggregate
+}
+import org.apache.spark.sql.catalyst.expressions.aggregate._
+import org.apache.spark.sql.catalyst.plans.physical.{
+  AllTuples,
+  ClusteredDistribution,
+  Distribution,
+  UnspecifiedDistribution
+}
+import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.types.StructField
-import org.apache.spark.sql.types.StructType
-import org.blaze.protobuf.AggregateMode
-import org.blaze.protobuf.HashAggregateExecNode
-import org.blaze.protobuf.PhysicalExprNode
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Schema
+import org.apache.spark.sql.types.{StructField, StructType}
+import org.blaze.protobuf.{
+  AggregateMode,
+  HashAggregateExecNode,
+  PhysicalExprNode,
+  PhysicalPlanNode,
+  Schema
+}
+
+import scala.collection.JavaConverters._
 
 case class NativeHashAggregateExec(
     requiredChildDistributionExpressions: Option[Seq[Expression]],
