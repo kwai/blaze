@@ -16,12 +16,18 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.sql.blaze.{MetricNode, NativeRDD, NativeSupports}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder}
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{LocalLimitExec, SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.blaze.protobuf.{LimitExecNode, PhysicalPlanNode}
+import org.apache.spark.sql.execution.LocalLimitExec
+import org.blaze.protobuf.LimitExecNode
+import org.blaze.protobuf.PhysicalPlanNode
 
 case class NativeLocalLimitExec(limit: Long, override val child: SparkPlan)
     extends UnaryExecNode

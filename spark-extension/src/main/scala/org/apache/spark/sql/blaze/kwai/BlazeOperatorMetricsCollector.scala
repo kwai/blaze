@@ -23,11 +23,12 @@ import org.apache.spark.sql.blaze.NativeSupports.blazeOperatorMetricsCollector
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.{KwaiSparkBasicMetrics, SparkContext, SparkEnv}
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.apache.spark.sql.execution.SparkPlan
 
 import scala.beans.BeanProperty
 import scala.util.Try
 
-class BlazeOperatorMetricsCollector() extends Logging {
+class BlazeOperatorMetricsCollector extends Logging {
 
   private val kafkaStageMetricsBroker =
     SparkEnv.get.conf.get(
@@ -44,30 +45,33 @@ class BlazeOperatorMetricsCollector() extends Logging {
 
   private val objectMapper: ObjectMapper = new ObjectMapper()
 
+  def createListener(plan: SparkPlan with NativeSupports, sc: SparkContext): Unit = {
+    sc.listenerBus.addToQueue(
+      new BlazeOperatorMetricsListener(sc, plan),
+      "BlazeOperatorMetrics")
+  }
+
   def sendOperatorMetrics(
       stageInfo: StageInfo,
       nodeName: String,
-      outPut: Long,
+      output: Long,
       simpleString: String,
       sc: SparkContext): Unit = {
     val stageId = stageInfo.stageId
     val stageAttemptId = stageInfo.attemptNumber()
     val stageStatus = stageInfo.getStatusString
-    val stageFailedReason = if (stageInfo.failureReason.isEmpty) {
-      "None"
-    } else {
-      stageInfo.failureReason.get
-    }
+    val stageFailedReason = stageInfo.failureReason.getOrElse("")
+
     val execName = nodeName
     val execInfo = simpleString
-    val outPutRows = outPut
+    val outputRows = output
     try {
       val msg = buildMsg(
         sc,
         stageId,
         stageAttemptId,
         execName,
-        outPutRows,
+        outputRows,
         execInfo,
         stageStatus,
         stageFailedReason)
@@ -83,7 +87,7 @@ class BlazeOperatorMetricsCollector() extends Logging {
       stageId: Int,
       stageAttemptId: Int,
       execName: String,
-      outPutRows: Long,
+      outputRows: Long,
       execInfo: String,
       stageStatus: String,
       stageFailedReason: String): String =
@@ -93,7 +97,7 @@ class BlazeOperatorMetricsCollector() extends Logging {
         stageId,
         stageAttemptId,
         execName,
-        outPutRows,
+        outputRows,
         execInfo,
         stageStatus,
         stageFailedReason))
@@ -101,16 +105,8 @@ class BlazeOperatorMetricsCollector() extends Logging {
 }
 
 object BlazeOperatorMetricsCollector {
-  val isBlazeOperatorMetricsenabled: Boolean =
+  val isBlazeOperatorMetricsEnabled: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = true)
-
-  def createListener(plan: NativeSupports, sc: SparkContext): Unit = {
-
-    val addListener: LiveListenerBus = sc.listenerBus
-    addListener.addToQueue(
-      new BlazeOperatorMetricsListener(sc, plan.getClass.getSimpleName, plan, plan.simpleString),
-      "BlazeOperatorMetrics")
-  }
 }
 
 class BlazeOperatorMetrics(
@@ -126,7 +122,7 @@ class BlazeOperatorMetrics(
   @BeanProperty val stageId: Int = metricStageId
   @BeanProperty val stageAttemptId: Int = metricStageAttemptId
   @BeanProperty val operatorName: String = execName
-  @BeanProperty val operatorOutPutRows: Long = outputRows
+  @BeanProperty val operatorOutputRows: Long = outputRows
   @BeanProperty val operatorInfo: String = execInfo
   @BeanProperty val operatorStageStatus: String = stageStatus
   @BeanProperty val operatorStageFailedReason: String = stageFailedReason
@@ -134,36 +130,32 @@ class BlazeOperatorMetrics(
 
 class BlazeOperatorMetricsListener(
     sc: SparkContext,
-    nodeName: String,
-    exec: => NativeSupports,
-    simpleString: String)
+    exec: => NativeSupports
+    )
     extends SparkListener
     with Logging {
 
   override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
 
-    blazeOperatorMetricsCollector match {
-      case _: Some[BlazeOperatorMetricsCollector] =>
-        val metricsOutput = exec.metrics("output_rows")
-        metricsOutput match {
-          case _: SQLMetric =>
-            blazeOperatorMetricsCollector.get.sendOperatorMetrics(
-              stageCompleted.stageInfo,
-              nodeName,
-              exec.metrics("output_rows").value,
-              simpleString,
-              sc)
-          case _ =>
-            blazeOperatorMetricsCollector.get.sendOperatorMetrics(
-              stageCompleted.stageInfo,
-              nodeName,
-              0L,
-              simpleString,
-              sc)
-        }
-      case _ =>
+    blazeOperatorMetricsCollector.foreach { collector =>
+      val metricsOutput = exec.metrics("output_rows")
+      metricsOutput match {
+        case _: SQLMetric =>
+          collector.sendOperatorMetrics(
+            stageCompleted.stageInfo,
+            exec.getClass.getSimpleName,
+            exec.metrics("output_rows").value,
+            exec.simpleString,
+            sc)
+        case _ =>
+          collector.sendOperatorMetrics(
+            stageCompleted.stageInfo,
+            exec.getClass.getSimpleName,
+            0L,
+            exec.simpleString,
+            sc)
+      }
     }
-
-    sc.listenerBus.removeListener(this)
+      sc.listenerBus.removeListener(this)
   }
 }

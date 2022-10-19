@@ -16,23 +16,37 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.Partition
-import org.apache.spark.rdd.MapPartitionsRDD
-import org.apache.spark.sql.blaze._
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{FileSourceScanExec, LeafExecNode, SparkPlan}
-import org.apache.spark.sql.execution.datasources.{FileScanRDD, PartitionedFile}
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
-import org.apache.spark.sql.execution.statsEstimation.Statistics
-import org.apache.spark.sql.types.{NullType, StructField, StructType}
-import org.apache.spark.util.SerializableConfiguration
-import org.blaze.{protobuf => pb}
-
 import java.security.PrivilegedExceptionAction
 import java.util.UUID
+
 import scala.collection.JavaConverters._
+import scala.collection.mutable
+
+import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.LeafExecNode
+import org.apache.spark.sql.execution.datasources.FileScanRDD
+import org.apache.spark.Partition
+import org.apache.spark.rdd.MapPartitionsRDD
+import org.apache.spark.sql.blaze.JniBridge
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.datasources.FilePartition
+import org.apache.spark.sql.execution.datasources.PartitionedFile
+import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.execution.statsEstimation.Statistics
+import org.apache.spark.sql.types.NullType
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.SerializableConfiguration
+import org.blaze.{protobuf => pb}
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     extends LeafExecNode

@@ -16,12 +16,20 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.sql.blaze.{MetricNode, NativeConverters, NativeRDD, NativeSupports}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, SortOrder}
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{FilterExec, SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.blaze.protobuf.{FilterExecNode, PhysicalPlanNode}
+import org.apache.spark.sql.execution.FilterExec
+import org.blaze.protobuf.FilterExecNode
+import org.blaze.protobuf.PhysicalPlanNode
 
 case class NativeFilterExec(condition: Expression, override val child: SparkPlan)
     extends UnaryExecNode

@@ -16,15 +16,20 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.sql.blaze.{MetricNode, NativeRDD, NativeSupports}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder}
+import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec.buildRenameColumnsExec
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.blaze.protobuf.{PhysicalPlanNode, RenameColumnsExecNode}
-
-import scala.collection.JavaConverters._
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.RenameColumnsExecNode
 
 case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnNames: Seq[String])
     extends UnaryExecNode

@@ -22,10 +22,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.{RDD, ShuffledRDDPartition}
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
-import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.{
-  createListener,
-  isBlazeOperatorMetricsenabled
-}
+import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.isBlazeOperatorMetricsEnabled
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SparkPlan
@@ -67,9 +64,11 @@ object NativeSupports extends Logging {
 
   val currentUser: UserGroupInformation = UserGroupInformation.getCurrentUser
 
-  var blazeOperatorMetricsCollector: Option[BlazeOperatorMetricsCollector] = None
-  if (isBlazeOperatorMetricsenabled) {
-    blazeOperatorMetricsCollector = Some(new BlazeOperatorMetricsCollector)
+  val blazeOperatorMetricsCollector: Option[BlazeOperatorMetricsCollector] = if (isBlazeOperatorMetricsEnabled) {
+    Some(new BlazeOperatorMetricsCollector)
+  }
+  else {
+    None
   }
 
   @tailrec
@@ -96,9 +95,7 @@ object NativeSupports extends Logging {
   def executeNative(plan: SparkPlan): NativeRDD =
     plan match {
       case plan: NativeSupports =>
-        if (isBlazeOperatorMetricsenabled) {
-          createListener(plan, plan.sparkContext)
-        }
+        NativeSupports.blazeOperatorMetricsCollector.foreach(_.createListener(plan, plan.sparkContext))
         plan.doExecuteNative()
       case plan: ShuffleQueryStageInput => executeNativeCustomShuffleReader(plan, plan.output)
       case plan: SkewedShuffleQueryStageInput =>

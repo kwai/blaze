@@ -16,19 +16,28 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.sql.blaze.{MetricNode, NativeConverters, NativeRDD, NativeSupports}
-import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, NullsFirst, SortOrder}
-import org.apache.spark.sql.catalyst.plans.physical.{
-  Distribution,
-  OrderedDistribution,
-  Partitioning,
-  UnspecifiedDistribution
-}
-import org.apache.spark.sql.execution.{SortExec, SparkPlan, UnaryExecNode}
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.blaze.protobuf.{PhysicalExprNode, PhysicalPlanNode, PhysicalSortExprNode, SortExecNode}
-
 import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.Ascending
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.NullsFirst
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.physical.Distribution
+import org.apache.spark.sql.catalyst.plans.physical.OrderedDistribution
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.SortExec
+import org.blaze.protobuf.PhysicalExprNode
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.PhysicalSortExprNode
+import org.blaze.protobuf.SortExecNode
 
 case class NativeSortExec(
     sortOrder: Seq[SortOrder],

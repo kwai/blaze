@@ -16,24 +16,30 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.sql.blaze.{MetricNode, NativeConverters, NativeRDD, NativeSupports}
-import org.apache.spark.sql.catalyst.analysis.ResolvedStar
-import org.apache.spark.sql.catalyst.expressions.{
-  Alias,
-  Attribute,
-  Cast,
-  Literal,
-  NamedExpression
-}
-import org.apache.spark.sql.execution.{ProjectExec, SparkPlan, UnaryExecNode}
-import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec.getNativeProjectBuilder
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.types.DataTypes
-import org.blaze.protobuf.{PhysicalExprNode, PhysicalPlanNode, ProjectionExecNode}
-
 import java.util.UUID
-import scala.collection.JavaConverters._
+
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.analysis.ResolvedStar
+import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.ProjectExec
+import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec.getNativeProjectBuilder
+import org.apache.spark.sql.types.DataTypes
+import org.blaze.protobuf.PhysicalExprNode
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.ProjectionExecNode
 
 case class NativeProjectExec(
     projectList: Seq[NamedExpression],

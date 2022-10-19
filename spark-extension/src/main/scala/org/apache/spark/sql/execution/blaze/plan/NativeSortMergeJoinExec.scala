@@ -16,19 +16,29 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.OneToOneDependency
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.{MetricNode, NativeConverters, NativeRDD, NativeSupports}
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, SortOrder}
-import org.apache.spark.sql.catalyst.plans.{JoinType, RightOuter}
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{BinaryExecNode, SparkPlan}
-import org.apache.spark.sql.execution.joins.SortMergeJoinExec
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.blaze.protobuf.{JoinOn, PhysicalPlanNode, SortMergeJoinExecNode, SortOptions}
-
 import scala.collection.JavaConverters._
+
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.OneToOneDependency
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.execution.BinaryExecNode
+import org.apache.spark.sql.execution.joins.SortMergeJoinExec
+import org.blaze.protobuf.JoinOn
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.SortMergeJoinExecNode
+import org.blaze.protobuf.SortOptions
 
 case class NativeSortMergeJoinExec(
     override val left: SparkPlan,

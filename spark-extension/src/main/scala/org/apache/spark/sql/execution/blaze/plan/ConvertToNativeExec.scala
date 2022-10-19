@@ -16,19 +16,31 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.{InterruptibleIterator, SparkEnv}
-import org.apache.spark.sql.blaze._
+import java.util.UUID
+
+import org.apache.arrow.c.ArrowArray
+import org.apache.arrow.c.ArrowSchema
+import org.apache.spark.InterruptibleIterator
+import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
-import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
-import org.blaze.protobuf.{FFIReaderExecNode, PhysicalPlanNode, Schema}
-
-import java.util.UUID
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.SparkEnv
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
+import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.blaze.protobuf.FFIReaderExecNode
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.Schema
 
 case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode

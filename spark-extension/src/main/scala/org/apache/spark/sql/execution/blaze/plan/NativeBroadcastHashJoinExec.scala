@@ -16,17 +16,31 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import org.apache.spark.Partition
-import org.apache.spark.sql.blaze.{MetricNode, NativeConverters, NativeRDD, NativeSupports}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, SortOrder}
-import org.apache.spark.sql.catalyst.plans._
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{BinaryExecNode, SparkPlan}
-import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BuildLeft}
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.blaze.protobuf.{HashJoinExecNode, JoinOn, PhysicalPlanNode}
-
 import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.execution.BinaryExecNode
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
+import org.apache.spark.sql.execution.joins.BuildLeft
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.Partition
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.plans.ExistenceJoin
+import org.apache.spark.sql.catalyst.plans.InnerLike
+import org.apache.spark.sql.catalyst.plans.LeftExistence
+import org.apache.spark.sql.catalyst.plans.LeftOuter
+import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.blaze.protobuf.HashJoinExecNode
+import org.blaze.protobuf.JoinOn
+import org.blaze.protobuf.PhysicalPlanNode
 
 case class NativeBroadcastHashJoinExec(
     override val left: SparkPlan,
