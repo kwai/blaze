@@ -64,12 +64,12 @@ object NativeSupports extends Logging {
 
   val currentUser: UserGroupInformation = UserGroupInformation.getCurrentUser
 
-  val blazeOperatorMetricsCollector: Option[BlazeOperatorMetricsCollector] = if (isBlazeOperatorMetricsEnabled) {
-    Some(new BlazeOperatorMetricsCollector)
-  }
-  else {
-    None
-  }
+  val blazeOperatorMetricsCollector: Option[BlazeOperatorMetricsCollector] =
+    if (isBlazeOperatorMetricsEnabled) {
+      Some(new BlazeOperatorMetricsCollector)
+    } else {
+      None
+    }
 
   @tailrec
   def isNative(plan: SparkPlan): Boolean =
@@ -95,7 +95,8 @@ object NativeSupports extends Logging {
   def executeNative(plan: SparkPlan): NativeRDD =
     plan match {
       case plan: NativeSupports =>
-        NativeSupports.blazeOperatorMetricsCollector.foreach(_.createListener(plan, plan.sparkContext))
+        NativeSupports.blazeOperatorMetricsCollector.foreach(
+          _.createListener(plan, plan.sparkContext))
         plan.doExecuteNative()
       case plan: ShuffleQueryStageInput => executeNativeCustomShuffleReader(plan, plan.output)
       case plan: SkewedShuffleQueryStageInput =>

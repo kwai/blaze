@@ -46,9 +46,7 @@ class BlazeOperatorMetricsCollector extends Logging {
   private val objectMapper: ObjectMapper = new ObjectMapper()
 
   def createListener(plan: SparkPlan with NativeSupports, sc: SparkContext): Unit = {
-    sc.listenerBus.addToQueue(
-      new BlazeOperatorMetricsListener(sc, plan),
-      "BlazeOperatorMetrics")
+    sc.listenerBus.addToQueue(new BlazeOperatorMetricsListener(sc, plan), "BlazeOperatorMetrics")
   }
 
   def sendOperatorMetrics(
@@ -128,10 +126,7 @@ class BlazeOperatorMetrics(
   @BeanProperty val operatorStageFailedReason: String = stageFailedReason
 }
 
-class BlazeOperatorMetricsListener(
-    sc: SparkContext,
-    exec: => NativeSupports
-    )
+class BlazeOperatorMetricsListener(sc: SparkContext, exec: => NativeSupports)
     extends SparkListener
     with Logging {
 
@@ -156,6 +151,6 @@ class BlazeOperatorMetricsListener(
             sc)
       }
     }
-      sc.listenerBus.removeListener(this)
+    sc.listenerBus.removeListener(this)
   }
 }

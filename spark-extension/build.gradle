@@ -68,31 +68,15 @@ dependencies {
 	compileOnly 'org.apache.spark:spark-sql_2.11:2.4.1U1.9.33-SNAPSHOT'
 	compileOnly 'org.apache.spark:spark-hive_2.11:2.4.1U1.9.33-SNAPSHOT'
 	compileOnly 'com.kuaishou.dataarch:shuffle-sdk:1.3.75-RELEASE:shaded'
-	compileOnly ('com.fasterxml.jackson.core:jackson-annotations') {
-		version {
-			strictly '2.6.7'
-		}
-	}
-	compileOnly ('com.fasterxml.jackson.core:jackson-core') {
-		version {
-			strictly '2.6.7'
-		}
-	}
-	compileOnly ('com.fasterxml.jackson.core:jackson-databind') {
-		version {
-			strictly '2.6.7'
-		}
-	}
-
+	compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.6.7'
+	compileOnly 'com.fasterxml.jackson.core:jackson-core:2.6.7'
+	compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.6.7'
 }
 
 configurations.implementation {
 	exclude module: "hive-hbase-handler"
 	exclude module: "htrace-core"
 	exclude module: "htrace-core-t"
-	exclude module: "jackson-annotation"
-	exclude module: "jackson-core"
-	exclude module: "jackson-databind"
 	exclude module: "zstd-jni"
 }
 
@@ -107,6 +91,12 @@ shadowJar {
 	}
 	relocate('io.netty', 'blaze.io.netty')
 	relocate('com.google.flatbuffers', 'blaze.com.google.flatbuffers')
+
+	// exclude some stuff that should be always available in spark environment
+	exclude('org/apache/commons/codec/**/*')
+	exclude('org/apache/commons/compress/**/*')
+	exclude('org/slf4j/**/*')
+	exclude('com/fasterxml/jackson/**/*')
 	outputs.upToDateWhen { false }
 }
 
@@ -137,13 +127,9 @@ spotless {
 		// optional: you can specify import groups directly
 		// note: you can use an empty string for all the imports you didn't specify explicitly, and '\\#` prefix for static imports
 		importOrder('java', 'javax', 'org.apache', 'com.blaze', '', '\\#')
-
 		target 'src/main/java/**/*.java'
-
 		removeUnusedImports()
-
 		googleJavaFormat()
-
 		licenseHeader '/*\n' +
 				' * Copyright 2022 The Blaze Authors\n' +
 				' *\n' +
@@ -163,9 +149,7 @@ spotless {
 	}
 	scala {
 		target 'src/main/scala/**/*.scala'
-
 		scalafmt('2.6.1').configFile('../dev/.scalafmt.conf')
-
 		licenseHeader '/*\n' +
 				' * Copyright 2022 The Blaze Authors\n' +
 				' *\n' +
@@ -208,21 +192,25 @@ protobuf {
 		// Download from repositories
 		artifact = 'com.google.protobuf:protoc:3.19.1'
 	}
-
 	generatedFilesBaseDir = "$projectDir/src/generated-sources"
 }
 
-clean.doLast {
-	file("${projectDir}/../lib").deleteDir()
-	file("${projectDir}/../target").deleteDir()
-}
 task cargo(type: Exec) {
 	workingDir '.'
 	executable "${projectDir}/../build-native.sh"
 	args += [project.hasProperty('mode') ? getProperty('mode') : 'debug']
 }
 
+tasks.withType(ScalaCompile) {
+	scalaCompileOptions.additionalParameters = ["-Ywarn-unused"]
+}
+
 jar.enabled = false
 tasks.compileScala.dependsOn tasks.spotlessApply
 tasks.compileScala.dependsOn tasks.cargo
 tasks.build.dependsOn tasks.shadowJar
+
+clean.doLast {
+	file("${projectDir}/../lib").deleteDir()
+	file("${projectDir}/../target").deleteDir()
+}
