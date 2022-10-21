@@ -120,6 +120,12 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.sources.StringEndsWith
+import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
+import org.apache.spark.sql.catalyst.expressions.BitwiseOr
+import org.apache.spark.sql.catalyst.expressions.CheckOverflow
+import org.apache.spark.sql.catalyst.expressions.PromotePrecision
+import org.apache.spark.sql.catalyst.expressions.ShiftLeft
+import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
@@ -188,7 +194,7 @@ object NativeConverters {
       case DateType => scalarValueBuilder.setDate32Value(sparkValue.asInstanceOf[Int])
       case TimestampType =>
         scalarValueBuilder.setTimeMicrosecondValue(sparkValue.asInstanceOf[Long])
-      case t: DecimalType => {
+      case t: DecimalType =>
         val decimalValue = sparkValue.asInstanceOf[Decimal]
         val decimalType = convertDataType(t).getDECIMAL
         scalarValueBuilder.setDecimalValue(
@@ -196,7 +202,7 @@ object NativeConverters {
             .newBuilder()
             .setDecimal(decimalType)
             .setLongValue(decimalValue.toUnscaledLong))
-      }
+
       // TODO: support complex data types
       case _: ArrayType | _: StructType | _: MapType if sparkValue == null =>
         pb.PrimitiveScalarType.NULL
@@ -412,13 +418,43 @@ object NativeConverters {
       case Add(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Plus")
       case Subtract(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Minus")
       case Multiply(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Multiply")
-      case Divide(lhs, rhs) =>
-        buildBinaryExprNode(lhs, new NullIf(rhs, Literal.create(0, rhs.dataType)), "Divide")
-      case Remainder(lhs, rhs) =>
-        buildBinaryExprNode(lhs, new NullIf(rhs, Literal.create(0, rhs.dataType)), "Modulo")
+      case e @ Divide(lhs, rhs) =>
+        rhs match {
+          case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
+            buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
+          case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
+            buildBinaryExprNode(lhs, rhs, "Divide")
+          case rhs =>
+            buildExprNode(
+              _.setBinaryExpr(
+                pb.PhysicalBinaryExprNode
+                  .newBuilder()
+                  .setL(convertExpr(lhs, useAttrExprId))
+                  .setR(buildExtScalarFunction("NullIfZero", rhs :: Nil, rhs.dataType))
+                  .setOp("Divide")))
+        }
+      case e @ Remainder(lhs, rhs) =>
+        rhs match {
+          case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
+            buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
+          case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
+            buildBinaryExprNode(lhs, rhs, "Modulo")
+          case rhs =>
+            buildExprNode(
+              _.setBinaryExpr(
+                pb.PhysicalBinaryExprNode
+                  .newBuilder()
+                  .setL(convertExpr(lhs, useAttrExprId))
+                  .setR(buildExtScalarFunction("NullIfZero", rhs :: Nil, rhs.dataType))
+                  .setOp("Modulo")))
+        }
       case Like(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Like")
       case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
       case Or(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Or")
+      case BitwiseAnd(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseAnd")
+      case BitwiseOr(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseOr")
+      case ShiftLeft(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseShiftLeft")
+      case ShiftRight(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseShiftRight")
 
       // builtin scalar functions
       case e: Sqrt => buildScalarFunction(pb.ScalarFunction.Sqrt, e.children, e.dataType)
@@ -466,10 +502,8 @@ object NativeConverters {
         buildScalarFunction(pb.ScalarFunction.Ltrim, e.srcStr +: e.trimStr.toSeq, e.dataType)
       case e: StringTrimRight =>
         buildScalarFunction(pb.ScalarFunction.Rtrim, e.srcStr +: e.trimStr.toSeq, e.dataType)
-      // case Nothing => buildScalarFunction(pb.ScalarFunction.TOTIMESTAMP, Nil)
-      // case Nothing => buildScalarFunction(pb.ScalarFunction.ARRAY, Nil)
-      case e: NullIf => buildScalarFunction(pb.ScalarFunction.NullIf, e.children, e.dataType)
-      // case e: DatePart => buildScalarFunction(pb.ScalarFunction.DatePart, e.children, e.dataType)
+      case e @ NullIf(left, right, _) =>
+        buildScalarFunction(pb.ScalarFunction.NullIf, left :: right :: Nil, e.dataType)
       case e: TruncDate =>
         buildScalarFunction(pb.ScalarFunction.DateTrunc, e.children, e.dataType)
       case Md5(_1) =>
@@ -545,12 +579,23 @@ object NativeConverters {
         elseValue.foreach(el => caseExpr.setElseExpr(convertExpr(el, useAttrExprId)))
         pb.PhysicalExprNode.newBuilder().setCase(caseExpr).build()
 
-      // aggr bypass
+      // expressions for DecimalPrecision rule
       case UnscaledValue(_1) =>
-        buildExtScalarFunction("UnscaledValue", Seq(_1), LongType)
+        val args = _1 :: Nil
+        buildExtScalarFunction("UnscaledValue", args, LongType)
+
       case MakeDecimal(_1, precision, scale) =>
-        val args = Seq(_1, Literal(precision), Literal(scale))
+        val args =
+          _1 :: Literal.apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
         buildExtScalarFunction("MakeDecimal", args, DecimalType(precision, scale))
+
+      case PromotePrecision(_1) =>
+        convertExpr(_1, useAttrExprId)
+
+      case CheckOverflow(_1, DecimalType(precision, scale)) =>
+        val args =
+          _1 :: Literal.apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
+        buildExtScalarFunction("CheckOverflow", args, DecimalType(precision, scale))
 
       // aggr
       case Min(_1) => buildAggrExprNode(pb.AggregateFunction.MIN, _1)
@@ -559,7 +604,7 @@ object NativeConverters {
       case Average(_1) => buildAggrExprNode(pb.AggregateFunction.AVG, _1)
       case Count(Seq(_1)) => buildAggrExprNode(pb.AggregateFunction.COUNT, _1)
       case Count(_n) if !_n.exists(_.nullable) =>
-        buildAggrExprNode(pb.AggregateFunction.COUNT, Literal(1))
+        buildAggrExprNode(pb.AggregateFunction.COUNT, Literal.apply(1))
       case VarianceSamp(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE, _1)
       case VariancePop(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE_POP, _1)
       case StddevSamp(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV, _1)

@@ -18,8 +18,6 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
 
-import org.apache.arrow.c.ArrowArray
-import org.apache.arrow.c.ArrowSchema
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -100,4 +98,6 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   }
 
   override def doCanonicalize(): SparkPlan = child.canonicalized
+
+  override def simpleString: String = s"${this.nodeName} [$output]"
 }

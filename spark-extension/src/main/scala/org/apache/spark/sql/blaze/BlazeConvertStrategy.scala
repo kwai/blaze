@@ -35,11 +35,12 @@ import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
 import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.LocalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.types.TimestampType
 
 object BlazeConvertStrategy extends Logging {
@@ -127,6 +128,9 @@ object BlazeConvertStrategy extends Logging {
       neverConvertJoinsWithPostCondition(exec)
     if (alwaysConvertDirectSortMergeJoinEnabled)
       alwaysConvertDirectSortMergeJoin(exec)
+
+    alwaysConvertFinalAggr(exec)
+
     if (neverConvertContinuousCodegensEnabled)
       neverConvertContinuousCodegens(exec)
     if (neverConvertScanWithInconvertibleChildrenEnabled)
@@ -219,6 +223,18 @@ object BlazeConvertStrategy extends Logging {
           })) {
           e.setTagValue(convertStrategyTag, AlwaysConvert)
           e.children.foreach(_.setTagValue(convertStrategyTag, AlwaysConvert))
+        }
+      case _ =>
+    }
+  }
+
+  private def alwaysConvertFinalAggr(exec: SparkPlan): Unit = {
+    exec.foreachUp {
+      case e: HashAggregateExec if e.child.isInstanceOf[ShuffleQueryStageInput] =>
+        val childStage = e.child.asInstanceOf[ShuffleQueryStageInput].childStage
+        val childShuffle = childStage.child.asInstanceOf[ShuffleExchangeLike]
+        if (childShuffle.child.isInstanceOf[NativeHashAggregateExec]) {
+          e.setTagValue(convertStrategyTag, AlwaysConvert)
         }
       case _ =>
     }

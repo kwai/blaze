@@ -1,4 +1,4 @@
 #!/bin/bash
 
 cd "$(dirname "$0")"
-./gradlew build --no-daemon -Pmode=release-lto
+./gradlew build --offline --no-daemon -Pmode=release-lto

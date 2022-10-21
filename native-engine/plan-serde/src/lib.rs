@@ -66,7 +66,7 @@ macro_rules! convert_box_required {
     }};
 }
 
-pub(crate) fn from_proto_binary_op(op: &str) -> Result<Operator, PlanSerDeError> {
+pub fn from_proto_binary_op(op: &str) -> Result<Operator, PlanSerDeError> {
     match op {
         "And" => Ok(Operator::And),
         "Or" => Ok(Operator::Or),
@@ -83,6 +83,18 @@ pub(crate) fn from_proto_binary_op(op: &str) -> Result<Operator, PlanSerDeError>
         "Modulo" => Ok(Operator::Modulo),
         "Like" => Ok(Operator::Like),
         "NotLike" => Ok(Operator::NotLike),
+        "IsDistinctFrom" => Ok(Operator::IsDistinctFrom),
+        "IsNotDistinctFrom" => Ok(Operator::IsNotDistinctFrom),
+        "BitwiseAnd" => Ok(Operator::BitwiseAnd),
+        "BitwiseOr" => Ok(Operator::BitwiseOr),
+        "BitwiseXor" => Ok(Operator::BitwiseXor),
+        "BitwiseShiftLeft" => Ok(Operator::BitwiseShiftLeft),
+        "BitwiseShiftRight" => Ok(Operator::BitwiseShiftRight),
+        "RegexIMatch" => Ok(Operator::RegexIMatch),
+        "RegexMatch" => Ok(Operator::RegexMatch),
+        "RegexNotIMatch" => Ok(Operator::RegexNotIMatch),
+        "RegexNotMatch" => Ok(Operator::RegexNotMatch),
+        "StringConcat" => Ok(Operator::StringConcat),
         other => Err(proto_error(format!(
             "Unsupported binary operator '{:?}'",
             other

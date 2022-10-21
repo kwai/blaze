@@ -308,6 +308,22 @@ impl ShuffleRepartitioner {
 
         let num_output_partitions = self.num_output_partitions;
         match &self.partitioning {
+            _ if num_output_partitions == 1 => { // single partition
+                let mut buffered_partitions = self.buffered_partitions.lock().await;
+                let output = &mut buffered_partitions[0];
+                let mem_diff = output.append_batch(input)?;
+                if mem_diff > 0 {
+                    let mem_increase = mem_diff as usize;
+                    self.try_grow(mem_increase).await?;
+                    self.metrics.mem_used().add(mem_increase);
+                }
+                if mem_diff < 0 {
+                    let mem_used = self.metrics.mem_used().value();
+                    let mem_decrease = mem_used.min(-mem_diff as usize);
+                    self.shrink(mem_decrease);
+                    self.metrics.mem_used().set(mem_used - mem_decrease);
+                }
+            }
             Partitioning::Hash(exprs, _) => {
                 let hashes_buf = &mut vec![];
                 let arrays = exprs

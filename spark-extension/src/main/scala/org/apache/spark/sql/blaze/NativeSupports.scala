@@ -16,39 +16,61 @@
 
 package org.apache.spark.sql.blaze
 
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.UUID
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.BlockingQueue
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+
+import scala.annotation.tailrec
+import scala.collection.immutable.TreeMap
+import scala.concurrent.TimeoutException
+import scala.language.reflectiveCalls
+
 import org.apache.hadoop.security.UserGroupInformation
-import org.apache.spark._
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.{RDD, ShuffledRDDPartition}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.ShuffledRDDPartition
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
 import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.isBlazeOperatorMetricsEnabled
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.adaptive._
-import org.apache.spark.sql.execution.blaze.arrowio.{ArrowFFIImportIterator, ColumnarHelper}
+import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIImportIterator
+import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
-import org.apache.spark.sql.execution.metric.{
-  SQLMetric,
-  SQLMetrics,
-  SQLShuffleReadMetricsReporter
-}
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.util.{CompletionIterator, Utils}
-import org.blaze.protobuf._
-
-import java.io.{File, FileNotFoundException, IOException}
-import java.nio.file.{Files, StandardCopyOption}
-import java.util.UUID
-import java.util.concurrent.{ArrayBlockingQueue, BlockingQueue, SynchronousQueue, TimeUnit}
-import java.util.concurrent.atomic.AtomicBoolean
-import scala.annotation.tailrec
-import scala.collection.immutable.TreeMap
-import scala.concurrent.TimeoutException
-import scala.language.reflectiveCalls
+import org.apache.spark.util.CompletionIterator
+import org.apache.spark.util.Utils
+import org.apache.spark.Partition
+import org.apache.spark.SparkContext
+import org.apache.spark.SparkEnv
+import org.apache.spark.SparkException
+import org.apache.spark.TaskContext
+import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageInput
+import org.apache.spark.sql.execution.adaptive.LocalShuffledRowRDD
+import org.apache.spark.sql.execution.adaptive.QueryStage
+import org.apache.spark.sql.execution.adaptive.QueryStageInput
+import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
+import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
+import org.apache.spark.ShuffleDependency
+import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
+import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
+import org.blaze.protobuf.PartitionId
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.TaskDefinition
 
 trait NativeSupports extends SparkPlan {
   implicit class ImplicitLogicalLink(sparkPlan: SparkPlan)
@@ -150,14 +172,18 @@ object NativeSupports extends Logging {
           .asInstanceOf[ShuffleDependency[_, _, _]]
         val shuffleHandle = dependency.shuffleHandle
 
-        val inputMetrics = exec.asInstanceOf[QueryStageInput].childStage.child.metrics
+        val shuffleExec = exec
+          .asInstanceOf[QueryStageInput]
+          .childStage
+          .child
+          .asInstanceOf[ArrowShuffleExchangeExec]
+        val inputMetrics = shuffleExec.metrics
         val inputRDD = exec match {
           case exec: ShuffleQueryStageInput => NativeSupports.executeNative(exec.childStage)
           case exec: SkewedShuffleQueryStageInput => NativeSupports.executeNative(exec.childStage)
         }
 
-        val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
-          StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
+        val nativeSchema = shuffleExec.nativeSchema
         val metrics = inputRDD.metrics
         val partitionClsName = shuffledRDD.getClass.getSimpleName
 
@@ -387,8 +413,11 @@ case class BlazeCallNativeWrapper(
     errorQueue.poll() match {
       case e: Throwable =>
         finish()
-        if (JniBridge.isTaskRunning) {
-          throw e
+        classOf[BlazeCallNativeWrapper].synchronized {
+          TaskContext.setTaskContext(context)
+          if (JniBridge.isTaskRunning) {
+            throw new SparkException("blaze native execution error", e)
+          }
         }
       case null =>
       // do nothing

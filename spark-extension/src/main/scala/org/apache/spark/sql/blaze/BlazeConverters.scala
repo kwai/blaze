@@ -28,7 +28,6 @@ import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
@@ -71,6 +70,9 @@ import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.idTag
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.aggregate.Final
+import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
+import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.adaptive.QueryStage
@@ -80,7 +82,6 @@ import org.apache.spark.sql.execution.LocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
-import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -168,7 +169,7 @@ object BlazeConverters extends Logging {
 
     } catch {
       case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
-        logWarning(s"Error converting exec: ${exec.getClass.getSimpleName}: ${e.getMessage}")
+        logWarning(s"Error converting exec: ${exec.getClass.getSimpleName}: ${e.getMessage}", e)
         exec.setTagValue(convertibleTag, false)
         exec.setTagValue(convertStrategyTag, NeverConvert)
         exec
@@ -196,7 +197,7 @@ object BlazeConverters extends Logging {
       optionalBucketSet,
       dataFilters,
       tableIdentifier,
-      isHive) = exec
+      _) = exec
     logDebug(s"Converting FileSourceScanExec: ${exec.simpleStringWithNodeId}")
     logDebug(s"  relation: ${relation}")
     logDebug(s"  relation.location: ${relation.location}")
@@ -446,21 +447,21 @@ object BlazeConverters extends Logging {
     exec match {
       case exec: HashAggregateExec =>
         logDebug(s"Converting HashAggregateExec: ${exec.simpleStringWithNodeId()}")
-        val converted = NativeHashAggregateExec(
+        val nativeAggr = NativeHashAggregateExec(
           exec.requiredChildDistributionExpressions,
           exec.groupingExpressions,
           exec.aggregateExpressions,
           exec.aggregateAttributes,
-          exec.resultExpressions,
           convertToNative(exec.child))
 
-        if (converted.aggrMode == Partial) {
-          return converted
+        nativeAggr.aggrMode match {
+          case Partial =>
+            return nativeAggr.mapChildren(addRenameColumnsExec)
+          case PartialMerge =>
+            return nativeAggr
+          case Final =>
+            return NativeProjectExec(exec.resultExpressions, nativeAggr)
         }
-        NativeProjectExec(exec.resultExpressions, converted, addTypeCast = true)
-
-      case exec =>
-        return exec
     }
     exec
   }

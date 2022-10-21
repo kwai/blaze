@@ -172,20 +172,15 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         }
 
         // spawn a thread to poll batches
-        let num_worker_threads_default = 4;
         let runtime = Arc::new(RuntimeWrapper {
             runtime: Some(
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(num_worker_threads_default)
-                    .thread_keep_alive(Duration::MAX) // always use same thread
                     .on_thread_start(move || {
                         // propagate classloader and task context to spawned
                         // children threads
-
                         jni_call_static!(
                             JniBridge.setContextClassLoader(JavaClasses::get().classloader) -> ()
                         ).unwrap();
-
                         jni_call_static!(
                             JniBridge.setTaskContext(task_context.as_obj()) -> ()
                         ).unwrap();
@@ -230,9 +225,12 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                             let array_ptr = jni_call!(ScalaTuple2(input)._2() -> JObject).unwrap();
                             let array_ptr = jni_call!(JavaLong(array_ptr).longValue() -> jlong).unwrap();
 
+                            let schema = batch.schema();
+
                             let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                             let out_array = array_ptr as *mut FFI_ArrowArray;
                             let struct_array: Arc<StructArray> = Arc::new(batch.into());
+
                             unsafe {
                                 export_array_into_raw(
                                     struct_array,
@@ -241,6 +239,32 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                                 )
                                 .expect("export_array_into_raw error");
                             }
+
+                            //unsafe {
+                            //    #[repr(C)]
+                            //    struct FFI_ArrowArray2 {
+                            //        length: i64,
+                            //        null_count: i64,
+                            //        offset: i64,
+                            //        n_buffers: i64,
+                            //        n_children: i64,
+                            //        buffers: *mut *const u8,
+                            //        children: *mut *mut FFI_ArrowArray2,
+                            //        dictionary: *mut FFI_ArrowArray2,
+                            //        release: Option<unsafe extern "C" fn(arg1: *mut FFI_ArrowArray2)>,
+                            //        private_data: *mut u8,
+                            //    }
+                            //    let out_array = &*(out_array as *mut FFI_ArrowArray2);
+                            //    for i in 0..out_array.n_children as usize {
+                            //        let child = &**(out_array.children.add(i));
+                            //        eprintln!("XXX name={}", &schema.field(i).name());
+                            //        eprintln!("XXX dt={}", &schema.field(i).data_type());
+                            //        eprintln!("XXX len={}", child.length);
+                            //        eprintln!("XXX null_count={}", child.null_count);
+                            //        eprintln!("XXX n_buffers={}", child.n_buffers);
+                            //        eprintln!("XXX n_children={}", child.n_children);
+                            //    }
+                            //}
 
                             // value_queue <- hasNext=true
                             while {
@@ -317,6 +341,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 while jni_call!(
                     BlazeCallNativeWrapper(wrapper_clone.as_obj()).isFinished() -> jboolean
                 ).unwrap() != JNI_TRUE {
+                    log::error!("native is exiting with an exception...");
                     let enqueued = jni_call!(
                         BlazeCallNativeWrapper(wrapper_clone.as_obj()).enqueueError(e) -> jboolean
                     )?;

@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import java.io.File
 import java.nio.file.Paths
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -24,22 +23,21 @@ import java.nio.file.Files
 import java.util.Random
 import java.util.function.Supplier
 import java.util.UUID
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+
 import org.apache.spark._
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.serializer.Serializer
-import org.apache.spark.shuffle.{
-  BaseShuffleHandle,
-  IndexShuffleBlockResolver,
-  ShuffleWriteMetricsReporter,
-  ShuffleWriteProcessor
-}
-import org.apache.spark.shuffle.sort.SortShuffleManager
+import org.apache.spark.shuffle.BaseShuffleHandle
+import org.apache.spark.shuffle.IndexShuffleBlockResolver
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.shuffle.sort.MapInfo
-import org.apache.spark.shuffle.sort.SerializedShuffleHandle
+import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -52,6 +50,7 @@ import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec.canUseNativeShuffleWrite
@@ -67,14 +66,12 @@ import org.apache.spark.sql.execution.SQLExecution.EXECUTION_ID_KEY
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.ShuffleDataBlockId
 import org.apache.spark.util.MutablePair
 import org.apache.spark.util.collection.unsafe.sort.PrefixComparators
 import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.ExternalBlockStoreUtils
-import org.apache.spark.util.Utils
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PhysicalExprNode
@@ -230,8 +227,14 @@ case class ArrowShuffleExchangeExec(
     cachedShuffleRDD
   }
 
-  val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
-    StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
+  val nativeSchema: Schema = child match {
+    case e: NativeHashAggregateExec => e.nativePartialOutputSchema
+    case _ =>
+      NativeConverters.convertSchema(StructType(output.map(a => {
+        val name = s"#${a.exprId.id}"
+        StructField(name, a.dataType, a.nullable, a.metadata)
+      })))
+  }
 
   val nativeHashExprs: List[PhysicalExprNode] = outputPartitioning match {
     case HashPartitioning(expressions, _) =>
@@ -360,7 +363,9 @@ object ArrowShuffleExchangeExec {
   def canUseNativeShuffleWrite(
       rdd: RDD[InternalRow],
       outputPartitioning: Partitioning): Boolean = {
-    rdd.isInstanceOf[NativeRDD] && outputPartitioning.isInstanceOf[HashPartitioning]
+    rdd.isInstanceOf[NativeRDD] && (
+      outputPartitioning.numPartitions == 1 || outputPartitioning.isInstanceOf[HashPartitioning]
+    )
   }
 
   def prepareNativeShuffleDependency(
@@ -373,9 +378,7 @@ object ArrowShuffleExchangeExec {
       : ShuffleDependency[Int, InternalRow, InternalRow] = {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
-    val HashPartitioning(expressions, numPartitions) =
-      outputPartitioning.asInstanceOf[HashPartitioning]
-
+    val numPartitions = outputPartitioning.numPartitions
     val nativeMetrics = MetricNode(
       Map(),
       nativeInputRDD.metrics :: Nil,
@@ -397,18 +400,26 @@ object ArrowShuffleExchangeExec {
       nativeInputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val nativeInputPartition = nativeInputRDD.partitions(partition.index)
+        val nativeOutputPartitioning = outputPartitioning match {
+          case SinglePartition =>
+            PhysicalHashRepartition
+              .newBuilder()
+              .setPartitionCount(1)
+          case HashPartitioning(_, _) =>
+            PhysicalHashRepartition
+              .newBuilder()
+              .setPartitionCount(numPartitions)
+              .addAllHashExpr(nativeHashExprs.asJava)
+          case p =>
+            throw new NotImplementedError(s"cannot convert partitioning to native: $p")
+        }
         PhysicalPlanNode
           .newBuilder()
           .setShuffleWriter(
             ShuffleWriterExecNode
               .newBuilder()
               .setInput(nativeInputRDD.nativePlan(nativeInputPartition, taskContext))
-              .setOutputPartitioning(
-                PhysicalHashRepartition
-                  .newBuilder()
-                  .setPartitionCount(numPartitions)
-                  .addAllHashExpr(nativeHashExprs.asJava)
-                  .build())
+              .setOutputPartitioning(nativeOutputPartitioning)
               .buildPartial()
           ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
           .build()

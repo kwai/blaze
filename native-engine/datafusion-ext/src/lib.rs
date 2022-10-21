@@ -74,8 +74,10 @@ pub fn create_spark_ext_function(
     name: &str,
 ) -> datafusion::error::Result<ScalarFunctionImplementation> {
     Ok(match name {
+        "NullIfZero" => Arc::new(spark_ext_function::spark_null_if_zero),
         "UnscaledValue" => Arc::new(spark_ext_function::spark_unscaled_value),
         "MakeDecimal" => Arc::new(spark_ext_function::spark_make_decimal),
+        "CheckOverflow" => Arc::new(spark_ext_function::spark_check_overflow),
         _ => Err(DataFusionError::NotImplemented(format!(
             "spark ext function not implemented: {}",
             name

@@ -27,6 +27,10 @@ import org.apache.arrow.vector.NullVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TinyIntVector;
+import org.apache.arrow.vector.UInt1Vector;
+import org.apache.arrow.vector.UInt2Vector;
+import org.apache.arrow.vector.UInt4Vector;
+import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -152,6 +156,14 @@ public final class ArrowColumnVector extends ColumnVector {
 
     if (vector instanceof BitVector) {
       accessor = new BooleanAccessor((BitVector) vector);
+    } else if (vector instanceof UInt1Vector) {
+      accessor = new UInt1Accessor((UInt1Vector) vector);
+    } else if (vector instanceof UInt2Vector) {
+      accessor = new UInt2Accessor((UInt2Vector) vector);
+    } else if (vector instanceof UInt4Vector) {
+      accessor = new UInt4Accessor((UInt4Vector) vector);
+    } else if (vector instanceof UInt8Vector) {
+      accessor = new UInt8Accessor((UInt8Vector) vector);
     } else if (vector instanceof TinyIntVector) {
       accessor = new ByteAccessor((TinyIntVector) vector);
     } else if (vector instanceof SmallIntVector) {
@@ -194,7 +206,7 @@ public final class ArrowColumnVector extends ColumnVector {
     } else if (vector instanceof NullVector) {
       accessor = new NullAccessor((NullVector) vector);
     } else {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException("unsupported vector type: " + vector.getClass());
     }
   }
 
@@ -312,6 +324,66 @@ public final class ArrowColumnVector extends ColumnVector {
 
     @Override
     final byte getByte(int rowId) {
+      return accessor.get(rowId);
+    }
+  }
+
+  private static class UInt1Accessor extends ArrowVectorAccessor {
+
+    private final UInt1Vector accessor;
+
+    UInt1Accessor(UInt1Vector vector) {
+      super(vector);
+      this.accessor = vector;
+    }
+
+    @Override
+    final byte getByte(int rowId) {
+      return accessor.get(rowId);
+    }
+  }
+
+  private static class UInt2Accessor extends ArrowVectorAccessor {
+
+    private final UInt2Vector accessor;
+
+    UInt2Accessor(UInt2Vector vector) {
+      super(vector);
+      this.accessor = vector;
+    }
+
+    @Override
+    final short getShort(int rowId) {
+      return (short) accessor.get(rowId);
+    }
+  }
+
+  private static class UInt4Accessor extends ArrowVectorAccessor {
+
+    private final UInt4Vector accessor;
+
+    UInt4Accessor(UInt4Vector vector) {
+      super(vector);
+      this.accessor = vector;
+    }
+
+    @Override
+    final int getInt(int rowId) {
+      return accessor.get(rowId);
+    }
+  }
+
+  private static class UInt8Accessor extends ArrowVectorAccessor {
+
+    private final UInt8Vector accessor;
+
+    UInt8Accessor(UInt8Vector vector) {
+      super(vector);
+      this.accessor = vector;
+    }
+
+    @Override
+    final long getLong(int rowId) {
       return accessor.get(rowId);
     }
   }

@@ -697,9 +697,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                                 ))
                                             },
                                         )?;
+
                                 let agg_expr = bind(
                                     try_parse_physical_expr_box_required(&agg_node.expr, &physical_schema)?,
-                                    &input.schema(),
+                                    &physical_schema,
                                 )?;
                                 Ok(create_aggregate_expr(
                                     &aggr_function.into(),
@@ -717,9 +718,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
+                let default_null_mask_group = group_expr
+                    .iter()
+                    .map(|_| false)
+                    .collect();
+
                 Ok(Arc::new(AggregateExec::try_new(
                     agg_mode,
-                    PhysicalGroupBy::new(group_expr, vec![], vec![]),
+                    PhysicalGroupBy::new(group_expr, vec![], vec![default_null_mask_group]),
                     physical_aggr_expr,
                     input,
                     Arc::new((&input_schema).try_into()?),
