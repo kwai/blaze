@@ -71,6 +71,9 @@ use crate::{from_proto_binary_op, proto_error};
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion_ext::expr::cast::TryCastExpr;
 use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
+use datafusion_ext::expr::string_starts_with::StringStartsWithExpr;
+use datafusion_ext::expr::string_ends_with::StringEndsWithExpr;
+use datafusion_ext::expr::string_contains::StringContainsExpr;
 use datafusion_ext::limit_exec::LimitExec;
 use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
 
@@ -187,6 +190,24 @@ fn bind(
         let expr = Arc::new(FixedSizeListGetIndexedFieldExpr::new(
             bind(expr.arg().clone(), input_schema)?,
             expr.key().clone(),
+        ));
+        Ok(expr)
+    } else if let Some(expr) = expr.downcast_ref::<StringStartsWithExpr>() {
+        let expr = Arc::new(StringStartsWithExpr::new(
+           bind(expr.expr().clone(), input_schema)?,
+          expr.prefix().to_owned(),
+        ));
+        Ok(expr)
+    } else if let Some(expr) = expr.downcast_ref::<StringEndsWithExpr>() {
+        let expr = Arc::new(StringEndsWithExpr::new(
+            bind(expr.expr().clone(), input_schema)?,
+            expr.suffix().to_owned(),
+        ));
+        Ok(expr)
+    } else if let Some(expr) = expr.downcast_ref::<StringContainsExpr>() {
+        let expr = Arc::new(StringContainsExpr::new(
+            bind(expr.expr().clone(), input_schema)?,
+            expr.infix().to_owned(),
         ));
         Ok(expr)
     } else {
@@ -939,6 +960,18 @@ fn try_parse_physical_expr(
                 }
                 _ => Arc::new(GetIndexedFieldExpr::new(expr, key)),
             }
+        }
+        ExprType::StringStartsWithExpr(e) => {
+            let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
+            Arc::new(StringStartsWithExpr::new(expr, e.prefix.clone()))
+        }
+        ExprType::StringEndsWithExpr(e) => {
+            let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
+            Arc::new(StringEndsWithExpr::new(expr, e.suffix.clone()))
+        }
+        ExprType::StringContainsExpr(e) => {
+            let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
+            Arc::new(StringContainsExpr::new(expr, e.infix.clone()))
         }
     };
 

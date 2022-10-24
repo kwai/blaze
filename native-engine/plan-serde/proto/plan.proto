@@ -83,6 +83,11 @@ message PhysicalExprNode {
     PhysicalFallbackToJvmExprNode fallback_to_jvm_expr = 10000;
     // GetIndexedField
     PhysicalGetIndexedFieldExprNode get_indexed_field_expr = 10001;
+
+    // string expressions
+    StringStartsWithExprNode string_starts_with_expr = 20000;
+    StringEndsWithExprNode string_ends_with_expr = 20001;
+    StringContainsExprNode string_contains_expr = 20002;
   }
 }
 
@@ -276,6 +281,21 @@ message PhysicalFallbackToJvmExprNode {
 message PhysicalGetIndexedFieldExprNode {
   PhysicalExprNode expr = 1;
   ScalarValue key = 2;
+}
+
+message StringStartsWithExprNode {
+  PhysicalExprNode expr = 1;
+  string prefix = 2;
+}
+
+message StringEndsWithExprNode {
+  PhysicalExprNode expr = 1;
+  string suffix = 2;
+}
+
+message StringContainsExprNode {
+  PhysicalExprNode expr = 1;
+  string infix = 2;
 }
 
 message FilterExecNode {

@@ -12,7 +12,79 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::any::Any;
+use std::fmt::{Display, Formatter};
+use std::sync::Arc;
+use arrow::array::{Array, BooleanArray, StringArray};
+use arrow::datatypes::{DataType, Schema};
+use arrow::record_batch::RecordBatch;
+use datafusion::common::{DataFusionError, Result, ScalarValue};
+use datafusion::logical_expr::ColumnarValue;
+use datafusion::physical_plan::PhysicalExpr;
+
 #[derive(Debug)]
 pub struct StringEndsWithExpr {
-    // todo
+    expr: Arc<dyn PhysicalExpr>,
+    suffix: String,
+}
+
+impl StringEndsWithExpr {
+    pub fn new(expr: Arc<dyn PhysicalExpr>, suffix: String) -> Self {
+        Self { expr, suffix }
+    }
+
+    pub fn suffix(&self) -> &str {
+        &self.suffix
+    }
+
+    pub fn expr(&self) -> &Arc<dyn PhysicalExpr> {
+        &self.expr
+    }
+}
+
+impl Display for StringEndsWithExpr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EndsWith({}, {})", self.expr, self.suffix)
+    }
+}
+
+impl PhysicalExpr for StringEndsWithExpr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+        Ok(DataType::Boolean)
+    }
+
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+        Ok(true)
+    }
+
+    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let expr = self.expr.evaluate(batch)?;
+
+        match expr {
+            ColumnarValue::Array(array) => {
+                let string_array = array.as_any().downcast_ref::<StringArray>().unwrap();
+                let ret_array = Arc::new(
+                    BooleanArray::from_iter(
+                        string_array.iter().map(|maybe_string| {
+                            maybe_string.map(|string| {
+                                string.ends_with(&self.suffix)
+                            })
+                        })));
+                Ok(ColumnarValue::Array(ret_array))
+            }
+            ColumnarValue::Scalar(ScalarValue::Utf8(maybe_string)) => {
+                let ret = maybe_string.map(|string| {
+                    string.ends_with(&self.suffix)
+                });
+                Ok(ColumnarValue::Scalar(ScalarValue::Boolean(ret)))
+            }
+            expr => {
+                Err(DataFusionError::Plan(format!("ends_with: invalid expr: {:?}", expr)))
+            }
+        }
+    }
 }

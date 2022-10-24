@@ -24,15 +24,30 @@ use datafusion::physical_plan::PhysicalExpr;
 
 #[derive(Debug)]
 pub struct StringStartsWithExpr {
-    arg1: Arc<dyn PhysicalExpr>,
-    arg2: String,
+    expr: Arc<dyn PhysicalExpr>,
+    prefix: String,
+}
+
+impl StringStartsWithExpr {
+    pub fn new(expr: Arc<dyn PhysicalExpr>, prefix: String) -> Self {
+        Self { expr, prefix }
+    }
+
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub fn expr(&self) -> &Arc<dyn PhysicalExpr> {
+        &self.expr
+    }
 }
 
 impl Display for StringStartsWithExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!("StartsWith({}, {})", self.arg1, self.arg2)
+        write!(f, "StartsWith({}, {})", self.expr, self.prefix)
     }
 }
+
 
 impl PhysicalExpr for StringStartsWithExpr {
     fn as_any(&self) -> &dyn Any {
@@ -48,28 +63,28 @@ impl PhysicalExpr for StringStartsWithExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let arg1 = self.arg1.evaluate(batch)?;
+        let expr = self.expr.evaluate(batch)?;
 
-        match arg1 {
+        match expr {
             ColumnarValue::Array(array) => {
-                let string_array = array.as_any().downcast_ref::<StringArray>()?;
+                let string_array = array.as_any().downcast_ref::<StringArray>().unwrap();
                 let ret_array = Arc::new(
-                    BooleanArray::from(
+                    BooleanArray::from_iter(
                         string_array.iter().map(|maybe_string| {
                             maybe_string.map(|string| {
-                                string.starts_with(&self.arg2)
+                                string.starts_with(&self.prefix)
                             })
                         })));
                 Ok(ColumnarValue::Array(ret_array))
             }
             ColumnarValue::Scalar(ScalarValue::Utf8(maybe_string)) => {
                 let ret = maybe_string.map(|string| {
-                    string.starts_with(&self.arg2)
+                    string.starts_with(&self.prefix)
                 });
                 Ok(ColumnarValue::Scalar(ScalarValue::Boolean(ret)))
             }
-            arg1 => {
-                Err(DataFusionError::Plan(format!("starts_with: invalid arg1: {:?}", arg1)))
+            expr => {
+                Err(DataFusionError::Plan(format!("starts_with: invalid expr: {:?}", expr)))
             }
         }
     }

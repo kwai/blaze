@@ -20,9 +20,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
-
 import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -69,6 +67,8 @@ import org.apache.spark.sql.catalyst.expressions.Signum
 import org.apache.spark.sql.catalyst.expressions.Sin
 import org.apache.spark.sql.catalyst.expressions.Sqrt
 import org.apache.spark.sql.catalyst.expressions.StartsWith
+import org.apache.spark.sql.catalyst.expressions.EndsWith
+import org.apache.spark.sql.catalyst.expressions.Contains
 import org.apache.spark.sql.catalyst.expressions.StringTrim
 import org.apache.spark.sql.catalyst.expressions.StringTrimLeft
 import org.apache.spark.sql.catalyst.expressions.StringTrimRight
@@ -119,6 +119,7 @@ import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.sources.StringEndsWith
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
 import org.blaze.protobuf.ScalarFunction
@@ -484,8 +485,33 @@ object NativeConverters {
       case Sha2(_1, Literal(512, _)) =>
         buildScalarFunction(pb.ScalarFunction.SHA512, Seq(unpackBinaryTypeCast(_1)), StringType)
       // case Nothing => buildScalarFunction(pb.ScalarFunction.TOTIMESTAMPMILLIS, Nil)
-      case StartsWith(_1, _2) =>
-        buildScalarFunction(pb.ScalarFunction.StartsWith, Seq(_1, _2), BooleanType)
+//      case StartsWith(_1, _2) =>
+//        buildScalarFunction(pb.ScalarFunction.StartsWith, Seq(_1, _2), BooleanType)
+
+      case StartsWith(expr, Literal(prefix, StringType)) =>
+        buildExprNode(
+          _.setStringStartsWithExpr(
+            pb.StringStartsWithExprNode
+              .newBuilder()
+              .setExpr(convertExpr(expr))
+              .setPrefix(prefix.toString)))
+
+      case EndsWith(expr, Literal(suffix, StringType)) =>
+        buildExprNode(
+          _.setStringEndsWithExpr(
+            pb.StringEndsWithExprNode
+              .newBuilder()
+              .setExpr(convertExpr(expr))
+              .setSuffix(suffix.toString)))
+
+      case Contains(expr, Literal(infix, StringType)) =>
+        buildExprNode(
+          _.setStringContainsExpr(
+            pb.StringContainsExprNode
+              .newBuilder()
+              .setExpr(convertExpr(expr))
+              .setInfix(infix.toString)))
+
       case e: Substring =>
         val newChildren = e.children.head +: e.children.tail.map {
           case c if c.dataType != LongType => Cast(c, LongType)
