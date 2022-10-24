@@ -25,17 +25,18 @@ import org.apache.spark.TaskContext
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper.rootAsBatch
 import org.apache.spark.sql.vectorized.ColumnarBatch
+import scala.collection.mutable.ArrayBuffer
 
 class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskContext)
     extends Iterator[ColumnarBatch] {
 
   private var allocator =
-    ArrowUtils2.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
+    ArrowUtils2.rootAllocator.newChildAllocator("arrowFFIImportIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new CDataDictionaryProvider()
-
   var consumerSchema: ArrowSchema = _
   var consumerArray: ArrowArray = _
   var consumed = true
+  var batchSaved = new ArrayBuffer[ColumnarBatch]
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
@@ -69,6 +70,7 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
       emptyDictionaryProvider)
     val batch = rootAsBatch(root)
     consumed = true
+    batchSaved += batch
     batch
   }
 
@@ -76,6 +78,11 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
     synchronized {
       if (allocator != null) {
         closeConsumerArrayAndSchema()
+        if (batchSaved != null) {
+          batchSaved.foreach(_.close())
+          batchSaved.clear()
+          batchSaved = null
+        }
         allocator.close()
         allocator = null
       }
