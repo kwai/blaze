@@ -98,6 +98,23 @@ impl PhysicalExpr for TryCastExpr {
                     }
                 }
             }
+            (&DataType::Decimal128(_, _), DataType::Utf8) => {
+                // spark compatible decimal to string cast
+                match value {
+                    ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
+                        try_cast_decimal_array_to_string(&array, &self.cast_type)?,
+                    )),
+                    ColumnarValue::Scalar(scalar) => {
+                        let scalar_array = scalar.to_array();
+                        let cast_array = try_cast_decimal_array_to_string(
+                            &scalar_array,
+                            &self.cast_type,
+                        )?;
+                        let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
+                        Ok(ColumnarValue::Scalar(cast_scalar))
+                    }
+                }
+            }
             _ => {
                 // default cast
                 match value {
@@ -171,6 +188,26 @@ fn try_cast_string_array_to_decimal(
         return Ok(Arc::new(builder.finish()));
     }
     unreachable!("cast_type must be DataType::Decimal")
+}
+
+fn try_cast_decimal_array_to_string(
+    array: &ArrayRef,
+    cast_type: &DataType,
+) -> Result<ArrayRef> {
+    if let &DataType::Utf8 = cast_type {
+        let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
+        let mut builder = StringBuilder::new();
+        for v in 0..array.len() {
+            if array.is_valid(v) {
+                builder.append_value(array.value_as_string(v))
+            }
+            else {
+                builder.append_null()
+            }
+        }
+        return Ok(Arc::new(builder.finish()));
+    }
+    unreachable!("cast_type must be DataType::Utf8")
 }
 
 // this implementation is original copied from spark UTF8String.scala
