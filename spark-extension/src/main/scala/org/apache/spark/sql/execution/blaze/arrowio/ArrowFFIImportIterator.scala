@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.execution.blaze.arrowio
 
+import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters._
+
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.CDataDictionaryProvider
 import org.apache.arrow.c.Data
+import org.apache.arrow.c.NativeUtil
+import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.spark.sql.blaze.BlazeCallNativeWrapper
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper.rootAsBatch
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import scala.collection.mutable.ArrayBuffer
 
 class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskContext)
     extends Iterator[ColumnarBatch] {
@@ -36,8 +40,8 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
   var consumerSchema: ArrowSchema = _
   var consumerArray: ArrowArray = _
   var consumed = true
-  var batchSaved = new ArrayBuffer[ColumnarBatch]
-
+  var cachedBatches = new ArrayBuffer[ColumnarBatch]
+  var root: VectorSchemaRoot = _
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
   override def hasNext: Boolean = {
@@ -63,14 +67,32 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
   }
 
   override def next(): ColumnarBatch = {
-    val root = Data.importVectorSchemaRoot(
-      allocator,
-      consumerArray,
-      consumerSchema,
-      emptyDictionaryProvider)
+    if (root == null) {
+      val schema = Data.importSchema(allocator, consumerSchema, emptyDictionaryProvider)
+      root = VectorSchemaRoot.create(schema, allocator)
+    }
+    root.clear()
+
+    // NOTE: walk-around without getting the incorrect n_buffers error
+    // in Data.importIntoVectorSchemaRoot()
+    val childrenPtr = NativeUtil.toJavaArray(
+      consumerArray.snapshot.children,
+      consumerArray.snapshot.n_children.toInt)
+    val childVectors = root.getFieldVectors
+    if (childrenPtr != null && childrenPtr.nonEmpty) {
+      childrenPtr
+        .zip(childVectors.asScala)
+        .foreach {
+          case (childPtr, vector) =>
+            val child = ArrowArray.wrap(childPtr)
+            Data.importIntoVector(allocator, child, vector, emptyDictionaryProvider)
+        }
+      root.setRowCount(root.getVector(0).getValueCount)
+    }
     val batch = rootAsBatch(root)
+
     consumed = true
-    batchSaved += batch
+    cachedBatches += batch
     batch
   }
 
@@ -78,10 +100,10 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
     synchronized {
       if (allocator != null) {
         closeConsumerArrayAndSchema()
-        if (batchSaved != null) {
-          batchSaved.foreach(_.close())
-          batchSaved.clear()
-          batchSaved = null
+        if (cachedBatches != null) {
+          cachedBatches.foreach(_.close())
+          cachedBatches.clear()
+          cachedBatches = null
         }
         allocator.close()
         allocator = null

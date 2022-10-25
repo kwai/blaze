@@ -19,7 +19,6 @@ use std::fmt::Debug;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
@@ -31,7 +30,7 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext::jni_bridge::JavaClasses;
 use datafusion_ext::*;
 use futures::{FutureExt, StreamExt};
-use jni::objects::{JClass, JString};
+use jni::objects::{GlobalRef, JClass, JString};
 use jni::objects::{JObject, JThrowable};
 use jni::sys::{jboolean, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
@@ -44,8 +43,36 @@ use tokio::runtime::Runtime;
 
 use crate::metrics::update_spark_metric_node;
 
-static LOGGING_INIT: OnceCell<()> = OnceCell::new();
-static SESSIONCTX: OnceCell<SessionContext> = OnceCell::new();
+fn init_logging() {
+    static LOGGING_INIT: OnceCell<()> = OnceCell::new();
+    LOGGING_INIT.get_or_init(|| {
+        TermLogger::init(
+            LevelFilter::Info,
+            ConfigBuilder::new()
+                .set_thread_mode(ThreadLogMode::Both)
+                .build(),
+            TerminalMode::Stderr,
+            ColorChoice::Never,
+        )
+            .unwrap();
+    });
+}
+
+fn java_true() -> &'static GlobalRef {
+    static OBJ_TRUE: OnceCell<GlobalRef> = OnceCell::new();
+    OBJ_TRUE.get_or_init(|| {
+        jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_TRUE).unwrap()).unwrap()
+    })
+}
+
+fn java_false() -> &'static GlobalRef {
+    static OBJ_FALSE: OnceCell<GlobalRef> = OnceCell::new();
+    OBJ_FALSE.get_or_init(|| {
+        jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_FALSE).unwrap()).unwrap()
+    })
+}
+
+static SESSION: OnceCell<SessionContext> = OnceCell::new();
 
 #[allow(non_snake_case)]
 #[allow(clippy::single_match)]
@@ -58,25 +85,15 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
     memory_fraction: f64,
     tmp_dirs: JString,
 ) {
-    match std::panic::catch_unwind(|| {
+    handle_unwinded_scope(|| {
         // init logging
-        LOGGING_INIT.get_or_init(|| {
-            TermLogger::init(
-                LevelFilter::Info,
-                ConfigBuilder::new()
-                    .set_thread_mode(ThreadLogMode::Both)
-                    .build(),
-                TerminalMode::Stderr,
-                ColorChoice::Never,
-            )
-            .unwrap();
-        });
+        init_logging();
 
         // init jni java classes
         JavaClasses::init(&env);
 
         // init datafusion session context
-        SESSIONCTX.get_or_init(|| {
+        SESSION.get_or_init(|| {
             let dirs = jni_get_string!(tmp_dirs)
                 .unwrap()
                 .split(',')
@@ -95,12 +112,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
             let config = SessionConfig::new().with_batch_size(batch_size);
             SessionContext::with_config_rt(config, runtime)
         });
-    }) {
-        Err(err) => {
-            handle_unwinded(err);
-        }
-        Ok(()) => {}
-    }
+        datafusion::error::Result::Ok(())
+    });
 }
 
 #[allow(non_snake_case)]
@@ -115,13 +128,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
         let wrapper = Arc::new(jni_new_global_ref!(wrapper).unwrap());
         let wrapper_clone = wrapper.clone();
-
-        let obj_true =
-            jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_TRUE).unwrap()).unwrap();
-
-        let obj_false =
-            jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_FALSE).unwrap())
-                .unwrap();
 
         // decode plan
         let raw_task_definition: JObject = jni_call!(
@@ -148,7 +154,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         log::info!("  execution plan:\n{}", execution_plan_displayable);
 
         // execute
-        let session_ctx = SESSIONCTX.get().unwrap();
+        let session_ctx = SESSION.get().unwrap();
         let task_ctx = session_ctx.task_ctx();
         let mut stream = execution_plan
             .execute(task_id.partition_id as usize, task_ctx)
@@ -225,8 +231,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                             let array_ptr = jni_call!(ScalaTuple2(input)._2() -> JObject).unwrap();
                             let array_ptr = jni_call!(JavaLong(array_ptr).longValue() -> jlong).unwrap();
 
-                            let schema = batch.schema();
-
                             let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                             let out_array = array_ptr as *mut FFI_ArrowArray;
                             let struct_array: Arc<StructArray> = Arc::new(batch.into());
@@ -240,36 +244,10 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                                 .expect("export_array_into_raw error");
                             }
 
-                            //unsafe {
-                            //    #[repr(C)]
-                            //    struct FFI_ArrowArray2 {
-                            //        length: i64,
-                            //        null_count: i64,
-                            //        offset: i64,
-                            //        n_buffers: i64,
-                            //        n_children: i64,
-                            //        buffers: *mut *const u8,
-                            //        children: *mut *mut FFI_ArrowArray2,
-                            //        dictionary: *mut FFI_ArrowArray2,
-                            //        release: Option<unsafe extern "C" fn(arg1: *mut FFI_ArrowArray2)>,
-                            //        private_data: *mut u8,
-                            //    }
-                            //    let out_array = &*(out_array as *mut FFI_ArrowArray2);
-                            //    for i in 0..out_array.n_children as usize {
-                            //        let child = &**(out_array.children.add(i));
-                            //        eprintln!("XXX name={}", &schema.field(i).name());
-                            //        eprintln!("XXX dt={}", &schema.field(i).data_type());
-                            //        eprintln!("XXX len={}", child.length);
-                            //        eprintln!("XXX null_count={}", child.null_count);
-                            //        eprintln!("XXX n_buffers={}", child.n_buffers);
-                            //        eprintln!("XXX n_children={}", child.n_children);
-                            //    }
-                            //}
-
                             // value_queue <- hasNext=true
                             while {
                                 jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE &&
-                                jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(obj_true.as_obj()) -> jboolean).unwrap() != JNI_TRUE
+                                jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(java_true().as_obj()) -> jboolean).unwrap() != JNI_TRUE
                             } {}
                         }
                         Err(e) => {
@@ -289,7 +267,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 // value_queue <- hasNext=false
                 while {
                     jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE &&
-                    jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(obj_false.as_obj()) -> jboolean).unwrap() != JNI_TRUE
+                    jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(java_false().as_obj()) -> jboolean).unwrap() != JNI_TRUE
                 } {}
 
                 log::info!("Updating blaze exec metrics ...");
@@ -337,7 +315,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 };
 
                 // error_queue <- exception
-
                 while jni_call!(
                     BlazeCallNativeWrapper(wrapper_clone.as_obj()).isFinished() -> jboolean
                 ).unwrap() != JNI_TRUE {
@@ -379,8 +356,7 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if !is_task_running()? {
-            // only handle running task
+        if !is_task_running()? { // only handle running task
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);

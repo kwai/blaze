@@ -352,7 +352,7 @@ case class BlazeCallNativeWrapper(
   logInfo(s"Start executing native plan")
   JniBridge.callNative(this)
 
-  def isFinished: Boolean = finished.get()
+  def isFinished: Boolean = !JniBridge.isTaskRunning || finished.get()
   def finish(): Unit = {
     if (!isFinished) {
       finished.set(true)
