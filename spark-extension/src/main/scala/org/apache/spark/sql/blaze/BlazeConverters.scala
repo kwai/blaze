@@ -331,12 +331,12 @@ object BlazeConverters extends Logging {
           logDebug(s"Converting BroadcastHashJoinExec: ${exec.simpleStringWithNodeId()}")
           var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
             case BuildRight =>
-              assert(NativeSupports.isNative(right))
+              assert(NativeSupports.isNative(right), "broadcast join build side is not native")
               val convertedLeft = convertToNative(left)
               (right, rightKeys, convertedLeft, leftKeys)
 
             case BuildLeft =>
-              assert(NativeSupports.isNative(left))
+              assert(NativeSupports.isNative(left), "broadcast join build side is not native")
               val convertedRight = convertToNative(right)
               (left, leftKeys, convertedRight, rightKeys)
 
