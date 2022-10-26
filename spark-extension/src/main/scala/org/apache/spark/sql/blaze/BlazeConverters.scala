@@ -285,15 +285,22 @@ object BlazeConverters extends Logging {
           needPostProject = true
         }
 
-        val smj = NativeSortMergeJoinExec(
-          addRenameColumnsExec(nativeLeft),
-          addRenameColumnsExec(nativeRight),
+        val smjOrig = SortMergeJoinExec(
           modifiedLeftKeys,
           modifiedRightKeys,
-          exec.output,
-          exec.outputPartitioning,
-          exec.outputOrdering,
-          joinType)
+          joinType,
+          None,
+          addRenameColumnsExec(nativeLeft),
+          addRenameColumnsExec(nativeRight))
+        val smj = NativeSortMergeJoinExec(
+          smjOrig.left,
+          smjOrig.right,
+          smjOrig.leftKeys,
+          smjOrig.rightKeys,
+          smjOrig.output,
+          smjOrig.outputPartitioning,
+          smjOrig.outputOrdering,
+          smjOrig.joinType)
 
         val postProjectedSmj = if (needPostProject) {
           buildPostJoinProject(smj, exec.output)
