@@ -326,7 +326,7 @@ pub struct JavaClasses<'a> {
     pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
-    pub cSparkFallbackToJvmExprContext: SparkFallbackToJvmExprContext<'a>,
+    pub cSparkExpressionWrapperContext: SparkExpressionWrapperContext<'a>,
 
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
 }
@@ -383,7 +383,7 @@ impl JavaClasses<'static> {
                 cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
-                cSparkFallbackToJvmExprContext: SparkFallbackToJvmExprContext::new(env)
+                cSparkExpressionWrapperContext: SparkExpressionWrapperContext::new(env)
                     .unwrap(),
 
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
@@ -952,19 +952,19 @@ impl<'a> SparkMetricNode<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct SparkFallbackToJvmExprContext<'a> {
+pub struct SparkExpressionWrapperContext<'a> {
     pub class: JClass<'a>,
     pub ctor: JMethodID<'a>,
     pub method_eval: JMethodID<'a>,
     pub method_eval_ret: JavaType,
 }
-impl<'a> SparkFallbackToJvmExprContext<'a> {
+impl<'a> SparkExpressionWrapperContext<'a> {
     pub const SIG_TYPE: &'static str =
-        "org/apache/spark/sql/blaze/FallbackToJvmExprContext";
+        "org/apache/spark/sql/blaze/SparkExpressionWrapperContext";
 
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkFallbackToJvmExprContext<'a>> {
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkExpressionWrapperContext<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(SparkFallbackToJvmExprContext {
+        Ok(SparkExpressionWrapperContext {
             class,
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
             method_eval: env

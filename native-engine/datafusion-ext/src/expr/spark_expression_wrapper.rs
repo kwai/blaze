@@ -1,3 +1,17 @@
+// Copyright 2022 The Blaze Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::util::ipc::{read_one_batch, write_one_batch};
 use crate::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -14,7 +28,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct SparkFallbackToJvmExpr {
+pub struct SparkExpressionWrapperExpr {
     pub serialized: Vec<u8>,
     pub return_type: DataType,
     pub return_nullable: bool,
@@ -24,7 +38,7 @@ pub struct SparkFallbackToJvmExpr {
     jcontext: OnceCell<GlobalRef>,
 }
 
-impl SparkFallbackToJvmExpr {
+impl SparkExpressionWrapperExpr {
     pub fn try_new(
         serialized: Vec<u8>,
         return_type: DataType,
@@ -54,19 +68,19 @@ impl SparkFallbackToJvmExpr {
     }
 }
 
-impl Display for SparkFallbackToJvmExpr {
+impl Display for SparkExpressionWrapperExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SparkFallbackToJvmExpr")
+        write!(f, "SparkExpressionWrapper")
     }
 }
 
-impl Debug for SparkFallbackToJvmExpr {
+impl Debug for SparkExpressionWrapperExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SparkFallbackToJvmExpr")
+        write!(f, "SparkExpressionWrapper")
     }
 }
 
-impl PhysicalExpr for SparkFallbackToJvmExpr {
+impl PhysicalExpr for SparkExpressionWrapperExpr {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -82,7 +96,7 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let jcontext = self.jcontext.get_or_try_init(|| {
             let jcontext = jni_new_object!(
-                SparkFallbackToJvmExprContext,
+                SparkExpressionWrapperContext,
                 jni_new_direct_byte_buffer!(unsafe {
                     // safety - byte buffer is not mutated in jvm side
                     std::slice::from_raw_parts_mut(
@@ -125,7 +139,7 @@ impl PhysicalExpr for SparkFallbackToJvmExpr {
             &mut batch_buffer[8..] // skip length header
         )?;
         let output_channel = jni_call!(
-            SparkFallbackToJvmExprContext(jcontext.as_obj()).eval(batch_byte_buffer) -> JObject
+            SparkExpressionWrapperContext(jcontext.as_obj()).eval(batch_byte_buffer) -> JObject
         )?;
 
         let mut reader = crate::ipc_reader_exec::ReadableByteChannelReader(

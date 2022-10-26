@@ -33,7 +33,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.internal.SQLConf
 
-case class FallbackToJvmExprContext(serialized: ByteBuffer) extends Logging {
+case class SparkExpressionWrapperContext(serialized: ByteBuffer) extends Logging {
   val expr: Expression = NativeConverters.deserializeExpression({
     val bytes = new Array[Byte](serialized.remaining())
     serialized.get(bytes)

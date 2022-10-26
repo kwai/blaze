@@ -20,7 +20,9 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
+
 import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -119,7 +121,6 @@ import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.sources.StringEndsWith
 import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
 import org.apache.spark.sql.catalyst.expressions.BitwiseOr
 import org.apache.spark.sql.catalyst.expressions.CheckOverflow
@@ -127,7 +128,7 @@ import org.apache.spark.sql.catalyst.expressions.PromotePrecision
 import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.blaze.{protobuf => pb}
-import org.blaze.protobuf.PhysicalFallbackToJvmExprNode
+import org.blaze.protobuf.PhysicalSparkExpressionWrapperExprNode
 import org.blaze.protobuf.ScalarFunction
 
 object NativeConverters {
@@ -625,8 +626,8 @@ object NativeConverters {
 
         pb.PhysicalExprNode
           .newBuilder()
-          .setFallbackToJvmExpr(
-            PhysicalFallbackToJvmExprNode
+          .setSparkExpressionWrapperExpr(
+            PhysicalSparkExpressionWrapperExprNode
               .newBuilder()
               .setSerialized(ByteString.copyFrom(serialized))
               .setReturnType(convertDataType(bounded.dataType))

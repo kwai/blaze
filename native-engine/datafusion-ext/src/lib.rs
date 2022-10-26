@@ -29,7 +29,6 @@ pub mod limit_exec;
 pub mod rename_columns_exec;
 pub mod shuffle_writer_exec;
 pub mod sort_merge_join_exec;
-pub mod spark_fallback_to_jvm_expr;
 
 mod spark_ext_function;
 mod spark_hash;

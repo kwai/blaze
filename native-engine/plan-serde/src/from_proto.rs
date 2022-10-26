@@ -75,7 +75,7 @@ use datafusion_ext::expr::string_starts_with::StringStartsWithExpr;
 use datafusion_ext::expr::string_ends_with::StringEndsWithExpr;
 use datafusion_ext::expr::string_contains::StringContainsExpr;
 use datafusion_ext::limit_exec::LimitExec;
-use datafusion_ext::spark_fallback_to_jvm_expr::SparkFallbackToJvmExpr;
+use datafusion_ext::expr::spark_expression_wrapper::SparkExpressionWrapperExpr;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -166,13 +166,13 @@ fn bind(
             expr.return_type(),
         ));
         Ok(sfe)
-    } else if let Some(expr) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
+    } else if let Some(expr) = expr.downcast_ref::<SparkExpressionWrapperExpr>() {
         let params = expr
             .params
             .iter()
             .map(|param| bind(param.clone(), input_schema))
             .collect::<Result<Vec<_>, _>>()?;
-        let expr = Arc::new(SparkFallbackToJvmExpr::try_new(
+        let expr = Arc::new(SparkExpressionWrapperExpr::try_new(
             expr.serialized.clone(),
             expr.return_type.clone(),
             expr.return_nullable,
@@ -296,9 +296,9 @@ pub fn convert_physical_expr_to_logical_expr(
         Err(DataFusionError::Plan(format!(
             "converting physical ScalarFunctionExpr to logical is not supported"
         )))
-    } else if let Some(_) = expr.downcast_ref::<SparkFallbackToJvmExpr>() {
+    } else if let Some(_) = expr.downcast_ref::<SparkExpressionWrapperExpr>() {
         Err(DataFusionError::Plan(format!(
-            "converting physical SparkFallbackToJvmExpr to logical is not supported"
+            "converting physical SparkExpressionWrapperExpr to logical is not supported"
         )))
     } else if let Some(_) = expr.downcast_ref::<GetIndexedFieldExpr>() {
         Err(DataFusionError::Plan(format!(
@@ -947,7 +947,7 @@ fn try_parse_physical_expr(
                 &convert_required!(e.return_type)?,
             ))
         }
-        ExprType::FallbackToJvmExpr(e) => Arc::new(SparkFallbackToJvmExpr::try_new(
+        ExprType::SparkExpressionWrapperExpr(e) => Arc::new(SparkExpressionWrapperExpr::try_new(
             e.serialized.clone(),
             convert_required!(e.return_type)?,
             e.return_nullable,

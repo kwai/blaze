@@ -79,8 +79,9 @@ message PhysicalExprNode {
     // window expressions
     PhysicalWindowExprNode window_expr = 15;
 
-    // Fallback to VJM expression
-    PhysicalFallbackToJvmExprNode fallback_to_jvm_expr = 10000;
+    // spark expression wrapper
+    PhysicalSparkExpressionWrapperExprNode spark_expression_wrapper_expr = 10000;
+
     // GetIndexedField
     PhysicalGetIndexedFieldExprNode get_indexed_field_expr = 10001;
 
@@ -271,7 +272,7 @@ message PhysicalNegativeNode {
   PhysicalExprNode expr = 1;
 }
 
-message PhysicalFallbackToJvmExprNode {
+message PhysicalSparkExpressionWrapperExprNode {
   bytes serialized = 1;
   ArrowType return_type = 2;
   bool return_nullable = 3;
