@@ -179,7 +179,7 @@ fn change_precision_round_half_up(
     to_precision: u8,
     to_scale: u8
 ) -> Option<i128> {
-    let max_long_digits = 18;
+    let max_spark_precision = 38;
 
     if to_precision == precision && to_scale == scale {
         return Some(i128_val);
@@ -206,10 +206,9 @@ fn change_precision_round_half_up(
         i128_val *= i128::pow(10, diff as u32);
     }
 
-    // We're still using i128_vals, but we should check whether we match the new precision
-    let p = i128::pow(10, u32::min(precision as u32, max_long_digits));
+    // check whether the i128_val overflows s max precision supported in spark
+    let p = i128::pow(10, u32::min(to_precision as u32, max_spark_precision));
     if i128_val <= -p || i128_val >= p {
-        // Note that we shouldn't have been able to fix this by switching to BigDecimal
         return None;
     }
     Some(i128_val)
