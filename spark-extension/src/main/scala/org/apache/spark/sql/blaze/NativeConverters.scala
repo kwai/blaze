@@ -128,8 +128,6 @@ import org.apache.spark.sql.catalyst.expressions.PromotePrecision
 import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.blaze.{protobuf => pb}
-import org.blaze.protobuf.PhysicalSparkExpressionWrapperExprNode
-import org.blaze.protobuf.ScalarFunction
 
 object NativeConverters {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -281,7 +279,7 @@ object NativeConverters {
           pb.PhysicalScalarFunctionNode
             .newBuilder()
             .setName(name)
-            .setFun(ScalarFunction.SparkExtFunctions)
+            .setFun(pb.ScalarFunction.SparkExtFunctions)
             .addAllArgs(args.map(expr => convertExpr(expr, useAttrExprId)).asJava)
             .setReturnType(convertDataType(dataType)))
       }
@@ -418,21 +416,40 @@ object NativeConverters {
       case LessThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "LtEq")
       case Add(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Plus")
       case Subtract(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Minus")
-      case Multiply(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Multiply")
+      case e @ Multiply(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Multiply")
       case e @ Divide(lhs, rhs) =>
+        val promotedDataType = (lhs.dataType, rhs.dataType) match {
+          case (lt: DecimalType, rt: DecimalType) =>
+            val (p1, s1) = (lt.precision, lt.scale)
+            val (p2, s2) = (rt.precision, rt.scale)
+            val scale = Math.max(6, s1 + p2 + 1)
+            val precision = p1 - s1 + s2 + scale
+            Some(DecimalType(precision, scale))
+          case _ =>
+            None
+        }
+        val promotePrecision = { (expr: Expression) =>
+          promotedDataType match {
+            case Some(promoted) if promoted != expr.dataType =>
+              Cast(expr, promoted)
+            case None =>
+              expr
+          }
+        }
+
         rhs match {
           case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
             buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
           case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
-            buildBinaryExprNode(lhs, rhs, "Divide")
+            buildBinaryExprNode(promotePrecision(lhs), promotePrecision(rhs), "Divide")
           case rhs =>
-            buildExprNode(
+            val l = convertExpr(promotePrecision(lhs), useAttrExprId)
+            val r =
+              buildExtScalarFunction("NullIfZero", promotePrecision(rhs) :: Nil, rhs.dataType)
+            buildExprNode {
               _.setBinaryExpr(
-                pb.PhysicalBinaryExprNode
-                  .newBuilder()
-                  .setL(convertExpr(lhs, useAttrExprId))
-                  .setR(buildExtScalarFunction("NullIfZero", rhs :: Nil, rhs.dataType))
-                  .setOp("Divide")))
+                pb.PhysicalBinaryExprNode.newBuilder().setL(l).setR(r).setOp("Divide"))
+            }
         }
       case e @ Remainder(lhs, rhs) =>
         rhs match {
@@ -441,13 +458,12 @@ object NativeConverters {
           case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
             buildBinaryExprNode(lhs, rhs, "Modulo")
           case rhs =>
-            buildExprNode(
+            val l = convertExpr(lhs, useAttrExprId)
+            val r = buildExtScalarFunction("NullIfZero", rhs :: Nil, rhs.dataType)
+            buildExprNode {
               _.setBinaryExpr(
-                pb.PhysicalBinaryExprNode
-                  .newBuilder()
-                  .setL(convertExpr(lhs, useAttrExprId))
-                  .setR(buildExtScalarFunction("NullIfZero", rhs :: Nil, rhs.dataType))
-                  .setOp("Modulo")))
+                pb.PhysicalBinaryExprNode.newBuilder().setL(l).setR(r).setOp("Modulo"))
+            }
         }
       case Like(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Like")
       case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
@@ -489,7 +505,6 @@ object NativeConverters {
         }
       case Round(_1, Literal(0, _)) =>
         buildScalarFunction(pb.ScalarFunction.Round, Seq(_1), _1.dataType)
-      // case Nothing => buildScalarFunction(pb.ScalarFunction.TRUNC, Nil)
       case e: Abs => buildScalarFunction(pb.ScalarFunction.Abs, e.children, e.dataType)
       case e: Signum => buildScalarFunction(pb.ScalarFunction.Signum, e.children, e.dataType)
       case e: OctetLength =>
@@ -519,9 +534,6 @@ object NativeConverters {
         buildScalarFunction(pb.ScalarFunction.SHA384, Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(512, _)) =>
         buildScalarFunction(pb.ScalarFunction.SHA512, Seq(unpackBinaryTypeCast(_1)), StringType)
-      // case Nothing => buildScalarFunction(pb.ScalarFunction.TOTIMESTAMPMILLIS, Nil)
-//      case StartsWith(_1, _2) =>
-//        buildScalarFunction(pb.ScalarFunction.StartsWith, Seq(_1, _2), BooleanType)
 
       case StartsWith(expr, Literal(prefix, StringType)) =>
         buildExprNode(
@@ -591,7 +603,12 @@ object NativeConverters {
         buildExtScalarFunction("MakeDecimal", args, DecimalType(precision, scale))
 
       case PromotePrecision(_1) =>
-        convertExpr(_1, useAttrExprId)
+        _1 match {
+          case Cast(_, dt, _) if dt == _1.dataType =>
+            convertExpr(_1, useAttrExprId)
+          case _ =>
+            convertExpr(Cast(_1, _1.dataType), useAttrExprId)
+        }
 
       case CheckOverflow(_1, DecimalType(precision, scale)) =>
         val args =
@@ -627,7 +644,7 @@ object NativeConverters {
         pb.PhysicalExprNode
           .newBuilder()
           .setSparkExpressionWrapperExpr(
-            PhysicalSparkExpressionWrapperExprNode
+            pb.PhysicalSparkExpressionWrapperExprNode
               .newBuilder()
               .setSerialized(ByteString.copyFrom(serialized))
               .setReturnType(convertDataType(bounded.dataType))
