@@ -17,7 +17,6 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
-
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
@@ -38,12 +37,19 @@ import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAg
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
-import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
-import org.apache.spark.sql.execution.joins.SortMergeJoinExec
+import org.apache.spark.sql.execution.joins.{
+  BroadcastHashJoinExec,
+  BuildLeft,
+  BuildRight,
+  CartesianProductExec,
+  SortMergeJoinExec
+}
 import org.apache.spark.sql.execution.{
   CollectLimitExec,
   FileSourceScanExec,
   FilterExec,
+  GlobalLimitExec,
+  LocalLimitExec,
   ProjectExec,
   SortExec,
   SparkPlan,
@@ -62,8 +68,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastHashJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
-import org.apache.spark.sql.execution.joins.BuildLeft
-import org.apache.spark.sql.execution.joins.BuildRight
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
@@ -79,9 +83,7 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.adaptive.QueryStage
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
-import org.apache.spark.sql.execution.LocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
-import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.Util
 
@@ -117,7 +119,8 @@ object BlazeConverters extends Logging {
         case exec @ (
               _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
               _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec |
-              _: DataWritingCommandExec | _: TakeOrderedAndProjectExec | _: ShuffleExchangeExec
+              _: DataWritingCommandExec | _: TakeOrderedAndProjectExec | _: ShuffleExchangeExec |
+              _: CartesianProductExec
             ) =>
           exec.mapChildren(child => convertToUnsafeRow(child))
         case exec => exec
