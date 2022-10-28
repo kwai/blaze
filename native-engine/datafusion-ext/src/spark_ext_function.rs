@@ -186,7 +186,7 @@ fn change_precision_round_half_up(
     }
     if to_scale < scale {
         // Easier case: we just need to divide our scale down
-        let diff = to_scale - scale;
+        let diff = scale - to_scale;
         let pow10diff = i128::pow(10, diff as u32);
         // % and / always round to 0
         let dropped_digits = i128_val % pow10diff;
