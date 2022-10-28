@@ -54,11 +54,13 @@ import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.LongType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.blaze.protobuf.AggregateFunction
 import org.blaze.protobuf.AggregateMode
 import org.blaze.protobuf.ArrowType
 import org.blaze.protobuf.EmptyMessage
 import org.blaze.protobuf.Field
 import org.blaze.protobuf.HashAggregateExecNode
+import org.blaze.protobuf.PhysicalAggregateExprNode
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
@@ -246,6 +248,7 @@ object NativeHashAggregateExec {
       aggrAttr: Attribute): Seq[(Attribute, ArrowType)] = {
 
     def makeFieldName(fieldName: String) = s"#${aggrAttr.exprId.id}[$fieldName]"
+
     def makeField(
         fieldName: String,
         dataType: DataType,
@@ -261,25 +264,56 @@ object NativeHashAggregateExec {
     val aggrNullable = aggr.nullable
 
     aggr.aggregateFunction match {
-      case _: Sum =>
-        Seq(
-          makeField("sum", aggrDataType, aggrNullable),
-          makeField("count", LongType, aggrNullable, uint64Type))
-
+      case _: Sum => Seq(makeField("sum", aggrDataType, aggrNullable))
       case _: Average =>
         Seq(
           makeField("count", LongType, aggrNullable, uint64Type),
           makeField("sum", aggrDataType, aggrNullable))
 
       case _: Count => Seq(makeField("count", LongType, nullable = true, uint64Type))
-
       case _: Max => Seq(makeField("max", aggrDataType, nullable = true))
-
       case _: Min => Seq(makeField("min", aggrDataType, nullable = true))
 
       case _ =>
         throw new NotImplementedError(
           s"aggregate function not supported: ${aggr.aggregateFunction}")
+    }
+  }
+
+  def getDFPartialMergeAggExprs(
+      aggr: AggregateExpression,
+      aggrAttr: Attribute): Seq[(Attribute, PhysicalExprNode, ArrowType)] = {
+
+    def convertAggrExprWithNewFunction(newFunction: AggregateFunction): PhysicalExprNode = {
+      val converted = NativeConverters.convertExpr(aggr)
+      val withNewFunction = converted.getAggregateExpr.toBuilder
+        .setAggrFunction(newFunction)
+      PhysicalExprNode.newBuilder().setAggregateExpr(withNewFunction).build()
+    }
+
+    (aggr.aggregateFunction match {
+      case _: Sum =>
+        getDFRowHashStateFields(aggr, aggrAttr).zip(
+          Seq(convertAggrExprWithNewFunction(AggregateFunction.SUM)))
+      case _: Average =>
+        getDFRowHashStateFields(aggr, aggrAttr).zip(
+          Seq(
+            convertAggrExprWithNewFunction(AggregateFunction.COUNT),
+            convertAggrExprWithNewFunction(AggregateFunction.SUM)))
+      case _: Count =>
+        getDFRowHashStateFields(aggr, aggrAttr).zip(
+          Seq(convertAggrExprWithNewFunction(AggregateFunction.COUNT)))
+      case _: Max =>
+        getDFRowHashStateFields(aggr, aggrAttr).zip(
+          Seq(convertAggrExprWithNewFunction(AggregateFunction.MAX)))
+      case _: Min =>
+        getDFRowHashStateFields(aggr, aggrAttr).zip(
+          Seq(convertAggrExprWithNewFunction(AggregateFunction.MIN)))
+      case _ =>
+        throw new NotImplementedError(
+          s"aggregate function not supported: ${aggr.aggregateFunction}")
+    }).map {
+      case ((attr, arrowType), partialAggr) => (attr, partialAggr, arrowType)
     }
   }
 }

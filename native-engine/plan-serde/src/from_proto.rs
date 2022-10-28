@@ -48,6 +48,7 @@ use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
 use datafusion::scalar::ScalarValue;
+use datafusion_ext::aggr::simplified_sum::SimplifiedSum;
 use datafusion_ext::debug_exec::DebugExec;
 use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext::ffi_reader_exec::FFIReaderExec;
@@ -702,13 +703,24 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                     try_parse_physical_expr_box_required(&agg_node.expr, &physical_schema)?,
                                     &physical_schema,
                                 )?;
-                                Ok(create_aggregate_expr(
-                                    &aggr_function.into(),
-                                    false,
-                                    &[agg_expr],
-                                    &physical_schema,
-                                    name.to_string(),
-                                )?)
+
+                                if let protobuf::AggregateFunction::Sum = aggr_function {
+                                    let simplified_sum: Arc<dyn AggregateExpr> = Arc::new(
+                                        SimplifiedSum::new(
+                                            agg_expr.clone(),
+                                            agg_expr.data_type(&physical_schema)?,
+                                        ));
+                                    Ok(simplified_sum)
+
+                                } else {
+                                    Ok(create_aggregate_expr(
+                                        &aggr_function.into(),
+                                        false,
+                                        &[agg_expr],
+                                        &physical_schema,
+                                        name.to_string(),
+                                    )?)
+                                }
                             }
                             _ => Err(PlanSerDeError::General(
                                 "Invalid aggregate  expression for AggregateExec"

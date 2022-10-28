@@ -17,6 +17,7 @@ use std::sync::Arc;
 use datafusion::common::DataFusionError;
 use datafusion::logical_expr::ScalarFunctionImplementation;
 
+pub mod aggr;
 pub mod debug_exec;
 pub mod empty_partitions_exec;
 pub mod expr;
