@@ -40,17 +40,7 @@ import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
-import org.apache.spark.sql.execution.{
-  CollectLimitExec,
-  FileSourceScanExec,
-  FilterExec,
-  ProjectExec,
-  SortExec,
-  SparkPlan,
-  TakeOrderedAndProjectExec,
-  UnaryExecNode,
-  UnionExec
-}
+import org.apache.spark.sql.execution.{CollectLimitExec, FileSourceScanExec, FilterExec, ProjectExec, SortExec, SparkPlan, TakeOrderedAndProjectExec, UnaryExecNode, UnionExec}
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -83,6 +73,7 @@ import org.apache.spark.sql.execution.LocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.Util
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -506,7 +497,7 @@ object BlazeConverters extends Logging {
       }
     }
     if (needRenameColumns(exec)) {
-      return NativeRenameColumnsExec(exec, exec.output.map(a => s"#${a.exprId.id}"))
+      return NativeRenameColumnsExec(exec, exec.output.map(Util.getFieldNameByExprId))
     }
     exec
   }

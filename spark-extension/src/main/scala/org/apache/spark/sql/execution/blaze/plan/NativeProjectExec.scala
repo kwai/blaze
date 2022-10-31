@@ -108,11 +108,11 @@ object NativeProjectExec {
 
             case alias: Alias =>
               namedExprs.append(
-                (s"#${alias.exprId.id}", NativeConverters.convertExpr(alias.child)))
+                (Util.getFieldNameByExprId(alias), NativeConverters.convertExpr(alias.child)))
               numAddedColumns += 1
 
             case named =>
-              namedExprs.append((s"#${named.exprId.id}", NativeConverters.convertExpr(named)))
+              (Util.getFieldNameByExprId(named), NativeConverters.convertExpr(named))
               numAddedColumns += 1
           }
         }

@@ -23,10 +23,27 @@ import org.apache.spark.sql.types.StructType
 import org.blaze.{protobuf => pb}
 
 object Util {
-  def getNativeSchema[E <: NamedExpression](fieldItems: Seq[E]): pb.Schema = {
-    val schema = StructType(fieldItems.map { item =>
-      StructField(s"#${item.exprId.id}", item.dataType, item.nullable, item.metadata)
+  def getSchema[E <: NamedExpression](
+    fieldItems: Seq[E],
+    useExprId: Boolean = true
+  ): StructType = {
+    StructType(fieldItems.map { item =>
+      val name = if (useExprId) {
+        getFieldNameByExprId(item)
+      } else {
+        item.name
+      }
+      StructField(name, item.dataType, item.nullable, item.metadata)
     })
-    NativeConverters.convertSchema(schema)
   }
+
+  def getNativeSchema[E <: NamedExpression](
+    fieldItems: Seq[E],
+    useExprId: Boolean = true
+  ): pb.Schema = {
+    NativeConverters.convertSchema(getSchema(fieldItems, useExprId))
+  }
+
+  def getFieldNameByExprId(expr: NamedExpression): String =
+    s"#${expr.exprId.id}"
 }

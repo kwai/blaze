@@ -126,7 +126,7 @@ case class NativeHashAggregateExec(
             schemaBuilder.addColumns(
               pb.Field
                 .newBuilder()
-                .setName(s"#${attr.exprId.id}")
+                .setName(Util.getFieldNameByExprId(attr))
                 .setArrowType(NativeConverters.convertDataType(attr.dataType))
                 .setNullable(attr.nullable))
           }
@@ -153,7 +153,7 @@ case class NativeHashAggregateExec(
     groupingExpressions.map(NativeConverters.convertExpr(_))
 
   val nativeGroupingNames: Seq[String] =
-    groupingExpressions.map(a => s"#${a.exprId.id}")
+    groupingExpressions.map(Util.getFieldNameByExprId)
 
   val nativeAggrNames: Seq[String] =
     nativeAggrInfos.flatMap(_.outputAttrs).map(_.name)
@@ -221,7 +221,7 @@ object NativeHashAggregateExec {
         partialMerger: AggregateFunction,
         arrowType: pb.ArrowType = null): NativeAggrPartialState = {
 
-      val fieldName = s"#${aggrAttr.exprId.id}[$stateFieldName]"
+      val fieldName = s"${Util.getFieldNameByExprId(aggrAttr)}[$stateFieldName]"
       val stateAttr = AttributeReference(fieldName, dataType, nullable)(aggrAttr.exprId)
       val nativePartialMerger = NativeConverters.convertExpr(partialMerger)
       NativeAggrPartialState(
@@ -259,7 +259,7 @@ object NativeHashAggregateExec {
           .newBuilder()
           .setColumn(pb.PhysicalColumn
             .newBuilder()
-            .setName(s"#${aggrAttr.exprId.id}[$fieldName]"))
+            .setName(s"${Util.getFieldNameByExprId(aggrAttr)}[$fieldName]"))
           .build())
     }
 
@@ -315,7 +315,7 @@ object NativeHashAggregateExec {
           outputPartialNativeType = partialStates.map(_.arrowType),
           outputAttrs = Seq(
             AttributeReference(
-              name = s"#${aggrAttr.exprId.id}",
+              Util.getFieldNameByExprId(aggrAttr),
               aggrAttr.dataType,
               aggr.nullable)(aggrAttr.exprId)))
 
@@ -340,7 +340,7 @@ object NativeHashAggregateExec {
           outputPartialNativeType = NativeConverters.convertDataType(aggr.dataType) :: Nil,
           outputAttrs = Seq(
             AttributeReference(
-              name = s"#${aggrAttr.exprId.id}",
+              Util.getFieldNameByExprId(aggrAttr),
               aggrAttr.dataType,
               aggrAttr.nullable)(aggrAttr.exprId)))
 

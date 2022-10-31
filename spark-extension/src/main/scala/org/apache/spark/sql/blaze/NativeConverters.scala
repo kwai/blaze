@@ -129,6 +129,7 @@ import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
+import org.apache.spark.sql.execution.blaze.plan.Util
 import org.blaze.{protobuf => pb}
 
 object NativeConverters {
@@ -326,7 +327,7 @@ object NativeConverters {
       case ar: AttributeReference =>
         buildExprNode {
           if (useAttrExprId) {
-            _.setColumn(pb.PhysicalColumn.newBuilder().setName(s"#${ar.exprId.id}").build())
+            _.setColumn(pb.PhysicalColumn.newBuilder().setName(Util.getFieldNameByExprId(ar)).build())
           } else {
             _.setColumn(pb.PhysicalColumn.newBuilder().setName(ar.name).build())
           }

@@ -35,6 +35,7 @@ import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.blaze.protobuf.FFIReaderExecNode
 import org.blaze.protobuf.PhysicalPlanNode
@@ -55,16 +56,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
     NativeSupports.getDefaultNativeMetrics(sparkContext) ++ Map(
       "size" -> SQLMetrics.createSizeMetric(sparkContext, "Native.batch_bytes_size"))
 
-  val renamedSchema: StructType = {
-    child match {
-      case e: NativeHashAggregateExec =>
-        StructType(
-          output.map(a => StructField(s"#${a.name}", a.dataType, a.nullable, a.metadata)))
-      case _ =>
-        StructType(
-          output.map(a => StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata)))
-    }
-  }
+  val renamedSchema: StructType = Util.getSchema(child.output)
   val nativeSchema: Schema = NativeConverters.convertSchema(renamedSchema)
 
   override def doExecuteNative(): NativeRDD = {
