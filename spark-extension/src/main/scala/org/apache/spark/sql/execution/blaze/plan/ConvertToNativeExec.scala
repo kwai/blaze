@@ -55,9 +55,16 @@ case class ConvertToNativeExec(override val child: SparkPlan)
     NativeSupports.getDefaultNativeMetrics(sparkContext) ++ Map(
       "size" -> SQLMetrics.createSizeMetric(sparkContext, "Native.batch_bytes_size"))
 
-  val renamedSchema: StructType =
-    StructType(
-      output.map(a => StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata)))
+  val renamedSchema: StructType = {
+    child match {
+      case e: NativeHashAggregateExec =>
+        StructType(
+          output.map(a => StructField(s"#${a.name}", a.dataType, a.nullable, a.metadata)))
+      case _ =>
+        StructType(
+          output.map(a => StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata)))
+    }
+  }
   val nativeSchema: Schema = NativeConverters.convertSchema(renamedSchema)
 
   override def doExecuteNative(): NativeRDD = {

@@ -25,7 +25,7 @@ use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::BuiltinScalarFunction;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::Operator;
-use datafusion::physical_expr::expressions::create_aggregate_expr;
+use datafusion::physical_expr::expressions::{create_aggregate_expr, Sum};
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
     AggregateExec, AggregateMode, PhysicalGroupBy,
@@ -704,23 +704,18 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                     &physical_schema,
                                 )?;
 
-                                if let protobuf::AggregateFunction::Sum = aggr_function {
-                                    let simplified_sum: Arc<dyn AggregateExpr> = Arc::new(
-                                        SimplifiedSum::new(
-                                            agg_expr.clone(),
-                                            agg_expr.data_type(&physical_schema)?,
-                                        ));
-                                    Ok(simplified_sum)
-
-                                } else {
-                                    Ok(create_aggregate_expr(
-                                        &aggr_function.into(),
-                                        false,
-                                        &[agg_expr],
-                                        &physical_schema,
-                                        name.to_string(),
-                                    )?)
-                                }
+                                Ok(create_aggregate_expr(
+                                    &aggr_function.into(),
+                                    false,
+                                    &[agg_expr],
+                                    &physical_schema,
+                                    name.to_string(),
+                                ).map(|aggr| -> Arc<dyn AggregateExpr> {
+                                    if aggr.as_any().downcast_ref::<Sum>().is_some() {
+                                        return Arc::new(SimplifiedSum::new(aggr.clone()));
+                                    }
+                                    aggr
+                                })?)
                             }
                             _ => Err(PlanSerDeError::General(
                                 "Invalid aggregate  expression for AggregateExec"

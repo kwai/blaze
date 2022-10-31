@@ -20,6 +20,7 @@ import java.util.UUID
 
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters._
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
@@ -459,15 +460,15 @@ object BlazeConverters extends Logging {
           exec.groupingExpressions,
           exec.aggregateExpressions,
           exec.aggregateAttributes,
-          convertToNative(exec.child))
+          addRenameColumnsExec(convertToNative(exec.child)))
 
         nativeAggr.aggrMode match {
-          case Partial =>
-            return nativeAggr.mapChildren(addRenameColumnsExec)
-          case PartialMerge =>
-            return nativeAggr
+          case Partial | PartialMerge => return nativeAggr
           case Final =>
-            return NativeProjectExec(exec.resultExpressions, nativeAggr)
+            val renamed = NativeRenameColumnsExec(
+              nativeAggr,
+              nativeAggr.nativeOutputSchema.getColumnsList.asScala.map(_.getName))
+            return NativeProjectExec(exec.resultExpressions, renamed)
         }
     }
     exec
@@ -490,6 +491,20 @@ object BlazeConverters extends Logging {
   }
 
   private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
+    def needRenameColumns(exec: SparkPlan): Boolean = {
+      if (exec.output.isEmpty) {
+        return false
+      }
+      exec match {
+        case exec: QueryStageInput =>
+          needRenameColumns(exec.childStage) || exec.output != exec.childStage.output
+        case exec: QueryStage =>
+          needRenameColumns(exec.child)
+        case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec =>
+          true
+        case _ => false
+      }
+    }
     if (needRenameColumns(exec)) {
       return NativeRenameColumnsExec(exec, exec.output.map(a => s"#${a.exprId.id}"))
     }
@@ -530,20 +545,6 @@ object BlazeConverters extends Logging {
             attr.exprId,
             attr.qualifier))
     NativeProjectExec(projectList, child)
-  }
-
-  private def needRenameColumns(exec: SparkPlan): Boolean = {
-    if (exec.output.isEmpty) {
-      return false
-    }
-    exec match {
-      case exec: QueryStageInput =>
-        needRenameColumns(exec.childStage) || exec.output != exec.childStage.output
-      case exec: QueryStage =>
-        needRenameColumns(exec.child)
-      case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec => true
-      case _ => false
-    }
   }
 
   @tailrec

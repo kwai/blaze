@@ -160,7 +160,7 @@ impl ExecutionPlan for IpcReaderExec {
     }
 
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "IpcReader: [{:?}]", &self.schema)
     }
 
     fn statistics(&self) -> Statistics {

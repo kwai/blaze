@@ -49,8 +49,9 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
+import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
+import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
 import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
-import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec.canUseNativeShuffleWrite
@@ -64,7 +65,6 @@ import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import org.apache.spark.sql.execution.SQLExecution.EXECUTION_ID_KEY
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.storage.ShuffleDataBlockId
 import org.apache.spark.util.MutablePair
@@ -228,12 +228,10 @@ case class ArrowShuffleExchangeExec(
   }
 
   val nativeSchema: Schema = child match {
-    case e: NativeHashAggregateExec => e.nativePartialOutputSchema
+    case e: NativeHashAggregateExec if e.aggrMode == Partial || e.aggrMode == PartialMerge =>
+      e.nativeOutputSchema
     case _ =>
-      NativeConverters.convertSchema(StructType(output.map(a => {
-        val name = s"#${a.exprId.id}"
-        StructField(name, a.dataType, a.nullable, a.metadata)
-      })))
+      Util.getNativeSchema(child.output)
   }
 
   val nativeHashExprs: List[PhysicalExprNode] = outputPartitioning match {

@@ -16,28 +16,23 @@ use std::any::Any;
 use std::sync::Arc;
 use arrow::array::ArrayRef;
 use arrow::datatypes::Field;
-use datafusion::arrow::datatypes::DataType;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::logical_expr::{Accumulator, AggregateState};
 use datafusion::physical_expr::{AggregateExpr, PhysicalExpr};
-use datafusion::physical_expr::expressions::Sum;
 use datafusion::physical_plan::RowAccumulator;
 use datafusion::row::accessor::RowAccessor;
 
 /// SUM aggregate expression (simplified by removing `count` state field)
 #[derive(Debug)]
 pub struct SimplifiedSum {
-    inner: Sum,
+    inner: Arc<dyn AggregateExpr>,
 }
 
 impl SimplifiedSum {
     /// Create a new SUM aggregate function
-    pub fn new(
-        expr: Arc<dyn PhysicalExpr>,
-        data_type: DataType,
-    ) -> Self {
+    pub fn new(inner_sum: Arc<dyn AggregateExpr>) -> Self {
         Self {
-            inner: Sum::new(expr, "sum", data_type)
+            inner: inner_sum,
         }
     }
 }

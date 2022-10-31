@@ -6,6 +6,10 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::physical_plan::ColumnarValue;
 use std::sync::Arc;
 
+pub fn placeholder(_args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    panic!("placeholder() should never be called")
+}
+
 /// used to avoid DivideByZero error in divide/modulo
 pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     Ok(match &args[0] {

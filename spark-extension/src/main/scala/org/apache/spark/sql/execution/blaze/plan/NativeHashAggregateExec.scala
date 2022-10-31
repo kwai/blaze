@@ -18,11 +18,11 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
-import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeConverters.NativeExprWrapper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -30,15 +30,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
-import org.apache.spark.sql.catalyst.expressions.aggregate
-import org.apache.spark.sql.catalyst.expressions.aggregate.Average
-import org.apache.spark.sql.catalyst.expressions.aggregate.Count
-import org.apache.spark.sql.catalyst.expressions.aggregate.Final
-import org.apache.spark.sql.catalyst.expressions.aggregate.Max
-import org.apache.spark.sql.catalyst.expressions.aggregate.Min
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
-import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
-import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
+import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.plans.physical.AllTuples
 import org.apache.spark.sql.catalyst.plans.physical.ClusteredDistribution
 import org.apache.spark.sql.catalyst.plans.physical.Distribution
@@ -47,23 +39,13 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.adaptive.QueryStage
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
 import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
-import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec.getDFRowHashStateFields
+import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec._
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.LongType
-import org.apache.spark.sql.types.StructField
-import org.apache.spark.sql.types.StructType
-import org.blaze.protobuf.AggregateFunction
-import org.blaze.protobuf.AggregateMode
-import org.blaze.protobuf.ArrowType
-import org.blaze.protobuf.EmptyMessage
-import org.blaze.protobuf.Field
-import org.blaze.protobuf.HashAggregateExecNode
-import org.blaze.protobuf.PhysicalAggregateExprNode
-import org.blaze.protobuf.PhysicalExprNode
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Schema
+import org.blaze.{protobuf => pb}
 
 case class NativeHashAggregateExec(
     requiredChildDistributionExpressions: Option[Seq[Expression]],
@@ -75,20 +57,17 @@ case class NativeHashAggregateExec(
     with NativeSupports
     with Logging {
 
-  assert(
-    !aggregateExpressions.exists(_.isDistinct),
-    "native distinct aggregation is not yet supported")
-
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
-  val aggrMode: aggregate.AggregateMode = if (requiredChildDistributionExpressions.isEmpty) {
-    Partial
-  } else if (aggregateExpressions.exists(_.mode == PartialMerge)) {
-    PartialMerge
-  } else {
-    Final
-  }
+  val aggrMode: AggregateMode =
+    if (aggregateExpressions.exists(_.mode == Final)) {
+      Final
+    } else if (aggregateExpressions.exists(_.mode == PartialMerge)) {
+      PartialMerge
+    } else {
+      Partial
+    }
 
   override def requiredChildDistribution: List[Distribution] = {
     requiredChildDistributionExpressions match {
@@ -98,97 +77,89 @@ case class NativeHashAggregateExec(
     }
   }
 
-  override def output: Seq[Attribute] = {
-    val columns = ArrayBuffer[NamedExpression]()
-    columns ++= groupingExpressions
-    columns ++= (aggrMode match {
-      case Partial =>
-        aggregateAttributes.zip(aggregateExpressions).flatMap {
-          case (aggrAttr, aggr) => getDFRowHashStateFields(aggr, aggrAttr).map(_._1)
-        }
-      case PartialMerge | Final =>
-        aggregateAttributes
-    })
-    columns.map(_.toAttribute)
-  }
+  val nativeAggrMode: pb.AggregateMode =
+    aggrMode match {
+      case Partial | PartialMerge => pb.AggregateMode.PARTIAL
+      case Final => pb.AggregateMode.FINAL
+      case Complete =>
+        throw new NotImplementedError("aggrMode = Complete not yet supported")
+    }
 
-  val relatedPartialAggr: NativeHashAggregateExec = aggrMode match {
+  val previousNativeAggrExec: NativeHashAggregateExec = aggrMode match {
     case Partial => null
-    case PartialMerge | Final =>
+    case _ =>
       @tailrec
-      def findRelatedPartialAggr(exec: SparkPlan = this): NativeHashAggregateExec =
-        exec match {
-          case e: NativeHashAggregateExec if e.aggrMode == Partial => e
-          case e =>
-            findRelatedPartialAggr(e match {
-              case stageInput: ShuffleQueryStageInput => stageInput.childStage
-              case stageInput: SkewedShuffleQueryStageInput => stageInput.childStage
-              case e: UnaryExecNode => e.child
-              case e =>
-                throw new NotImplementedError(
-                  s"expect partial NativeHashAggregateExec, got ${e.nodeName}")
-            })
-        }
-
-      findRelatedPartialAggr()
+      def findPreviousNativeAggrExec(exec: SparkPlan = this.child): NativeHashAggregateExec = {
+        findPreviousNativeAggrExec(exec match {
+          case e: NativeHashAggregateExec => return e
+          case stageInput: ShuffleQueryStageInput => stageInput.childStage
+          case stageInput: SkewedShuffleQueryStageInput => stageInput.childStage
+          case stage: QueryStage => stage.child
+          case shuffle: ArrowShuffleExchangeExec => shuffle.child
+          case renamed: NativeRenameColumnsExec => renamed.child
+        })
+      }
+      findPreviousNativeAggrExec()
   }
 
-  val nativePartialOutputSchema: Schema = aggrMode match {
-    case Partial =>
-      Schema
-        .newBuilder()
-        .addAllColumns(
-          groupingExpressions
-            .map(a =>
-              NativeConverters.convertField(
-                StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata)))
-            .asJava)
-        .addAllColumns(aggregateAttributes
-          .zip(aggregateExpressions)
-          .flatMap {
-            case (aggrAttr, aggr) =>
-              getDFRowHashStateFields(aggr, aggrAttr).map {
-                case (a, nativeType) =>
-                  Field
-                    .newBuilder()
-                    .setName(a.name)
-                    .setArrowType(nativeType)
-                    .setNullable(a.nullable)
-                    .build()
-              }
+  val nativeAggrInfos: Seq[NativeAggrInfo] = aggregateExpressions
+    .zip(aggregateAttributes)
+    .map {
+      case (aggr, aggrAttr) => getNativeAggrInfo(aggr, aggrAttr)
+    }
+
+  val nativeOutputSchema: pb.Schema = {
+    val schemaBuilder = Util.getNativeSchema(groupingExpressions).toBuilder
+    for (aggrInfo <- nativeAggrInfos) {
+      aggrMode match {
+        case Partial | PartialMerge =>
+          for ((attr, i) <- aggrInfo.outputPartialAttrs.zipWithIndex) {
+            schemaBuilder.addColumns(
+              pb.Field
+                .newBuilder()
+                .setName(attr.name)
+                .setArrowType(aggrInfo.outputPartialNativeType(i))
+                .setNullable(attr.nullable))
           }
-          .asJava)
-        .build()
-    case PartialMerge | Final =>
-      relatedPartialAggr.nativePartialOutputSchema
+        case Final =>
+          for (attr <- aggrInfo.outputAttrs) {
+            schemaBuilder.addColumns(
+              pb.Field
+                .newBuilder()
+                .setName(s"#${attr.exprId.id}")
+                .setArrowType(NativeConverters.convertDataType(attr.dataType))
+                .setNullable(attr.nullable))
+          }
+        case Complete =>
+          throw new NotImplementedError("aggrMode = Complete not yet supported")
+      }
+    }
+    schemaBuilder.build()
   }
 
-  val nativeInputSchema: Schema = aggrMode match {
-    case Partial =>
-      NativeConverters.convertSchema(StructType(child.output.map(a =>
-        StructField(s"#${a.exprId.id}", a.dataType, a.nullable, a.metadata))))
-    case PartialMerge | Final =>
-      relatedPartialAggr.nativeInputSchema
+  val nativeInputSchema: pb.Schema = {
+    aggrMode match {
+      case Partial => Util.getNativeSchema(child.output)
+      case PartialMerge | Final => previousNativeAggrExec.nativeOutputSchema
+      case Complete =>
+        throw new NotImplementedError("aggrMode = Complete not yet supported")
+    }
   }
 
-  val nativeGroupingExprs: Seq[PhysicalExprNode] = aggrMode match {
-    case Partial =>
-      groupingExpressions.map(expr => NativeConverters.convertExpr(expr))
-    case PartialMerge | Final =>
-      relatedPartialAggr.nativeGroupingExprs
-  }
+  val nativeAggrs: Seq[pb.PhysicalExprNode] =
+    nativeAggrInfos.flatMap(_.nativeAggrs)
 
-  val nativeAggrExprs: Seq[PhysicalExprNode] = aggrMode match {
-    case Partial =>
-      aggregateExpressions.map(aggr => NativeConverters.convertExpr(aggr.aggregateFunction))
-    case PartialMerge | Final =>
-      relatedPartialAggr.nativeAggrExprs
-  }
+  val nativeGroupingExprs: Seq[pb.PhysicalExprNode] =
+    groupingExpressions.map(NativeConverters.convertExpr(_))
 
-  logWarning(s"XXX mode=$aggrMode, nativePartialOutputSchema: $nativePartialOutputSchema")
-  logWarning(s"XXX mode=$aggrMode, nativeInputSchema: $nativeInputSchema")
-  logWarning(s"XXX mode=$aggrMode, nativeGroupingExprs: $nativeGroupingExprs")
-  logWarning(s"XXX mode=$aggrMode, nativeAggrExprs: $nativeAggrExprs")
+  val nativeGroupingNames: Seq[String] =
+    groupingExpressions.map(a => s"#${a.exprId.id}")
+
+  val nativeAggrNames: Seq[String] =
+    nativeAggrInfos.flatMap(_.outputAttrs).map(_.name)
+
+  override def output: Seq[Attribute] =
+    (groupingExpressions ++ nativeAggrInfos.flatMap(_.outputPartialAttrs)).map(_.toAttribute)
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
@@ -205,25 +176,18 @@ case class NativeHashAggregateExec(
         lazy val inputPlan =
           inputRDD.nativePlan(inputRDD.partitions(partition.index), taskContext)
 
-        val (groupNames, aggrNames) = (
-          groupingExpressions.map(a => s"#${a.exprId.id}"),
-          aggregateAttributes.map(a => s"#${a.exprId.id}"))
-
-        PhysicalPlanNode
+        pb.PhysicalPlanNode
           .newBuilder()
           .setHashAggregate(
-            HashAggregateExecNode
+            pb.HashAggregateExecNode
               .newBuilder()
-              .addAllAggrExprName(aggrNames.asJava)
-              .addAllGroupExprName(groupNames.asJava)
-              .addAllAggrExpr(nativeAggrExprs.asJava)
+              .setMode(nativeAggrMode)
+              .addAllAggrExprName(nativeAggrNames.asJava)
+              .addAllGroupExprName(nativeGroupingNames.asJava)
+              .addAllAggrExpr(nativeAggrs.asJava)
               .addAllGroupExpr(nativeGroupingExprs.asJava)
               .setInput(inputPlan)
-              .setInputSchema(nativeInputSchema)
-              .setMode(aggrMode match {
-                case Partial => AggregateMode.PARTIAL
-                case PartialMerge | Final => AggregateMode.FINAL
-              }))
+              .setInputSchema(nativeInputSchema))
           .build()
       },
       friendlyName = "NativeRDD.HashAggregate")
@@ -243,36 +207,91 @@ case class NativeHashAggregateExec(
     s"NativeHashAggregate.$aggrMode"
 }
 object NativeHashAggregateExec {
-  def getDFRowHashStateFields(
+  case class NativeAggrPartialState(
+      stateAttr: Attribute,
+      partialMerger: pb.PhysicalExprNode,
+      arrowType: pb.ArrowType)
+
+  object NativeAggrPartialState {
+    def apply(
+        aggrAttr: Attribute,
+        stateFieldName: String,
+        dataType: DataType,
+        nullable: Boolean,
+        partialMerger: AggregateFunction,
+        arrowType: pb.ArrowType = null): NativeAggrPartialState = {
+
+      val fieldName = s"#${aggrAttr.exprId.id}[$stateFieldName]"
+      val stateAttr = AttributeReference(fieldName, dataType, nullable)(aggrAttr.exprId)
+      val nativePartialMerger = NativeConverters.convertExpr(partialMerger)
+      NativeAggrPartialState(
+        stateAttr,
+        nativePartialMerger,
+        arrowType = Option(arrowType).getOrElse(NativeConverters.convertDataType(dataType)))
+    }
+  }
+
+  def getDFRowHashPartialStates(
       aggr: AggregateExpression,
-      aggrAttr: Attribute): Seq[(Attribute, ArrowType)] = {
+      aggrAttr: Attribute): Seq[NativeAggrPartialState] = {
 
-    def makeFieldName(fieldName: String) = s"#${aggrAttr.exprId.id}[$fieldName]"
-
-    def makeField(
+    val uint64Type =
+      pb.ArrowType.newBuilder().setUINT64(pb.EmptyMessage.getDefaultInstance).build()
+    val aggrDataType = aggr.dataType
+    val aggrNullable = aggr.nullable
+    val buildPartialState = (
         fieldName: String,
         dataType: DataType,
         nullable: Boolean,
-        nativeType: ArrowType = null) = {
-      (
-        AttributeReference(makeFieldName(fieldName), dataType, nullable)(aggrAttr.exprId),
-        Option(nativeType).getOrElse(NativeConverters.convertDataType(dataType)))
+        partialMerger: AggregateFunction,
+        nativeDataType: pb.ArrowType) => {
+      NativeAggrPartialState(
+        aggrAttr,
+        fieldName,
+        dataType,
+        nullable,
+        partialMerger,
+        nativeDataType)
+    }
+    val buildColumn = (fieldName: String) => {
+      NativeExprWrapper(
+        pb.PhysicalExprNode
+          .newBuilder()
+          .setColumn(pb.PhysicalColumn
+            .newBuilder()
+            .setName(s"#${aggrAttr.exprId.id}[$fieldName]"))
+          .build())
     }
 
-    val uint64Type = ArrowType.newBuilder().setUINT64(EmptyMessage.getDefaultInstance).build()
-    val aggrDataType = aggr.dataType
-    val aggrNullable = aggr.nullable
-
     aggr.aggregateFunction match {
-      case _: Sum => Seq(makeField("sum", aggrDataType, aggrNullable))
-      case _: Average =>
-        Seq(
-          makeField("count", LongType, aggrNullable, uint64Type),
-          makeField("sum", aggrDataType, aggrNullable))
+      case _: Sum =>
+        // [sum]: input.data_type
+        val partialMerger = Sum(buildColumn("sum"))
+        Seq(buildPartialState("sum", aggrDataType, aggrNullable, partialMerger, null))
 
-      case _: Count => Seq(makeField("count", LongType, nullable = true, uint64Type))
-      case _: Max => Seq(makeField("max", aggrDataType, nullable = true))
-      case _: Min => Seq(makeField("min", aggrDataType, nullable = true))
+      case _: Average =>
+        // [count]: u64
+        // [sum]: input.data_type
+        val partialMerger1 = Sum(buildColumn("count"))
+        val partialMerger2 = Sum(buildColumn("sum"))
+        Seq(
+          buildPartialState("count", LongType, true, partialMerger1, uint64Type),
+          buildPartialState("sum", aggrDataType, aggrNullable, partialMerger2, null))
+
+      case _: Count =>
+        // [count]: i64
+        val partialMerger = Sum(buildColumn("count"))
+        Seq(buildPartialState("count", LongType, true, partialMerger, null))
+
+      case _: Max =>
+        // [max]: input.data_type
+        val partialMerger = Max(buildColumn("max"))
+        Seq(buildPartialState("max", aggrDataType, aggrNullable, partialMerger, null))
+
+      case _: Min =>
+        // [min]: input.data_type
+        val partialMerger = Max(buildColumn("min"))
+        Seq(buildPartialState("min", aggrDataType, aggrNullable, partialMerger, null))
 
       case _ =>
         throw new NotImplementedError(
@@ -280,40 +299,66 @@ object NativeHashAggregateExec {
     }
   }
 
-  def getDFPartialMergeAggExprs(
-      aggr: AggregateExpression,
-      aggrAttr: Attribute): Seq[(Attribute, PhysicalExprNode, ArrowType)] = {
+  case class NativeAggrInfo(
+      nativeAggrs: Seq[pb.PhysicalExprNode],
+      outputPartialAttrs: Seq[Attribute],
+      outputPartialNativeType: Seq[pb.ArrowType],
+      outputAttrs: Seq[Attribute])
 
-    def convertAggrExprWithNewFunction(newFunction: AggregateFunction): PhysicalExprNode = {
-      val converted = NativeConverters.convertExpr(aggr)
-      val withNewFunction = converted.getAggregateExpr.toBuilder
-        .setAggrFunction(newFunction)
-      PhysicalExprNode.newBuilder().setAggregateExpr(withNewFunction).build()
-    }
+  def getNativeAggrInfo(aggr: AggregateExpression, aggrAttr: Attribute): NativeAggrInfo = {
+    aggr.mode match {
+      case Partial =>
+        val partialStates = getDFRowHashPartialStates(aggr, aggrAttr)
+        NativeAggrInfo(
+          nativeAggrs = NativeConverters.convertExpr(aggr) :: Nil,
+          outputPartialAttrs = partialStates.map(_.stateAttr),
+          outputPartialNativeType = partialStates.map(_.arrowType),
+          outputAttrs = Seq(
+            AttributeReference(
+              name = s"#${aggrAttr.exprId.id}",
+              aggrAttr.dataType,
+              aggr.nullable)(aggrAttr.exprId)))
 
-    (aggr.aggregateFunction match {
-      case _: Sum =>
-        getDFRowHashStateFields(aggr, aggrAttr).zip(
-          Seq(convertAggrExprWithNewFunction(AggregateFunction.SUM)))
-      case _: Average =>
-        getDFRowHashStateFields(aggr, aggrAttr).zip(
-          Seq(
-            convertAggrExprWithNewFunction(AggregateFunction.COUNT),
-            convertAggrExprWithNewFunction(AggregateFunction.SUM)))
-      case _: Count =>
-        getDFRowHashStateFields(aggr, aggrAttr).zip(
-          Seq(convertAggrExprWithNewFunction(AggregateFunction.COUNT)))
-      case _: Max =>
-        getDFRowHashStateFields(aggr, aggrAttr).zip(
-          Seq(convertAggrExprWithNewFunction(AggregateFunction.MAX)))
-      case _: Min =>
-        getDFRowHashStateFields(aggr, aggrAttr).zip(
-          Seq(convertAggrExprWithNewFunction(AggregateFunction.MIN)))
-      case _ =>
-        throw new NotImplementedError(
-          s"aggregate function not supported: ${aggr.aggregateFunction}")
-    }).map {
-      case ((attr, arrowType), partialAggr) => (attr, partialAggr, arrowType)
+      case PartialMerge =>
+        val partialStates = getDFRowHashPartialStates(aggr, aggrAttr)
+        NativeAggrInfo(
+          nativeAggrs = partialStates.map(_.partialMerger),
+          outputPartialAttrs = partialStates.map(_.stateAttr),
+          outputPartialNativeType = partialStates.map(_.arrowType),
+          outputAttrs = partialStates.map(_.stateAttr))
+
+      case Final =>
+        val reducedAggr = AggregateExpression(
+          aggr.aggregateFunction
+            .mapChildren(e => createPlaceholder(NativeConverters.convertDataType(e.dataType)))
+            .asInstanceOf[AggregateFunction],
+          aggr.mode,
+          aggr.isDistinct)
+        NativeAggrInfo(
+          nativeAggrs = NativeConverters.convertExpr(reducedAggr) :: Nil,
+          outputPartialAttrs = aggrAttr :: Nil,
+          outputPartialNativeType = NativeConverters.convertDataType(aggr.dataType) :: Nil,
+          outputAttrs = Seq(
+            AttributeReference(
+              name = s"#${aggrAttr.exprId.id}",
+              aggrAttr.dataType,
+              aggrAttr.nullable)(aggrAttr.exprId)))
+
+      case Complete =>
+        throw new NotImplementedError("aggrMode = Complete not yet supported")
     }
+  }
+
+  private def createPlaceholder(nativeDataType: pb.ArrowType): Expression = {
+    NativeExprWrapper(
+      pb.PhysicalExprNode
+        .newBuilder()
+        .setScalarFunction(
+          pb.PhysicalScalarFunctionNode
+            .newBuilder()
+            .setFun(pb.ScalarFunction.SparkExtFunctions)
+            .setName("Placeholder")
+            .setReturnType(nativeDataType))
+        .build())
   }
 }

@@ -74,6 +74,7 @@ pub fn create_spark_ext_function(
     name: &str,
 ) -> datafusion::error::Result<ScalarFunctionImplementation> {
     Ok(match name {
+        "Placeholder" => Arc::new(spark_ext_function::placeholder),
         "NullIfZero" => Arc::new(spark_ext_function::spark_null_if_zero),
         "UnscaledValue" => Arc::new(spark_ext_function::spark_unscaled_value),
         "MakeDecimal" => Arc::new(spark_ext_function::spark_make_decimal),

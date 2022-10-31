@@ -127,6 +127,8 @@ import org.apache.spark.sql.catalyst.expressions.CheckOverflow
 import org.apache.spark.sql.catalyst.expressions.PromotePrecision
 import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.blaze.{protobuf => pb}
 
 object NativeConverters {
@@ -227,6 +229,13 @@ object NativeConverters {
     schemaBuilder.build()
   }
 
+  case class NativeExprWrapper(
+      wrapped: pb.PhysicalExprNode,
+      override val dataType: DataType = NullType,
+      override val nullable: Boolean = true,
+      override val children: Seq[Expression] = Nil)
+      extends Unevaluable
+
   def convertExpr(sparkExpr: Expression, useAttrExprId: Boolean = true): pb.PhysicalExprNode = {
     def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => pb.PhysicalExprNode.Builder)
         : pb.PhysicalExprNode =
@@ -291,6 +300,8 @@ object NativeConverters {
       }
 
     sparkExpr match {
+      case NativeExprWrapper(wrapped, _, _, _) =>
+        wrapped
       case l @ Literal(value, dataType) =>
         buildExprNode { b =>
           if (value == null) {
@@ -616,6 +627,7 @@ object NativeConverters {
         buildExtScalarFunction("CheckOverflow", args, DecimalType(precision, scale))
 
       // aggr
+      case AggregateExpression(aggr, _, _, _) => convertExpr(aggr)
       case Min(_1) => buildAggrExprNode(pb.AggregateFunction.MIN, _1)
       case Max(_1) => buildAggrExprNode(pb.AggregateFunction.MAX, _1)
       case Sum(_1) => buildAggrExprNode(pb.AggregateFunction.SUM, _1)
