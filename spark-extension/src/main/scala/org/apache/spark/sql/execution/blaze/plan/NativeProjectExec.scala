@@ -112,7 +112,8 @@ object NativeProjectExec {
               numAddedColumns += 1
 
             case named =>
-              (Util.getFieldNameByExprId(named), NativeConverters.convertExpr(named))
+              namedExprs.append(
+                (Util.getFieldNameByExprId(named), NativeConverters.convertExpr(named)))
               numAddedColumns += 1
           }
         }

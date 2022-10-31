@@ -40,7 +40,17 @@ import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
-import org.apache.spark.sql.execution.{CollectLimitExec, FileSourceScanExec, FilterExec, ProjectExec, SortExec, SparkPlan, TakeOrderedAndProjectExec, UnaryExecNode, UnionExec}
+import org.apache.spark.sql.execution.{
+  CollectLimitExec,
+  FileSourceScanExec,
+  FilterExec,
+  ProjectExec,
+  SortExec,
+  SparkPlan,
+  TakeOrderedAndProjectExec,
+  UnaryExecNode,
+  UnionExec
+}
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -454,12 +464,10 @@ object BlazeConverters extends Logging {
           addRenameColumnsExec(convertToNative(exec.child)))
 
         nativeAggr.aggrMode match {
-          case Partial | PartialMerge => return nativeAggr
+          case Partial | PartialMerge =>
+            return nativeAggr
           case Final =>
-            val renamed = NativeRenameColumnsExec(
-              nativeAggr,
-              nativeAggr.nativeOutputSchema.getColumnsList.asScala.map(_.getName))
-            return NativeProjectExec(exec.resultExpressions, renamed)
+            return NativeProjectExec(exec.resultExpressions, nativeAggr)
         }
     }
     exec

@@ -327,7 +327,8 @@ object NativeConverters {
       case ar: AttributeReference =>
         buildExprNode {
           if (useAttrExprId) {
-            _.setColumn(pb.PhysicalColumn.newBuilder().setName(Util.getFieldNameByExprId(ar)).build())
+            _.setColumn(
+              pb.PhysicalColumn.newBuilder().setName(Util.getFieldNameByExprId(ar)).build())
           } else {
             _.setColumn(pb.PhysicalColumn.newBuilder().setName(ar.name).build())
           }

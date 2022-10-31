@@ -24,9 +24,8 @@ import org.blaze.{protobuf => pb}
 
 object Util {
   def getSchema[E <: NamedExpression](
-    fieldItems: Seq[E],
-    useExprId: Boolean = true
-  ): StructType = {
+      fieldItems: Seq[E],
+      useExprId: Boolean = true): StructType = {
     StructType(fieldItems.map { item =>
       val name = if (useExprId) {
         getFieldNameByExprId(item)
@@ -38,9 +37,8 @@ object Util {
   }
 
   def getNativeSchema[E <: NamedExpression](
-    fieldItems: Seq[E],
-    useExprId: Boolean = true
-  ): pb.Schema = {
+      fieldItems: Seq[E],
+      useExprId: Boolean = true): pb.Schema = {
     NativeConverters.convertSchema(getSchema(fieldItems, useExprId))
   }
 
