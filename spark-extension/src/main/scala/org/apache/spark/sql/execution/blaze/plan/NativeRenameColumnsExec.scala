@@ -65,6 +65,7 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
       friendlyName = "NativeRDD.RenameColumns")
   }
 
+  override def nodeName: String = "InputAdapter"
   override def doCanonicalize(): SparkPlan = child.canonicalized
 }
 
