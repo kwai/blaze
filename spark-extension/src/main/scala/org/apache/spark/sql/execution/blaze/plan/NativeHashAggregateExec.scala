@@ -61,7 +61,8 @@ case class NativeHashAggregateExec(
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
   val aggrMode: AggregateMode =
-    if (aggregateExpressions.exists(_.mode == Final)) {
+    if (aggregateExpressions.exists(_.mode == Final)
+      || (aggregateExpressions.isEmpty && requiredChildDistributionExpressions.isDefined)) {
       Final
     } else if (aggregateExpressions.exists(_.mode == PartialMerge)) {
       PartialMerge
