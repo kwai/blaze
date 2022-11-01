@@ -129,6 +129,8 @@ import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
+import org.apache.spark.sql.catalyst.expressions.Murmur3HashFunction
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.blaze.{protobuf => pb}
@@ -554,6 +556,8 @@ object NativeConverters {
         buildScalarFunction(pb.ScalarFunction.SHA384, Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(512, _)) =>
         buildScalarFunction(pb.ScalarFunction.SHA512, Seq(unpackBinaryTypeCast(_1)), StringType)
+      case Murmur3Hash(children, 42) =>
+        buildExtScalarFunction("Murmur3Hash", children, IntegerType)
 
       case StartsWith(expr, Literal(prefix, StringType)) =>
         buildExprNode(

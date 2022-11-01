@@ -21,6 +21,7 @@ mod spark_unscaled_value;
 mod spark_make_decimal;
 mod spark_check_overflow;
 mod spark_round_n;
+mod spark_murmur3_hash;
 
 pub fn create_spark_ext_function(
     name: &str,
@@ -32,6 +33,7 @@ pub fn create_spark_ext_function(
         "MakeDecimal" => Arc::new(spark_make_decimal::spark_make_decimal),
         "CheckOverflow" => Arc::new(spark_check_overflow::spark_check_overflow),
         "RoundN" => Arc::new(spark_round_n::spark_round_n),
+        "Murmur3Hash" => Arc::new(spark_murmur3_hash::spark_murmur3_hash),
 
         _ => Err(DataFusionError::NotImplemented(format!(
             "spark ext function not implemented: {}",
