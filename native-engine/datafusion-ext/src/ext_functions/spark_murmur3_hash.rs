@@ -37,7 +37,9 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         })
         .collect::<Vec<_>>();
 
-    let mut hash_buffer = vec![0u32; len];
+    // use identical seed as spark hash partition
+    let spark_murmur3_default_seed = 42u32;
+    let mut hash_buffer = vec![spark_murmur3_default_seed; len];
     create_hashes(&arrays, &mut hash_buffer)?;
 
     Ok(ColumnarValue::Array(
