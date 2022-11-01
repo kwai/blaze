@@ -1,7 +1,6 @@
-use crate::DataFusionError;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
+use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};

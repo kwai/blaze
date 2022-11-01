@@ -516,8 +516,11 @@ object NativeConverters {
               .setArrowType(convertDataType(e.dataType))
               .build())
         }
-      case Round(_1, Literal(0, _)) =>
-        buildScalarFunction(pb.ScalarFunction.Round, Seq(_1), _1.dataType)
+      case e @ Round(_1, Literal(0, _)) =>
+        buildScalarFunction(pb.ScalarFunction.Round, Seq(_1), e.dataType)
+      case e @ Round(_1, Literal(n: Int, _)) =>
+        buildExtScalarFunction("RoundN", Seq(_1, Literal(n, IntegerType)), e.dataType)
+
       case e: Abs => buildScalarFunction(pb.ScalarFunction.Abs, e.children, e.dataType)
       case e: Signum => buildScalarFunction(pb.ScalarFunction.Signum, e.children, e.dataType)
       case e: OctetLength =>

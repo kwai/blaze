@@ -12,7 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod array_builder;
-pub mod fs;
-pub mod ipc;
-pub mod spark_hash;
+pub mod debug_exec;
+pub mod empty_partitions_exec;
+pub mod ffi_reader_exec;
+pub mod ipc_reader_exec;
+pub mod ipc_writer_exec;
+pub mod rename_columns_exec;
+pub mod shuffle_writer_exec;
+pub mod sort_merge_join_exec;
+pub mod limit_exec;

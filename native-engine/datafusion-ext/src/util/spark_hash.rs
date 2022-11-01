@@ -322,7 +322,7 @@ mod tests {
     };
     use datafusion::from_slice::FromSlice;
 
-    use crate::spark_hash::{create_hashes, pmod};
+    use crate::util::spark_hash::{create_hashes, pmod};
 
     #[test]
     fn test_i8() {

@@ -963,7 +963,7 @@ mod tests {
     use datafusion::physical_plan::ExecutionPlan;
     use std::sync::Arc;
 
-    use crate::sort_merge_join_exec::SortMergeJoinExec;
+    use crate::plan::sort_merge_join_exec::SortMergeJoinExec;
     use datafusion::prelude::{SessionConfig, SessionContext};
 
     fn columns(schema: &Schema) -> Vec<String> {

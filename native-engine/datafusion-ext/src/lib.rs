@@ -12,27 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-
-use datafusion::common::DataFusionError;
-use datafusion::logical_expr::ScalarFunctionImplementation;
-
 pub mod aggr;
-pub mod debug_exec;
-pub mod empty_partitions_exec;
 pub mod expr;
-pub mod ffi_reader_exec;
+pub mod ext_functions;
 pub mod file_format;
-pub mod ipc_reader_exec;
-pub mod ipc_writer_exec;
 pub mod jni_bridge;
-pub mod limit_exec;
-pub mod rename_columns_exec;
-pub mod shuffle_writer_exec;
-pub mod sort_merge_join_exec;
+pub mod plan;
 
-mod spark_ext_function;
-mod spark_hash;
 mod util;
 
 pub trait ResultExt<T> {
@@ -68,20 +54,4 @@ where
             )),
         }
     }
-}
-
-pub fn create_spark_ext_function(
-    name: &str,
-) -> datafusion::error::Result<ScalarFunctionImplementation> {
-    Ok(match name {
-        "Placeholder" => Arc::new(spark_ext_function::placeholder),
-        "NullIfZero" => Arc::new(spark_ext_function::spark_null_if_zero),
-        "UnscaledValue" => Arc::new(spark_ext_function::spark_unscaled_value),
-        "MakeDecimal" => Arc::new(spark_ext_function::spark_make_decimal),
-        "CheckOverflow" => Arc::new(spark_ext_function::spark_check_overflow),
-        _ => Err(DataFusionError::NotImplemented(format!(
-            "spark ext function not implemented: {}",
-            name
-        )))?,
-    })
 }

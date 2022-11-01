@@ -60,7 +60,7 @@ use itertools::Itertools;
 use tempfile::NamedTempFile;
 use tokio::task;
 
-use crate::spark_hash::{create_hashes, pmod};
+use crate::util::spark_hash::{create_hashes, pmod};
 use crate::util::array_builder::{builder_extend, make_batch, new_array_builders};
 use crate::util::ipc::write_one_batch;
 

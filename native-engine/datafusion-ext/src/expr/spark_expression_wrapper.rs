@@ -142,7 +142,7 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
             SparkExpressionWrapperContext(jcontext.as_obj()).eval(batch_byte_buffer) -> JObject
         )?;
 
-        let mut reader = crate::ipc_reader_exec::ReadableByteChannelReader(
+        let mut reader = crate::plan::ipc_reader_exec::ReadableByteChannelReader(
             jni_new_global_ref!(output_channel)?,
         );
         let output_batch = read_one_batch(&mut reader, output_schema, false, false)?;

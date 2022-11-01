@@ -49,18 +49,18 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::aggr::simplified_sum::SimplifiedSum;
-use datafusion_ext::debug_exec::DebugExec;
-use datafusion_ext::empty_partitions_exec::EmptyPartitionsExec;
-use datafusion_ext::ffi_reader_exec::FFIReaderExec;
+use datafusion_ext::plan::debug_exec::DebugExec;
+use datafusion_ext::plan::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext::plan::ffi_reader_exec::FFIReaderExec;
 use datafusion_ext::file_format::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
-use datafusion_ext::ipc_reader_exec::IpcReadMode;
-use datafusion_ext::ipc_reader_exec::IpcReaderExec;
-use datafusion_ext::ipc_writer_exec::IpcWriterExec;
-use datafusion_ext::rename_columns_exec::RenameColumnsExec;
-use datafusion_ext::shuffle_writer_exec::ShuffleWriterExec;
-use datafusion_ext::sort_merge_join_exec::SortMergeJoinExec;
+use datafusion_ext::plan::ipc_reader_exec::IpcReadMode;
+use datafusion_ext::plan::ipc_reader_exec::IpcReaderExec;
+use datafusion_ext::plan::ipc_writer_exec::IpcWriterExec;
+use datafusion_ext::plan::rename_columns_exec::RenameColumnsExec;
+use datafusion_ext::plan::shuffle_writer_exec::ShuffleWriterExec;
+use datafusion_ext::plan::sort_merge_join_exec::SortMergeJoinExec;
 
 use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
@@ -75,7 +75,7 @@ use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
 use datafusion_ext::expr::string_starts_with::StringStartsWithExpr;
 use datafusion_ext::expr::string_ends_with::StringEndsWithExpr;
 use datafusion_ext::expr::string_contains::StringContainsExpr;
-use datafusion_ext::limit_exec::LimitExec;
+use datafusion_ext::plan::limit_exec::LimitExec;
 use datafusion_ext::expr::spark_expression_wrapper::SparkExpressionWrapperExpr;
 
 fn bind(
@@ -939,7 +939,7 @@ fn try_parse_physical_expr(
             let execution_props = ExecutionProps::new();
             let fun_expr =
                 if scalar_function == protobuf::ScalarFunction::SparkExtFunctions {
-                    datafusion_ext::create_spark_ext_function(&e.name)?
+                    datafusion_ext::ext_functions::create_spark_ext_function(&e.name)?
                 } else {
                     functions::create_physical_fun(
                         &(&scalar_function).into(),
