@@ -46,6 +46,12 @@ class BlazeOperatorMetricsCollector extends Logging {
   private val objectMapper: ObjectMapper = new ObjectMapper()
 
   def createListener(plan: SparkPlan with NativeSupports, sc: SparkContext): Unit = {
+    if (!SparkEnv.get.conf.getBoolean(
+        "spark.blaze.enabled.queueNullPlaceholderSet",
+        defaultValue = false)) {
+      SparkEnv.get.conf.set("spark.blaze.enabled.queueNullPlaceholderSet", "true")
+      sc.listenerBus.addToQueue(new BlazeNullPlaceholderListener, "BlazeOperatorMetrics")
+    }
     sc.listenerBus.addToQueue(new BlazeOperatorMetricsListener(sc, plan), "BlazeOperatorMetrics")
   }
 
@@ -104,7 +110,7 @@ class BlazeOperatorMetricsCollector extends Logging {
 
 object BlazeOperatorMetricsCollector {
   val isBlazeOperatorMetricsEnabled: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = false)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = true)
 }
 
 class BlazeOperatorMetrics(
@@ -133,24 +139,24 @@ class BlazeOperatorMetricsListener(sc: SparkContext, exec: => NativeSupports)
   override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
 
     blazeOperatorMetricsCollector.foreach { collector =>
-      val metricsOutput = exec.metrics("output_rows")
-      metricsOutput match {
-        case _: SQLMetric =>
-          collector.sendOperatorMetrics(
-            stageCompleted.stageInfo,
-            exec.getClass.getSimpleName,
-            exec.metrics("output_rows").value,
-            exec.simpleString,
-            sc)
-        case _ =>
-          collector.sendOperatorMetrics(
-            stageCompleted.stageInfo,
-            exec.getClass.getSimpleName,
-            0L,
-            exec.simpleString,
-            sc)
+      if (exec.metrics.contains("output_rows")) {
+        collector.sendOperatorMetrics(
+          stageCompleted.stageInfo,
+          exec.getClass.getSimpleName,
+          exec.metrics("output_rows").value,
+          exec.simpleString,
+          sc)
+      } else {
+        collector.sendOperatorMetrics(
+          stageCompleted.stageInfo,
+          exec.getClass.getSimpleName,
+          0L,
+          exec.simpleString,
+          sc)
       }
     }
     sc.listenerBus.removeListener(this)
   }
 }
+
+class BlazeNullPlaceholderListener extends SparkListener
