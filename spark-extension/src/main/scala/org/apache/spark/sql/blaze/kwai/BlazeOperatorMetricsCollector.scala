@@ -46,10 +46,10 @@ class BlazeOperatorMetricsCollector extends Logging {
   private val objectMapper: ObjectMapper = new ObjectMapper()
 
   def createListener(plan: SparkPlan with NativeSupports, sc: SparkContext): Unit = {
-    if (!SparkEnv.get.conf.getBoolean(
+    if (!sc.conf.getBoolean(
         "spark.blaze.enabled.queueNullPlaceholderSet",
         defaultValue = false)) {
-      SparkEnv.get.conf.set("spark.blaze.enabled.queueNullPlaceholderSet", "true")
+      sc.conf.set("spark.blaze.enabled.queueNullPlaceholderSet", "true")
       sc.listenerBus.addToQueue(new BlazeNullPlaceholderListener, "BlazeOperatorMetrics")
     }
     sc.listenerBus.addToQueue(new BlazeOperatorMetricsListener(sc, plan), "BlazeOperatorMetrics")
@@ -109,8 +109,9 @@ class BlazeOperatorMetricsCollector extends Logging {
 }
 
 object BlazeOperatorMetricsCollector {
-  val isBlazeOperatorMetricsEnabled: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = true)
+  val isBlazeOperatorMetricsEnabled: Boolean = {
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = false)
+  }
 }
 
 class BlazeOperatorMetrics(
