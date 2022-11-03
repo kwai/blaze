@@ -124,4 +124,7 @@ case class NativeSortMergeJoinExec(
 
   override def doCanonicalize(): SparkPlan =
     SortMergeJoinExec(leftKeys, rightKeys, joinType, condition = None, left, right).canonicalized
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(left = newChildren(0), right = newChildren(1))
 }

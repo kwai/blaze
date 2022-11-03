@@ -169,4 +169,7 @@ case class NativeTakeOrderedExec(
         friendlyName = "NativeRDD.PartialTakeOrdered")
     }
   }
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
 }

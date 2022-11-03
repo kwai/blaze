@@ -121,4 +121,8 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
   val nativeSchema: Schema = Util.getNativeSchema(output)
 
   override def doCanonicalize(): SparkPlan = UnionExec(children).canonicalized
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(children = newChildren)
+
 }

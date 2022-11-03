@@ -39,6 +39,7 @@ import org.apache.spark.sql.catalyst.plans.LeftExistence
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.OneToOneDependency
+import org.apache.spark.RangeDependency
 import org.blaze.protobuf.HashJoinExecNode
 import org.blaze.protobuf.JoinOn
 import org.blaze.protobuf.PhysicalPlanNode
@@ -103,7 +104,7 @@ case class NativeBroadcastHashJoinExec(
     val rightRDD = NativeSupports.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
     val partitions = rightRDD.partitions
-    val dependencies = Seq(new OneToOneDependency(leftRDD), new OneToOneDependency(rightRDD))
+    val dependencies = leftRDD.dependencies ++ Seq(new OneToOneDependency(rightRDD))
 
     new NativeRDD(
       sparkContext,
@@ -140,4 +141,7 @@ case class NativeBroadcastHashJoinExec(
       condition = None,
       left,
       right).canonicalized
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(left = newChildren(0), right = newChildren(1))
 }

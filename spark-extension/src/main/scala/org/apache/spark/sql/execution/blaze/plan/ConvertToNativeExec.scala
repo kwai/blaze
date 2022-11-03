@@ -96,5 +96,8 @@ case class ConvertToNativeExec(override val child: SparkPlan)
 
   override def doCanonicalize(): SparkPlan = child.canonicalized
 
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
+
   override def simpleString: String = s"${this.nodeName} [$output]"
 }

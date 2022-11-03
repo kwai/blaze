@@ -74,7 +74,6 @@ import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.blaze.BlazeConvertStrategy.idTag
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.aggregate.Final
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
@@ -112,7 +111,7 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf
       .getBoolean("spark.blaze.enable.take.ordered.and.project", defaultValue = true)
   val enableAggr: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = false)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = true)
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
     exec
@@ -173,7 +172,6 @@ object BlazeConverters extends Logging {
           exec.setLogicalLink(basedExec.logicalLink.get)
           exec.children.foreach(setLogicalLink(_, basedExec))
         }
-        exec.setTagValue(idTag, exec.getTagValue(idTag).orNull)
         exec.setTagValue(convertibleTag, true)
         exec
       }
@@ -193,7 +191,7 @@ object BlazeConverters extends Logging {
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
 
     val convertedChild = outputPartitioning match {
-      case _: HashPartitioning if BlazeConvertStrategy.preferNativeShuffle =>
+      case p if p.isInstanceOf[HashPartitioning] || p.numPartitions == 1 =>
         convertToNative(child)
       case _ => child
     }

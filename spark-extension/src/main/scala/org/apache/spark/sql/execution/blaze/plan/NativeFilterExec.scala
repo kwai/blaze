@@ -68,4 +68,7 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
 
   override def doCanonicalize(): SparkPlan =
     FilterExec(condition, child).canonicalized
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
 }

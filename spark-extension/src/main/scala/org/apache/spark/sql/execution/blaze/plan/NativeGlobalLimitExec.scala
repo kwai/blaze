@@ -68,4 +68,7 @@ case class NativeGlobalLimitExec(limit: Long, override val child: SparkPlan)
 
   override def doCanonicalize(): SparkPlan =
     GlobalLimitExec(limit.toInt, child).canonicalized
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
 }

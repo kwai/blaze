@@ -190,4 +190,6 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     s"$nodeName (${basedFileScan.simpleString(maxFields)})"
 
   override def doCanonicalize(): SparkPlan = basedFileScan.canonicalized
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan = copy()
 }

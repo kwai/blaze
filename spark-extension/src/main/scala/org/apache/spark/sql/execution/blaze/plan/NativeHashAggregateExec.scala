@@ -209,6 +209,9 @@ case class NativeHashAggregateExec(
       resultExpressions = Nil,
       child).canonicalized
 
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
+
   override val nodeName: String =
     s"NativeHashAggregate.$aggrMode"
 }
