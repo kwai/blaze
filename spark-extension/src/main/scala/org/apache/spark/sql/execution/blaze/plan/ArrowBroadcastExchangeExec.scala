@@ -54,6 +54,7 @@ import org.apache.spark.broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.IpcWriterExecNode
@@ -171,7 +172,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
       "elapsed_compute" -> metrics("ipc_write_time"))
     val nativeMetrics = MetricNode(modifiedMetrics, inputRDD.metrics :: Nil)
 
-    val ipcRDD = new RDD[Array[Byte]](sparkContext, inputRDD.dependencies) {
+    val ipcRDD = new RDD[Array[Byte]](sparkContext, new OneToOneDependency(inputRDD) :: Nil) {
       setName("NativeRDD.BroadcastWrite")
 
       override protected def getPartitions: Array[Partition] = inputRDD.partitions

@@ -66,6 +66,7 @@ import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
 import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
+import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PartitionId
@@ -80,6 +81,7 @@ trait NativeSupports extends SparkPlan {
 
   protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
   protected override def doExecuteColumnar(): RDD[ColumnarBatch] = doExecuteNative().toColumnar
+
 }
 
 object NativeSupports extends Logging {
@@ -191,7 +193,7 @@ object NativeSupports extends Logging {
           shuffledRDD.sparkContext,
           metrics,
           shuffledRDD.partitions,
-          shuffledRDD.dependencies,
+          new OneToOneDependency(shuffledRDD) :: Nil,
           shuffledRDD.shuffleReadFull,
           (partition, taskContext) => {
             val shuffleReadMetrics = taskContext.taskMetrics().createTempShuffleReadMetrics()

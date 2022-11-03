@@ -61,8 +61,8 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
         SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) ++ NativeSupports
       .getDefaultNativeMetrics(sparkContext)
 
-  override def output: Seq[Attribute] = basedFileScan.output
-  override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning
+  override val output: Seq[Attribute] = basedFileScan.output
+  override val outputPartitioning: Partitioning = basedFileScan.outputPartitioning
 
   private val inputFileScanRDD = {
     basedFileScan.inputRDDs().head match {

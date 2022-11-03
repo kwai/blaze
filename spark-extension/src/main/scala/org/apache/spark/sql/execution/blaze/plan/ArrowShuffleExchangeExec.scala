@@ -100,11 +100,8 @@ case class ArrowShuffleExchangeExec(
       "dataSize" -> SQLMetrics
         .createSizeMetric(sparkContext, "data size")) ++ readMetrics ++ writeMetrics
 
-  override def nodeName: String = {
-    "ArrowShuffleExchange"
-  }
-
-  override def outputPartitioning: Partitioning = newPartitioning
+  override val nodeName: String = "ArrowShuffleExchange"
+  override val outputPartitioning: Partitioning = newPartitioning
 
   private val serializer: UnsafeRowSerializer =
     new UnsafeRowSerializer(child.output.size, longMetric("dataSize"))
@@ -147,6 +144,9 @@ case class ArrowShuffleExchangeExec(
     new ShuffledRowRDD(shuffleDependency, readMetrics, specifiedPartitionStartIndices)
   }
 
+  private lazy val shuffleDependency: ShuffleDependency[Int, InternalRow, InternalRow] =
+    prepareShuffleDependency()
+
   /**
    * Caches the created ShuffleRowRDD so we can reuse that.
    */
@@ -168,7 +168,6 @@ case class ArrowShuffleExchangeExec(
 
   override def eagerExecute(): RDD[InternalRow] = {
     if (cachedShuffleRDD == null) {
-      val shuffleDependency = prepareShuffleDependency()
       shuffleDependency.rdd.stageId = this.stageId
       val allOperatorMetrics = new mutable.HashSet[SQLMetric]()
       metrics.foreach {
@@ -241,7 +240,6 @@ case class ArrowShuffleExchangeExec(
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val shuffleDependency = prepareShuffleDependency()
     val shuffleHandle = shuffleDependency.shuffleHandle
     val rdd = doExecute()
 
@@ -259,8 +257,8 @@ case class ArrowShuffleExchangeExec(
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      rdd.partitions,
-      rdd.dependencies,
+      rddPartitions = rdd.partitions,
+      rddDependencies = shuffleDependency :: Nil,
       rdd.shuffleReadFull,
       (partition, taskContext) => {
         val shuffleReadMetrics = taskContext.taskMetrics().createTempShuffleReadMetrics()

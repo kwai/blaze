@@ -94,10 +94,8 @@ case class NativeSortMergeJoinExec(
     } else {
       rightRDD.partitions
     }
+    val dependencies = Seq(new OneToOneDependency(leftRDD), new OneToOneDependency(rightRDD))
 
-    val dependencies = Seq(
-      new OneToOneDependency[InternalRow](leftRDD.asInstanceOf[RDD[InternalRow]]),
-      new OneToOneDependency[InternalRow](rightRDD.asInstanceOf[RDD[InternalRow]]))
     new NativeRDD(
       sparkContext,
       nativeMetrics,

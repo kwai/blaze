@@ -45,6 +45,8 @@ import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec._
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.LongType
+import org.apache.spark.OneToOneDependency
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.blaze.{protobuf => pb}
 
 case class NativeHashAggregateExec(
@@ -162,6 +164,9 @@ case class NativeHashAggregateExec(
   override def output: Seq[Attribute] =
     (groupingExpressions ++ nativeAggrInfos.flatMap(_.outputPartialAttrs)).map(_.toAttribute)
 
+  override def outputPartitioning: Partitioning =
+    child.outputPartitioning
+
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)
     val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
@@ -169,8 +174,8 @@ case class NativeHashAggregateExec(
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      inputRDD.partitions,
-      inputRDD.dependencies,
+      rddPartitions = inputRDD.partitions,
+      rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.shuffleReadFull,
       (partition, taskContext) => {
 

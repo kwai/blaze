@@ -28,6 +28,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec.buildRenameColumnsExec
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.RenameColumnsExecNode
 
@@ -35,15 +36,14 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
     extends UnaryExecNode
     with NativeSupports {
 
-  override def output: Seq[Attribute] =
+  override val output: Seq[Attribute] =
     child.output
       .zip(renamedColumnNames)
       .map {
         case (attr, newName) => attr.withName(newName)
       }
-
-  override def outputPartitioning: Partitioning = child.outputPartitioning
-  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+  override val outputPartitioning: Partitioning = child.outputPartitioning
+  override val outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
@@ -55,8 +55,8 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      inputRDD.partitions,
-      inputRDD.dependencies,
+      rddPartitions = inputRDD.partitions,
+      rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val inputPlan = inputRDD.nativePlan(inputRDD.partitions(partition.index), taskContext)

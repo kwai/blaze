@@ -17,6 +17,7 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
+
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
@@ -85,6 +86,7 @@ import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.blaze.plan.Util
 
 object BlazeConverters extends Logging {
@@ -106,6 +108,9 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.limit", defaultValue = true)
   val enableGlobalLimit: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.global.limit", defaultValue = true)
+  val enableTakeOrderedAndProject: Boolean =
+    SparkEnv.get.conf
+      .getBoolean("spark.blaze.enable.take.ordered.and.project", defaultValue = true)
   val enableAggr: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = false)
 
@@ -149,6 +154,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertLocalLimitExec)
       case e: GlobalLimitExec if enableGlobalLimit => // global limit
         tryConvert(e, convertGlobalLimitExec)
+      case e: TakeOrderedAndProjectExec if enableTakeOrderedAndProject =>
+        tryConvert(e, convertTakeOrderedAndProjectExec)
       case e: HashAggregateExec if enableAggr => // aggregate
         tryConvert(e, convertHashAggregateExec)
 
@@ -451,6 +458,23 @@ object BlazeConverters extends Logging {
       case exec: GlobalLimitExec =>
         logDebug(s"Converting GlobalLimitExec: ${exec.simpleStringWithNodeId()}")
         return NativeGlobalLimitExec(exec.limit.toLong, exec.child)
+    }
+    exec
+  }
+
+  def convertTakeOrderedAndProjectExec(exec: SparkPlan): SparkPlan = {
+    exec match {
+      case exec: TakeOrderedAndProjectExec =>
+        logDebug(s"Converting TakeOrderedAndProjectExec: ${exec.simpleStringWithNodeId()}")
+        val nativeTakeOrdered =
+          NativeTakeOrderedExec(exec.limit, exec.sortOrder, convertToNative(exec.child))
+
+        if (exec.projectList != exec.child.output) {
+          val project = ProjectExec(exec.projectList, nativeTakeOrdered)
+          return tryConvert(project, convertProjectExec)
+        } else {
+          return nativeTakeOrdered
+        }
     }
     exec
   }

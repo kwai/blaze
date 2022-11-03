@@ -28,6 +28,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.GlobalLimitExec
+import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.LimitExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 
@@ -51,7 +52,7 @@ case class NativeGlobalLimitExec(limit: Long, override val child: SparkPlan)
       sparkContext,
       nativeMetrics,
       inputRDD.partitions,
-      inputRDD.dependencies,
+      new OneToOneDependency(inputRDD) :: Nil,
       rddShuffleReadFull = false,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)

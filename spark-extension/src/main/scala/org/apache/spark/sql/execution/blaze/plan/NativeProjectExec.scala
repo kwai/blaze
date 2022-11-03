@@ -37,6 +37,8 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec.getNativeProjectBuilder
 import org.apache.spark.sql.types.DataTypes
+import org.apache.spark.OneToOneDependency
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.ProjectionExecNode
@@ -51,9 +53,8 @@ case class NativeProjectExec(
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
-  private def outputExpressions: Seq[NamedExpression] = projectList
-
-  override def output: Seq[Attribute] = outputExpressions.map(_.toAttribute)
+  override val output: Seq[Attribute] = projectList.map(_.toAttribute)
+  override val outputPartitioning: Partitioning = child.outputPartitioning
 
   private val nativeProject = getNativeProjectBuilder(projectList, addTypeCast).buildPartial()
 
@@ -64,8 +65,8 @@ case class NativeProjectExec(
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      inputRDD.partitions,
-      inputRDD.dependencies,
+      rddPartitions = inputRDD.partitions,
+      rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)

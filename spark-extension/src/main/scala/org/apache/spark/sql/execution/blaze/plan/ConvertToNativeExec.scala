@@ -27,7 +27,6 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.blaze.MetricNode
@@ -35,8 +34,8 @@ import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.FFIReaderExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
@@ -44,13 +43,12 @@ import org.blaze.protobuf.Schema
 case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
-  override def nodeName: String = "ConvertToNative"
+  override val nodeName: String = "ConvertToNative"
 
-  def logicalLink: Option[LogicalPlan] = child.logicalLink
+  val logicalLink: Option[LogicalPlan] = child.logicalLink
 
-  override def output: Seq[Attribute] = child.output
-
-  override def outputPartitioning: Partitioning = child.outputPartitioning
+  override val output: Seq[Attribute] = child.output
+  override val outputPartitioning: Partitioning = child.outputPartitioning
 
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext) ++ Map(
@@ -68,8 +66,8 @@ case class ConvertToNativeExec(override val child: SparkPlan)
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      inputRDD.partitions,
-      inputRDD.dependencies,
+      rddPartitions = inputRDD.partitions,
+      rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.shuffleReadFull,
       (partition, context) => {
         val inputRowIter = inputRDD.compute(partition, context)

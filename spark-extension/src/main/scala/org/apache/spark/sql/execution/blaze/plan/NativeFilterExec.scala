@@ -28,6 +28,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.FilterExec
+import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.FilterExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 
@@ -38,10 +39,9 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
   override lazy val metrics: Map[String, SQLMetric] =
     NativeSupports.getDefaultNativeMetrics(sparkContext)
 
-  override def output: Seq[Attribute] = child.output
-  override def outputPartitioning: Partitioning = child.outputPartitioning
-  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
-
+  override val output: Seq[Attribute] = child.output
+  override val outputPartitioning: Partitioning = child.outputPartitioning
+  override val outputOrdering: Seq[SortOrder] = child.outputOrdering
   private val nativeFilterExpr = NativeConverters.convertExpr(condition)
 
   override def doExecuteNative(): NativeRDD = {
@@ -51,8 +51,8 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      inputRDD.partitions,
-      inputRDD.dependencies,
+      rddPartitions = inputRDD.partitions,
+      rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
