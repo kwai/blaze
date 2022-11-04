@@ -104,13 +104,12 @@ case class NativeBroadcastHashJoinExec(
     val rightRDD = NativeSupports.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
     val partitions = rightRDD.partitions
-    val dependencies = leftRDD.dependencies ++ Seq(new OneToOneDependency(rightRDD))
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       partitions,
-      dependencies,
+      rddDependencies = new OneToOneDependency(rightRDD) :: Nil,
       rightRDD.shuffleReadFull,
       (partition, context) => {
         val partition0 = new Partition() {

@@ -33,13 +33,10 @@ import org.apache.spark.InterruptibleIterator
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
-import org.apache.spark.sql.types.StructField
-import org.apache.spark.sql.types.StructType
 import org.apache.spark.Partition
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.execution.metric.SQLMetrics
