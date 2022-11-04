@@ -26,6 +26,8 @@ use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Cursor;
 use std::sync::Arc;
+use datafusion::physical_expr::utils::expr_list_eq_any_order;
+use crate::expr::down_cast_any_ref;
 
 #[derive(Clone)]
 pub struct SparkExpressionWrapperExpr {
@@ -36,6 +38,23 @@ pub struct SparkExpressionWrapperExpr {
     pub input_schema: SchemaRef,
     pub params_schema: SchemaRef,
     jcontext: OnceCell<GlobalRef>,
+}
+
+impl PartialEq<dyn Any> for SparkExpressionWrapperExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        down_cast_any_ref(other)
+            .downcast_ref::<Self>()
+            .map(|x|
+                expr_list_eq_any_order(&self.params, &x.params) &&
+                    self.serialized == x.serialized &&
+                    self.return_type == x.return_type &&
+                    self.return_nullable == x.return_nullable &&
+                    self.input_schema == x.input_schema &&
+                    self.params_schema == x.params_schema &&
+                    self.jcontext.get().is_none() && x.jcontext.get().is_none()
+            )
+            .unwrap_or(false)
+    }
 }
 
 impl SparkExpressionWrapperExpr {
@@ -155,5 +174,19 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
                 0,
             )?))
         }
+    }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        self.params.clone()
+    }
+
+    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(Arc::new(Self::try_new(
+            self.serialized.clone(),
+            self.return_type.clone(),
+            self.return_nullable,
+            children,
+            self.input_schema.clone(),
+        )?))
     }
 }

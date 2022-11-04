@@ -10,10 +10,10 @@ use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::logical_plan::JoinType;
+use datafusion::logical_expr::JoinType;
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::join_utils::{
+use datafusion::physical_plan::joins::utils::{
     build_join_schema, check_join_is_valid, JoinOn,
 };
 use datafusion::physical_plan::metrics::{
@@ -108,11 +108,14 @@ impl ExecutionPlan for SortMergeJoinExec {
 
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
         match self.join_type {
-            JoinType::Inner | JoinType::Left | JoinType::Semi | JoinType::Anti => {
+            JoinType::Inner | JoinType::Left | JoinType::LeftSemi | JoinType::LeftAnti => {
                 self.left.output_ordering()
             }
             JoinType::Right => self.right.output_ordering(),
             JoinType::Full => None,
+            j @ (JoinType::RightSemi | JoinType::RightAnti) => {
+                panic!("join type not supported: {:?}", j);
+            }
         }
     }
 
@@ -264,7 +267,7 @@ async fn execute_join(
                 .map_err(ArrowError::from)
             }
 
-            JoinType::Semi | JoinType::Anti => join_semi(
+            JoinType::LeftSemi | JoinType::LeftAnti => join_semi(
                 &mut left_cursor,
                 &mut right_cursor,
                 join_params_clone,
@@ -273,6 +276,10 @@ async fn execute_join(
             )
             .await
             .map_err(ArrowError::from),
+
+            j @ (JoinType::RightSemi | JoinType::RightAnti) => {
+                panic!("join type not supported: {:?}", j);
+            }
         };
 
         if let Err(e) = result {
@@ -697,21 +704,21 @@ async fn join_semi(
     }
 
     while left_cursor.current().is_some() {
-        if join_type == JoinType::Semi && right_cursor.current().is_none() {
+        if join_type == JoinType::LeftSemi && right_cursor.current().is_none() {
             break;
         }
 
         let ord = compare_cursor(left_cursor, right_cursor, &join_params);
         match ord {
             Ordering::Less => {
-                if join_type == JoinType::Anti {
+                if join_type == JoinType::LeftAnti {
                     output_left_current_record!();
                 }
                 left_cursor.forward().await?;
                 continue;
             }
             Ordering::Equal => {
-                if join_type == JoinType::Semi {
+                if join_type == JoinType::LeftSemi {
                     output_left_current_record!();
                 }
                 left_cursor.forward().await?;
@@ -955,10 +962,9 @@ mod tests {
     use datafusion::arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_sorted_eq;
     use datafusion::error::Result;
-    use datafusion::logical_plan::JoinType;
+    use datafusion::logical_expr::JoinType;
     use datafusion::physical_expr::expressions::Column;
     use datafusion::physical_plan::common;
-    use datafusion::physical_plan::join_utils::JoinOn;
     use datafusion::physical_plan::memory::MemoryExec;
     use datafusion::physical_plan::ExecutionPlan;
     use std::sync::Arc;
@@ -1516,7 +1522,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Anti).await?;
+        let (_, batches) = join_collect(left, right, on, JoinType::LeftAnti).await?;
         let expected = vec![
             "+----+----+----+",
             "| a1 | b1 | c1 |",
@@ -1547,7 +1553,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Semi).await?;
+        let (_, batches) = join_collect(left, right, on, JoinType::LeftSemi).await?;
         let expected = vec![
             "+----+----+----+",
             "| a1 | b1 | c1 |",

@@ -38,11 +38,12 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             macro_rules! handle_decimal {
                 ($dt:ident, $precision:expr, $scale:expr) => {{
                     type T = paste::paste! {datafusion::arrow::datatypes::[<$dt Type>]};
-                    let array = array.as_any().downcast_ref::<DecimalArray<T>>().unwrap();
+                    let array = array.as_any().downcast_ref::<PrimitiveArray<T>>().unwrap();
+                    let _0 = <T as ArrowPrimitiveType>::Native::from_le_bytes([0; T::BYTE_LENGTH]);
                     let filtered = array
                         .iter()
-                        .map(|v| v.filter(|v| *v.raw_value() != [0u8; T::BYTE_LENGTH]));
-                    Arc::new(DecimalArray::<T>::from_iter(filtered)
+                        .map(|v| v.filter(|v| *v != _0));
+                    Arc::new(PrimitiveArray::<T>::from_iter(filtered)
                         .with_precision_and_scale($precision, $scale)?
                     )
                 }}

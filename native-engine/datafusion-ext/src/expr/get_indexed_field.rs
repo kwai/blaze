@@ -27,6 +27,7 @@ use datafusion::physical_expr::PhysicalExpr;
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::{any::Any, sync::Arc};
+use crate::expr::down_cast_any_ref;
 
 /// expression to get a field of a struct array.
 #[derive(Debug)]
@@ -46,6 +47,15 @@ impl FixedSizeListGetIndexedFieldExpr {
 
     pub fn arg(&self) -> &Arc<dyn PhysicalExpr> {
         &self.arg
+    }
+}
+
+impl PartialEq<dyn Any> for FixedSizeListGetIndexedFieldExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        down_cast_any_ref(other)
+            .downcast_ref::<Self>()
+            .map(|x| self.arg.eq(&x.arg) && self.key == x.key)
+            .unwrap_or(false)
     }
 }
 
@@ -107,6 +117,14 @@ impl PhysicalExpr for FixedSizeListGetIndexedFieldExpr {
             }
             (dt, key) => Err(DataFusionError::Execution(format!("get indexed field (FixedSizeList) is only possible on lists with int64 indexes. Tried {:?} with {:?} index", dt, key))),
         }
+    }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![self.arg.clone()]
+    }
+
+    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(Arc::new(Self::new(children[0].clone(), self.key.clone())))
     }
 }
 

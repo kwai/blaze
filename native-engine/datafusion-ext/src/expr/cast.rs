@@ -25,12 +25,22 @@ use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
+use crate::expr::down_cast_any_ref;
 
 /// cast expression compatible with spark
 #[derive(Debug)]
 pub struct TryCastExpr {
     pub expr: Arc<dyn PhysicalExpr>,
     pub cast_type: DataType,
+}
+
+impl PartialEq<dyn Any> for TryCastExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        down_cast_any_ref(other)
+            .downcast_ref::<Self>()
+            .map(|x| self.expr.eq(&x.expr) && self.cast_type == x.cast_type)
+            .unwrap_or(false)
+    }
 }
 
 impl TryCastExpr {
@@ -57,6 +67,7 @@ impl PhysicalExpr for TryCastExpr {
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
         Ok(true)
     }
+
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let value = self.expr.evaluate(batch)?;
@@ -137,6 +148,14 @@ impl PhysicalExpr for TryCastExpr {
             }
         }
     }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![self.expr.clone()]
+    }
+
+    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(Arc::new(Self::new(children[0].clone(), self.cast_type.clone())))
+    }
 }
 
 fn try_cast_string_array_to_integer(
@@ -174,18 +193,20 @@ fn try_cast_string_array_to_decimal(
 ) -> Result<ArrayRef> {
     if let &DataType::Decimal128(precision, scale) = cast_type {
         let array = array.as_any().downcast_ref::<StringArray>().unwrap();
-        let mut builder = Decimal128Builder::new(precision, scale);
+        let mut builder = Decimal128Builder::new();
 
         for v in array.iter() {
             match v {
                 Some(s) => match to_decimal(s, precision, scale) {
-                    Some(v) => builder.append_value(v)?,
+                    Some(v) => builder.append_value(v),
                     None => builder.append_null(),
                 },
                 None => builder.append_null(),
             }
         }
-        return Ok(Arc::new(builder.finish()));
+        return Ok(Arc::new(builder
+            .finish()
+            .with_precision_and_scale(precision, scale)?));
     }
     unreachable!("cast_type must be DataType::Decimal")
 }

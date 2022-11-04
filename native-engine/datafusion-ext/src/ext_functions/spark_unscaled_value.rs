@@ -32,7 +32,7 @@ pub fn spark_unscaled_value(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             let mut output = Int64Builder::new();
 
             for v in array.into_iter() {
-                output.append_option(v.map(|v| v.as_i128() as i64));
+                output.append_option(v.map(|v| v as i64));
             }
             ColumnarValue::Array(Arc::new(output.finish()))
         }

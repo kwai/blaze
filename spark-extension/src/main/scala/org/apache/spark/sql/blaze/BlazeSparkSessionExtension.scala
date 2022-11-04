@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.ColumnarRule
+import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.exchange.Exchange
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
@@ -48,7 +49,7 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
         if (NativeSupports.isNative(sparkPlanTransformed)) {
           val topNative = NativeSupports.getUnderlyingNativePlan(sparkPlanTransformed)
           val topNeededConvertToUnsafeRow = topNative match {
-            case _: Exchange => false
+            case _: Exchange | _: NativeTakeOrderedExec => false
             case _ => true
           }
           if (topNeededConvertToUnsafeRow) {

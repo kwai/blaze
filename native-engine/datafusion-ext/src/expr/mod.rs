@@ -12,9 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::any::Any;
+use std::sync::Arc;
+use datafusion::physical_expr::PhysicalExpr;
+
 pub mod cast;
 pub mod get_indexed_field;
 pub mod string_contains;
 pub mod string_ends_with;
 pub mod string_starts_with;
 pub mod spark_expression_wrapper;
+
+fn down_cast_any_ref(any: &dyn Any) -> &dyn Any {
+    if any.is::<Arc<dyn PhysicalExpr>>() {
+        any.downcast_ref::<Arc<dyn PhysicalExpr>>()
+            .unwrap()
+            .as_any()
+    } else if any.is::<Box<dyn PhysicalExpr>>() {
+        any.downcast_ref::<Box<dyn PhysicalExpr>>()
+            .unwrap()
+            .as_any()
+    } else {
+        any
+    }
+}

@@ -51,23 +51,25 @@ pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         },
         ColumnarValue::Array(array) => {
             let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
-            let mut output = Decimal128Builder::with_capacity(array.len(), to_precision, to_scale);
+            let mut output = Decimal128Builder::with_capacity(array.len());
 
             for v in array.into_iter() {
                 match v {
                     Some(v) => {
                         output.append_option(
                             change_precision_round_half_up(
-                                v.as_i128(),
+                                v,
                                 array.precision(),
                                 array.scale(),
                                 to_precision,
-                                to_scale))?;
+                                to_scale));
                     }
                     None => output.append_null(),
                 }
             }
-            ColumnarValue::Array(Arc::new(output.finish()))
+            ColumnarValue::Array(Arc::new(output
+                .finish()
+                .with_precision_and_scale(to_precision, to_scale)?))
         }
     })
 }

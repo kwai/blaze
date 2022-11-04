@@ -43,15 +43,17 @@ pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         },
         ColumnarValue::Array(array) => {
             let array = array.as_any().downcast_ref::<Int64Array>().unwrap();
-            let mut output = Decimal128Builder::with_capacity(array.len(), precision, scale);
+            let mut output = Decimal128Builder::with_capacity(array.len());
 
             for v in array.into_iter() {
                 match v {
-                    Some(v) => output.append_value(v as i128)?,
+                    Some(v) => output.append_value(v as i128),
                     None => output.append_null(),
                 }
             }
-            ColumnarValue::Array(Arc::new(output.finish()))
+            ColumnarValue::Array(Arc::new(output
+                .finish()
+                .with_precision_and_scale(precision, scale)?))
         }
     })
 }

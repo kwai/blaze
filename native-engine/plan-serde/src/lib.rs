@@ -15,8 +15,8 @@
 use crate::error::PlanSerDeError;
 use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 use datafusion::logical_expr::AggregateFunction;
-use datafusion::logical_plan::Operator;
-use datafusion::physical_plan::join_utils::JoinSide;
+use datafusion::logical_expr::Operator;
+use datafusion::physical_plan::joins::utils::JoinSide;
 use datafusion::prelude::JoinType;
 use datafusion::scalar::ScalarValue;
 
@@ -109,8 +109,8 @@ impl From<protobuf::JoinType> for JoinType {
             protobuf::JoinType::Left => JoinType::Left,
             protobuf::JoinType::Right => JoinType::Right,
             protobuf::JoinType::Full => JoinType::Full,
-            protobuf::JoinType::Semi => JoinType::Semi,
-            protobuf::JoinType::Anti => JoinType::Anti,
+            protobuf::JoinType::Semi => JoinType::LeftSemi,
+            protobuf::JoinType::Anti => JoinType::LeftAnti,
         }
     }
 }

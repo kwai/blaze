@@ -53,18 +53,20 @@ pub fn spark_round_n(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                 }
                 DataType::Decimal128(precision, scale) => {
                     let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
-                    let mut output = Decimal128Builder::with_capacity(array.len(), *precision, n as u8);
+                    let mut output = Decimal128Builder::with_capacity(array.len());
 
                     for v in array.into_iter() {
                         match v {
                             Some(v) => {
-                                let i128_val = round_decimal(v.as_i128(), *scale, n);
-                                output.append_option(i128_val)?;
+                                let i128_val = round_decimal(v, *scale, n);
+                                output.append_option(i128_val);
                             }
                             None => output.append_null(),
                         }
                     }
-                    ColumnarValue::Array(Arc::new(output.finish()))
+                    ColumnarValue::Array(Arc::new(output
+                        .finish()
+                        .with_precision_and_scale(*precision, n as u8)?))
                 }
                 dt => {
                     return Err(DataFusionError::Plan(

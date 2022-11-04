@@ -22,7 +22,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::BuiltinScalarFunction;
+use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::Operator;
 use datafusion::physical_expr::expressions::{create_aggregate_expr, Sum};
@@ -30,8 +30,8 @@ use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
     AggregateExec, AggregateMode, PhysicalGroupBy,
 };
-use datafusion::physical_plan::hash_join::{HashJoinExec, PartitionMode};
-use datafusion::physical_plan::join_utils::{ColumnIndex, JoinFilter};
+use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
+use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
@@ -89,130 +89,13 @@ fn bind(
             expr.name(),
             input_schema,
         )?))
-    } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
-        let binary_expr = Arc::new(BinaryExpr::new(
-            bind(expr.left().clone(), input_schema)?,
-            *expr.op(),
-            bind(expr.right().clone(), input_schema)?,
-        ));
-        Ok(binary_expr)
-    } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
-        let case_expr = Arc::new(CaseExpr::try_new(
-            expr.expr()
-                .as_ref()
-                .map(|exp| bind(exp.clone(), input_schema))
-                .transpose()?,
-            expr.when_then_expr()
-                .iter()
-                .map(|(when_expr, then_expr)| {
-                    (
-                        bind(when_expr.clone(), input_schema).unwrap(),
-                        bind(then_expr.clone(), input_schema).unwrap(),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            expr.else_expr()
-                .as_ref()
-                .map(|exp| bind((**exp).clone(), input_schema))
-                .transpose()?,
-        )?);
-        Ok(case_expr)
-    } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
-        let not_expr = Arc::new(NotExpr::new(bind(expr.arg().clone(), input_schema)?));
-        Ok(not_expr)
-    } else if let Some(expr) = expr.downcast_ref::<IsNullExpr>() {
-        let is_null = Arc::new(IsNullExpr::new(bind(expr.arg().clone(), input_schema)?));
-        Ok(is_null)
-    } else if let Some(expr) = expr.downcast_ref::<IsNotNullExpr>() {
-        let is_not_null =
-            Arc::new(IsNotNullExpr::new(bind(expr.arg().clone(), input_schema)?));
-        Ok(is_not_null)
-    } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
-        let in_list = Arc::new(InListExpr::new(
-            bind(expr.expr().clone(), input_schema)?,
-            expr.list()
-                .iter()
-                .map(|a| bind(a.clone(), input_schema))
-                .collect::<Result<Vec<_>, DataFusionError>>()?,
-            expr.negated(),
-            input_schema,
-        ));
-        Ok(in_list)
-    } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
-        let neg = Arc::new(NegativeExpr::new(bind(expr.arg().clone(), input_schema)?));
-        Ok(neg)
-    } else if expr.downcast_ref::<Literal>().is_some() {
-        Ok(expr_in)
-    } else if let Some(cast) = expr.downcast_ref::<CastExpr>() {
-        let cast = Arc::new(CastExpr::new(
-            bind(cast.expr().clone(), input_schema)?,
-            cast.cast_type().clone(),
-            DEFAULT_DATAFUSION_CAST_OPTIONS,
-        ));
-        Ok(cast)
-    } else if let Some(cast) = expr.downcast_ref::<TryCastExpr>() {
-        let string_try_cast = Arc::new(TryCastExpr::new(
-            bind(cast.expr.clone(), input_schema)?,
-            cast.cast_type.clone(),
-        ));
-        Ok(string_try_cast)
-    } else if let Some(expr) = expr.downcast_ref::<ScalarFunctionExpr>() {
-        let sfe = Arc::new(ScalarFunctionExpr::new(
-            expr.name(),
-            expr.fun().clone(),
-            expr.args()
-                .iter()
-                .map(|e| bind(e.clone(), input_schema))
-                .collect::<Result<Vec<_>, _>>()?,
-            expr.return_type(),
-        ));
-        Ok(sfe)
-    } else if let Some(expr) = expr.downcast_ref::<SparkExpressionWrapperExpr>() {
-        let params = expr
-            .params
-            .iter()
-            .map(|param| bind(param.clone(), input_schema))
-            .collect::<Result<Vec<_>, _>>()?;
-        let expr = Arc::new(SparkExpressionWrapperExpr::try_new(
-            expr.serialized.clone(),
-            expr.return_type.clone(),
-            expr.return_nullable,
-            params,
-            input_schema.clone(),
-        )?);
-        Ok(expr)
-    } else if let Some(expr) = expr.downcast_ref::<GetIndexedFieldExpr>() {
-        let expr = Arc::new(GetIndexedFieldExpr::new(
-            bind(expr.arg().clone(), input_schema)?,
-            expr.key().clone(),
-        ));
-        Ok(expr)
-    } else if let Some(expr) = expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>() {
-        let expr = Arc::new(FixedSizeListGetIndexedFieldExpr::new(
-            bind(expr.arg().clone(), input_schema)?,
-            expr.key().clone(),
-        ));
-        Ok(expr)
-    } else if let Some(expr) = expr.downcast_ref::<StringStartsWithExpr>() {
-        let expr = Arc::new(StringStartsWithExpr::new(
-           bind(expr.expr().clone(), input_schema)?,
-          expr.prefix().to_owned(),
-        ));
-        Ok(expr)
-    } else if let Some(expr) = expr.downcast_ref::<StringEndsWithExpr>() {
-        let expr = Arc::new(StringEndsWithExpr::new(
-            bind(expr.expr().clone(), input_schema)?,
-            expr.suffix().to_owned(),
-        ));
-        Ok(expr)
-    } else if let Some(expr) = expr.downcast_ref::<StringContainsExpr>() {
-        let expr = Arc::new(StringContainsExpr::new(
-            bind(expr.expr().clone(), input_schema)?,
-            expr.infix().to_owned(),
-        ));
-        Ok(expr)
     } else {
-        unimplemented!("Expression binding not implemented yet")
+        let new_children = expr_in
+            .children()
+            .iter()
+            .map(|child_expr| bind(child_expr.clone(), input_schema))
+            .collect::<Result<Vec<_>, DataFusionError>>()?;
+        Ok(expr_in.with_new_children(new_children)?)
     }
 }
 
@@ -226,13 +109,13 @@ pub fn convert_physical_expr_to_logical_expr(
             expr.name(),
         )))
     } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
-        Ok(Expr::BinaryExpr {
+        Ok(Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr {
             left: Box::new(convert_physical_expr_to_logical_expr(expr.left())?),
             op: expr.op().clone(),
             right: Box::new(convert_physical_expr_to_logical_expr(expr.right())?),
-        })
+        }))
     } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
-        Ok(Expr::Case {
+        Ok(Expr::Case(Case {
             expr: expr
                 .expr()
                 .as_ref()
@@ -254,7 +137,7 @@ pub fn convert_physical_expr_to_logical_expr(
                     convert_physical_expr_to_logical_expr(else_expr).map(Box::new)
                 })
                 .transpose()?,
-        })
+        }))
     } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
         Ok(Expr::Not(Box::new(convert_physical_expr_to_logical_expr(
             &expr.arg(),
@@ -284,10 +167,10 @@ pub fn convert_physical_expr_to_logical_expr(
     } else if let Some(expr) = expr.downcast_ref::<Literal>() {
         Ok(Expr::Literal(expr.value().clone()))
     } else if let Some(expr) = expr.downcast_ref::<CastExpr>() {
-        Ok(Expr::Cast {
+        Ok(Expr::Cast(Cast {
             expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr())?),
             data_type: expr.cast_type().clone(),
-        })
+        }))
     } else if let Some(expr) = expr.downcast_ref::<TryCastExpr>() {
         Ok(Expr::TryCast {
             expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr)?),
@@ -377,11 +260,11 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         .ok()
                     })
                     .fold(Expr::Literal(ScalarValue::from(true)), |a, b| {
-                        Expr::BinaryExpr {
+                        Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr {
                             op: Operator::And,
                             left: Box::new(a),
                             right: Box::new(b),
-                        }
+                        })
                     });
                 Ok(Arc::new(ParquetExec::new(
                     conf,

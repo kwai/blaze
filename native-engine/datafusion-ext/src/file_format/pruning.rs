@@ -31,7 +31,6 @@
 //! Copied from datafusion v13.0.0, modified to support pruning
 //! IsNotNull operator.
 
-use std::convert::TryFrom;
 use std::{collections::HashSet, sync::Arc};
 
 use arrow::record_batch::RecordBatchOptions;
@@ -40,17 +39,17 @@ use arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use datafusion::common::{downcast_value, ScalarValue};
+use datafusion::common::{Column, DFSchema, downcast_value, ScalarValue};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::expr_rewriter::{ExprRewritable, ExprRewriter};
 use datafusion::logical_expr::utils::expr_to_columns;
-use datafusion::logical_expr::{binary_expr, cast, try_cast, ExprSchemable};
+use datafusion::logical_expr::{binary_expr, cast, try_cast, ExprSchemable, ColumnarValue, Cast, BinaryExpr};
 use datafusion::physical_expr::create_physical_expr;
 use datafusion::prelude::lit;
 use datafusion::{
     error::{DataFusionError, Result},
-    logical_plan::{Column, DFSchema, Expr, Operator},
-    physical_plan::{ColumnarValue, PhysicalExpr},
+    logical_expr::{Expr, Operator},
+    physical_expr::PhysicalExpr,
 };
 
 /// Interface to pass statistics information to [`PruningPredicate`]
@@ -536,7 +535,7 @@ fn rewrite_expr_to_prunable(
         // `col op lit()`
         Expr::Column(_) => Ok((column_expr.clone(), op, scalar_expr.clone())),
         // `cast(col) op lit()`
-        Expr::Cast { expr, data_type } => {
+        Expr::Cast(Cast { expr, data_type }) => {
             let from_type = expr.get_type(&schema)?;
             verify_support_type_for_prune(&from_type, data_type)?;
             let (left, op, right) =
@@ -767,7 +766,7 @@ fn build_predicate_expression(
 
     // predicate expression can only be a binary expression
     let (left, op, right) = match expr {
-        Expr::BinaryExpr { left, op, right } => (left, *op, right),
+        Expr::BinaryExpr(BinaryExpr { left, op, right }) => (left, *op, right),
         Expr::IsNull(expr) => {
             let expr = build_is_null_column_expr(expr, schema, required_columns)
                 .unwrap_or(unhandled);

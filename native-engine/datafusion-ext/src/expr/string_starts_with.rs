@@ -21,11 +21,21 @@ use arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_plan::PhysicalExpr;
+use crate::expr::down_cast_any_ref;
 
 #[derive(Debug)]
 pub struct StringStartsWithExpr {
     expr: Arc<dyn PhysicalExpr>,
     prefix: String,
+}
+
+impl PartialEq<dyn Any> for StringStartsWithExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        down_cast_any_ref(other)
+            .downcast_ref::<Self>()
+            .map(|x| self.expr.eq(&x.expr) && self.prefix == x.prefix)
+            .unwrap_or(false)
+    }
 }
 
 impl StringStartsWithExpr {
@@ -87,5 +97,14 @@ impl PhysicalExpr for StringStartsWithExpr {
                 Err(DataFusionError::Plan(format!("starts_with: invalid expr: {:?}", expr)))
             }
         }
+    }
+
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![self.expr.clone()]
+    }
+
+    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(Arc::new(Self::new(children[0].clone(), self.prefix.clone())))
     }
 }

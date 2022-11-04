@@ -32,4 +32,5 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-parquet = { path = "patched/parquet-24.0.0-kwai" }
+datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "7e944ede86457fe0f43be44e0e5550229ecaf008" }
+parquet = { path = "patched/parquet-25.0.0-kwai" }
