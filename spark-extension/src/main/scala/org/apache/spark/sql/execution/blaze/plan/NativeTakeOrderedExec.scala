@@ -36,8 +36,6 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
 import org.apache.spark.OneToOneDependency
-import org.apache.spark.sql.execution.adaptive.ShuffleQueryStage
-import org.apache.spark.ShuffleDependency
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.PhysicalSortExprNode
@@ -71,12 +69,13 @@ case class NativeTakeOrderedExec(
   }
 
   override def executeCollect(): Array[InternalRow] = {
-    val partial = ConvertToUnsafeRowExec(NativePartialTakeOrderedExec(child, sortOrder))
+    val partial = ConvertToUnsafeRowExec(NativePartialTakeOrderedExec(sortOrder, child, metrics))
     val ord = new LazilyGeneratedOrdering(sortOrder, output)
 
     // all partitions are sorted, so perform a sorted-merge to achieve the result
     partial
       .execute()
+      .map(_.copy())
       .mapPartitions(iter => Iterator.single(iter.toArray))
       .reduce {
         case (array1, array2) =>
@@ -107,7 +106,7 @@ case class NativeTakeOrderedExec(
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val partial = NativePartialTakeOrderedExec(child, sortOrder)
+    val partial = NativePartialTakeOrderedExec(sortOrder, child)
     if (partial.outputPartitioning.numPartitions <= 1) {
       return NativeSupports.executeNative(partial)
     }
@@ -140,8 +139,9 @@ case class NativeTakeOrderedExec(
     TakeOrderedAndProjectExec(limit.toInt, sortOrder, Nil, child).canonicalized
 
   case class NativePartialTakeOrderedExec(
+      sortOrder: Seq[SortOrder],
       override val child: SparkPlan,
-      sortOrder: Seq[SortOrder])
+      override val metrics: Map[String, SQLMetric] = Map())
       extends UnaryExecNode
       with NativeSupports {
 
@@ -152,7 +152,7 @@ case class NativeTakeOrderedExec(
       val inputRDD = NativeSupports.executeNative(child)
       new NativeRDD(
         sparkContext,
-        metrics = MetricNode(Map(), inputRDD.metrics :: Nil),
+        metrics = MetricNode(metrics, inputRDD.metrics :: Nil),
         inputRDD.partitions,
         new OneToOneDependency(inputRDD) :: Nil,
         rddShuffleReadFull = false,
