@@ -36,25 +36,13 @@ import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.LocalLimitExec
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
+import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
 import org.apache.spark.sql.types.TimestampType
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
 
-  val neverConvertExecWithTimestampEnabled: Boolean =
-    SparkEnv.get.conf
-      .getBoolean(
-        "spark.blaze.strategy.enable.neverConvertExecWithTimestamp",
-        defaultValue = true)
-  val neverConvertJoinsWithPostConditionEnabled: Boolean =
-    SparkEnv.get.conf.getBoolean(
-      "spark.blaze.strategy.enable.neverConvertJoinsWithCondition",
-      defaultValue = true)
-  val neverConvertPartialAggregateShuffleExchangeEnabled: Boolean =
-    SparkEnv.get.conf.getBoolean(
-      "spark.blaze.strategy.enable.neverConvertAggregateShuffleExchange",
-      defaultValue = true)
-
+  val depthTag: TreeNodeTag[Int] = TreeNodeTag("blaze.depth")
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
   val convertStrategyTag: TreeNodeTag[ConvertStrategy] = TreeNodeTag("blaze.convert.strategy")
   val hashAggrModeTag: TreeNodeTag[AggregateMode] = TreeNodeTag("blaze.hash.aggr.mode")
@@ -62,6 +50,13 @@ object BlazeConvertStrategy extends Logging {
   def apply(exec: SparkPlan): Unit = {
     exec.foreach(_.setTagValue(convertibleTag, true))
     exec.foreach(_.setTagValue(convertStrategyTag, Default))
+
+    // fill depth
+    exec.setTagValue(depthTag, 0)
+    exec.foreach(e => {
+      val childDepth = e.getTagValue(depthTag).get + 1
+      e.children.foreach(_.setTagValue(depthTag, childDepth))
+    })
 
     // try to convert all plans and fill convertible tag back to origin exec
     var danglingChildren = Seq[SparkPlan]()
@@ -88,16 +83,22 @@ object BlazeConvertStrategy extends Logging {
       danglingChildren = newDangling :+ converted
     }
 
+    // fill convert strategy of stage inputs
+    exec.foreachUp {
+      case stageInput: QueryStageInput =>
+        stageInput.setTagValue(
+          convertStrategyTag,
+          if (NativeSupports.isNative(stageInput)) {
+            AlwaysConvert
+          } else {
+            NeverConvert
+          })
+      case _ =>
+    }
+
     // execute some special strategies
-    if (neverConvertExecWithTimestampEnabled) {
-      neverConvertExecWithTimestamp(exec)
-    }
-    if (neverConvertJoinsWithPostConditionEnabled) {
-      neverConvertJoinsWithPostCondition(exec)
-    }
-    if (neverConvertPartialAggregateShuffleExchangeEnabled) {
-      neverConvertPartialAggregateShuffleExchange(exec)
-    }
+    neverConvertExecWithTimestamp(exec)
+    neverConvertJoinsWithPostCondition(exec)
     removeInefficientConverts(exec)
 
     def hasLessConvertibleChildren(e: SparkPlan) =
@@ -118,15 +119,18 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: SortExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: UnionExec if !hasLessConvertibleChildren(e) =>
+      case e: UnionExec
+          if e.children.count(isAlwaysConvert) >= e.children.count(isNeverConvert) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: SortMergeJoinExec if !hasLessConvertibleChildren(e) =>
+      case e: SortMergeJoinExec if e.children.exists(isAlwaysConvert) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: BroadcastHashJoinExec if !hasLessConvertibleChildren(e) =>
+      case e: BroadcastHashJoinExec if e.children.forall(isAlwaysConvert) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: LocalLimitExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: GlobalLimitExec if isAlwaysConvert(e.child) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: TakeOrderedAndProjectExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: HashAggregateExec
           if isAlwaysConvert(e.child) || !e.getTagValue(hashAggrModeTag).contains(Partial) =>
@@ -166,48 +170,56 @@ object BlazeConvertStrategy extends Logging {
     }
   }
 
-  private def neverConvertPartialAggregateShuffleExchange(exec: SparkPlan): Unit = {
-    exec.foreach {
-      case exec @ ShuffleExchangeExec(_, aggr @ HashAggregateExec(None, _, _, _, _, _, _))
-          if isNeverConvert(aggr) =>
-        // shuffle of partial hash aggregate without requiring child distribution
-        exec.setTagValue(convertStrategyTag, NeverConvert)
-
-      case _ =>
-    }
-  }
-
   private def removeInefficientConverts(exec: SparkPlan): Unit = {
     var finished = false
 
     while (!finished) {
       finished = true
-
-      exec.foreach {
-        // [ ConvertToNative -> NativeFilter ]
-        case e: FilterExec if !isNeverConvert(e) && isNeverConvert(e.child) =>
-          e.setTagValue(convertStrategyTag, NeverConvert)
+      val dontConvertIf = (exec: SparkPlan, condition: Boolean) => {
+        if (condition) {
+          exec.setTagValue(convertStrategyTag, NeverConvert)
           finished = false
-
-        // [ ConvertToNative -> NativePartialAggr ]
-        case e: HashAggregateExec if !isNeverConvert(e) && isNeverConvert(e.child) =>
-          if (e.getTagValue(hashAggrModeTag).contains(Partial)) {
-            e.setTagValue(convertStrategyTag, NeverConvert)
-            finished = false
-          }
-
-        case e if isNeverConvert(e) =>
-          e.children.foreach {
-            // [ NativeParquetScan -> ConvertToUnsafeRow ]
-            case child: FileSourceScanExec if !isNeverConvert(child) =>
-              child.setTagValue(convertStrategyTag, NeverConvert)
-              finished = false
-
-            case _ =>
-          }
-
-        case _ =>
+        }
       }
+
+      exec.foreach { e =>
+        // [ (non-native) -> Filter(native) ]
+        dontConvertIf(
+          e,
+          e.isInstanceOf[FilterExec] && !isNeverConvert(e) && isNeverConvert(e.children.head))
+
+        // [ (non-native) -> PartialAggr(native) ]
+        dontConvertIf(
+          e,
+          e.isInstanceOf[HashAggregateExec] &&
+            isPartialHashAggregate(e) &&
+            !isNeverConvert(e) &&
+            isNeverConvert(e.children.head))
+
+        // [ PartialAggr -> ShuffleExchange(native) ]
+        dontConvertIf(
+          e,
+          e.isInstanceOf[ShuffleExchangeExec] &&
+            isPartialHashAggregate(e.children.head) &&
+            !isNeverConvert(e) &&
+            isNeverConvert(e.children.head))
+
+        //// [ NativeParquetScan -> (non-native) ]
+        e.children.foreach { child =>
+          dontConvertIf(
+            child,
+            child.isInstanceOf[FileSourceScanExec] &&
+              !isNeverConvert(child) &&
+              isNeverConvert(e))
+        }
+      }
+    }
+  }
+
+  private def isPartialHashAggregate(e: SparkPlan): Boolean = {
+    e match {
+      case e: HashAggregateExec => e.requiredChildDistributionExpressions.isEmpty
+      case _ => false
     }
   }
 }

@@ -74,6 +74,7 @@ import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.aggregate.Final
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
@@ -114,11 +115,23 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = true)
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
-    exec
-      .transformUp {
-        case exec if BlazeConvertStrategy.isNeverConvert(exec) => exec
-        case exec => convertSparkPlan(exec)
+
+    // convert
+    var danglingConverted: Seq[SparkPlan] = Nil
+    exec.foreachUp { exec =>
+      val (newDanglingConverted, newChildren) =
+        danglingConverted.splitAt(danglingConverted.length - exec.children.length)
+
+      var newExec = exec.withNewChildren(newChildren)
+      if (!isNeverConvert(exec)) {
+        newExec = convertSparkPlan(newExec)
       }
+      danglingConverted = newDanglingConverted :+ newExec
+    }
+    val converted = danglingConverted.head
+
+    // insert necessary ConvertToUnsafeRowExec
+    converted
       .transformUp {
         case exec @ (
               _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |

@@ -42,7 +42,19 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
   override def preColumnarTransitions: Rule[SparkPlan] =
     new Rule[SparkPlan] {
       override def apply(sparkPlan: SparkPlan): SparkPlan = {
+        // generate convert strategy
         BlazeConvertStrategy.apply(sparkPlan)
+        logDebug("Blaze convert strategy for current stage:")
+        sparkPlan.foreach { exec =>
+          val depth = exec.getTagValue(BlazeConvertStrategy.depthTag).getOrElse(0)
+          val nodeName = exec.nodeName
+          val convertible = exec
+            .getTagValue(BlazeConvertStrategy.convertibleTag)
+            .getOrElse(false)
+          val strategy =
+            exec.getTagValue(BlazeConvertStrategy.convertStrategyTag).getOrElse(Default)
+          logWarning(s" +${"-" * depth} $nodeName (convertible=$convertible, strategy=$strategy)")
+        }
         var sparkPlanTransformed = BlazeConverters.convertSparkPlanRecursively(sparkPlan)
 
         // wrap with ConvertUnsafeRowExec if top exec is native
