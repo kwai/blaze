@@ -72,6 +72,7 @@ import org.apache.spark.util.collection.unsafe.sort.PrefixComparators
 import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.ExternalBlockStoreUtils
+import org.blaze.protobuf.CoalesceBatchesExecNode
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PhysicalExprNode
@@ -375,9 +376,11 @@ object ArrowShuffleExchangeExec {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val numPartitions = outputPartitioning.numPartitions
+
+    val nativeInnerMetrics = MetricNode(Map(), nativeInputRDD.metrics :: Nil)
     val nativeMetrics = MetricNode(
       Map(),
-      nativeInputRDD.metrics :: Nil,
+      nativeInnerMetrics :: Nil,
       Some({
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
@@ -409,16 +412,28 @@ object ArrowShuffleExchangeExec {
           case p =>
             throw new NotImplementedError(s"cannot convert partitioning to native: $p")
         }
-        PhysicalPlanNode
+
+        val input = nativeInputRDD.nativePlan(nativeInputPartition, taskContext)
+        val nativeCoalesceBatchesExec = PhysicalPlanNode
+          .newBuilder()
+          .setCoalesceBatches(
+            CoalesceBatchesExecNode
+              .newBuilder()
+              .setInput(input)
+              .setBatchSize(NativeSupports.batchSize))
+          .build()
+        val nativeShuffleWriteExec = PhysicalPlanNode
           .newBuilder()
           .setShuffleWriter(
             ShuffleWriterExecNode
               .newBuilder()
-              .setInput(nativeInputRDD.nativePlan(nativeInputPartition, taskContext))
+              .setInput(nativeCoalesceBatchesExec)
               .setOutputPartitioning(nativeOutputPartitioning)
               .buildPartial()
           ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
           .build()
+
+        nativeShuffleWriteExec
       },
       friendlyName = "NativeRDD.ShuffleWrite")
 

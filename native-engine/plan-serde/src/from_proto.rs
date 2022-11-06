@@ -633,6 +633,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     schema,
                 )))
             }
+            PhysicalPlanType::CoalesceBatches(coalesce_batches) => {
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(coalesce_batches.input)?;
+                Ok(Arc::new(LimitExec::new(input, coalesce_batches.batch_size)))
+            }
         }
     }
 }

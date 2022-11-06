@@ -85,6 +85,14 @@ trait NativeSupports extends SparkPlan {
 }
 
 object NativeSupports extends Logging {
+  val batchSize: Long =
+    SparkEnv.get.conf.getLong("spark.blaze.batchSize", 16000)
+  val nativeMemory: Long =
+    SparkEnv.get.conf.getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024
+  val memoryFraction: Double =
+    SparkEnv.get.conf.getDouble("spark.blaze.memoryFraction", 0.75);
+  val tmpDirs: String =
+    SparkEnv.get.blockManager.diskBlockManager.localDirs.map(_.toString).mkString(",")
 
   val currentUser: UserGroupInformation = UserGroupInformation.getCurrentUser
 
@@ -336,17 +344,14 @@ case class BlazeCallNativeWrapper(
   private val nativeThreadFinished: BlockingQueue[Object] = new ArrayBlockingQueue(1)
 
   BlazeCallNativeWrapper.synchronized {
-    val conf = SparkEnv.get.conf
-    val batchSize = conf.getLong("spark.blaze.batchSize", 16384);
-    val nativeMemory = conf.getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024;
-    val memoryFraction = conf.getDouble("spark.blaze.memoryFraction", 0.75);
-    val tmpDirs =
-      SparkEnv.get.blockManager.diskBlockManager.localDirs.map(_.toString).mkString(",")
-
     if (!BlazeCallNativeWrapper.nativeInitialized) {
       logInfo(s"Initializing native environment ...")
       BlazeCallNativeWrapper.load("blaze")
-      JniBridge.initNative(batchSize, nativeMemory, memoryFraction, tmpDirs)
+      JniBridge.initNative(
+        NativeSupports.batchSize,
+        NativeSupports.nativeMemory,
+        NativeSupports.memoryFraction,
+        NativeSupports.tmpDirs)
       BlazeCallNativeWrapper.nativeInitialized = true
     }
   }
