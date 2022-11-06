@@ -46,6 +46,7 @@ use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, Statistics};
 use datafusion::{error::Result, scalar::ScalarValue};
 
 mod file_stream;
+mod fs;
 mod parquet;
 mod parquet_file_format;
 mod pruning;

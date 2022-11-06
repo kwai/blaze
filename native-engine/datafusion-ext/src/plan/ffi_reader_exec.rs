@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
+use blaze_commons::{
     jni_call, jni_call_static, jni_delete_local_ref, jni_new_global_ref, jni_new_object,
     jni_new_string,
 };

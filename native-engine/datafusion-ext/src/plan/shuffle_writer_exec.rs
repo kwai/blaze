@@ -60,9 +60,9 @@ use itertools::Itertools;
 use tempfile::NamedTempFile;
 use tokio::task;
 
-use crate::util::spark_hash::{create_hashes, pmod};
 use crate::util::array_builder::{builder_extend, make_batch, new_array_builders};
 use crate::util::ipc::write_one_batch;
+use crate::util::spark_hash::{create_hashes, pmod};
 
 struct PartitionBuffer {
     schema: SchemaRef,
@@ -308,7 +308,8 @@ impl ShuffleRepartitioner {
 
         let num_output_partitions = self.num_output_partitions;
         match &self.partitioning {
-            _ if num_output_partitions == 1 => { // single partition
+            _ if num_output_partitions == 1 => {
+                // single partition
                 let mut buffered_partitions = self.buffered_partitions.lock().await;
                 let output = &mut buffered_partitions[0];
                 let mem_diff = output.append_batch(input)?;

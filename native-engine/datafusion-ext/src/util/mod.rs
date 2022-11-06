@@ -13,6 +13,5 @@
 // limitations under the License.
 
 pub mod array_builder;
-pub mod fs;
 pub mod ipc;
 pub mod spark_hash;

@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use datafusion::arrow::array::*;
-use datafusion::common::ScalarValue;
 use datafusion::common::Result;
+use datafusion::common::ScalarValue;
 use datafusion::physical_plan::ColumnarValue;
+use std::sync::Arc;
 
 /// implements org.apache.spark.sql.catalyst.expressions.MakeDecimal
 pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
@@ -28,18 +28,18 @@ pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         &ColumnarValue::Scalar(ScalarValue::Int32(Some(scale))) => scale as u8,
         _ => unreachable!("make_decimal.scale is not int32 value"),
     };
-    assert!(precision >= 1, "make_decimal: illegal precision: {}", precision);
+    assert!(
+        precision >= 1,
+        "make_decimal: illegal precision: {}",
+        precision
+    );
 
     Ok(match &args[0] {
         ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Int64(Some(v)) => {
-                ColumnarValue::Scalar(
-                    ScalarValue::Decimal128(Some(*v as i128), precision, scale),
-                )
-            },
-            _ => {
-                ColumnarValue::Scalar(ScalarValue::Decimal128(None, precision, scale))
-            },
+            ScalarValue::Int64(Some(v)) => ColumnarValue::Scalar(
+                ScalarValue::Decimal128(Some(*v as i128), precision, scale),
+            ),
+            _ => ColumnarValue::Scalar(ScalarValue::Decimal128(None, precision, scale)),
         },
         ColumnarValue::Array(array) => {
             let array = array.as_any().downcast_ref::<Int64Array>().unwrap();
@@ -51,9 +51,9 @@ pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                     None => output.append_null(),
                 }
             }
-            ColumnarValue::Array(Arc::new(output
-                .finish()
-                .with_precision_and_scale(precision, scale)?))
+            ColumnarValue::Array(Arc::new(
+                output.finish().with_precision_and_scale(precision, scale)?,
+            ))
         }
     })
 }

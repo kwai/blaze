@@ -18,9 +18,9 @@ use jni::objects::JClass;
 use jni::objects::JMethodID;
 use jni::objects::JObject;
 use jni::objects::JStaticMethodID;
-use jni::signature::JavaType;
 use jni::signature::Primitive;
 use jni::signature::Primitive::Boolean;
+use jni::signature::ReturnType;
 use jni::JNIEnv;
 use jni::JavaVM;
 use once_cell::sync::OnceCell;
@@ -34,7 +34,7 @@ thread_local! {
                 JavaClasses::get().cJniBridge.class,
                 JavaClasses::get().cJniBridge.method_setContextClassLoader,
                 JavaClasses::get().cJniBridge.method_setContextClassLoader_ret.clone(),
-                &[jni::objects::JValue::from(JavaClasses::get().classloader)]
+                &[jni::sys::jvalue::from(jni::objects::JValue::from(JavaClasses::get().classloader))]
             ).unwrap_or_fatal();
             env
         });
@@ -44,6 +44,13 @@ thread_local! {
 macro_rules! jvalues {
     ($($args:expr,)* $(,)?) => {{
         &[$(jni::objects::JValue::from($args)),*] as &[jni::objects::JValue]
+    }}
+}
+
+#[macro_export]
+macro_rules! jvalues_sys {
+    ($($args:expr,)* $(,)?) => {{
+        &[$(jni::sys::jvalue::from(jni::objects::JValue::from($args))),*] as &[jni::sys::jvalue]
     }}
 }
 
@@ -120,8 +127,14 @@ macro_rules! jni_map_error {
 #[macro_export]
 macro_rules! jni_new_direct_byte_buffer {
     ($value:expr) => {{
-        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
-            $crate::jni_map_error_with_env!(env, env.new_direct_byte_buffer($value))
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| unsafe {
+            $crate::jni_map_error_with_env!(
+                env,
+                env.new_direct_byte_buffer(
+                    unsafe { $value.get_unchecked_mut(0) as *mut u8 },
+                    $value.len()
+                )
+            )
         })
     }};
 }
@@ -187,7 +200,7 @@ macro_rules! jni_call {
                     $obj,
                     paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method>]},
                     paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-                    $crate::jvalues!($($args,)*)
+                    $crate::jvalues_sys!($($args,)*)
                 )
             ).and_then(|result| $crate::jni_map_error_with_env!(env, <$ret>::try_from(result)))
         })
@@ -208,7 +221,7 @@ macro_rules! jni_call_static {
                     paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].class},
                     paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method>]},
                     paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
-                    $crate::jvalues!($($args,)*)
+                    $crate::jvalues_sys!($($args,)*)
                 )
             ).and_then(|result| $crate::jni_map_error_with_env!(env, <$ret>::try_from(result)))
         })
@@ -404,18 +417,18 @@ impl JavaClasses<'static> {
 #[allow(non_snake_case)]
 pub struct JniBridge<'a> {
     pub class: JClass<'a>,
-    pub method_getContextClassLoader: JStaticMethodID<'a>,
-    pub method_getContextClassLoader_ret: JavaType,
-    pub method_setContextClassLoader: JStaticMethodID<'a>,
-    pub method_setContextClassLoader_ret: JavaType,
-    pub method_getResource: JStaticMethodID<'a>,
-    pub method_getResource_ret: JavaType,
-    pub method_setTaskContext: JStaticMethodID<'a>,
-    pub method_setTaskContext_ret: JavaType,
-    pub method_getTaskContext: JStaticMethodID<'a>,
-    pub method_getTaskContext_ret: JavaType,
-    pub method_isTaskRunning: JStaticMethodID<'a>,
-    pub method_isTaskRunning_ret: JavaType,
+    pub method_getContextClassLoader: JStaticMethodID,
+    pub method_getContextClassLoader_ret: ReturnType,
+    pub method_setContextClassLoader: JStaticMethodID,
+    pub method_setContextClassLoader_ret: ReturnType,
+    pub method_getResource: JStaticMethodID,
+    pub method_getResource_ret: ReturnType,
+    pub method_setTaskContext: JStaticMethodID,
+    pub method_setTaskContext_ret: ReturnType,
+    pub method_getTaskContext: JStaticMethodID,
+    pub method_getTaskContext_ret: ReturnType,
+    pub method_isTaskRunning: JStaticMethodID,
+    pub method_isTaskRunning_ret: ReturnType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -429,41 +442,37 @@ impl<'a> JniBridge<'a> {
                 "getContextClassLoader",
                 "()Ljava/lang/ClassLoader;",
             )?,
-            method_getContextClassLoader_ret: JavaType::Object(
-                "java/lang/ClassLoader".to_owned(),
-            ),
+            method_getContextClassLoader_ret: ReturnType::Object,
             method_setContextClassLoader: env.get_static_method_id(
                 class,
                 "setContextClassLoader",
                 "(Ljava/lang/ClassLoader;)V",
             )?,
-            method_setContextClassLoader_ret: JavaType::Primitive(Primitive::Void),
+            method_setContextClassLoader_ret: ReturnType::Primitive(Primitive::Void),
             method_getResource: env.get_static_method_id(
                 class,
                 "getResource",
                 "(Ljava/lang/String;)Ljava/lang/Object;",
             )?,
-            method_getResource_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_getResource_ret: ReturnType::Object,
             method_getTaskContext: env.get_static_method_id(
                 class,
                 "getTaskContext",
                 "()Lorg/apache/spark/TaskContext;",
             )?,
-            method_getTaskContext_ret: JavaType::Object(
-                "org/apache/spark/TaskContext".to_owned(),
-            ),
+            method_getTaskContext_ret: ReturnType::Object,
             method_setTaskContext: env.get_static_method_id(
                 class,
                 "setTaskContext",
                 "(Lorg/apache/spark/TaskContext;)V",
             )?,
-            method_setTaskContext_ret: JavaType::Primitive(Primitive::Void),
+            method_setTaskContext_ret: ReturnType::Primitive(Primitive::Void),
             method_isTaskRunning: env.get_static_method_id(
                 class,
                 "isTaskRunning",
                 "()Z",
             )?,
-            method_isTaskRunning_ret: JavaType::Primitive(Boolean),
+            method_isTaskRunning_ret: ReturnType::Primitive(Boolean),
         })
     }
 }
@@ -471,8 +480,8 @@ impl<'a> JniBridge<'a> {
 #[allow(non_snake_case)]
 pub struct JavaClass<'a> {
     pub class: JClass<'a>,
-    pub method_getName: JMethodID<'a>,
-    pub method_getName_ret: JavaType,
+    pub method_getName: JMethodID,
+    pub method_getName_ret: ReturnType,
 }
 impl<'a> JavaClass<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/Class";
@@ -486,7 +495,7 @@ impl<'a> JavaClass<'a> {
                 "getName",
                 "()Ljava/lang/String;",
             )?,
-            method_getName_ret: JavaType::Object("java/lang/String".to_owned()),
+            method_getName_ret: ReturnType::Object,
         })
     }
 }
@@ -494,8 +503,8 @@ impl<'a> JavaClass<'a> {
 #[allow(non_snake_case)]
 pub struct JavaThrowable<'a> {
     pub class: JClass<'a>,
-    pub method_getMessage: JMethodID<'a>,
-    pub method_getMessage_ret: JavaType,
+    pub method_getMessage: JMethodID,
+    pub method_getMessage_ret: ReturnType,
 }
 impl<'a> JavaThrowable<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/Throwable";
@@ -509,7 +518,7 @@ impl<'a> JavaThrowable<'a> {
                 "getMessage",
                 "()Ljava/lang/String;",
             )?,
-            method_getMessage_ret: JavaType::Object("java/lang/String".to_owned()),
+            method_getMessage_ret: ReturnType::Object,
         })
     }
 }
@@ -517,7 +526,7 @@ impl<'a> JavaThrowable<'a> {
 #[allow(non_snake_case)]
 pub struct JavaRuntimeException<'a> {
     pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
+    pub ctor: JMethodID,
 }
 impl<'a> JavaRuntimeException<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/RuntimeException";
@@ -538,8 +547,8 @@ impl<'a> JavaRuntimeException<'a> {
 #[allow(non_snake_case)]
 pub struct JavaChannels<'a> {
     pub class: JClass<'a>,
-    pub method_newChannel: JStaticMethodID<'a>,
-    pub method_newChannel_ret: JavaType,
+    pub method_newChannel: JStaticMethodID,
+    pub method_newChannel_ret: ReturnType,
 }
 impl<'a> JavaChannels<'a> {
     pub const SIG_TYPE: &'static str = "java/nio/channels/Channels";
@@ -553,9 +562,7 @@ impl<'a> JavaChannels<'a> {
                 "newChannel",
                 "(Ljava/io/InputStream;)Ljava/nio/channels/ReadableByteChannel;",
             )?,
-            method_newChannel_ret: JavaType::Object(
-                "java/nio/channels/ReadableByteChannel".to_owned(),
-            ),
+            method_newChannel_ret: ReturnType::Object,
         })
     }
 }
@@ -563,10 +570,10 @@ impl<'a> JavaChannels<'a> {
 #[allow(non_snake_case)]
 pub struct JavaReadableByteChannel<'a> {
     pub class: JClass<'a>,
-    pub method_read: JMethodID<'a>,
-    pub method_read_ret: JavaType,
-    pub method_close: JMethodID<'a>,
-    pub method_close_ret: JavaType,
+    pub method_read: JMethodID,
+    pub method_read_ret: ReturnType,
+    pub method_close: JMethodID,
+    pub method_close_ret: ReturnType,
 }
 impl<'a> JavaReadableByteChannel<'a> {
     pub const SIG_TYPE: &'static str = "java/nio/channels/ReadableByteChannel";
@@ -576,9 +583,9 @@ impl<'a> JavaReadableByteChannel<'a> {
         Ok(JavaReadableByteChannel {
             class,
             method_read: env.get_method_id(class, "read", "(Ljava/nio/ByteBuffer;)I")?,
-            method_read_ret: JavaType::Primitive(Primitive::Int),
+            method_read_ret: ReturnType::Primitive(Primitive::Int),
             method_close: env.get_method_id(class, "close", "()V")?,
-            method_close_ret: JavaType::Primitive(Primitive::Void),
+            method_close_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -586,7 +593,7 @@ impl<'a> JavaReadableByteChannel<'a> {
 #[allow(non_snake_case)]
 pub struct JavaBoolean<'a> {
     pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
+    pub ctor: JMethodID,
 }
 impl<'a> JavaBoolean<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/Boolean";
@@ -603,9 +610,9 @@ impl<'a> JavaBoolean<'a> {
 #[allow(non_snake_case)]
 pub struct JavaLong<'a> {
     pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
-    pub method_longValue: JMethodID<'a>,
-    pub method_longValue_ret: JavaType,
+    pub ctor: JMethodID,
+    pub method_longValue: JMethodID,
+    pub method_longValue_ret: ReturnType,
 }
 impl<'a> JavaLong<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/Long";
@@ -616,7 +623,7 @@ impl<'a> JavaLong<'a> {
             class,
             ctor: env.get_method_id(class, "<init>", "(J)V")?,
             method_longValue: env.get_method_id(class, "longValue", "()J")?,
-            method_longValue_ret: JavaType::Primitive(Primitive::Long),
+            method_longValue_ret: ReturnType::Primitive(Primitive::Long),
         })
     }
 }
@@ -624,10 +631,10 @@ impl<'a> JavaLong<'a> {
 #[allow(non_snake_case)]
 pub struct JavaList<'a> {
     pub class: JClass<'a>,
-    pub method_size: JMethodID<'a>,
-    pub method_size_ret: JavaType,
-    pub method_get: JMethodID<'a>,
-    pub method_get_ret: JavaType,
+    pub method_size: JMethodID,
+    pub method_size_ret: ReturnType,
+    pub method_get: JMethodID,
+    pub method_get_ret: ReturnType,
 }
 impl<'a> JavaList<'a> {
     pub const SIG_TYPE: &'static str = "java/util/List";
@@ -637,9 +644,9 @@ impl<'a> JavaList<'a> {
         Ok(JavaList {
             class,
             method_size: env.get_method_id(class, "size", "()I")?,
-            method_size_ret: JavaType::Primitive(Primitive::Int),
+            method_size_ret: ReturnType::Primitive(Primitive::Int),
             method_get: env.get_method_id(class, "get", "(I)Ljava/lang/Object;")?,
-            method_get_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_get_ret: ReturnType::Object,
         })
     }
 }
@@ -647,10 +654,10 @@ impl<'a> JavaList<'a> {
 #[allow(non_snake_case)]
 pub struct JavaMap<'a> {
     pub class: JClass<'a>,
-    pub method_get: JMethodID<'a>,
-    pub method_get_ret: JavaType,
-    pub method_put: JMethodID<'a>,
-    pub method_put_ret: JavaType,
+    pub method_get: JMethodID,
+    pub method_get_ret: ReturnType,
+    pub method_put: JMethodID,
+    pub method_put_ret: ReturnType,
 }
 impl<'a> JavaMap<'a> {
     pub const SIG_TYPE: &'static str = "java/util/Map";
@@ -662,7 +669,7 @@ impl<'a> JavaMap<'a> {
             method_get: env
                 .get_method_id(class, "get", "(Ljava/lang/Object;)Ljava/lang/Object;")
                 .unwrap(),
-            method_get_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_get_ret: ReturnType::Object,
             method_put: env
                 .get_method_id(
                     class,
@@ -670,7 +677,7 @@ impl<'a> JavaMap<'a> {
                     "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
                 )
                 .unwrap(),
-            method_put_ret: JavaType::Primitive(Primitive::Void),
+            method_put_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -678,8 +685,8 @@ impl<'a> JavaMap<'a> {
 #[allow(non_snake_case)]
 pub struct JavaFile<'a> {
     pub class: JClass<'a>,
-    pub method_getPath: JMethodID<'a>,
-    pub method_getPath_ret: JavaType,
+    pub method_getPath: JMethodID,
+    pub method_getPath_ret: ReturnType,
 }
 impl<'a> JavaFile<'a> {
     pub const SIG_TYPE: &'static str = "java/io/File";
@@ -693,7 +700,7 @@ impl<'a> JavaFile<'a> {
                 "getPath",
                 "()Ljava/lang/String;",
             )?,
-            method_getPath_ret: JavaType::Object("java/lang/String".to_owned()),
+            method_getPath_ret: ReturnType::Object,
         })
     }
 }
@@ -701,10 +708,10 @@ impl<'a> JavaFile<'a> {
 #[allow(non_snake_case)]
 pub struct ScalaIterator<'a> {
     pub class: JClass<'a>,
-    pub method_hasNext: JMethodID<'a>,
-    pub method_hasNext_ret: JavaType,
-    pub method_next: JMethodID<'a>,
-    pub method_next_ret: JavaType,
+    pub method_hasNext: JMethodID,
+    pub method_hasNext_ret: ReturnType,
+    pub method_next: JMethodID,
+    pub method_next_ret: ReturnType,
 }
 impl<'a> ScalaIterator<'a> {
     pub const SIG_TYPE: &'static str = "scala/collection/Iterator";
@@ -714,9 +721,9 @@ impl<'a> ScalaIterator<'a> {
         Ok(ScalaIterator {
             class,
             method_hasNext: env.get_method_id(class, "hasNext", "()Z")?,
-            method_hasNext_ret: JavaType::Primitive(Primitive::Boolean),
+            method_hasNext_ret: ReturnType::Primitive(Primitive::Boolean),
             method_next: env.get_method_id(class, "next", "()Ljava/lang/Object;")?,
-            method_next_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_next_ret: ReturnType::Object,
         })
     }
 }
@@ -724,10 +731,10 @@ impl<'a> ScalaIterator<'a> {
 #[allow(non_snake_case)]
 pub struct ScalaTuple2<'a> {
     pub class: JClass<'a>,
-    pub method__1: JMethodID<'a>,
-    pub method__1_ret: JavaType,
-    pub method__2: JMethodID<'a>,
-    pub method__2_ret: JavaType,
+    pub method__1: JMethodID,
+    pub method__1_ret: ReturnType,
+    pub method__2: JMethodID,
+    pub method__2_ret: ReturnType,
 }
 impl<'a> ScalaTuple2<'a> {
     pub const SIG_TYPE: &'static str = "scala/Tuple2";
@@ -737,9 +744,9 @@ impl<'a> ScalaTuple2<'a> {
         Ok(ScalaTuple2 {
             class,
             method__1: env.get_method_id(class, "_1", "()Ljava/lang/Object;")?,
-            method__1_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method__1_ret: ReturnType::Object,
             method__2: env.get_method_id(class, "_2", "()Ljava/lang/Object;")?,
-            method__2_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method__2_ret: ReturnType::Object,
         })
     }
 }
@@ -747,8 +754,8 @@ impl<'a> ScalaTuple2<'a> {
 #[allow(non_snake_case)]
 pub struct ScalaFunction0<'a> {
     pub class: JClass<'a>,
-    pub method_apply: JMethodID<'a>,
-    pub method_apply_ret: JavaType,
+    pub method_apply: JMethodID,
+    pub method_apply_ret: ReturnType,
 }
 impl<'a> ScalaFunction0<'a> {
     pub const SIG_TYPE: &'static str = "scala/Function0";
@@ -758,7 +765,7 @@ impl<'a> ScalaFunction0<'a> {
         Ok(ScalaFunction0 {
             class,
             method_apply: env.get_method_id(class, "apply", "()Ljava/lang/Object;")?,
-            method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_apply_ret: ReturnType::Object,
         })
     }
 }
@@ -766,8 +773,8 @@ impl<'a> ScalaFunction0<'a> {
 #[allow(non_snake_case)]
 pub struct ScalaFunction1<'a> {
     pub class: JClass<'a>,
-    pub method_apply: JMethodID<'a>,
-    pub method_apply_ret: JavaType,
+    pub method_apply: JMethodID,
+    pub method_apply_ret: ReturnType,
 }
 impl<'a> ScalaFunction1<'a> {
     pub const SIG_TYPE: &'static str = "scala/Function1";
@@ -781,7 +788,7 @@ impl<'a> ScalaFunction1<'a> {
                 "apply",
                 "(Ljava/lang/Object;)Ljava/lang/Object;",
             )?,
-            method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_apply_ret: ReturnType::Object,
         })
     }
 }
@@ -789,8 +796,8 @@ impl<'a> ScalaFunction1<'a> {
 #[allow(non_snake_case)]
 pub struct ScalaFunction2<'a> {
     pub class: JClass<'a>,
-    pub method_apply: JMethodID<'a>,
-    pub method_apply_ret: JavaType,
+    pub method_apply: JMethodID,
+    pub method_apply_ret: ReturnType,
 }
 impl<'a> ScalaFunction2<'a> {
     pub const SIG_TYPE: &'static str = "scala/Function2";
@@ -804,7 +811,7 @@ impl<'a> ScalaFunction2<'a> {
                 "apply",
                 "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
             )?,
-            method_apply_ret: JavaType::Object("java/lang/Object".to_owned()),
+            method_apply_ret: ReturnType::Object,
         })
     }
 }
@@ -812,8 +819,8 @@ impl<'a> ScalaFunction2<'a> {
 #[allow(non_snake_case)]
 pub struct HadoopFileSystem<'a> {
     pub class: JClass<'a>,
-    pub method_open: JMethodID<'a>,
-    pub method_open_ret: JavaType,
+    pub method_open: JMethodID,
+    pub method_open_ret: ReturnType,
 }
 impl<'a> HadoopFileSystem<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FileSystem";
@@ -827,9 +834,7 @@ impl<'a> HadoopFileSystem<'a> {
                 "open",
                 "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataInputStream;",
             )?,
-            method_open_ret: JavaType::Object(
-                "org/apache/hadoop/fs/FSDataInputStream".to_owned(),
-            ),
+            method_open_ret: ReturnType::Object,
         })
     }
 }
@@ -837,7 +842,7 @@ impl<'a> HadoopFileSystem<'a> {
 #[allow(non_snake_case)]
 pub struct HadoopPath<'a> {
     pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
+    pub ctor: JMethodID,
 }
 impl<'a> HadoopPath<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/Path";
@@ -854,10 +859,10 @@ impl<'a> HadoopPath<'a> {
 #[allow(non_snake_case)]
 pub struct HadoopFSDataInputStream<'a> {
     pub class: JClass<'a>,
-    pub method_seek: JMethodID<'a>,
-    pub method_seek_ret: JavaType,
-    pub method_close: JMethodID<'a>,
-    pub method_close_ret: JavaType,
+    pub method_seek: JMethodID,
+    pub method_seek_ret: ReturnType,
+    pub method_close: JMethodID,
+    pub method_close_ret: ReturnType,
 }
 impl<'a> HadoopFSDataInputStream<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FSDataInputStream";
@@ -867,9 +872,9 @@ impl<'a> HadoopFSDataInputStream<'a> {
         Ok(HadoopFSDataInputStream {
             class,
             method_seek: env.get_method_id(class, "seek", "(J)V")?,
-            method_seek_ret: JavaType::Primitive(Primitive::Void),
+            method_seek_ret: ReturnType::Primitive(Primitive::Void),
             method_close: env.get_method_id(class, "close", "()V")?,
-            method_close_ret: JavaType::Primitive(Primitive::Void),
+            method_close_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -877,12 +882,12 @@ impl<'a> HadoopFSDataInputStream<'a> {
 #[allow(non_snake_case)]
 pub struct SparkFileSegment<'a> {
     pub class: JClass<'a>,
-    pub method_file: JMethodID<'a>,
-    pub method_file_ret: JavaType,
-    pub method_offset: JMethodID<'a>,
-    pub method_offset_ret: JavaType,
-    pub method_length: JMethodID<'a>,
-    pub method_length_ret: JavaType,
+    pub method_file: JMethodID,
+    pub method_file_ret: ReturnType,
+    pub method_offset: JMethodID,
+    pub method_offset_ret: ReturnType,
+    pub method_length: JMethodID,
+    pub method_length_ret: ReturnType,
 }
 impl<'a> SparkFileSegment<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/storage/FileSegment";
@@ -892,11 +897,11 @@ impl<'a> SparkFileSegment<'a> {
         Ok(SparkFileSegment {
             class,
             method_file: env.get_method_id(class, "file", "()Ljava/io/File;")?,
-            method_file_ret: JavaType::Object("java/io/File".to_owned()),
+            method_file_ret: ReturnType::Object,
             method_offset: env.get_method_id(class, "offset", "()J")?,
-            method_offset_ret: JavaType::Primitive(Primitive::Long),
+            method_offset_ret: ReturnType::Primitive(Primitive::Long),
             method_length: env.get_method_id(class, "length", "()J")?,
-            method_length_ret: JavaType::Primitive(Primitive::Long),
+            method_length_ret: ReturnType::Primitive(Primitive::Long),
         })
     }
 }
@@ -904,8 +909,8 @@ impl<'a> SparkFileSegment<'a> {
 #[allow(non_snake_case)]
 pub struct SparkSQLMetric<'a> {
     pub class: JClass<'a>,
-    pub method_add: JMethodID<'a>,
-    pub method_add_ret: JavaType,
+    pub method_add: JMethodID,
+    pub method_add_ret: ReturnType,
 }
 impl<'a> SparkSQLMetric<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/metric/SQLMetric";
@@ -915,7 +920,7 @@ impl<'a> SparkSQLMetric<'a> {
         Ok(SparkSQLMetric {
             class,
             method_add: env.get_method_id(class, "add", "(J)V")?,
-            method_add_ret: JavaType::Primitive(Primitive::Void),
+            method_add_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -923,10 +928,10 @@ impl<'a> SparkSQLMetric<'a> {
 #[allow(non_snake_case)]
 pub struct SparkMetricNode<'a> {
     pub class: JClass<'a>,
-    pub method_getChild: JMethodID<'a>,
-    pub method_getChild_ret: JavaType,
-    pub method_add: JMethodID<'a>,
-    pub method_add_ret: JavaType,
+    pub method_getChild: JMethodID,
+    pub method_getChild_ret: ReturnType,
+    pub method_add: JMethodID,
+    pub method_add_ret: ReturnType,
 }
 impl<'a> SparkMetricNode<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/MetricNode";
@@ -942,11 +947,11 @@ impl<'a> SparkMetricNode<'a> {
                     "(I)Lorg/apache/spark/sql/blaze/MetricNode;",
                 )
                 .unwrap(),
-            method_getChild_ret: JavaType::Object(Self::SIG_TYPE.to_owned()),
+            method_getChild_ret: ReturnType::Object,
             method_add: env
                 .get_method_id(class, "add", "(Ljava/lang/String;J)V")
                 .unwrap(),
-            method_add_ret: JavaType::Primitive(Primitive::Void),
+            method_add_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -954,9 +959,9 @@ impl<'a> SparkMetricNode<'a> {
 #[allow(non_snake_case)]
 pub struct SparkExpressionWrapperContext<'a> {
     pub class: JClass<'a>,
-    pub ctor: JMethodID<'a>,
-    pub method_eval: JMethodID<'a>,
-    pub method_eval_ret: JavaType,
+    pub ctor: JMethodID,
+    pub method_eval: JMethodID,
+    pub method_eval_ret: ReturnType,
 }
 impl<'a> SparkExpressionWrapperContext<'a> {
     pub const SIG_TYPE: &'static str =
@@ -974,9 +979,7 @@ impl<'a> SparkExpressionWrapperContext<'a> {
                     "(Ljava/nio/ByteBuffer;)Ljava/nio/channels/ReadableByteChannel;",
                 )
                 .unwrap(),
-            method_eval_ret: JavaType::Object(
-                JavaReadableByteChannel::SIG_TYPE.to_owned(),
-            ),
+            method_eval_ret: ReturnType::Object,
         })
     }
 }
@@ -984,20 +987,20 @@ impl<'a> SparkExpressionWrapperContext<'a> {
 #[allow(non_snake_case)]
 pub struct BlazeCallNativeWrapper<'a> {
     pub class: JClass<'a>,
-    pub method_isFinished: JMethodID<'a>,
-    pub method_isFinished_ret: JavaType,
-    pub method_getRawTaskDefinition: JMethodID<'a>,
-    pub method_getRawTaskDefinition_ret: JavaType,
-    pub method_getMetrics: JMethodID<'a>,
-    pub method_getMetrics_ret: JavaType,
-    pub method_enqueueWithTimeout: JMethodID<'a>,
-    pub method_enqueueWithTimeout_ret: JavaType,
-    pub method_enqueueError: JMethodID<'a>,
-    pub method_enqueueError_ret: JavaType,
-    pub method_dequeueWithTimeout: JMethodID<'a>,
-    pub method_dequeueWithTimeout_ret: JavaType,
-    pub method_finishNativeThread: JMethodID<'a>,
-    pub method_finishNativeThread_ret: JavaType,
+    pub method_isFinished: JMethodID,
+    pub method_isFinished_ret: ReturnType,
+    pub method_getRawTaskDefinition: JMethodID,
+    pub method_getRawTaskDefinition_ret: ReturnType,
+    pub method_getMetrics: JMethodID,
+    pub method_getMetrics_ret: ReturnType,
+    pub method_enqueueWithTimeout: JMethodID,
+    pub method_enqueueWithTimeout_ret: ReturnType,
+    pub method_enqueueError: JMethodID,
+    pub method_enqueueError_ret: ReturnType,
+    pub method_dequeueWithTimeout: JMethodID,
+    pub method_dequeueWithTimeout_ret: ReturnType,
+    pub method_finishNativeThread: JMethodID,
+    pub method_finishNativeThread_ret: ReturnType,
 }
 impl<'a> BlazeCallNativeWrapper<'a> {
     pub const SIG_TYPE: &'static str =
@@ -1008,13 +1011,11 @@ impl<'a> BlazeCallNativeWrapper<'a> {
         Ok(BlazeCallNativeWrapper {
             class,
             method_isFinished: env.get_method_id(class, "isFinished", "()Z").unwrap(),
-            method_isFinished_ret: JavaType::Primitive(Primitive::Boolean),
+            method_isFinished_ret: ReturnType::Primitive(Primitive::Boolean),
             method_getRawTaskDefinition: env
                 .get_method_id(class, "getRawTaskDefinition", "()[B")
                 .unwrap(),
-            method_getRawTaskDefinition_ret: JavaType::Array(Box::new(
-                JavaType::Primitive(Primitive::Byte),
-            )),
+            method_getRawTaskDefinition_ret: ReturnType::Array,
             method_getMetrics: env
                 .get_method_id(
                     class,
@@ -1022,25 +1023,23 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                     "()Lorg/apache/spark/sql/blaze/MetricNode;",
                 )
                 .unwrap(),
-            method_getMetrics_ret: JavaType::Object(SparkMetricNode::SIG_TYPE.to_owned()),
+            method_getMetrics_ret: ReturnType::Object,
             method_enqueueWithTimeout: env
                 .get_method_id(class, "enqueueWithTimeout", "(Ljava/lang/Object;)Z")
                 .unwrap(),
-            method_enqueueWithTimeout_ret: JavaType::Primitive(Primitive::Boolean),
+            method_enqueueWithTimeout_ret: ReturnType::Primitive(Primitive::Boolean),
             method_enqueueError: env
                 .get_method_id(class, "enqueueError", "(Ljava/lang/Object;)Z")
                 .unwrap(),
-            method_enqueueError_ret: JavaType::Primitive(Primitive::Boolean),
+            method_enqueueError_ret: ReturnType::Primitive(Primitive::Boolean),
             method_dequeueWithTimeout: env
                 .get_method_id(class, "dequeueWithTimeout", "()Ljava/lang/Object;")
                 .unwrap(),
-            method_dequeueWithTimeout_ret: JavaType::Object(
-                "java/lang/Object".to_owned(),
-            ),
+            method_dequeueWithTimeout_ret: ReturnType::Object,
             method_finishNativeThread: env
                 .get_method_id(class, "finishNativeThread", "()V")
                 .unwrap(),
-            method_finishNativeThread_ret: JavaType::Primitive(Primitive::Void),
+            method_finishNativeThread_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

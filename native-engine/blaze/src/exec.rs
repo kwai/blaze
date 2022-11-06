@@ -20,6 +20,9 @@ use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use blaze_commons::jni_bridge::JavaClasses;
+use blaze_commons::*;
+use blaze_serde::protobuf::TaskDefinition;
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use datafusion::execution::disk_manager::DiskManagerConfig;
@@ -27,15 +30,12 @@ use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_ext::jni_bridge::JavaClasses;
-use datafusion_ext::*;
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JClass, JString};
 use jni::objects::{JObject, JThrowable};
 use jni::sys::{jboolean, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use log::LevelFilter;
-use blaze_serde::protobuf::TaskDefinition;
 use once_cell::sync::OnceCell;
 use prost::Message;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
@@ -54,7 +54,7 @@ fn init_logging() {
             TerminalMode::Stderr,
             ColorChoice::Never,
         )
-            .unwrap();
+        .unwrap();
     });
 }
 
@@ -136,7 +136,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         .unwrap();
 
         let task_definition = TaskDefinition::decode(
-            jni_convert_byte_array!(raw_task_definition.into_inner())
+            jni_convert_byte_array!(*raw_task_definition)
                 .unwrap()
                 .as_slice(),
         )
@@ -356,7 +356,8 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if !is_task_running()? { // only handle running task
+        if !is_task_running()? {
+            // only handle running task
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);

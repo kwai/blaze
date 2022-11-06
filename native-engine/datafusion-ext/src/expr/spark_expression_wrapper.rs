@@ -12,13 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::expr::down_cast_any_ref;
 use crate::util::ipc::{read_one_batch, write_one_batch};
-use crate::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
+use blaze_commons::{
+    jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
+};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::ScalarValue;
 use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
+use datafusion::physical_expr::utils::expr_list_eq_any_order;
 use datafusion::physical_plan::PhysicalExpr;
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
@@ -26,8 +30,6 @@ use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Cursor;
 use std::sync::Arc;
-use datafusion::physical_expr::utils::expr_list_eq_any_order;
-use crate::expr::down_cast_any_ref;
 
 #[derive(Clone)]
 pub struct SparkExpressionWrapperExpr {
@@ -44,15 +46,16 @@ impl PartialEq<dyn Any> for SparkExpressionWrapperExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         down_cast_any_ref(other)
             .downcast_ref::<Self>()
-            .map(|x|
-                expr_list_eq_any_order(&self.params, &x.params) &&
-                    self.serialized == x.serialized &&
-                    self.return_type == x.return_type &&
-                    self.return_nullable == x.return_nullable &&
-                    self.input_schema == x.input_schema &&
-                    self.params_schema == x.params_schema &&
-                    self.jcontext.get().is_none() && x.jcontext.get().is_none()
-            )
+            .map(|x| {
+                expr_list_eq_any_order(&self.params, &x.params)
+                    && self.serialized == x.serialized
+                    && self.return_type == x.return_type
+                    && self.return_nullable == x.return_nullable
+                    && self.input_schema == x.input_schema
+                    && self.params_schema == x.params_schema
+                    && self.jcontext.get().is_none()
+                    && x.jcontext.get().is_none()
+            })
             .unwrap_or(false)
     }
 }
@@ -116,7 +119,7 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
         let jcontext = self.jcontext.get_or_try_init(|| {
             let jcontext = jni_new_object!(
                 SparkExpressionWrapperContext,
-                jni_new_direct_byte_buffer!(unsafe {
+                jni_new_direct_byte_buffer!({
                     // safety - byte buffer is not mutated in jvm side
                     std::slice::from_raw_parts_mut(
                         self.serialized.as_ptr() as *mut u8,
@@ -180,7 +183,10 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
         self.params.clone()
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
         Ok(Arc::new(Self::try_new(
             self.serialized.clone(),
             self.return_type.clone(),

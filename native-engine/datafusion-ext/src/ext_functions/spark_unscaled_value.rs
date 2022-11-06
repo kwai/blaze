@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use datafusion::arrow::array::*;
-use datafusion::common::ScalarValue;
 use datafusion::common::Result;
+use datafusion::common::ScalarValue;
 use datafusion::physical_plan::ColumnarValue;
+use std::sync::Arc;
 
 /// implements org.apache.spark.sql.catalyst.expressions.UnscaledValue
 pub fn spark_unscaled_value(args: &[ColumnarValue]) -> Result<ColumnarValue> {

@@ -17,7 +17,7 @@ pub mod empty_partitions_exec;
 pub mod ffi_reader_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
+pub mod limit_exec;
 pub mod rename_columns_exec;
 pub mod shuffle_writer_exec;
 pub mod sort_merge_join_exec;
-pub mod limit_exec;

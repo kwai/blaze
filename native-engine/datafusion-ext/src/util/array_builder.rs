@@ -302,15 +302,13 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
     }
 
     match dt {
-        DataType::Null => {
-            Box::new(NullBuilder::new())
-        }
-        DataType::Decimal128(precision, scale) => {
-            Box::new(ConfiguredDecimal128Builder::with_capacity(0, *precision, *scale))
-        }
-        DataType::Decimal256(precision, scale) => {
-            Box::new(ConfiguredDecimal256Builder::with_capacity(0, *precision, *scale))
-        }
+        DataType::Null => Box::new(NullBuilder::new()),
+        DataType::Decimal128(precision, scale) => Box::new(
+            ConfiguredDecimal128Builder::with_capacity(0, *precision, *scale),
+        ),
+        DataType::Decimal256(precision, scale) => Box::new(
+            ConfiguredDecimal256Builder::with_capacity(0, *precision, *scale),
+        ),
         DataType::Dictionary(key_type, value_type) => {
             make_dictionary_builder!(key_type, value_type)
         }
@@ -319,13 +317,11 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
 }
 
 pub struct NullBuilder {
-    len: usize
+    len: usize,
 }
 impl NullBuilder {
     pub fn new() -> Self {
-        Self {
-            len: 0
-        }
+        Self { len: 0 }
     }
 
     pub fn append(&mut self) {
@@ -399,7 +395,7 @@ impl<T: DecimalType> ConfiguredDecimalBuilder<T> {
         self.scale
     }
 }
-impl<T:DecimalType> ArrayBuilder for ConfiguredDecimalBuilder<T> {
+impl<T: DecimalType> ArrayBuilder for ConfiguredDecimalBuilder<T> {
     fn len(&self) -> usize {
         self.inner.len()
     }
@@ -409,11 +405,12 @@ impl<T:DecimalType> ArrayBuilder for ConfiguredDecimalBuilder<T> {
     }
 
     fn finish(&mut self) -> ArrayRef {
-        Arc::new(self
-            .inner
-            .finish()
-            .with_precision_and_scale(self.precision, self.scale)
-            .unwrap())
+        Arc::new(
+            self.inner
+                .finish()
+                .with_precision_and_scale(self.precision, self.scale)
+                .unwrap(),
+        )
     }
 
     fn as_any(&self) -> &dyn Any {

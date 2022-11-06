@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::expr::down_cast_any_ref;
 use bigdecimal::ToPrimitive;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
@@ -25,7 +26,6 @@ use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
-use crate::expr::down_cast_any_ref;
 
 /// cast expression compatible with spark
 #[derive(Debug)]
@@ -67,7 +67,6 @@ impl PhysicalExpr for TryCastExpr {
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
         Ok(true)
     }
-
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let value = self.expr.evaluate(batch)?;
@@ -153,8 +152,14 @@ impl PhysicalExpr for TryCastExpr {
         vec![self.expr.clone()]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(Arc::new(Self::new(children[0].clone(), self.cast_type.clone())))
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(Arc::new(Self::new(
+            children[0].clone(),
+            self.cast_type.clone(),
+        )))
     }
 }
 
@@ -204,9 +209,11 @@ fn try_cast_string_array_to_decimal(
                 None => builder.append_null(),
             }
         }
-        return Ok(Arc::new(builder
-            .finish()
-            .with_precision_and_scale(precision, scale)?));
+        return Ok(Arc::new(
+            builder
+                .finish()
+                .with_precision_and_scale(precision, scale)?,
+        ));
     }
     unreachable!("cast_type must be DataType::Decimal")
 }
@@ -221,8 +228,7 @@ fn try_cast_decimal_array_to_string(
         for v in 0..array.len() {
             if array.is_valid(v) {
                 builder.append_value(array.value_as_string(v))
-            }
-            else {
+            } else {
                 builder.append_null()
             }
         }

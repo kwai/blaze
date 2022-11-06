@@ -39,11 +39,13 @@ use arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use datafusion::common::{Column, DFSchema, downcast_value, ScalarValue};
+use datafusion::common::{downcast_value, Column, DFSchema, ScalarValue};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::expr_rewriter::{ExprRewritable, ExprRewriter};
 use datafusion::logical_expr::utils::expr_to_columns;
-use datafusion::logical_expr::{binary_expr, cast, try_cast, ExprSchemable, ColumnarValue, Cast, BinaryExpr};
+use datafusion::logical_expr::{
+    binary_expr, cast, try_cast, BinaryExpr, Cast, ColumnarValue, ExprSchemable,
+};
 use datafusion::physical_expr::create_physical_expr;
 use datafusion::prelude::lit;
 use datafusion::{

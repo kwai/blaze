@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Display, Formatter};
-use std::sync::Arc;
+use crate::expr::down_cast_any_ref;
 use arrow::array::{Array, BooleanArray, StringArray};
 use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_plan::PhysicalExpr;
-use crate::expr::down_cast_any_ref;
+use std::any::Any;
+use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct StringEndsWithExpr {
@@ -77,24 +77,21 @@ impl PhysicalExpr for StringEndsWithExpr {
         match expr {
             ColumnarValue::Array(array) => {
                 let string_array = array.as_any().downcast_ref::<StringArray>().unwrap();
-                let ret_array = Arc::new(
-                    BooleanArray::from_iter(
-                        string_array.iter().map(|maybe_string| {
-                            maybe_string.map(|string| {
-                                string.ends_with(&self.suffix)
-                            })
-                        })));
+                let ret_array = Arc::new(BooleanArray::from_iter(
+                    string_array.iter().map(|maybe_string| {
+                        maybe_string.map(|string| string.ends_with(&self.suffix))
+                    }),
+                ));
                 Ok(ColumnarValue::Array(ret_array))
             }
             ColumnarValue::Scalar(ScalarValue::Utf8(maybe_string)) => {
-                let ret = maybe_string.map(|string| {
-                    string.ends_with(&self.suffix)
-                });
+                let ret = maybe_string.map(|string| string.ends_with(&self.suffix));
                 Ok(ColumnarValue::Scalar(ScalarValue::Boolean(ret)))
             }
-            expr => {
-                Err(DataFusionError::Plan(format!("ends_with: invalid expr: {:?}", expr)))
-            }
+            expr => Err(DataFusionError::Plan(format!(
+                "ends_with: invalid expr: {:?}",
+                expr
+            ))),
         }
     }
 
@@ -102,7 +99,13 @@ impl PhysicalExpr for StringEndsWithExpr {
         vec![self.expr.clone()]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(Arc::new(Self::new(children[0].clone(), self.suffix.clone())))
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(Arc::new(Self::new(
+            children[0].clone(),
+            self.suffix.clone(),
+        )))
     }
 }

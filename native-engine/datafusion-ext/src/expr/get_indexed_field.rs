@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::expr::down_cast_any_ref;
 use datafusion::arrow::array::{Array, FixedSizeListArray};
 use datafusion::arrow::compute::concat;
 use datafusion::arrow::datatypes::Field;
@@ -27,7 +28,6 @@ use datafusion::physical_expr::PhysicalExpr;
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::{any::Any, sync::Arc};
-use crate::expr::down_cast_any_ref;
 
 /// expression to get a field of a struct array.
 #[derive(Debug)]
@@ -123,7 +123,10 @@ impl PhysicalExpr for FixedSizeListGetIndexedFieldExpr {
         vec![self.arg.clone()]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
         Ok(Arc::new(Self::new(children[0].clone(), self.key.clone())))
     }
 }

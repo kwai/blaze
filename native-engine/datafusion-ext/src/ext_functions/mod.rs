@@ -12,20 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::logical_expr::ScalarFunctionImplementation;
+use std::sync::Arc;
 
-mod spark_null_if_zero;
-mod spark_unscaled_value;
-mod spark_make_decimal;
 mod spark_check_overflow;
-mod spark_round_n;
+mod spark_make_decimal;
 mod spark_murmur3_hash;
+mod spark_null_if_zero;
+mod spark_round_n;
+mod spark_unscaled_value;
 
-pub fn create_spark_ext_function(
-    name: &str,
-) -> Result<ScalarFunctionImplementation> {
+pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementation> {
     Ok(match name {
         "Placeholder" => Arc::new(|_| panic!("placeholder() should never be called")),
         "NullIfZero" => Arc::new(spark_null_if_zero::spark_null_if_zero),

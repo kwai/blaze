@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use crate::util::ipc::write_one_batch;
-use crate::{
+use async_trait::async_trait;
+use blaze_commons::{
     jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer,
     jni_new_global_ref, jni_new_string,
 };
-use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;

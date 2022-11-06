@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use crate::util::spark_hash::create_hashes;
 use datafusion::arrow::array::*;
 use datafusion::common::Result;
 use datafusion::physical_plan::ColumnarValue;
-use crate::util::spark_hash::create_hashes;
+use std::sync::Arc;
 
 /// implements org.apache.spark.sql.catalyst.expressions.UnscaledValue
 pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
@@ -42,11 +42,7 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let mut hash_buffer = vec![spark_murmur3_default_seed; len];
     create_hashes(&arrays, &mut hash_buffer)?;
 
-    Ok(ColumnarValue::Array(
-        Arc::new(Int32Array::from_iter_values(
-            hash_buffer
-                .into_iter()
-                .map(|hash| hash as i32)
-        ))
-    ))
+    Ok(ColumnarValue::Array(Arc::new(
+        Int32Array::from_iter_values(hash_buffer.into_iter().map(|hash| hash as i32)),
+    )))
 }

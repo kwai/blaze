@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::{
+use blaze_commons::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
     jni_new_object, jni_new_string,
 };

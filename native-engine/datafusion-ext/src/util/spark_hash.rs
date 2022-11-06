@@ -143,10 +143,8 @@ macro_rules! hash_array_decimal {
 
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash = spark_compatible_murmur3_hash(
-                    array.value(i).to_le_bytes(),
-                    *hash,
-                );
+                *hash =
+                    spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *hash);
             }
         } else {
             for (i, hash) in $hashes.iter_mut().enumerate() {

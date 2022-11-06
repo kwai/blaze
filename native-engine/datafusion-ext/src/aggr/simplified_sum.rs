@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::sync::Arc;
 use arrow::array::ArrayRef;
 use arrow::datatypes::Field;
 use datafusion::common::{Result, ScalarValue};
@@ -21,6 +19,8 @@ use datafusion::logical_expr::{Accumulator, AggregateState};
 use datafusion::physical_expr::{AggregateExpr, PhysicalExpr};
 use datafusion::physical_plan::RowAccumulator;
 use datafusion::row::accessor::RowAccessor;
+use std::any::Any;
+use std::sync::Arc;
 
 /// SUM aggregate expression (simplified by removing `count` state field)
 #[derive(Debug)]
@@ -31,9 +31,7 @@ pub struct SimplifiedSum {
 impl SimplifiedSum {
     /// Create a new SUM aggregate function
     pub fn new(inner_sum: Arc<dyn AggregateExpr>) -> Self {
-        Self {
-            inner: inner_sum,
-        }
+        Self { inner: inner_sum }
     }
 }
 
@@ -48,7 +46,7 @@ impl AggregateExpr for SimplifiedSum {
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
         Ok(Box::new(SimplifiedSumAccumulator {
-            inner: self.inner.create_accumulator()?
+            inner: self.inner.create_accumulator()?,
         }))
     }
 
@@ -70,9 +68,12 @@ impl AggregateExpr for SimplifiedSum {
         self.inner.row_accumulator_supported()
     }
 
-    fn create_row_accumulator(&self, start_index: usize) -> Result<Box<dyn RowAccumulator>> {
+    fn create_row_accumulator(
+        &self,
+        start_index: usize,
+    ) -> Result<Box<dyn RowAccumulator>> {
         Ok(Box::new(SimplifiedSumRowAccumulator {
-            inner: self.inner.create_row_accumulator(start_index)?
+            inner: self.inner.create_row_accumulator(start_index)?,
         }))
     }
 }
@@ -108,11 +109,19 @@ struct SimplifiedSumRowAccumulator {
 }
 
 impl RowAccumulator for SimplifiedSumRowAccumulator {
-    fn update_batch(&mut self, values: &[ArrayRef], accessor: &mut RowAccessor) -> Result<()> {
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        accessor: &mut RowAccessor,
+    ) -> Result<()> {
         self.inner.update_batch(values, accessor)
     }
 
-    fn merge_batch(&mut self, states: &[ArrayRef], accessor: &mut RowAccessor) -> Result<()> {
+    fn merge_batch(
+        &mut self,
+        states: &[ArrayRef],
+        accessor: &mut RowAccessor,
+    ) -> Result<()> {
         self.inner.merge_batch(states, accessor)
     }
 

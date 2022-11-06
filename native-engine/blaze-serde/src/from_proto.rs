@@ -22,16 +22,16 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::Operator;
+use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
 use datafusion::physical_expr::expressions::{create_aggregate_expr, Sum};
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
     AggregateExec, AggregateMode, PhysicalGroupBy,
 };
-use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
+use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
@@ -49,12 +49,12 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use datafusion_ext::aggr::simplified_sum::SimplifiedSum;
-use datafusion_ext::plan::debug_exec::DebugExec;
-use datafusion_ext::plan::empty_partitions_exec::EmptyPartitionsExec;
-use datafusion_ext::plan::ffi_reader_exec::FFIReaderExec;
 use datafusion_ext::file_format::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
+use datafusion_ext::plan::debug_exec::DebugExec;
+use datafusion_ext::plan::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext::plan::ffi_reader_exec::FFIReaderExec;
 use datafusion_ext::plan::ipc_reader_exec::IpcReadMode;
 use datafusion_ext::plan::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext::plan::ipc_writer_exec::IpcWriterExec;
@@ -72,11 +72,11 @@ use crate::{from_proto_binary_op, proto_error};
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion_ext::expr::cast::TryCastExpr;
 use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
-use datafusion_ext::expr::string_starts_with::StringStartsWithExpr;
-use datafusion_ext::expr::string_ends_with::StringEndsWithExpr;
-use datafusion_ext::expr::string_contains::StringContainsExpr;
-use datafusion_ext::plan::limit_exec::LimitExec;
 use datafusion_ext::expr::spark_expression_wrapper::SparkExpressionWrapperExpr;
+use datafusion_ext::expr::string_contains::StringContainsExpr;
+use datafusion_ext::expr::string_ends_with::StringEndsWithExpr;
+use datafusion_ext::expr::string_starts_with::StringStartsWithExpr;
+use datafusion_ext::plan::limit_exec::LimitExec;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -608,14 +608,15 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                let default_null_mask_group = group_expr
-                    .iter()
-                    .map(|_| false)
-                    .collect();
+                let default_null_mask_group = group_expr.iter().map(|_| false).collect();
 
                 Ok(Arc::new(AggregateExec::try_new(
                     agg_mode,
-                    PhysicalGroupBy::new(group_expr, vec![], vec![default_null_mask_group]),
+                    PhysicalGroupBy::new(
+                        group_expr,
+                        vec![],
+                        vec![default_null_mask_group],
+                    ),
                     physical_aggr_expr,
                     input,
                     Arc::new((&input_schema).try_into()?),
@@ -837,16 +838,18 @@ fn try_parse_physical_expr(
                 &convert_required!(e.return_type)?,
             ))
         }
-        ExprType::SparkExpressionWrapperExpr(e) => Arc::new(SparkExpressionWrapperExpr::try_new(
-            e.serialized.clone(),
-            convert_required!(e.return_type)?,
-            e.return_nullable,
-            e.params
-                .iter()
-                .map(|x| try_parse_physical_expr(x, input_schema))
-                .collect::<Result<Vec<_>, _>>()?,
-            input_schema.clone(),
-        )?),
+        ExprType::SparkExpressionWrapperExpr(e) => {
+            Arc::new(SparkExpressionWrapperExpr::try_new(
+                e.serialized.clone(),
+                convert_required!(e.return_type)?,
+                e.return_nullable,
+                e.params
+                    .iter()
+                    .map(|x| try_parse_physical_expr(x, input_schema))
+                    .collect::<Result<Vec<_>, _>>()?,
+                input_schema.clone(),
+            )?)
+        }
         ExprType::GetIndexedFieldExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             let key = convert_required!(e.key)?;

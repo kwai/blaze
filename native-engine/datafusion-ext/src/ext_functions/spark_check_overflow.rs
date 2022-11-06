@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use datafusion::arrow::array::*;
-use datafusion::common::ScalarValue;
 use datafusion::common::Result;
+use datafusion::common::ScalarValue;
 use datafusion::physical_plan::ColumnarValue;
+use std::sync::Arc;
 
 /// implements org.apache.spark.sql.catalyst.expressions.MakeDecimal
 pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
@@ -28,26 +28,32 @@ pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         &ColumnarValue::Scalar(ScalarValue::Int32(Some(scale))) => scale as u8,
         _ => unreachable!("check_overflow.scale is not int32 value"),
     };
-    assert!(to_precision >= 1, "check_overflow: illegal precision: {}", to_precision);
+    assert!(
+        to_precision >= 1,
+        "check_overflow: illegal precision: {}",
+        to_precision
+    );
 
     Ok(match &args[0] {
         ColumnarValue::Scalar(scalar) => match scalar {
             ScalarValue::Decimal128(Some(i128_val), precision, scale) => {
-                ColumnarValue::Scalar(
-                    ScalarValue::Decimal128(
-                        change_precision_round_half_up(
-                            *i128_val,
-                            *precision,
-                            *scale,
-                            to_precision,
-                            to_scale),
+                ColumnarValue::Scalar(ScalarValue::Decimal128(
+                    change_precision_round_half_up(
+                        *i128_val,
+                        *precision,
+                        *scale,
                         to_precision,
-                        to_scale
-                    ))
+                        to_scale,
+                    ),
+                    to_precision,
+                    to_scale,
+                ))
             }
-            _ => {
-                ColumnarValue::Scalar(ScalarValue::Decimal128(None, to_precision, to_scale))
-            },
+            _ => ColumnarValue::Scalar(ScalarValue::Decimal128(
+                None,
+                to_precision,
+                to_scale,
+            )),
         },
         ColumnarValue::Array(array) => {
             let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
@@ -56,20 +62,22 @@ pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             for v in array.into_iter() {
                 match v {
                     Some(v) => {
-                        output.append_option(
-                            change_precision_round_half_up(
-                                v,
-                                array.precision(),
-                                array.scale(),
-                                to_precision,
-                                to_scale));
+                        output.append_option(change_precision_round_half_up(
+                            v,
+                            array.precision(),
+                            array.scale(),
+                            to_precision,
+                            to_scale,
+                        ));
                     }
                     None => output.append_null(),
                 }
             }
-            ColumnarValue::Array(Arc::new(output
-                .finish()
-                .with_precision_and_scale(to_precision, to_scale)?))
+            ColumnarValue::Array(Arc::new(
+                output
+                    .finish()
+                    .with_precision_and_scale(to_precision, to_scale)?,
+            ))
         }
     })
 }
@@ -80,7 +88,7 @@ fn change_precision_round_half_up(
     precision: u8,
     scale: u8,
     to_precision: u8,
-    to_scale: u8
+    to_scale: u8,
 ) -> Option<i128> {
     let max_spark_precision = 38;
 
@@ -95,11 +103,7 @@ fn change_precision_round_half_up(
         let dropped_digits = i128_val % pow10diff;
         i128_val /= pow10diff;
         if dropped_digits.abs() * 2 >= pow10diff {
-            i128_val += if dropped_digits < 0 {
-                -1
-            } else {
-                1
-            };
+            i128_val += if dropped_digits < 0 { -1 } else { 1 };
         }
     } else if to_scale > scale {
         // We might be able to multiply i128_val by a power of 10 and not overflow, but if not,

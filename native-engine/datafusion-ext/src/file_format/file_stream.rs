@@ -39,8 +39,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{ready, FutureExt, Stream, StreamExt};
 
+use crate::file_format::fs::FsProvider;
 use crate::file_format::{FileScanConfig, PartitionColumnProjector};
-use crate::util::fs::FsProvider;
 
 /// A fallible future that resolves to a stream of [`RecordBatch`]
 pub type ReaderFuture =
