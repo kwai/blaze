@@ -32,5 +32,13 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "7e944ede86457fe0f43be44e0e5550229ecaf008" }
-parquet = { path = "patched/parquet-25.0.0-kwai" }
+arrow = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow-array = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow-buffer = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow-cast = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow-data = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow-ipc = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow-schema = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow-select = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "b7a33317c2abf265f4ab6b3fe636f87c4d01334c" }
+parquet = { path = "patched/parquet-26.0.0-kwai" }

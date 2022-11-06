@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["datafusion/simd", "prost/no-recursion-limit"]
 [dependencies]
-datafusion = "13.0.0"
+datafusion = "14.0.0"
 log = "0.4.14"
 prost = "0.11.0"
 
@@ -14,4 +14,4 @@ prost = "0.11.0"
 path = "../datafusion-ext"
 
 [build-dependencies]
-tonic-build = { version = "0.8.2" }
+tonic-build = "0.8.2"

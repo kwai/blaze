@@ -55,10 +55,10 @@ compileScala.options.encoding = "UTF-8"
 compileTestScala.options.encoding = "UTF-8"
 
 dependencies {
-	implementation 'org.apache.arrow:arrow-vector:9.0.0'
-	implementation 'org.apache.arrow:arrow-memory-netty:9.0.0'
-	implementation 'org.apache.arrow:arrow-compression:9.0.0'
-	implementation 'org.apache.arrow:arrow-c-data:9.0.0'
+	implementation 'org.apache.arrow:arrow-vector:10.0.0'
+	implementation 'org.apache.arrow:arrow-memory-netty:10.0.0'
+	implementation 'org.apache.arrow:arrow-compression:10.0.0'
+	implementation 'org.apache.arrow:arrow-c-data:10.0.0'
 	implementation 'com.google.protobuf:protobuf-java:3.19.4'
 
 	testImplementation 'org.scalatest:scalatest_2.12:3.2.9'
