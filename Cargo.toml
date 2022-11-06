@@ -16,8 +16,8 @@
 [workspace]
 members = [
     "native-engine/datafusion-ext",
-    "native-engine/plan-serde",
     "native-engine/blaze",
+    "native-engine/blaze-serde",
 ]
 
 [profile.release-lto]
