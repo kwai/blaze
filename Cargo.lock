@@ -324,6 +324,7 @@ dependencies = [
  "datafusion",
  "datafusion-ext",
  "datafusion-ext-commons",
+ "datafusion-ext-exprs",
  "datafusion-ext-plans",
  "log",
  "prost",
@@ -711,6 +712,30 @@ dependencies = [
  "blaze-commons",
  "bytes",
  "datafusion",
+ "futures",
+ "itertools",
+ "jni",
+ "log",
+ "num",
+ "once_cell",
+ "paste",
+ "tempfile",
+ "thrift",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
+name = "datafusion-ext-exprs"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "bigdecimal",
+ "blaze-commons",
+ "bytes",
+ "datafusion",
+ "datafusion-ext-commons",
  "futures",
  "itertools",
  "jni",

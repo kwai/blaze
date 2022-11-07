@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::expr::down_cast_any_ref;
+use crate::down_cast_any_ref;
 use datafusion::arrow::array::{Array, FixedSizeListArray};
 use datafusion::arrow::compute::concat;
 use datafusion::arrow::datatypes::Field;

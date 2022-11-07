@@ -16,6 +16,7 @@ use datafusion::physical_expr::PhysicalExpr;
 use std::any::Any;
 use std::sync::Arc;
 
+pub mod aggr;
 pub mod cast;
 pub mod get_indexed_field;
 pub mod spark_expression_wrapper;

@@ -48,7 +48,7 @@ use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
 use datafusion::scalar::ScalarValue;
-use datafusion_ext::aggr::simplified_sum::SimplifiedSum;
+use datafusion_ext_exprs::aggr::simplified_sum::SimplifiedSum;
 use datafusion_ext::file_format::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
@@ -71,12 +71,12 @@ use crate::{
 };
 use crate::{from_proto_binary_op, proto_error};
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
-use datafusion_ext::expr::cast::TryCastExpr;
-use datafusion_ext::expr::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
-use datafusion_ext::expr::spark_expression_wrapper::SparkExpressionWrapperExpr;
-use datafusion_ext::expr::string_contains::StringContainsExpr;
-use datafusion_ext::expr::string_ends_with::StringEndsWithExpr;
-use datafusion_ext::expr::string_starts_with::StringStartsWithExpr;
+use datafusion_ext_exprs::cast::TryCastExpr;
+use datafusion_ext_exprs::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
+use datafusion_ext_exprs::spark_expression_wrapper::SparkExpressionWrapperExpr;
+use datafusion_ext_exprs::string_contains::StringContainsExpr;
+use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
+use datafusion_ext_exprs::string_starts_with::StringStartsWithExpr;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,

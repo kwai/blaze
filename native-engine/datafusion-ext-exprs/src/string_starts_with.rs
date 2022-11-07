@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::expr::down_cast_any_ref;
+use crate::down_cast_any_ref;
 use arrow::array::{Array, BooleanArray, StringArray};
 use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;

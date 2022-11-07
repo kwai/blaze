@@ -17,6 +17,7 @@
 members = [
     "native-engine/datafusion-ext",
     "native-engine/datafusion-ext-commons",
+    "native-engine/datafusion-ext-exprs",
     "native-engine/datafusion-ext-plans",
     "native-engine/blaze",
     "native-engine/blaze-commons",

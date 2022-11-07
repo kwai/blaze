@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::expr::down_cast_any_ref;
+use crate::down_cast_any_ref;
 use blaze_commons::{
     jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };

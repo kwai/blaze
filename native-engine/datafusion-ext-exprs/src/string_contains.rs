@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::expr::down_cast_any_ref;
+use crate::down_cast_any_ref;
 use arrow::array::{Array, BooleanArray, StringArray};
 use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
@@ -24,27 +24,27 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 #[derive(Debug)]
-pub struct StringEndsWithExpr {
+pub struct StringContainsExpr {
     expr: Arc<dyn PhysicalExpr>,
-    suffix: String,
+    infix: String,
 }
 
-impl PartialEq<dyn Any> for StringEndsWithExpr {
+impl PartialEq<dyn Any> for StringContainsExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         down_cast_any_ref(other)
             .downcast_ref::<Self>()
-            .map(|x| self.expr.eq(&x.expr) && self.suffix == x.suffix)
+            .map(|x| self.expr.eq(&x.expr) && self.infix == x.infix)
             .unwrap_or(false)
     }
 }
 
-impl StringEndsWithExpr {
-    pub fn new(expr: Arc<dyn PhysicalExpr>, suffix: String) -> Self {
-        Self { expr, suffix }
+impl StringContainsExpr {
+    pub fn new(expr: Arc<dyn PhysicalExpr>, infix: String) -> Self {
+        Self { expr, infix }
     }
 
-    pub fn suffix(&self) -> &str {
-        &self.suffix
+    pub fn infix(&self) -> &str {
+        &self.infix
     }
 
     pub fn expr(&self) -> &Arc<dyn PhysicalExpr> {
@@ -52,13 +52,13 @@ impl StringEndsWithExpr {
     }
 }
 
-impl Display for StringEndsWithExpr {
+impl Display for StringContainsExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "EndsWith({}, {})", self.expr, self.suffix)
+        write!(f, "Contains({}, {})", self.expr, self.infix)
     }
 }
 
-impl PhysicalExpr for StringEndsWithExpr {
+impl PhysicalExpr for StringContainsExpr {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -79,17 +79,17 @@ impl PhysicalExpr for StringEndsWithExpr {
                 let string_array = array.as_any().downcast_ref::<StringArray>().unwrap();
                 let ret_array = Arc::new(BooleanArray::from_iter(
                     string_array.iter().map(|maybe_string| {
-                        maybe_string.map(|string| string.ends_with(&self.suffix))
+                        maybe_string.map(|string| string.contains(&self.infix))
                     }),
                 ));
                 Ok(ColumnarValue::Array(ret_array))
             }
             ColumnarValue::Scalar(ScalarValue::Utf8(maybe_string)) => {
-                let ret = maybe_string.map(|string| string.ends_with(&self.suffix));
+                let ret = maybe_string.map(|string| string.contains(&self.infix));
                 Ok(ColumnarValue::Scalar(ScalarValue::Boolean(ret)))
             }
             expr => Err(DataFusionError::Plan(format!(
-                "ends_with: invalid expr: {:?}",
+                "contains: invalid expr: {:?}",
                 expr
             ))),
         }
@@ -103,9 +103,6 @@ impl PhysicalExpr for StringEndsWithExpr {
         self: Arc<Self>,
         children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(Arc::new(Self::new(
-            children[0].clone(),
-            self.suffix.clone(),
-        )))
+        Ok(Arc::new(Self::new(children[0].clone(), self.infix.clone())))
     }
 }
