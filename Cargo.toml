@@ -15,9 +15,10 @@
 
 [workspace]
 members = [
-    "native-engine/datafusion-ext",
     "native-engine/datafusion-ext-commons",
     "native-engine/datafusion-ext-exprs",
+    "native-engine/datafusion-ext-file-formats",
+    "native-engine/datafusion-ext-functions",
     "native-engine/datafusion-ext-plans",
     "native-engine/blaze",
     "native-engine/blaze-commons",

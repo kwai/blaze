@@ -294,7 +294,6 @@ dependencies = [
  "blaze-commons",
  "blaze-serde",
  "datafusion",
- "datafusion-ext",
  "futures",
  "jni",
  "log",
@@ -322,9 +321,10 @@ name = "blaze-serde"
 version = "0.1.0"
 dependencies = [
  "datafusion",
- "datafusion-ext",
  "datafusion-ext-commons",
  "datafusion-ext-exprs",
+ "datafusion-ext-file-formats",
+ "datafusion-ext-functions",
  "datafusion-ext-plans",
  "log",
  "prost",
@@ -680,30 +680,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datafusion-ext"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "async-trait",
- "bigdecimal",
- "blaze-commons",
- "bytes",
- "datafusion",
- "datafusion-ext-commons",
- "futures",
- "itertools",
- "jni",
- "log",
- "num",
- "once_cell",
- "paste",
- "tempfile",
- "thrift",
- "tokio",
- "zstd",
-]
-
-[[package]]
 name = "datafusion-ext-commons"
 version = "0.1.0"
 dependencies = [
@@ -733,20 +709,43 @@ dependencies = [
  "async-trait",
  "bigdecimal",
  "blaze-commons",
- "bytes",
  "datafusion",
  "datafusion-ext-commons",
- "futures",
- "itertools",
  "jni",
  "log",
  "num",
  "once_cell",
  "paste",
- "tempfile",
- "thrift",
- "tokio",
- "zstd",
+]
+
+[[package]]
+name = "datafusion-ext-file-formats"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "blaze-commons",
+ "bytes",
+ "datafusion",
+ "futures",
+ "jni",
+ "log",
+ "once_cell",
+]
+
+[[package]]
+name = "datafusion-ext-functions"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "bigdecimal",
+ "blaze-commons",
+ "datafusion",
+ "datafusion-ext-commons",
+ "log",
+ "num",
+ "paste",
 ]
 
 [[package]]
@@ -756,20 +755,15 @@ dependencies = [
  "arrow",
  "async-trait",
  "blaze-commons",
- "bytes",
  "datafusion",
  "datafusion-ext-commons",
  "futures",
  "itertools",
  "jni",
  "log",
- "num",
- "once_cell",
  "paste",
  "tempfile",
- "thrift",
  "tokio",
- "zstd",
 ]
 
 [[package]]

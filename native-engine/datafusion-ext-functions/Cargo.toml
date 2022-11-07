@@ -1,11 +1,11 @@
 [package]
-name = "datafusion-ext"
+name = "datafusion-ext-functions"
 version = "0.1.0"
 edition = "2021"
 resolver = "1"
 
 [features]
-default = ["arrow/ffi", "datafusion/simd", "tokio/rt-multi-thread"]
+default = ["arrow/ffi", "datafusion/simd"]
 
 [dependencies]
 arrow = "26.0.0"

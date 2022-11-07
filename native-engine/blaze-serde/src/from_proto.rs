@@ -49,7 +49,7 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use datafusion_ext_exprs::aggr::simplified_sum::SimplifiedSum;
-use datafusion_ext::file_format::{
+use datafusion_ext_file_formats::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
@@ -828,7 +828,7 @@ fn try_parse_physical_expr(
             let execution_props = ExecutionProps::new();
             let fun_expr =
                 if scalar_function == protobuf::ScalarFunction::SparkExtFunctions {
-                    datafusion_ext::ext_functions::create_spark_ext_function(&e.name)?
+                    datafusion_ext_functions::create_spark_ext_function(&e.name)?
                 } else {
                     functions::create_physical_fun(
                         &(&scalar_function).into(),

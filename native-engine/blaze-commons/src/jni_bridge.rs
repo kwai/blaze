@@ -12,17 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub use datafusion;
+pub use jni;
+pub use jni::errors::Result as JniResult;
+pub use jni::objects::JClass;
+pub use jni::objects::JMethodID;
+pub use jni::objects::JObject;
+pub use jni::objects::JStaticMethodID;
+pub use jni::objects::JValue;
+pub use jni::signature::Primitive;
+pub use jni::signature::Primitive::Boolean;
+pub use jni::signature::ReturnType;
+pub use jni::sys::jvalue;
+pub use jni::JNIEnv;
+pub use jni::JavaVM;
+pub use paste::paste;
+
 use crate::ResultExt;
-use jni::errors::Result as JniResult;
-use jni::objects::JClass;
-use jni::objects::JMethodID;
-use jni::objects::JObject;
-use jni::objects::JStaticMethodID;
-use jni::signature::Primitive;
-use jni::signature::Primitive::Boolean;
-use jni::signature::ReturnType;
-use jni::JNIEnv;
-use jni::JavaVM;
 use once_cell::sync::OnceCell;
 
 thread_local! {
@@ -43,14 +49,15 @@ thread_local! {
 #[macro_export]
 macro_rules! jvalues {
     ($($args:expr,)* $(,)?) => {{
-        &[$(jni::objects::JValue::from($args)),*] as &[jni::objects::JValue]
+        &[$($crate::jni_bridge::JValue::from($args)),*] as &[$crate::jni_bridge::JValue]
     }}
 }
 
 #[macro_export]
 macro_rules! jvalues_sys {
     ($($args:expr,)* $(,)?) => {{
-        &[$(jni::sys::jvalue::from(jni::objects::JValue::from($args))),*] as &[jni::sys::jvalue]
+        &[$($crate::jni_bridge::jvalue::from($crate::jni_bridge::JValue::from($args))),*]
+            as &[$crate::jni_bridge::jvalue]
     }}
 }
 
@@ -58,8 +65,8 @@ macro_rules! jvalues_sys {
 macro_rules! jni_map_error_with_env {
     ($env:expr, $result:expr) => {{
         match $result {
-            Ok(result) => datafusion::error::Result::Ok(result),
-            Err(jni::errors::Error::JavaException) => {
+            Ok(result) => $crate::jni_bridge::datafusion::error::Result::Ok(result),
+            Err($crate::jni_bridge::jni::errors::Error::JavaException) => {
                 let ex = $env.exception_occurred().unwrap();
                 $env.exception_describe().unwrap();
                 $env.exception_clear().unwrap();
@@ -83,7 +90,7 @@ macro_rules! jni_map_error_with_env {
                         .get_string(message_obj.into())
                         .map(|s| String::from(s))
                         .unwrap();
-                    Err(datafusion::error::DataFusionError::External(
+                    Err($crate::jni_bridge::datafusion::error::DataFusionError::External(
                         format!(
                             "Java exception thrown at {}:{}: {}",
                             file!(),
@@ -93,7 +100,7 @@ macro_rules! jni_map_error_with_env {
                         .into(),
                     ))
                 } else {
-                    Err(datafusion::error::DataFusionError::External(
+                    Err($crate::jni_bridge::datafusion::error::DataFusionError::External(
                         format!(
                             "Java exception thrown at {}:{}: (no message)",
                             file!(),
@@ -103,7 +110,7 @@ macro_rules! jni_map_error_with_env {
                     ))
                 }
             }
-            Err(err) => Err(datafusion::error::DataFusionError::External(
+            Err(err) => Err($crate::jni_bridge::datafusion::error::DataFusionError::External(
                 format!(
                     "Unknown JNI error occurred at {}:{}: {:?}",
                     file!(),
@@ -158,8 +165,8 @@ macro_rules! jni_new_object {
             $crate::jni_map_error_with_env!(
                 env,
                 env.new_object_unchecked(
-                    paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].class},
-                    paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].ctor},
+                    $crate::jni_bridge::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].class},
+                    $crate::jni_bridge::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].ctor},
                     $crate::jvalues!($($args,)*))
             )
         })
@@ -198,8 +205,8 @@ macro_rules! jni_call {
                 env,
                 env.call_method_unchecked(
                     $obj,
-                    paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method>]},
-                    paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
+                    $crate::jni_bridge::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method>]},
+                    $crate::jni_bridge::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
                     $crate::jvalues_sys!($($args,)*)
                 )
             ).and_then(|result| $crate::jni_map_error_with_env!(env, <$ret>::try_from(result)))
@@ -218,9 +225,9 @@ macro_rules! jni_call_static {
             $crate::jni_map_error_with_env!(
                 env,
                 env.call_static_method_unchecked(
-                    paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].class},
-                    paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method>]},
-                    paste::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
+                    $crate::jni_bridge::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].class},
+                    $crate::jni_bridge::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method>]},
+                    $crate::jni_bridge::paste! {$crate::jni_bridge::JavaClasses::get().[<c $clsname>].[<method_ $method _ret>]}.clone(),
                     $crate::jvalues_sys!($($args,)*)
                 )
             ).and_then(|result| $crate::jni_map_error_with_env!(env, <$ret>::try_from(result)))

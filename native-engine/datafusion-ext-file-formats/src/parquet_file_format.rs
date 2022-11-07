@@ -17,8 +17,8 @@
 
 //! Parquet format abstractions
 
-use crate::file_format::fs::FsDataInputStream;
-use crate::file_format::ObjectMeta;
+use crate::fs::FsDataInputStream;
+use crate::ObjectMeta;
 use datafusion::common::DataFusionError;
 use datafusion::error::Result;
 use datafusion::parquet::file::footer::{decode_footer, decode_metadata};

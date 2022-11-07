@@ -57,11 +57,11 @@ use jni::objects::JObject;
 use log::{debug, warn};
 use once_cell::sync::OnceCell;
 
-use crate::file_format::file_stream::{FileStream, FormatReader, ReaderFuture};
-use crate::file_format::fs::{FsDataInputStream, FsProvider};
-use crate::file_format::parquet_file_format::fetch_parquet_metadata;
-use crate::file_format::pruning::{PruningPredicate, PruningStatistics};
-use crate::file_format::{FileScanConfig, ObjectMeta, SchemaAdapter};
+use crate::file_stream::{FileStream, FormatReader, ReaderFuture};
+use crate::fs::{FsDataInputStream, FsProvider};
+use crate::parquet_file_format::fetch_parquet_metadata;
+use crate::pruning::{PruningPredicate, PruningStatistics};
+use crate::{FileScanConfig, ObjectMeta, SchemaAdapter};
 use blaze_commons::{jni_call_static, jni_new_global_ref, jni_new_string};
 
 /// Execution plan for scanning one or more Parquet partitions

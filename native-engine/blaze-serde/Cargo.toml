@@ -9,12 +9,11 @@ default = ["datafusion/simd", "prost/no-recursion-limit"]
 datafusion = "14.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "../datafusion-ext-exprs" }
+datafusion-ext-file-formats = { path = "../datafusion-ext-file-formats" }
+datafusion-ext-functions = { path = "../datafusion-ext-functions" }
 datafusion-ext-plans = { path = "../datafusion-ext-plans" }
 log = "0.4.14"
 prost = "0.11.0"
-
-[dependencies.datafusion-ext]
-path = "../datafusion-ext"
 
 [build-dependencies]
 tonic-build = "0.8.2"
