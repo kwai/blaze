@@ -57,8 +57,7 @@ pub struct IpcReaderStream {
     baseline_metrics: BaselineMetrics,
     size_counter: Count,
 }
-unsafe impl Sync for IpcReaderStream {} // safety: segments is safe to be shared
-unsafe impl Send for IpcReaderStream {} // #[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for IpcReaderStream {}
 
 impl IpcReaderStream {
     pub fn new(
