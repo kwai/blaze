@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::ipc::write_one_batch;
 use async_trait::async_trait;
 use blaze_commons::{
     jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer,
@@ -34,6 +33,8 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
+use datafusion_ext_commons::ipc::write_one_batch;
+
 use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::TryStreamExt;

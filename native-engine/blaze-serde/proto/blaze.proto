@@ -41,6 +41,7 @@ message PhysicalPlanNode {
     HashAggregateExecNode hash_aggregate = 14;
     LimitExecNode limit = 15;
     FFIReaderExecNode ffi_reader = 16;
+    CoalesceBatchesExecNode coalesce_batches = 17;
   }
 }
 
@@ -500,6 +501,11 @@ message FFIReaderExecNode {
   uint32 num_partitions = 1;
   Schema schema = 2;
   string export_iter_provider_resource_id = 3;
+}
+
+message CoalesceBatchesExecNode {
+  PhysicalPlanNode input = 1;
+  uint64 batch_size = 2;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

@@ -12,6 +12,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod array_builder;
-pub mod ipc;
-pub mod spark_hash;
+pub mod ipc_stream;

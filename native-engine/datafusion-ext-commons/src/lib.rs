@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod aggr;
-pub mod expr;
-pub mod ext_functions;
-pub mod file_format;
+pub mod array_builder;
+pub mod ipc;
+pub mod spark_hash;
+pub mod streams;

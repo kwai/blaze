@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::expr::down_cast_any_ref;
-use crate::util::ipc::{read_one_batch, write_one_batch};
 use blaze_commons::{
     jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
@@ -24,6 +23,7 @@ use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::utils::expr_list_eq_any_order;
 use datafusion::physical_plan::PhysicalExpr;
+use datafusion_ext_commons::ipc::{read_one_batch, write_one_batch};
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
 use std::any::Any;
@@ -164,9 +164,10 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
             SparkExpressionWrapperContext(jcontext.as_obj()).eval(batch_byte_buffer) -> JObject
         )?;
 
-        let mut reader = crate::plan::ipc_reader_exec::ReadableByteChannelReader(
-            jni_new_global_ref!(output_channel)?,
-        );
+        let mut reader =
+            datafusion_ext_commons::streams::ipc_stream::ReadableByteChannelReader(
+                jni_new_global_ref!(output_channel)?,
+            );
         let output_batch = read_one_batch(&mut reader, output_schema, false, false)?;
 
         if input_contains_array {

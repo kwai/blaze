@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::spark_hash::create_hashes;
 use datafusion::arrow::array::*;
 use datafusion::common::Result;
 use datafusion::physical_plan::ColumnarValue;
+use datafusion_ext_commons::spark_hash::create_hashes;
 use std::sync::Arc;
 
 /// implements org.apache.spark.sql.catalyst.expressions.UnscaledValue

@@ -303,7 +303,7 @@ pub fn create_hashes<'a>(
     Ok(hashes_buffer)
 }
 
-pub(crate) fn pmod(hash: u32, n: usize) -> usize {
+pub fn pmod(hash: u32, n: usize) -> usize {
     let hash = hash as i32;
     let n = n as i32;
     let r = hash % n;
@@ -315,12 +315,11 @@ pub(crate) fn pmod(hash: u32, n: usize) -> usize {
 mod tests {
     use std::sync::Arc;
 
+    use crate::spark_hash::{create_hashes, pmod};
     use datafusion::arrow::array::{
         ArrayRef, Int32Array, Int64Array, Int8Array, StringArray,
     };
     use datafusion::from_slice::FromSlice;
-
-    use crate::util::spark_hash::{create_hashes, pmod};
 
     #[test]
     fn test_i8() {

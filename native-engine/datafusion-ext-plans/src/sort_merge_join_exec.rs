@@ -1,6 +1,3 @@
-use crate::util::array_builder::{
-    builder_append_null, builder_extend, make_batch, new_array_builders,
-};
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute::kernels::take::take;
 use datafusion::arrow::compute::SortOptions;
@@ -24,6 +21,9 @@ use datafusion::physical_plan::stream::{
 };
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
+};
+use datafusion_ext_commons::array_builder::{
+    builder_append_null, builder_extend, make_batch, new_array_builders,
 };
 use std::any::Any;
 use std::borrow::BorrowMut;
@@ -956,6 +956,7 @@ fn row_equal(
 
 #[cfg(test)]
 mod tests {
+    use crate::sort_merge_join_exec::SortMergeJoinExec;
     use datafusion::arrow;
     use datafusion::arrow::array::*;
     use datafusion::arrow::compute::SortOptions;
@@ -966,12 +967,11 @@ mod tests {
     use datafusion::logical_expr::JoinType;
     use datafusion::physical_expr::expressions::Column;
     use datafusion::physical_plan::common;
+    use datafusion::physical_plan::joins::utils::*;
     use datafusion::physical_plan::memory::MemoryExec;
     use datafusion::physical_plan::ExecutionPlan;
-    use std::sync::Arc;
-
-    use crate::plan::sort_merge_join_exec::SortMergeJoinExec;
     use datafusion::prelude::{SessionConfig, SessionContext};
+    use std::sync::Arc;
 
     fn columns(schema: &Schema) -> Vec<String> {
         schema.fields().iter().map(|f| f.name().clone()).collect()

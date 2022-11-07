@@ -3,15 +3,6 @@
 version = 3
 
 [[package]]
-name = "addr2line"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ecd88a8c8378ca913a680cd98f0f13ac67383d35993f86c90a70e3f137816b"
-dependencies = [
- "gimli",
-]
-
-[[package]]
 name = "adler"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -300,7 +291,6 @@ name = "blaze"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "backtrace",
  "blaze-commons",
  "blaze-serde",
  "datafusion",
@@ -333,6 +323,8 @@ version = "0.1.0"
 dependencies = [
  "datafusion",
  "datafusion-ext",
+ "datafusion-ext-commons",
+ "datafusion-ext-plans",
  "log",
  "prost",
  "tonic-build",
@@ -696,6 +688,52 @@ dependencies = [
  "blaze-commons",
  "bytes",
  "datafusion",
+ "datafusion-ext-commons",
+ "futures",
+ "itertools",
+ "jni",
+ "log",
+ "num",
+ "once_cell",
+ "paste",
+ "tempfile",
+ "thrift",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
+name = "datafusion-ext-commons"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "blaze-commons",
+ "bytes",
+ "datafusion",
+ "futures",
+ "itertools",
+ "jni",
+ "log",
+ "num",
+ "once_cell",
+ "paste",
+ "tempfile",
+ "thrift",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
+name = "datafusion-ext-plans"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "blaze-commons",
+ "bytes",
+ "datafusion",
+ "datafusion-ext-commons",
  "futures",
  "itertools",
  "jni",
@@ -953,12 +991,6 @@ dependencies = [
  "libc",
  "wasi",
 ]
-
-[[package]]
-name = "gimli"
-version = "0.26.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78cc372d058dcf6d5ecd98510e7fbc9e5aec4d21de70f65fea8fecebcd881bd4"
 
 [[package]]
 name = "glob"
@@ -1725,12 +1757,6 @@ checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
 dependencies = [
  "winapi",
 ]
-
-[[package]]
-name = "rustc-demangle"
-version = "0.1.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef03e0a2b150c7a90d01faf6254c9c48a41e95fb2a8c2ac1c6f0d2b9aefc342"
 
 [[package]]
 name = "rustversion"

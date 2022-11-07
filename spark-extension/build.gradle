@@ -172,7 +172,7 @@ spotless {
 sourceSets {
 	main {
 		proto {
-			srcDir '../native-engine/plan-serde/proto'
+			srcDir '../native-engine/blaze-serde/proto'
 		}
 		scala {
 			srcDirs = ['src/generated-sources/main/java', 'src/main/scala', 'src/main/java']

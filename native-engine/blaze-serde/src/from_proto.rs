@@ -52,15 +52,16 @@ use datafusion_ext::aggr::simplified_sum::SimplifiedSum;
 use datafusion_ext::file_format::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
-use datafusion_ext::plan::debug_exec::DebugExec;
-use datafusion_ext::plan::empty_partitions_exec::EmptyPartitionsExec;
-use datafusion_ext::plan::ffi_reader_exec::FFIReaderExec;
-use datafusion_ext::plan::ipc_reader_exec::IpcReadMode;
-use datafusion_ext::plan::ipc_reader_exec::IpcReaderExec;
-use datafusion_ext::plan::ipc_writer_exec::IpcWriterExec;
-use datafusion_ext::plan::rename_columns_exec::RenameColumnsExec;
-use datafusion_ext::plan::shuffle_writer_exec::ShuffleWriterExec;
-use datafusion_ext::plan::sort_merge_join_exec::SortMergeJoinExec;
+use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
+use datafusion_ext_plans::debug_exec::DebugExec;
+use datafusion_ext_plans::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext_plans::ffi_reader_exec::FFIReaderExec;
+use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
+use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
+use datafusion_ext_plans::limit_exec::LimitExec;
+use datafusion_ext_plans::rename_columns_exec::RenameColumnsExec;
+use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
+use datafusion_ext_plans::sort_merge_join_exec::SortMergeJoinExec;
 
 use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
@@ -76,7 +77,6 @@ use datafusion_ext::expr::spark_expression_wrapper::SparkExpressionWrapperExpr;
 use datafusion_ext::expr::string_contains::StringContainsExpr;
 use datafusion_ext::expr::string_ends_with::StringEndsWithExpr;
 use datafusion_ext::expr::string_starts_with::StringStartsWithExpr;
-use datafusion_ext::plan::limit_exec::LimitExec;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -633,6 +633,11 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     ffi_reader.export_iter_provider_resource_id.clone(),
                     schema,
                 )))
+            }
+            PhysicalPlanType::CoalesceBatches(coalesce_batches) => {
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(coalesce_batches.input)?;
+                Ok(Arc::new(LimitExec::new(input, coalesce_batches.batch_size)))
             }
         }
     }
