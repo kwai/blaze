@@ -42,15 +42,15 @@ class ArrowWriterIterator(
   private val arrowSchema = ArrowUtils2.toArrowSchema(schema, timeZoneId)
   private var allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowWriterIterator", 0, Long.MaxValue)
-  private var root = VectorSchemaRoot.create(arrowSchema, allocator)
-  private val arrowWriter: ArrowWriter = ArrowWriter.create(root)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
-  override def hasNext: Boolean = root != null && rowIter.hasNext
+  override def hasNext: Boolean = allocator != null && rowIter.hasNext
 
   override def next(): ReadableByteChannel = {
+    val root = VectorSchemaRoot.create(arrowSchema, allocator)
+    val arrowWriter = ArrowWriter.create(root)
     var rowCount = 0
 
     while (rowIter.hasNext && rowCount < recordBatchSize) {
@@ -67,17 +67,14 @@ class ArrowWriterIterator(
         writer.end()
         writer.close()
       }
-      arrowWriter.reset()
-      root.clear()
+      root.close()
       new SeekableInMemoryByteChannel(outputStream.toByteArray)
     }
   }
 
   private def close(): Unit =
     synchronized {
-      if (root != null) {
-        root.close()
-        root = null
+      if (allocator != null) {
         allocator.close()
         allocator = null
       }

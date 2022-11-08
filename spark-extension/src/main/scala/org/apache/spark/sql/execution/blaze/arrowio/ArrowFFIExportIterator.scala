@@ -40,8 +40,6 @@ class ArrowFFIExportIterator(
   private val arrowSchema = ArrowUtils2.toArrowSchema(schema, timeZoneId)
   private var allocator =
     ArrowUtils2.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
-  private var root = VectorSchemaRoot.create(arrowSchema, allocator)
-  private val arrowWriter: ArrowWriter = ArrowWriter.create(root)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
@@ -49,9 +47,9 @@ class ArrowFFIExportIterator(
   override def hasNext: Boolean = allocator != null && rowIter.hasNext
 
   override def next(): (Long, Long) => Unit = {
+    val root = VectorSchemaRoot.create(arrowSchema, allocator)
+    val arrowWriter = ArrowWriter.create(root)
     var rowCount = 0
-    arrowWriter.reset()
-    root.clear()
 
     while (rowIter.hasNext && rowCount < recordBatchSize) {
       arrowWriter.write(rowIter.next())
@@ -66,13 +64,12 @@ class ArrowFFIExportIterator(
         emptyDictionaryProvider,
         ArrowArray.wrap(exportArrowArrayPtr),
         ArrowSchema.wrap(exportArrowSchemaPtr))
+      root.close()
   }
 
   private def close(): Unit =
     synchronized {
       if (allocator != null) {
-        root.close()
-        root = null
         allocator.close()
         allocator = null
       }
