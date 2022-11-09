@@ -37,13 +37,13 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-arrow = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
-arrow-array = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
-arrow-buffer = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
-arrow-cast = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
-arrow-data = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
-arrow-ipc = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
-arrow-schema = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
-arrow-select = { git = "https://github.com/apache/arrow-rs.git", rev = "deb64554f9d25afa044248293b31ab7c26f0e42f" }
+arrow = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" } # fix issue https://github.com/apache/arrow-rs/issues/3061
+arrow-array = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
+arrow-buffer = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
+arrow-cast = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
+arrow-data = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
+arrow-ipc = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
+arrow-schema = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
+arrow-select = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
 datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "b7a33317c2abf265f4ab6b3fe636f87c4d01334c" }
 parquet = { path = "patched/parquet-26.0.0-kwai" }

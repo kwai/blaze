@@ -86,7 +86,7 @@ checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
 [[package]]
 name = "arrow"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 dependencies = [
  "ahash 0.8.0",
  "arrow-array",
@@ -116,7 +116,7 @@ dependencies = [
 [[package]]
 name = "arrow-array"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 dependencies = [
  "ahash 0.8.0",
  "arrow-buffer",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "arrow-buffer"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 dependencies = [
  "half",
  "num",
@@ -140,7 +140,7 @@ dependencies = [
 [[package]]
 name = "arrow-cast"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "arrow-data"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -166,7 +166,7 @@ dependencies = [
 [[package]]
 name = "arrow-ipc"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -179,12 +179,12 @@ dependencies = [
 [[package]]
 name = "arrow-schema"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 
 [[package]]
 name = "arrow-select"
 version = "26.0.0"
-source = "git+https://github.com/apache/arrow-rs.git?rev=deb64554f9d25afa044248293b31ab7c26f0e42f#deb64554f9d25afa044248293b31ab7c26f0e42f"
+source = "git+https://github.com/viirya/arrow-rs.git?rev=ccec98d43e0ad7dfe8452f5548c23ae0d572115b#ccec98d43e0ad7dfe8452f5548c23ae0d572115b"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
