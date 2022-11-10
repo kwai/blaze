@@ -22,6 +22,7 @@ mod spark_murmur3_hash;
 mod spark_null_if_zero;
 mod spark_round_n;
 mod spark_unscaled_value;
+mod spark_get_json_object;
 
 pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementation> {
     Ok(match name {
@@ -32,6 +33,7 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "CheckOverflow" => Arc::new(spark_check_overflow::spark_check_overflow),
         "RoundN" => Arc::new(spark_round_n::spark_round_n),
         "Murmur3Hash" => Arc::new(spark_murmur3_hash::spark_murmur3_hash),
+        "GetJsonObject" => Arc::new(spark_get_json_object::spark_get_json_object),
 
         _ => Err(DataFusionError::NotImplemented(format!(
             "spark ext function not implemented: {}",

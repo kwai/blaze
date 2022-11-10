@@ -20,9 +20,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
-
 import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -133,6 +131,11 @@ import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
 import org.apache.spark.sql.catalyst.expressions.Murmur3HashFunction
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.execution.blaze.plan.Util
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil.{
+  getFunctionClassName,
+  isHiveGenericUDF,
+  isHiveSimpleUDF
+}
 import org.blaze.{protobuf => pb}
 
 object NativeConverters {
@@ -653,11 +656,24 @@ object NativeConverters {
       case StddevSamp(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV, _1)
       case StddevPop(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV_POP, _1)
 
-      // hive UDF
+      // hive UDFJson
       case e
-          if Seq(
-            "org.apache.spark.sql.hive.HiveSimpleUDF",
-            "org.apache.spark.sql.hive.HiveGenericUDF").contains(e.getClass.getName) =>
+          if (isHiveSimpleUDF(e)
+            && getFunctionClassName(e) == Some("org.apache.hadoop.hive.ql.udf.UDFJson")
+            && SparkEnv.get.conf.getBoolean(
+              "spark.blaze.udf.UDFJson.enabled",
+              defaultValue = false)) =>
+        e.children match {
+          case Seq(_1, Literal(path, StringType)) =>
+            buildExtScalarFunction(
+              "GetJsonObject",
+              Seq(_1, Literal(path, StringType)),
+              StringType)
+          case _ => throw new NotImplementedError(s"Arraytype path not supported")
+        }
+
+      //hive UDF
+      case e if isHiveSimpleUDF(e) || isHiveGenericUDF(e) =>
         assert(
           SparkEnv.get.conf.getBoolean("spark.blaze.udf.enabled", defaultValue = false),
           "stop converting UDF because spark.blaze.udf.enabled = false")
