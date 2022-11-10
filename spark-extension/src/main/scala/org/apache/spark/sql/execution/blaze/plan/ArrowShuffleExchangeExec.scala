@@ -72,7 +72,6 @@ import org.apache.spark.util.collection.unsafe.sort.PrefixComparators
 import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.ExternalBlockStoreUtils
-import org.blaze.protobuf.CoalesceBatchesExecNode
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PhysicalExprNode
@@ -376,11 +375,9 @@ object ArrowShuffleExchangeExec {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val numPartitions = outputPartitioning.numPartitions
-
-    val nativeInnerMetrics = MetricNode(Map(), nativeInputRDD.metrics :: Nil)
     val nativeMetrics = MetricNode(
       Map(),
-      nativeInnerMetrics :: Nil,
+      nativeInputRDD.metrics :: Nil,
       Some({
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
@@ -414,25 +411,16 @@ object ArrowShuffleExchangeExec {
         }
 
         val input = nativeInputRDD.nativePlan(nativeInputPartition, taskContext)
-        val nativeCoalesceBatchesExec = PhysicalPlanNode
-          .newBuilder()
-          .setCoalesceBatches(
-            CoalesceBatchesExecNode
-              .newBuilder()
-              .setInput(input)
-              .setBatchSize(NativeSupports.batchSize))
-          .build()
         val nativeShuffleWriteExec = PhysicalPlanNode
           .newBuilder()
           .setShuffleWriter(
             ShuffleWriterExecNode
               .newBuilder()
-              .setInput(nativeCoalesceBatchesExec)
+              .setInput(input)
               .setOutputPartitioning(nativeOutputPartitioning)
               .buildPartial()
           ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
           .build()
-
         nativeShuffleWriteExec
       },
       friendlyName = "NativeRDD.ShuffleWrite")

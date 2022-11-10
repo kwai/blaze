@@ -52,7 +52,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.OneToOneDependency
-import org.blaze.protobuf.CoalesceBatchesExecNode
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.IpcWriterExecNode
@@ -168,8 +167,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
     val modifiedMetrics = metrics ++ Map(
       "output_rows" -> metrics("ipc_write_rows"),
       "elapsed_compute" -> metrics("ipc_write_time"))
-    val nativeInnerMetrics = MetricNode(Map(), inputRDD.metrics :: Nil)
-    val nativeMetrics = MetricNode(modifiedMetrics, nativeInnerMetrics :: Nil)
+    val nativeMetrics = MetricNode(modifiedMetrics, inputRDD.metrics :: Nil)
 
     val ipcRDD = new RDD[Array[Byte]](sparkContext, new OneToOneDependency(inputRDD) :: Nil) {
       setName("NativeRDD.BroadcastWrite")
@@ -189,20 +187,12 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
           })
 
         val input = inputRDD.nativePlan(inputRDD.partitions(split.index), context)
-        val nativeCoalesceBatchesExec = PhysicalPlanNode
-          .newBuilder()
-          .setCoalesceBatches(
-            CoalesceBatchesExecNode
-              .newBuilder()
-              .setInput(input)
-              .setBatchSize(NativeSupports.batchSize))
-          .build()
         val nativeIpcWriterExec = PhysicalPlanNode
           .newBuilder()
           .setIpcWriter(
             IpcWriterExecNode
               .newBuilder()
-              .setInput(nativeCoalesceBatchesExec)
+              .setInput(input)
               .setIpcConsumerResourceId(resourceId)
               .build())
           .build()
