@@ -662,15 +662,12 @@ object NativeConverters {
             && getFunctionClassName(e) == Some("org.apache.hadoop.hive.ql.udf.UDFJson")
             && SparkEnv.get.conf.getBoolean(
               "spark.blaze.udf.UDFJson.enabled",
-              defaultValue = false)) =>
-        e.children match {
-          case Seq(_1, Literal(path, StringType)) =>
-            buildExtScalarFunction(
-              "GetJsonObject",
-              Seq(_1, Literal(path, StringType)),
-              StringType)
-          case _ => throw new NotImplementedError(s"Arraytype path not supported")
-        }
+              defaultValue = true)
+            && e.children.length == 2
+            && e.children(0).dataType == StringType
+            && e.children(1).dataType == StringType
+            && e.children(1).isInstanceOf[Literal]) =>
+        buildExtScalarFunction("GetJsonObject", e.children, StringType)
 
       //hive UDF
       case e if isHiveSimpleUDF(e) || isHiveGenericUDF(e) =>
