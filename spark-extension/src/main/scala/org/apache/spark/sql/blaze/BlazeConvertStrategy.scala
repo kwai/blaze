@@ -98,8 +98,6 @@ object BlazeConvertStrategy extends Logging {
     }
 
     // execute some special strategies
-    neverConvertExecWithTimestamp(exec)
-    neverConvertJoinsWithPostCondition(exec)
     removeInefficientConverts(exec)
 
     exec.foreachUp {
@@ -148,26 +146,6 @@ object BlazeConvertStrategy extends Logging {
 
   def isAlwaysConvert(exec: SparkPlan): Boolean = {
     exec.getTagValue(convertStrategyTag).contains(AlwaysConvert)
-  }
-
-  private def neverConvertExecWithTimestamp(exec: SparkPlan): Unit = {
-    exec.foreach {
-      case e
-          if e.output.exists(_.dataType == TimestampType) || e.children.exists(
-            _.output.exists(_.dataType == TimestampType)) =>
-        e.setTagValue(convertStrategyTag, NeverConvert)
-      case _ =>
-    }
-  }
-
-  private def neverConvertJoinsWithPostCondition(exec: SparkPlan): Unit = {
-    exec.foreach {
-      case e: SortMergeJoinExec if e.condition.nonEmpty =>
-        e.setTagValue(convertStrategyTag, NeverConvert)
-      case e: BroadcastHashJoinExec if e.condition.nonEmpty =>
-        e.setTagValue(convertStrategyTag, NeverConvert)
-      case _ =>
-    }
   }
 
   private def removeInefficientConverts(exec: SparkPlan): Unit = {

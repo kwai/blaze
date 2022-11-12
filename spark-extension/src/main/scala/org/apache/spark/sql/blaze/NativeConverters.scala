@@ -201,10 +201,9 @@ object NativeConverters {
       case FloatType => scalarValueBuilder.setFloat32Value(sparkValue.asInstanceOf[Float])
       case DoubleType => scalarValueBuilder.setFloat64Value(sparkValue.asInstanceOf[Double])
       case StringType => scalarValueBuilder.setUtf8Value(sparkValue.toString)
-      case BinaryType => throw new NotImplementedError("???")
+      case BinaryType => throw new NotImplementedError("BinaryType not yet supported")
       case DateType => scalarValueBuilder.setDate32Value(sparkValue.asInstanceOf[Int])
-      case TimestampType =>
-        scalarValueBuilder.setTimeMicrosecondValue(sparkValue.asInstanceOf[Long])
+      case TimestampType => throw new NotImplementedError("TimstampType not yet supported")
       case t: DecimalType =>
         val decimalValue = sparkValue.asInstanceOf[Decimal]
         val decimalType = convertDataType(t).getDECIMAL

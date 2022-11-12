@@ -295,6 +295,7 @@ object BlazeConverters extends Logging {
       case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right) =>
         logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
 
+        assert(exec.condition.isEmpty, "SortMergeJoin with post filter not yet supported")
         var nativeLeft = convertToNative(left)
         var nativeRight = convertToNative(right)
         var modifiedLeftKeys = leftKeys
@@ -331,23 +332,11 @@ object BlazeConverters extends Logging {
           smjOrig.outputOrdering,
           smjOrig.joinType)
 
-        val postProjectedSmj = if (needPostProject) {
+        return if (needPostProject) {
           buildPostJoinProject(smj, exec.output)
         } else {
           smj
         }
-
-        val postProjectExprIds = postProjectedSmj.output.map(_.exprId.id).toSet
-        val conditionedSmj = condition match {
-          case Some(condition) =>
-            if (!condition.references.map(_.exprId.id).toSet.subsetOf(postProjectExprIds)) {
-              throw new NotImplementedError(
-                "SMJ post filter with columns not existed in join output is not yet supported")
-            }
-            NativeFilterExec(condition, postProjectedSmj)
-          case None => postProjectedSmj
-        }
-        return conditionedSmj
     }
     logDebug(s"Ignoring SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
     exec
@@ -418,25 +407,14 @@ object BlazeConverters extends Logging {
             addRenameColumnsExec(nativeProbed),
             modifiedHashedKeys,
             modifiedProbedKeys,
+            condition,
             modifiedJoinType)
 
-          val postProjectedBhj = if (needPostProject) {
+          return if (needPostProject) {
             buildPostJoinProject(bhj, exec.output)
           } else {
             bhj
           }
-
-          val postProjectExprIds = postProjectedBhj.output.map(_.exprId.id).toSet
-          val conditionedBhj = condition match {
-            case Some(condition) =>
-              if (!condition.references.map(_.exprId.id).toSet.subsetOf(postProjectExprIds)) {
-                throw new NotImplementedError(
-                  "BHJ post filter with columns not existed in join output is not yet supported")
-              }
-              NativeFilterExec(condition, postProjectedBhj)
-            case None => postProjectedBhj
-          }
-          return conditionedBhj
       }
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>

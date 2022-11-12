@@ -17,6 +17,7 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -39,9 +40,11 @@ import org.apache.spark.sql.catalyst.plans.LeftExistence
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.OneToOneDependency
-import org.apache.spark.RangeDependency
+import org.blaze.protobuf.ColumnIndex
 import org.blaze.protobuf.HashJoinExecNode
+import org.blaze.protobuf.JoinFilter
 import org.blaze.protobuf.JoinOn
+import org.blaze.protobuf.JoinSide
 import org.blaze.protobuf.PhysicalPlanNode
 
 case class NativeBroadcastHashJoinExec(
@@ -49,6 +52,7 @@ case class NativeBroadcastHashJoinExec(
     override val right: SparkPlan,
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
+    joinFilter: Option[Expression],
     joinType: JoinType)
     extends BinaryExecNode
     with NativeSupports {
@@ -97,6 +101,35 @@ case class NativeBroadcastHashJoinExec(
         .build()
   }
 
+  private val nativeJoinFilter = joinFilter.map { filterExpr =>
+    val schema = filterExpr.references.toSeq
+    val columnIndices = ArrayBuffer[ColumnIndex]()
+    for (attr <- schema) {
+      attr.exprId match {
+        case exprId if left.output.exists(_.exprId == exprId) =>
+          columnIndices += ColumnIndex
+            .newBuilder()
+            .setSide(JoinSide.LEFT_SIDE)
+            .setIndex(left.output.indexWhere(_.exprId == attr.exprId))
+            .build()
+        case exprId if right.output.exists(_.exprId == exprId) =>
+          columnIndices += ColumnIndex
+            .newBuilder()
+            .setSide(JoinSide.RIGHT_SIDE)
+            .setIndex(right.output.indexWhere(_.exprId == attr.exprId))
+            .build()
+        case _ =>
+          throw new NotImplementedError(s"unsupported join filter: $filterExpr")
+      }
+    }
+    JoinFilter
+      .newBuilder()
+      .setExpression(NativeConverters.convertExpr(filterExpr))
+      .setSchema(Util.getNativeSchema(schema))
+      .addAllColumnIndices(columnIndices.asJava)
+      .build()
+  }
+
   private val nativeJoinType = NativeConverters.convertJoinType(joinType)
 
   override def doExecuteNative(): NativeRDD = {
@@ -126,6 +159,8 @@ case class NativeBroadcastHashJoinExec(
           .setJoinType(nativeJoinType)
           .addAllOn(nativeJoinOn.asJava)
           .setNullEqualsNull(false)
+
+        nativeJoinFilter.foreach(joinFilter => hashJoinExec.setFilter(joinFilter))
         PhysicalPlanNode.newBuilder().setHashJoin(hashJoinExec).build()
       },
       friendlyName = "NativeRDD.BroadcastHashJoin")
