@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![feature(ready_macro)]
+
 pub mod debug_exec;
 pub mod empty_partitions_exec;
+pub mod expand_exec;
 pub mod ffi_reader_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;

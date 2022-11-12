@@ -36,6 +36,7 @@ import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.LocalLimitExec
 import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
+import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
 import org.apache.spark.sql.types.TimestampType
 
@@ -101,9 +102,6 @@ object BlazeConvertStrategy extends Logging {
     neverConvertJoinsWithPostCondition(exec)
     removeInefficientConverts(exec)
 
-    def hasLessConvertibleChildren(e: SparkPlan) =
-      e.children.count(isNeverConvert) > e.children.count(isAlwaysConvert)
-
     exec.foreachUp {
       case exec if isNeverConvert(exec) || isAlwaysConvert(exec) =>
       // already decided, do nothing
@@ -134,6 +132,8 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: HashAggregateExec
           if isAlwaysConvert(e.child) || !e.getTagValue(hashAggrModeTag).contains(Partial) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: ExpandExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 
       case e =>

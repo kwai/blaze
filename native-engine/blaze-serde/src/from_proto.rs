@@ -55,6 +55,7 @@ use datafusion_ext_file_formats::{
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_plans::debug_exec::DebugExec;
 use datafusion_ext_plans::empty_partitions_exec::EmptyPartitionsExec;
+use datafusion_ext_plans::expand_exec::ExpandExec;
 use datafusion_ext_plans::ffi_reader_exec::FFIReaderExec;
 use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
@@ -638,6 +639,28 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let input: Arc<dyn ExecutionPlan> =
                     convert_box_required!(coalesce_batches.input)?;
                 Ok(Arc::new(LimitExec::new(input, coalesce_batches.batch_size)))
+            }
+            PhysicalPlanType::Expand(expand) => {
+                let schema = Arc::new(convert_required!(expand.schema)?);
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(expand.input)?;
+                let projections = expand.projections
+                    .iter()
+                    .map(|projection| {
+                        projection.expr.iter().map(|expr| {
+                            Ok(bind(
+                                try_parse_physical_expr(expr, &input.schema())?,
+                                &input.schema(),
+                            )?)
+                        })
+                        .collect::<Result<Vec<_>, Self::Error>>()
+                    }).collect::<Result<Vec<_>, _>>()?;
+
+                Ok(Arc::new(ExpandExec::try_new(
+                    schema,
+                    projections,
+                    input,
+                )?))
             }
         }
     }

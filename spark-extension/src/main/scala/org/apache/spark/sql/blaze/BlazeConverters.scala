@@ -88,6 +88,8 @@ import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.blaze.plan.Util
+import org.apache.spark.sql.execution.ExpandExec
+import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -113,6 +115,8 @@ object BlazeConverters extends Logging {
       .getBoolean("spark.blaze.enable.take.ordered.and.project", defaultValue = true)
   val enableAggr: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = true)
+  val enableExpand: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.expand", defaultValue = true)
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
 
@@ -170,6 +174,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertTakeOrderedAndProjectExec)
       case e: HashAggregateExec if enableAggr => // aggregate
         tryConvert(e, convertHashAggregateExec)
+      case e: ExpandExec if enableExpand => // aggregate
+        tryConvert(e, convertExpandExec)
 
       case exec =>
         exec.setTagValue(convertibleTag, false)
@@ -510,6 +516,20 @@ object BlazeConverters extends Logging {
     }
     exec
   }
+
+  def convertExpandExec(exec: ExpandExec): SparkPlan =
+    exec match {
+      case exec: ExpandExec =>
+        logDebug(s"Converting ExpandExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"  projections: ${exec.projections}")
+        NativeExpandExec(
+          exec.projections,
+          exec.output,
+          addRenameColumnsExec(convertToNative(exec.child)))
+      case _ =>
+        logDebug(s"Ignoring ExpandExec: ${exec.simpleStringWithNodeId()}")
+        exec
+    }
 
   def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
     if (!NativeSupports.isNative(exec)) {
