@@ -453,7 +453,7 @@ object NativeConverters {
             val (p1, s1) = (lt.precision, lt.scale)
             val (p2, s2) = (rt.precision, rt.scale)
             val scale = Math.max(6, s1 + p2 + 1)
-            val precision = p1 - s1 + s2 + scale
+            val precision = Math.min(p1 - s1 + s2 + scale, DecimalType.MAX_PRECISION)
             Some(DecimalType(precision, scale))
           case _ =>
             None
