@@ -127,9 +127,11 @@ object NativeSupports extends Logging {
   def executeNative(plan: SparkPlan): NativeRDD =
     plan match {
       case plan: NativeSupports =>
-        NativeSupports.blazeOperatorMetricsCollector.foreach(
-          _.createListener(plan, plan.sparkContext))
-        plan.doExecuteNative()
+        plan.executeQuery {
+          NativeSupports.blazeOperatorMetricsCollector.foreach(
+            _.createListener(plan, plan.sparkContext))
+          plan.doExecuteNative()
+        }
       case plan: ShuffleQueryStageInput => executeNativeCustomShuffleReader(plan, plan.output)
       case plan: SkewedShuffleQueryStageInput =>
         executeNativeCustomShuffleReader(plan, plan.output)

@@ -20,7 +20,9 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
+
 import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -131,6 +133,7 @@ import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
 import org.apache.spark.sql.catalyst.expressions.Murmur3HashFunction
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.execution.blaze.plan.Util
+import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.{
   getFunctionClassName,
   isHiveGenericUDF,
@@ -342,6 +345,12 @@ object NativeConverters {
 
       case alias: Alias =>
         convertExpr(alias.child, useAttrExprId)
+
+      // ScalarSubquery
+      case subquery: ScalarSubquery =>
+        subquery.updateResult()
+        val value = Literal.create(subquery.eval(null), subquery.dataType)
+        convertExpr(value, useAttrExprId)
 
       // cast
       case Cast(child, dataType, _) =>
