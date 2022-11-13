@@ -36,8 +36,11 @@ case class NativeGlobalLimitExec(limit: Long, override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows"))
+      .toSeq: _*)
 
   override def output: Seq[Attribute] = child.output
   override def outputPartitioning: Partitioning = child.outputPartitioning

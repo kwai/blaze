@@ -91,14 +91,12 @@ case class ArrowShuffleExchangeExec(
 
   // NOTE: coordinator can be null after serialization/deserialization,
   //       e.g. it can be null on the Executor side
-  override lazy val writeMetrics =
+  override lazy val writeMetrics: Map[String, SQLMetric] =
     SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext, shuffleDescStr)
-  override lazy val readMetrics =
+  override lazy val readMetrics: Map[String, SQLMetric] =
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext, shuffleDescStr)
-  override lazy val metrics: Map[String, SQLMetric] =
-    Map(
-      "dataSize" -> SQLMetrics
-        .createSizeMetric(sparkContext, "data size")) ++ readMetrics ++ writeMetrics
+  override lazy val metrics: Map[String, SQLMetric] = readMetrics ++ writeMetrics ++ Map(
+    "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))
 
   override val nodeName: String = "ArrowShuffleExchange"
   override val outputPartitioning: Partitioning = newPartitioning

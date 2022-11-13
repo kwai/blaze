@@ -52,8 +52,11 @@ case class NativeSortMergeJoinExec(
     extends BinaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq: _*)
 
   private val nativeJoinOn = leftKeys.zip(rightKeys).map {
     case (leftKey, rightKey) =>

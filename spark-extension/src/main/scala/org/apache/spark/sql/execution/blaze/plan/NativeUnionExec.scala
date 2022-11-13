@@ -24,7 +24,6 @@ import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
 import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -33,7 +32,6 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.UnionExec
-import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
@@ -44,8 +42,11 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
     extends SparkPlan
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows"))
+      .toSeq: _*)
 
   // updating nullability to make all the children consistent
   override def output: Seq[Attribute] = {

@@ -161,6 +161,7 @@ impl Stream for ExpandStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // continue processing current batch
         if let Some(batch) = &self.current_batch {
+            let _timer = self.metrics.elapsed_compute();
             let projections = &self.projections[self.current_projection_id];
             let arrays = projections
                 .iter()

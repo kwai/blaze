@@ -51,15 +51,15 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     extends LeafExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    Map(
-      "predicate_evaluation_errors" ->
-        SQLMetrics.createMetric(sparkContext, "Native.predicate_evaluation_errors"),
-      "row_groups_pruned" ->
-        SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned"),
-      "bytes_scanned" ->
-        SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) ++ NativeSupports
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
       .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows"))
+      .toSeq :+
+      ("predicate_evaluation_errors", SQLMetrics
+        .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
+      ("row_groups_pruned", SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned")) :+
+      ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")): _*)
 
   override val output: Seq[Attribute] = basedFileScan.output
   override val outputPartitioning: Partitioning = basedFileScan.outputPartitioning

@@ -59,8 +59,11 @@ case class NativeHashAggregateExec(
     with NativeSupports
     with Logging {
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq: _*)
 
   val aggrMode: AggregateMode =
     if (aggregateExpressions.exists(_.mode == Final)

@@ -45,8 +45,10 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
   override val outputPartitioning: Partitioning = child.outputPartitioning
   override val outputOrdering: Seq[SortOrder] = child.outputOrdering
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .toSeq: _*)
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeSupports.executeNative(child)

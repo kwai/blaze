@@ -50,8 +50,11 @@ case class NativeProjectExec(
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq: _*)
 
   override val output: Seq[Attribute] = projectList.map(_.toAttribute)
   override val outputPartitioning: Partitioning = child.outputPartitioning

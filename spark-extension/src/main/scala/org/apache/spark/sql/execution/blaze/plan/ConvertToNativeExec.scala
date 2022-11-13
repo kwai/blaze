@@ -50,9 +50,12 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   override val output: Seq[Attribute] = child.output
   override val outputPartitioning: Partitioning = child.outputPartitioning
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext) ++ Map(
-      "size" -> SQLMetrics.createSizeMetric(sparkContext, "Native.batch_bytes_size"))
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq :+
+      ("size", SQLMetrics.createSizeMetric(sparkContext, "Native.batch_bytes_size")): _*)
 
   val renamedSchema: StructType = Util.getSchema(child.output)
   val nativeSchema: Schema = NativeConverters.convertSchema(renamedSchema)

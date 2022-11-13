@@ -132,9 +132,8 @@ object NativeSupports extends Logging {
             _.createListener(plan, plan.sparkContext))
           plan.doExecuteNative()
         }
-      case plan: ShuffleQueryStageInput => executeNativeCustomShuffleReader(plan, plan.output)
-      case plan: SkewedShuffleQueryStageInput =>
-        executeNativeCustomShuffleReader(plan, plan.output)
+      case plan: ShuffleQueryStageInput => executeNativeCustomShuffleReader(plan)
+      case plan: SkewedShuffleQueryStageInput => executeNativeCustomShuffleReader(plan)
       case plan: BroadcastQueryStageInput => executeNative(plan.childStage)
       case plan: QueryStage => executeNative(plan.child)
       case plan: ReusedExchangeExec => executeNative(plan.child)
@@ -172,9 +171,7 @@ object NativeSupports extends Logging {
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
       "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"))
 
-  private def executeNativeCustomShuffleReader(
-      exec: SparkPlan,
-      output: Seq[Attribute]): NativeRDD = {
+  private def executeNativeCustomShuffleReader(exec: SparkPlan): NativeRDD = {
     exec match {
       case _: ShuffleQueryStageInput | _: SkewedShuffleQueryStageInput =>
         val shuffledRDD = exec.execute()

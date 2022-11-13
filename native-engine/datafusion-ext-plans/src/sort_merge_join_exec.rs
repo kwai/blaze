@@ -14,7 +14,7 @@ use datafusion::physical_plan::joins::utils::{
     build_join_schema, check_join_is_valid, JoinOn,
 };
 use datafusion::physical_plan::metrics::{
-    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
+    self, BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
 };
 use datafusion::physical_plan::stream::{
     RecordBatchReceiverStream, RecordBatchStreamAdapter,
@@ -30,6 +30,7 @@ use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use itertools::izip;
@@ -301,6 +302,10 @@ async fn join_combined(
     metrics: Arc<BaselineMetrics>,
     sender: &Sender<ArrowResult<RecordBatch>>,
 ) -> Result<()> {
+    let total_time = metrics::Time::new();
+    let io_time = metrics::Time::new();
+    let total_timer = total_time.timer();
+
     let left_dts = join_params
         .left_schema
         .fields()
@@ -328,7 +333,11 @@ async fn join_combined(
                     new_array_builders(&join_params.output_schema, join_params.batch_size)
                 }),
             )?;
-            sender.send(Ok(batch)).await.ok();
+
+            {
+                let _io_timer = io_time.timer();
+                sender.send(Ok(batch)).await.ok();
+            }
             metrics.record_output(staging_len);
             staging_len = 0;
             let _ = staging_len; // suppress value unused warnings
@@ -410,7 +419,10 @@ async fn join_combined(
                     }
 
                     let batch_num_rows = batch.num_rows();
-                    sender.send(Ok(batch)).await.ok();
+                    {
+                        let _io_timer = io_time.timer();
+                        sender.send(Ok(batch)).await.ok();
+                    }
                     metrics.record_output(batch_num_rows);
                 }
             }
@@ -450,7 +462,10 @@ async fn join_combined(
                     }
 
                     let batch_num_rows = batch.num_rows();
-                    sender.send(Ok(batch)).await.ok();
+                    {
+                        let _io_timer = io_time.timer();
+                        sender.send(Ok(batch)).await.ok();
+                    }
                     metrics.record_output(batch_num_rows);
                 }
             }
@@ -491,7 +506,11 @@ async fn join_combined(
                     flush_staging!();
                 }
             }
-            left_cursor.forward().await?;
+
+            {
+                let _io_timer = io_time.timer();
+                left_cursor.forward().await?;
+            }
             continue;
         }
         if ord.is_gt() {
@@ -512,7 +531,11 @@ async fn join_combined(
                     flush_staging!();
                 }
             }
-            right_cursor.forward().await?;
+
+            {
+                let _io_timer = io_time.timer();
+                right_cursor.forward().await?;
+            }
             continue;
         }
 
@@ -601,8 +624,12 @@ async fn join_combined(
                 buffers[i].push((batch, idx..idx + 1));
                 num_rows[i] += 1;
                 cur_indices[i] = 0;
-            };
-            cursors[i].forward().await?;
+            }
+
+            {
+                let _io_timer = io_time.timer();
+                cursors[i].forward().await?;
+            }
         }
 
         // read rest equal rows
@@ -645,7 +672,11 @@ async fn join_combined(
                     cur_indices[i] = 0;
                     flush_buffers!();
                 }
-                cursors[i].forward().await?;
+
+                {
+                    let _io_timer = io_time.timer();
+                    cursors[i].forward().await?;
+                }
             } else {
                 // unequal -- if current batch is forwarded, append to buffer, then exit
                 if idx > cur_indices[i] {
@@ -662,6 +693,11 @@ async fn join_combined(
     if staging_len > 0 {
         flush_staging!();
     }
+
+    drop(total_timer);
+    metrics.elapsed_compute().add_duration(
+        Duration::from_nanos((total_time.value() - io_time.value()) as u64)
+    );
     Ok(())
 }
 
@@ -672,6 +708,10 @@ async fn join_semi(
     metrics: Arc<BaselineMetrics>,
     sender: &Sender<ArrowResult<RecordBatch>>,
 ) -> Result<()> {
+    let total_time = metrics::Time::new();
+    let io_time = metrics::Time::new();
+    let total_timer = total_time.timer();
+
     let join_type = join_params.join_type;
     let mut staging_len = 0;
     let mut staging =
@@ -685,7 +725,10 @@ async fn join_semi(
                     new_array_builders(&join_params.output_schema, join_params.batch_size)
                 }),
             )?;
-            sender.send(Ok(batch)).await.ok();
+            {
+                let _io_timer = io_time.timer();
+                sender.send(Ok(batch)).await.ok();
+            }
             metrics.record_output(staging_len);
             staging_len = 0;
             let _ = staging_len; // suppress value unused warnings
@@ -715,18 +758,29 @@ async fn join_semi(
                 if join_type == JoinType::LeftAnti {
                     output_left_current_record!();
                 }
-                left_cursor.forward().await?;
+
+                {
+                    let _io_timer = io_time.timer();
+                    left_cursor.forward().await?;
+                }
                 continue;
             }
             Ordering::Equal => {
                 if join_type == JoinType::LeftSemi {
                     output_left_current_record!();
                 }
-                left_cursor.forward().await?;
+
+                {
+                    let _io_timer = io_time.timer();
+                    left_cursor.forward().await?;
+                }
                 continue;
             }
             Ordering::Greater => {
-                right_cursor.forward().await?;
+                {
+                    let _io_timer = io_time.timer();
+                    right_cursor.forward().await?;
+                }
                 continue;
             }
         }
@@ -734,6 +788,11 @@ async fn join_semi(
     if staging_len > 0 {
         flush_staging!();
     }
+
+    drop(total_timer);
+    metrics.elapsed_compute().add_duration(
+        Duration::from_nanos((total_time.value() - io_time.value()) as u64)
+    );
     Ok(())
 }
 

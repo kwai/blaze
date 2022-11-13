@@ -70,16 +70,18 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
 
   lazy val runId: UUID = UUID.randomUUID()
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext) ++ Map(
-      "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
-      "collectTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to collect"),
-      "buildTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to build"),
-      "broadcastTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to broadcast"),
-      "ipc_write_rows" -> SQLMetrics.createMetric(sparkContext, "Native.ipc_write_rows"),
-      "ipc_write_time" -> SQLMetrics.createNanoTimingMetric(
-        sparkContext,
-        "Native.ipc_write_time"))
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq :+
+      ("dataSize", SQLMetrics.createSizeMetric(sparkContext, "data size")) :+
+      ("collectTime", SQLMetrics.createTimingMetric(sparkContext, "time to collect")) :+
+      ("buildTime", SQLMetrics.createTimingMetric(sparkContext, "time to build")) :+
+      ("broadcastTime", SQLMetrics.createTimingMetric(sparkContext, "time to broadcast")) :+
+      ("ipc_write_rows", SQLMetrics.createMetric(sparkContext, "Native.ipc_write_rows")) :+
+      ("ipc_write_time", SQLMetrics
+        .createNanoTimingMetric(sparkContext, "Native.ipc_write_time")): _*)
 
   override def outputPartitioning: Partitioning = BroadcastPartitioning(mode)
 

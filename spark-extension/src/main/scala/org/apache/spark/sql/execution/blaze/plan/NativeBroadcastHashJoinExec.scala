@@ -79,8 +79,13 @@ case class NativeBroadcastHashJoinExec(
         throw new IllegalArgumentException(s"HashJoin should not take $x as the JoinType")
     }
   }
-  override lazy val metrics: Map[String, SQLMetric] =
-    NativeSupports.getDefaultNativeMetrics(sparkContext)
+
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeSupports
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(
+        Set("output_rows", "output_batches", "input_rows", "input_batches", "join_time"))
+      .toSeq: _*)
 
   private val nativeJoinOn = leftKeys.zip(rightKeys).map {
     case (leftKey, rightKey) =>
