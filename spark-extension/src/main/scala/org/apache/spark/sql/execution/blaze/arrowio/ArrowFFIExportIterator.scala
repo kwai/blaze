@@ -27,13 +27,14 @@ import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.NativeSupports
 
 class ArrowFFIExportIterator(
     rowIter: Iterator[InternalRow],
     schema: StructType,
     timeZoneId: String,
     taskContext: TaskContext,
-    recordBatchSize: Int = 10000)
+    recordBatchSize: Int = NativeSupports.batchSize)
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 

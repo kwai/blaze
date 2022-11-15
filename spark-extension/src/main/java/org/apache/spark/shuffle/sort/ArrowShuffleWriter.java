@@ -53,6 +53,7 @@ import org.apache.spark.serializer.SerializerInstance;
 import org.apache.spark.shuffle.IndexShuffleBlockResolver;
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter;
 import org.apache.spark.shuffle.ShuffleWriter;
+import org.apache.spark.sql.blaze.NativeSupports$;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
@@ -180,7 +181,7 @@ public class ArrowShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.outputBufferSizeInBytes =
         (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_UNSAFE_FILE_OUTPUT_BUFFER_SIZE())
             * 1024;
-    this.maxRecordsPerBatch = sparkConf.getInt("spark.blaze.batchSize", 10000);
+    this.maxRecordsPerBatch = NativeSupports$.MODULE$.batchSize();
     open();
   }
 

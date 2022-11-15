@@ -85,8 +85,8 @@ trait NativeSupports extends SparkPlan {
 }
 
 object NativeSupports extends Logging {
-  val batchSize: Long =
-    SparkEnv.get.conf.getLong("spark.blaze.batchSize", 16000)
+  val batchSize: Int =
+    SparkEnv.get.conf.getInt("spark.blaze.batchSize", 10000)
   val nativeMemory: Long =
     SparkEnv.get.conf.getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024
   val memoryFraction: Double =

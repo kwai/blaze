@@ -96,7 +96,7 @@ At the same time, there are a series of configurations that you can use to contr
 |-------------------------------------------------------------------|-----------------------|--------------------------------------------------------------------------------------------------|
 | spark.executor.memoryOverhead                                     | executor.memory * 0.1 | The amount of non-heap memory to be allocated per executor. Blaze would use this part of memory. |
 | spark.blaze.memoryFraction                                        | 0.75                  | A fraction of the off-heap that Blaze could use during execution.                                |
-| spark.blaze.batchSize                                             | 16384                 | Batch size for vectorized execution.                                                             |
+| spark.blaze.batchSize                                             | 10000                 | Batch size for vectorized execution.                                                             |
 | spark.blaze.enable.shuffle                                        | true                  | If enabled, use native, Arrow-IPC based Shuffle.                                                 |
 | spark.blaze.enable.[scan,project,filter,sort,union,sortmergejoin] | true                  | If enabled, offload the corresponding operator to native engine.                                 |
 

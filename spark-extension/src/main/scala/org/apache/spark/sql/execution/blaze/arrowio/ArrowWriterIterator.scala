@@ -30,13 +30,14 @@ import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.util.Utils
 import org.apache.spark.TaskContext
+import org.apache.spark.sql.blaze.NativeSupports
 
 class ArrowWriterIterator(
     rowIter: Iterator[InternalRow],
     schema: StructType,
     timeZoneId: String,
     taskContext: TaskContext,
-    recordBatchSize: Int = 10000)
+    recordBatchSize: Int = NativeSupports.batchSize)
     extends Iterator[ReadableByteChannel] {
 
   private val arrowSchema = ArrowUtils2.toArrowSchema(schema, timeZoneId)
