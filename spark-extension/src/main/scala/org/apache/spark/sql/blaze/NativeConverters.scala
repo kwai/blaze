@@ -139,6 +139,7 @@ import org.apache.spark.sql.hive.blaze.HiveUDFUtil.{
   isHiveGenericUDF,
   isHiveSimpleUDF
 }
+import org.apache.spark.sql.types.FractionalType
 import org.blaze.{protobuf => pb}
 
 object NativeConverters {
@@ -533,9 +534,10 @@ object NativeConverters {
               .setArrowType(convertDataType(e.dataType))
               .build())
         }
-      case e @ Round(_1, Literal(0, _)) =>
+      case e @ Round(_1, Literal(0, _)) if _1.dataType.isInstanceOf[FractionalType] =>
         buildScalarFunction(pb.ScalarFunction.Round, Seq(_1), e.dataType)
-      case e @ Round(_1, Literal(n: Int, _)) =>
+      case e @ Round(_1, Literal(n: Int, _))
+          if _1.dataType.isInstanceOf[FractionalType] && n >= 0 =>
         buildExtScalarFunction("RoundN", Seq(_1, Literal(n, IntegerType)), e.dataType)
 
       case e: Abs => buildScalarFunction(pb.ScalarFunction.Abs, e.children, e.dataType)

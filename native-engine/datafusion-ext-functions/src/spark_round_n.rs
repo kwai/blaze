@@ -94,3 +94,73 @@ fn round_decimal(i128_val: i128, scale: u8, n: i32) -> Option<i128> {
     let rounded = decimal.round(n as i64);
     rounded.as_bigint_and_exponent().0.to_i128()
 }
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use datafusion::arrow::array::*;
+    use datafusion::common::ScalarValue;
+    use datafusion::logical_expr::ColumnarValue;
+    use crate::spark_round_n::spark_round_n;
+
+    #[test]
+    fn test_float() {
+        let input: ArrayRef = Arc::new(Float64Array::from_iter(&[
+            Some(123.000000),
+            Some(123.456000),
+            Some(123.456789),
+            None,
+        ]));
+
+        // round with n >= 0
+        let output = spark_round_n(&[
+            ColumnarValue::Array(input.clone()),
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(5)))
+        ]).unwrap().into_array(4);
+
+        assert_eq!(
+            output
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                Some(123.00000),
+                Some(123.45600),
+                Some(123.45679),
+                None,
+            ]
+        );
+    }
+    #[test]
+    fn test_decimal() {
+        let input: ArrayRef = Arc::new(Decimal128Array::from_iter(&[
+            Some(123000000),
+            Some(123456000),
+            Some(123456789),
+            None,
+        ]).with_precision_and_scale(9, 6).unwrap());
+
+        // round with n >= 0
+        let output = spark_round_n(&[
+            ColumnarValue::Array(input.clone()),
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(5)))
+        ]).unwrap().into_array(4);
+
+        assert_eq!(
+            output
+                .as_any()
+                .downcast_ref::<Decimal128Array>()
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                Some(12300000),
+                Some(12345600),
+                Some(12345679),
+                None,
+            ]
+        );
+    }
+}
