@@ -13,6 +13,7 @@ async-trait = "0.1.56"
 blaze-commons = { path = "../blaze-commons" }
 bytes = "1.1.0"
 datafusion = "14.0.0"
+datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 futures = "0.3"
 jni = "0.20.0"
 log = "0.4.14"

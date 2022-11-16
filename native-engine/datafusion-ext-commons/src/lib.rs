@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod array_builder;
+pub mod cast;
 pub mod ipc;
 pub mod spark_hash;
 pub mod streams;

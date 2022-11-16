@@ -685,6 +685,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "async-trait",
+ "bigdecimal",
  "blaze-commons",
  "bytes",
  "datafusion",
@@ -727,6 +728,7 @@ dependencies = [
  "blaze-commons",
  "bytes",
  "datafusion",
+ "datafusion-ext-commons",
  "futures",
  "jni",
  "log",
