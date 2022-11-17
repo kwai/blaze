@@ -489,7 +489,15 @@ object BlazeConverters extends Logging {
           case Partial | PartialMerge =>
             return nativeAggr
           case Final =>
-            return NativeProjectExec(exec.resultExpressions, nativeAggr)
+            // NOTE: we should not fail the conversion in Final mode because
+            // jvm aggr cannot handle output of native partial aggr.
+            try {
+              return NativeProjectExec(exec.resultExpressions, nativeAggr)
+            } catch {
+              case _: NotImplementedError | _: AssertionError | _: Exception =>
+                val project = ProjectExec(exec.resultExpressions, convertToUnsafeRow(nativeAggr))
+                convertToNative(project)
+            }
         }
     }
     exec
