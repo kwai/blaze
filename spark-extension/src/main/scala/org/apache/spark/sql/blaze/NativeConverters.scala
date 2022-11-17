@@ -364,7 +364,7 @@ object NativeConverters {
         }
 
       // in
-      case In(value, list) =>
+      case In(value, list) if list.forall(_.isInstanceOf[Literal]) =>
         // TODO:
         //  some types are not yet supported if datafusion (like Date32), keep
         //  this code until they are implemented
