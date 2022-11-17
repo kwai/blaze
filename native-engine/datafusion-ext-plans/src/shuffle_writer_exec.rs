@@ -256,12 +256,15 @@ struct ShuffleRepartitioner {
     output_data_file: String,
     output_index_file: String,
     schema: SchemaRef,
+    staging_batches: Vec<RecordBatch>,
+    num_staging_rows: usize,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     spills: Mutex<Vec<SpillInfo>>,
     /// Sort expressions
     /// Partitioning scheme to use
     partitioning: Partitioning,
     num_output_partitions: usize,
+    batch_size: usize,
     runtime: Arc<RuntimeEnv>,
     metrics: BaselineMetrics,
 }
@@ -284,6 +287,8 @@ impl ShuffleRepartitioner {
             output_data_file,
             output_index_file,
             schema: schema.clone(),
+            staging_batches: vec![],
+            num_staging_rows: 0,
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
                     .map(|_| PartitionBuffer::new(schema.clone(), batch_size))
@@ -292,17 +297,38 @@ impl ShuffleRepartitioner {
             spills: Mutex::new(vec![]),
             partitioning,
             num_output_partitions,
+            batch_size,
             runtime,
             metrics,
         }
     }
 
-    async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
+    async fn insert_batch(&mut self, input: RecordBatch) -> Result<()> {
         if input.num_rows() == 0 {
             // skip empty batch
             return Ok(());
         }
+        self.num_staging_rows += input.num_rows();
+        self.staging_batches.push(input);
+        if self.num_staging_rows >= self.batch_size {
+            return self.flush_staging_batches().await;
+        }
+        Ok(())
+    }
+
+    async fn flush_staging_batches(&mut self) -> Result<()> {
+        if self.num_staging_rows == 0 {
+            return Ok(());
+        }
         let _timer = self.metrics.elapsed_compute().timer();
+
+        // get concatenated input batch from staging
+        let input = concat_batches(
+            &self.schema,
+            &mut self.staging_batches,
+            self.num_staging_rows)?;
+        self.staging_batches.clear();
+        self.num_staging_rows = 0;
 
         // NOTE: in shuffle writer exec, the output_rows metrics represents the
         // number of rows those are written to output data file.
@@ -758,7 +784,7 @@ pub async fn external_shuffle(
     context: Arc<TaskContext>,
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
-    let repartitioner = ShuffleRepartitioner::new(
+    let mut repartitioner = ShuffleRepartitioner::new(
         partition_id,
         output_data_file,
         output_index_file,
@@ -774,5 +800,6 @@ pub async fn external_shuffle(
         let batch = batch?;
         repartitioner.insert_batch(batch).await?;
     }
+    repartitioner.flush_staging_batches().await?;
     repartitioner.shuffle_write().await
 }
