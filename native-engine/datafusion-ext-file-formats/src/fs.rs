@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
 use blaze_commons::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
     jni_new_object, jni_new_string,
@@ -22,28 +19,18 @@ use blaze_commons::{
 use datafusion::error::{DataFusionError, Result};
 use jni::objects::{GlobalRef, JObject};
 
-pub struct FsProvider(GlobalRef, Mutex<HashMap<String, Arc<Fs>>>);
+pub struct FsProvider(GlobalRef);
 
 impl FsProvider {
     pub fn new(fs_provider: GlobalRef) -> Self {
-        Self(fs_provider, Mutex::new(HashMap::new()))
+        Self(fs_provider)
     }
 
-    pub fn provide(&self, path: &str) -> Result<Arc<Fs>> {
-        let scheme = path.split_once('/').map(|split| split.0).unwrap_or("");
-        let mut cache = self.1.lock().unwrap();
-
-        // first try to find an existed fs with same scheme
-        if let Some(fs) = cache.get(scheme) {
-            return Ok(fs.clone());
-        }
-
-        // provide and cache a new fs
-        let fs = Arc::new(Fs::new(jni_new_global_ref!(jni_call!(
+    pub fn provide(&self, path: &str) -> Result<Fs> {
+        let fs = jni_call!(
             ScalaFunction1(self.0.as_obj()).apply(jni_new_string!(path)?) -> JObject
-        )?)?));
-        cache.insert(scheme.to_owned(), fs.clone());
-        Ok(fs)
+        )?;
+        Ok(Fs::new(jni_new_global_ref!(fs)?))
     }
 }
 
