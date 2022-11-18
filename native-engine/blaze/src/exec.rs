@@ -25,9 +25,11 @@ use blaze_commons::*;
 use blaze_serde::protobuf::TaskDefinition;
 use datafusion::arrow::array::{export_array_into_raw, StructArray};
 use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
+use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use futures::{FutureExt, StreamExt};
@@ -156,6 +158,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         // execute
         let session_ctx = SESSION.get().unwrap();
         let task_ctx = session_ctx.task_ctx();
+        let batch_size = task_ctx.session_config().batch_size();
+
         let mut stream = execution_plan
             .execute(task_id.partition_id as usize, task_ctx)
             .unwrap();
@@ -199,8 +203,51 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
         runtime.clone().runtime.as_ref().unwrap().spawn(async move {
             AssertUnwindSafe(async move {
-                let mut total_batches = 0;
+                let mut staging_batches = vec![];
+                let mut num_staging_rows = 0;
                 let mut total_rows = 0;
+
+                let output_batch = |batch: RecordBatch| -> datafusion::common::Result<bool> {
+                    // value_queue -> (schema_ptr, array_ptr)
+                    let mut input = JObject::null();
+                    while jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean)? != JNI_TRUE {
+                        input = jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).dequeueWithTimeout() -> JObject)?;
+
+                        if !input.is_null() {
+                            break;
+                        }
+                    }
+                    if input.is_null() { // wrapper.isFinished = true
+                        return Ok(false);
+                    }
+
+                    let schema_ptr = jni_call!(ScalaTuple2(input)._1() -> JObject)?;
+                    let schema_ptr = jni_call!(JavaLong(schema_ptr).longValue() -> jlong)?;
+                    let array_ptr = jni_call!(ScalaTuple2(input)._2() -> JObject)?;
+                    let array_ptr = jni_call!(JavaLong(array_ptr).longValue() -> jlong)?;
+
+                    let out_schema = schema_ptr as *mut FFI_ArrowSchema;
+                    let out_array = array_ptr as *mut FFI_ArrowArray;
+                    let struct_array: Arc<StructArray> = Arc::new(batch.into());
+
+                    unsafe {
+                        export_array_into_raw(
+                            struct_array,
+                            out_array,
+                            out_schema,
+                        )
+                        .expect("export_array_into_raw error");
+                    }
+
+                    // value_queue <- hasNext=true
+                    while {
+                        jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean)? != JNI_TRUE &&
+                        jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(java_true().as_obj()) -> jboolean)? != JNI_TRUE
+                    } {
+                        // wait until finished or enqueueWithTimeout succeeded
+                    }
+                    Ok(true)
+                };
 
                 // load batches
                 while let Some(r) = stream.next().await {
@@ -210,50 +257,33 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                             if num_rows == 0 {
                                 continue;
                             }
-                            total_batches += 1;
                             total_rows += num_rows;
 
-                            // value_queue -> (schema_ptr, array_ptr)
-                            let mut input = JObject::null();
-                            while jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE {
-                                input = jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).dequeueWithTimeout() -> JObject).unwrap();
-
-                                if !input.is_null() {
-                                    break;
-                                }
+                            staging_batches.push(batch);
+                            num_staging_rows += num_rows;
+                            if num_staging_rows >= batch_size {
+                                let batch = concat_batches(
+                                    &stream.schema(),
+                                    &staging_batches,
+                                    num_staging_rows
+                                ).unwrap();
+                                staging_batches.clear();
+                                num_staging_rows = 0;
+                                output_batch(batch).unwrap();
                             }
-                            if input.is_null() { // wrapper.isFinished = true
-                                break;
-                            }
-
-                            let schema_ptr = jni_call!(ScalaTuple2(input)._1() -> JObject).unwrap();
-                            let schema_ptr = jni_call!(JavaLong(schema_ptr).longValue() -> jlong).unwrap();
-                            let array_ptr = jni_call!(ScalaTuple2(input)._2() -> JObject).unwrap();
-                            let array_ptr = jni_call!(JavaLong(array_ptr).longValue() -> jlong).unwrap();
-
-                            let out_schema = schema_ptr as *mut FFI_ArrowSchema;
-                            let out_array = array_ptr as *mut FFI_ArrowArray;
-                            let struct_array: Arc<StructArray> = Arc::new(batch.into());
-
-                            unsafe {
-                                export_array_into_raw(
-                                    struct_array,
-                                    out_array,
-                                    out_schema,
-                                )
-                                .expect("export_array_into_raw error");
-                            }
-
-                            // value_queue <- hasNext=true
-                            while {
-                                jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE &&
-                                jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).enqueueWithTimeout(java_true().as_obj()) -> jboolean).unwrap() != JNI_TRUE
-                            } {}
                         }
                         Err(e) => {
                             panic!("stream.next() error: {:?}", e);
                         }
                     }
+                }
+                if num_staging_rows > 0 {
+                    let batch = concat_batches(
+                        &stream.schema(),
+                        &std::mem::take(&mut staging_batches),
+                        num_staging_rows
+                    ).unwrap();
+                    output_batch(batch).unwrap();
                 }
 
                 // value_queue -> (discard)
@@ -281,7 +311,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 ).unwrap();
 
                 log::info!("Blaze native executing finished.");
-                log::info!("  total loaded batches: {}", total_batches);
                 log::info!("  total loaded rows: {}", total_rows);
                 std::mem::drop(runtime);
 
