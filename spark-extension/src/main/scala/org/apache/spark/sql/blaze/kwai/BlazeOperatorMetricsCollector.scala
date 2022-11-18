@@ -110,7 +110,7 @@ class BlazeOperatorMetricsCollector extends Logging {
 
 object BlazeOperatorMetricsCollector {
   val isBlazeOperatorMetricsEnabled: Boolean = {
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = false)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = true)
   }
 }
 
