@@ -235,51 +235,51 @@ public final class ArrowColumnVector extends ColumnVector {
     }
 
     boolean getBoolean(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     byte getByte(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     short getShort(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     int getInt(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     long getLong(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     float getFloat(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     double getDouble(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     Decimal getDecimal(int rowId, int precision, int scale) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     UTF8String getUTF8String(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     byte[] getBinary(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     ColumnarArray getArray(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
 
     ColumnarMap getMap(int rowId) {
-      throw new UnsupportedOperationException();
+      throw new UnsupportedOperationException(this.getClass().getName());
     }
   }
 

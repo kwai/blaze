@@ -66,14 +66,7 @@ case class NativeHashAggregateExec(
       .toSeq: _*)
 
   val aggrMode: AggregateMode =
-    if (aggregateExpressions.exists(_.mode == Final)
-      || (aggregateExpressions.isEmpty && requiredChildDistributionExpressions.isDefined)) {
-      Final
-    } else if (aggregateExpressions.exists(_.mode == PartialMerge)) {
-      PartialMerge
-    } else {
-      Partial
-    }
+    getAggrMode(aggregateExpressions, requiredChildDistributionExpressions)
 
   override def requiredChildDistribution: List[Distribution] = {
     requiredChildDistributionExpressions match {
@@ -219,6 +212,19 @@ case class NativeHashAggregateExec(
     s"NativeHashAggregate.$aggrMode"
 }
 object NativeHashAggregateExec {
+  def getAggrMode(
+      aggregateExpressions: Seq[AggregateExpression],
+      requiredChildDistributionExpressions: Option[Seq[Expression]]): AggregateMode = {
+    if (aggregateExpressions.exists(_.mode == Final)
+      || (aggregateExpressions.isEmpty && requiredChildDistributionExpressions.isDefined)) {
+      Final
+    } else if (aggregateExpressions.exists(_.mode == PartialMerge)) {
+      PartialMerge
+    } else {
+      Partial
+    }
+  }
+
   case class NativeAggrPartialState(
       stateAttr: Attribute,
       partialMerger: pb.PhysicalExprNode,

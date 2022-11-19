@@ -91,6 +91,9 @@ message PhysicalExprNode {
     StringStartsWithExprNode string_starts_with_expr = 20000;
     StringEndsWithExprNode string_ends_with_expr = 20001;
     StringContainsExprNode string_contains_expr = 20002;
+
+    // spark logical ops
+    SparkLogicalExprNode spark_logical_expr = 20010;
   }
 }
 
@@ -299,6 +302,12 @@ message StringEndsWithExprNode {
 message StringContainsExprNode {
   PhysicalExprNode expr = 1;
   string infix = 2;
+}
+
+message SparkLogicalExprNode {
+  PhysicalExprNode arg1 = 1;
+  PhysicalExprNode arg2 = 2;
+  string op = 3; // "And" | "Or"
 }
 
 message FilterExecNode {

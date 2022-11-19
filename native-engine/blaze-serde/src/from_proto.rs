@@ -75,6 +75,7 @@ use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion_ext_exprs::cast::TryCastExpr;
 use datafusion_ext_exprs::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
 use datafusion_ext_exprs::spark_expression_wrapper::SparkExpressionWrapperExpr;
+use datafusion_ext_exprs::spark_logical::{SparkLogicalExpr, SparkLogicalOp};
 use datafusion_ext_exprs::string_contains::StringContainsExpr;
 use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
 use datafusion_ext_exprs::string_starts_with::StringStartsWithExpr;
@@ -899,6 +900,16 @@ fn try_parse_physical_expr(
         ExprType::StringContainsExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             Arc::new(StringContainsExpr::new(expr, e.infix.clone()))
+        }
+        ExprType::SparkLogicalExpr(e) => {
+            let arg1 = try_parse_physical_expr_box_required(&e.arg1, input_schema)?;
+            let arg2 = try_parse_physical_expr_box_required(&e.arg2, input_schema)?;
+            let op = match e.op.as_str() {
+                "And" => SparkLogicalOp::And,
+                "Or" => SparkLogicalOp::Or,
+                _ => panic!("SparkLogicalExpr.op must be one of [And, Or]")
+            };
+            Arc::new(SparkLogicalExpr::new(arg1, arg2, op))
         }
     };
 

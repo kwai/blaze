@@ -129,8 +129,12 @@ import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
+import org.apache.spark.sql.catalyst.expressions.BinaryExpression
 import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
 import org.apache.spark.sql.catalyst.expressions.Murmur3HashFunction
+import org.apache.spark.sql.catalyst.expressions.UnaryMathExpression
+import org.apache.spark.sql.catalyst.expressions.UnaryMinus
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
@@ -139,7 +143,9 @@ import org.apache.spark.sql.hive.blaze.HiveUDFUtil.{
   isHiveGenericUDF,
   isHiveSimpleUDF
 }
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.types.FractionalType
+import org.apache.spark.sql.types.NumericType
 import org.blaze.{protobuf => pb}
 
 object NativeConverters {
@@ -497,8 +503,42 @@ object NativeConverters {
             }
         }
       case Like(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Like")
+
+      // if rhs is complex in and/or operators, use short-circuiting implementation
+      case e @ And(lhs, rhs)
+          if e.find(HiveUDFUtil.isHiveUDF).isDefined ||
+            rhs.map(_ => 1).sum >= 10 ||
+            rhs.map(_.dataType).exists {
+              case NullType | BooleanType | _: NumericType => false
+              case _ => true
+            } =>
+        buildExprNode {
+          _.setSparkLogicalExpr(
+            pb.SparkLogicalExprNode
+              .newBuilder()
+              .setArg1(convertExpr(lhs, useAttrExprId))
+              .setArg2(convertExpr(rhs, useAttrExprId))
+              .setOp("And"))
+        }
+      case e @ Or(lhs, rhs)
+          if e.find(HiveUDFUtil.isHiveUDF).isDefined ||
+            rhs.map(_ => 1).sum >= 10 ||
+            rhs.map(_.dataType).exists {
+              case NullType | BooleanType | _: NumericType => false
+              case _ => true
+            } =>
+        buildExprNode {
+          _.setSparkLogicalExpr(
+            pb.SparkLogicalExprNode
+              .newBuilder()
+              .setArg1(convertExpr(lhs, useAttrExprId))
+              .setArg2(convertExpr(rhs, useAttrExprId))
+              .setOp("Or"))
+        }
       case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
       case Or(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Or")
+
+      // bitwise
       case BitwiseAnd(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseAnd")
       case BitwiseOr(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseOr")
       case ShiftLeft(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseShiftLeft")

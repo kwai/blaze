@@ -67,15 +67,19 @@ object BlazeConvertStrategy extends Logging {
 
       val converted = convertSparkPlan(exec.withNewChildren(children))
       converted match {
-        case e: QueryStageInput if NativeSupports.isNative(e) =>
+        case e if NativeSupports.isNative(e) =>
           exec.setTagValue(convertibleTag, true)
 
-        case e: NativeHashAggregateExec =>
-          exec.setTagValue(hashAggrModeTag, e.aggrMode)
-          exec.setTagValue(convertibleTag, true)
-
-        case _: NativeSupports =>
-          exec.setTagValue(convertibleTag, true)
+          // set aggregation mode
+          exec match {
+            case e: HashAggregateExec =>
+              exec.setTagValue(
+                hashAggrModeTag,
+                NativeHashAggregateExec.getAggrMode(
+                  e.aggregateExpressions,
+                  e.requiredChildDistributionExpressions))
+            case _ =>
+          }
 
         case _ =>
           exec.setTagValue(convertibleTag, false)

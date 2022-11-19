@@ -21,6 +21,9 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.hive.{HiveGenericUDF, HiveSimpleUDF}
 
 object HiveUDFUtil extends Logging {
+  def isHiveUDF(expression: Expression): Boolean = {
+    isHiveSimpleUDF(expression) || isHiveGenericUDF(expression)
+  }
 
   def isHiveSimpleUDF(expression: Expression): Boolean = {
     expression.isInstanceOf[HiveSimpleUDF]

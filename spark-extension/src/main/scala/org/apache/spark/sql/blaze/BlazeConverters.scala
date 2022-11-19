@@ -74,6 +74,7 @@ import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.hashAggrModeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.aggregate.Final
@@ -489,14 +490,13 @@ object BlazeConverters extends Logging {
           case Partial | PartialMerge =>
             return nativeAggr
           case Final =>
-            // NOTE: we should not fail the conversion in Final mode because
-            // jvm aggr cannot handle output of native partial aggr.
             try {
               return NativeProjectExec(exec.resultExpressions, nativeAggr)
             } catch {
-              case _: NotImplementedError | _: AssertionError | _: Exception =>
-                val project = ProjectExec(exec.resultExpressions, convertToUnsafeRow(nativeAggr))
-                convertToNative(project)
+              case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
+                logWarning(
+                  s"Error projecting resultExpressions, failback to non-native projection: ${e.getMessage}")
+                return ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
             }
         }
     }
