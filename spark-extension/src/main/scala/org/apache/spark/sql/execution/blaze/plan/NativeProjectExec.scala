@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.analysis.ResolvedStar
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -38,10 +38,13 @@ import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec.getNativeProjectBuilder
 import org.apache.spark.sql.types.DataTypes
 import org.apache.spark.OneToOneDependency
+
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.ProjectionExecNode
+
+import org.apache.spark.sql.blaze.NativeSupports
 
 case class NativeProjectExec(
     projectList: Seq[NamedExpression],
@@ -51,7 +54,7 @@ case class NativeProjectExec(
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
@@ -62,7 +65,7 @@ case class NativeProjectExec(
   private val nativeProject = getNativeProjectBuilder(projectList, addTypeCast).buildPartial()
 
   override def doExecuteNative(): NativeRDD = {
-    val inputRDD = NativeSupports.executeNative(child)
+    val inputRDD = NativeHelper.executeNative(child)
     val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
 
     new NativeRDD(

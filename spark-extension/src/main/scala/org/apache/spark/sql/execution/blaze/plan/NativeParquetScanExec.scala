@@ -25,17 +25,19 @@ import scala.collection.mutable
 
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.Partition
+
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
@@ -48,12 +50,14 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.blaze.{protobuf => pb}
 
+import org.apache.spark.sql.blaze.NativeSupports
+
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     extends LeafExecNode
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows"))
       .toSeq :+
@@ -150,7 +154,7 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
         JniBridge.resourcesMap.put(
           resourceId,
           (location: String) => {
-            NativeSupports.currentUser.doAs(new PrivilegedExceptionAction[FileSystem] {
+            NativeHelper.currentUser.doAs(new PrivilegedExceptionAction[FileSystem] {
               override def run(): FileSystem = {
                 FileSystem.get(new URI(location), broadcastedHadoopConf.value.value)
               }

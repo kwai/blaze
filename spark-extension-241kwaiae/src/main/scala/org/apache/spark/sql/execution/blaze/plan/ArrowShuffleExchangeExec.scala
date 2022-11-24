@@ -28,6 +28,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark._
+
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
@@ -36,13 +37,12 @@ import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriteProcessor
-import org.apache.spark.shuffle.sort.MapInfo
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.errors.attachTree
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -55,15 +55,14 @@ import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec.canUseNativeShuffleWrite
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
-import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import org.apache.spark.sql.execution.SQLExecution.EXECUTION_ID_KEY
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.storage.ShuffleDataBlockId
@@ -71,20 +70,11 @@ import org.apache.spark.util.MutablePair
 import org.apache.spark.util.collection.unsafe.sort.PrefixComparators
 import org.apache.spark.util.collection.unsafe.sort.RecordComparator
 import org.apache.spark.util.CompletionIterator
-import org.apache.spark.util.ExternalBlockStoreUtils
-import org.blaze.protobuf.IpcReaderExecNode
-import org.blaze.protobuf.IpcReadMode
-import org.blaze.protobuf.PhysicalExprNode
-import org.blaze.protobuf.PhysicalHashRepartition
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleWriterExecNode
 
 case class ArrowShuffleExchangeExec(
     var newPartitioning: Partitioning,
     override val child: SparkPlan)
-    extends ShuffleExchangeLike
-    with NativeSupports {
+    extends ArrowShuffleExchangeBase {
 
   val shuffleDescStr =
     s"$newPartitioning[${child.output.map(_.dataType.simpleString).mkString(",")}]"
@@ -627,7 +617,7 @@ object ArrowShuffleExchangeExec {
               .setOutputIndexFile(tempIndexFilename)
               .build())
           .build()
-        val iterator = NativeSupports.executeNativePlan(
+        val iterator = NativeHelper.executeNativePlan(
           nativeShuffleWriterExec,
           nativeShuffleRDD.metrics,
           partition,

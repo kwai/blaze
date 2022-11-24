@@ -22,7 +22,7 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.NullsFirst
@@ -41,6 +41,9 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.PhysicalSortExprNode
 import org.blaze.protobuf.SortExecNode
 
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.Shims
+
 case class NativeTakeOrderedExec(
     limit: Long,
     sortOrder: Seq[SortOrder],
@@ -49,7 +52,7 @@ case class NativeTakeOrderedExec(
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
@@ -111,12 +114,12 @@ case class NativeTakeOrderedExec(
   override def doExecuteNative(): NativeRDD = {
     val partial = NativePartialTakeOrderedExec(sortOrder, child)
     if (partial.outputPartitioning.numPartitions <= 1) {
-      return NativeSupports.executeNative(partial)
+      return NativeHelper.executeNative(partial)
     }
 
     // merge top-K from every children partitions into a single partition
-    val shuffled = ArrowShuffleExchangeExec(SinglePartition, partial)
-    val shuffledRDD = NativeSupports.executeNative(shuffled)
+    val shuffled = Shims.get.shuffleShims.createArrowShuffleExchange(SinglePartition, partial)
+    val shuffledRDD = NativeHelper.executeNative(shuffled)
 
     // take top-K from the final partition
     new NativeRDD(
@@ -152,7 +155,7 @@ case class NativeTakeOrderedExec(
     override val outputPartitioning: Partitioning = child.outputPartitioning
 
     override def doExecuteNative(): NativeRDD = {
-      val inputRDD = NativeSupports.executeNative(child)
+      val inputRDD = NativeHelper.executeNative(child)
       new NativeRDD(
         sparkContext,
         metrics = MetricNode(metrics, inputRDD.metrics :: Nil),

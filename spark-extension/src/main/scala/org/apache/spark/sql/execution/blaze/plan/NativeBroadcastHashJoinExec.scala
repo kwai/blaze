@@ -30,10 +30,11 @@ import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.Partition
+
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.catalyst.plans.InnerLike
 import org.apache.spark.sql.catalyst.plans.LeftExistence
@@ -46,6 +47,8 @@ import org.blaze.protobuf.JoinFilter
 import org.blaze.protobuf.JoinOn
 import org.blaze.protobuf.JoinSide
 import org.blaze.protobuf.PhysicalPlanNode
+
+import org.apache.spark.sql.blaze.NativeSupports
 
 case class NativeBroadcastHashJoinExec(
     override val left: SparkPlan,
@@ -81,7 +84,7 @@ case class NativeBroadcastHashJoinExec(
   }
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(
         Set("output_rows", "output_batches", "input_rows", "input_batches", "join_time"))
@@ -138,8 +141,8 @@ case class NativeBroadcastHashJoinExec(
   private val nativeJoinType = NativeConverters.convertJoinType(joinType)
 
   override def doExecuteNative(): NativeRDD = {
-    val leftRDD = NativeSupports.executeNative(left)
-    val rightRDD = NativeSupports.executeNative(right)
+    val leftRDD = NativeHelper.executeNative(left)
+    val rightRDD = NativeHelper.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
     val partitions = rightRDD.partitions
 

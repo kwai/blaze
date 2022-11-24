@@ -67,7 +67,7 @@ object BlazeConvertStrategy extends Logging {
 
       val converted = convertSparkPlan(exec.withNewChildren(children))
       converted match {
-        case e if NativeSupports.isNative(e) =>
+        case e if NativeHelper.isNative(e) =>
           exec.setTagValue(convertibleTag, true)
 
           // set aggregation mode
@@ -93,7 +93,7 @@ object BlazeConvertStrategy extends Logging {
       case stageInput: QueryStageInput =>
         stageInput.setTagValue(
           convertStrategyTag,
-          if (NativeSupports.isNative(stageInput)) {
+          if (NativeHelper.isNative(stageInput)) {
             AlwaysConvert
           } else {
             NeverConvert

@@ -41,6 +41,7 @@ import org.apache.spark.shuffle.ShuffleWriter;
 import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle;
 import org.apache.spark.shuffle.sort.MapInfo;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.execution.blaze.arrowio.DiskBlockArrowIPCWriter;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.storage.*;
 import org.apache.spark.util.ExternalBlockStoreUtils;

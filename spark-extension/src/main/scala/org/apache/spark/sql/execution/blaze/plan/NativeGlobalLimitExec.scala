@@ -18,7 +18,7 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.AllTuples
@@ -32,12 +32,14 @@ import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.LimitExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 
+import org.apache.spark.sql.blaze.NativeSupports
+
 case class NativeGlobalLimitExec(limit: Long, override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows"))
       .toSeq: _*)
@@ -48,7 +50,7 @@ case class NativeGlobalLimitExec(limit: Long, override val child: SparkPlan)
   override def requiredChildDistribution: List[Distribution] = AllTuples :: Nil
 
   override def doExecuteNative(): NativeRDD = {
-    val inputRDD = NativeSupports.executeNative(child)
+    val inputRDD = NativeHelper.executeNative(child)
     val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
 
     new NativeRDD(

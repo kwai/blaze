@@ -22,25 +22,25 @@ import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 
 class ArrowFFIExportIterator(
     rowIter: Iterator[InternalRow],
     schema: StructType,
     timeZoneId: String,
     taskContext: TaskContext,
-    recordBatchSize: Int = NativeSupports.batchSize)
+    recordBatchSize: Int = NativeHelper.batchSize)
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 
-  private val arrowSchema = ArrowUtils2.toArrowSchema(schema, timeZoneId)
+  private val arrowSchema = ArrowUtils.toArrowSchema(schema, timeZoneId)
   private var allocator =
-    ArrowUtils2.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
+    ArrowUtils.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
 
   taskContext.addTaskCompletionListener[Unit](_ => close())

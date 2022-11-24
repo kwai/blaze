@@ -27,8 +27,8 @@ import org.apache.spark.sql.types._
 object ArrowWriter {
 
   def create(schema: StructType, timeZoneId: String): ArrowWriter = {
-    val arrowSchema = ArrowUtils2.toArrowSchema(schema, timeZoneId)
-    val root = VectorSchemaRoot.create(arrowSchema, ArrowUtils2.rootAllocator)
+    val arrowSchema = ArrowUtils.toArrowSchema(schema, timeZoneId)
+    val root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
     create(root)
   }
 
@@ -42,7 +42,7 @@ object ArrowWriter {
 
   private def createFieldWriter(vector: ValueVector): ArrowFieldWriter = {
     val field = vector.getField()
-    (ArrowUtils2.fromArrowField(field), vector) match {
+    (ArrowUtils.fromArrowField(field), vector) match {
       case (NullType, vector: NullVector) => new NullWriter(vector)
       case (BooleanType, vector: BitVector) => new BooleanWriter(vector)
       case (ByteType, vector: TinyIntVector) => new ByteWriter(vector)
@@ -112,7 +112,7 @@ private[sql] abstract class ArrowFieldWriter {
   def valueVector: ValueVector
 
   def name: String = valueVector.getField().getName()
-  def dataType: DataType = ArrowUtils2.fromArrowField(valueVector.getField())
+  def dataType: DataType = ArrowUtils.fromArrowField(valueVector.getField())
   def nullable: Boolean = valueVector.getField().isNullable()
 
   def setNull(): Unit

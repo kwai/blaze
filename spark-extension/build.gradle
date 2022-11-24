@@ -1,216 +1,33 @@
-/*
- * Copyright 2022 The Blaze Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-plugins {
-	id 'java-library'
-	id 'maven-publish'
-	id 'scala'
-	id "com.google.protobuf" version "0.8.18"
-	id "com.github.johnrengelman.shadow" version "7.1.2"
-	id "com.github.alisiikh.scalastyle" version "3.4.1"
-	id "com.diffplug.spotless" version "6.4.2"
-}
-
 repositories {
-	mavenLocal()
-	maven {
-		url 'http://nexus.corp.kuaishou.com:88/nexus/content/groups/public/'
-		credentials {
-			username "$usr"
-			password "$pwd"
-		}
-		authentication {
-			basic(BasicAuthentication)
-			digest(DigestAuthentication)
-		}
-		allowInsecureProtocol = true
-	}
-	mavenCentral()
+    mavenLocal()
+    mavenCentral()
 }
-
-group = 'blaze-engine'
-description = 'blaze-engine'
-version = '1.0.1'
-
-java.sourceCompatibility = JavaVersion.VERSION_1_8
-java.targetCompatibility = JavaVersion.VERSION_1_8
-
-compileJava.options.encoding = "UTF-8"
-compileTestJava.options.encoding = "UTF-8"
-javadoc.options.encoding = 'UTF-8'
-compileScala.options.encoding = "UTF-8"
-compileTestScala.options.encoding = "UTF-8"
 
 dependencies {
-	implementation 'org.apache.arrow:arrow-vector:10.0.0'
-	implementation 'org.apache.arrow:arrow-memory-netty:10.0.0'
-	implementation 'org.apache.arrow:arrow-compression:10.0.0'
-	implementation 'org.apache.arrow:arrow-c-data:10.0.0'
-	implementation 'com.google.protobuf:protobuf-java:3.19.4'
-
-	testImplementation 'org.scalatest:scalatest_2.12:3.2.9'
-
-	compileOnly 'org.scala-lang:scala-library:2.11.12'
-	compileOnly 'org.apache.spark:spark-core_2.11:2.4.1U1.9.33-SNAPSHOT'
-	compileOnly 'org.apache.spark:spark-sql_2.11:2.4.1U1.9.33-SNAPSHOT'
-	compileOnly 'org.apache.spark:spark-hive_2.11:2.4.1U1.9.33-SNAPSHOT'
-	compileOnly 'com.kuaishou.dataarch:shuffle-sdk:1.3.75-RELEASE:shaded'
-	compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.6.7'
-	compileOnly 'com.fasterxml.jackson.core:jackson-core:2.6.7'
-	compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.6.7'
+    compileOnly 'org.scala-lang:scala-library:2.12.2'
+    compileOnly "org.apache.spark:spark-core_2.12:3.0.3"
+    compileOnly "org.apache.spark:spark-hive_2.12:3.0.3"
+    compileOnly "org.apache.spark:spark-sql_2.12:3.0.3"
+    implementation "com.google.protobuf:protobuf-java:3.21.9"
+    implementation "org.apache.arrow:arrow-c-data:10.0.0"
+    implementation "org.apache.arrow:arrow-compression:10.0.0"
+    implementation "org.apache.arrow:arrow-memory-netty:10.0.0"
+    implementation "org.apache.arrow:arrow-vector:10.0.0"
+    testImplementation "org.scalatest:scalatest_2.12:3.2.14"
 }
 
 configurations.implementation {
-	exclude module: "hive-hbase-handler"
-	exclude module: "htrace-core"
-	exclude module: "htrace-core-t"
-	exclude module: "zstd-jni"
+    exclude module: "hive-hbase-handler"
+    exclude module: "htrace-core"
+    exclude module: "htrace-core-t"
+    exclude module: "zstd-jni"
 }
 
-shadowJar {
-	destinationDir(new File("../target"))
-	archiveFileName.set("${project.name}-${project.version}.jar")
-
-	relocate('com.google.protobuf', 'blaze.com.google.protobuf')
-	relocate('org.apache.arrow', "blaze.org.apache.arrow") {
-		exclude('org.apache.arrow.c.*')
-		exclude('org.apache.arrow.c.jni.*')
-	}
-	relocate('io.netty', 'blaze.io.netty')
-	relocate('com.google.flatbuffers', 'blaze.com.google.flatbuffers')
-
-	// exclude some stuff that should be always available in spark environment
-	exclude('org/apache/commons/codec/**/*')
-	exclude('org/apache/commons/compress/**/*')
-	exclude('org/slf4j/**/*')
-	exclude('com/fasterxml/jackson/**/*')
-	outputs.upToDateWhen { false }
-}
-
-scalastyle {
-	scalaVersion = '2.12'
-	scalastyleVersion = '1.5.1'
-	config = file("${projectDir}/scalastyle_config.xml") // path to scalastyle config xml file
-	skip = true  // skips scalastyle check if set to true
-	inputEncoding = 'UTF-8'
-	outputEncoding = 'UTF-8'
-	failOnWarning = false
-	verbose = false
-	quiet = false
-	forkOptions {} // JavaForkOptions that determine fork options of the daemon worker(s)
-}
-
-spotless {
-	format 'misc', {
-		// define the files to apply `misc` to
-		target '*.gradle', '*.md', '.gitignore'
-
-		// define the steps to apply to those files
-		trimTrailingWhitespace()
-		indentWithTabs() // or spaces. Takes an integer argument if you don't like 4
-		endWithNewline()
-	}
-	java {
-		// optional: you can specify import groups directly
-		// note: you can use an empty string for all the imports you didn't specify explicitly, and '\\#` prefix for static imports
-		importOrder('java', 'javax', 'org.apache', 'com.blaze', '', '\\#')
-		target 'src/main/java/**/*.java'
-		removeUnusedImports()
-		googleJavaFormat()
-		licenseHeader '/*\n' +
-				' * Copyright 2022 The Blaze Authors\n' +
-				' *\n' +
-				' * Licensed under the Apache License, Version 2.0 (the "License");\n' +
-				' * you may not use this file except in compliance with the License.\n' +
-				' * You may obtain a copy of the License at\n' +
-				' *\n' +
-				' *     http://www.apache.org/licenses/LICENSE-2.0\n' +
-				' *\n' +
-				' * Unless required by applicable law or agreed to in writing, software\n' +
-				' * distributed under the License is distributed on an "AS IS" BASIS,\n' +
-				' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n' +
-				' * See the License for the specific language governing permissions and\n' +
-				' * limitations under the License.\n' +
-				' */\n' +
-				'\n'
-	}
-	scala {
-		target 'src/main/scala/**/*.scala'
-		scalafmt('2.6.1').configFile('../dev/.scalafmt.conf')
-		licenseHeader '/*\n' +
-				' * Copyright 2022 The Blaze Authors\n' +
-				' *\n' +
-				' * Licensed under the Apache License, Version 2.0 (the "License");\n' +
-				' * you may not use this file except in compliance with the License.\n' +
-				' * You may obtain a copy of the License at\n' +
-				' *\n' +
-				' *     http://www.apache.org/licenses/LICENSE-2.0\n' +
-				' *\n' +
-				' * Unless required by applicable law or agreed to in writing, software\n' +
-				' * distributed under the License is distributed on an "AS IS" BASIS,\n' +
-				' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n' +
-				' * See the License for the specific language governing permissions and\n' +
-				' * limitations under the License.\n' +
-				' */\n' +
-				'\n', 'package '
-	}
-}
-
-sourceSets {
-	main {
-		proto {
-			srcDir '../native-engine/blaze-serde/proto'
-		}
-		scala {
-			srcDirs = ['src/generated-sources/main/java', 'src/main/scala', 'src/main/java']
-		}
-		java {
-			srcDirs = []
-		}
-		resources {
-			srcDir '../lib'
-		}
-	}
-}
-
+apply plugin: "com.google.protobuf"
 protobuf {
-	// Configure the protoc executable
-	protoc {
-		// Download from repositories
-		artifact = 'com.google.protobuf:protoc:3.19.1'
-	}
-	generatedFilesBaseDir = "$projectDir/src/generated-sources"
+    protoc {
+        artifact = 'com.google.protobuf:protoc:3.21.9'
+    }
+    generatedFilesBaseDir = "$projectDir/src/generated-sources"
 }
-
-task cargo(type: Exec) {
-	workingDir '.'
-	executable "${projectDir}/../build-native.sh"
-	args += [project.hasProperty('mode') ? getProperty('mode') : 'debug']
-}
-
-tasks.withType(ScalaCompile) {
-	scalaCompileOptions.additionalParameters = ["-Ywarn-unused"]
-}
-
-jar.enabled = false
-tasks.compileScala.dependsOn tasks.spotlessApply
-tasks.compileScala.dependsOn tasks.cargo
-tasks.build.dependsOn tasks.shadowJar
-
-clean.doLast {
-	file("${projectDir}/../lib").deleteDir()
-	file("${projectDir}/../target").deleteDir()
-}
+sourceSets.main.proto.srcDir "${rootDir}/native-engine/blaze-serde/proto"

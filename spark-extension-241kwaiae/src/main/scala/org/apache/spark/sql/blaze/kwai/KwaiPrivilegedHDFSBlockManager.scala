@@ -18,7 +18,7 @@ package org.apache.spark.sql.blaze.kwai
 
 import java.security.PrivilegedExceptionAction
 
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.HDFSBlockManager
 import org.apache.spark.SparkConf
@@ -31,7 +31,7 @@ class KwaiPrivilegedHDFSBlockManager extends HDFSBlockManager {
       super.init(blockManager)
     }
 
-    NativeSupports.currentUser.doAs(new PrivilegedExceptionAction[Unit] {
+    NativeHelper.currentUser.doAs(new PrivilegedExceptionAction[Unit] {
       override def run(): Unit = initHDFSBlockManager()
     })
   }

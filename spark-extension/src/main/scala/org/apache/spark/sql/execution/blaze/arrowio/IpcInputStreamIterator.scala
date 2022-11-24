@@ -26,7 +26,8 @@ import java.nio.ByteOrder
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.TaskContext
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleManager
+
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 
 case class IpcInputStreamIterator(
     var in: InputStream,
@@ -92,7 +93,7 @@ case class IpcInputStreamIterator(
     currentLimitedInputStream = is
 
     if (decompressingNeeded) {
-      val zs = ArrowShuffleManager.compressionCodecForShuffling.compressedInputStream(is)
+      val zs = ArrowShuffleDependency.compressionCodecForShuffling.compressedInputStream(is)
       Channels.newChannel(zs)
     } else {
       Channels.newChannel(is)

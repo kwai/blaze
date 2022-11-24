@@ -24,7 +24,7 @@ import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeConverters.NativeExprWrapper
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
@@ -39,15 +39,16 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.execution.adaptive.QueryStage
-import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
-import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec._
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.LongType
 import org.apache.spark.OneToOneDependency
+
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.blaze.{protobuf => pb}
+
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.Shims
 
 case class NativeHashAggregateExec(
     requiredChildDistributionExpressions: Option[Seq[Expression]],
@@ -60,7 +61,7 @@ case class NativeHashAggregateExec(
     with Logging {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
@@ -91,11 +92,9 @@ case class NativeHashAggregateExec(
       def findPreviousNativeAggrExec(exec: SparkPlan = this.child): NativeHashAggregateExec = {
         findPreviousNativeAggrExec(exec match {
           case e: NativeHashAggregateExec => return e
-          case stageInput: ShuffleQueryStageInput => stageInput.childStage
-          case stageInput: SkewedShuffleQueryStageInput => stageInput.childStage
-          case stage: QueryStage => stage.child
-          case shuffle: ArrowShuffleExchangeExec => shuffle.child
-          case renamed: NativeRenameColumnsExec => renamed.child
+          case unary: UnaryExecNode => unary.child
+          case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
+            Shims.get.sparkPlanShims.getChildStage(stageInput)
         })
       }
       findPreviousNativeAggrExec()
@@ -164,7 +163,7 @@ case class NativeHashAggregateExec(
     child.outputPartitioning
 
   override def doExecuteNative(): NativeRDD = {
-    val inputRDD = NativeSupports.executeNative(child)
+    val inputRDD = NativeHelper.executeNative(child)
     val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
 
     new NativeRDD(

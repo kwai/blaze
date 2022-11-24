@@ -30,7 +30,7 @@ import org.apache.spark.memory.TaskMemoryManager;
 import org.apache.spark.memory.TooLargePageException;
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter;
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
-import org.apache.spark.sql.execution.blaze.shuffle.DiskBlockArrowIPCWriter;
+import org.apache.spark.sql.execution.blaze.arrowio.DiskBlockArrowIPCWriter;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.storage.BlockManager;
 import org.apache.spark.storage.FileSegment;

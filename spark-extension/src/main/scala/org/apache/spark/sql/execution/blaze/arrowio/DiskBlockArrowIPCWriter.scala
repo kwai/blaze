@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.blaze.shuffle
+package org.apache.spark.sql.execution.blaze.arrowio
 
 import java.io.BufferedOutputStream
 import java.io.File
@@ -31,17 +31,20 @@ import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.pojo.Schema
+import org.apache.spark.SparkEnv
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.storage.TimeTrackingOutputStream
 import org.apache.spark.util.Utils
-import org.apache.spark.SparkEnv
 
 /**
  * A class for writing JVM objects directly to a file on disk. This class allows data to be appended
@@ -53,7 +56,7 @@ import org.apache.spark.SparkEnv
  * This class does not support concurrent writes. Also, once the writer has been opened it cannot be
  * reopened again.
  */
-private[spark] class DiskBlockArrowIPCWriter(
+class DiskBlockArrowIPCWriter(
     val file: File,
     bufferSize: Int,
     syncWrites: Boolean,
@@ -83,9 +86,9 @@ private[spark] class DiskBlockArrowIPCWriter(
     }
   }
   private val timezoneId: String = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
-  private val arrowSchema: Schema = ArrowUtils2.toArrowSchema(schema, timezoneId)
+  private val arrowSchema: Schema = ArrowUtils.toArrowSchema(schema, timezoneId)
   private val allocator: BufferAllocator =
-    ArrowUtils2.rootAllocator.newChildAllocator("row2ArrowBatchWrite", 0, Long.MaxValue)
+    ArrowUtils.rootAllocator.newChildAllocator("row2ArrowBatchWrite", 0, Long.MaxValue)
   private val root: VectorSchemaRoot = VectorSchemaRoot.create(arrowSchema, allocator)
   private val arrowBuffer: ArrowWriter = ArrowWriter.create(root)
   private val ipcLengthBuffer = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
@@ -181,8 +184,11 @@ private[spark] class DiskBlockArrowIPCWriter(
       }
 
       val pos = randomAccessFile.length()
-      val fileSegment =
-        new FileSegment(file, committedPosition, pos - committedPosition, numRecordsWritten)
+      val fileSegment = Shims.get.shuffleShims.createFileSegment(
+        file,
+        committedPosition,
+        pos - committedPosition,
+        numRecordsWritten)
       committedPosition = pos
       // In certain compression codecs, more bytes are written after streams are closed
       writeMetrics.incBytesWritten(committedPosition - reportedPosition)
@@ -190,7 +196,7 @@ private[spark] class DiskBlockArrowIPCWriter(
       numRecordsWritten = 0
       fileSegment
     } else {
-      new FileSegment(file, committedPosition, 0, 0)
+      Shims.get.shuffleShims.createFileSegment(file, committedPosition, 0, 0)
     }
   }
 
@@ -286,7 +292,7 @@ private[spark] class DiskBlockArrowIPCWriter(
       mcs.write(ipcLengthBuffer.array()) // ipc length placeholder
 
       val channel = Channels.newChannel(
-        ArrowShuffleManager.compressionCodecForShuffling.compressedOutputStream(mcs))
+        ArrowShuffleDependency.compressionCodecForShuffling.compressedOutputStream(mcs))
       writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
       writer.start()
     }

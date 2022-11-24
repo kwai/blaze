@@ -26,52 +26,38 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Promise
 
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.InterruptibleIterator
-import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
-import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.Partition
+import org.apache.spark.SparkException
+import org.apache.spark.TaskContext
+import org.apache.spark.broadcast
+import org.apache.spark.OneToOneDependency
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.TaskContext
-import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
+import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.SparkException
-import org.apache.spark.broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
-import org.apache.spark.OneToOneDependency
-import org.blaze.protobuf.IpcReaderExecNode
-import org.blaze.protobuf.IpcReadMode
-import org.blaze.protobuf.IpcWriterExecNode
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Schema
 
 case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
-    extends BroadcastExchangeLike
-    with NativeSupports {
+    extends ArrowBroadcastExchangeBase {
 
-  override val output: Seq[Attribute] = child.output
-
-  private lazy val isNative = {
-    getTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag).getOrElse(false)
-  }
-
-  lazy val runId: UUID = UUID.randomUUID()
+  override lazy val runId: UUID = UUID.randomUUID()
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq :+
@@ -162,8 +148,8 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
   val nativeSchema: Schema = Util.getNativeSchema(output)
 
   def collectNative(): Array[Array[Byte]] = {
-    val inputRDD = NativeSupports.executeNative(child match {
-      case child if NativeSupports.isNative(child) => child
+    val inputRDD = NativeHelper.executeNative(child match {
+      case child if NativeHelper.isNative(child) => child
       case child => ConvertToNativeExec(child)
     })
     val modifiedMetrics = metrics ++ Map(
@@ -201,7 +187,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
 
         // execute ipc writer and fill output channels
         val iter =
-          NativeSupports.executeNativePlan(nativeIpcWriterExec, nativeMetrics, split, context)
+          NativeHelper.executeNativePlan(nativeIpcWriterExec, nativeMetrics, split, context)
         assert(iter.isEmpty)
 
         // return ipcs as iterator
@@ -248,8 +234,4 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
 
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
-}
-
-object ArrowBroadcastExchangeExec {
-  def nativeExecutionTag: TreeNodeTag[Boolean] = TreeNodeTag("arrowBroadcastNativeExecution")
 }

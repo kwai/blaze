@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowColumnVector
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowColumnVector
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.sql.vectorized.ColumnVector
 import org.apache.spark.util.CompletionIterator

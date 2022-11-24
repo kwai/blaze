@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.blaze.arrowio.util2;
+package org.apache.spark.sql.execution.blaze.arrowio.util;
 
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -39,6 +39,7 @@ import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.MapVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.holders.NullableVarCharHolder;
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarArray;
@@ -152,7 +153,7 @@ public final class ArrowColumnVector extends ColumnVector {
   }
 
   public ArrowColumnVector(ValueVector vector) {
-    super(ArrowUtils2.fromArrowField(vector.getField()));
+    super(ArrowUtils.fromArrowField(vector.getField()));
 
     if (vector instanceof BitVector) {
       accessor = new BooleanAccessor((BitVector) vector);

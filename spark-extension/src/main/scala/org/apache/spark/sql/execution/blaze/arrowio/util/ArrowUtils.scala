@@ -27,10 +27,9 @@ import org.apache.arrow.vector.types.pojo.ArrowType
 import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.FieldType
 import org.apache.arrow.vector.types.pojo.Schema
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-object ArrowUtils2 {
+object ArrowUtils {
 
   val rootAllocator = new RootAllocator(Long.MaxValue)
 

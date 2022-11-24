@@ -35,7 +35,6 @@ import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec}
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.joins.{
@@ -74,6 +73,7 @@ import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
+
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.hashAggrModeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -90,7 +90,11 @@ import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ExpandExec
+import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
+import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -207,7 +211,7 @@ object BlazeConverters extends Logging {
   }
 
   def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
-    val ShuffleExchangeExec(outputPartitioning, child) = exec
+    val (outputPartitioning, child) = (exec.outputPartitioning, exec.child)
     logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
 
     val convertedChild = outputPartitioning match {
@@ -215,19 +219,29 @@ object BlazeConverters extends Logging {
         convertToNative(child)
       case _ => child
     }
-    ArrowShuffleExchangeExec(outputPartitioning, addRenameColumnsExec(convertedChild))
+    Shims.get.shuffleShims
+      .createArrowShuffleExchange(outputPartitioning, addRenameColumnsExec(convertedChild))
   }
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
-    val FileSourceScanExec(
+    val (
       relation,
       output,
       requiredSchema,
       partitionFilters,
       optionalBucketSet,
       dataFilters,
-      tableIdentifier,
-      _) = exec
+      tableIdentifier) = (
+      exec.relation,
+      exec.output,
+      exec.requiredSchema,
+      exec.partitionFilters,
+      exec.optionalBucketSet,
+      exec.dataFilters,
+      exec.tableIdentifier)
+    assert(
+      !relation.fileFormat.isInstanceOf[ParquetFileFormat],
+      "Cannot convert non-parquet scan exec")
     logDebug(s"Converting FileSourceScanExec: ${exec.simpleStringWithNodeId}")
     logDebug(s"  relation: ${relation}")
     logDebug(s"  relation.location: ${relation.location}")
@@ -237,22 +251,15 @@ object BlazeConverters extends Logging {
     logDebug(s"  optionalBucketSet: ${optionalBucketSet}")
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
-    if (relation.fileFormat.isInstanceOf[ParquetFileFormat]) {
-      return NativeParquetScanExec(exec)
-    }
-    exec
+    return NativeParquetScanExec(exec)
   }
 
-  def convertProjectExec(exec: ProjectExec): SparkPlan =
-    exec match {
-      case exec: ProjectExec =>
-        logDebug(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
-        exec.projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
-        NativeProjectExec(exec.projectList, addRenameColumnsExec(convertToNative(exec.child)))
-      case _ =>
-        logDebug(s"Ignoring ProjectExec: ${exec.simpleStringWithNodeId()}")
-        exec
-    }
+  def convertProjectExec(exec: ProjectExec): SparkPlan = {
+    val (projectList, child) = (exec.projectList, exec.child)
+    logDebug(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
+    projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
+    NativeProjectExec(projectList, addRenameColumnsExec(convertToNative(child)))
+  }
 
   def convertFilterExec(exec: FilterExec): SparkPlan =
     exec match {
@@ -266,156 +273,139 @@ object BlazeConverters extends Logging {
     }
 
   def convertSortExec(exec: SortExec): SparkPlan = {
-    exec match {
-      case SortExec(sortOrder, global, child, _) =>
-        logDebug(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
-        logDebug(s"  global: ${global}")
-        exec.sortOrder.foreach(s => logDebug(s"  sortOrder: ${s}"))
-        NativeSortExec(sortOrder, global, addRenameColumnsExec(convertToNative(child)))
-      case _ =>
-        logDebug(s"Ignoring SortExec: ${exec.simpleStringWithNodeId()}")
-        exec
-    }
+    val (sortOrder, global, child) = (exec.sortOrder, exec.global, exec.child)
+    logDebug(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(s"  global: ${global}")
+    sortOrder.foreach(s => logDebug(s"  sortOrder: ${s}"))
+    NativeSortExec(sortOrder, global, addRenameColumnsExec(convertToNative(child)))
   }
 
   def convertUnionExec(exec: UnionExec): SparkPlan = {
-    exec match {
-      case UnionExec(children) =>
-        logDebug(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
-        NativeUnionExec(children.map(child => {
-          addRenameColumnsExec(convertToNative(child))
-        }))
-      case _ =>
-        logDebug(s"Ignoring UnionExec: ${exec.simpleStringWithNodeId()}")
-        exec
-    }
+    logDebug(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
+    NativeUnionExec(exec.children.map(child => {
+      addRenameColumnsExec(convertToNative(child))
+    }))
   }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
-    exec match {
-      case SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right) =>
-        logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
+    val (leftKeys, rightKeys, joinType, condition, left, right) =
+      (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
+    logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
+    assert(condition.isEmpty, "SortMergeJoin with post filter not yet supported")
+    var nativeLeft = convertToNative(left)
+    var nativeRight = convertToNative(right)
+    var modifiedLeftKeys = leftKeys
+    var modifiedRightKeys = rightKeys
+    var needPostProject = false
 
-        assert(exec.condition.isEmpty, "SortMergeJoin with post filter not yet supported")
-        var nativeLeft = convertToNative(left)
-        var nativeRight = convertToNative(right)
-        var modifiedLeftKeys = leftKeys
-        var modifiedRightKeys = rightKeys
-        var needPostProject = false
-
-        if (leftKeys.exists(!_.isInstanceOf[AttributeReference])) {
-          val (keys, exec) = buildJoinColumnsProject(nativeLeft, leftKeys)
-          modifiedLeftKeys = keys
-          nativeLeft = exec
-          needPostProject = true
-        }
-        if (rightKeys.exists(!_.isInstanceOf[AttributeReference])) {
-          val (keys, exec) = buildJoinColumnsProject(nativeRight, rightKeys)
-          modifiedRightKeys = keys
-          nativeRight = exec
-          needPostProject = true
-        }
-
-        val smjOrig = SortMergeJoinExec(
-          modifiedLeftKeys,
-          modifiedRightKeys,
-          joinType,
-          None,
-          addRenameColumnsExec(nativeLeft),
-          addRenameColumnsExec(nativeRight))
-        val smj = NativeSortMergeJoinExec(
-          smjOrig.left,
-          smjOrig.right,
-          smjOrig.leftKeys,
-          smjOrig.rightKeys,
-          smjOrig.output,
-          smjOrig.outputPartitioning,
-          smjOrig.outputOrdering,
-          smjOrig.joinType)
-
-        return if (needPostProject) {
-          buildPostJoinProject(smj, exec.output)
-        } else {
-          smj
-        }
+    if (leftKeys.exists(!_.isInstanceOf[AttributeReference])) {
+      val (keys, exec) = buildJoinColumnsProject(nativeLeft, leftKeys)
+      modifiedLeftKeys = keys
+      nativeLeft = exec
+      needPostProject = true
     }
-    logDebug(s"Ignoring SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
-    exec
+    if (rightKeys.exists(!_.isInstanceOf[AttributeReference])) {
+      val (keys, exec) = buildJoinColumnsProject(nativeRight, rightKeys)
+      modifiedRightKeys = keys
+      nativeRight = exec
+      needPostProject = true
+    }
+
+    val smjOrig = SortMergeJoinExec(
+      modifiedLeftKeys,
+      modifiedRightKeys,
+      joinType,
+      None,
+      addRenameColumnsExec(nativeLeft),
+      addRenameColumnsExec(nativeRight))
+    val smj = NativeSortMergeJoinExec(
+      smjOrig.left,
+      smjOrig.right,
+      smjOrig.leftKeys,
+      smjOrig.rightKeys,
+      smjOrig.output,
+      smjOrig.outputPartitioning,
+      smjOrig.outputOrdering,
+      smjOrig.joinType)
+
+    if (needPostProject) {
+      buildPostJoinProject(smj, exec.output)
+    } else {
+      smj
+    }
   }
 
   def convertBroadcastHashJoinExec(exec: BroadcastHashJoinExec): SparkPlan = {
     try {
-      exec match {
-        case BroadcastHashJoinExec(
-              leftKeys,
-              rightKeys,
-              joinType,
-              buildSide,
-              condition,
-              left,
-              right) =>
-          logDebug(s"Converting BroadcastHashJoinExec: ${exec.simpleStringWithNodeId()}")
-          var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
-            case BuildRight =>
-              assert(NativeSupports.isNative(right), "broadcast join build side is not native")
-              val convertedLeft = convertToNative(left)
-              (right, rightKeys, convertedLeft, leftKeys)
+      val (leftKeys, rightKeys, joinType, buildSide, condition, left, right) = (
+        exec.leftKeys,
+        exec.rightKeys,
+        exec.joinType,
+        exec.buildSide,
+        exec.condition,
+        exec.left,
+        exec.right)
+      logDebug(s"Converting BroadcastHashJoinExec: ${exec.simpleStringWithNodeId()}")
+      var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
+        case BuildRight =>
+          assert(NativeHelper.isNative(right), "broadcast join build side is not native")
+          val convertedLeft = convertToNative(left)
+          (right, rightKeys, convertedLeft, leftKeys)
 
-            case BuildLeft =>
-              assert(NativeSupports.isNative(left), "broadcast join build side is not native")
-              val convertedRight = convertToNative(right)
-              (left, leftKeys, convertedRight, rightKeys)
+        case BuildLeft =>
+          assert(NativeHelper.isNative(left), "broadcast join build side is not native")
+          val convertedRight = convertToNative(right)
+          (left, leftKeys, convertedRight, rightKeys)
 
+        case _ =>
+          throw new NotImplementedError(
+            "Ignore BroadcastHashJoin with unsupported children structure")
+      }
+
+      var modifiedHashedKeys = hashedKeys
+      var modifiedProbedKeys = probedKeys
+      var needPostProject = false
+
+      if (hashedKeys.exists(!_.isInstanceOf[AttributeReference])) {
+        val (keys, exec) = buildJoinColumnsProject(hashed, hashedKeys)
+        modifiedHashedKeys = keys
+        hashed = exec
+        needPostProject = true
+      }
+      if (probedKeys.exists(!_.isInstanceOf[AttributeReference])) {
+        val (keys, exec) = buildJoinColumnsProject(nativeProbed, probedKeys)
+        modifiedProbedKeys = keys
+        nativeProbed = exec
+        needPostProject = true
+      }
+
+      val modifiedJoinType = buildSide match {
+        case BuildLeft => joinType
+        case BuildRight =>
+          needPostProject = true
+          joinType match { // reverse join type
+            case Inner => Inner
+            case FullOuter => FullOuter
+            case LeftOuter => RightOuter
+            case RightOuter => LeftOuter
             case _ =>
               throw new NotImplementedError(
-                "Ignore BroadcastHashJoin with unsupported children structure")
+                "BHJ Semi/Anti join with BuildRight is not yet supported")
           }
+      }
 
-          var modifiedHashedKeys = hashedKeys
-          var modifiedProbedKeys = probedKeys
-          var needPostProject = false
+      val bhj = NativeBroadcastHashJoinExec(
+        addRenameColumnsExec(hashed),
+        addRenameColumnsExec(nativeProbed),
+        modifiedHashedKeys,
+        modifiedProbedKeys,
+        condition,
+        modifiedJoinType)
 
-          if (hashedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-            val (keys, exec) = buildJoinColumnsProject(hashed, hashedKeys)
-            modifiedHashedKeys = keys
-            hashed = exec
-            needPostProject = true
-          }
-          if (probedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-            val (keys, exec) = buildJoinColumnsProject(nativeProbed, probedKeys)
-            modifiedProbedKeys = keys
-            nativeProbed = exec
-            needPostProject = true
-          }
-
-          val modifiedJoinType = buildSide match {
-            case BuildLeft => joinType
-            case BuildRight =>
-              needPostProject = true
-              joinType match { // reverse join type
-                case Inner => Inner
-                case FullOuter => FullOuter
-                case LeftOuter => RightOuter
-                case RightOuter => LeftOuter
-                case _ =>
-                  throw new NotImplementedError(
-                    "BHJ Semi/Anti join with BuildRight is not yet supported")
-              }
-          }
-
-          val bhj = NativeBroadcastHashJoinExec(
-            addRenameColumnsExec(hashed),
-            addRenameColumnsExec(nativeProbed),
-            modifiedHashedKeys,
-            modifiedProbedKeys,
-            condition,
-            modifiedJoinType)
-
-          return if (needPostProject) {
-            buildPostJoinProject(bhj, exec.output)
-          } else {
-            bhj
-          }
+      if (needPostProject) {
+        buildPostJoinProject(bhj, exec.output)
+      } else {
+        bhj
       }
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
@@ -423,102 +413,81 @@ object BlazeConverters extends Logging {
           case BuildLeft => getUnderlyingBroadcast(exec.left)
           case BuildRight => getUnderlyingBroadcast(exec.right)
         }
-        underlyingBroadcast.setTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag, false)
+        underlyingBroadcast.setTagValue(ArrowBroadcastExchangeBase.nativeExecutionTag, false)
+        exec
     }
-    logDebug(s"Ignoring BroadcastHashJoinExec: ${exec.simpleStringWithNodeId()}")
-    exec
   }
 
   def convertBroadcastExchangeExec(exec: SparkPlan): SparkPlan = {
     exec match {
       case exec: BroadcastExchangeExec =>
         logDebug(s"Converting BroadcastExchangeExec: ${exec.simpleStringWithNodeId()}")
-        val converted = ArrowBroadcastExchangeExec(exec.mode, exec.child)
-        converted.setTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag, true)
+        val converted =
+          Shims.get.broadcastShims.createArrowBroadcastExchange(exec.mode, exec.child)
+        converted.setTagValue(ArrowBroadcastExchangeBase.nativeExecutionTag, true)
         return converted
     }
     exec
   }
 
-  def convertLocalLimitExec(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case exec: LocalLimitExec =>
-        logDebug(s"Converting LocalLimitExec: ${exec.simpleStringWithNodeId()}")
-        return NativeLocalLimitExec(exec.limit.toLong, exec.child)
-    }
-    exec
+  def convertLocalLimitExec(exec: LocalLimitExec): SparkPlan = {
+    logDebug(s"Converting LocalLimitExec: ${exec.simpleStringWithNodeId()}")
+    NativeLocalLimitExec(exec.limit.toLong, exec.child)
   }
 
-  def convertGlobalLimitExec(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case exec: GlobalLimitExec =>
-        logDebug(s"Converting GlobalLimitExec: ${exec.simpleStringWithNodeId()}")
-        return NativeGlobalLimitExec(exec.limit.toLong, exec.child)
-    }
-    exec
+  def convertGlobalLimitExec(exec: GlobalLimitExec): SparkPlan = {
+    logDebug(s"Converting GlobalLimitExec: ${exec.simpleStringWithNodeId()}")
+    NativeGlobalLimitExec(exec.limit.toLong, exec.child)
   }
 
-  def convertTakeOrderedAndProjectExec(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case exec: TakeOrderedAndProjectExec =>
-        logDebug(s"Converting TakeOrderedAndProjectExec: ${exec.simpleStringWithNodeId()}")
-        val nativeTakeOrdered =
-          NativeTakeOrderedExec(exec.limit, exec.sortOrder, convertToNative(exec.child))
+  def convertTakeOrderedAndProjectExec(exec: TakeOrderedAndProjectExec): SparkPlan = {
+    logDebug(s"Converting TakeOrderedAndProjectExec: ${exec.simpleStringWithNodeId()}")
+    val nativeTakeOrdered =
+      NativeTakeOrderedExec(exec.limit, exec.sortOrder, convertToNative(exec.child))
 
-        if (exec.projectList != exec.child.output) {
-          val project = ProjectExec(exec.projectList, nativeTakeOrdered)
-          return tryConvert(project, convertProjectExec)
-        } else {
-          return nativeTakeOrdered
+    if (exec.projectList != exec.child.output) {
+      val project = ProjectExec(exec.projectList, nativeTakeOrdered)
+      tryConvert(project, convertProjectExec)
+    } else {
+      nativeTakeOrdered
+    }
+  }
+
+  def convertHashAggregateExec(exec: HashAggregateExec): SparkPlan = {
+    logDebug(s"Converting HashAggregateExec: ${exec.simpleStringWithNodeId()}")
+    val nativeAggr = NativeHashAggregateExec(
+      exec.requiredChildDistributionExpressions,
+      exec.groupingExpressions,
+      exec.aggregateExpressions,
+      exec.aggregateAttributes,
+      addRenameColumnsExec(convertToNative(exec.child)))
+
+    nativeAggr.aggrMode match {
+      case Partial | PartialMerge =>
+        nativeAggr
+      case Final =>
+        try {
+          NativeProjectExec(exec.resultExpressions, nativeAggr)
+        } catch {
+          case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
+            logWarning(
+              s"Error projecting resultExpressions, failback to non-native projection: ${e.getMessage}")
+            ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
         }
     }
-    exec
   }
 
-  def convertHashAggregateExec(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case exec: HashAggregateExec =>
-        logDebug(s"Converting HashAggregateExec: ${exec.simpleStringWithNodeId()}")
-        val nativeAggr = NativeHashAggregateExec(
-          exec.requiredChildDistributionExpressions,
-          exec.groupingExpressions,
-          exec.aggregateExpressions,
-          exec.aggregateAttributes,
-          addRenameColumnsExec(convertToNative(exec.child)))
-
-        nativeAggr.aggrMode match {
-          case Partial | PartialMerge =>
-            return nativeAggr
-          case Final =>
-            try {
-              return NativeProjectExec(exec.resultExpressions, nativeAggr)
-            } catch {
-              case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
-                logWarning(
-                  s"Error projecting resultExpressions, failback to non-native projection: ${e.getMessage}")
-                return ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
-            }
-        }
-    }
-    exec
+  def convertExpandExec(exec: ExpandExec): SparkPlan = {
+    logDebug(s"Converting ExpandExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(s"  projections: ${exec.projections}")
+    NativeExpandExec(
+      exec.projections,
+      exec.output,
+      addRenameColumnsExec(convertToNative(exec.child)))
   }
-
-  def convertExpandExec(exec: ExpandExec): SparkPlan =
-    exec match {
-      case exec: ExpandExec =>
-        logDebug(s"Converting ExpandExec: ${exec.simpleStringWithNodeId()}")
-        logDebug(s"  projections: ${exec.projections}")
-        NativeExpandExec(
-          exec.projections,
-          exec.output,
-          addRenameColumnsExec(convertToNative(exec.child)))
-      case _ =>
-        logDebug(s"Ignoring ExpandExec: ${exec.simpleStringWithNodeId()}")
-        exec
-    }
 
   def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
-    if (!NativeSupports.isNative(exec)) {
+    if (!NativeHelper.isNative(exec)) {
       return exec
     }
     ConvertToUnsafeRowExec(exec)
@@ -526,7 +495,7 @@ object BlazeConverters extends Logging {
 
   def convertToNative(exec: SparkPlan): SparkPlan = {
     exec match {
-      case exec if NativeSupports.isNative(exec) => exec
+      case exec if NativeHelper.isNative(exec) => exec
       case exec =>
         assert(exec.find(_.isInstanceOf[DataWritingCommandExec]).isEmpty)
         ConvertToNativeExec(exec)
@@ -591,23 +560,12 @@ object BlazeConverters extends Logging {
   }
 
   @tailrec
-  private def getUnderlyingBroadcast(exec: SparkPlan): SparkPlan = {
+  private def getUnderlyingBroadcast(exec: SparkPlan): BroadcastExchangeLike = {
     exec match {
-      case _: BroadcastExchangeExec | _: ArrowBroadcastExchangeExec => exec
-      case exec: BroadcastQueryStage => exec.child
+      case exec: BroadcastExchangeLike => exec
       case exec: UnaryExecNode =>
         getUnderlyingBroadcast(exec.child)
     }
   }
 
-  implicit class ImplicitSimpleStringWithNodeId(sparkPlan: SparkPlan) {
-    def simpleStringWithNodeId(): String = {
-      sparkPlan.simpleString
-    }
-  }
-
-  implicit class ImplicitLogicalLink(sparkPlan: SparkPlan) {
-    def logicalLink: Option[LogicalPlan] = None
-    def setLogicalLink(logicalPlan: LogicalPlan): Unit = {}
-  }
 }

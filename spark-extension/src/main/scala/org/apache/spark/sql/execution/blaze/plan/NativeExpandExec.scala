@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.SortOrder
@@ -30,11 +30,14 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
+
 import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning
 import org.apache.spark.sql.execution.ExpandExec
 import org.blaze.protobuf.ExpandExecNode
 import org.blaze.protobuf.ExpandProjection
 import org.blaze.protobuf.PhysicalPlanNode
+
+import org.apache.spark.sql.blaze.NativeSupports
 
 case class NativeExpandExec(
     projections: Seq[Seq[Expression]],
@@ -44,7 +47,7 @@ case class NativeExpandExec(
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
@@ -58,7 +61,7 @@ case class NativeExpandExec(
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val inputRDD = NativeSupports.executeNative(child)
+    val inputRDD = NativeHelper.executeNative(child)
     val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
 
     new NativeRDD(

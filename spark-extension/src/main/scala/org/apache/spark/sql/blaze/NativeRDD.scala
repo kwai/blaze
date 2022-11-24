@@ -40,14 +40,16 @@ class NativeRDD(
   if (friendlyName != null) {
     setName(friendlyName)
   }
-  this.shuffleReadFull = rddShuffleReadFull
+
+  def shuffleReadFull: Boolean = Shims.get.rddShims.getShuffleReadFull(this)
+  Shims.get.rddShims.setShuffleReadFull(this, rddShuffleReadFull)
 
   override protected def getPartitions: Array[Partition] = rddPartitions
   override protected def getDependencies: Seq[Dependency[_]] = rddDependencies
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
     val computingNativePlan = nativePlan(split, context)
-    NativeSupports.executeNativePlan(computingNativePlan, metrics, split, context)
+    NativeHelper.executeNativePlan(computingNativePlan, metrics, split, context)
   }
 
   def toColumnar: RDD[ColumnarBatch] =
@@ -57,7 +59,7 @@ class NativeRDD(
 
       override def compute(split: Partition, context: TaskContext): Iterator[ColumnarBatch] = {
         val computingNativePlan = nativePlan(split, context)
-        NativeSupports.executeNativePlanColumnar(computingNativePlan, metrics, split, context)
+        NativeHelper.executeNativePlanColumnar(computingNativePlan, metrics, split, context)
       }
     }
 }

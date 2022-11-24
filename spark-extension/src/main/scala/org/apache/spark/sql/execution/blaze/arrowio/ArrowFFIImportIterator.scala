@@ -27,7 +27,7 @@ import org.apache.arrow.c.NativeUtil
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.spark.sql.blaze.BlazeCallNativeWrapper
 import org.apache.spark.TaskContext
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils2
+import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper.rootAsBatch
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
@@ -35,7 +35,7 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
     extends Iterator[ColumnarBatch] {
 
   private var allocator =
-    ArrowUtils2.rootAllocator.newChildAllocator("arrowFFIImportIterator", 0, Long.MaxValue)
+    ArrowUtils.rootAllocator.newChildAllocator("arrowFFIImportIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new CDataDictionaryProvider()
   var consumerSchema: ArrowSchema = _
   var consumerArray: ArrowArray = _

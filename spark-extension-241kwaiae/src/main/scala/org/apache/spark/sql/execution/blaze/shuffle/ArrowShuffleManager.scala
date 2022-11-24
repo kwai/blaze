@@ -22,17 +22,15 @@ import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
+
 import org.apache.spark.internal.Logging
-import org.apache.spark.io.CompressionCodec
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.sort.ArrowShuffleWriter
 import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
 import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.shuffle.sort.SortShuffleManager
-import org.apache.spark.sql.blaze.kwai.KwaiPrivilegedHDFSBlockManager
 
 class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
-  import ArrowShuffleManager._
 
   // introduce a wrapped HDFSBlockManager because we found some permission issues
   // if the original HDFSBlockManager is initialized inside a native thread.
@@ -164,28 +162,5 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   /** Shut down this ShuffleManager. */
   override def stop(): Unit = {
     sortShuffleManager.stop()
-  }
-}
-
-private[spark] object ArrowShuffleManager extends Logging {
-
-  private def isArrowShuffle(handle: ShuffleHandle): Boolean = {
-    val base = handle.asInstanceOf[BaseShuffleHandle[_, _, _]]
-    val dep = base.dependency
-    dep.isInstanceOf[ArrowShuffleDependency[_, _, _]]
-  }
-
-  lazy val compressionCodecForShuffling: CompressionCodec = {
-    val sparkConf = SparkEnv.get.conf
-    val zcodecConfName = "spark.blaze.shuffle.compression.codec"
-    val zcodecName =
-      sparkConf.get(zcodecConfName, defaultValue = sparkConf.get("spark.io.compression.codec"))
-
-    // only zstd compression is supported at the moment
-    if (zcodecName != "zstd") {
-      logWarning(
-        s"Overriding config spark.io.compression.codec=${zcodecName} in shuffling, force using zstd")
-    }
-    CompressionCodec.createCodec(sparkConf, "zstd")
   }
 }

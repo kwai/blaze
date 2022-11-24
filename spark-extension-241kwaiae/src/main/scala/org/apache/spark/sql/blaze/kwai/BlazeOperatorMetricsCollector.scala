@@ -18,8 +18,6 @@ package org.apache.spark.sql.blaze.kwai
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler._
-import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.blaze.NativeSupports.blazeOperatorMetricsCollector
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.{KwaiSparkBasicMetrics, SparkContext, SparkEnv}
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -109,8 +107,15 @@ class BlazeOperatorMetricsCollector extends Logging {
 }
 
 object BlazeOperatorMetricsCollector {
-  val isBlazeOperatorMetricsEnabled: Boolean = {
+  val isBlazeOperatorMetricsEnabled: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.operatorMetrics", defaultValue = true)
+
+  val instance: Option[BlazeOperatorMetricsCollector] = {
+    if (isBlazeOperatorMetricsEnabled) {
+      Some(new BlazeOperatorMetricsCollector)
+    } else {
+      None
+    }
   }
 }
 

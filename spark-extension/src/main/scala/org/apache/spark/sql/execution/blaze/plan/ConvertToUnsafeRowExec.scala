@@ -96,7 +96,4 @@ case class ConvertToUnsafeRowExec(override val child: SparkPlan)
 
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
-
-  implicit class ImplicitLogicalLink(sparkPlan: SparkPlan)
-      extends BlazeConverters.ImplicitLogicalLink(sparkPlan)
 }

@@ -22,10 +22,11 @@ import scala.collection.JavaConverters._
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
+
 import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.InternalRow
@@ -38,12 +39,14 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.UnionExecNode
 
+import org.apache.spark.sql.blaze.NativeSupports
+
 case class NativeUnionExec(override val children: Seq[SparkPlan])
     extends SparkPlan
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows"))
       .toSeq: _*)
@@ -65,7 +68,7 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val rdds = children.map(c => NativeSupports.executeNative(c))
+    val rdds = children.map(c => NativeHelper.executeNative(c))
     val nativeMetrics = MetricNode(metrics, rdds.map(_.metrics))
 
     def unionedPartitions: Array[UnionPartition[InternalRow]] = {

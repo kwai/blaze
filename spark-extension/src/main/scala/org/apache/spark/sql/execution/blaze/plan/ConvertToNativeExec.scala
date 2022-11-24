@@ -19,6 +19,7 @@ package org.apache.spark.sql.execution.blaze.plan
 import java.util.UUID
 
 import org.apache.spark.InterruptibleIterator
+
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -29,10 +30,11 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.SparkEnv
+
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.OneToOneDependency
@@ -40,18 +42,18 @@ import org.blaze.protobuf.FFIReaderExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.Shims
+
 case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
   override val nodeName: String = "ConvertToNative"
-
-  val logicalLink: Option[LogicalPlan] = child.logicalLink
-
   override val output: Seq[Attribute] = child.output
   override val outputPartitioning: Partitioning = child.outputPartitioning
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq :+
@@ -71,7 +73,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
-      inputRDD.shuffleReadFull,
+      Shims.get.rddShims.getShuffleReadFull(inputRDD),
       (partition, context) => {
         val inputRowIter = inputRDD.compute(partition, context)
         val resourceId = s"ConvertToNativeExec:${UUID.randomUUID().toString}"

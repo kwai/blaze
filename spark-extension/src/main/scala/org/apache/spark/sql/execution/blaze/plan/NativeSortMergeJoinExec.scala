@@ -27,10 +27,11 @@ import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
+
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.BinaryExecNode
@@ -39,6 +40,8 @@ import org.blaze.protobuf.JoinOn
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.SortMergeJoinExecNode
 import org.blaze.protobuf.SortOptions
+
+import org.apache.spark.sql.blaze.NativeSupports
 
 case class NativeSortMergeJoinExec(
     override val left: SparkPlan,
@@ -53,7 +56,7 @@ case class NativeSortMergeJoinExec(
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeSupports
+    NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
@@ -88,8 +91,8 @@ case class NativeSortMergeJoinExec(
   private val nativeJoinType = NativeConverters.convertJoinType(joinType)
 
   override def doExecuteNative(): NativeRDD = {
-    val leftRDD = NativeSupports.executeNative(left)
-    val rightRDD = NativeSupports.executeNative(right)
+    val leftRDD = NativeHelper.executeNative(left)
+    val rightRDD = NativeHelper.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
 
     val partitions = if (joinType != RightOuter) {
