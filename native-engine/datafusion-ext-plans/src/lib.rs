@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(ready_macro)]
-
 pub mod debug_exec;
 pub mod empty_partitions_exec;
 pub mod expand_exec;
@@ -24,3 +22,5 @@ pub mod limit_exec;
 pub mod rename_columns_exec;
 pub mod shuffle_writer_exec;
 pub mod sort_merge_join_exec;
+
+mod shuffle;

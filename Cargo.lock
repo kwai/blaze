@@ -764,6 +764,7 @@ dependencies = [
  "itertools",
  "jni",
  "log",
+ "once_cell",
  "paste",
  "tempfile",
  "tokio",
