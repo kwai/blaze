@@ -165,7 +165,7 @@ class ArrowBlockStoreShuffleReader[K, C](
 object ArrowBlockStoreShuffleReader {
   private object Helper {
     val bufferReleasingInputStreamClass: Class[_] =
-      // scalastyle:off classforname
+    // scalastyle:off classforname
       Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
     // scalastyle:on classforname
     val delegateFn: Method = bufferReleasingInputStreamClass.getDeclaredMethod(

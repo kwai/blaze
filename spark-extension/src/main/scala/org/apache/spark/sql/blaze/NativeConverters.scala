@@ -20,9 +20,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
-
 import com.google.protobuf.ByteString
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -68,9 +66,9 @@ import org.apache.spark.sql.catalyst.expressions.Sha2
 import org.apache.spark.sql.catalyst.expressions.Signum
 import org.apache.spark.sql.catalyst.expressions.Sin
 import org.apache.spark.sql.catalyst.expressions.Sqrt
+import org.apache.spark.sql.catalyst.expressions.Contains
 import org.apache.spark.sql.catalyst.expressions.StartsWith
 import org.apache.spark.sql.catalyst.expressions.EndsWith
-import org.apache.spark.sql.catalyst.expressions.Contains
 import org.apache.spark.sql.catalyst.expressions.StringTrim
 import org.apache.spark.sql.catalyst.expressions.StringTrimLeft
 import org.apache.spark.sql.catalyst.expressions.StringTrimRight
@@ -144,6 +142,7 @@ import org.apache.spark.sql.hive.blaze.HiveUDFUtil.{
   isHiveSimpleUDF
 }
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.FractionalType
 import org.apache.spark.sql.types.NumericType
 import org.blaze.{protobuf => pb}
@@ -502,7 +501,9 @@ object NativeConverters {
                 pb.PhysicalBinaryExprNode.newBuilder().setL(l).setR(r).setOp("Modulo"))
             }
         }
-      case Like(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Like")
+      case e: Like =>
+        assert(Shims.get.exprShims.getEscapeChar(e) == '\\')
+        buildBinaryExprNode(e.left, e.right, "Like")
 
       // if rhs is complex in and/or operators, use short-circuiting implementation
       case e @ And(lhs, rhs)
@@ -674,9 +675,14 @@ object NativeConverters {
         val args = _1 :: Nil
         buildExtScalarFunction("UnscaledValue", args, LongType)
 
-      case MakeDecimal(_1, precision, scale) =>
+      case e: MakeDecimal =>
+        // case MakeDecimal(_1, precision, scale) =>
+        //  assert(!SQLConf.get.ansiEnabled)
+        val precision = e.precision
+        val scale = e.scale
         val args =
-          _1 :: Literal.apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
+          e.child :: Literal
+            .apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
         buildExtScalarFunction("MakeDecimal", args, DecimalType(precision, scale))
 
       case PromotePrecision(_1) =>
@@ -686,14 +692,20 @@ object NativeConverters {
           case _ =>
             convertExpr(Cast(_1, _1.dataType), useAttrExprId)
         }
-
-      case CheckOverflow(_1, DecimalType(precision, scale)) =>
+      case e: CheckOverflow =>
+        // case CheckOverflow(_1, DecimalType(precision, scale)) =>
+        val precision = e.dataType.precision
+        val scale = e.dataType.scale
         val args =
-          _1 :: Literal.apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
+          e.child :: Literal
+            .apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
         buildExtScalarFunction("CheckOverflow", args, DecimalType(precision, scale))
 
       // aggr
-      case AggregateExpression(aggr, _, _, _) => convertExpr(aggr)
+      // aggr add new parameter filter
+      case e: AggregateExpression =>
+        assert(Shims.get.exprShims.getAggregateExpressionFilter(e).isEmpty)
+        convertExpr(e.aggregateFunction)
       case Min(_1) => buildAggrExprNode(pb.AggregateFunction.MIN, _1)
       case Max(_1) => buildAggrExprNode(pb.AggregateFunction.MAX, _1)
       case Sum(_1) => buildAggrExprNode(pb.AggregateFunction.SUM, _1)
@@ -719,7 +731,7 @@ object NativeConverters {
             && e.children(1).isInstanceOf[Literal]) =>
         buildExtScalarFunction("GetJsonObject", e.children, StringType)
 
-      //hive UDF
+      // hive UDF
       case e if isHiveSimpleUDF(e) || isHiveGenericUDF(e) =>
         assert(
           SparkEnv.get.conf.getBoolean("spark.blaze.udf.enabled", defaultValue = false),
@@ -741,8 +753,11 @@ object NativeConverters {
           .build()
 
       case unsupportedExpression =>
+        // scalastyle:off throwerror
         throw new NotImplementedError(
-          s"unsupported exception: ${unsupportedExpression} (${unsupportedExpression.getClass.getName})")
+          s"unsupported exception: " +
+            s"${unsupportedExpression} (${unsupportedExpression.getClass.getName})")
+      // scalastyle:on throwerror
     }
   }
 

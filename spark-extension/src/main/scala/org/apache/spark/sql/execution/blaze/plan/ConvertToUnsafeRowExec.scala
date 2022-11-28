@@ -37,7 +37,7 @@ case class ConvertToUnsafeRowExec(override val child: SparkPlan)
     with CodegenSupport {
   override def nodeName: String = "ConvertToUnsafeRow"
 
-  def logicalLink: Option[LogicalPlan] = child.logicalLink
+  override def logicalLink: Option[LogicalPlan] = child.logicalLink
 
   override def output: Seq[Attribute] = child.output
 

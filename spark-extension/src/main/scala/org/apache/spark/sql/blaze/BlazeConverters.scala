@@ -61,7 +61,7 @@ import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
-import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeExec
+// import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToUnsafeRowExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinExec
@@ -70,10 +70,9 @@ import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
-import org.apache.spark.sql.execution.adaptive.BroadcastQueryStage
+import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
-
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.hashAggrModeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -82,8 +81,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.window.WindowExec
-import org.apache.spark.sql.execution.adaptive.QueryStage
-import org.apache.spark.sql.execution.adaptive.QueryStageInput
+import org.apache.spark.sql.execution.adaptive.QueryStageExec
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
@@ -91,8 +89,8 @@ import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
+// import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
+// import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 
@@ -358,6 +356,7 @@ object BlazeConverters extends Logging {
           (left, leftKeys, convertedRight, rightKeys)
 
         case _ =>
+          // scalastyle:off throwerror
           throw new NotImplementedError(
             "Ignore BroadcastHashJoin with unsupported children structure")
       }
@@ -471,7 +470,8 @@ object BlazeConverters extends Logging {
         } catch {
           case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
             logWarning(
-              s"Error projecting resultExpressions, failback to non-native projection: ${e.getMessage}")
+              s"Error projecting resultExpressions, failback to non-native projection: " +
+                s"${e.getMessage}")
             ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
         }
     }
@@ -507,11 +507,13 @@ object BlazeConverters extends Logging {
       if (exec.output.isEmpty) {
         return false
       }
+      // use shim to get isQueryStageInput and getChildStage
       exec match {
-        case exec: QueryStageInput =>
-          needRenameColumns(exec.childStage) || exec.output != exec.childStage.output
-        case exec: QueryStage =>
-          needRenameColumns(exec.child)
+        case exec if Shims.get.sparkPlanShims.isQueryStageInput(exec) =>
+          needRenameColumns(Shims.get.sparkPlanShims.getChildStage(exec)) ||
+            exec.output != Shims.get.sparkPlanShims.getChildStage(exec).output
+        case exec: QueryStageExec =>
+          needRenameColumns(Shims.get.sparkPlanShims.getChildStage(exec))
         case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec =>
           true
         case _ => false

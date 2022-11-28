@@ -19,19 +19,15 @@ package org.apache.spark.sql.execution.blaze.plan
 import java.net.URI
 import java.security.PrivilegedExceptionAction
 import java.util.UUID
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.Partition
-
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
@@ -43,14 +39,14 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.sql.execution.statsEstimation.Statistics
+// import org.apache.spark.sql.execution.statsEstimation.Statistics
 import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.plans.logical.Statistics
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
     extends LeafExecNode
@@ -185,12 +181,15 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       friendlyName = "NativeRDD.ParquetScan")
   }
 
-  override def computeStats(): Statistics = basedFileScan.computeStats()
+  // build new class from logical plan Statistics
+  // delete override tag
+  def computeStats(): Statistics =
+    Statistics(sizeInBytes = basedFileScan.relation.sizeInBytes)
 
   override val nodeName: String =
     s"NativeParquetScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
 
-  def simpleString(maxFields: Int): String =
+  override def simpleString(maxFields: Int): String =
     s"$nodeName (${basedFileScan.simpleString(maxFields)})"
 
   override def doCanonicalize(): SparkPlan = basedFileScan.canonicalized

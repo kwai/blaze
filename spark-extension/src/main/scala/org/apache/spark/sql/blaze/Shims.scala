@@ -19,8 +19,8 @@ package org.apache.spark.sql.blaze
 import java.io.File
 
 import org.apache.spark.SparkContext
-
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
@@ -33,10 +33,13 @@ abstract class Shims {
   def sparkPlanShims: SparkPlanShims
   def shuffleShims: ShuffleShims
   def broadcastShims: BroadcastShims
+  def exprShims: ExprShims
 }
 object Shims {
   lazy val get: Shims = {
-    throw new NotImplementedError()
+    // scalastyle:off throwerror
+    throw new NotImplementedError("get not implemented")
+    // scalastyle:on throwerror
   }
 }
 
@@ -66,4 +69,9 @@ trait BroadcastShims {
   def createArrowBroadcastExchange(
       mode: BroadcastMode,
       child: SparkPlan): ArrowBroadcastExchangeBase
+}
+
+trait ExprShims {
+  def getEscapeChar(expr: Expression): Char
+  def getAggregateExpressionFilter(expr: Expression): Option[Expression]
 }

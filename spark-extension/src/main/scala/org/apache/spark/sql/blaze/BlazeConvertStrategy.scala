@@ -34,7 +34,6 @@ import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.LocalLimitExec
-import org.apache.spark.sql.execution.adaptive.QueryStageInput
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
@@ -89,8 +88,9 @@ object BlazeConvertStrategy extends Logging {
     }
 
     // fill convert strategy of stage inputs
+    // get stageInput from Shim trait
     exec.foreachUp {
-      case stageInput: QueryStageInput =>
+      case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
         stageInput.setTagValue(
           convertStrategyTag,
           if (NativeHelper.isNative(stageInput)) {
@@ -186,7 +186,7 @@ object BlazeConvertStrategy extends Logging {
             !isNeverConvert(e) &&
             isNeverConvert(e.children.head))
 
-        //// [ NativeParquetScan -> (non-native) ]
+        // [ NativeParquetScan -> (non-native) ]
         e.children.foreach { child =>
           dontConvertIf(
             child,

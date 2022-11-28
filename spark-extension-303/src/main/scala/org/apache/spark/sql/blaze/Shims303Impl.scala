@@ -22,7 +22,7 @@ import org.apache.spark.sql.blaze.shims.RDDShimsImpl
 import org.apache.spark.sql.blaze.shims.ShuffleShimsImpl
 import org.apache.spark.sql.blaze.shims.SparkPlanShimsImpl
 
-class Shims241kwaiaeImpl extends Shims {
+class Shims303Impl extends Shims {
   override val rddShims: RDDShims = new RDDShimsImpl
   override val sparkPlanShims: SparkPlanShims = new SparkPlanShimsImpl
   override val shuffleShims: ShuffleShims = new ShuffleShimsImpl
