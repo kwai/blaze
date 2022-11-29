@@ -645,17 +645,15 @@ object NativeConverters {
         buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
 
-      case If(predicate, trueValue, falseValue) =>
+      case e @ If(predicate, trueValue, falseValue) =>
         buildExprNode {
-          _.setCase(
-            pb.PhysicalCaseNode
+          _.setIifExpr(
+            pb.IIfExprNode
               .newBuilder()
-              .addWhenThenExpr(
-                pb.PhysicalWhenThen
-                  .newBuilder()
-                  .setWhenExpr(convertExpr(predicate, useAttrExprId))
-                  .setThenExpr(convertExpr(trueValue, useAttrExprId)))
-              .setElseExpr(convertExpr(falseValue, useAttrExprId)))
+              .setCondition(convertExpr(predicate, useAttrExprId))
+              .setTruthy(convertExpr(trueValue, useAttrExprId))
+              .setFalsy(convertExpr(falseValue, useAttrExprId))
+              .setDataType(convertDataType(e.dataType)))
         }
       case CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()

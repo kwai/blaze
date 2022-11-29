@@ -74,6 +74,7 @@ use crate::{from_proto_binary_op, proto_error};
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion_ext_exprs::cast::TryCastExpr;
 use datafusion_ext_exprs::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
+use datafusion_ext_exprs::iif::IIfExpr;
 use datafusion_ext_exprs::spark_expression_wrapper::SparkExpressionWrapperExpr;
 use datafusion_ext_exprs::spark_logical::{SparkLogicalExpr, SparkLogicalOp};
 use datafusion_ext_exprs::string_contains::StringContainsExpr;
@@ -910,6 +911,18 @@ fn try_parse_physical_expr(
                 _ => panic!("SparkLogicalExpr.op must be one of [And, Or]")
             };
             Arc::new(SparkLogicalExpr::new(arg1, arg2, op))
+        }
+        ExprType::IifExpr(e) => {
+            let condition = try_parse_physical_expr_box_required(&e.condition, input_schema)?;
+            let truthy = try_parse_physical_expr_box_required(&e.truthy, input_schema)?;
+            let falsy = try_parse_physical_expr_box_required(&e.falsy, input_schema)?;
+            let data_type = convert_required!(e.data_type)?;
+            Arc::new(IIfExpr::new(
+                condition,
+                truthy,
+                falsy,
+                data_type,
+            ))
         }
     };
 
