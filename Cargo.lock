@@ -201,7 +201,7 @@ dependencies = [
  "panic-message",
  "paste",
  "plan-serde",
- "prost 0.10.4",
+ "prost 0.11.3",
  "simplelog",
  "snmalloc-rs",
  "tokio",
@@ -1457,7 +1457,7 @@ dependencies = [
  "datafusion-ext",
  "log",
  "object_store",
- "prost 0.10.4",
+ "prost 0.11.3",
  "tonic",
  "tonic-build",
 ]
@@ -1489,12 +1489,12 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.10.4"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71adf41db68aa0daaefc69bb30bcd68ded9b9abaad5d1fbb6304c4fb390e083e"
+checksum = "c0b18e655c21ff5ac2084a5ad0611e827b3f92badf79f4910b5a5c58f4d87ff0"
 dependencies = [
  "bytes",
- "prost-derive 0.10.1",
+ "prost-derive 0.11.2",
 ]
 
 [[package]]
@@ -1532,9 +1532,9 @@ dependencies = [
 
 [[package]]
 name = "prost-derive"
-version = "0.10.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b670f45da57fb8542ebdbb6105a925fe571b67f9e7ed9f47a06a84e72b4e7cc"
+checksum = "164ae68b6587001ca506d3bf7f1000bfa248d0e1217b618108fba4ec1d0cc306"
 dependencies = [
  "anyhow",
  "itertools",
