@@ -12,5 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod coalesce_stream;
 pub mod ipc_stream;
 pub mod ffi_stream;

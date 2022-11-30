@@ -40,7 +40,6 @@ use datafusion::physical_plan::{
         Literal, NegativeExpr, NotExpr, PhysicalSortExpr,
         DEFAULT_DATAFUSION_CAST_OPTIONS,
     },
-    filter::FilterExec,
     projection::ProjectionExec,
     Partitioning,
 };
@@ -56,6 +55,7 @@ use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_plans::debug_exec::DebugExec;
 use datafusion_ext_plans::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext_plans::expand_exec::ExpandExec;
+use datafusion_ext_plans::filter_exec::FilterExec;
 use datafusion_ext_plans::ffi_reader_exec::FFIReaderExec;
 use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;

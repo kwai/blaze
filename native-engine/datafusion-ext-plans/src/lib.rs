@@ -15,6 +15,7 @@
 pub mod debug_exec;
 pub mod empty_partitions_exec;
 pub mod expand_exec;
+pub mod filter_exec;
 pub mod ffi_reader_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;

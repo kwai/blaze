@@ -26,6 +26,9 @@ pub fn write_one_batch<W: Write + Seek>(
     output: &mut W,
     compress: bool,
 ) -> ArrowResult<usize> {
+    let num_rows = batch.num_rows();
+    let mem_size = batch.get_array_memory_size();
+
     if batch.num_rows() == 0 {
         return Ok(0);
     }
@@ -56,6 +59,13 @@ pub fn write_one_batch<W: Write + Seek>(
     output.seek(SeekFrom::Start(start_pos))?;
     output.write_all(&ipc_length.to_le_bytes()[..])?;
 
+    log::info!(
+        "write_one_batch: num_rows={}, mem_size={}, ipc_length={}, compressed={}",
+        num_rows,
+        mem_size,
+        ipc_length,
+        compress,
+    );
     output.seek(SeekFrom::Start(end_pos))?;
     Ok((end_pos - start_pos) as usize)
 }
