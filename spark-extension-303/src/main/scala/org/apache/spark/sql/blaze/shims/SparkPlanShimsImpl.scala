@@ -48,10 +48,7 @@ import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.Utils
 
-private[blaze] case class SparkPlanShimsImpl()
-    extends SparkPlanShims
-    with SparkPlan
-    with Logging {
+private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims with Logging {
 
   override def isNative(plan: SparkPlan): Boolean = {
     plan match {
@@ -233,17 +230,27 @@ private[blaze] case class SparkPlanShimsImpl()
   }
 
   override protected def doExecute(): RDD[InternalRow] = {
-    throw new UnsupportedOperationException(
-      "BroadcastExchange does not support the execute() code path.")
+    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support doExecute()")
   }
 
   override def output: Seq[Attribute] = {
-    throw new UnsupportedOperationException(
-      "BroadcastExchange does not support the execute() code path.")
+    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support output()")
   }
 
   override def children: Seq[SparkPlan] = {
+    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support children()")
+  }
+
+  override def productElement(n: Int): Any = {
     throw new UnsupportedOperationException(
-      "BroadcastExchange does not support the execute() code path.")
+      "SparkPlanShimsImpl does not support productElement()")
+  }
+
+  override def productArity: Int = {
+    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support productArity()")
+  }
+
+  override def canEqual(that: Any): Boolean = {
+    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support canEqual()")
   }
 }
