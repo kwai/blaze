@@ -17,12 +17,16 @@
 package org.apache.spark.sql.blaze.shims
 
 import org.apache.spark.sql.blaze.ExprShims
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Like}
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+
 
 class ExprShimsImpl extends ExprShims {
 
   override def getEscapeChar(expr: Expression): Char = {
-    expr.escapeChar
+    expr.asInstanceOf[Like].escapeChar
   }
-  override def getAggregateExpressionFilter(expr: Expression): Option[Expression] = expr.filter
+  override def getAggregateExpressionFilter(expr: Expression): Option[Expression] = {
+    expr.asInstanceOf[AggregateExpression].filter
+  }
 }

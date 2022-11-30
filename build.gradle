@@ -106,6 +106,13 @@ subprojects {
 		tasks.withType(ScalaCompile) {
 			scalaCompileOptions.additionalParameters = ["-Xmaxerrs", "10000"]
 		}
+		tasks.withType(Tar){
+			duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+		}
+
+		tasks.withType(Zip){
+			duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+		}
 		tasks.compileScala.dependsOn tasks.scalastyleCheck
 		tasks.compileScala.dependsOn tasks.spotlessApply
 	}
@@ -118,7 +125,7 @@ repositories {
 
 dependencies {
 	implementation project(":spark-extension")
-	implementation project(":spark-extension-241kwaiae")
+	implementation project(":spark-extension-303")
 }
 
 shadowJar {
@@ -157,7 +164,7 @@ task cargo(type: Exec) {
 
 tasks.shadowJar.dependsOn tasks.cargo
 tasks.shadowJar.dependsOn project(":spark-extension").tasks.build
-tasks.shadowJar.dependsOn project(":spark-extension-241kwaiae").tasks.build
+tasks.shadowJar.dependsOn project(":spark-extension-303").tasks.build
 tasks.build.dependsOn tasks.shadowJar
 
 clean.doLast {

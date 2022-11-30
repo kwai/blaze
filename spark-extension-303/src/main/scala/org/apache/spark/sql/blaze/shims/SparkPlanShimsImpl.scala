@@ -17,29 +17,24 @@
 package org.apache.spark.sql.blaze.shims
 
 import java.util.UUID
-
 import scala.annotation.tailrec
-
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.ShuffledRDDPartition
 import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.blaze.SparkPlanShims
-import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
-import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.{JniBridge, NativeRDD, NativeSupports, Shims, SparkPlanShims}
+import org.apache.spark.sql.execution.adaptive.{BroadcastQueryStageExec, CustomShuffleReaderExec, ShuffleQueryStageExec}
+import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalPlanNode}
+// import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageInput
-import org.apache.spark.sql.execution.adaptive.LocalShuffledRowRDD
-import org.apache.spark.sql.execution.adaptive.QueryStage
-import org.apache.spark.sql.execution.adaptive.QueryStageInput
-import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
-import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
+// import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageInput
+// import org.apache.spark.sql.execution.adaptive.LocalShuffledRowRDD
+import org.apache.spark.sql.execution.adaptive.QueryStageExec
+// import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
+// import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
@@ -52,8 +47,8 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
   override def isNative(plan: SparkPlan): Boolean = {
     plan match {
       case _: NativeSupports => true
-      case plan: QueryStageInput => isNative(plan.childStage)
-      case plan: QueryStage => isNative(plan.child)
+//      case plan: QueryStageInput => isNative(plan.childStage)
+      case plan: QueryStageExec => isNative(plan.plan)
       case plan: ReusedExchangeExec => isNative(plan.child)
       case _ => false
     }
@@ -62,8 +57,8 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
   override def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports = {
     plan match {
       case plan: NativeSupports => plan
-      case plan: QueryStageInput => getUnderlyingNativePlan(plan.childStage)
-      case plan: QueryStage => getUnderlyingNativePlan(plan.child)
+      case plan: QueryStageExec => getUnderlyingNativePlan(plan.plan)
+//      case plan: QueryStage => getUnderlyingNativePlan(plan.child)
       case plan: ReusedExchangeExec => getUnderlyingNativePlan(plan.child)
       case _ => throw new RuntimeException("unreachable: plan is not native")
     }
@@ -73,29 +68,32 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
     plan match {
       case plan: NativeSupports =>
         plan.executeQuery {
-          BlazeOperatorMetricsCollector.instance.foreach {
-            _.createListener(plan, plan.sparkContext)
-          }
+//          BlazeOperatorMetricsCollector.instance.foreach {
+//            _.createListener(plan, plan.sparkContext)
+//          }
           plan.doExecuteNative()
         }
-      case plan: ShuffleQueryStageInput => executeNativeCustomShuffleReader(plan)
-      case plan: SkewedShuffleQueryStageInput => executeNativeCustomShuffleReader(plan)
-      case plan: BroadcastQueryStageInput => executeNative(plan.childStage)
-      case plan: QueryStage => executeNative(plan.child)
+      case plan: ShuffleQueryStageExec => executeNativeCustomShuffleReader(plan.shuffle)
+       case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan)
+      case plan: BroadcastQueryStageExec => executeNative(plan.broadcast)
+      case plan: QueryStageExec => executeNative(plan.plan)
       case plan: ReusedExchangeExec => executeNative(plan.child)
       case _ => throw new SparkException(s"Underlying plan is not NativeSupports: ${plan}")
     }
   }
 
-  override def isQueryStageInput(plan: SparkPlan): Boolean =
-    plan.isInstanceOf[QueryStageInput]
+  override def isQueryStageInput(plan: SparkPlan): Boolean = {
+    plan.isInstanceOf[QueryStageExec]
+//    plan.isInstanceOf[QueryStageInput]
+  }
 
   override def getChildStage(plan: SparkPlan): SparkPlan =
-    plan.asInstanceOf[QueryStageInput].childStage
+    plan.asInstanceOf[QueryStageExec].plan
 
   private def executeNativeCustomShuffleReader(exec: SparkPlan): NativeRDD = {
     exec match {
-      case _: ShuffleQueryStageInput | _: SkewedShuffleQueryStageInput =>
+//      case _: ShuffleQueryStageExec | _: SkewedShuffleQueryStageInput =>
+      case _: ShuffleQueryStageExec | _: CustomShuffleReaderExec =>
         val shuffledRDD = exec.execute()
         val dependency = shuffledRDD.getClass
           .getMethod("dependency")
@@ -104,14 +102,13 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
         val shuffleHandle = dependency.shuffleHandle
 
         val shuffleExec = exec
-          .asInstanceOf[QueryStageInput]
-          .childStage
-          .child
+          .asInstanceOf[QueryStageExec]
+          .plan
           .asInstanceOf[ArrowShuffleExchangeExec]
         val inputMetrics = shuffleExec.metrics
         val inputRDD = exec match {
-          case exec: ShuffleQueryStageInput => executeNative(exec.childStage)
-          case exec: SkewedShuffleQueryStageInput => executeNative(exec.childStage)
+          case exec: ShuffleQueryStageExec => executeNative(exec.plan)
+          case exec: CustomShuffleReaderExec => executeNative(exec.child)
         }
 
         val nativeSchema = shuffleExec.nativeSchema
@@ -123,7 +120,7 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
           metrics,
           shuffledRDD.partitions,
           new OneToOneDependency(shuffledRDD) :: Nil,
-          shuffledRDD.shuffleReadFull,
+          true,
           (partition, taskContext) => {
             val shuffleReadMetrics = taskContext.taskMetrics().createTempShuffleReadMetrics()
             val metricsReporter =
@@ -136,27 +133,27 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
                 "org.apache.spark.sql.execution.adaptive.AdaptiveShuffledRowRDDPartition")
 
             val readers: Iterator[ShuffleReader[_, _]] = shuffledRDD match {
-              case rdd: LocalShuffledRowRDD =>
-                val shuffledRowPartition = partition.asInstanceOf[ShuffledRDDPartition]
-                val mapId = shuffledRowPartition.index
-                val partitionStartIndices = rdd.partitionStartIndices.iterator
-                val partitionEndIndices = rdd.partitionEndIndices.iterator
-                partitionStartIndices
-                  .zip(partitionEndIndices)
-                  .map {
-                    case (start, end) =>
-                      logInfo(
-                        s"Create local shuffle reader mapId $mapId, partition range $start-$end")
-                      SparkEnv.get.shuffleManager
-                        .getReader(
-                          shuffleHandle,
-                          start,
-                          end,
-                          taskContext,
-                          metricsReporter,
-                          mapId,
-                          mapId + 1)
-                  }
+//              case rdd: LocalShuffledRowRDD =>
+//                val shuffledRowPartition = partition.asInstanceOf[ShuffledRDDPartition]
+//                val mapId = shuffledRowPartition.index
+//                val partitionStartIndices = rdd.partitionStartIndices.iterator
+//                val partitionEndIndices = rdd.partitionEndIndices.iterator
+//                partitionStartIndices
+//                  .zip(partitionEndIndices)
+//                  .map {
+//                    case (start, end) =>
+//                      logInfo(
+//                        s"Create local shuffle reader mapId $mapId, partition range $start-$end")
+//                      SparkEnv.get.shuffleManager
+//                        .getReader(
+//                          shuffleHandle,
+//                          start,
+//                          end,
+//                          taskContext,
+//                          metricsReporter,
+//                          mapId,
+//                          mapId + 1)
+//                  }
               case _ =>
                 partition match {
                   case p if classOfShuffledRowRDDPartition.isInstance(p) =>
@@ -184,14 +181,14 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
 
                     Iterator.single(
                       SparkEnv.get.shuffleManager
-                        .getReader(
+                        .getReaderForRange(
                           shuffleHandle,
                           preShufflePartitionIndex,
                           preShufflePartitionIndex + 1,
-                          taskContext,
-                          metricsReporter,
                           startMapId,
-                          endMapId))
+                          endMapId,
+                          taskContext,
+                          metricsReporter))
                   case p =>
                     Iterator.single(
                       SparkEnv.get.shuffleManager.getReader(
@@ -210,7 +207,7 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
               () => {
                 CompletionIterator[Object, Iterator[Object]](
                   readers.flatMap(_.asInstanceOf[ArrowBlockStoreShuffleReader[_, _]].readIpc()),
-                  taskContext.taskMetrics().mergeShuffleReadMetrics(true))
+                  taskContext.taskMetrics().mergeShuffleReadMetrics())
               })
 
             PhysicalPlanNode

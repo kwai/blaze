@@ -513,7 +513,7 @@ object BlazeConverters extends Logging {
           needRenameColumns(Shims.get.sparkPlanShims.getChildStage(exec)) ||
             exec.output != Shims.get.sparkPlanShims.getChildStage(exec).output
         case exec: QueryStageExec =>
-          needRenameColumns(Shims.get.sparkPlanShims.getChildStage(exec))
+          needRenameColumns(exec.plan)
         case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec =>
           true
         case _ => false

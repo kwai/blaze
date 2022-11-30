@@ -22,37 +22,50 @@ import java.util.UUID
 import java.util.concurrent.Future
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
-
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Promise
-
-import org.apache.spark.InterruptibleIterator
-import org.apache.spark.Partition
-import org.apache.spark.SparkException
-import org.apache.spark.TaskContext
-import org.apache.spark.broadcast
-import org.apache.spark.OneToOneDependency
-
-import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeHelper
-import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
+import org.apache.spark.sql.catalyst.plans.logical.Statistics
+import org.apache.spark.sql.catalyst.plans.physical.Distribution
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.InterruptibleIterator
+import org.apache.spark.sql.blaze.{JniBridge, MetricNode, NativeConverters, NativeHelper, NativeRDD, NativeSupports}
+import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.Partition
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.TaskContext
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.types.BinaryType
+import org.apache.spark.sql.types.DataType
+import org.apache.spark.SparkException
+import org.apache.spark.broadcast
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
+import org.blaze.protobuf.IpcWriterExecNode
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.Schema
+import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
 
 case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
-    extends ArrowBroadcastExchangeBase {
+  extends ArrowBroadcastExchangeBase {
+
+  override val output: Seq[Attribute] = child.output
+
+  private lazy val isNative = {
+    getTagValue(ArrowBroadcastExchangeExec.nativeExecutionTag).getOrElse(false)
+  }
 
   override lazy val runId: UUID = UUID.randomUUID()
 
@@ -69,18 +82,29 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
       ("ipc_write_time", SQLMetrics
         .createNanoTimingMetric(sparkContext, "Native.ipc_write_time")): _*)
 
-  override def outputPartitioning: Partitioning = BroadcastPartitioning(mode)
+  override def outputPartitioning: Partitioning =
+    new Partitioning {
+      override val numPartitions: Int = 1
+      override def satisfies0(required: Distribution): Boolean = true
+    }
 
   override def doCanonicalize(): SparkPlan = child.canonicalized
+
+  override def runtimeStatistics: Statistics = {
+    val dataSize = metrics("dataSize").value
+    Statistics(dataSize)
+  }
+
+  @transient
+  override lazy val completionFuture: concurrent.Future[Broadcast[Any]] = {
+    // ArrowBroadcastExchangeExec is not materialized until doExecuteBroadcast called
+    // so return a dummy future here
+    Promise.successful(null).future
+  }
 
   override protected def doExecute(): RDD[InternalRow] = {
     throw new UnsupportedOperationException(
       "BroadcastExchange does not support the execute() code path.")
-  }
-
-  override def doPrepare(): Unit = {
-    // Materialize the future.
-    relationFuture
   }
 
   override def doExecuteBroadcast[T](): Broadcast[T] = {
@@ -141,25 +165,18 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
               .setMode(IpcReadMode.CHANNEL)
               .build())
           .build()
-      },
-      friendlyName = "NativeRDD.BroadcastRead")
+      })
   }
 
-  val nativeSchema: Schema = Util.getNativeSchema(output)
+  val nativeSchema: Schema = NativeConverters.convertSchema(
+    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
 
   def collectNative(): Array[Array[Byte]] = {
     val inputRDD = NativeHelper.executeNative(child match {
       case child if NativeHelper.isNative(child) => child
       case child => ConvertToNativeExec(child)
     })
-    val modifiedMetrics = metrics ++ Map(
-      "output_rows" -> metrics("ipc_write_rows"),
-      "elapsed_compute" -> metrics("ipc_write_time"))
-    val nativeMetrics = MetricNode(modifiedMetrics, inputRDD.metrics :: Nil)
-
-    val ipcRDD = new RDD[Array[Byte]](sparkContext, new OneToOneDependency(inputRDD) :: Nil) {
-      setName("NativeRDD.BroadcastWrite")
-
+    val ipcRDD = new RDD[Array[Byte]](sparkContext, inputRDD.dependencies) {
       override protected def getPartitions: Array[Partition] = inputRDD.partitions
 
       override def compute(split: Partition, context: TaskContext): Iterator[Array[Byte]] = {
@@ -174,13 +191,17 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
             metrics("dataSize") += byteArray.length
           })
 
-        val input = inputRDD.nativePlan(inputRDD.partitions(split.index), context)
+        val modifiedMetrics = metrics ++ Map(
+          "output_rows" -> metrics("ipc_write_rows"),
+          "elapsed_compute" -> metrics("ipc_write_time"))
+        val nativeMetrics = MetricNode(modifiedMetrics, inputRDD.metrics :: Nil)
+
         val nativeIpcWriterExec = PhysicalPlanNode
           .newBuilder()
           .setIpcWriter(
             IpcWriterExecNode
               .newBuilder()
-              .setInput(input)
+              .setInput(inputRDD.nativePlan(inputRDD.partitions(split.index), context))
               .setIpcConsumerResourceId(resourceId)
               .build())
           .build()
@@ -198,12 +219,10 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
   }
 
   @transient
-  private lazy val relationFuture: Future[Broadcast[Any]] = if (isNative) {
+  override lazy val relationFuture: Future[Broadcast[Any]] = if (isNative) {
     nativeRelationFuture.asInstanceOf[Future[Broadcast[Any]]]
   } else {
-    val relationFutureField = classOf[BroadcastExchangeExec].getDeclaredField("relationFuture")
-    relationFutureField.setAccessible(true)
-    relationFutureField.get(nonNativeBroadcastExec).asInstanceOf[Future[Broadcast[Any]]]
+    nonNativeBroadcastExec.relationFuture
   }
 
   @transient
@@ -234,4 +253,8 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
 
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
+}
+
+object ArrowBroadcastExchangeExec {
+  def nativeExecutionTag: TreeNodeTag[Boolean] = TreeNodeTag("arrowBroadcastNativeExecution")
 }

@@ -31,9 +31,11 @@ class ShuffleShimsImpl extends ShuffleShims {
       child: SparkPlan): ArrowShuffleExchangeBase =
     ArrowShuffleExchangeExec(outputPartitioning, child)
 
+  // 3.0.3 does not need numRecords,just skip
+
   override def createFileSegment(
       file: File,
       offset: Long,
       length: Long,
-      numRecords: Long): FileSegment = new FileSegment(file, offset, length, numRecords)
+      numRecords: Long): FileSegment = new FileSegment(file, offset, length)
 }
