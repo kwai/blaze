@@ -31,7 +31,14 @@ import org.apache.spark.sql.catalyst.plans.physical.Distribution
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.InterruptibleIterator
-import org.apache.spark.sql.blaze.{JniBridge, MetricNode, NativeConverters, NativeHelper, NativeRDD, NativeSupports}
+import org.apache.spark.sql.blaze.{
+  JniBridge,
+  MetricNode,
+  NativeConverters,
+  NativeHelper,
+  NativeRDD,
+  NativeSupports
+}
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.types.StructField
@@ -59,7 +66,7 @@ import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
 
 case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
-  extends ArrowBroadcastExchangeBase {
+    extends ArrowBroadcastExchangeBase {
 
   override val output: Seq[Attribute] = child.output
 

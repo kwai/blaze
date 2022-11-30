@@ -36,7 +36,14 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
-import org.apache.spark.sql.blaze.{JniBridge, MetricNode, NativeConverters, NativeHelper, NativeRDD, NativeSupports}
+import org.apache.spark.sql.blaze.{
+  JniBridge,
+  MetricNode,
+  NativeConverters,
+  NativeHelper,
+  NativeRDD,
+  NativeSupports
+}
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec.canUseNativeShuffleWrite
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
@@ -70,10 +77,10 @@ import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.ShuffleWriterExecNode
 
 case class ArrowShuffleExchangeExec(
-                                        override val outputPartitioning: Partitioning,
-                                        override val child: SparkPlan,
-                                        noUserSpecifiedNumPartition: Boolean = true)
-  extends ArrowShuffleExchangeBase {
+    override val outputPartitioning: Partitioning,
+    override val child: SparkPlan,
+    noUserSpecifiedNumPartition: Boolean = true)
+    extends ArrowShuffleExchangeBase {
 
   override lazy val metrics: Map[String, SQLMetric] =
     Map(
@@ -111,7 +118,7 @@ case class ArrowShuffleExchangeExec(
           //  records are larger than 5
           //
           val totalShuffleRecordsWritten =
-          metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN).value
+            metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN).value
           val avgRecordsPerIpc = totalShuffleRecordsWritten / estimatedIpcCount
           val dataSizeFactor = Math.min(Math.max(avgRecordsPerIpc / 5.0, 0.1), 1.0)
 
@@ -240,17 +247,17 @@ case class ArrowShuffleExchangeExec(
 
 object ArrowShuffleExchangeExec {
   def canUseNativeShuffleWrite(
-                                rdd: RDD[InternalRow],
-                                outputPartitioning: Partitioning): Boolean = {
+      rdd: RDD[InternalRow],
+      outputPartitioning: Partitioning): Boolean = {
     rdd.isInstanceOf[NativeRDD] && outputPartitioning.isInstanceOf[HashPartitioning]
   }
 
   def prepareNativeShuffleDependency(
-                                      rdd: RDD[InternalRow],
-                                      outputAttributes: Seq[Attribute],
-                                      outputPartitioning: Partitioning,
-                                      serializer: Serializer,
-                                      metrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
+      rdd: RDD[InternalRow],
+      outputAttributes: Seq[Attribute],
+      outputPartitioning: Partitioning,
+      serializer: Serializer,
+      metrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val HashPartitioning(expressions, numPartitions) =
@@ -304,11 +311,11 @@ object ArrowShuffleExchangeExec {
    * the returned ShuffleDependency will be the input of shuffle.
    */
   def prepareShuffleDependency(
-                                rdd: RDD[InternalRow],
-                                outputAttributes: Seq[Attribute],
-                                newPartitioning: Partitioning,
-                                serializer: Serializer,
-                                writeMetrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
+      rdd: RDD[InternalRow],
+      outputAttributes: Seq[Attribute],
+      newPartitioning: Partitioning,
+      serializer: Serializer,
+      writeMetrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
     val part: Partitioner = newPartitioning match {
       case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
       case HashPartitioning(_, n) =>
@@ -400,7 +407,7 @@ object ArrowShuffleExchangeExec {
             private val result = new UnsafeExternalRowSorter.PrefixComputer.Prefix
 
             override def computePrefix(
-                                        row: InternalRow): UnsafeExternalRowSorter.PrefixComputer.Prefix = {
+                row: InternalRow): UnsafeExternalRowSorter.PrefixComputer.Prefix = {
               // The hashcode generated from the binary form of a [[UnsafeRow]] should not be null.
               result.isNull = false
               result.value = row.hashCode()
@@ -452,7 +459,7 @@ object ArrowShuffleExchangeExec {
     // are in the form of (partitionId, row) and every partitionId is in the expected range
     // [0, part.numPartitions - 1]. The partitioner of this is a PartitionIdPassthrough.
     val newPartitionIdPassThrough =
-    Class.forName("org.apache.spark.sql.execution.PartitionIdPassthrough").getConstructors.head
+      Class.forName("org.apache.spark.sql.execution.PartitionIdPassthrough").getConstructors.head
 
     val dependency =
       new ArrowShuffleDependency[Int, InternalRow, InternalRow](
@@ -524,19 +531,19 @@ object ArrowShuffleExchangeExec {
   }
 
   def createNativeShuffleWriteProcessor(
-                                         metrics: Map[String, SQLMetric]): ShuffleWriteProcessor = {
+      metrics: Map[String, SQLMetric]): ShuffleWriteProcessor = {
     new ShuffleWriteProcessor {
       override protected def createMetricsReporter(
-                                                    context: TaskContext): ShuffleWriteMetricsReporter = {
+          context: TaskContext): ShuffleWriteMetricsReporter = {
         new SQLShuffleWriteMetricsReporter(context.taskMetrics().shuffleWriteMetrics, metrics)
       }
 
       override def write(
-                          rdd: RDD[_],
-                          dep: ShuffleDependency[_, _, _],
-                          mapId: Long,
-                          context: TaskContext,
-                          partition: Partition): MapStatus = {
+          rdd: RDD[_],
+          dep: ShuffleDependency[_, _, _],
+          mapId: Long,
+          context: TaskContext,
+          partition: Partition): MapStatus = {
 
         val shuffleBlockResolver =
           SparkEnv.get.shuffleManager.shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver]
@@ -603,7 +610,7 @@ object ArrowShuffleExchangeExec {
   def createShuffleWriteProcessor(metrics: Map[String, SQLMetric]): ShuffleWriteProcessor = {
     new ShuffleWriteProcessor {
       override protected def createMetricsReporter(
-                                                    context: TaskContext): ShuffleWriteMetricsReporter = {
+          context: TaskContext): ShuffleWriteMetricsReporter = {
         new SQLShuffleWriteMetricsReporter(context.taskMetrics().shuffleWriteMetrics, metrics)
       }
     }

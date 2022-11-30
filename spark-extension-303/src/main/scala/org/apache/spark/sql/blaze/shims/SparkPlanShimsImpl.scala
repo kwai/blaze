@@ -23,10 +23,16 @@ import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.ShuffledRDDPartition
+import org.apache.spark.rdd.{RDD, ShuffledRDDPartition}
 import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.sql.blaze.{JniBridge, NativeRDD, NativeSupports, Shims, SparkPlanShims}
-import org.apache.spark.sql.execution.adaptive.{BroadcastQueryStageExec, CustomShuffleReaderExec, ShuffleQueryStageExec}
+import org.apache.spark.sql.blaze.{JniBridge, NativeRDD, NativeSupports, SparkPlanShims}
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.execution.adaptive.{
+  BroadcastQueryStageExec,
+  CustomShuffleReaderExec,
+  ShuffleQueryStageExec
+}
 import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalPlanNode}
 // import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
 import org.apache.spark.sql.execution.SparkPlan
@@ -42,7 +48,10 @@ import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.Utils
 
-private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan with Logging {
+private[blaze] case class SparkPlanShimsImpl()
+    extends SparkPlanShims
+    with SparkPlan
+    with Logging {
 
   override def isNative(plan: SparkPlan): Boolean = {
     plan match {
@@ -68,13 +77,10 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
     plan match {
       case plan: NativeSupports =>
         plan.executeQuery {
-//          BlazeOperatorMetricsCollector.instance.foreach {
-//            _.createListener(plan, plan.sparkContext)
-//          }
           plan.doExecuteNative()
         }
       case plan: ShuffleQueryStageExec => executeNativeCustomShuffleReader(plan.shuffle)
-       case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan)
+      case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan)
       case plan: BroadcastQueryStageExec => executeNative(plan.broadcast)
       case plan: QueryStageExec => executeNative(plan.plan)
       case plan: ReusedExchangeExec => executeNative(plan.child)
@@ -224,5 +230,20 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with SparkPlan wi
           },
           friendlyName = s"NativeRDD.ShuffleRead [$partitionClsName]")
     }
+  }
+
+  override protected def doExecute(): RDD[InternalRow] = {
+    throw new UnsupportedOperationException(
+      "BroadcastExchange does not support the execute() code path.")
+  }
+
+  override def output: Seq[Attribute] = {
+    throw new UnsupportedOperationException(
+      "BroadcastExchange does not support the execute() code path.")
+  }
+
+  override def children: Seq[SparkPlan] = {
+    throw new UnsupportedOperationException(
+      "BroadcastExchange does not support the execute() code path.")
   }
 }

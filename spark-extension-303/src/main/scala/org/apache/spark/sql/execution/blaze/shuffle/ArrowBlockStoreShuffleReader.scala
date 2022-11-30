@@ -44,15 +44,15 @@ import org.apache.spark.storage.ShuffleBlockFetcherIterator
 import org.apache.spark.util.CompletionIterator
 
 class ArrowBlockStoreShuffleReader[K, C](
-                                             handle: BaseShuffleHandle[K, _, C],
-                                             blocksByAddress: () => Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
-                                             context: TaskContext,
-                                             readMetrics: ShuffleReadMetricsReporter,
-                                             serializerManager: SerializerManager = SparkEnv.get.serializerManager,
-                                             blockManager: BlockManager = SparkEnv.get.blockManager,
-                                             mapOutputTracker: MapOutputTracker = SparkEnv.get.mapOutputTracker,
-                                             shouldBatchFetch: Boolean = false)
-  extends ShuffleReader[K, C]
+    handle: BaseShuffleHandle[K, _, C],
+    blocksByAddress: () => Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
+    context: TaskContext,
+    readMetrics: ShuffleReadMetricsReporter,
+    serializerManager: SerializerManager = SparkEnv.get.serializerManager,
+    blockManager: BlockManager = SparkEnv.get.blockManager,
+    mapOutputTracker: MapOutputTracker = SparkEnv.get.mapOutputTracker,
+    shouldBatchFetch: Boolean = false)
+    extends ShuffleReader[K, C]
     with Logging {
 
   private val dep = handle.dependency

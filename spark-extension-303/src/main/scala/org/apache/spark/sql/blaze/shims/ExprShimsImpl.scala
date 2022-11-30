@@ -20,7 +20,6 @@ import org.apache.spark.sql.blaze.ExprShims
 import org.apache.spark.sql.catalyst.expressions.{Expression, Like}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 
-
 class ExprShimsImpl extends ExprShims {
 
   override def getEscapeChar(expr: Expression): Char = {
