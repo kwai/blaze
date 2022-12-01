@@ -37,9 +37,10 @@ abstract class Shims {
 }
 object Shims {
   lazy val get: Shims = {
-    // scalastyle:off throwerror
-    throw new NotImplementedError("get not implemented")
-    // scalastyle:on throwerror
+    classOf[Shims].getClassLoader
+      .loadClass("org.apache.spark.sql.blaze.Shims303Impl")
+      .newInstance()
+      .asInstanceOf[Shims]
   }
 }
 

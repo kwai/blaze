@@ -458,8 +458,10 @@ object ArrowShuffleExchangeExec {
     // Now, we manually create a ShuffleDependency. Because pairs in rddWithPartitionIds
     // are in the form of (partitionId, row) and every partitionId is in the expected range
     // [0, part.numPartitions - 1]. The partitioner of this is a PartitionIdPassthrough.
+    // scalastyle:off classforname
     val newPartitionIdPassThrough =
       Class.forName("org.apache.spark.sql.execution.PartitionIdPassthrough").getConstructors.head
+    // scalastyle:on classforname
 
     val dependency =
       new ArrowShuffleDependency[Int, InternalRow, InternalRow](

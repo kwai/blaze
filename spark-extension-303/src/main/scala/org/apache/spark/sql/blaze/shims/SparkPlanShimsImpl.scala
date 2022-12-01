@@ -25,15 +25,28 @@ import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.{RDD, ShuffledRDDPartition}
 import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.sql.blaze.{JniBridge, NativeRDD, NativeSupports, SparkPlanShims}
+import org.apache.spark.sql.blaze.{
+  JniBridge,
+  MetricNode,
+  NativeConverters,
+  NativeRDD,
+  NativeSupports,
+  SparkPlanShims
+}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.execution.adaptive.{
-  BroadcastQueryStageExec,
-  CustomShuffleReaderExec,
-  ShuffleQueryStageExec
+import org.apache.spark.sql.execution.{
+  CoalescedPartitionSpec,
+  PartialMapperPartitionSpec,
+  PartialReducerPartitionSpec,
+  ShufflePartitionSpec,
+  ShuffledRowRDD
 }
-import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalPlanNode}
+import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
+import org.apache.spark.sql.types.{StructField, StructType}
+import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalPlanNode, Schema}
+
+import java.lang.reflect.Method
 // import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
 import org.apache.spark.sql.execution.SparkPlan
 // import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageInput
@@ -72,13 +85,12 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims wi
 
   override def executeNative(plan: SparkPlan): NativeRDD = {
     plan match {
-      case plan: NativeSupports =>
-        plan.executeQuery {
-          plan.doExecuteNative()
-        }
-      case plan: ShuffleQueryStageExec => executeNativeCustomShuffleReader(plan.shuffle)
-      case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan)
-      case plan: BroadcastQueryStageExec => executeNative(plan.broadcast)
+      case plan: SparkPlan with NativeSupports =>
+        val executeQueryMethod: Method = classOf[SparkPlan].getMethod("executeQuery")
+        executeQueryMethod.setAccessible(true)
+        executeQueryMethod.invoke(() => plan.doExecuteNative()).asInstanceOf[NativeRDD]
+
+      case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan, plan.output)
       case plan: QueryStageExec => executeNative(plan.plan)
       case plan: ReusedExchangeExec => executeNative(plan.child)
       case _ => throw new SparkException(s"Underlying plan is not NativeSupports: ${plan}")
@@ -93,125 +105,75 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims wi
   override def getChildStage(plan: SparkPlan): SparkPlan =
     plan.asInstanceOf[QueryStageExec].plan
 
-  private def executeNativeCustomShuffleReader(exec: SparkPlan): NativeRDD = {
+  private def executeNativeCustomShuffleReader(
+      exec: CustomShuffleReaderExec,
+      output: Seq[Attribute]): NativeRDD = {
     exec match {
-//      case _: ShuffleQueryStageExec | _: SkewedShuffleQueryStageInput =>
-      case _: ShuffleQueryStageExec | _: CustomShuffleReaderExec =>
-        val shuffledRDD = exec.execute()
-        val dependency = shuffledRDD.getClass
-          .getMethod("dependency")
-          .invoke(shuffledRDD)
-          .asInstanceOf[ShuffleDependency[_, _, _]]
-        val shuffleHandle = dependency.shuffleHandle
+      case CustomShuffleReaderExec(_, _, _) =>
+        val inputShuffledRowRDD = exec.execute().asInstanceOf[ShuffledRowRDD]
+        val shuffleHandle = inputShuffledRowRDD.dependency.shuffleHandle
 
-        val shuffleExec = exec
-          .asInstanceOf[QueryStageExec]
-          .plan
-          .asInstanceOf[ArrowShuffleExchangeExec]
-        val inputMetrics = shuffleExec.metrics
-        val inputRDD = exec match {
-          case exec: ShuffleQueryStageExec => executeNative(exec.plan)
-          case exec: CustomShuffleReaderExec => executeNative(exec.child)
-        }
-
-        val nativeSchema = shuffleExec.nativeSchema
-        val metrics = inputRDD.metrics
-        val partitionClsName = shuffledRDD.getClass.getSimpleName
+        val inputRDD = executeNative(exec.child)
+        val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
+          StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+        val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
 
         new NativeRDD(
-          shuffledRDD.sparkContext,
+          inputShuffledRowRDD.sparkContext,
           metrics,
-          shuffledRDD.partitions,
-          new OneToOneDependency(shuffledRDD) :: Nil,
+          inputShuffledRowRDD.partitions,
+          inputShuffledRowRDD.dependencies,
           true,
           (partition, taskContext) => {
-            val shuffleReadMetrics = taskContext.taskMetrics().createTempShuffleReadMetrics()
-            val metricsReporter =
-              new SQLShuffleReadMetricsReporter(shuffleReadMetrics, inputMetrics)
 
-            val classOfShuffledRowRDDPartition =
-              Utils.classForName("org.apache.spark.sql.execution.ShuffledRowRDDPartition")
-            val classOfAdaptiveShuffledRowRDDPartition =
-              Utils.classForName(
-                "org.apache.spark.sql.execution.adaptive.AdaptiveShuffledRowRDDPartition")
+            // use reflection to get partitionSpec because ShuffledRowRDDPartition is private
+            // scalastyle:off classforname
+            val shuffledRDDPartitionClass =
+              Class.forName("org.apache.spark.sql.execution.ShuffledRowRDDPartition")
+            // scalastyle:on classforname
+            val specField = shuffledRDDPartitionClass.getDeclaredField("spec")
+            specField.setAccessible(true)
+            val sqlMetricsReporter = taskContext.taskMetrics().createTempShuffleReadMetrics()
+            val spec = specField.get(partition).asInstanceOf[ShufflePartitionSpec]
+            val reader = spec match {
+              case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
+                SparkEnv.get.shuffleManager
+                  .getReader(
+                    shuffleHandle,
+                    startReducerIndex,
+                    endReducerIndex,
+                    taskContext,
+                    sqlMetricsReporter)
+                  .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
 
-            val readers: Iterator[ShuffleReader[_, _]] = shuffledRDD match {
-//              case rdd: LocalShuffledRowRDD =>
-//                val shuffledRowPartition = partition.asInstanceOf[ShuffledRDDPartition]
-//                val mapId = shuffledRowPartition.index
-//                val partitionStartIndices = rdd.partitionStartIndices.iterator
-//                val partitionEndIndices = rdd.partitionEndIndices.iterator
-//                partitionStartIndices
-//                  .zip(partitionEndIndices)
-//                  .map {
-//                    case (start, end) =>
-//                      logInfo(
-//                        s"Create local shuffle reader mapId $mapId, partition range $start-$end")
-//                      SparkEnv.get.shuffleManager
-//                        .getReader(
-//                          shuffleHandle,
-//                          start,
-//                          end,
-//                          taskContext,
-//                          metricsReporter,
-//                          mapId,
-//                          mapId + 1)
-//                  }
-              case _ =>
-                partition match {
-                  case p if classOfShuffledRowRDDPartition.isInstance(p) =>
-                    val clz = classOfShuffledRowRDDPartition
-                    val startPreShufflePartitionIndex =
-                      clz.getMethod("startPreShufflePartitionIndex").invoke(p).asInstanceOf[Int]
-                    val endPreShufflePartitionIndex =
-                      clz.getMethod("endPreShufflePartitionIndex").invoke(p).asInstanceOf[Int]
+              case PartialReducerPartitionSpec(reducerIndex, startMapIndex, endMapIndex) =>
+                SparkEnv.get.shuffleManager
+                  .getReaderForRange(
+                    shuffleHandle,
+                    startMapIndex,
+                    endMapIndex,
+                    reducerIndex,
+                    reducerIndex + 1,
+                    taskContext,
+                    sqlMetricsReporter)
+                  .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
 
-                    Iterator.single(
-                      SparkEnv.get.shuffleManager
-                        .getReader(
-                          shuffleHandle,
-                          startPreShufflePartitionIndex,
-                          endPreShufflePartitionIndex,
-                          taskContext,
-                          metricsReporter))
-
-                  case p if classOfAdaptiveShuffledRowRDDPartition.isInstance(p) =>
-                    val clz = classOfAdaptiveShuffledRowRDDPartition
-                    val preShufflePartitionIndex =
-                      clz.getMethod("preShufflePartitionIndex").invoke(p).asInstanceOf[Int]
-                    val startMapId = clz.getMethod("startMapId").invoke(p).asInstanceOf[Int]
-                    val endMapId = clz.getMethod("endMapId").invoke(p).asInstanceOf[Int]
-
-                    Iterator.single(
-                      SparkEnv.get.shuffleManager
-                        .getReaderForRange(
-                          shuffleHandle,
-                          preShufflePartitionIndex,
-                          preShufflePartitionIndex + 1,
-                          startMapId,
-                          endMapId,
-                          taskContext,
-                          metricsReporter))
-                  case p =>
-                    Iterator.single(
-                      SparkEnv.get.shuffleManager.getReader(
-                        shuffleHandle,
-                        p.index,
-                        p.index + 1,
-                        taskContext,
-                        metricsReporter))
-                }
+              case PartialMapperPartitionSpec(mapIndex, startReducerIndex, endReducerIndex) =>
+                SparkEnv.get.shuffleManager
+                  .getReaderForRange(
+                    shuffleHandle,
+                    mapIndex,
+                    mapIndex + 1,
+                    startReducerIndex,
+                    endReducerIndex,
+                    taskContext,
+                    sqlMetricsReporter)
+                  .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
             }
 
             // store fetch iterator in jni resource before native compute
             val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
-            JniBridge.resourcesMap.put(
-              jniResourceId,
-              () => {
-                CompletionIterator[Object, Iterator[Object]](
-                  readers.flatMap(_.asInstanceOf[ArrowBlockStoreShuffleReader[_, _]].readIpc()),
-                  taskContext.taskMetrics().mergeShuffleReadMetrics())
-              })
+            JniBridge.resourcesMap.put(jniResourceId, () => reader.readIpc())
 
             PhysicalPlanNode
               .newBuilder()
@@ -219,13 +181,12 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims wi
                 IpcReaderExecNode
                   .newBuilder()
                   .setSchema(nativeSchema)
-                  .setNumPartitions(shuffledRDD.getNumPartitions)
+                  .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
                   .setIpcProviderResourceId(jniResourceId)
                   .setMode(IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
                   .build())
               .build()
-          },
-          friendlyName = s"NativeRDD.ShuffleRead [$partitionClsName]")
+          })
     }
   }
 
