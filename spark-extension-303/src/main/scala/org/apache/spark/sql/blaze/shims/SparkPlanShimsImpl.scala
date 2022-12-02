@@ -86,10 +86,15 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims wi
   override def executeNative(plan: SparkPlan): NativeRDD = {
     plan match {
       case plan: SparkPlan with NativeSupports =>
-        val executeQueryMethod: Method = classOf[SparkPlan].getMethod("executeQuery")
+        val executeQueryMethod: Method = classOf[SparkPlan]
+          .getDeclaredMethod("executeQuery", classOf[() => _])
         executeQueryMethod.setAccessible(true)
-        executeQueryMethod.invoke(() => plan.doExecuteNative()).asInstanceOf[NativeRDD]
-
+        logInfo(s"plan name ${plan.nodeName} schema is: ${plan.schema}")
+        val x: AnyRef = executeQueryMethod
+          .invoke(plan, () => plan.doExecuteNative())
+        logInfo(s"AnyRef is: $x")
+        logInfo(s"invoke change ans is: ${x.asInstanceOf[NativeRDD]}")
+        x.asInstanceOf[NativeRDD]
       case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan, plan.output)
       case plan: QueryStageExec => executeNative(plan.plan)
       case plan: ReusedExchangeExec => executeNative(plan.child)

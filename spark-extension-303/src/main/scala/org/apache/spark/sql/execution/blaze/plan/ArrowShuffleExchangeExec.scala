@@ -53,6 +53,7 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
+import org.apache.spark.sql.catalyst.expressions.aggregate.{Partial, PartialMerge}
 import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
@@ -186,8 +187,12 @@ case class ArrowShuffleExchangeExec(
     Statistics(dataSize, Some(rowCount))
   }
 
-  val nativeSchema: Schema = NativeConverters.convertSchema(
-    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+  val nativeSchema: Schema = child match {
+    case e: NativeHashAggregateExec if e.aggrMode == Partial || e.aggrMode == PartialMerge =>
+      e.nativeOutputSchema
+    case _ =>
+      Util.getNativeSchema(child.output)
+  }
 
   protected override def doExecute(): RDD[InternalRow] =
     attachTree(this, "execute") {

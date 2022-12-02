@@ -238,7 +238,7 @@ object BlazeConverters extends Logging {
       exec.dataFilters,
       exec.tableIdentifier)
     assert(
-      !relation.fileFormat.isInstanceOf[ParquetFileFormat],
+      relation.fileFormat.isInstanceOf[ParquetFileFormat],
       "Cannot convert non-parquet scan exec")
     logDebug(s"Converting FileSourceScanExec: ${exec.simpleStringWithNodeId}")
     logDebug(s"  relation: ${relation}")
