@@ -38,14 +38,14 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
     extends UnaryExecNode
     with NativeSupports {
 
-  override val output: Seq[Attribute] =
+  override def output: Seq[Attribute] =
     child.output
       .zip(renamedColumnNames)
       .map {
         case (attr, newName) => attr.withName(newName)
       }
-  override val outputPartitioning: Partitioning = child.outputPartitioning
-  override val outputOrdering: Seq[SortOrder] = child.outputOrdering
+  override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
     NativeHelper

@@ -42,9 +42,9 @@ case class NativeLocalLimitExec(limit: Long, override val child: SparkPlan)
       .filterKeys(Set("output_rows"))
       .toSeq: _*)
 
-  override val output: Seq[Attribute] = child.output
-  override val outputPartitioning: Partitioning = child.outputPartitioning
-  override val outputOrdering: Seq[SortOrder] = child.outputOrdering
+  override def output: Seq[Attribute] = child.output
+  override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeHelper.executeNative(child)

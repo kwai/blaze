@@ -22,7 +22,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 
 abstract class ArrowBroadcastExchangeBase extends BroadcastExchangeLike with NativeSupports {
-  override val output: Seq[Attribute] = child.output
+  override def output: Seq[Attribute] = child.output
 
   private lazy val isNative = {
     getTagValue(ArrowBroadcastExchangeBase.nativeExecutionTag).getOrElse(false)

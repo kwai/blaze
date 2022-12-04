@@ -62,40 +62,33 @@ import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.Utils
 
 private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims with Logging {
-
-  override def isNative(plan: SparkPlan): Boolean = {
+  override def isNative(plan: SparkPlan): Boolean =
     plan match {
       case _: NativeSupports => true
-//      case plan: QueryStageInput => isNative(plan.childStage)
+      case plan: CustomShuffleReaderExec => isNative(plan.child)
       case plan: QueryStageExec => isNative(plan.plan)
       case plan: ReusedExchangeExec => isNative(plan.child)
       case _ => false
     }
-  }
 
-  override def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports = {
+  override def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports =
     plan match {
       case plan: NativeSupports => plan
+      case plan: CustomShuffleReaderExec => getUnderlyingNativePlan(plan.child)
       case plan: QueryStageExec => getUnderlyingNativePlan(plan.plan)
-//      case plan: QueryStage => getUnderlyingNativePlan(plan.child)
       case plan: ReusedExchangeExec => getUnderlyingNativePlan(plan.child)
       case _ => throw new RuntimeException("unreachable: plan is not native")
     }
-  }
 
   override def executeNative(plan: SparkPlan): NativeRDD = {
     plan match {
-      case plan: SparkPlan with NativeSupports =>
+      case plan: NativeSupports =>
         val executeQueryMethod: Method = classOf[SparkPlan]
           .getDeclaredMethod("executeQuery", classOf[() => _])
         executeQueryMethod.setAccessible(true)
-        logInfo(s"plan name ${plan.nodeName} schema is: ${plan.schema}")
-        val x: AnyRef = executeQueryMethod
-          .invoke(plan, () => plan.doExecuteNative())
-        logInfo(s"AnyRef is: $x")
-        logInfo(s"invoke change ans is: ${x.asInstanceOf[NativeRDD]}")
-        x.asInstanceOf[NativeRDD]
-      case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan, plan.output)
+        executeQueryMethod.invoke(plan, () => plan.doExecuteNative()).asInstanceOf[NativeRDD]
+
+      case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan)
       case plan: QueryStageExec => executeNative(plan.plan)
       case plan: ReusedExchangeExec => executeNative(plan.child)
       case _ => throw new SparkException(s"Underlying plan is not NativeSupports: ${plan}")
@@ -104,23 +97,21 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims wi
 
   override def isQueryStageInput(plan: SparkPlan): Boolean = {
     plan.isInstanceOf[QueryStageExec]
-//    plan.isInstanceOf[QueryStageInput]
   }
 
   override def getChildStage(plan: SparkPlan): SparkPlan =
     plan.asInstanceOf[QueryStageExec].plan
 
-  private def executeNativeCustomShuffleReader(
-      exec: CustomShuffleReaderExec,
-      output: Seq[Attribute]): NativeRDD = {
+  private def executeNativeCustomShuffleReader(exec: CustomShuffleReaderExec): NativeRDD = {
     exec match {
-      case CustomShuffleReaderExec(_, _, _) =>
+      case CustomShuffleReaderExec(child, _, _) if isNative(child) =>
         val inputShuffledRowRDD = exec.execute().asInstanceOf[ShuffledRowRDD]
         val shuffleHandle = inputShuffledRowRDD.dependency.shuffleHandle
 
-        val inputRDD = executeNative(exec.child)
-        val nativeSchema: Schema = NativeConverters.convertSchema(StructType(output.map(a =>
-          StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+        val inputRDD = executeNative(child)
+        val nativeSchema: Schema = getUnderlyingNativePlan(child)
+          .asInstanceOf[ArrowShuffleExchangeExec]
+          .nativeSchema
         val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
 
         new NativeRDD(

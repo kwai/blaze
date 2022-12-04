@@ -59,8 +59,8 @@ case class NativeProjectExec(
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
 
-  override val output: Seq[Attribute] = projectList.map(_.toAttribute)
-  override val outputPartitioning: Partitioning = child.outputPartitioning
+  override def output: Seq[Attribute] = projectList.map(_.toAttribute)
+  override def outputPartitioning: Partitioning = child.outputPartitioning
 
   private val nativeProject = getNativeProjectBuilder(projectList, addTypeCast).buildPartial()
 

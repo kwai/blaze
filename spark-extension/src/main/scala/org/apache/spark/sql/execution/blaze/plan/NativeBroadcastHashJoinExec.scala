@@ -60,11 +60,11 @@ case class NativeBroadcastHashJoinExec(
     extends BinaryExecNode
     with NativeSupports {
 
-  override val outputPartitioning: Partitioning = {
+  override def outputPartitioning: Partitioning = {
     right.outputPartitioning // right side is always the streamed plan
   }
 
-  override val outputOrdering: Seq[SortOrder] = Nil
+  override def outputOrdering: Seq[SortOrder] = Nil
 
   override def output: Seq[Attribute] = {
     joinType match {

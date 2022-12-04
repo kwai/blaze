@@ -48,7 +48,7 @@ import org.blaze.{protobuf => pb}
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 
-case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
+case class NativeParquetScanExec(@transient basedFileScan: FileSourceScanExec)
     extends LeafExecNode
     with NativeSupports {
 
@@ -62,9 +62,10 @@ case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
       ("row_groups_pruned", SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned")) :+
       ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")): _*)
 
-  override val output: Seq[Attribute] = basedFileScan.output
-  override val outputPartitioning: Partitioning = basedFileScan.outputPartitioning
+  override def output: Seq[Attribute] = basedFileScan.output
+  override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning
 
+  @transient
   private val inputFileScanRDD = {
     basedFileScan.inputRDDs().head match {
       case rdd: FileScanRDD => rdd

@@ -41,21 +41,16 @@ import org.apache.spark.sql.blaze.{
 }
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
-import org.apache.spark.sql.types.StructField
-import org.apache.spark.sql.types.StructType
 import org.apache.spark.Partition
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.types.BinaryType
-import org.apache.spark.sql.types.DataType
 import org.apache.spark.SparkException
 import org.apache.spark.broadcast
 import org.apache.spark.sql.SparkSession
@@ -175,8 +170,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
       })
   }
 
-  val nativeSchema: Schema = NativeConverters.convertSchema(
-    StructType(output.map(a => StructField(a.toString(), a.dataType, a.nullable, a.metadata))))
+  val nativeSchema: Schema = Util.getNativeSchema(output)
 
   def collectNative(): Array[Array[Byte]] = {
     val inputRDD = NativeHelper.executeNative(child match {

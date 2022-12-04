@@ -52,8 +52,8 @@ case class NativeExpandExec(
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
 
-  override val outputPartitioning: Partitioning = UnknownPartitioning(0)
-  override val outputOrdering: Seq[SortOrder] = Nil
+  override def outputPartitioning: Partitioning = UnknownPartitioning(0)
+  override def outputOrdering: Seq[SortOrder] = Nil
 
   private val nativeSchema = Util.getNativeSchema(output)
   private val nativeProjections = projections.map { projection =>

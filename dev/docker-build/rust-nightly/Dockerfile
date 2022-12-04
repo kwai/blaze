@@ -1,10 +1,13 @@
 FROM centos:7
 
+# fast rebuild the image
+RUN echo '483978A0-C70C-4EAD-8854-ED405B0C77EF'
+
 RUN yum update -y
 RUN yum install -y centos-release-scl
 
 # install common tools
-RUN yum install -y unzip wget
+RUN yum install -y libzip unzip wget
 
 # install gcc-11
 RUN yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++

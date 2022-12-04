@@ -6,5 +6,8 @@ rootProject.projectDir = file('.')
 include 'spark-extension'
 project(":spark-extension").projectDir = file('spark-extension')
 
-include 'spark-extension-303'
-project(":spark-extension-303").projectDir = file('spark-extension-303')
+// include 'spark-extension-shims-spark241kwaiae'
+// project(":spark-extension-shims-spark241kwaiae").projectDir = file('spark-extension-shims-spark241kwaiae')
+
+include 'spark-extension-shims-spark303'
+project(":spark-extension-shims-spark303").projectDir = file('spark-extension-shims-spark303')

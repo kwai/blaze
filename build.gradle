@@ -12,6 +12,7 @@ rootProject.group = "blaze-engine"
 rootProject.version = "1.0.1"
 
 ext {
+	shim = getProperty("shim")
 	licenseHeader = "" +
 			"/*\n" +
 			" * Copyright 2022 The Blaze Authors\n" +
@@ -54,7 +55,7 @@ subprojects {
 		scalastyle {
 			scalaVersion = "2.12"
 			scalastyleVersion = "1.5.1"
-			config = file("${rootDir}/scalastyle_config.xml")
+			config = file("${projectDir}/../scalastyle_config.xml")
 			skip = true
 			inputEncoding = "UTF-8"
 			outputEncoding = "UTF-8"
@@ -79,7 +80,7 @@ subprojects {
 			}
 			scala {
 				target "src/main/scala/**/*.scala"
-				scalafmt("2.6.1").configFile("${rootDir}/dev/.scalafmt.conf")
+				scalafmt("2.6.1").configFile("${projectDir}/../dev/.scalafmt.conf")
 				licenseHeader rootProject.ext.licenseHeader, "package "
 			}
 		}
@@ -125,17 +126,17 @@ repositories {
 
 dependencies {
 	implementation project(":spark-extension")
-	implementation project(":spark-extension-303")
+	implementation project(":spark-extension-shims-${shim}")
 }
 
 shadowJar {
-	archiveName "${project.name}-${project.version}.jar"
+	archiveName "${project.name}-${shim}-${project.version}.jar"
 	destinationDir file("${projectDir}/target")
 	zip64 true
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
 	// blaze native lib
-	from "${rootDir}/lib/"
+	from "${projectDir}/lib/"
 
 	relocate("com.google.flatbuffers", "blaze.com.google.flatbuffers")
 	relocate("com.google.protobuf", "blaze.com.google.protobuf")
@@ -158,16 +159,16 @@ shadowJar {
 
 task cargo(type: Exec) {
 	workingDir "."
-	executable "${rootDir}/build-native.sh"
+	executable "${projectDir}/build-native.sh"
 	args += [project.hasProperty("mode") ? getProperty("mode") : "debug"]
 }
 
 tasks.shadowJar.dependsOn tasks.cargo
 tasks.shadowJar.dependsOn project(":spark-extension").tasks.build
-tasks.shadowJar.dependsOn project(":spark-extension-303").tasks.build
+tasks.shadowJar.dependsOn project(":spark-extension-shims-${shim}").tasks.build
 tasks.build.dependsOn tasks.shadowJar
 
 clean.doLast {
-	file("${rootDir}/lib").deleteDir()
-	file("${rootDir}/target").deleteDir()
+	file("${projectDir}/lib").deleteDir()
+	file("${projectDir}/target").deleteDir()
 }

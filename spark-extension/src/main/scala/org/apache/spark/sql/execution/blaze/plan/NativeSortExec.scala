@@ -55,9 +55,9 @@ case class NativeSortExec(
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
 
-  override val output: Seq[Attribute] = child.output
-  override val outputPartitioning: Partitioning = child.outputPartitioning
-  override val outputOrdering: Seq[SortOrder] = sortOrder
+  override def output: Seq[Attribute] = child.output
+  override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = sortOrder
 
   override def requiredChildDistribution: Seq[Distribution] =
     if (global) {

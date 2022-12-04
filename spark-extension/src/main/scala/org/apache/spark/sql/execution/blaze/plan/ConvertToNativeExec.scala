@@ -49,8 +49,8 @@ case class ConvertToNativeExec(override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
   override val nodeName: String = "ConvertToNative"
-  override val output: Seq[Attribute] = child.output
-  override val outputPartitioning: Partitioning = child.outputPartitioning
+  override def output: Seq[Attribute] = child.output
+  override def outputPartitioning: Partitioning = child.outputPartitioning
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
     NativeHelper
