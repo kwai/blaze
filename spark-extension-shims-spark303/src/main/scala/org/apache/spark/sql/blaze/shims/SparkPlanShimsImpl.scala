@@ -16,52 +16,38 @@
 
 package org.apache.spark.sql.blaze.shims
 
+import java.lang.reflect.Method
 import java.util.UUID
-import scala.annotation.tailrec
-import org.apache.spark.OneToOneDependency
-import org.apache.spark.ShuffleDependency
+
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
+import org.blaze.protobuf.IpcReadMode
+import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.Schema
+
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.{RDD, ShuffledRDDPartition}
-import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.sql.blaze.{
-  JniBridge,
-  MetricNode,
-  NativeConverters,
-  NativeRDD,
-  NativeSupports,
-  SparkPlanShims
-}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.blaze.JniBridge
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.SparkPlanShims
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.execution.{
-  CoalescedPartitionSpec,
-  PartialMapperPartitionSpec,
-  PartialReducerPartitionSpec,
-  ShufflePartitionSpec,
-  ShuffledRowRDD
-}
+import org.apache.spark.sql.execution.CoalescedPartitionSpec
+import org.apache.spark.sql.execution.PartialMapperPartitionSpec
+import org.apache.spark.sql.execution.PartialReducerPartitionSpec
+import org.apache.spark.sql.execution.ShufflePartitionSpec
+import org.apache.spark.sql.execution.ShuffledRowRDD
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
-import org.apache.spark.sql.types.{StructField, StructType}
-import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalPlanNode, Schema}
-
-import java.lang.reflect.Method
-// import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
 import org.apache.spark.sql.execution.SparkPlan
-// import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageInput
-// import org.apache.spark.sql.execution.adaptive.LocalShuffledRowRDD
 import org.apache.spark.sql.execution.adaptive.QueryStageExec
-// import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageInput
-// import org.apache.spark.sql.execution.adaptive.SkewedShuffleQueryStageInput
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
-import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
-import org.apache.spark.util.CompletionIterator
-import org.apache.spark.util.Utils
 
-private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims with Logging {
+private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
   override def isNative(plan: SparkPlan): Boolean =
     plan match {
       case _: NativeSupports => true
@@ -184,30 +170,5 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlan with SparkPlanShims wi
               .build()
           })
     }
-  }
-
-  override protected def doExecute(): RDD[InternalRow] = {
-    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support doExecute()")
-  }
-
-  override def output: Seq[Attribute] = {
-    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support output()")
-  }
-
-  override def children: Seq[SparkPlan] = {
-    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support children()")
-  }
-
-  override def productElement(n: Int): Any = {
-    throw new UnsupportedOperationException(
-      "SparkPlanShimsImpl does not support productElement()")
-  }
-
-  override def productArity: Int = {
-    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support productArity()")
-  }
-
-  override def canEqual(that: Any): Boolean = {
-    throw new UnsupportedOperationException("SparkPlanShimsImpl does not support canEqual()")
   }
 }

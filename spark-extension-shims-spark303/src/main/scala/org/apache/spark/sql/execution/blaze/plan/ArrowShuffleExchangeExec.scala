@@ -23,10 +23,13 @@ import java.nio.file.Files
 import java.util.Random
 import java.util.function.Supplier
 import java.util.UUID
+
 import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+
 import org.apache.spark._
+
 import org.apache.spark.internal.config
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
@@ -75,6 +78,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.IpcReadMode
+import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.ShuffleWriterExecNode
 
 case class ArrowShuffleExchangeExec(
@@ -143,7 +147,8 @@ case class ArrowShuffleExchangeExec(
         child.output,
         outputPartitioning,
         serializer,
-        metrics)
+        metrics,
+        nativeHashExprs)
     } else {
       ArrowShuffleExchangeExec.prepareShuffleDependency(
         inputRDD,
@@ -192,6 +197,12 @@ case class ArrowShuffleExchangeExec(
       e.nativeOutputSchema
     case _ =>
       Util.getNativeSchema(child.output)
+  }
+
+  val nativeHashExprs: List[PhysicalExprNode] = outputPartitioning match {
+    case HashPartitioning(expressions, _) =>
+      expressions.map(expr => NativeConverters.convertExpr(expr)).toList
+    case _ => null
   }
 
   protected override def doExecute(): RDD[InternalRow] =
@@ -254,7 +265,9 @@ object ArrowShuffleExchangeExec {
   def canUseNativeShuffleWrite(
       rdd: RDD[InternalRow],
       outputPartitioning: Partitioning): Boolean = {
-    rdd.isInstanceOf[NativeRDD] && outputPartitioning.isInstanceOf[HashPartitioning]
+    rdd.isInstanceOf[NativeRDD] && {
+      outputPartitioning.isInstanceOf[HashPartitioning] || outputPartitioning.numPartitions <= 1
+    }
   }
 
   def prepareNativeShuffleDependency(
@@ -262,12 +275,12 @@ object ArrowShuffleExchangeExec {
       outputAttributes: Seq[Attribute],
       outputPartitioning: Partitioning,
       serializer: Serializer,
-      metrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
+      metrics: Map[String, SQLMetric],
+      nativeHashExprs: List[PhysicalExprNode])
+      : ShuffleDependency[Int, InternalRow, InternalRow] = {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
-    val HashPartitioning(expressions, numPartitions) =
-      outputPartitioning.asInstanceOf[HashPartitioning]
-
+    val numPartitions = outputPartitioning.numPartitions
     val modifiedMetrics = Map(
       "output_rows" -> metrics("shuffle_write_rows"),
       "elapsed_compute" -> metrics("shuffle_write_elapsed_compute"))
@@ -281,18 +294,27 @@ object ArrowShuffleExchangeExec {
       nativeInputRDD.shuffleReadFull,
       (partition, taskContext) => {
         val nativeInputPartition = nativeInputRDD.partitions(partition.index)
+        val nativeOutputPartitioning = outputPartitioning match {
+          case SinglePartition =>
+            PhysicalHashRepartition
+              .newBuilder()
+              .setPartitionCount(1)
+          case HashPartitioning(_, _) =>
+            PhysicalHashRepartition
+              .newBuilder()
+              .setPartitionCount(numPartitions)
+              .addAllHashExpr(nativeHashExprs.asJava)
+          case p =>
+            throw new NotImplementedError(s"cannot convert partitioning to native: $p")
+        }
+
         PhysicalPlanNode
           .newBuilder()
           .setShuffleWriter(
             ShuffleWriterExecNode
               .newBuilder()
               .setInput(nativeInputRDD.nativePlan(nativeInputPartition, taskContext))
-              .setOutputPartitioning(
-                PhysicalHashRepartition
-                  .newBuilder()
-                  .setPartitionCount(numPartitions)
-                  .addAllHashExpr(expressions.map(NativeConverters.convertExpr(_)).asJava)
-                  .build())
+              .setOutputPartitioning(nativeOutputPartitioning)
               .buildPartial()
           ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
           .build()
