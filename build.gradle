@@ -12,7 +12,7 @@ rootProject.group = "blaze-engine"
 rootProject.version = "1.0.1"
 
 ext {
-	shim = getProperty("shim")
+	shim = hasProperty("shim") ? getProperty("shim") : "shim-not-configured"
 	licenseHeader = "" +
 			"/*\n" +
 			" * Copyright 2022 The Blaze Authors\n" +
@@ -116,6 +116,12 @@ subprojects {
 		}
 		tasks.compileScala.dependsOn tasks.scalastyleCheck
 		tasks.compileScala.dependsOn tasks.spotlessApply
+
+		if (project.name.startsWith("spark-extension-shims-") && !project.name.endsWith(shim)) {
+			project.tasks.all {
+				task -> task.enabled = false
+			}
+		}
 	}
 }
 
@@ -126,7 +132,9 @@ repositories {
 
 dependencies {
 	implementation project(":spark-extension")
-	implementation project(":spark-extension-shims-${shim}")
+	if (shim != "shim-not-configured") {
+		implementation project(":spark-extension-shims-${shim}")
+	}
 }
 
 shadowJar {
@@ -165,7 +173,9 @@ task cargo(type: Exec) {
 
 tasks.shadowJar.dependsOn tasks.cargo
 tasks.shadowJar.dependsOn project(":spark-extension").tasks.build
-tasks.shadowJar.dependsOn project(":spark-extension-shims-${shim}").tasks.build
+if (shim != "shim-not-configured") {
+	tasks.shadowJar.dependsOn project(":spark-extension-shims-${shim}").tasks.build
+}
 tasks.build.dependsOn tasks.shadowJar
 
 clean.doLast {

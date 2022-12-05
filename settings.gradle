@@ -1,13 +1,13 @@
-rootProject.name = 'blaze-parent'
+rootProject.name = "blaze-parent"
 
-rootProject.name = 'blaze-engine'
-rootProject.projectDir = file('.')
+rootProject.name = "blaze-engine"
+rootProject.projectDir = file(".")
 
-include 'spark-extension'
-project(":spark-extension").projectDir = file('spark-extension')
+include "spark-extension"
+project(":spark-extension").projectDir = file("spark-extension")
 
-// include 'spark-extension-shims-spark241kwaiae'
-// project(":spark-extension-shims-spark241kwaiae").projectDir = file('spark-extension-shims-spark241kwaiae')
+include "spark-extension-shims-spark241kwaiae"
+project(":spark-extension-shims-spark241kwaiae").projectDir = file("spark-extension-shims-spark241kwaiae")
 
-include 'spark-extension-shims-spark303'
-project(":spark-extension-shims-spark303").projectDir = file('spark-extension-shims-spark303')
+include "spark-extension-shims-spark303"
+project(":spark-extension-shims-spark303").projectDir = file("spark-extension-shims-spark303")
