@@ -20,29 +20,26 @@ import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 
-import org.apache.commons.lang3.ClassUtils
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
-import org.apache.spark.internal.config.IO_COMPRESSION_CODEC
-import org.apache.spark.io.CompressionCodec
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
 import org.apache.spark.shuffle.sort.ArrowShuffleWriter
 import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
 import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.shuffle.sort.SortShuffleManager
-import org.apache.spark.shuffle.sort.SortShuffleWriter
-import org.apache.spark.shuffle.sort.UnsafeShuffleWriter
-import org.apache.spark.storage.BlockManager
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency.isArrowShuffle
 import org.apache.spark.util.collection.OpenHashSet
 
 class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 
   import ArrowShuffleManager._
   import SortShuffleManager._
+
+  val sortShuffleManager = new SortShuffleManager(conf)
 
   if (!conf.getBoolean("spark.shuffle.spill", defaultValue = true)) {
     logWarning(
@@ -61,77 +58,10 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   /**
    * (override) Obtains a [[ShuffleHandle]] to pass to tasks.
    */
-  def registerShuffle[K, V, C](
+  override def registerShuffle[K, V, C](
       shuffleId: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
-    if (SortShuffleWriter.shouldBypassMergeSort(conf, dependency)) {
-      // If there are fewer than spark.shuffle.sort.bypassMergeThreshold partitions and we don't
-      // need map-side aggregation, then write numPartitions files directly and just concatenate
-      // them at the end. This avoids doing serialization and deserialization twice to merge
-      // together the spilled files, which would happen with the normal code path. The downside is
-      // having multiple files open at a time and thus more memory allocated to buffers.
-      classOf[BypassMergeSortShuffleHandle[K, V]]
-        .getConstructor(Integer.TYPE, classOf[ShuffleDependency[_, _, _]])
-        .newInstance(Int.box(shuffleId), dependency.asInstanceOf[ShuffleDependency[_, _, _]])
-        .asInstanceOf[ShuffleHandle]
-
-    } else if (SortShuffleManager.canUseSerializedShuffle(dependency)) {
-      // Otherwise, try to buffer map outputs in a serialized form, since this is more efficient:
-      classOf[SerializedShuffleHandle[K, V]]
-        .getConstructor(Integer.TYPE, classOf[ShuffleDependency[_, _, _]])
-        .newInstance(Int.box(shuffleId), dependency.asInstanceOf[ShuffleDependency[_, _, _]])
-        .asInstanceOf[ShuffleHandle]
-
-    } else {
-      // Otherwise, buffer map outputs in a deserialized form:
-      classOf[BaseShuffleHandle[K, V, C]]
-        .getConstructor(Integer.TYPE, classOf[ShuffleDependency[_, _, _]])
-        .newInstance(Int.box(shuffleId), dependency.asInstanceOf[ShuffleDependency[_, _, _]])
-        .asInstanceOf[ShuffleHandle]
-    }
-  }
-
-  /**
-   * Obtains a [[ShuffleHandle]] to pass to tasks.
-   */
-  def registerShuffle[K, V, C](
-      shuffleId: Int,
-      numMaps: Int,
-      dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
-    if (SortShuffleWriter.shouldBypassMergeSort(conf, dependency)) {
-      // If there are fewer than spark.shuffle.sort.bypassMergeThreshold partitions and we don't
-      // need map-side aggregation, then write numPartitions files directly and just concatenate
-      // them at the end. This avoids doing serialization and deserialization twice to merge
-      // together the spilled files, which would happen with the normal code path. The downside is
-      // having multiple files open at a time and thus more memory allocated to buffers.
-      classOf[BypassMergeSortShuffleHandle[K, V]]
-        .getConstructor(Integer.TYPE, Integer.TYPE, classOf[ShuffleDependency[_, _, _]])
-        .newInstance(
-          Int.box(shuffleId),
-          Int.box(numMaps),
-          dependency.asInstanceOf[ShuffleDependency[_, _, _]])
-        .asInstanceOf[ShuffleHandle]
-
-    } else if (SortShuffleManager.canUseSerializedShuffle(dependency)) {
-      // Otherwise, try to buffer map outputs in a serialized form, since this is more efficient:
-      classOf[SerializedShuffleHandle[K, V]]
-        .getConstructor(Integer.TYPE, Integer.TYPE, classOf[ShuffleDependency[_, _, _]])
-        .newInstance(
-          Int.box(shuffleId),
-          Int.box(numMaps),
-          dependency.asInstanceOf[ShuffleDependency[_, _, _]])
-        .asInstanceOf[ShuffleHandle]
-
-    } else {
-      // Otherwise, buffer map outputs in a deserialized form:
-      classOf[BaseShuffleHandle[K, V, C]]
-        .getConstructor(Integer.TYPE, Integer.TYPE, classOf[ShuffleDependency[_, _, _]])
-        .newInstance(
-          Int.box(shuffleId),
-          Int.box(numMaps),
-          dependency.asInstanceOf[ShuffleDependency[_, _, _]])
-        .asInstanceOf[ShuffleHandle]
-    }
+    sortShuffleManager.registerShuffle(shuffleId, dependency)
   }
 
   /**
@@ -144,26 +74,21 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       endPartition: Int,
       context: TaskContext,
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
-    val blocksByAddress = () =>
-      SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
-        handle.shuffleId,
-        startPartition,
-        endPartition)
 
     if (isArrowShuffle(handle)) {
       new ArrowBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
-        blocksByAddress,
+        startPartition,
+        endPartition,
         context,
         metrics,
+        SparkEnv.get.blockManager,
+        SparkEnv.get.mapOutputTracker,
+        None,
+        None,
         shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
     } else {
-      new BlockStoreShuffleReader[K, C](
-        handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
-        blocksByAddress(),
-        context,
-        metrics,
-        shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
+      sortShuffleManager.getReader(handle, startPartition, endPartition, context, metrics)
     }
   }
 
@@ -176,28 +101,26 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       context: TaskContext,
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
 
-    val blocksByAddress = () =>
-      SparkEnv.get.mapOutputTracker.getMapSizesByRange(
-        handle.shuffleId,
-        startMapIndex,
-        endMapIndex,
-        startPartition,
-        endPartition)
-
     if (isArrowShuffle(handle)) {
       new ArrowBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
-        blocksByAddress,
+        startPartition,
+        endPartition,
         context,
         metrics,
-        shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
+        SparkEnv.get.blockManager,
+        SparkEnv.get.mapOutputTracker,
+        startMapId = Some(startMapIndex),
+        endMapId = Some(endMapIndex))
     } else {
-      new BlockStoreShuffleReader(
-        handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
-        blocksByAddress(),
+      sortShuffleManager.getReaderForRange(
+        handle,
+        startPartition,
+        endPartition,
+        startMapIndex,
+        endMapIndex,
         context,
-        metrics,
-        shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
+        metrics)
     }
   }
 
@@ -207,15 +130,11 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       mapId: Long,
       context: TaskContext,
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V] = {
-    val mapTaskIds =
-      taskIdMapsForShuffle.computeIfAbsent(handle.shuffleId, _ => new OpenHashSet[Long](16))
-    mapTaskIds.synchronized {
-      mapTaskIds.add(context.taskAttemptId())
-    }
-    val env = SparkEnv.get
-    handle match {
-      case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
-        if (isArrowShuffle(unsafeShuffleHandle)) {
+
+    if (isArrowShuffle(handle)) {
+      val env = SparkEnv.get
+      handle match {
+        case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
           new ArrowShuffleWriter(
             env.blockManager,
             context.taskMemoryManager(),
@@ -225,19 +144,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
             env.conf,
             metrics,
             shuffleExecutorComponents)
-        } else {
-          new UnsafeShuffleWriter[K, V](
-            env.blockManager,
-            context.taskMemoryManager(),
-            unsafeShuffleHandle,
-            mapId,
-            context,
-            env.conf,
-            metrics,
-            shuffleExecutorComponents)
-        }
-      case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
-        if (isArrowShuffle(bypassMergeSortHandle)) {
+        case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
           new ArrowBypassMergeSortShuffleWriter(
             env.blockManager,
             bypassMergeSortHandle,
@@ -245,42 +152,17 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
             env.conf,
             metrics,
             shuffleExecutorComponents)
-        } else {
-          val clzName = "org.apache.spark.shuffle.sort.BypassMergeSortShuffleWriter"
-          val clz = ClassUtils.getClass(clzName)
-          val cons = clz
-            .getDeclaredConstructor(
-              classOf[BlockManager],
-              classOf[BypassMergeSortShuffleHandle[_, _]],
-              classOf[Long],
-              classOf[SparkConf],
-              classOf[ShuffleWriteMetricsReporter],
-              classOf[ShuffleExecutorComponents])
-
-          cons.setAccessible(true)
-          cons
-            .newInstance(
-              env.blockManager,
-              bypassMergeSortHandle,
-              mapId.asInstanceOf[AnyRef],
-              env.conf,
-              metrics,
-              shuffleExecutorComponents)
-            .asInstanceOf[ShuffleWriter[K, V]]
-        }
-      case other: BaseShuffleHandle[K @unchecked, V @unchecked, _] =>
-        throw new UnsupportedOperationException(s"$other type not allowed for arrow-shuffle")
+        case other =>
+          throw new UnsupportedOperationException(s"$other type not allowed for arrow-shuffle")
+      }
+    } else {
+      sortShuffleManager.getWriter(handle, mapId, context, metrics)
     }
   }
 
   /** Remove a shuffle's metadata from the ShuffleManager. */
   override def unregisterShuffle(shuffleId: Int): Boolean = {
-    Option(taskIdMapsForShuffle.remove(shuffleId)).foreach { mapTaskIds =>
-      mapTaskIds.iterator.foreach { mapTaskId =>
-        shuffleBlockResolver.removeDataByMap(shuffleId, mapTaskId)
-      }
-    }
-    true
+    sortShuffleManager.unregisterShuffle(shuffleId)
   }
 
   /** Shut down this ShuffleManager. */
@@ -298,25 +180,5 @@ private[spark] object ArrowShuffleManager extends Logging {
       SparkEnv.get.executorId,
       extraConfigs.asJava)
     executorComponents
-  }
-
-  private def isArrowShuffle(handle: ShuffleHandle): Boolean = {
-    val base = handle.asInstanceOf[BaseShuffleHandle[_, _, _]]
-    val dep = base.dependency
-    dep.isInstanceOf[ArrowShuffleDependency[_, _, _]]
-  }
-
-  lazy val compressionCodecForShuffling: CompressionCodec = {
-    val sparkConf = SparkEnv.get.conf
-    val zcodecConfName = "spark.blaze.shuffle.compression.codec"
-    val zcodecName =
-      sparkConf.get(zcodecConfName, defaultValue = sparkConf.get(IO_COMPRESSION_CODEC))
-
-    // only zstd compression is supported at the moment
-    if (zcodecName != "zstd") {
-      logWarning(
-        s"Overriding config ${IO_COMPRESSION_CODEC}=${zcodecName} in shuffling, force using zstd")
-    }
-    CompressionCodec.createCodec(sparkConf, "zstd")
   }
 }
