@@ -18,7 +18,6 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -43,12 +42,11 @@ import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec._
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.LongType
 import org.apache.spark.OneToOneDependency
-
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 
 case class NativeHashAggregateExec(
     requiredChildDistributionExpressions: Option[Seq[Expression]],
@@ -93,6 +91,7 @@ case class NativeHashAggregateExec(
         findPreviousNativeAggrExec(exec match {
           case e: NativeHashAggregateExec => return e
           case unary: UnaryExecNode => unary.child
+          case e: ReusedExchangeExec => e.child
           case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
             Shims.get.sparkPlanShims.getChildStage(stageInput)
         })

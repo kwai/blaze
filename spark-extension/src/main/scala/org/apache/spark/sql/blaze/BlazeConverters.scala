@@ -17,11 +17,9 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
-
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -34,6 +32,7 @@ import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.execution.adaptive.{CustomShuffleReaderExec, ShuffleQueryStageExec}
 import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec}
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
@@ -515,6 +514,8 @@ object BlazeConverters extends Logging {
         case exec: QueryStageExec =>
           needRenameColumns(exec.plan)
         case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec =>
+          true
+        case CustomShuffleReaderExec(ShuffleQueryStageExec(_, ReusedExchangeExec(_, _)), _, _) =>
           true
         case _ => false
       }

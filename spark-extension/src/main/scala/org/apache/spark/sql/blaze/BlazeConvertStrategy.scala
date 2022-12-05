@@ -194,6 +194,13 @@ object BlazeConvertStrategy extends Logging {
               !isNeverConvert(child) &&
               isNeverConvert(e))
         }
+        // [ aggregateExpressions > 5 ]
+        dontConvertIf(
+          e,
+          e.isInstanceOf[HashAggregateExec] &&
+            isPartialHashAggregate(e) &&
+            !isNeverConvert(e) &&
+            e.asInstanceOf[HashAggregateExec].aggregateExpressions.length > 5)
       }
     }
   }
