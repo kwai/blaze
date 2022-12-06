@@ -194,7 +194,7 @@ object BlazeConvertStrategy extends Logging {
               !isNeverConvert(child) &&
               isNeverConvert(e))
         }
-        // [ aggregateExpressions > 5 ]
+        // [ aggregateExpressions > threshold ]
         dontConvertIf(
           e,
           e.isInstanceOf[HashAggregateExec] &&
