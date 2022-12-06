@@ -3,8 +3,8 @@ plugins {
 	id "java-library"
 	id "scala"
 	id "com.google.protobuf" version "0.9.1"
-	id "com.github.johnrengelman.shadow" version "7.1.2"
 	id "com.github.alisiikh.scalastyle" version "3.4.1"
+	id "com.github.johnrengelman.shadow" version "7.1.2"
 	id "com.diffplug.spotless" version "6.4.2"
 }
 
@@ -12,7 +12,16 @@ rootProject.group = "blaze-engine"
 rootProject.version = "1.0.1"
 
 ext {
-	shim = hasProperty("shim") ? getProperty("shim") : "shim-not-configured"
+	shim = rootProject.properties.getOrDefault("shim", "UnspecifiedShimName")
+	scalaVersion = [
+			spark303: "2.12.17",
+			spark241kwaiae: "2.11.12",
+	][shim]
+	sparkVersion = [
+			spark303: "2.12:3.0.3",
+			spark241kwaiae: "2.11:2.4.1U1.9.33-SNAPSHOT",
+	][shim]
+
 	licenseHeader = "" +
 			"/*\n" +
 			" * Copyright 2022 The Blaze Authors\n" +
@@ -30,6 +39,8 @@ ext {
 			" * limitations under the License.\n" +
 			" */\n\n"
 }
+
+logger.warn "compiling with shim=${ext.shim}"
 
 subprojects {
 	buildscript {
@@ -104,14 +115,11 @@ subprojects {
 			}
 		}
 
-		tasks.withType(ScalaCompile) {
-			scalaCompileOptions.additionalParameters = ["-Xmaxerrs", "10000"]
-		}
-		tasks.withType(Tar){
+		tasks.withType(Tar) {
 			duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 		}
 
-		tasks.withType(Zip){
+		tasks.withType(Zip) {
 			duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 		}
 		tasks.compileScala.dependsOn tasks.scalastyleCheck
@@ -122,6 +130,8 @@ subprojects {
 				task -> task.enabled = false
 			}
 		}
+		project.properties.scalaVersion = scalaVersion
+		project.properties.sparkVersion = sparkVersion
 	}
 }
 

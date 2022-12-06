@@ -1,13 +1,8 @@
-repositories {
-    mavenLocal()
-    mavenCentral()
-}
-
 dependencies {
-    compileOnly 'org.scala-lang:scala-library:2.12.2'
-    compileOnly "org.apache.spark:spark-core_2.12:3.0.3"
-    compileOnly "org.apache.spark:spark-hive_2.12:3.0.3"
-    compileOnly "org.apache.spark:spark-sql_2.12:3.0.3"
+    compileOnly "org.scala-lang:scala-library:${scalaVersion}"
+    compileOnly "org.apache.spark:spark-core_${sparkVersion}"
+    compileOnly "org.apache.spark:spark-hive_${sparkVersion}"
+    compileOnly "org.apache.spark:spark-sql_${sparkVersion}"
     implementation "com.google.protobuf:protobuf-java:3.21.9"
     implementation "org.apache.arrow:arrow-c-data:10.0.0"
     implementation "org.apache.arrow:arrow-compression:10.0.0"
@@ -26,7 +21,7 @@ configurations.implementation {
 apply plugin: "com.google.protobuf"
 protobuf {
     protoc {
-        artifact = 'com.google.protobuf:protoc:3.21.9'
+        artifact = "com.google.protobuf:protoc:3.21.9"
     }
     generatedFilesBaseDir = "$projectDir/src/generated-sources"
 }

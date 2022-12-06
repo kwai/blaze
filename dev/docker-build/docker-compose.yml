@@ -11,4 +11,7 @@ services:
       - ./../../:/blaze:rw
       - ./../../target-docker:/blaze/target:rw
       - ./../../target-docker/spark-extension-build:/blaze/spark-extension/build:rw
-    command: "bash -c 'source ~/.bashrc && cd /blaze && ./release.sh'"
+    environment:
+      SHIM: "${SHIM}"
+      MODE: "${MODE}"
+    command: "bash -c 'source ~/.bashrc && cd /blaze && ./release.sh -Pshim=${SHIM} -Pmode=${MODE}'"

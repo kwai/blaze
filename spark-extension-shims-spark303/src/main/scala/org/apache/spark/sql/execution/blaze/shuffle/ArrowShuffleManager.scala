@@ -51,17 +51,27 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   override val shuffleBlockResolver = new IndexShuffleBlockResolver(conf)
 
   /**
-   * A mapping from shuffle ids to the task ids of mappers producing output for those shuffles.
-   */
-  private[this] val taskIdMapsForShuffle = new ConcurrentHashMap[Int, OpenHashSet[Long]]()
-
-  /**
    * (override) Obtains a [[ShuffleHandle]] to pass to tasks.
    */
   override def registerShuffle[K, V, C](
       shuffleId: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
     sortShuffleManager.registerShuffle(shuffleId, dependency)
+  }
+
+  protected def registerShuffle[K, V, C](
+      shuffleId: Int,
+      mapId: Int,
+      dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
+    val registerShuffleMethod = classOf[SortShuffleManager].getDeclaredMethod(
+      "registerShuffle",
+      Integer.TYPE,
+      Integer.TYPE,
+      classOf[ShuffleDependency[_, _, _]])
+    registerShuffleMethod.setAccessible(true)
+    registerShuffleMethod
+      .invoke(sortShuffleManager, new Integer(shuffleId), new Integer(mapId), dependency)
+      .asInstanceOf[ShuffleHandle]
   }
 
   /**

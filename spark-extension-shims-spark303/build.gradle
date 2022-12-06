@@ -1,17 +1,12 @@
-repositories {
-    mavenLocal()
-    mavenCentral()
-}
-
 dependencies {
-    compileOnly "com.fasterxml.jackson.core:jackson-annotations:2.10.0"
-    compileOnly "com.fasterxml.jackson.core:jackson-core:2.10.0"
-    compileOnly "com.fasterxml.jackson.core:jackson-databind:2.10.0"
+    compileOnly "org.scala-lang:scala-library:${scalaVersion}"
+    compileOnly "org.apache.spark:spark-core_${sparkVersion}"
+    compileOnly "org.apache.spark:spark-hive_${sparkVersion}"
+    compileOnly "org.apache.spark:spark-sql_${sparkVersion}"
+    compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.14.0'
+    compileOnly 'com.fasterxml.jackson.core:jackson-core:2.14.0'
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.14.0'
     compileOnly "com.google.protobuf:protobuf-java:3.21.9"
-    compileOnly "org.apache.spark:spark-core_2.12:3.0.3"
-    compileOnly "org.apache.spark:spark-hive_2.12:3.0.3"
-    compileOnly "org.apache.spark:spark-sql_2.12:3.0.3"
-    compileOnly "org.scala-lang:scala-library:2.12.10"
     compileOnly project(":spark-extension")
     testImplementation "org.scalatest:scalatest_2.12:3.2.9"
 }

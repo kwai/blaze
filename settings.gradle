@@ -11,3 +11,24 @@ project(":spark-extension-shims-spark241kwaiae").projectDir = file("spark-extens
 
 include "spark-extension-shims-spark303"
 project(":spark-extension-shims-spark303").projectDir = file("spark-extension-shims-spark303")
+
+dependencyResolutionManagement {
+    repositories {
+        mavenLocal()
+        maven {
+            url "http://nexus.corp.kuaishou.com:88/nexus/content/groups/public/"
+            credentials {
+                username "$usr"
+                password "$pwd"
+            }
+            authentication {
+                basic(BasicAuthentication)
+                digest(DigestAuthentication)
+            }
+            allowInsecureProtocol = true
+        }
+        mavenCentral()
+    }
+
+
+}

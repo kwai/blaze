@@ -111,8 +111,9 @@ abstract class ArrowBlockStoreShuffleReaderBase[K, C](
 }
 
 object ArrowBlockStoreShuffleReaderBase {
-  private val bufferReleasingInputStreamClass: Class[_] =
-    Utils.classForName("org.apache.spark.storage.BufferReleasingInputStream")
+  private val bufferReleasingInputStreamClass: Class[_] = Utils.classForName(
+    "org.apache.spark.storage.BufferReleasingInputStream",
+    noSparkClassLoader = true)
   private val delegateFn: Method = bufferReleasingInputStreamClass.getDeclaredMethod(
     "org$apache$spark$storage$BufferReleasingInputStream$$delegate")
   private val inField: Field = classOf[FilterInputStream].getDeclaredField("in")
