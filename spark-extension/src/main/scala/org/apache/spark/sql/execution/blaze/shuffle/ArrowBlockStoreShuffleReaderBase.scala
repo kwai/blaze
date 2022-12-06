@@ -114,8 +114,9 @@ object ArrowBlockStoreShuffleReaderBase {
   private val bufferReleasingInputStreamClass: Class[_] = Utils.classForName(
     "org.apache.spark.storage.BufferReleasingInputStream",
     noSparkClassLoader = true)
-  private val delegateFn: Method = bufferReleasingInputStreamClass.getDeclaredMethod(
-    "org$apache$spark$storage$BufferReleasingInputStream$$delegate")
+  private val delegateFn: Method = bufferReleasingInputStreamClass.getDeclaredMethods
+    .find(_.getName.endsWith("delegate"))
+    .get
   private val inField: Field = classOf[FilterInputStream].getDeclaredField("in")
   private val limitField: Field = classOf[LimitedInputStream].getDeclaredField("left")
   private val pathField: Field = classOf[FileInputStream].getDeclaredField("path")
@@ -125,6 +126,7 @@ object ArrowBlockStoreShuffleReaderBase {
   pathField.setAccessible(true)
 
   def getFileSegmentFromInputStream(in: InputStream): Option[FileSegment] = {
+
     delegateFn.invoke(in) match {
       case in: LimitedInputStream =>
         val limit = limitField.getLong(in)
