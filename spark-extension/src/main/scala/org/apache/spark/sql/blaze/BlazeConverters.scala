@@ -32,9 +32,8 @@ import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.apache.spark.sql.execution.adaptive.{CustomShuffleReaderExec, ShuffleQueryStageExec}
 import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec}
-import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.joins.{
   BroadcastHashJoinExec,
@@ -68,8 +67,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastHashJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
-import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
-import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.hashAggrModeTag
@@ -80,7 +77,6 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.window.WindowExec
-import org.apache.spark.sql.execution.adaptive.QueryStageExec
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
@@ -189,12 +185,7 @@ object BlazeConverters extends Logging {
   def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan = {
     try {
       def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
-        if (basedExec.logicalLink.isDefined && exec.logicalLink.isEmpty) {
-          exec.setLogicalLink(basedExec.logicalLink.get)
-          exec.children.foreach(setLogicalLink(_, basedExec))
-        }
-        exec.setTagValue(convertibleTag, true)
-        exec
+        Shims.get.sparkPlanShims.setLogicalLink(exec, basedExec)
       }
       setLogicalLink(convert(exec), exec)
 
@@ -209,7 +200,8 @@ object BlazeConverters extends Logging {
 
   def convertShuffleExchangeExec(exec: ShuffleExchangeExec): SparkPlan = {
     val (outputPartitioning, child) = (exec.outputPartitioning, exec.child)
-    logDebug(s"Converting ShuffleExchangeExec: ${exec.simpleStringWithNodeId}")
+    logDebug(
+      s"Converting ShuffleExchangeExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
 
     val convertedChild = outputPartitioning match {
       case p if p.isInstanceOf[HashPartitioning] || p.numPartitions == 1 =>
@@ -239,7 +231,8 @@ object BlazeConverters extends Logging {
     assert(
       relation.fileFormat.isInstanceOf[ParquetFileFormat],
       "Cannot convert non-parquet scan exec")
-    logDebug(s"Converting FileSourceScanExec: ${exec.simpleStringWithNodeId}")
+    logDebug(
+      s"Converting FileSourceScanExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     logDebug(s"  relation: ${relation}")
     logDebug(s"  relation.location: ${relation.location}")
     logDebug(s"  output: ${output}")
@@ -248,12 +241,12 @@ object BlazeConverters extends Logging {
     logDebug(s"  optionalBucketSet: ${optionalBucketSet}")
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
-    return NativeParquetScanExec(exec)
+    return Shims.get.parquetScanShims.createParquetScan(exec)
   }
 
   def convertProjectExec(exec: ProjectExec): SparkPlan = {
     val (projectList, child) = (exec.projectList, exec.child)
-    logDebug(s"Converting ProjectExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(s"Converting ProjectExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
     NativeProjectExec(projectList, addRenameColumnsExec(convertToNative(child)))
   }
@@ -261,24 +254,25 @@ object BlazeConverters extends Logging {
   def convertFilterExec(exec: FilterExec): SparkPlan =
     exec match {
       case exec: FilterExec =>
-        logDebug(s"Converting FilterExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(
+          s"Converting FilterExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
         logDebug(s"  condition: ${exec.condition}")
         NativeFilterExec(exec.condition, addRenameColumnsExec(convertToNative(exec.child)))
       case _ =>
-        logDebug(s"Ignoring FilterExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(s"Ignoring FilterExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
         exec
     }
 
   def convertSortExec(exec: SortExec): SparkPlan = {
     val (sortOrder, global, child) = (exec.sortOrder, exec.global, exec.child)
-    logDebug(s"Converting SortExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(s"Converting SortExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     logDebug(s"  global: ${global}")
     sortOrder.foreach(s => logDebug(s"  sortOrder: ${s}"))
     NativeSortExec(sortOrder, global, addRenameColumnsExec(convertToNative(child)))
   }
 
   def convertUnionExec(exec: UnionExec): SparkPlan = {
-    logDebug(s"Converting UnionExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(s"Converting UnionExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     NativeUnionExec(exec.children.map(child => {
       addRenameColumnsExec(convertToNative(child))
     }))
@@ -287,7 +281,8 @@ object BlazeConverters extends Logging {
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
-    logDebug(s"Converting SortMergeJoinExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(
+      s"Converting SortMergeJoinExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     assert(condition.isEmpty, "SortMergeJoin with post filter not yet supported")
     var nativeLeft = convertToNative(left)
     var nativeRight = convertToNative(right)
@@ -342,7 +337,8 @@ object BlazeConverters extends Logging {
         exec.condition,
         exec.left,
         exec.right)
-      logDebug(s"Converting BroadcastHashJoinExec: ${exec.simpleStringWithNodeId()}")
+      logDebug(
+        s"Converting BroadcastHashJoinExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
       var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
@@ -419,7 +415,8 @@ object BlazeConverters extends Logging {
   def convertBroadcastExchangeExec(exec: SparkPlan): SparkPlan = {
     exec match {
       case exec: BroadcastExchangeExec =>
-        logDebug(s"Converting BroadcastExchangeExec: ${exec.simpleStringWithNodeId()}")
+        logDebug(
+          s"Converting BroadcastExchangeExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
         val converted =
           Shims.get.broadcastShims.createArrowBroadcastExchange(exec.mode, exec.child)
         converted.setTagValue(ArrowBroadcastExchangeBase.nativeExecutionTag, true)
@@ -429,17 +426,20 @@ object BlazeConverters extends Logging {
   }
 
   def convertLocalLimitExec(exec: LocalLimitExec): SparkPlan = {
-    logDebug(s"Converting LocalLimitExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(
+      s"Converting LocalLimitExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     NativeLocalLimitExec(exec.limit.toLong, exec.child)
   }
 
   def convertGlobalLimitExec(exec: GlobalLimitExec): SparkPlan = {
-    logDebug(s"Converting GlobalLimitExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(
+      s"Converting GlobalLimitExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     NativeGlobalLimitExec(exec.limit.toLong, exec.child)
   }
 
   def convertTakeOrderedAndProjectExec(exec: TakeOrderedAndProjectExec): SparkPlan = {
-    logDebug(s"Converting TakeOrderedAndProjectExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(
+      s"Converting TakeOrderedAndProjectExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     val nativeTakeOrdered =
       NativeTakeOrderedExec(exec.limit, exec.sortOrder, convertToNative(exec.child))
 
@@ -452,7 +452,8 @@ object BlazeConverters extends Logging {
   }
 
   def convertHashAggregateExec(exec: HashAggregateExec): SparkPlan = {
-    logDebug(s"Converting HashAggregateExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(
+      s"Converting HashAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     val nativeAggr = NativeHashAggregateExec(
       exec.requiredChildDistributionExpressions,
       exec.groupingExpressions,
@@ -477,7 +478,7 @@ object BlazeConverters extends Logging {
   }
 
   def convertExpandExec(exec: ExpandExec): SparkPlan = {
-    logDebug(s"Converting ExpandExec: ${exec.simpleStringWithNodeId()}")
+    logDebug(s"Converting ExpandExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     logDebug(s"  projections: ${exec.projections}")
     NativeExpandExec(
       exec.projections,
@@ -503,22 +504,7 @@ object BlazeConverters extends Logging {
 
   private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
     def needRenameColumns(exec: SparkPlan): Boolean = {
-      if (exec.output.isEmpty) {
-        return false
-      }
-      // use shim to get isQueryStageInput and getChildStage
-      exec match {
-        case exec if Shims.get.sparkPlanShims.isQueryStageInput(exec) =>
-          needRenameColumns(Shims.get.sparkPlanShims.getChildStage(exec)) ||
-            exec.output != Shims.get.sparkPlanShims.getChildStage(exec).output
-        case exec: QueryStageExec =>
-          needRenameColumns(exec.plan)
-        case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec =>
-          true
-        case CustomShuffleReaderExec(ShuffleQueryStageExec(_, ReusedExchangeExec(_, _)), _, _) =>
-          true
-        case _ => false
-      }
+      Shims.get.sparkPlanShims.needRenameColumns(exec)
     }
     if (needRenameColumns(exec)) {
       return NativeRenameColumnsExec(exec, exec.output.map(Util.getFieldNameByExprId))

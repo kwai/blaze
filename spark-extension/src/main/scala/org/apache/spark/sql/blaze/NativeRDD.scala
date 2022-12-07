@@ -41,7 +41,7 @@ class NativeRDD(
     setName(friendlyName)
   }
 
-  def shuffleReadFull: Boolean = Shims.get.rddShims.getShuffleReadFull(this)
+  // override def shuffleReadFull: Boolean = Shims.get.rddShims.getShuffleReadFull(this)
   Shims.get.rddShims.setShuffleReadFull(this, rddShuffleReadFull)
 
   override protected def getPartitions: Array[Partition] = rddPartitions

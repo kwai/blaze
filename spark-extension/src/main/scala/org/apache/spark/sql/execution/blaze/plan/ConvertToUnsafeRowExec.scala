@@ -17,7 +17,7 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.BlazeConverters
+import org.apache.spark.sql.blaze.{BlazeConverters, Shims}
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -37,7 +37,7 @@ case class ConvertToUnsafeRowExec(override val child: SparkPlan)
     with CodegenSupport {
   override def nodeName: String = "ConvertToUnsafeRow"
 
-  override def logicalLink: Option[LogicalPlan] = child.logicalLink
+  // override def logicalLink: Option[LogicalPlan] = child.logicalLink
 
   override def output: Seq[Attribute] = child.output
 

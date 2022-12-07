@@ -18,21 +18,16 @@ package org.apache.spark.sql.blaze.shims
 
 import java.lang.reflect.Method
 import java.util.UUID
-
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
 import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.IpcReaderExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.blaze.SparkPlanShims
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
+import org.apache.spark.sql.blaze.{JniBridge, MetricNode, NativeRDD, NativeSupports, Shims, SparkPlanShims}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.CoalescedPartitionSpec
@@ -40,10 +35,9 @@ import org.apache.spark.sql.execution.PartialMapperPartitionSpec
 import org.apache.spark.sql.execution.PartialReducerPartitionSpec
 import org.apache.spark.sql.execution.ShufflePartitionSpec
 import org.apache.spark.sql.execution.ShuffledRowRDD
-import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
+import org.apache.spark.sql.execution.adaptive.{CustomShuffleReaderExec, QueryStageExec, ShuffleQueryStageExec}
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.adaptive.QueryStageExec
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
+import org.apache.spark.sql.execution.blaze.plan.{ArrowShuffleExchangeExec, NativeParquetScanExec, NativeUnionExec}
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 
@@ -171,4 +165,34 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
           })
     }
   }
+
+  override def needRenameColumns(plan: SparkPlan): Boolean = {
+    if (plan.output.isEmpty) {
+      return false
+    }
+    // use shim to get isQueryStageInput and getChildStage
+    plan match {
+      case exec if Shims.get.sparkPlanShims.isQueryStageInput(exec) =>
+        needRenameColumns(Shims.get.sparkPlanShims.getChildStage(exec)) ||
+          exec.output != Shims.get.sparkPlanShims.getChildStage(exec).output
+      case exec: QueryStageExec =>
+        needRenameColumns(exec.plan)
+      case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec =>
+        true
+      case CustomShuffleReaderExec(ShuffleQueryStageExec(_, ReusedExchangeExec(_, _)), _, _) =>
+        true
+      case _ => false
+    }
+  }
+
+  override def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
+    if (basedExec.logicalLink.isDefined && exec.logicalLink.isEmpty) {
+      exec.setLogicalLink(basedExec.logicalLink.get)
+      exec.children.foreach(setLogicalLink(_, basedExec))
+    }
+    exec.setTagValue(convertibleTag, true)
+    exec
+  }
+
+  override def simpleStringWithNodeId(plan: SparkPlan): String = plan.simpleStringWithNodeId()
 }

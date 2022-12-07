@@ -17,15 +17,18 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
+import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
+import org.apache.spark.sql.execution.blaze.plan.{
+  ArrowBroadcastExchangeBase,
+  ArrowShuffleExchangeBase,
+  NativeParquetScanBase
+}
 import org.apache.spark.storage.FileSegment
 
 abstract class Shims {
@@ -34,11 +37,12 @@ abstract class Shims {
   def shuffleShims: ShuffleShims
   def broadcastShims: BroadcastShims
   def exprShims: ExprShims
+  def parquetScanShims: ParquetScanShims
 }
 object Shims {
   lazy val get: Shims = {
     classOf[Shims].getClassLoader
-      .loadClass("org.apache.spark.sql.blaze.Shims303Impl")
+      .loadClass("org.apache.spark.sql.blaze.Shims241kwaiaeImpl")
       .newInstance()
       .asInstanceOf[Shims]
   }
@@ -56,6 +60,12 @@ trait SparkPlanShims {
 
   def isQueryStageInput(plan: SparkPlan): Boolean
   def getChildStage(plan: SparkPlan): SparkPlan
+  def needRenameColumns(plan: SparkPlan): Boolean
+  def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan
+  def simpleStringWithNodeId(plan: SparkPlan): String
+  def getComputeStats(basedFileScan: FileSourceScanExec): Statistics = {
+    Statistics(sizeInBytes = basedFileScan.relation.sizeInBytes)
+  }
 }
 
 trait ShuffleShims {
@@ -64,6 +74,10 @@ trait ShuffleShims {
       child: SparkPlan): ArrowShuffleExchangeBase
 
   def createFileSegment(file: File, offset: Long, length: Long, numRecords: Long): FileSegment
+}
+
+trait ParquetScanShims {
+  def createParquetScan(exec: FileSourceScanExec): NativeParquetScanBase
 }
 
 trait BroadcastShims {

@@ -14,15 +14,13 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze
+package org.apache.spark.sql.blaze.shims
 
-import org.apache.spark.sql.blaze.shims.{BroadcastShimsImpl, ExprShimsImpl, ParquetScanShimsImpl, RDDShimsImpl, ShuffleShimsImpl, SparkPlanShimsImpl}
+import org.apache.spark.sql.blaze.ParquetScanShims
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.blaze.plan.{NativeParquetScanBase, NativeParquetScanExec}
 
-class Shims303Impl extends Shims {
-  override val rddShims: RDDShims = new RDDShimsImpl
-  override val sparkPlanShims: SparkPlanShims = new SparkPlanShimsImpl
-  override val shuffleShims: ShuffleShims = new ShuffleShimsImpl
-  override val broadcastShims: BroadcastShims = new BroadcastShimsImpl
-  override val exprShims: ExprShims = new ExprShimsImpl
-  val parquetScanShims: ParquetScanShims = new ParquetScanShimsImpl
+class ParquetScanShimsImpl extends ParquetScanShims{
+  override def createParquetScan(exec: FileSourceScanExec): NativeParquetScanBase =
+    NativeParquetScanExec(exec)
 }
