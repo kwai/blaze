@@ -19,7 +19,6 @@ package org.apache.spark.sql.blaze
 import java.util.UUID
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.JavaConverters._
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -33,7 +32,6 @@ import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec}
-import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.joins.{
   BroadcastHashJoinExec,
@@ -59,7 +57,6 @@ import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
-// import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToUnsafeRowExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinExec
@@ -69,13 +66,11 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.blaze.BlazeConvertStrategy.hashAggrModeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.aggregate.Final
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
@@ -84,8 +79,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
-// import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
-// import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 

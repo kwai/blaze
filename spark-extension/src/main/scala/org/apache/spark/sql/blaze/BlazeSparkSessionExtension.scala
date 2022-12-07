@@ -18,19 +18,27 @@ package org.apache.spark.sql.blaze
 
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
+
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.exchange.Exchange
+import org.apache.spark.sql.internal.SQLConf
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
+  import BlazeSparkSessionExtension._
+
   override def apply(extensions: SparkSessionExtensions): Unit = {
     SparkEnv.get.conf.set("spark.sql.adaptive.enabled", "true")
     SparkEnv.get.conf.set("spark.sql.adaptive.forceApply", "true")
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
+
+    assert(BlazeSparkSessionExtension.blazeEnabledKey != null)
 
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)
@@ -38,10 +46,23 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
   }
 }
 
+object BlazeSparkSessionExtension {
+  lazy val blazeEnabledKey: ConfigEntry[Boolean] = SQLConf
+    .buildConf("spark.blaze.enabled")
+    .booleanConf
+    .createWithDefault(true)
+}
+
 case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule with Logging {
+  import BlazeSparkSessionExtension._
+
   override def preColumnarTransitions: Rule[SparkPlan] =
     new Rule[SparkPlan] {
       override def apply(sparkPlan: SparkPlan): SparkPlan = {
+        if (!sparkPlan.conf.getConf(blazeEnabledKey)) {
+          return sparkPlan // performs no conversion if blaze is not enabled
+        }
+
         // generate convert strategy
         BlazeConvertStrategy.apply(sparkPlan)
         logDebug("Blaze convert strategy for current stage:")
