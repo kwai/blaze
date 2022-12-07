@@ -81,6 +81,8 @@ import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.ShuffleWriterExecNode
 
+import org.apache.spark.util.CompletionIterator
+
 case class ArrowShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
     override val child: SparkPlan,
@@ -226,10 +228,12 @@ case class ArrowShuffleExchangeExec(
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      rdd.partitions,
-      rdd.dependencies,
+      rddPartitions = rdd.partitions,
+      rddDependencies = shuffleDependency :: Nil,
       true,
       (partition, taskContext) => {
+        val shuffleReadMetrics = taskContext.taskMetrics().createTempShuffleReadMetrics()
+        val metricReporter = new SQLShuffleReadMetricsReporter(shuffleReadMetrics, metrics)
 
         // store fetch iterator in jni resource before native compute
         val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
@@ -239,9 +243,12 @@ case class ArrowShuffleExchangeExec(
             partition.index,
             partition.index + 1,
             taskContext,
-            taskContext.taskMetrics().createTempShuffleReadMetrics())
+            metricReporter)
           .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
-        JniBridge.resourcesMap.put(jniResourceId, () => reader.readIpc())
+        val ipcIterator = CompletionIterator[Object, Iterator[Object]](
+          reader.readIpc(),
+          taskContext.taskMetrics().mergeShuffleReadMetrics())
+        JniBridge.resourcesMap.put(jniResourceId, () => ipcIterator)
 
         PhysicalPlanNode
           .newBuilder()
@@ -254,7 +261,8 @@ case class ArrowShuffleExchangeExec(
               .setMode(IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
               .build())
           .build()
-      })
+      },
+      friendlyName = "NativeRDD.ShuffleRead")
   }
 
   override def doCanonicalize(): SparkPlan =
@@ -265,9 +273,9 @@ object ArrowShuffleExchangeExec {
   def canUseNativeShuffleWrite(
       rdd: RDD[InternalRow],
       outputPartitioning: Partitioning): Boolean = {
-    rdd.isInstanceOf[NativeRDD] && {
-      outputPartitioning.isInstanceOf[HashPartitioning] || outputPartitioning.numPartitions <= 1
-    }
+    rdd.isInstanceOf[NativeRDD] && (
+      outputPartitioning.numPartitions == 1 || outputPartitioning.isInstanceOf[HashPartitioning]
+    )
   }
 
   def prepareNativeShuffleDependency(
@@ -281,10 +289,18 @@ object ArrowShuffleExchangeExec {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val numPartitions = outputPartitioning.numPartitions
-    val modifiedMetrics = Map(
-      "output_rows" -> metrics("shuffle_write_rows"),
-      "elapsed_compute" -> metrics("shuffle_write_elapsed_compute"))
-    val nativeMetrics = MetricNode(modifiedMetrics, nativeInputRDD.metrics :: Nil)
+    val nativeMetrics = MetricNode(
+      Map(),
+      nativeInputRDD.metrics :: Nil,
+      Some({
+        case ("output_rows", v) =>
+          val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
+          new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incRecordsWritten(v)
+        case ("compute_elapsed", v) =>
+          val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
+          new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
+        case _ =>
+      }))
 
     val nativeShuffleRDD = new NativeRDD(
       nativeInputRDD.sparkContext,
@@ -308,17 +324,20 @@ object ArrowShuffleExchangeExec {
             throw new NotImplementedError(s"cannot convert partitioning to native: $p")
         }
 
-        PhysicalPlanNode
+        val input = nativeInputRDD.nativePlan(nativeInputPartition, taskContext)
+        val nativeShuffleWriteExec = PhysicalPlanNode
           .newBuilder()
           .setShuffleWriter(
             ShuffleWriterExecNode
               .newBuilder()
-              .setInput(nativeInputRDD.nativePlan(nativeInputPartition, taskContext))
+              .setInput(input)
               .setOutputPartitioning(nativeOutputPartitioning)
               .buildPartial()
           ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
           .build()
-      })
+        nativeShuffleWriteExec
+      },
+      friendlyName = "NativeRDD.ShuffleWrite")
 
     val dependency = new ArrowShuffleDependency[Int, InternalRow, InternalRow](
       nativeShuffleRDD.map((0, _)),
@@ -432,7 +451,6 @@ object ArrowShuffleExchangeExec {
           // limited range.
           val prefixComputer = new UnsafeExternalRowSorter.PrefixComputer {
             private val result = new UnsafeExternalRowSorter.PrefixComputer.Prefix
-
             override def computePrefix(
                 row: InternalRow): UnsafeExternalRowSorter.PrefixComputer.Prefix = {
               // The hashcode generated from the binary form of a [[UnsafeRow]] should not be null.
@@ -464,9 +482,7 @@ object ArrowShuffleExchangeExec {
         newRdd.mapPartitionsWithIndexInternal(
           (_, iter) => {
             val getPartitionKey = getPartitionKeyExtractor()
-            iter.map { row =>
-              (part.getPartition(getPartitionKey(row)), row.copy())
-            }
+            iter.map { row => (part.getPartition(getPartitionKey(row)), row.copy()) }
           },
           isOrderSensitive = isOrderSensitive)
       } else {
@@ -474,9 +490,7 @@ object ArrowShuffleExchangeExec {
           (_, iter) => {
             val getPartitionKey = getPartitionKeyExtractor()
             val mutablePair = new MutablePair[Int, InternalRow]()
-            iter.map { row =>
-              mutablePair.update(part.getPartition(getPartitionKey(row)), row)
-            }
+            iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
           },
           isOrderSensitive = isOrderSensitive)
       }

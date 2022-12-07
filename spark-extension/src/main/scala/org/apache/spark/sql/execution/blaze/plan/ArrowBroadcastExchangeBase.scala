@@ -117,7 +117,7 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
       case ex: TimeoutException =>
         logError(s"Could not execute broadcast in $timeout secs.", ex)
         if (!nativeRelationFuture.isDone) {
-          sparkContext.cancelJobGroup(runId.toString)
+          sparkContext.cancelJobGroup(getRunId.toString)
           nativeRelationFuture.cancel(true)
         }
         throw new SparkException("Native broadcast exchange timed out.", ex)
@@ -235,7 +235,7 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
       BroadcastExchangeExec.executionContext) {
       try {
         sparkContext.setJobGroup(
-          runId.toString,
+          getRunId.toString,
           s"native broadcast exchange (runId $getRunId)",
           interruptOnCancel = true)
         val broadcasted = sparkContext.broadcast(collectNative())
