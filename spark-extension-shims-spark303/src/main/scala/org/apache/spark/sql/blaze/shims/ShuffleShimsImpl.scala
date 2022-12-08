@@ -18,6 +18,12 @@ package org.apache.spark.sql.blaze.shims
 
 import java.io.File
 
+import org.apache.spark.ShuffleDependency
+import org.apache.spark.SparkEnv
+import org.apache.spark.TaskContext
+
+import org.apache.spark.scheduler.MapStatus
+import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.sql.blaze.ShuffleShims
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
@@ -38,4 +44,21 @@ class ShuffleShimsImpl extends ShuffleShims {
       offset: Long,
       length: Long,
       numRecords: Long): FileSegment = new FileSegment(file, offset, length)
+
+  override def commit(
+      dep: ShuffleDependency[_, _, _],
+      shuffleBlockResolver: IndexShuffleBlockResolver,
+      tempDataFile: File,
+      mapId: Long,
+      partitionLengths: Array[Long],
+      dataSize: Long,
+      context: TaskContext): MapStatus = {
+
+    shuffleBlockResolver.writeIndexFileAndCommit(
+      dep.shuffleId,
+      mapId,
+      partitionLengths,
+      tempDataFile)
+    MapStatus.apply(SparkEnv.get.blockManager.shuffleServerId, partitionLengths, mapId)
+  }
 }

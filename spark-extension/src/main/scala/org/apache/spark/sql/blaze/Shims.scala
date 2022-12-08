@@ -17,18 +17,21 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-import org.apache.spark.SparkContext
+
+import org.apache.spark.ShuffleDependency
+import org.apache.spark.TaskContext
+
 import org.apache.spark.rdd.RDD
+import org.apache.spark.scheduler.MapStatus
+import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
-import org.apache.spark.sql.execution.blaze.plan.{
-  ArrowBroadcastExchangeBase,
-  ArrowShuffleExchangeBase,
-  NativeParquetScanBase
-}
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.storage.FileSegment
 
 abstract class Shims {
@@ -63,9 +66,6 @@ trait SparkPlanShims {
   def needRenameColumns(plan: SparkPlan): Boolean
   def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan
   def simpleStringWithNodeId(plan: SparkPlan): String
-  def getComputeStats(basedFileScan: FileSourceScanExec): Statistics = {
-    Statistics(sizeInBytes = basedFileScan.relation.sizeInBytes)
-  }
 }
 
 trait ShuffleShims {
@@ -74,6 +74,15 @@ trait ShuffleShims {
       child: SparkPlan): ArrowShuffleExchangeBase
 
   def createFileSegment(file: File, offset: Long, length: Long, numRecords: Long): FileSegment
+
+  def commit(
+      dep: ShuffleDependency[_, _, _],
+      shuffleBlockResolver: IndexShuffleBlockResolver,
+      tempDataFile: File,
+      mapId: Long,
+      partitionLengths: Array[Long],
+      dataSize: Long,
+      context: TaskContext): MapStatus
 }
 
 trait ParquetScanShims {
