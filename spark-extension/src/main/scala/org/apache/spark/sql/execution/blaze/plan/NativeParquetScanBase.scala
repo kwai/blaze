@@ -19,13 +19,17 @@ package org.apache.spark.sql.execution.blaze.plan
 import java.net.URI
 import java.security.PrivilegedExceptionAction
 import java.util.UUID
+
 import scala.collection.JavaConverters._
+
 import org.apache.hadoop.fs.FileSystem
+
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.Partition
+
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
@@ -42,6 +46,8 @@ import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.blaze.{protobuf => pb}
+import org.blaze.protobuf.FileGroup
+
 import org.apache.spark.sql.blaze.NativeSupports
 
 abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
@@ -141,7 +147,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
       partitions.asInstanceOf[Array[Partition]],
       Nil,
       rddShuffleReadFull = true,
-      (_, _) => {
+      (partition, _) => {
         val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
         val sharedConf = broadcastedHadoopConf.value.value
         JniBridge.resourcesMap.put(
@@ -154,11 +160,17 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
             })
           })
 
+        val nativeFileGroupsPartitioned = nativeFileGroups.zipWithIndex
+          .map {
+            case (fileGroup, index) if index == partition.index => fileGroup
+            case (_, _) => FileGroup.getDefaultInstance
+          }
+
         val nativeParquetScanConf = pb.FileScanExecConf
           .newBuilder()
           .setStatistics(pb.Statistics.getDefaultInstance)
           .setSchema(nativeFileSchema)
-          .addAllFileGroups(nativeFileGroups.toList.asJava)
+          .addAllFileGroups(nativeFileGroupsPartitioned.toList.asJava)
           .addAllProjection(projection.map(Integer.valueOf).asJava)
           .addAllTablePartitionCols(partCols.asJava)
           .setPartitionSchema(partitionSchema)
