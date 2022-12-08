@@ -16,13 +16,20 @@
 
 package org.apache.spark.sql.blaze
 
-import org.apache.spark.sql.blaze.shims.{BroadcastShimsImpl, ExprShimsImpl, ParquetScanShimsImpl, RDDShimsImpl, ShuffleShimsImpl, SparkPlanShimsImpl}
+import org.apache.spark.sql.blaze.shims.{
+  BroadcastShimsImpl,
+  ExprShimsImpl,
+  ParquetScanShimsImpl,
+  RDDShimsImpl,
+  ShuffleShimsImpl,
+  SparkPlanShimsImpl
+}
 
-class Shims303Impl extends Shims {
+class ShimsImpl extends Shims {
   override val rddShims: RDDShims = new RDDShimsImpl
   override val sparkPlanShims: SparkPlanShims = new SparkPlanShimsImpl
   override val shuffleShims: ShuffleShims = new ShuffleShimsImpl
   override val broadcastShims: BroadcastShims = new BroadcastShimsImpl
   override val exprShims: ExprShims = new ExprShimsImpl
-  val parquetScanShims: ParquetScanShims = new ParquetScanShimsImpl
+  override val parquetScanShims: ParquetScanShims = new ParquetScanShimsImpl
 }

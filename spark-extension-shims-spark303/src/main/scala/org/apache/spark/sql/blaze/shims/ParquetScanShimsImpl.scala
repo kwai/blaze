@@ -20,7 +20,7 @@ import org.apache.spark.sql.blaze.ParquetScanShims
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.blaze.plan.{NativeParquetScanBase, NativeParquetScanExec}
 
-class ParquetScanShimsImpl extends ParquetScanShims{
+class ParquetScanShimsImpl extends ParquetScanShims {
   override def createParquetScan(exec: FileSourceScanExec): NativeParquetScanBase =
     NativeParquetScanExec(exec)
 }

@@ -48,150 +48,150 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 
 case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
-  extends NativeParquetScanBase {
+    extends NativeParquetScanBase(basedFileScan) {
 
-    override lazy val metrics: Map[String, SQLMetric] = Map(
-      NativeHelper
-        .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(Set("output_rows"))
-        .toSeq :+
-        ("predicate_evaluation_errors", SQLMetrics
-          .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
-        ("row_groups_pruned", SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned")) :+
-        ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")): _*)
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeHelper
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows"))
+      .toSeq :+
+      ("predicate_evaluation_errors", SQLMetrics
+        .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
+      ("row_groups_pruned", SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned")) :+
+      ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")): _*)
 
-    override def output: Seq[Attribute] = basedFileScan.output
-    override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning
+  override def output: Seq[Attribute] = basedFileScan.output
+  override def outputPartitioning: Partitioning = basedFileScan.outputPartitioning
 
-    @transient
-    private val inputFileScanRDD = {
-      basedFileScan.inputRDDs().head match {
-        case rdd: FileScanRDD => rdd
-        case rdd: MapPartitionsRDD[_, _] => rdd.prev.asInstanceOf[FileScanRDD]
-      }
+  @transient
+  private val inputFileScanRDD = {
+    basedFileScan.inputRDDs().head match {
+      case rdd: FileScanRDD => rdd
+      case rdd: MapPartitionsRDD[_, _] => rdd.prev.asInstanceOf[FileScanRDD]
+    }
+  }
+
+  private val nativePruningPredicateFilters = basedFileScan.dataFilters
+    .map(expr => NativeConverters.convertExpr(expr, useAttrExprId = false))
+
+  private val nativeFileSchema =
+    NativeConverters.convertSchema(StructType(basedFileScan.relation.dataSchema.map {
+      case field if basedFileScan.requiredSchema.exists(_.name == field.name) => field
+      case field =>
+        // avoid converting unsupported type in non-used fields
+        StructField(field.name, NullType)
+    }))
+  private val nativeFileGroups: Array[pb.FileGroup] = {
+    val partitions = inputFileScanRDD.filePartitions.toArray
+
+    // compute file sizes
+    val fileSizes = partitions
+      .flatMap(_.files)
+      .groupBy(_.filePath)
+      .mapValues(_.map(_.length).sum)
+
+    // list input file statuses
+    def nativePartitionedFile(file: PartitionedFile) = {
+      val nativePartitionValues =
+        basedFileScan.relation.partitionSchema.zipWithIndex
+          .map {
+            case (field, index) =>
+              NativeConverters.convertValue(
+                file.partitionValues.get(index, field.dataType),
+                field.dataType)
+          }
+
+      pb.PartitionedFile
+        .newBuilder()
+        .setPath(file.filePath)
+        .setSize(fileSizes(file.filePath))
+        .addAllPartitionValues(nativePartitionValues.asJava)
+        .setLastModifiedNs(0)
+        .setRange(
+          pb.FileRange
+            .newBuilder()
+            .setStart(file.start)
+            .setEnd(file.start + file.length)
+            .build())
+        .build()
     }
 
-    private val nativePruningPredicateFilters = basedFileScan.dataFilters
-      .map(expr => NativeConverters.convertExpr(expr, useAttrExprId = false))
-
-    private val nativeFileSchema =
-      NativeConverters.convertSchema(StructType(basedFileScan.relation.dataSchema.map {
-        case field if basedFileScan.requiredSchema.exists(_.name == field.name) => field
-        case field =>
-          // avoid converting unsupported type in non-used fields
-          StructField(field.name, NullType)
-      }))
-    private val nativeFileGroups: Array[pb.FileGroup] = {
-      val partitions = inputFileScanRDD.filePartitions.toArray
-
-      // compute file sizes
-      val fileSizes = partitions
-        .flatMap(_.files)
-        .groupBy(_.filePath)
-        .mapValues(_.map(_.length).sum)
-
-      // list input file statuses
-      def nativePartitionedFile(file: PartitionedFile) = {
-        val nativePartitionValues =
-          basedFileScan.relation.partitionSchema.zipWithIndex
-            .map {
-              case (field, index) =>
-                NativeConverters.convertValue(
-                  file.partitionValues.get(index, field.dataType),
-                  field.dataType)
-            }
-
-        pb.PartitionedFile
-          .newBuilder()
-          .setPath(file.filePath)
-          .setSize(fileSizes(file.filePath))
-          .addAllPartitionValues(nativePartitionValues.asJava)
-          .setLastModifiedNs(0)
-          .setRange(
-            pb.FileRange
-              .newBuilder()
-              .setStart(file.start)
-              .setEnd(file.start + file.length)
-              .build())
-          .build()
-      }
-
-      partitions.map { partition =>
-        pb.FileGroup
-          .newBuilder()
-          .addAllFiles(partition.files.map(nativePartitionedFile).toList.asJava)
-          .build()
-      }
+    partitions.map { partition =>
+      pb.FileGroup
+        .newBuilder()
+        .addAllFiles(partition.files.map(nativePartitionedFile).toList.asJava)
+        .build()
     }
+  }
 
-    override def doExecuteNative(): NativeRDD = {
-      val partitions = inputFileScanRDD.filePartitions.toArray
-      val nativeMetrics = MetricNode(metrics, Nil)
-      val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
-      val partCols = basedFileScan.relation.partitionSchema.map(_.name)
-      val partitionSchema = NativeConverters.convertSchema(basedFileScan.relation.partitionSchema)
+  override def doExecuteNative(): NativeRDD = {
+    val partitions = inputFileScanRDD.filePartitions.toArray
+    val nativeMetrics = MetricNode(metrics, Nil)
+    val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
+    val partCols = basedFileScan.relation.partitionSchema.map(_.name)
+    val partitionSchema = NativeConverters.convertSchema(basedFileScan.relation.partitionSchema)
 
-      val relation = basedFileScan.relation
-      val sparkSession = relation.sparkSession
-      val hadoopConf =
-        sparkSession.sessionState.newHadoopConfWithOptions(basedFileScan.relation.options)
-      val broadcastedHadoopConf =
-        sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+    val relation = basedFileScan.relation
+    val sparkSession = relation.sparkSession
+    val hadoopConf =
+      sparkSession.sessionState.newHadoopConfWithOptions(basedFileScan.relation.options)
+    val broadcastedHadoopConf =
+      sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
-      new NativeRDD(
-        sparkContext,
-        nativeMetrics,
-        partitions.asInstanceOf[Array[Partition]],
-        Nil,
-        rddShuffleReadFull = true,
-        (_, _) => {
-          val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
-          JniBridge.resourcesMap.put(
-            resourceId,
-            (location: String) => {
-              NativeHelper.currentUser.doAs(new PrivilegedExceptionAction[FileSystem] {
-                override def run(): FileSystem = {
-                  FileSystem.get(new URI(location), broadcastedHadoopConf.value.value)
-                }
-              })
+    new NativeRDD(
+      sparkContext,
+      nativeMetrics,
+      partitions.asInstanceOf[Array[Partition]],
+      Nil,
+      rddShuffleReadFull = true,
+      (_, _) => {
+        val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
+        JniBridge.resourcesMap.put(
+          resourceId,
+          (location: String) => {
+            NativeHelper.currentUser.doAs(new PrivilegedExceptionAction[FileSystem] {
+              override def run(): FileSystem = {
+                FileSystem.get(new URI(location), broadcastedHadoopConf.value.value)
+              }
             })
+          })
 
-          val nativeParquetScanConf = pb.FileScanExecConf
-            .newBuilder()
-            .setStatistics(pb.Statistics.getDefaultInstance)
-            .setSchema(nativeFileSchema)
-            .addAllFileGroups(nativeFileGroups.toList.asJava)
-            .addAllProjection(projection.map(Integer.valueOf).asJava)
-            .addAllTablePartitionCols(partCols.asJava)
-            .setPartitionSchema(partitionSchema)
-            .build()
+        val nativeParquetScanConf = pb.FileScanExecConf
+          .newBuilder()
+          .setStatistics(pb.Statistics.getDefaultInstance)
+          .setSchema(nativeFileSchema)
+          .addAllFileGroups(nativeFileGroups.toList.asJava)
+          .addAllProjection(projection.map(Integer.valueOf).asJava)
+          .addAllTablePartitionCols(partCols.asJava)
+          .setPartitionSchema(partitionSchema)
+          .build()
 
-          val nativeParquetScanExecBuilder = pb.ParquetScanExecNode
-            .newBuilder()
-            .setBaseConf(nativeParquetScanConf)
-            .setFsResourceId(resourceId)
-            .addAllPruningPredicates(nativePruningPredicateFilters.asJava)
+        val nativeParquetScanExecBuilder = pb.ParquetScanExecNode
+          .newBuilder()
+          .setBaseConf(nativeParquetScanConf)
+          .setFsResourceId(resourceId)
+          .addAllPruningPredicates(nativePruningPredicateFilters.asJava)
 
-          pb.PhysicalPlanNode
-            .newBuilder()
-            .setParquetScan(nativeParquetScanExecBuilder.build())
-            .build()
-        },
-        friendlyName = "NativeRDD.ParquetScan")
-    }
+        pb.PhysicalPlanNode
+          .newBuilder()
+          .setParquetScan(nativeParquetScanExecBuilder.build())
+          .build()
+      },
+      friendlyName = "NativeRDD.ParquetScan")
+  }
 
-    // build new class from logical plan Statistics
-    // delete override tag
-    def computeStats(): Statistics =
-      Statistics(sizeInBytes = basedFileScan.relation.sizeInBytes)
+  // build new class from logical plan Statistics
+  // delete override tag
+  def computeStats(): Statistics =
+    Statistics(sizeInBytes = basedFileScan.relation.sizeInBytes)
 
-    override val nodeName: String =
-      s"NativeParquetScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
+  override val nodeName: String =
+    s"NativeParquetScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
 
-    def simpleString(maxFields: Int): String =
-      s"$nodeName (${basedFileScan.simpleString(maxFields)})"
+  override def simpleString(maxFields: Int): String =
+    s"$nodeName (${basedFileScan.simpleString(maxFields)})"
 
-    override def doCanonicalize(): SparkPlan = basedFileScan.canonicalized
+  override def doCanonicalize(): SparkPlan = basedFileScan.canonicalized
 
-    override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan = copy()
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan = copy()
 }

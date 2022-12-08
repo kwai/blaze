@@ -42,7 +42,7 @@ abstract class Shims {
 object Shims {
   lazy val get: Shims = {
     classOf[Shims].getClassLoader
-      .loadClass("org.apache.spark.sql.blaze.Shims241kwaiaeImpl")
+      .loadClass("org.apache.spark.sql.blaze.ShimsImpl")
       .newInstance()
       .asInstanceOf[Shims]
   }

@@ -27,7 +27,14 @@ import org.blaze.protobuf.Schema
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
-import org.apache.spark.sql.blaze.{JniBridge, MetricNode, NativeRDD, NativeSupports, Shims, SparkPlanShims}
+import org.apache.spark.sql.blaze.{
+  JniBridge,
+  MetricNode,
+  NativeRDD,
+  NativeSupports,
+  Shims,
+  SparkPlanShims
+}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.CoalescedPartitionSpec
@@ -35,9 +42,17 @@ import org.apache.spark.sql.execution.PartialMapperPartitionSpec
 import org.apache.spark.sql.execution.PartialReducerPartitionSpec
 import org.apache.spark.sql.execution.ShufflePartitionSpec
 import org.apache.spark.sql.execution.ShuffledRowRDD
-import org.apache.spark.sql.execution.adaptive.{CustomShuffleReaderExec, QueryStageExec, ShuffleQueryStageExec}
+import org.apache.spark.sql.execution.adaptive.{
+  CustomShuffleReaderExec,
+  QueryStageExec,
+  ShuffleQueryStageExec
+}
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.plan.{ArrowShuffleExchangeExec, NativeParquetScanExec, NativeUnionExec}
+import org.apache.spark.sql.execution.blaze.plan.{
+  ArrowShuffleExchangeExec,
+  NativeParquetScanExec,
+  NativeUnionExec
+}
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 
