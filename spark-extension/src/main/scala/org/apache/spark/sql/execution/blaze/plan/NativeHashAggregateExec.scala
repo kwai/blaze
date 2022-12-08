@@ -170,7 +170,7 @@ case class NativeHashAggregateExec(
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
-      inputRDD.shuffleReadFull,
+      inputRDD.isShuffleReadFull,
       (partition, taskContext) => {
 
         lazy val inputPlan =

@@ -96,7 +96,7 @@ case class NativeUnionExec(override val children: Seq[SparkPlan])
       nativeMetrics,
       unionedPartitions.asInstanceOf[Array[Partition]],
       dependencies,
-      rdds.forall(_.shuffleReadFull),
+      rdds.forall(_.isShuffleReadFull),
       (partition, taskContext) => {
         val unionPartition = unionedPartitions(partition.index)
         val unionChildrenExecs = rdds.zipWithIndex.map {

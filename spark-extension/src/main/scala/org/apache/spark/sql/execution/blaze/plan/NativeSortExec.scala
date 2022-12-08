@@ -88,7 +88,7 @@ case class NativeSortExec(
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
-      inputRDD.shuffleReadFull,
+      inputRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
         val nativeSortExec = SortExecNode

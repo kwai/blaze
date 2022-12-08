@@ -20,9 +20,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.RDDShims
 
 private[blaze] class RDDShimsImpl extends RDDShims {
-  override def getShuffleReadFull(rdd: RDD[_]): Boolean =
-    true
+  override def getShuffleReadFull(rdd: RDD[_]): Boolean = true
 
-  override def setShuffleReadFull(rdd: RDD[_], shuffleReadFull: Boolean): Unit =
-    ()
+  override def setShuffleReadFull(rdd: RDD[_], shuffleReadFull: Boolean): Unit = {}
 }

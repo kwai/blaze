@@ -153,7 +153,7 @@ case class NativeBroadcastHashJoinExec(
       nativeMetrics,
       partitions,
       rddDependencies = new OneToOneDependency(rightRDD) :: Nil,
-      rightRDD.shuffleReadFull,
+      rightRDD.isShuffleReadFull,
       (partition, context) => {
         val partition0 = new Partition() {
           override def index: Int = 0

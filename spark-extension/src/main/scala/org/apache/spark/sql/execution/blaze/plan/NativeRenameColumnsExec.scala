@@ -61,7 +61,7 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
-      inputRDD.shuffleReadFull,
+      inputRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val inputPlan = inputRDD.nativePlan(inputRDD.partitions(partition.index), taskContext)
         buildRenameColumnsExec(inputPlan, renamedColumnNames)

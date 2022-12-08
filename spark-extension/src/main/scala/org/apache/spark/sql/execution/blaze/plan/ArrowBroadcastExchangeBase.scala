@@ -58,6 +58,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 
@@ -176,6 +177,7 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
 
     val ipcRDD = new RDD[Array[Byte]](sparkContext, new OneToOneDependency(inputRDD) :: Nil) {
       setName("NativeRDD.BroadcastWrite")
+      Shims.get.rddShims.setShuffleReadFull(this, inputRDD.isShuffleReadFull)
 
       override protected def getPartitions: Array[Partition] = inputRDD.partitions
 

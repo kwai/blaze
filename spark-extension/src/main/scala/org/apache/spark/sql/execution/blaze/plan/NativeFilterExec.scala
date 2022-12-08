@@ -58,7 +58,7 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
-      inputRDD.shuffleReadFull,
+      inputRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val inputPartition = inputRDD.partitions(partition.index)
         val nativeFilterExec = FilterExecNode

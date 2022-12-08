@@ -307,7 +307,7 @@ object ArrowShuffleExchangeExec {
       nativeMetrics,
       nativeInputRDD.partitions,
       nativeInputRDD.dependencies,
-      nativeInputRDD.shuffleReadFull,
+      nativeInputRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val nativeInputPartition = nativeInputRDD.partitions(partition.index)
         val nativeOutputPartitioning = outputPartitioning match {

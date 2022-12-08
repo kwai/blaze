@@ -107,7 +107,7 @@ case class NativeSortMergeJoinExec(
       nativeMetrics,
       partitions,
       dependencies,
-      leftRDD.shuffleReadFull && rightRDD.shuffleReadFull,
+      leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val leftPartition = leftRDD.partitions(partition.index)
         val leftChild = leftRDD.nativePlan(leftPartition, taskContext)
