@@ -50,15 +50,7 @@ case class ArrowShuffleExchangeExec(
   lazy val readMetrics: Map[String, SQLMetric] =
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val metrics: Map[String, SQLMetric] = readMetrics ++ writeMetrics ++ Map(
-    "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
-    "shuffle_write_rows" ->
-      SQLMetrics.createMetric(sparkContext, "Native.shuffle_write_rows"),
-    "shuffle_write_elapsed_compute" ->
-      SQLMetrics.createNanoTimingMetric(sparkContext, "Native.shuffle_write_elapsed_compute"),
-    "shuffle_read_rows" ->
-      SQLMetrics.createMetric(sparkContext, "Native.shuffle_read_rows"),
-    "shuffle_read_elapsed_compute" ->
-      SQLMetrics.createNanoTimingMetric(sparkContext, "Native.shuffle_read_elapsed_compute"))
+    "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))
 
   private val estimatedIpcCount: Int =
     Math.max(child.outputPartitioning.numPartitions * outputPartitioning.numPartitions, 1)
@@ -147,7 +139,7 @@ case class ArrowShuffleExchangeExec(
           mapId.toInt,
           context,
           partition,
-          metrics)
+          createMetricsReporter(context))
       }
     }
   }

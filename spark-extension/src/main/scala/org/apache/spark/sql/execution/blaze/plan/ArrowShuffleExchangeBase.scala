@@ -46,6 +46,7 @@ import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
@@ -494,7 +495,7 @@ object ArrowShuffleExchangeBase {
       mapId: Int,
       context: TaskContext,
       partition: Partition,
-      metrics: Map[String, SQLMetric]): MapStatus = {
+      metricsReporter: ShuffleWriteMetricsReporter): MapStatus = {
 
     val shuffleBlockResolver =
       SparkEnv.get.shuffleManager.shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver]
@@ -537,9 +538,7 @@ object ArrowShuffleExchangeBase {
 
     // update metrics
     val dataSize = Files.size(tempDataFilePath)
-    val numWrittenRecords = metrics("shuffle_write_rows").value
-    metrics("dataSize") += dataSize
-    metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN) += numWrittenRecords
+    metricsReporter.incBytesWritten(dataSize)
 
     Shims.get.shuffleShims.commit(
       dep,

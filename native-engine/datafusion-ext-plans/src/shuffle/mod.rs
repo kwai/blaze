@@ -54,7 +54,6 @@ impl dyn ShuffleRepartitioner {
                     &input.schema(),
                     &std::mem::take(&mut staging_batches),
                     num_staging_rows)?;
-
                 let batch_mem_size = batch.get_array_memory_size();
                 log::info!(
                     "{} flushing record batch with {} rows, bytes size={}",
