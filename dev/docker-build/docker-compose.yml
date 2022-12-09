@@ -11,6 +11,8 @@ services:
       - ./../../:/blaze:rw
       - ./../../target-docker:/blaze/target:rw
       - ./../../target-docker/spark-extension-build:/blaze/spark-extension/build:rw
+      - ./../../target-docker/spark-extension-shims-spark303-build:/blaze/spark-extension-shims-spark303/build:rw
+      - ./../../target-docker/spark-extension-shims-spark241kwaiae-build:/blaze/spark-extension-shims-spark241kwaiae/build:rw
     environment:
       SHIM: "${SHIM}"
       MODE: "${MODE}"
