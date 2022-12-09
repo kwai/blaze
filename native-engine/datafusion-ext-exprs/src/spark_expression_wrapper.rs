@@ -157,9 +157,7 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
         }
 
         write_one_batch(&input_batch, &mut Cursor::new(&mut batch_buffer), false)?;
-        let batch_byte_buffer = jni_new_direct_byte_buffer!(
-            &mut batch_buffer[8..] // skip length header
-        )?;
+        let batch_byte_buffer = jni_new_direct_byte_buffer!(&mut batch_buffer[..])?;
         let output_channel = jni_call!(
             SparkExpressionWrapperContext(jcontext.as_obj()).eval(batch_byte_buffer) -> JObject
         )?;
@@ -168,7 +166,10 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
             datafusion_ext_commons::streams::ipc_stream::ReadableByteChannelReader(
                 jni_new_global_ref!(output_channel)?,
             );
-        let output_batch = read_one_batch(&mut reader, output_schema, false, false)?;
+        let output_batch = match read_one_batch(&mut reader, output_schema.clone(), false)? {
+            Some(batch) => batch,
+            None => RecordBatch::new_empty(output_schema.clone()),
+        };
 
         if input_contains_array {
             Ok(ColumnarValue::Array(output_batch.column(0).clone()))

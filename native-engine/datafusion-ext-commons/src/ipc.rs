@@ -20,6 +20,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 
 use std::io::Read;
 use std::io::{Seek, SeekFrom, Write};
+use std::sync::Arc;
+use arrow::datatypes::Schema;
 
 pub fn write_one_batch<W: Write + Seek>(
     batch: &RecordBatch,
@@ -32,22 +34,32 @@ pub fn write_one_batch<W: Write + Seek>(
     if batch.num_rows() == 0 {
         return Ok(0);
     }
-    let start_pos = output.stream_position()?;
+
+    // nameless - reduce column names from serialized data, the names are
+    // always available in the read size
+    let nameless_schema = Arc::new(Schema::new(batch
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| field.clone().with_name(""))
+        .collect()));
+    let batch = name_batch(batch, &nameless_schema)?;
 
     // write ipc_length placeholder
+    let start_pos = output.stream_position()?;
     output.write_all(&[0u8; 8])?;
 
     // write ipc data
     let output = if compress {
         let mut arrow_writer =
             StreamWriter::try_new(zstd::Encoder::new(output, 1)?, &batch.schema())?;
-        arrow_writer.write(batch)?;
+        arrow_writer.write(&batch)?;
         arrow_writer.finish()?;
         let zwriter = arrow_writer.into_inner()?;
         zwriter.finish()?
     } else {
         let mut arrow_writer = StreamWriter::try_new(output, &batch.schema())?;
-        arrow_writer.write(batch)?;
+        arrow_writer.write(&batch)?;
         arrow_writer.finish()?;
         arrow_writer.into_inner()?
     };
@@ -72,25 +84,39 @@ pub fn write_one_batch<W: Write + Seek>(
 
 pub fn read_one_batch<R: Read>(
     input: &mut R,
-    _schema: SchemaRef,
+    schema: SchemaRef,
     compress: bool,
-    has_length_header: bool,
-) -> ArrowResult<RecordBatch> {
-    let input: Box<dyn Read> = if has_length_header {
-        let mut len_buf = [0u8; 8];
-        input.read_exact(&mut len_buf)?;
-        let len = u64::from_le_bytes(len_buf);
-        Box::new(input.take(len))
-    } else {
-        Box::new(input)
-    };
+) -> ArrowResult<Option<RecordBatch>> {
 
     // read
-    Ok(if compress {
+    let input: Box<dyn Read> = Box::new(input);
+    let nameless_batch = if compress {
         let mut arrow_reader = StreamReader::try_new(zstd::Decoder::new(input)?, None)?;
         arrow_reader.next().unwrap()?
     } else {
         let mut arrow_reader = StreamReader::try_new(input, None)?;
         arrow_reader.next().unwrap()?
-    })
+    };
+
+    // recover schema name
+    Ok(Some(name_batch(&nameless_batch, &schema)?))
+}
+
+pub fn name_batch(
+    batch: &RecordBatch,
+    name_schema: &SchemaRef,
+) -> ArrowResult<RecordBatch> {
+
+    let schema = Arc::new(Schema::new(batch
+        .schema()
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(i, field)| field.clone().with_name(name_schema.field(i).name()))
+        .collect()));
+
+    RecordBatch::try_new(
+        schema,
+        batch.columns().iter() .map(|column| column.clone()).collect(),
+    )
 }
