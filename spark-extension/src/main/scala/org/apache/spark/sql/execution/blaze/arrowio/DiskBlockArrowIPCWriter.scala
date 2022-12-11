@@ -39,7 +39,6 @@ import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.storage.FileSegment
@@ -291,8 +290,7 @@ class DiskBlockArrowIPCWriter(
       ipcLengthBuffer.clear()
       mcs.write(ipcLengthBuffer.array()) // ipc length placeholder
 
-      val channel = Channels.newChannel(
-        ArrowShuffleDependency.compressionCodecForShuffling.compressedOutputStream(mcs))
+      val channel = Channels.newChannel(ZstdUtil.createZstdOutputStreamWithIpcDict(mcs))
       writer = new ArrowStreamWriter(root, new MapDictionaryProvider(), channel)
       writer.start()
     }

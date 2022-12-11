@@ -93,7 +93,7 @@ case class IpcInputStreamIterator(
     currentLimitedInputStream = is
 
     if (decompressingNeeded) {
-      val zs = ArrowShuffleDependency.compressionCodecForShuffling.compressedInputStream(is)
+      val zs = ZstdUtil.createZstdInputStreamWithIpcDict(is)
       Channels.newChannel(zs)
     } else {
       Channels.newChannel(is)

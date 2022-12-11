@@ -1,0 +1,9 @@
+[package]
+name = "mkipcdict"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrow = { version = "28.0.0", features = ["ipc_compression"] }
+itertools = "0.10.5"
+zstd = "0.12.1"

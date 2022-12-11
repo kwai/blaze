@@ -51,20 +51,6 @@ class ArrowShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
       shuffleWriterProcessor) {}
 
 object ArrowShuffleDependency extends Logging {
-  lazy val compressionCodecForShuffling: CompressionCodec = {
-    val sparkConf = SparkEnv.get.conf
-    val zcodecConfName = "spark.blaze.shuffle.compression.codec"
-    val zcodecName =
-      sparkConf.get(zcodecConfName, defaultValue = sparkConf.get("spark.io.compression.codec"))
-
-    // only zstd compression is supported at the moment
-    if (zcodecName != "zstd") {
-      logWarning(
-        s"Overriding config spark.io.compression.codec=${zcodecName} in shuffling, force using zstd")
-    }
-    CompressionCodec.createCodec(sparkConf, "zstd")
-  }
-
   def isArrowShuffle(handle: ShuffleHandle): Boolean = {
     val base = handle.asInstanceOf[BaseShuffleHandle[_, _, _]]
     val dep = base.dependency

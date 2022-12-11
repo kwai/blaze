@@ -36,7 +36,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use crate::ipc::name_batch;
+use crate::ipc::{ipc_decoder_dict, name_batch};
 
 #[derive(Debug, Clone, Copy)]
 pub enum IpcReadMode {
@@ -194,7 +194,11 @@ impl ReadableByteChannelBatchReader {
         let channel_reader = ReadableByteChannelReader(channel);
         let buffered = BufReader::new(channel_reader);
         let decompressed: Box<dyn Read> = if compressed {
-            Box::new(zstd::Decoder::new(buffered)?)
+            Box::new(
+                zstd::Decoder::with_prepared_dictionary(
+                    buffered,
+                    ipc_decoder_dict(),
+                )?)
         } else {
             Box::new(buffered)
         };
@@ -279,8 +283,11 @@ impl FileSegmentBatchReader {
             self.current_ipc_length = u64::from_le_bytes(ipc_length_buf);
 
             let ipc = self.file.try_clone()?.take(self.current_ipc_length);
-            let zstd_decoder: Box<dyn Read> =
-                Box::new(zstd::stream::Decoder::new(BufReader::new(ipc))?);
+            let zstd_decoder: Box<dyn Read> = Box::new(
+                zstd::stream::Decoder::with_prepared_dictionary(
+                    BufReader::new(ipc),
+                    ipc_decoder_dict(),
+                )?);
             self.segment_reader =
                 Some(StreamReader::try_new(zstd_decoder, None).unwrap());
             return self.next_batch_impl();
