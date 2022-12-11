@@ -1,8 +1,19 @@
+def versions = [
+    spark303: [
+        scalaVersion: "2.12.17",
+        sparkVersion: "2.12:3.0.3",
+    ],
+    spark241kwaiae: [
+        scalaVersion: "2.11.12",
+        sparkVersion: "2.11:2.4.1U1.9.33-SNAPSHOT",
+    ]
+][shim]
+
 dependencies {
-    compileOnly "org.scala-lang:scala-library:${scalaVersion}"
-    compileOnly "org.apache.spark:spark-core_${sparkVersion}"
-    compileOnly "org.apache.spark:spark-hive_${sparkVersion}"
-    compileOnly "org.apache.spark:spark-sql_${sparkVersion}"
+    compileOnly "org.scala-lang:scala-library:${versions.scalaVersion}"
+    compileOnly "org.apache.spark:spark-core_${versions.sparkVersion}"
+    compileOnly "org.apache.spark:spark-hive_${versions.sparkVersion}"
+    compileOnly "org.apache.spark:spark-sql_${versions.sparkVersion}"
     implementation "org.apache.arrow:arrow-c-data:10.0.0"
     implementation "org.apache.arrow:arrow-compression:10.0.0"
     implementation "org.apache.arrow:arrow-memory-netty:10.0.0"
