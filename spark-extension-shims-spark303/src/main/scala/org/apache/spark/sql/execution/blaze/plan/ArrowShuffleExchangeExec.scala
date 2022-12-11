@@ -69,14 +69,14 @@ case class ArrowShuffleExchangeExec(
           //  arrow headers). so a data size factor is needed here to prevent incorrect
           //  conversion to later SMJ/BHJ.
           //
-          // assume compressed ipc size is smaller than unsafe rows only when the number of
-          //  records are larger than 5
+          // assume compressed ipc size is smaller than unsafe rows only when the bytes
+          // size is larger than 512B
           //
-          val totalShuffleRecordsWritten =
-            metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN).value
-          val avgRecordsPerIpc = totalShuffleRecordsWritten / estimatedIpcCount
-          val dataSizeFactor = Math.min(Math.max(avgRecordsPerIpc / 5.0, 0.1), 1.0)
-
+          val totalBytesWritten = stat.bytesByPartitionId.sum
+          val estimatedIpcCount: Int =
+            Math.max(inputRDD.getNumPartitions * outputPartitioning.numPartitions, 1)
+          val avgBytesPerIpc = totalBytesWritten / estimatedIpcCount
+          val dataSizeFactor = Math.min(Math.max(avgBytesPerIpc / 512, 0.1), 1.0)
           new MapOutputStatistics(
             stat.shuffleId,
             stat.bytesByPartitionId.map(n => (n * dataSizeFactor).ceil.toLong))
