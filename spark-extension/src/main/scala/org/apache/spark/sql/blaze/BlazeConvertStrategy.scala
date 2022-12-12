@@ -28,7 +28,11 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.SortExec
 import org.apache.spark.sql.execution.UnionExec
-import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec, SortAggregateExec}
+import org.apache.spark.sql.execution.aggregate.{
+  HashAggregateExec,
+  ObjectHashAggregateExec,
+  SortAggregateExec
+}
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
@@ -107,7 +111,7 @@ object BlazeConvertStrategy extends Logging {
     exec.foreachUp {
       case exec if isNeverConvert(exec) || isAlwaysConvert(exec) =>
       // already decided, do nothing
-      case e: ShuffleExchangeExec =>
+      case e: ShuffleExchangeExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: BroadcastExchangeExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
@@ -178,7 +182,7 @@ object BlazeConvertStrategy extends Logging {
             !isNeverConvert(e) &&
             isNeverConvert(e.children.head))
 
-        // [ PartialAggr -> ShuffleExchange(native) ]
+        // [ HashAggr/ObjectAggr/SortAggr -> ShuffleExchange(native) ]
         dontConvertIf(
           e,
           e.isInstanceOf[ShuffleExchangeExec] &&
