@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.SortExec
 import org.apache.spark.sql.execution.UnionExec
-import org.apache.spark.sql.execution.aggregate.HashAggregateExec
+import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec, SortAggregateExec}
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
@@ -182,7 +182,7 @@ object BlazeConvertStrategy extends Logging {
         dontConvertIf(
           e,
           e.isInstanceOf[ShuffleExchangeExec] &&
-            isPartialHashAggregate(e.children.head) &&
+            isAggregate(e.children.head) &&
             !isNeverConvert(e) &&
             isNeverConvert(e.children.head))
 
@@ -208,6 +208,14 @@ object BlazeConvertStrategy extends Logging {
   private def isPartialHashAggregate(e: SparkPlan): Boolean = {
     e match {
       case e: HashAggregateExec => e.requiredChildDistributionExpressions.isEmpty
+      case _ => false
+    }
+  }
+  private def isAggregate(e: SparkPlan): Boolean = {
+    e match {
+      case e: HashAggregateExec => e.requiredChildDistributionExpressions.isEmpty
+      case _: ObjectHashAggregateExec => true
+      case _: SortAggregateExec => true
       case _ => false
     }
   }
