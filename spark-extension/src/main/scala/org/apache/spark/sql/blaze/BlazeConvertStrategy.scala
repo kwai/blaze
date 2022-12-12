@@ -111,7 +111,7 @@ object BlazeConvertStrategy extends Logging {
     exec.foreachUp {
       case exec if isNeverConvert(exec) || isAlwaysConvert(exec) =>
       // already decided, do nothing
-      case e: ShuffleExchangeExec if isAlwaysConvert(e.child) =>
+      case e: ShuffleExchangeExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: BroadcastExchangeExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
