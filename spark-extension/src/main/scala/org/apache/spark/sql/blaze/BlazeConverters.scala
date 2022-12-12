@@ -177,10 +177,8 @@ object BlazeConverters extends Logging {
 
   def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan = {
     try {
-      def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
-        Shims.get.sparkPlanShims.setLogicalLink(exec, basedExec)
-      }
-      setLogicalLink(convert(exec), exec)
+      exec.setTagValue(convertibleTag, true)
+      convert(exec)
 
     } catch {
       case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
