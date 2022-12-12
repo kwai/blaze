@@ -155,7 +155,6 @@ shadowJar {
 
 	// exclude some stuff that should be always available in spark environment
 	exclude("org/apache/commons/codec/**/*")
-	exclude("org/apache/commons/compress/**/*")
 	exclude("org/slf4j/**/*")
 	exclude("com/fasterxml/jackson/**/*")
 
