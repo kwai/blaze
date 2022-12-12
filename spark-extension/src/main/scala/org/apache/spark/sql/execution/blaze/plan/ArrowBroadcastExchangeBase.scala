@@ -226,14 +226,14 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
 
     // if there are only one ipc, directly return it
     if (ipcs.length == 1) {
-      val ipcBytes = ipcRDD.collect().head
+      val ipcBytes = ipcs.head
       metrics("dataSize") += ipcBytes.length
       return ipcBytes
     }
 
     // if there are more than one partition, merge them into one ipc
     // TODO: implement this logic in native and avoid columns to rows convertion
-    val rows = ipcRDD.collect().iterator.flatMap { partIpcBytes =>
+    val rows = ipcs.iterator.flatMap { partIpcBytes =>
       val partIn = new ByteArrayInputStream(partIpcBytes)
       IpcInputStreamIterator(partIn, decompressingNeeded = true, null)
         .flatMap(new ArrowReaderIterator(_, null))
