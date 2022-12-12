@@ -32,7 +32,9 @@ class ArrowReaderIterator(channel: ReadableByteChannel, taskContext: TaskContext
   private var root = arrowReader.getVectorSchemaRoot
   private var rowIter: Iterator[InternalRow] = Iterator.empty
 
-  taskContext.addTaskCompletionListener[Unit](_ => close())
+  if (taskContext != null) {
+    taskContext.addTaskCompletionListener[Unit](_ => close())
+  }
 
   override def hasNext: Boolean = rowIter.hasNext || nextBatch()
 
@@ -51,7 +53,7 @@ class ArrowReaderIterator(channel: ReadableByteChannel, taskContext: TaskContext
       true
     }
 
-  private def close(): Unit =
+  def close(): Unit =
     synchronized {
       if (root != null) {
         arrowReader.close()

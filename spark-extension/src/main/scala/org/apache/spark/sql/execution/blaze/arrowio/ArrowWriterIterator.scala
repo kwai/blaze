@@ -45,7 +45,9 @@ class ArrowWriterIterator(
     ArrowUtils.rootAllocator.newChildAllocator("arrowWriterIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
 
-  taskContext.addTaskCompletionListener[Unit](_ => close())
+  if (taskContext != null) {
+    taskContext.addTaskCompletionListener[Unit](_ => close())
+  }
 
   override def hasNext: Boolean = allocator != null && rowIter.hasNext
 
@@ -73,7 +75,7 @@ class ArrowWriterIterator(
     }
   }
 
-  private def close(): Unit =
+  def close(): Unit =
     synchronized {
       if (allocator != null) {
         allocator.close()

@@ -17,7 +17,10 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.nio.channels.Channels
+import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -26,12 +29,16 @@ import java.util.concurrent.TimeoutException
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Promise
 
+import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
+import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
+import org.apache.commons.io.IOUtils
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
 import org.apache.spark.SparkException
 import org.apache.spark.TaskContext
 import org.apache.spark.broadcast
+import org.apache.spark.SparkEnv
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
@@ -60,7 +67,11 @@ import org.blaze.protobuf.Schema
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
+import org.apache.spark.sql.execution.blaze.arrowio.ArrowReaderIterator
+import org.apache.spark.sql.execution.blaze.arrowio.ArrowWriterIterator
+import org.apache.spark.sql.execution.blaze.arrowio.ZstdUtil
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.sql.internal.SQLConf
 
 abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike
@@ -126,7 +137,7 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val broadcast = doExecuteBroadcastNative[Array[Array[Byte]]]()
+    val broadcast = doExecuteBroadcastNative[Array[Byte]]()
     val nativeMetrics = MetricNode(metrics, Nil)
     val partitions = Array(new Partition() {
       override def index: Int = 0
@@ -141,10 +152,9 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
       (_, context) => {
         val resourceId = s"ArrowBroadcastExchangeExec:${UUID.randomUUID()}"
         val provideIpcIterator = () => {
-          val ipcIterator = broadcast.value.iterator.flatMap { bytes =>
-            val inputStream = new ByteArrayInputStream(bytes)
+          val inputStream = new ByteArrayInputStream(broadcast.value)
+          val ipcIterator =
             IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
-          }
           new InterruptibleIterator(context, ipcIterator)
         }
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
@@ -165,7 +175,7 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
 
   val nativeSchema: Schema = Util.getNativeSchema(output)
 
-  def collectNative(): Array[Array[Byte]] = {
+  def collectNative(): Array[Byte] = {
     val inputRDD = NativeHelper.executeNative(child match {
       case child if NativeHelper.isNative(child) => child
       case child => ConvertToNativeExec(child)
@@ -190,7 +200,6 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
             val byteArray = new Array[Byte](byteBuffer.capacity())
             byteBuffer.get(byteArray)
             ipcs += byteArray
-            metrics("dataSize") += byteArray.length
           })
 
         val input = inputRDD.nativePlan(inputRDD.partitions(split.index), context)
@@ -213,7 +222,42 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
         ipcs.iterator
       }
     }
-    ipcRDD.collect()
+    val ipcs = ipcRDD.collect()
+
+    // if there are only one ipc, directly return it
+    if (ipcs.length == 1) {
+      val ipcBytes = ipcRDD.collect().head
+      metrics("dataSize") += ipcBytes.length
+      return ipcBytes
+    }
+
+    // if there are more than one partition, merge them into one ipc
+    // TODO: implement this logic in native and avoid columns to rows convertion
+    val rows = ipcRDD.collect().iterator.flatMap { partIpcBytes =>
+      val partIn = new ByteArrayInputStream(partIpcBytes)
+      IpcInputStreamIterator(partIn, decompressingNeeded = true, null)
+        .flatMap(new ArrowReaderIterator(_, null))
+    }
+    val out = new ByteArrayOutputStream()
+    val timeZoneId: String = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
+    val writer = new ArrowWriterIterator(rows, Util.getSchema(output), timeZoneId, null)
+    writer.foreach { channel =>
+      val os = new ByteArrayOutputStream()
+      val is = Channels.newInputStream(channel)
+      val zs = ZstdUtil.createZstdOutputStreamWithIpcDict(os)
+      IOUtils.copy(is, zs)
+      zs.flush()
+
+      val bytes = os.toByteArray
+      val ipcLengthBuf = ByteBuffer.allocate(8)
+      ipcLengthBuf.order(ByteOrder.LITTLE_ENDIAN)
+      ipcLengthBuf.putLong(bytes.length.toLong)
+      out.write(ipcLengthBuf.array())
+      out.write(bytes)
+    }
+    writer.close()
+    metrics("dataSize") += out.size()
+    out.toByteArray
   }
 
   @transient
@@ -231,8 +275,8 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
   }
 
   @transient
-  lazy val nativeRelationFuture: Future[Broadcast[Array[Array[Byte]]]] = {
-    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Array[Byte]]]](
+  lazy val nativeRelationFuture: Future[Broadcast[Array[Byte]]] = {
+    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Byte]]](
       sqlContext.sparkSession,
       BroadcastExchangeExec.executionContext) {
       try {
@@ -241,11 +285,11 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
           s"native broadcast exchange (runId $getRunId)",
           interruptOnCancel = true)
         val broadcasted = sparkContext.broadcast(collectNative())
-        Promise[Broadcast[Array[Array[Byte]]]].trySuccess(broadcasted)
+        Promise[Broadcast[Array[Byte]]].trySuccess(broadcasted)
         broadcasted
       } catch {
         case e: Throwable =>
-          Promise[Broadcast[Array[Array[Byte]]]].tryFailure(e)
+          Promise[Broadcast[Array[Byte]]].tryFailure(e)
           throw e
       }
     }
