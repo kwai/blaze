@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.execution.blaze.arrowio
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.channels.Channels
 import java.nio.channels.ReadableByteChannel
@@ -23,13 +24,14 @@ import java.nio.channels.ReadableByteChannel
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
-import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
+
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.util.Utils
 import org.apache.spark.TaskContext
+
 import org.apache.spark.sql.blaze.NativeHelper
 
 class ArrowWriterIterator(
@@ -71,7 +73,9 @@ class ArrowWriterIterator(
         writer.close()
       }
       root.close()
-      new SeekableInMemoryByteChannel(outputStream.toByteArray)
+
+      val in = new ByteArrayInputStream(outputStream.toByteArray)
+      Channels.newChannel(in)
     }
   }
 

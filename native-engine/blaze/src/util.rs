@@ -13,14 +13,14 @@
 // limitations under the License.
 
 use std::io::{Cursor, };
-use blaze_commons::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref};
+use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::common::Result;
 use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion_ext_commons::ipc::write_one_batch;
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject};
 use jni::sys::{jboolean, JNI_TRUE};
-use datafusion_ext_commons::streams::ipc_stream::{get_channel_reader, ReadableByteChannelBatchReader, RecordBatchReader};
+use datafusion_ext_commons::streams::ipc_stream::get_channel_reader;
 use crate::{handle_unwinded_scope, SESSION};
 
 #[allow(non_snake_case)]
