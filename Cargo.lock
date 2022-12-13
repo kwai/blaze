@@ -294,6 +294,7 @@ dependencies = [
  "blaze-commons",
  "blaze-serde",
  "datafusion",
+ "datafusion-ext-commons",
  "futures",
  "jni",
  "log",

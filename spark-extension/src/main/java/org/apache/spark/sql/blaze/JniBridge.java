@@ -16,9 +16,14 @@
 
 package org.apache.spark.sql.blaze;
 
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
+import scala.Function1;
+import scala.Unit;
+import scala.collection.Iterator;
 
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
@@ -49,6 +54,11 @@ public class JniBridge {
   }
 
   public static boolean isTaskRunning() {
-    return !TaskContext$.MODULE$.get().isCompleted() && !TaskContext$.MODULE$.get().isInterrupted();
+    TaskContext tc = getTaskContext();
+    return !tc.isCompleted() && !tc.isInterrupted();
   }
+
+  public static native void mergeIpcs(
+      Iterator<ReadableByteChannel> ipcBytesIter,
+      Function1<ByteBuffer, Unit> mergedIpcBytesHandler);
 }

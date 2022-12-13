@@ -139,18 +139,7 @@ case class BlazeCallNativeWrapper(
   private val finished: AtomicBoolean = new AtomicBoolean(false)
   private val nativeThreadFinished: BlockingQueue[Object] = new ArrayBlockingQueue(1)
 
-  BlazeCallNativeWrapper.synchronized {
-    if (!BlazeCallNativeWrapper.nativeInitialized) {
-      logInfo(s"Initializing native environment ...")
-      BlazeCallNativeWrapper.load("blaze")
-      JniBridge.initNative(
-        NativeHelper.batchSize,
-        NativeHelper.nativeMemory,
-        NativeHelper.memoryFraction,
-        NativeHelper.tmpDirs)
-      BlazeCallNativeWrapper.nativeInitialized = true
-    }
-  }
+  BlazeCallNativeWrapper.initNative()
 
   logInfo(s"Start executing native plan")
   JniBridge.callNative(this)
@@ -241,8 +230,20 @@ case class BlazeCallNativeWrapper(
   }
 }
 
-object BlazeCallNativeWrapper {
-  private var nativeInitialized: Boolean = false
+object BlazeCallNativeWrapper extends Logging {
+  def initNative(): Unit = {
+    lazyInitNative
+  }
+
+  private lazy val lazyInitNative: Unit = {
+    logInfo(s"Initializing native environment ...")
+    BlazeCallNativeWrapper.load("blaze")
+    JniBridge.initNative(
+      NativeHelper.batchSize,
+      NativeHelper.nativeMemory,
+      NativeHelper.memoryFraction,
+      NativeHelper.tmpDirs)
+  }
 
   private def load(name: String): Unit = {
     val libraryToLoad = System.mapLibraryName(name)
@@ -266,4 +267,5 @@ object BlazeCallNativeWrapper {
         throw new IllegalStateException("error loading native libraries: " + e)
     }
   }
+
 }

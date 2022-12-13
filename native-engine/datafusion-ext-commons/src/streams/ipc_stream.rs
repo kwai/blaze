@@ -93,10 +93,10 @@ impl IpcReaderStream {
         let schema = self.schema.clone();
         self.reader = Some(match self.mode {
             IpcReadMode::ChannelUncompressed =>
-                get_channel_reader(schema, segment, false)?,
+                get_channel_reader(Some(schema), segment, false)?,
 
             IpcReadMode::Channel =>
-                get_channel_reader(schema, segment, true)?,
+                get_channel_reader(Some(schema), segment, true)?,
 
             IpcReadMode::ChannelAndFileSegment => {
                 let segment_class = jni_get_object_class!(segment)?;
@@ -104,9 +104,9 @@ impl IpcReaderStream {
                     jni_call!(Class(segment_class).getName() -> JObject)?;
                 let segment_classname = jni_get_string!(segment_classname.into())?;
                 if segment_classname == "org.apache.spark.storage.FileSegment" {
-                    get_file_segment_reader(schema, segment)?
+                    get_file_segment_reader(Some(schema), segment)?
                 } else {
-                    get_channel_reader(schema, segment, true)?
+                    get_channel_reader(Some(schema), segment, true)?
                 }
             }
         });
@@ -114,8 +114,8 @@ impl IpcReaderStream {
     }
 }
 
-fn get_channel_reader(
-    schema: SchemaRef,
+pub fn get_channel_reader(
+    schema: Option<SchemaRef>,
     channel: JObject,
     compressed: bool,
 ) -> Result<Box<dyn RecordBatchReader>> {
@@ -128,8 +128,8 @@ fn get_channel_reader(
     )?))
 }
 
-fn get_file_segment_reader(
-    schema: SchemaRef,
+pub fn get_file_segment_reader(
+    schema: Option<SchemaRef>,
     file_segment: JObject,
 ) -> Result<Box<dyn RecordBatchReader>> {
     let file = jni_call!(SparkFileSegment(file_segment).file() -> JObject)?;
@@ -175,19 +175,19 @@ impl RecordBatchStream for IpcReaderStream {
     }
 }
 
-trait RecordBatchReader {
+pub trait RecordBatchReader {
     fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>>;
 }
 
 // record batch reader for byte channel
-struct ReadableByteChannelBatchReader {
-    schema: SchemaRef,
+pub struct ReadableByteChannelBatchReader {
+    schema: Option<SchemaRef>,
     inner: StreamReader<Box<dyn Read>>,
 }
 
 impl ReadableByteChannelBatchReader {
-    fn try_new(
-        schema: SchemaRef,
+    pub fn try_new(
+        schema: Option<SchemaRef>,
         channel: GlobalRef,
         compressed: bool,
     ) -> ArrowResult<Self> {
@@ -212,7 +212,10 @@ impl ReadableByteChannelBatchReader {
 impl RecordBatchReader for ReadableByteChannelBatchReader {
     fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>> {
         if let Some(batch) = self.inner.next().transpose()? {
-            return Ok(Some(name_batch(&batch, &self.schema)?));
+            if let Some(schema) = self.schema.as_ref() {
+                return Ok(Some(name_batch(&batch, schema)?));
+            }
+            return Ok(Some(batch));
         }
         Ok(None)
     }
@@ -238,8 +241,8 @@ impl Drop for ReadableByteChannelReader {
 }
 
 // record batch reader for file segment
-struct FileSegmentBatchReader {
-    schema: SchemaRef,
+pub struct FileSegmentBatchReader {
+    schema: Option<SchemaRef>,
     file: File,
     segment_reader: Option<StreamReader<Box<dyn Read>>>,
     current_ipc_length: u64,
@@ -248,7 +251,7 @@ struct FileSegmentBatchReader {
 }
 impl FileSegmentBatchReader {
     fn try_new(
-        schema: SchemaRef,
+        schema: Option<SchemaRef>,
         path: impl AsRef<Path>,
         offset: u64,
         length: u64,
@@ -266,7 +269,10 @@ impl FileSegmentBatchReader {
     fn next_batch_impl(&mut self) -> ArrowResult<Option<RecordBatch>> {
         if let Some(reader) = &mut self.segment_reader {
             if let Some(batch) = reader.next().transpose()? {
-                return Ok(Some(name_batch(&batch, &self.schema)?));
+                if let Some(schema) = self.schema.as_ref() {
+                    return Ok(Some(name_batch(&batch, schema)?));
+                }
+                return Ok(Some(batch));
             }
         }
 

@@ -23,14 +23,13 @@ import java.nio.channels.Channels
 import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.Future
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Promise
 
 import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
-import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
 import org.apache.commons.io.IOUtils
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.OneToOneDependency
@@ -39,38 +38,38 @@ import org.apache.spark.SparkException
 import org.apache.spark.TaskContext
 import org.apache.spark.broadcast
 import org.apache.spark.SparkEnv
-
-import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeHelper
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.catalyst.trees.TreeNodeTag
-import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
 import org.blaze.protobuf.IpcWriterExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.blaze.BlazeCallNativeWrapper
+import org.apache.spark.sql.blaze.JniBridge
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeHelper
+import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
+import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowReaderIterator
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowWriterIterator
+import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
 import org.apache.spark.sql.execution.blaze.arrowio.ZstdUtil
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.internal.SQLConf
 
 abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)
@@ -232,31 +231,18 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
     }
 
     // if there are more than one partition, merge them into one ipc
-    // TODO: implement this logic in native and avoid columns to rows convertion
-    val rows = ipcs.iterator.flatMap { partIpcBytes =>
-      val partIn = new ByteArrayInputStream(partIpcBytes)
-      IpcInputStreamIterator(partIn, decompressingNeeded = true, null)
-        .flatMap(new ArrowReaderIterator(_, null))
-    }
     val out = new ByteArrayOutputStream()
-    val timeZoneId: String = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
-    val writer = new ArrowWriterIterator(rows, Util.getSchema(output), timeZoneId, null)
-    writer.foreach { channel =>
-      val os = new ByteArrayOutputStream()
-      val is = Channels.newInputStream(channel)
-      val zs = ZstdUtil.createZstdOutputStreamWithIpcDict(os)
-      IOUtils.copy(is, zs)
-      zs.flush()
+    val outChannel = Channels.newChannel(out);
 
-      val bytes = os.toByteArray
-      val ipcLengthBuf = ByteBuffer.allocate(8)
-      ipcLengthBuf.order(ByteOrder.LITTLE_ENDIAN)
-      ipcLengthBuf.putLong(bytes.length.toLong)
-      out.write(ipcLengthBuf.array())
-      out.write(bytes)
-    }
-    writer.close()
-    metrics("dataSize") += out.size()
+    // this code runs on driver side, so it is necessary to ensure native
+    // environment is initialized
+    BlazeCallNativeWrapper.initNative()
+    JniBridge.mergeIpcs(
+      ipcs.iterator.flatMap(ipcBytes => {
+        val inputStream = new ByteArrayInputStream(ipcBytes)
+        IpcInputStreamIterator(inputStream, decompressingNeeded = false, null)
+      }),
+      mergedIpcBytes => outChannel.write(mergedIpcBytes))
     out.toByteArray
   }
 

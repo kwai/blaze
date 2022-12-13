@@ -166,7 +166,12 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
             datafusion_ext_commons::streams::ipc_stream::ReadableByteChannelReader(
                 jni_new_global_ref!(output_channel)?,
             );
-        let output_batch = match read_one_batch(&mut reader, output_schema.clone(), false)? {
+
+        let output_batch = match read_one_batch(
+            &mut reader,
+            Some(output_schema.clone()),
+            false,
+        )? {
             Some(batch) => batch,
             None => RecordBatch::new_empty(output_schema.clone()),
         };

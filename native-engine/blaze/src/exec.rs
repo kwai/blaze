@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::error::Error;
-use std::fmt::Debug;
-
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,7 +30,7 @@ use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JClass, JString};
-use jni::objects::{JObject, JThrowable};
+use jni::objects::JObject;
 use jni::sys::{jboolean, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use log::LevelFilter;
@@ -44,6 +40,7 @@ use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogM
 use tokio::runtime::Runtime;
 
 use crate::metrics::update_spark_metric_node;
+use crate::{handle_unwinded_scope, is_task_running, SESSION};
 
 fn init_logging() {
     static LOGGING_INIT: OnceCell<()> = OnceCell::new();
@@ -73,8 +70,6 @@ fn java_false() -> &'static GlobalRef {
         jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_FALSE).unwrap()).unwrap()
     })
 }
-
-static SESSION: OnceCell<SessionContext> = OnceCell::new();
 
 #[allow(non_snake_case)]
 #[allow(clippy::single_match)]
@@ -364,63 +359,4 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         log::info!("Blaze native thread created");
         datafusion::error::Result::Ok(())
     });
-}
-
-fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Result<()> {
-    let msg = jni_new_string!(msg)?;
-    let e = jni_new_object!(JavaRuntimeException, msg, cause)?;
-
-    if let Err(err) = jni_throw!(JThrowable::from(e)) {
-        jni_fatal_error!(format!(
-            "Error throwing RuntimeException, cannot result: {:?}",
-            err
-        ));
-    }
-    Ok(())
-}
-
-fn handle_unwinded(err: Box<dyn Any + Send>) {
-    // default handling:
-    //  * caused by Interrupted/TaskKilled: do nothing but just print a message.
-    //  * other reasons: wrap it into a RuntimeException and throw.
-    //  * if another error happens during handling, kill the whole JVM instance.
-    let recover = || {
-        if !is_task_running()? {
-            // only handle running task
-            return Ok(());
-        }
-        let panic_message = panic_message::panic_message(&err);
-
-        // throw jvm runtime exception
-        let cause = if jni_exception_check!()? {
-            let throwable = jni_exception_occurred!()?.into();
-            jni_exception_clear!()?;
-            throwable
-        } else {
-            JObject::null()
-        };
-        throw_runtime_exception(panic_message, cause)?;
-        Ok(())
-    };
-    recover().unwrap_or_else(|err: Box<dyn Error>| {
-        jni_fatal_error!(format!(
-            "Error recovering from panic, cannot resume: {:?}",
-            err
-        ));
-    });
-}
-
-fn handle_unwinded_scope<E: Debug>(scope: impl FnOnce() -> Result<(), E>) {
-    if let Err(err) = std::panic::catch_unwind(AssertUnwindSafe(|| scope().unwrap())) {
-        handle_unwinded(err);
-    }
-}
-
-fn is_task_running() -> datafusion::error::Result<bool> {
-    if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE {
-        jni_exception_clear!()?;
-        log::info!("native execution completed/interrupted");
-        return Ok(false);
-    }
-    Ok(true)
 }

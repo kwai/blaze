@@ -87,7 +87,7 @@ pub fn write_one_batch<W: Write + Seek>(
 
 pub fn read_one_batch<R: Read>(
     input: &mut R,
-    schema: SchemaRef,
+    schema: Option<SchemaRef>,
     compress: bool,
 ) -> ArrowResult<Option<RecordBatch>> {
 
@@ -105,7 +105,10 @@ pub fn read_one_batch<R: Read>(
     };
 
     // recover schema name
-    Ok(Some(name_batch(&nameless_batch, &schema)?))
+    if let Some(schema) = schema.as_ref() {
+        return Ok(Some(name_batch(&nameless_batch, schema)?))
+    }
+    Ok(Some(nameless_batch))
 }
 
 pub fn name_batch(
