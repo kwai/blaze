@@ -201,4 +201,9 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
   }
 
   override def simpleStringWithNodeId(plan: SparkPlan): String = plan.simpleStringWithNodeId()
+
+  override def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
+    basedExec.logicalLink.foreach(logicalLink => exec.setLogicalLink(logicalLink))
+    exec
+  }
 }
