@@ -131,6 +131,9 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         case ("bytes_scanned", v) =>
           val inputMetric = TaskContext.get.taskMetrics().inputMetrics
           inputMetric.incBytesRead(v)
+        case ("output_rows", v) =>
+          val inputMetric = TaskContext.get.taskMetrics().inputMetrics
+          inputMetric.incRecordsRead(v)
         case _ =>
       }))
     val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
