@@ -115,21 +115,8 @@ case class MetricNode(
     children(i)
 
   def add(metricName: String, v: Long): Unit = {
-    metrics.get(metricName) match {
-      case Some(metric) =>
-        metric.add(v)
-        metricValueHandler match {
-          case Some(handler) => handler.apply(metricName, v)
-          case None =>
-            logWarning(s"Ignore non-exist metric: ${metricName}")
-        }
-      case None =>
-        metricValueHandler match {
-          case Some(handler) => handler.apply(metricName, v)
-          case None =>
-            logWarning(s"Ignore non-exist metric: ${metricName}")
-        }
-    }
+    metrics.get(metricName).foreach(_.add(v))
+    metricValueHandler.foreach(_.apply(metricName, v))
   }
 }
 
