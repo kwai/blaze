@@ -19,17 +19,13 @@ package org.apache.spark.sql.execution.blaze.plan
 import java.net.URI
 import java.security.PrivilegedExceptionAction
 import java.util.UUID
-
 import scala.collection.JavaConverters._
-
 import org.apache.hadoop.fs.FileSystem
-
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
-import org.apache.spark.Partition
-
+import org.apache.spark.{Partition, TaskContext}
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
@@ -47,7 +43,6 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.FileGroup
-
 import org.apache.spark.sql.blaze.NativeSupports
 
 abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
@@ -129,7 +124,15 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
 
   override def doExecuteNative(): NativeRDD = {
     val partitions = inputFileScanRDD.filePartitions.toArray
-    val nativeMetrics = MetricNode(metrics, Nil)
+    val nativeMetrics = MetricNode(
+      metrics,
+      Nil,
+      Some({
+        case ("bytes_scanned", v) =>
+          val inputMetric = TaskContext.get.taskMetrics().inputMetrics
+          inputMetric.incBytesRead(v)
+        case _ =>
+      }))
     val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
     val partCols = basedFileScan.relation.partitionSchema.map(_.name)
     val partitionSchema = NativeConverters.convertSchema(basedFileScan.relation.partitionSchema)
