@@ -38,7 +38,7 @@ use itertools::Itertools;
 use tokio::task;
 use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
 use datafusion_ext_commons::ipc::write_one_batch;
-use crate::shuffle::{evaluate_partition_ids, FileSpillInfo, ShuffleRepartitioner};
+use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, FileSpillInfo, ShuffleRepartitioner};
 
 pub struct BucketShuffleRepartitioner {
     id: MemoryConsumerId,
@@ -107,7 +107,8 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
-        let partition_ids = evaluate_partition_ids(&self.partitioning, &input)?;
+        let hashes = evaluate_hashes(&self.partitioning, &input)?;
+        let partition_ids = evaluate_partition_ids(&hashes, num_output_partitions);
 
         // count each partition size
         let mut partition_counters = vec![0usize; num_output_partitions];

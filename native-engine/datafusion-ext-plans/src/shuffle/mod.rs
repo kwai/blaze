@@ -124,13 +124,13 @@ struct FileSpillInfo {
     offsets: Vec<u64>,
 }
 
-fn evaluate_partition_ids(
+fn evaluate_hashes(
     partitioning: &Partitioning,
     batch: &RecordBatch,
 ) -> ArrowResult<Vec<u32>>{
     match partitioning {
-        Partitioning::Hash(exprs, num_partitions) => {
-            let hashes_buf = &mut vec![];
+        Partitioning::Hash(exprs, _) => {
+            let mut hashes_buf = vec![];
             let arrays = exprs
                 .iter()
                 .map(|expr| Ok(expr.evaluate(&batch)?.into_array(batch.num_rows())))
@@ -139,12 +139,21 @@ fn evaluate_partition_ids(
             // use identical seed as spark hash partition
             hashes_buf.resize(arrays[0].len(), 42);
 
-            // Hash arrays and compute buckets based on number of partitions
-            Ok(create_hashes(&arrays, hashes_buf)?
-                .iter_mut()
-                .map(|hash| pmod(*hash, *num_partitions) as u32)
-                .collect::<Vec<_>>())
+            // compute hash array
+            create_hashes(&arrays, &mut hashes_buf)?;
+            Ok(hashes_buf)
         }
         _ => unreachable!("unsupported partitioning: {:?}", partitioning)
     }
+}
+
+fn evaluate_partition_ids(
+    hashes: &[u32],
+    num_partitions: usize
+) -> Vec<u32> {
+    hashes
+        .iter()
+        .map(|hash| pmod(*hash, num_partitions) as u32)
+        .collect()
+
 }

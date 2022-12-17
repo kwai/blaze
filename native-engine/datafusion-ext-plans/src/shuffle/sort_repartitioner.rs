@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::cmp::Ordering;
 use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -40,7 +40,8 @@ use datafusion_ext_commons::ipc::write_one_batch;
 use futures::lock::Mutex;
 use datafusion::physical_plan::coalesce_batches::concat_batches;
 use tokio::task;
-use crate::shuffle::{evaluate_partition_ids, FileSpillInfo, InMemSpillInfo, ShuffleRepartitioner};
+use voracious_radix_sort::{Radixable, RadixSort};
+use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, FileSpillInfo, InMemSpillInfo, ShuffleRepartitioner};
 
 pub struct SortShuffleRepartitioner {
     memory_consumer_id: MemoryConsumerId,
@@ -121,16 +122,21 @@ impl SortShuffleRepartitioner {
             &std::mem::take::<Vec<RecordBatch>>(&mut buffered_batches),
             num_buffered_rows)?;
 
+        let hashes = evaluate_hashes(&self.partitioning, &batch)?;
+        let partition_ids = evaluate_partition_ids(&hashes, num_output_partitions);
+
         // compute partition ids and sorted indices by counting sort
-        let mut pi_vec = evaluate_partition_ids(&self.partitioning, &batch)?
+        let mut pi_vec = hashes
             .into_iter()
+            .zip(partition_ids.into_iter())
             .enumerate()
-            .map(|(i, partition_id)| PI {
+            .map(|(i, (hash, partition_id))| PI {
                 partition_id,
+                hash,
                 index: i as u32,
             })
             .collect::<Vec<_>>();
-        counting_sort_pis(&mut pi_vec, num_output_partitions);
+        RadixSort::voracious_sort(&mut pi_vec);
 
         // write to in-mem spill
         let mut cur_partition_id = 0;
@@ -475,39 +481,26 @@ impl Drop for SortShuffleRepartitioner {
 #[derive(Clone, Copy, Default)]
 struct PI {
     partition_id: u32,
+    hash: u32,
     index: u32,
 }
 
-fn counting_sort_pis(
-    pis: &mut [PI],
-    num_output_partitions: usize
-) {
-    let mut counts = vec![0u32; num_output_partitions];
-
-    // compute counts
-    for pi in pis.as_ref() {
-        counts[pi.partition_id as usize] += 1;
+impl PartialOrd for PI {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.key().partial_cmp(&other.key())
     }
+}
 
-    // compute buckets
-    let mut buckets: Vec<Range<u32>> = vec![];
-    for count in counts {
-        let bucket_start = buckets.last().map(|b| b.end).unwrap_or(0);
-        buckets.push(bucket_start .. bucket_start + count);
+impl PartialEq for PI {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
     }
+}
 
-    // swap objects into place
-    for b in 0..num_output_partitions {
-        for i in buckets[b].clone() {
-            loop {
-                let bucket = &mut buckets[pis[i as usize].partition_id as usize];
-                if bucket.contains(&i) {
-                    bucket.start += 1;
-                    break;
-                }
-                pis.swap(i as usize, bucket.start as usize);
-                bucket.start += 1;
-            }
-        }
+impl Radixable<u64> for PI {
+    type Key = u64;
+
+    fn key(&self) -> Self::Key {
+        (self.partition_id as u64) << 32 | self.hash as u64
     }
 }

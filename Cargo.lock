@@ -769,6 +769,7 @@ dependencies = [
  "paste",
  "tempfile",
  "tokio",
+ "voracious_radix_sort",
 ]
 
 [[package]]
@@ -2218,6 +2219,12 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "voracious_radix_sort"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ca7cc4f89d8aa95b7653c6573f8c4d7fec0574998fad0014d9d1acf777dba57"
 
 [[package]]
 name = "walkdir"
