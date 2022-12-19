@@ -108,7 +108,7 @@ case class ArrowShuffleExchangeExec(
    */
   private var cachedShuffleRDD: ShuffledRowRDD = _
 
-  protected override def doExecute(): RDD[InternalRow] =
+  protected override def doExecuteNonNative(): RDD[InternalRow] =
     attachTree(this, "execute") {
       // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
       if (cachedShuffleRDD == null) {

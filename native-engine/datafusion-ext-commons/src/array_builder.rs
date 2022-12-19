@@ -395,6 +395,7 @@ impl<T: DecimalType> ConfiguredDecimalBuilder<T> {
         self.scale
     }
 }
+
 impl<T: DecimalType> ArrayBuilder for ConfiguredDecimalBuilder<T> {
     fn len(&self) -> usize {
         self.inner.len()

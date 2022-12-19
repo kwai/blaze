@@ -16,7 +16,7 @@ use std::io::{Cursor, };
 use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::common::Result;
 use datafusion::physical_plan::coalesce_batches::concat_batches;
-use datafusion_ext_commons::ipc::write_one_batch;
+use datafusion_ext_commons::io::write_one_batch;
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject};
 use jni::sys::{jboolean, JNI_TRUE};

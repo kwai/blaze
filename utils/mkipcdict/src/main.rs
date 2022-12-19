@@ -4,6 +4,9 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::ipc::writer::StreamWriter;
 use itertools::Itertools;
+use arrow::ipc::writer::IpcWriteOptions;
+use arrow::ipc::MetadataVersion;
+use arrow::ipc::CompressionType;
 
 fn main() -> ArrowResult<()> {
 
@@ -59,25 +62,26 @@ fn main() -> ArrowResult<()> {
     println!("");
 
     // prepare test batch
-    let array1: ArrayRef = Arc::new(StringArray::from_iter_values(["20220101".to_owned()]));
-    let array2: ArrayRef = Arc::new(Int32Array::from_iter_values([123456789i32]));
-    let array3: ArrayRef = Arc::new(Int64Array::from_iter_values([123456789123456789i64]));
-    let array4: ArrayRef = Arc::new(Int32Array::from_iter([None]));
-    let array5: ArrayRef = Arc::new(Int64Array::from_iter([None]));
+    let array1: ArrayRef = Arc::new(StringArray::from_iter_values((0..100000).into_iter().map(|_| "20220101".to_owned())));
+    //let array2: ArrayRef = Arc::new(Int32Array::from_iter_values([123456789i32]));
+    //let array3: ArrayRef = Arc::new(Int64Array::from_iter_values([123456789123456789i64]));
+    //let array4: ArrayRef = Arc::new(Int32Array::from_iter([None]));
+    //let array5: ArrayRef = Arc::new(Int64Array::from_iter([None]));
     let batch = RecordBatch::try_from_iter_with_nullable([
         ("", array1, false),
-        ("", array2, false),
-        ("", array3, false),
-        ("", array4, true),
-        ("", array5, true),
+        //("", array2, false),
+        //("", array3, false),
+        //("", array4, true),
+        //("", array5, true),
     ])?;
 
     // test
-    let level = 10;
-    let mut buf1 = vec![];
-    let zwriter = zstd::Encoder::new(&mut buf1, level)?
-        .auto_finish();
-    let mut writer = StreamWriter::try_new(zwriter, &batch.schema())?;
+    let level = 1;
+    let mut buf1: Vec<u8> = vec![];
+    //let zwriter = zstd::Encoder::new(&mut buf1, level)?
+    //    .auto_finish();
+    let mut f = std::fs::File::create("./test.arrow")?;
+    let mut writer = StreamWriter::try_new_with_options(&mut f, &batch.schema(), IpcWriteOptions::try_new(64, false, MetadataVersion::V5)?.try_with_compression(None)?)?;
     writer.write(&batch)?;
     writer.finish()?;
     drop(writer);

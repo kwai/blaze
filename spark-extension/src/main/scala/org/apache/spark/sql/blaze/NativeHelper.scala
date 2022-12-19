@@ -42,9 +42,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIImportIterator
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper

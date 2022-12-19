@@ -37,7 +37,7 @@ use datafusion::physical_plan::coalesce_batches::concat_batches;
 use itertools::Itertools;
 use tokio::task;
 use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
-use datafusion_ext_commons::ipc::write_one_batch;
+use datafusion_ext_commons::io::write_one_batch;
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, FileSpillInfo, ShuffleRepartitioner};
 
 pub struct BucketShuffleRepartitioner {

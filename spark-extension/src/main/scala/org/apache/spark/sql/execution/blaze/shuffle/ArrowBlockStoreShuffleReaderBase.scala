@@ -22,6 +22,7 @@ import java.io.FilterInputStream
 import java.io.InputStream
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.nio.channels.Channels
 
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.ShuffleDependency
@@ -50,12 +51,14 @@ abstract class ArrowBlockStoreShuffleReaderBase[K, C](
   protected def readBlocks(): Iterator[(BlockId, InputStream)]
 
   def readIpc(): Iterator[Object] = { // FileSegment | ReadableByteChannel
-    val ipcIterator = readBlocks().flatMap {
+    val ipcIterator = readBlocks().map {
       case (_, inputStream) =>
         getFileSegmentFromInputStream(inputStream) match {
-          case Some(fileSegment) => Iterator.single(fileSegment)
+          case Some(fileSegment) =>
+            fileSegment
           case None =>
-            IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
+            val in = new LimitedInputStream(inputStream, Long.MaxValue, false)
+            Channels.newChannel(in)
         }
     }
 

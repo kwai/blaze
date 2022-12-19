@@ -33,7 +33,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
-use datafusion_ext_commons::ipc::write_one_batch;
+use datafusion_ext_commons::io::write_one_batch;
 
 use futures::StreamExt;
 use futures::TryFutureExt;

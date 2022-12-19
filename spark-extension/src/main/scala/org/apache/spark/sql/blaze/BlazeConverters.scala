@@ -17,8 +17,10 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
+
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -66,6 +68,7 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.SparkEnv
+
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.aggregate.Final
@@ -79,6 +82,7 @@ import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 
@@ -193,6 +197,10 @@ object BlazeConverters extends Logging {
     val (outputPartitioning, child) = (exec.outputPartitioning, exec.child)
     logDebug(
       s"Converting ShuffleExchangeExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+
+    assert(
+      exec.outputPartitioning.numPartitions == 1 || exec.outputPartitioning
+        .isInstanceOf[HashPartitioning])
 
     val convertedChild = outputPartitioning match {
       case p if p.isInstanceOf[HashPartitioning] || p.numPartitions == 1 =>

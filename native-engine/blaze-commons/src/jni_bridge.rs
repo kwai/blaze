@@ -21,7 +21,6 @@ pub use jni::objects::JObject;
 pub use jni::objects::JStaticMethodID;
 pub use jni::objects::JValue;
 pub use jni::signature::Primitive;
-pub use jni::signature::Primitive::Boolean;
 pub use jni::signature::ReturnType;
 pub use jni::sys::jvalue;
 pub use jni::JNIEnv;
@@ -332,6 +331,7 @@ pub struct JavaClasses<'a> {
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
     pub cJavaFile: JavaFile<'a>,
+    pub cJavaBuffer: JavaBuffer<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
     pub cScalaTuple2: ScalaTuple2<'a>,
@@ -389,6 +389,7 @@ impl JavaClasses<'static> {
                 cJavaList: JavaList::new(env).unwrap(),
                 cJavaMap: JavaMap::new(env).unwrap(),
                 cJavaFile: JavaFile::new(env).unwrap(),
+                cJavaBuffer: JavaBuffer::new(env).unwrap(),
 
                 cScalaIterator: ScalaIterator::new(env).unwrap(),
                 cScalaTuple2: ScalaTuple2::new(env).unwrap(),
@@ -479,7 +480,7 @@ impl<'a> JniBridge<'a> {
                 "isTaskRunning",
                 "()Z",
             )?,
-            method_isTaskRunning_ret: ReturnType::Primitive(Boolean),
+            method_isTaskRunning_ret: ReturnType::Primitive(Primitive::Boolean),
         })
     }
 }
@@ -708,6 +709,29 @@ impl<'a> JavaFile<'a> {
                 "()Ljava/lang/String;",
             )?,
             method_getPath_ret: ReturnType::Object,
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JavaBuffer<'a> {
+    pub class: JClass<'a>,
+    pub method_hasRemaining: JMethodID,
+    pub method_hasRemaining_ret: ReturnType,
+    pub method_position: JMethodID,
+    pub method_position_ret: ReturnType,
+}
+impl<'a> JavaBuffer<'a> {
+    pub const SIG_TYPE: &'static str = "java/nio/Buffer";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaBuffer<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaBuffer {
+            class,
+            method_hasRemaining: env.get_method_id(class, "hasRemaining", "()Z")?,
+            method_hasRemaining_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_position: env.get_method_id(class, "position", "()I")?,
+            method_position_ret: ReturnType::Primitive(Primitive::Int),
         })
     }
 }

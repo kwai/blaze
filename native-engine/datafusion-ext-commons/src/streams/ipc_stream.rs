@@ -20,7 +20,6 @@ use blaze_commons::{
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 use datafusion::physical_plan::common::batch_byte_size;
@@ -31,12 +30,11 @@ use jni::objects::{GlobalRef, JObject};
 use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
 use std::fs::File;
 use std::io::Seek;
-use std::io::{BufReader, Read, SeekFrom};
-use std::path::Path;
+use std::io::{Read, SeekFrom};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use crate::ipc::{ipc_decoder_dict, name_batch};
+use crate::io::read_one_batch;
 
 #[derive(Debug, Clone, Copy)]
 pub enum IpcReadMode {
@@ -54,7 +52,7 @@ pub struct IpcReaderStream {
     schema: SchemaRef,
     mode: IpcReadMode,
     segments: GlobalRef,
-    reader: Option<Box<dyn RecordBatchReader>>,
+    reader: Option<RecordBatchReader>,
     baseline_metrics: BaselineMetrics,
     size_counter: Count,
 }
@@ -118,31 +116,36 @@ pub fn get_channel_reader(
     schema: Option<SchemaRef>,
     channel: JObject,
     compressed: bool,
-) -> Result<Box<dyn RecordBatchReader>> {
+) -> Result<RecordBatchReader> {
     let global_ref = jni_new_global_ref!(channel)?;
     jni_delete_local_ref!(channel)?;
-    Ok(Box::new(ReadableByteChannelBatchReader::try_new(
+    let channel_reader = ReadableByteChannelReader::new(global_ref);
+
+    Ok(RecordBatchReader::new(
+        Box::new(channel_reader),
         schema,
-        global_ref,
         compressed,
-    )?))
+    ))
 }
 
 pub fn get_file_segment_reader(
     schema: Option<SchemaRef>,
     file_segment: JObject,
-) -> Result<Box<dyn RecordBatchReader>> {
+) -> Result<RecordBatchReader> {
     let file = jni_call!(SparkFileSegment(file_segment).file() -> JObject)?;
     let path = jni_call!(JavaFile(file).getPath() -> JObject)?;
     let path = jni_get_string!(path.into())?;
     let offset = jni_call!(SparkFileSegment(file_segment).offset() -> jlong)?;
     let length = jni_call!(SparkFileSegment(file_segment).length() -> jlong)?;
-    Ok(Box::new(FileSegmentBatchReader::try_new(
+
+    let mut file = File::open(path)?;
+    file.seek(SeekFrom::Start(offset as u64))?;
+
+    Ok(RecordBatchReader::new(
+        Box::new(file.take(length as u64)),
         schema,
-        path,
-        offset as u64,
-        length as u64,
-    )?))
+        true,
+    ))
 }
 
 impl Stream for IpcReaderStream {
@@ -175,134 +178,68 @@ impl RecordBatchStream for IpcReaderStream {
     }
 }
 
-pub trait RecordBatchReader {
-    fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>>;
+pub struct ReadableByteChannelReader {
+    channel: GlobalRef,
+    finished: bool,
 }
-
-// record batch reader for byte channel
-pub struct ReadableByteChannelBatchReader {
-    schema: Option<SchemaRef>,
-    inner: StreamReader<Box<dyn Read>>,
-}
-
-impl ReadableByteChannelBatchReader {
-    pub fn try_new(
-        schema: Option<SchemaRef>,
-        channel: GlobalRef,
-        compressed: bool,
-    ) -> ArrowResult<Self> {
-        let channel_reader = ReadableByteChannelReader(channel);
-        let buffered = BufReader::new(channel_reader);
-        let decompressed: Box<dyn Read> = if compressed {
-            Box::new(
-                zstd::Decoder::with_prepared_dictionary(
-                    buffered,
-                    ipc_decoder_dict(),
-                )?)
-        } else {
-            Box::new(buffered)
-        };
-
-        Ok(Self {
-            schema,
-            inner: StreamReader::try_new(decompressed, None)?,
-        })
-    }
-}
-impl RecordBatchReader for ReadableByteChannelBatchReader {
-    fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>> {
-        if let Some(batch) = self.inner.next().transpose()? {
-            if let Some(schema) = self.schema.as_ref() {
-                return Ok(Some(name_batch(&batch, schema)?));
-            }
-            return Ok(Some(batch));
+impl ReadableByteChannelReader {
+    pub fn new(channel: GlobalRef) -> Self {
+        Self {
+            channel,
+            finished: false,
         }
-        Ok(None)
     }
 }
-
-pub struct ReadableByteChannelReader(pub GlobalRef);
 impl Read for ReadableByteChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Ok(jni_call!(
-            JavaReadableByteChannel(self.0.as_obj()).read(
-                jni_new_direct_byte_buffer!(buf).to_io_result()?
-            ) -> jint
-        )
-        .to_io_result()? as usize)
+        if self.finished {
+            return Ok(0);
+        }
+        let jbuf = jni_new_direct_byte_buffer!(buf).to_io_result()?;
+
+        while jni_call!(JavaBuffer(jbuf).hasRemaining() -> jboolean).to_io_result()? == JNI_TRUE {
+            let read_bytes = jni_call!(
+                JavaReadableByteChannel(self.channel.as_obj()).read(jbuf) -> jint
+            )
+            .to_io_result()?;
+
+            if read_bytes < 0 {
+                self.finished = true;
+                break;
+            }
+        }
+        let position = jni_call!(JavaBuffer(jbuf).position() -> jint).to_io_result()?;
+        Ok(position as usize)
     }
 }
 impl Drop for ReadableByteChannelReader {
     fn drop(&mut self) {
         let _ = jni_call!( // ignore errors to avoid double panic problem
-            JavaReadableByteChannel(self.0.as_obj()).close() -> ()
+            JavaReadableByteChannel(self.channel.as_obj()).close() -> ()
         );
     }
 }
 
-// record batch reader for file segment
-pub struct FileSegmentBatchReader {
+pub struct RecordBatchReader {
+    input: Box<dyn Read>,
     schema: Option<SchemaRef>,
-    file: File,
-    segment_reader: Option<StreamReader<Box<dyn Read>>>,
-    current_ipc_length: u64,
-    current_start: u64,
-    limit: u64,
+    compress: bool,
 }
-impl FileSegmentBatchReader {
-    fn try_new(
+
+impl RecordBatchReader {
+    pub fn new(
+        input: Box<dyn Read>,
         schema: Option<SchemaRef>,
-        path: impl AsRef<Path>,
-        offset: u64,
-        length: u64,
-    ) -> ArrowResult<Self> {
-        Ok(Self {
+        compress: bool,
+    ) -> Self {
+        Self {
+            input,
             schema,
-            file: File::open(path)?,
-            segment_reader: None,
-            current_ipc_length: 0,
-            current_start: offset,
-            limit: offset + length,
-        })
+            compress,
+        }
     }
 
-    fn next_batch_impl(&mut self) -> ArrowResult<Option<RecordBatch>> {
-        if let Some(reader) = &mut self.segment_reader {
-            if let Some(batch) = reader.next().transpose()? {
-                if let Some(schema) = self.schema.as_ref() {
-                    return Ok(Some(name_batch(&batch, schema)?));
-                }
-                return Ok(Some(batch));
-            }
-        }
-
-        // not first ipc -- update start pos
-        if self.segment_reader.is_some() {
-            self.current_start += 8 + self.current_ipc_length;
-        }
-
-        if self.current_start < self.limit {
-            let mut ipc_length_buf = [0u8; 8];
-
-            self.file.seek(SeekFrom::Start(self.current_start))?;
-            self.file.read_exact(&mut ipc_length_buf)?;
-            self.current_ipc_length = u64::from_le_bytes(ipc_length_buf);
-
-            let ipc = self.file.try_clone()?.take(self.current_ipc_length);
-            let zstd_decoder: Box<dyn Read> = Box::new(
-                zstd::stream::Decoder::with_prepared_dictionary(
-                    BufReader::new(ipc),
-                    ipc_decoder_dict(),
-                )?);
-            self.segment_reader =
-                Some(StreamReader::try_new(zstd_decoder, None).unwrap());
-            return self.next_batch_impl();
-        }
-        Ok(None)
-    }
-}
-impl RecordBatchReader for FileSegmentBatchReader {
-    fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>> {
-        self.next_batch_impl()
+    pub fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>> {
+        read_one_batch(&mut self.input, self.schema.clone(), self.compress)
     }
 }

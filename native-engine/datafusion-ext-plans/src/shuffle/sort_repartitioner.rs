@@ -36,7 +36,7 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
-use datafusion_ext_commons::ipc::write_one_batch;
+use datafusion_ext_commons::io::write_one_batch;
 use futures::lock::Mutex;
 use datafusion::physical_plan::coalesce_batches::concat_batches;
 use tokio::task;

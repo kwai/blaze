@@ -21,7 +21,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use once_cell::sync::OnceCell;
-use datafusion_ext_commons::ipc::write_one_batch;
+use datafusion_ext_commons::io::write_one_batch;
 use crate::shuffle::ShuffleRepartitioner;
 
 pub struct SingleShuffleRepartitioner {

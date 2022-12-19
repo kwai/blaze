@@ -136,9 +136,11 @@ abstract class ArrowShuffleExchangeBase(
     case _ => null
   }
 
+  protected def doExecuteNonNative(): RDD[InternalRow]
+
   override def doExecuteNative(): NativeRDD = {
     val shuffleHandle = shuffleDependency.shuffleHandle
-    val rdd = doExecute()
+    val rdd = doExecuteNonNative()
 
     val nativeMetrics = MetricNode(
       Map(),

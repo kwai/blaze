@@ -23,7 +23,7 @@ use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::utils::expr_list_eq_any_order;
 use datafusion::physical_plan::PhysicalExpr;
-use datafusion_ext_commons::ipc::{read_one_batch, write_one_batch};
+use datafusion_ext_commons::io::{read_one_batch, write_one_batch};
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
 use std::any::Any;
@@ -156,6 +156,7 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
             return Ok(ColumnarValue::Array(empty_array));
         }
 
+        // FIXME: use arrow stream reader/writer instead
         write_one_batch(&input_batch, &mut Cursor::new(&mut batch_buffer), false)?;
         let batch_byte_buffer = jni_new_direct_byte_buffer!(&mut batch_buffer[..])?;
         let output_channel = jni_call!(
@@ -163,10 +164,11 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
         )?;
 
         let mut reader =
-            datafusion_ext_commons::streams::ipc_stream::ReadableByteChannelReader(
+            datafusion_ext_commons::streams::ipc_stream::ReadableByteChannelReader::new(
                 jni_new_global_ref!(output_channel)?,
             );
 
+        // FIXME: use arrow stream reader/writer instead
         let output_batch = match read_one_batch(
             &mut reader,
             Some(output_schema.clone()),

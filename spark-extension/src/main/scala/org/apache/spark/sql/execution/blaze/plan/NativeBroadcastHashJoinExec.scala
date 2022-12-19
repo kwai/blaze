@@ -143,8 +143,6 @@ case class NativeBroadcastHashJoinExec(
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeHelper.executeNative(left)
     val rightRDD = NativeHelper.executeNative(right)
-    logInfo(s"leftRDD is: ${leftRDD}")
-    logInfo(s"rightRDD is: $rightRDD")
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
     val partitions = rightRDD.partitions
 
@@ -161,9 +159,6 @@ case class NativeBroadcastHashJoinExec(
         val rightPartition = rightRDD.partitions(partition.index)
         val leftChild = leftRDD.nativePlan(partition0, context)
         val rightChild = rightRDD.nativePlan(rightPartition, context)
-        logInfo(s"leftChild is: ${leftChild}")
-        logInfo(s"rightChild is: $rightChild")
-
         val hashJoinExec = HashJoinExecNode
           .newBuilder()
           .setLeft(leftChild)

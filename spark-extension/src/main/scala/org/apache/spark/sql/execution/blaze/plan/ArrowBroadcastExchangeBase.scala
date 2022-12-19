@@ -152,9 +152,10 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
         val resourceId = s"ArrowBroadcastExchangeExec:${UUID.randomUUID()}"
         val provideIpcIterator = () => {
           val inputStream = new ByteArrayInputStream(broadcast.value)
-          val ipcIterator =
-            IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
-          new InterruptibleIterator(context, ipcIterator)
+          // val ipcIterator =
+          //   IpcInputStreamIterator(inputStream, decompressingNeeded = false, context)
+          // new InterruptibleIterator(context, ipcIterator)
+          Iterator.single(Channels.newChannel(inputStream))
         }
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
         PhysicalPlanNode
@@ -238,9 +239,10 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
     // environment is initialized
     BlazeCallNativeWrapper.initNative()
     JniBridge.mergeIpcs(
-      ipcs.iterator.flatMap(ipcBytes => {
+      ipcs.iterator.map(ipcBytes => {
         val inputStream = new ByteArrayInputStream(ipcBytes)
-        IpcInputStreamIterator(inputStream, decompressingNeeded = false, null)
+        Channels.newChannel(inputStream)
+        // IpcInputStreamIterator(inputStream, decompressingNeeded = false, null)
       }),
       mergedIpcBytes => outChannel.write(mergedIpcBytes))
     out.toByteArray
