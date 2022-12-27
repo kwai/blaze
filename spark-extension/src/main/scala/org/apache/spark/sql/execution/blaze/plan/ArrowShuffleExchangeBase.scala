@@ -110,17 +110,18 @@ abstract class ArrowShuffleExchangeBase(
    */
   @transient
   lazy val shuffleDependency: ShuffleDependency[Int, InternalRow, InternalRow] = {
-    if (canUseNativeShuffleWrite(inputRDD, outputPartitioning)) {
-      prepareNativeShuffleDependency(
-        inputRDD,
-        child.output,
-        outputPartitioning,
-        serializer,
-        metrics,
-        nativeHashExprs)
-    } else {
-      prepareShuffleDependency(inputRDD, child.output, outputPartitioning, serializer, metrics)
-    }
+//    if (canUseNativeShuffleWrite(inputRDD, outputPartitioning)) {
+    prepareNativeShuffleDependency(
+      inputRDD,
+      child.output,
+      outputPartitioning,
+      serializer,
+      metrics,
+      nativeHashExprs)
+//    } else {
+//      throw new NotImplementedError(s"shuffleDependency must canUseNativeShuffleWrite")
+//      prepareShuffleDependency(inputRDD, child.output, outputPartitioning, serializer, metrics)
+//    }
   }
 
   val nativeSchema: Schema = child match {
@@ -270,159 +271,6 @@ abstract class ArrowShuffleExchangeBase(
     dependency
   }
 
-  def prepareShuffleDependency(
-      rdd: RDD[InternalRow],
-      outputAttributes: Seq[Attribute],
-      outputPartitioning: Partitioning,
-      serializer: Serializer,
-      writeMetrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
-    val part: Partitioner = outputPartitioning match {
-      case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
-      case HashPartitioning(_, n) =>
-        new Partitioner {
-          override def numPartitions: Int = n
-
-          // For HashPartitioning, the partitioning key is already a valid partition ID, as we use
-          // `HashPartitioning.partitionIdExpression` to produce partitioning key.
-          override def getPartition(key: Any): Int = key.asInstanceOf[Int]
-        }
-      case RangePartitioning(sortingExpressions, numPartitions) =>
-        // Extract only fields used for sorting to avoid collecting large fields that does not
-        // affect sorting result when deciding partition bounds in RangePartitioner
-        val rddForSampling = rdd.mapPartitionsInternal { iter =>
-          val projection =
-            UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-          val mutablePair = new MutablePair[InternalRow, Null]()
-          // Internally, RangePartitioner runs a job on the RDD that samples keys to compute
-          // partition bounds. To get accurate samples, we need to copy the mutable keys.
-          iter.map(row => mutablePair.update(projection(row).copy(), null))
-        }
-        // Construct ordering on extracted sort key.
-        val orderingAttributes = sortingExpressions.zipWithIndex.map {
-          case (ord, i) =>
-            ord.copy(child = BoundReference(i, ord.dataType, ord.nullable))
-        }
-        implicit val ordering: LazilyGeneratedOrdering =
-          new LazilyGeneratedOrdering(orderingAttributes)
-        new RangePartitioner(
-          numPartitions,
-          rddForSampling,
-          ascending = true,
-          samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
-      case SinglePartition =>
-        new Partitioner {
-          override def numPartitions: Int = 1
-
-          override def getPartition(key: Any): Int = 0
-        }
-      case _ => sys.error(s"Exchange not implemented for $outputPartitioning")
-      // TODO: Handle BroadcastPartitioning.
-    }
-
-    def getPartitionKeyExtractor: InternalRow => Any =
-      outputPartitioning match {
-        case RoundRobinPartitioning(numPartitions) =>
-          // Distributes elements evenly across output partitions, starting from a random partition.
-          var position = new Random(TaskContext.get().partitionId()).nextInt(numPartitions)
-          (row: InternalRow) => {
-            // The HashPartitioner will handle the `mod` by the number of partitions
-            position += 1
-            position
-          }
-        case h: HashPartitioning =>
-          val projection =
-            UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
-          row => projection(row).getInt(0)
-        case RangePartitioning(sortingExpressions, _) =>
-          val projection =
-            UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-          row => projection(row)
-        case SinglePartition => identity
-        case _ => sys.error(s"Exchange not implemented for $outputPartitioning")
-      }
-
-    val isRoundRobin = outputPartitioning.isInstanceOf[RoundRobinPartitioning] &&
-      outputPartitioning.numPartitions > 1
-
-    val rddWithPartitionIds: RDD[Product2[Int, InternalRow]] = {
-      // [SPARK-23207] Have to make sure the generated RoundRobinPartitioning is deterministic,
-      // otherwise a retry task may output different rows and thus lead to data loss.
-      //
-      // Currently we following the most straight-forward way that perform a local sort before
-      // partitioning.
-      //
-      // Note that we don't perform local sort if the new partitioning has only 1 partition, under
-      // that case all output rows go to the same partition.
-      val newRdd = if (isRoundRobin && SQLConf.get.sortBeforeRepartition) {
-        rdd.mapPartitionsInternal { iter =>
-          val recordComparatorSupplier = new Supplier[RecordComparator] {
-            override def get: RecordComparator = new RecordBinaryComparator()
-          }
-          // The comparator for comparing row hashcode, which should always be Integer.
-          val prefixComparator = PrefixComparators.LONG
-          val canUseRadixSort = SQLConf.get.enableRadixSort
-          // The prefix computer generates row hashcode as the prefix, so we may decrease the
-          // probability that the prefixes are equal when input rows choose column values from a
-          // limited range.
-          val prefixComputer = new UnsafeExternalRowSorter.PrefixComputer {
-            private val result = new UnsafeExternalRowSorter.PrefixComputer.Prefix
-
-            override def computePrefix(
-                row: InternalRow): UnsafeExternalRowSorter.PrefixComputer.Prefix = {
-              // The hashcode generated from the binary form of a [[UnsafeRow]] should not be null.
-              result.isNull = false
-              result.value = row.hashCode()
-              result
-            }
-          }
-          val pageSize = SparkEnv.get.memoryManager.pageSizeBytes
-
-          val sorter = UnsafeExternalRowSorter.createWithRecordComparator(
-            StructType.fromAttributes(outputAttributes),
-            recordComparatorSupplier,
-            prefixComparator,
-            prefixComputer,
-            pageSize,
-            canUseRadixSort)
-          sorter.sort(iter.asInstanceOf[Iterator[UnsafeRow]])
-        }
-      } else {
-        rdd
-      }
-
-      // round-robin function is order sensitive if we don't sort the input.
-      val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
-      if (needToCopyObjectsBeforeShuffle(part)) {
-        newRdd.mapPartitionsWithIndexInternal(
-          (_, iter) => {
-            val getPartitionKey = getPartitionKeyExtractor
-            iter.map { row => (part.getPartition(getPartitionKey(row)), row.copy()) }
-          },
-          isOrderSensitive = isOrderSensitive)
-      } else {
-        newRdd.mapPartitionsWithIndexInternal(
-          (_, iter) => {
-            val getPartitionKey = getPartitionKeyExtractor
-            val mutablePair = new MutablePair[Int, InternalRow]()
-            iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
-          },
-          isOrderSensitive = isOrderSensitive)
-      }
-    }
-
-    // Now, we manually create a ShuffleDependency. Because pairs in rddWithPartitionIds
-    // are in the form of (partitionId, row) and every partitionId is in the expected range
-    // [0, part.numPartitions - 1]. The partitioner of this is a PartitionIdPassthrough.
-    val dependency =
-      new ArrowShuffleDependency[Int, InternalRow, InternalRow](
-        rddWithPartitionIds,
-        new PartitionIdPassthrough(part.numPartitions),
-        serializer,
-        shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
-        schema = StructType.fromAttributes(outputAttributes))
-    dependency
-  }
-
   override def doCanonicalize(): SparkPlan =
     ShuffleExchangeExec(outputPartitioning, child).canonicalized
 }
@@ -490,65 +338,5 @@ object ArrowShuffleExchangeBase {
     rdd.isInstanceOf[NativeRDD] && (
       outputPartitioning.numPartitions == 1 || outputPartitioning.isInstanceOf[HashPartitioning]
     )
-  }
-  def nativeShuffleWrite(
-      nativeShuffleRDD: NativeRDD,
-      dep: ShuffleDependency[_, _, _],
-      mapId: Int,
-      context: TaskContext,
-      partition: Partition,
-      metricsReporter: ShuffleWriteMetricsReporter): MapStatus = {
-
-    val shuffleBlockResolver =
-      SparkEnv.get.shuffleManager.shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver]
-    val dataFile = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
-    val tempDataFilename = dataFile.getPath.replace(".data", ".data.tmp")
-    val tempIndexFilename = dataFile.getPath.replace(".data", ".index.tmp")
-    val tempDataFilePath = Paths.get(tempDataFilename)
-    val tempIndexFilePath = Paths.get(tempIndexFilename)
-
-    val nativeShuffleWriterExec = PhysicalPlanNode
-      .newBuilder()
-      .setShuffleWriter(
-        ShuffleWriterExecNode
-          .newBuilder(nativeShuffleRDD.nativePlan(partition, context).getShuffleWriter)
-          .setOutputDataFile(tempDataFilename)
-          .setOutputIndexFile(tempIndexFilename)
-          .build())
-      .build()
-    val iterator = NativeHelper.executeNativePlan(
-      nativeShuffleWriterExec,
-      nativeShuffleRDD.metrics,
-      partition,
-      context)
-    assert(iterator.toArray.isEmpty)
-
-    // get partition lengths from shuffle write output index file
-    var offset = 0L
-    val partitionLengths = Files
-      .readAllBytes(tempIndexFilePath)
-      .grouped(8)
-      .drop(1) // first partition offset is always 0
-      .map(indexBytes => {
-        val partitionOffset =
-          ByteBuffer.wrap(indexBytes).order(ByteOrder.LITTLE_ENDIAN).getLong
-        val partitionLength = partitionOffset - offset
-        offset = partitionOffset
-        partitionLength
-      })
-      .toArray
-
-    // update metrics
-    val dataSize = Files.size(tempDataFilePath)
-    metricsReporter.incBytesWritten(dataSize)
-
-    Shims.get.shuffleShims.commit(
-      dep,
-      shuffleBlockResolver,
-      tempDataFilePath.toFile,
-      mapId,
-      partitionLengths,
-      dataSize,
-      context)
   }
 }

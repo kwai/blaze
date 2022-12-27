@@ -18,20 +18,22 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-
 import org.apache.spark._
-
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.shuffle.ShuffleWriteProcessor
+import org.apache.spark.shuffle.{
+  ShuffleWriteMetricsReporter,
+  ShuffleWriteProcessor,
+  ShuffleWriter
+}
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.errors.attachTree
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleWriter
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
@@ -133,13 +135,21 @@ case class ArrowShuffleExchangeExec(
           context: TaskContext,
           partition: Partition): MapStatus = {
 
-        ArrowShuffleExchangeBase.nativeShuffleWrite(
-          rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
-          dep,
-          mapId.toInt,
+        val manager = SparkEnv.get.shuffleManager
+        var writer: ShuffleWriter[Any, Any] = null
+        writer = manager.getWriter[Any, Any](
+          dep.shuffleHandle,
+          mapId,
           context,
-          partition,
           createMetricsReporter(context))
+        writer
+          .asInstanceOf[ArrowShuffleWriter[_, _]]
+          .nativeShuffleWrite(
+            rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+            dep,
+            mapId,
+            context,
+            partition)
       }
     }
   }

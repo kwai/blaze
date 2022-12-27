@@ -27,9 +27,6 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
-import org.apache.spark.shuffle.sort.ArrowShuffleWriter
-import org.apache.spark.shuffle.sort.BypassMergeSortShuffleHandle
-import org.apache.spark.shuffle.sort.SerializedShuffleHandle
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency.isArrowShuffle
 import org.apache.spark.util.collection.OpenHashSet
@@ -142,29 +139,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V] = {
 
     if (isArrowShuffle(handle)) {
-      val env = SparkEnv.get
-      handle match {
-        case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
-          new ArrowShuffleWriter(
-            env.blockManager,
-            context.taskMemoryManager(),
-            unsafeShuffleHandle,
-            mapId,
-            context,
-            env.conf,
-            metrics,
-            shuffleExecutorComponents)
-        case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
-          new ArrowBypassMergeSortShuffleWriter(
-            env.blockManager,
-            bypassMergeSortHandle,
-            mapId,
-            env.conf,
-            metrics,
-            shuffleExecutorComponents)
-        case other =>
-          throw new UnsupportedOperationException(s"$other type not allowed for arrow-shuffle")
-      }
+      new ArrowShuffleWriter(metrics)
     } else {
       sortShuffleManager.getWriter(handle, mapId, context, metrics)
     }
