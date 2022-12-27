@@ -147,7 +147,7 @@ case class ArrowShuffleExchangeExec(
           .nativeShuffleWrite(
             rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
             dep,
-            mapId,
+            mapId.toInt,
             context,
             partition)
       }
