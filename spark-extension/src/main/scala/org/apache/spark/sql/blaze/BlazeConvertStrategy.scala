@@ -206,13 +206,6 @@ object BlazeConvertStrategy extends Logging {
             isPartialHashAggregate(e) &&
             !isNeverConvert(e) &&
             e.asInstanceOf[HashAggregateExec].aggregateExpressions.length > 5)
-
-        // [ ShuffleExchangeExec.outputPartitioning is RangePartitioning/Robin]
-        dontConvertIf(
-          e,
-          e.isInstanceOf[ShuffleExchangeExec] &&
-            !isNeverConvert(e) &&
-            isNeverNativeShuffle(e))
       }
     }
   }
@@ -230,11 +223,6 @@ object BlazeConvertStrategy extends Logging {
       case _: SortAggregateExec => true
       case _ => false
     }
-  }
-  private def isNeverNativeShuffle(e: SparkPlan): Boolean = {
-    val temp = e.asInstanceOf[ShuffleExchangeExec]
-    temp.outputPartitioning.isInstanceOf[RangePartitioning] ||
-    temp.outputPartitioning.isInstanceOf[RoundRobinPartitioning]
   }
 }
 

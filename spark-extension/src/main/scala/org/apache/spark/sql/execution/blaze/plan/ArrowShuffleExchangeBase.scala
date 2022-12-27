@@ -110,7 +110,6 @@ abstract class ArrowShuffleExchangeBase(
    */
   @transient
   lazy val shuffleDependency: ShuffleDependency[Int, InternalRow, InternalRow] = {
-//    if (canUseNativeShuffleWrite(inputRDD, outputPartitioning)) {
     prepareNativeShuffleDependency(
       inputRDD,
       child.output,
@@ -118,10 +117,6 @@ abstract class ArrowShuffleExchangeBase(
       serializer,
       metrics,
       nativeHashExprs)
-//    } else {
-//      throw new NotImplementedError(s"shuffleDependency must canUseNativeShuffleWrite")
-//      prepareShuffleDependency(inputRDD, child.output, outputPartitioning, serializer, metrics)
-//    }
   }
 
   val nativeSchema: Schema = child match {
@@ -333,10 +328,7 @@ object ArrowShuffleExchangeBase {
     }
   }
   def canUseNativeShuffleWrite(
-      rdd: RDD[InternalRow],
       outputPartitioning: Partitioning): Boolean = {
-    rdd.isInstanceOf[NativeRDD] && (
       outputPartitioning.numPartitions == 1 || outputPartitioning.isInstanceOf[HashPartitioning]
-    )
   }
 }
