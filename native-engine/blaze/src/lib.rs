@@ -24,7 +24,6 @@ use blaze_commons::*;
 
 mod exec;
 mod metrics;
-mod util;
 
 static SESSION: OnceCell<SessionContext> = OnceCell::new();
 

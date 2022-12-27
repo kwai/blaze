@@ -38,6 +38,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
+import org.apache.spark.sql.internal.SQLConf
 
 case class ArrowShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
@@ -72,13 +73,27 @@ case class ArrowShuffleExchangeExec(
           //  conversion to later SMJ/BHJ.
           //
           // assume compressed ipc size is smaller than unsafe rows only when the bytes
-          // size is larger than 512B
+          // size is larger than 64B
           //
           val totalBytesWritten = stat.bytesByPartitionId.sum
           val estimatedIpcCount: Int =
             Math.max(inputRDD.getNumPartitions * outputPartitioning.numPartitions, 1)
           val avgBytesPerIpc = totalBytesWritten / estimatedIpcCount
-          val dataSizeFactor = Math.min(Math.max(avgBytesPerIpc / 512, 0.1), 1.0)
+          var dataSizeFactor = Math.min(Math.max(avgBytesPerIpc / 64, 0.1), 1.0)
+
+          // NOTE:
+          //  in some cases, the number of written records exceeds broadcastCountLimit
+          // but the size is smaller than autoBroadcastThreshold. in this situation
+          // spark incorrectly turns SMJ into BHJ and always fails the broadcast. so we
+          // have to manually increase the stats by setting the dataSizeFactor.
+          val numRecordsWritten = metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN).value
+          val broadcastCountLimit = 512000000 / 4
+          val broadcastThreshold = SQLConf.get.getConf(SQLConf.AUTO_BROADCASTJOIN_THRESHOLD)
+          if (numRecordsWritten >= broadcastCountLimit
+            && totalBytesWritten * dataSizeFactor <= broadcastThreshold) {
+            dataSizeFactor = broadcastThreshold.toDouble / totalBytesWritten.toDouble + 0.1
+          }
+
           new MapOutputStatistics(
             stat.shuffleId,
             stat.bytesByPartitionId.map(n => (n * dataSizeFactor).ceil.toLong))

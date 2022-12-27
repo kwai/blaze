@@ -41,6 +41,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.ShuffleWriterExecNode
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.serializer.Serializer
@@ -270,7 +271,7 @@ abstract class ArrowShuffleExchangeBase(
     ShuffleExchangeExec(outputPartitioning, child).canonicalized
 }
 
-object ArrowShuffleExchangeBase {
+object ArrowShuffleExchangeBase extends Logging {
 
   /**
    * Determines whether records must be defensively copied before being sent to the shuffle.
