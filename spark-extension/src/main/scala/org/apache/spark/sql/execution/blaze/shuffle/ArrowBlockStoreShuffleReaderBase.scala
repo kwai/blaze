@@ -23,29 +23,35 @@ import java.io.InputStream
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.nio.channels.Channels
+import java.util.UUID
 
 import org.apache.spark.InterruptibleIterator
+import org.apache.spark.Partition
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
+import org.blaze.protobuf.IpcReaderExecNode
+import org.blaze.protobuf.IpcReadMode
+import org.blaze.protobuf.PhysicalPlanNode
 
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
+import org.apache.spark.sql.blaze.JniBridge
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.Shims
-import org.apache.spark.sql.execution.blaze.arrowio.ArrowReaderIterator
-import org.apache.spark.sql.execution.blaze.arrowio.IpcInputStreamIterator
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReaderBase.getFileSegmentFromInputStream
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.util.CompletionIterator
-import org.apache.spark.util.Utils
 
 abstract class ArrowBlockStoreShuffleReaderBase[K, C](
     handle: BaseShuffleHandle[K, _, C],
     context: TaskContext,
     readMetrics: ShuffleReadMetricsReporter)
     extends ShuffleReader[K, C] {
+  import ArrowBlockStoreShuffleReaderBase._
 
   protected val dep: ShuffleDependency[K, _, C] = handle.dependency
   protected def readBlocks(): Iterator[(BlockId, InputStream)]
@@ -68,14 +74,37 @@ abstract class ArrowBlockStoreShuffleReaderBase[K, C](
 
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
-    val recordIter = readBlocks()
-      .flatMap {
-        case (_, inputStream) =>
-          IpcInputStreamIterator(inputStream, decompressingNeeded = true, context)
-      }
-      .flatMap { channel =>
-        new ArrowReaderIterator(channel, context).map((0, _)) // use 0 as key since it's not used
-      }
+
+    // Use native IpcReaderExec and ffi to extract rows from ipcs because batch
+    // ser/de is not implemented in jvm side
+    val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
+    val ipcIterator = CompletionIterator[Object, Iterator[Object]](
+      readIpc(),
+      context.taskMetrics().mergeShuffleReadMetrics())
+    JniBridge.resourcesMap.put(jniResourceId, () => ipcIterator)
+
+    val arrowDep = dep.asInstanceOf[ArrowShuffleDependency[K, _, C]]
+    val nativeMetrics = MetricNode(Map(), Nil)
+    val nativePlan = PhysicalPlanNode
+      .newBuilder()
+      .setIpcReader(
+        IpcReaderExecNode
+          .newBuilder()
+          .setSchema(NativeConverters.convertSchema(arrowDep.schema))
+          .setNumPartitions(1)
+          .setIpcProviderResourceId(jniResourceId)
+          .setMode(IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
+          .build())
+      .build()
+    val recordIter = NativeHelper
+      .executeNativePlan(
+        nativePlan,
+        nativeMetrics,
+        new Partition() {
+          override def index: Int = 0
+        },
+        context)
+      .map((0, _)) // use 0 as key since it's not used
 
     // Update the context task metrics for each record read.
     val metricIter = CompletionIterator[(Any, Any), Iterator[(Any, Any)]](
