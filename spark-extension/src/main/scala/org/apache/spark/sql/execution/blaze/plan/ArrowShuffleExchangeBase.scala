@@ -94,7 +94,6 @@ abstract class ArrowShuffleExchangeBase(
     override val child: SparkPlan)
     extends ShuffleExchangeLike
     with NativeSupports {
-  import ArrowShuffleExchangeBase._
 
   override val nodeName: String = "ArrowShuffleExchange"
 
@@ -328,8 +327,7 @@ object ArrowShuffleExchangeBase extends Logging {
       true
     }
   }
-  def canUseNativeShuffleWrite(
-      outputPartitioning: Partitioning): Boolean = {
-      outputPartitioning.numPartitions == 1 || outputPartitioning.isInstanceOf[HashPartitioning]
+  def canUseNativeShuffleWrite(outputPartitioning: Partitioning): Boolean = {
+    outputPartitioning.numPartitions == 1 || outputPartitioning.isInstanceOf[HashPartitioning]
   }
 }

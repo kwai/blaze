@@ -100,6 +100,8 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
     synchronized {
       if (allocator != null) {
         closeConsumerArrayAndSchema()
+        wrapper.finish()
+
         if (cachedBatches != null) {
           cachedBatches.foreach(_.close())
           cachedBatches.clear()

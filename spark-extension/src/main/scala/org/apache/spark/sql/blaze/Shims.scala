@@ -62,6 +62,7 @@ trait SparkPlanShims {
   def executeNative(plan: SparkPlan): NativeRDD
 
   def isQueryStageInput(plan: SparkPlan): Boolean
+  def isShuffleQueryStageInput(plan: SparkPlan): Boolean
   def getChildStage(plan: SparkPlan): SparkPlan
   def needRenameColumns(plan: SparkPlan): Boolean
   def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan

@@ -180,19 +180,27 @@ impl RecordBatchStream for IpcReaderStream {
 
 pub struct ReadableByteChannelReader {
     channel: GlobalRef,
-    finished: bool,
+    closed: bool,
 }
 impl ReadableByteChannelReader {
     pub fn new(channel: GlobalRef) -> Self {
         Self {
             channel,
-            finished: false,
+            closed: false,
         }
+    }
+
+    pub fn close(&mut self) -> Result<()> {
+        if !self.closed {
+            jni_call!(JavaReadableByteChannel(self.channel.as_obj()).close() -> ())?;
+            self.closed = true;
+        }
+        Ok(())
     }
 }
 impl Read for ReadableByteChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.finished {
+        if self.closed {
             return Ok(0);
         }
         let jbuf = jni_new_direct_byte_buffer!(buf).to_io_result()?;
@@ -204,7 +212,7 @@ impl Read for ReadableByteChannelReader {
             .to_io_result()?;
 
             if read_bytes < 0 {
-                self.finished = true;
+                self.close()?;
                 break;
             }
         }
@@ -214,9 +222,8 @@ impl Read for ReadableByteChannelReader {
 }
 impl Drop for ReadableByteChannelReader {
     fn drop(&mut self) {
-        let _ = jni_call!( // ignore errors to avoid double panic problem
-            JavaReadableByteChannel(self.channel.as_obj()).close() -> ()
-        );
+        // ensure the channel is closed
+        let _ = self.close();
     }
 }
 

@@ -94,6 +94,10 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
     plan.isInstanceOf[QueryStageExec]
   }
 
+  override def isShuffleQueryStageInput(plan: SparkPlan): Boolean = {
+    plan.isInstanceOf[ShuffleQueryStageExec]
+  }
+
   override def getChildStage(plan: SparkPlan): SparkPlan =
     plan.asInstanceOf[QueryStageExec].plan
 

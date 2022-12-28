@@ -66,20 +66,8 @@ case class ArrowShuffleExchangeExec(
       sparkContext
         .submitMapStage(shuffleDependency)
         .map(stat => {
-          // NOTE:
-          //  in the case that one ipc contains little number of records, the data size may
-          //  be much more larger than unsafe row shuffle (because of a lot of redundant
-          //  arrow headers). so a data size factor is needed here to prevent incorrect
-          //  conversion to later SMJ/BHJ.
-          //
-          // assume compressed ipc size is smaller than unsafe rows only when the bytes
-          // size is larger than 64B
-          //
           val totalBytesWritten = stat.bytesByPartitionId.sum
-          val estimatedIpcCount: Int =
-            Math.max(inputRDD.getNumPartitions * outputPartitioning.numPartitions, 1)
-          val avgBytesPerIpc = totalBytesWritten / estimatedIpcCount
-          var dataSizeFactor = Math.min(Math.max(avgBytesPerIpc / 64, 0.1), 1.0)
+          var dataSizeFactor = 1.0
 
           // NOTE:
           //  in some cases, the number of written records exceeds broadcastCountLimit
@@ -93,7 +81,10 @@ case class ArrowShuffleExchangeExec(
             && totalBytesWritten * dataSizeFactor <= broadcastThreshold) {
             dataSizeFactor = broadcastThreshold.toDouble / totalBytesWritten.toDouble + 0.1
           }
-
+          logInfo(
+            s"shuffleId=${shuffleDependency.shuffleId}" +
+              s", numRecordsWritten=$numRecordsWritten" +
+              s", totalBytesWritten=$totalBytesWritten")
           new MapOutputStatistics(
             stat.shuffleId,
             stat.bytesByPartitionId.map(n => (n * dataSizeFactor).ceil.toLong))

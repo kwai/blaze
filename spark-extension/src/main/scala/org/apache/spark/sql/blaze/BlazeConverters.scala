@@ -74,6 +74,8 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.aggregate.Final
 import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
@@ -144,6 +146,7 @@ object BlazeConverters extends Logging {
   }
 
   def convertSparkPlan(exec: SparkPlan): SparkPlan = {
+    val sparkPlanShims = Shims.get.sparkPlanShims
     exec match {
       case e: ShuffleExchangeExec => tryConvert(e, convertShuffleExchangeExec)
       case e: BroadcastExchangeExec => tryConvert(e, convertBroadcastExchangeExec)
@@ -171,6 +174,18 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertHashAggregateExec)
       case e: ExpandExec if enableExpand => // aggregate
         tryConvert(e, convertExpandExec)
+
+      case e if sparkPlanShims.isShuffleQueryStageInput(e) && sparkPlanShims.isNative(e) =>
+        case class ForceExecuteNativeWrapper(override val child: SparkPlan)
+            extends UnaryExecNode
+            with NativeSupports {
+          override val nodeName: String = "InputAdapter"
+          override val output: Seq[Attribute] = e.output
+          override val outputPartitioning: Partitioning = child.outputPartitioning
+          override val outputOrdering: Seq[SortOrder] = child.outputOrdering
+          override def doExecuteNative(): NativeRDD = sparkPlanShims.executeNative(child)
+        }
+        ForceExecuteNativeWrapper(e)
 
       case exec =>
         exec.setTagValue(convertibleTag, false)
