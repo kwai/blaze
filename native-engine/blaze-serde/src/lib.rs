@@ -353,7 +353,7 @@ impl Into<datafusion::arrow::datatypes::DataType> for protobuf::PrimitiveScalarT
                 DataType::Time64(TimeUnit::Nanosecond)
             }
             protobuf::PrimitiveScalarType::Null => DataType::Null,
-            protobuf::PrimitiveScalarType::Decimal128 => DataType::Decimal128(0, 0),
+            protobuf::PrimitiveScalarType::Decimal128 => DataType::Decimal128(1, 0),
             protobuf::PrimitiveScalarType::Date64 => DataType::Date64,
             protobuf::PrimitiveScalarType::TimeSecond => {
                 DataType::Timestamp(TimeUnit::Second, None)
@@ -890,7 +890,7 @@ fn typechecked_scalar_value_conversion(
                     //}
                     PrimitiveScalarType::Null => ScalarValue::Null,
                     PrimitiveScalarType::Decimal128 => {
-                        ScalarValue::Decimal128(None, 0, 0)
+                        ScalarValue::Decimal128(None, 1, 0)
                     }
                     PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
                     PrimitiveScalarType::TimeSecond => {
@@ -944,7 +944,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
                 ScalarValue::TimestampNanosecond(None, None)
             }
             protobuf::PrimitiveScalarType::Decimal128 => {
-                ScalarValue::Decimal128(None, 0, 0)
+                ScalarValue::Decimal128(None, 1, 0)
             }
             protobuf::PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
             protobuf::PrimitiveScalarType::TimeSecond => {

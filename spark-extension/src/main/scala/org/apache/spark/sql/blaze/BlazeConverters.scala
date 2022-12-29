@@ -176,16 +176,7 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertExpandExec)
 
       case e if sparkPlanShims.isShuffleQueryStageInput(e) && sparkPlanShims.isNative(e) =>
-        case class ForceExecuteNativeWrapper(override val child: SparkPlan)
-            extends UnaryExecNode
-            with NativeSupports {
-          override val nodeName: String = "InputAdapter"
-          override val output: Seq[Attribute] = e.output
-          override val outputPartitioning: Partitioning = child.outputPartitioning
-          override val outputOrdering: Seq[SortOrder] = child.outputOrdering
-          override def doExecuteNative(): NativeRDD = sparkPlanShims.executeNative(child)
-        }
-        ForceExecuteNativeWrapper(e)
+        ForceNativeExecutionWrapper(e)
 
       case exec =>
         exec.setTagValue(convertibleTag, false)

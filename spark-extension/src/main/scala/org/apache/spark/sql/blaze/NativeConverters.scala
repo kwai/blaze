@@ -20,8 +20,13 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
+
 import com.google.protobuf.ByteString
+import org.apache.spark.SparkEnv
+import org.blaze.{protobuf => pb}
+
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
 import org.apache.spark.sql.catalyst.expressions.Add
@@ -34,8 +39,10 @@ import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.expressions.Ceil
 import org.apache.spark.sql.catalyst.expressions.Coalesce
 import org.apache.spark.sql.catalyst.expressions.Concat
+import org.apache.spark.sql.catalyst.expressions.Contains
 import org.apache.spark.sql.catalyst.expressions.Cos
 import org.apache.spark.sql.catalyst.expressions.Divide
+import org.apache.spark.sql.catalyst.expressions.EndsWith
 import org.apache.spark.sql.catalyst.expressions.EqualTo
 import org.apache.spark.sql.catalyst.expressions.Exp
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -66,9 +73,7 @@ import org.apache.spark.sql.catalyst.expressions.Sha2
 import org.apache.spark.sql.catalyst.expressions.Signum
 import org.apache.spark.sql.catalyst.expressions.Sin
 import org.apache.spark.sql.catalyst.expressions.Sqrt
-import org.apache.spark.sql.catalyst.expressions.Contains
 import org.apache.spark.sql.catalyst.expressions.StartsWith
-import org.apache.spark.sql.catalyst.expressions.EndsWith
 import org.apache.spark.sql.catalyst.expressions.StringTrim
 import org.apache.spark.sql.catalyst.expressions.StringTrimLeft
 import org.apache.spark.sql.catalyst.expressions.StringTrimRight
@@ -86,10 +91,20 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.StddevSamp
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
 import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
+import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
+import org.apache.spark.sql.catalyst.expressions.BitwiseOr
 import org.apache.spark.sql.catalyst.expressions.BoundReference
+import org.apache.spark.sql.catalyst.expressions.CheckOverflow
 import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.MakeDecimal
+import org.apache.spark.sql.catalyst.expressions.PromotePrecision
+import org.apache.spark.sql.catalyst.expressions.ShiftLeft
+import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
+import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -97,6 +112,12 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.execution.blaze.plan.Util
+import org.apache.spark.sql.execution.ScalarSubquery
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveGenericUDF
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
@@ -107,10 +128,12 @@ import org.apache.spark.sql.types.Decimal
 import org.apache.spark.sql.types.DecimalType
 import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.sql.types.FloatType
+import org.apache.spark.sql.types.FractionalType
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.LongType
 import org.apache.spark.sql.types.MapType
 import org.apache.spark.sql.types.NullType
+import org.apache.spark.sql.types.NumericType
 import org.apache.spark.sql.types.ShortType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.StructField
@@ -118,34 +141,6 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
-import org.apache.spark.SparkEnv
-import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
-import org.apache.spark.sql.catalyst.expressions.BitwiseOr
-import org.apache.spark.sql.catalyst.expressions.CheckOverflow
-import org.apache.spark.sql.catalyst.expressions.PromotePrecision
-import org.apache.spark.sql.catalyst.expressions.ShiftLeft
-import org.apache.spark.sql.catalyst.expressions.ShiftRight
-import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
-import org.apache.spark.sql.catalyst.expressions.Alias
-import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
-import org.apache.spark.sql.catalyst.expressions.BinaryExpression
-import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
-import org.apache.spark.sql.catalyst.expressions.Murmur3HashFunction
-import org.apache.spark.sql.catalyst.expressions.UnaryMathExpression
-import org.apache.spark.sql.catalyst.expressions.UnaryMinus
-import org.apache.spark.sql.catalyst.expressions.Unevaluable
-import org.apache.spark.sql.execution.blaze.plan.Util
-import org.apache.spark.sql.execution.ScalarSubquery
-import org.apache.spark.sql.hive.blaze.HiveUDFUtil.{
-  getFunctionClassName,
-  isHiveGenericUDF,
-  isHiveSimpleUDF
-}
-import org.apache.spark.sql.hive.blaze.HiveUDFUtil
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.FractionalType
-import org.apache.spark.sql.types.NumericType
-import org.blaze.{protobuf => pb}
 
 object NativeConverters {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -185,7 +180,7 @@ object NativeConverters {
         arrowTypeBuilder.setDECIMAL(
           org.blaze.protobuf.Decimal
             .newBuilder()
-            .setWhole(t.precision)
+            .setWhole(Math.max(t.precision, 1))
             .setFractional(t.scale)
             .build())
 
@@ -459,7 +454,7 @@ object NativeConverters {
             val (p1, s1) = (lt.precision, lt.scale)
             val (p2, s2) = (rt.precision, rt.scale)
             val scale = Math.max(6, s1 + p2 + 1)
-            val precision = Math.min(p1 - s1 + s2 + scale, DecimalType.MAX_PRECISION)
+            val precision = Math.max(1, Math.min(p1 - s1 + s2 + scale, DecimalType.MAX_PRECISION))
             Some(DecimalType(precision, scale))
           case _ =>
             None
