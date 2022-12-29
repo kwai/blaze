@@ -22,9 +22,10 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::{Expr, ReturnTypeFunction, ScalarFunctionImplementation, ScalarUDF, Signature, Volatility};
 use datafusion::logical_expr::Operator;
 use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
+use datafusion::logical_expr::TypeSignature::VariadicEqual;
 use datafusion::physical_expr::expressions::{create_aggregate_expr, Sum};
 use datafusion::physical_expr::{functions, AggregateExpr, ScalarFunctionExpr};
 use datafusion::physical_plan::aggregates::{
@@ -179,6 +180,21 @@ pub fn convert_physical_expr_to_logical_expr(
             expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr)?),
             data_type: expr.cast_type.clone(),
         })
+    } else if let Some(expr1) = expr.downcast_ref::<StringStartsWithExpr>() {
+        let mut args = Vec::new();
+        args.push(convert_physical_expr_to_logical_expr(expr1.expr())?);
+        args.push(Expr::Literal(ScalarValue::Utf8(Some(expr1.prefix().to_string()))));
+        let return_type:ReturnTypeFunction = Arc::new(|_| panic!("place"));
+        let func:ScalarFunctionImplementation = Arc::new(|_| panic!("place"));
+        Ok(Expr::ScalarUDF {
+            fun: Arc::from(ScalarUDF::new(
+                "string_start_with",
+                &Signature::new(VariadicEqual, Volatility::Immutable),
+                &return_type,
+                &func)),
+            args
+        }
+        )
     } else if let Some(_) = expr.downcast_ref::<ScalarFunctionExpr>() {
         Err(DataFusionError::Plan(format!(
             "converting physical ScalarFunctionExpr to logical is not supported"

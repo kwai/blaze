@@ -43,9 +43,7 @@ use datafusion::common::{downcast_value, Column, DFSchema, ScalarValue};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::expr_rewriter::{ExprRewritable, ExprRewriter};
 use datafusion::logical_expr::utils::expr_to_columns;
-use datafusion::logical_expr::{
-    binary_expr, cast, try_cast, BinaryExpr, Cast, ColumnarValue, ExprSchemable,
-};
+use datafusion::logical_expr::{binary_expr, cast, try_cast, BinaryExpr, Cast, ColumnarValue, ExprSchemable, substring};
 use datafusion::physical_expr::create_physical_expr;
 use datafusion::prelude::lit;
 use datafusion::{
@@ -751,6 +749,34 @@ fn build_is_not_null_column_expr(
     }
 }
 
+fn build_start_with_predicate_expression_expr(
+    col: &Expr,
+    prefix: &Expr,
+    schema: &Schema,
+    required_columns: &mut RequiredStatColumns,
+)->Result<Expr> {
+
+    let need_col:Option<Column> = match col.clone() {
+        Expr::Column(col1) => Some(col1),
+        _ => None
+    };
+    let length = match &prefix {
+        Expr::Literal(ScalarValue::Utf8(str)) => str.as_ref().unwrap().len() as i32,
+        _ => -1
+    };
+    let field = schema.field_with_name(&need_col.as_ref().unwrap().name).unwrap();
+
+    let min = required_columns
+        .min_column_expr(&need_col.as_ref().unwrap(), col, field).unwrap();
+    let max = required_columns
+        .max_column_expr(&need_col.as_ref().unwrap(), col, field).unwrap();
+
+    let first = substring(min, Expr::Literal(ScalarValue::Int64(Some(0))), Expr::Literal(ScalarValue::Int64(Some(length as i64))));
+    let second = substring(max, Expr::Literal(ScalarValue::Int64(Some(0))), Expr::Literal(ScalarValue::Int64(Some(length as i64))));
+    let prefix = prefix.clone();
+    Ok(first.lt_eq(prefix.clone()).and(prefix.lt_eq(second)))
+}
+
 /// Translate logical filter expression into pruning predicate
 /// expression that will evaluate to FALSE if it can be determined no
 /// rows between the min/max values could pass the predicates.
@@ -768,6 +794,11 @@ fn build_predicate_expression(
 
     // predicate expression can only be a binary expression
     let (left, op, right) = match expr {
+        Expr::ScalarUDF{fun:_, args} => {
+            let col = args.get(0).ok_or(DataFusionError::Execution(String::from("parse column error")))?;
+            let prefix = args.get(1).ok_or(DataFusionError::Execution(String::from("parse prefix error")))?;
+            return build_start_with_predicate_expression_expr(col,prefix,schema,required_columns)
+        }
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => (left, *op, right),
         Expr::IsNull(expr) => {
             let expr = build_is_null_column_expr(expr, schema, required_columns)

@@ -618,7 +618,7 @@ object NativeConverters {
           _.setStringStartsWithExpr(
             pb.StringStartsWithExprNode
               .newBuilder()
-              .setExpr(convertExpr(expr))
+              .setExpr(convertExpr(expr, useAttrExprId))
               .setPrefix(prefix.toString)))
 
       case EndsWith(expr, Literal(suffix, StringType)) =>
@@ -626,7 +626,7 @@ object NativeConverters {
           _.setStringEndsWithExpr(
             pb.StringEndsWithExprNode
               .newBuilder()
-              .setExpr(convertExpr(expr))
+              .setExpr(convertExpr(expr, useAttrExprId))
               .setSuffix(suffix.toString)))
 
       case Contains(expr, Literal(infix, StringType)) =>
@@ -634,7 +634,7 @@ object NativeConverters {
           _.setStringContainsExpr(
             pb.StringContainsExprNode
               .newBuilder()
-              .setExpr(convertExpr(expr))
+              .setExpr(convertExpr(expr, useAttrExprId))
               .setInfix(infix.toString)))
 
       case e: Substring =>
