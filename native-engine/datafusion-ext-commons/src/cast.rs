@@ -262,7 +262,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(
     Some(result)
 }
 
-fn to_decimal(input: &str, precision: u8, scale: u8) -> Option<i128> {
+fn to_decimal(input: &str, precision: u8, scale: i8) -> Option<i128> {
     let precision = precision as u64;
     let scale = scale as i64;
     bigdecimal::BigDecimal::from_str(input)

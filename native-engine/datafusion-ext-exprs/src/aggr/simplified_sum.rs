@@ -101,6 +101,10 @@ impl Accumulator for SimplifiedSumAccumulator {
     fn evaluate(&self) -> Result<ScalarValue> {
         self.inner.evaluate()
     }
+
+    fn size(&self) -> usize {
+        self.inner.size()
+    }
 }
 
 #[derive(Debug)]

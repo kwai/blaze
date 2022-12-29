@@ -254,7 +254,7 @@ impl TryInto<datafusion::arrow::datatypes::DataType>
             arrow_type::ArrowTypeEnum::Decimal(protobuf::Decimal {
                 whole,
                 fractional,
-            }) => DataType::Decimal128(*whole as u8, *fractional as u8),
+            }) => DataType::Decimal128(*whole as u8, *fractional as i8),
             arrow_type::ArrowTypeEnum::List(list) => {
                 let list_type: &protobuf::Field = list
                     .as_ref()
@@ -494,7 +494,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                 ScalarValue::Decimal128(
                     Some(v.long_value as i128),
                     decimal.whole as u8,
-                    decimal.fractional as u8,
+                    decimal.fractional as i8,
                 )
             }
             protobuf::scalar_value::Value::ListValue(scalar_list) => {
@@ -657,7 +657,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
                 ScalarValue::Decimal128(
                     Some(v.long_value as i128),
                     decimal.whole as u8,
-                    decimal.fractional as u8,
+                    decimal.fractional as i8,
                 )
             }
         };

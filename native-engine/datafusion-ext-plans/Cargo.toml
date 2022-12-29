@@ -8,10 +8,10 @@ resolver = "1"
 default = ["arrow/ffi", "datafusion/simd", "tokio/rt-multi-thread"]
 
 [dependencies]
-arrow = "26.0.0"
+arrow = "28.0.0"
 async-trait = "0.1.56"
 blaze-commons = { path = "../blaze-commons" }
-datafusion = "14.0.0"
+datafusion = "15.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 futures = "0.3"
 itertools = "0.10.3"

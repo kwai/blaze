@@ -647,7 +647,7 @@ enum IntervalUnit {
 
 message Decimal {
     uint64 whole = 1;
-    uint64 fractional = 2;
+    int64 fractional = 2;
 }
 
 message List {

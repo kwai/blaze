@@ -25,7 +25,7 @@ pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         _ => unreachable!("check_overflow.precision is not int32 value"),
     };
     let to_scale = match &args[2] {
-        &ColumnarValue::Scalar(ScalarValue::Int32(Some(scale))) => scale as u8,
+        &ColumnarValue::Scalar(ScalarValue::Int32(Some(scale))) => scale as i8,
         _ => unreachable!("check_overflow.scale is not int32 value"),
     };
     assert!(
@@ -86,9 +86,9 @@ pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 fn change_precision_round_half_up(
     mut i128_val: i128,
     precision: u8,
-    scale: u8,
+    scale: i8,
     to_precision: u8,
-    to_scale: u8,
+    to_scale: i8,
 ) -> Option<i128> {
     let max_spark_precision = 38;
 

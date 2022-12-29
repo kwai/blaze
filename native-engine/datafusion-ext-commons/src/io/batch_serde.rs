@@ -206,7 +206,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
         DataType::Decimal128(prec, scale) => {
             write_u8(15, output)?;
             write_u8(*prec, output)?;
-            write_u8(*scale, output)?;
+            write_u8(*scale as u8, output)?;
         },
         DataType::Utf8 => write_u8(16, output)?,
         other => {
@@ -236,7 +236,7 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
         14 => DataType::Date64,
         15 => {
             let prec = read_u8(input)?;
-            let scale = read_u8(input)?;
+            let scale = read_u8(input)? as i8;
             DataType::Decimal128(prec, scale)
         },
         16 => DataType::Utf8,

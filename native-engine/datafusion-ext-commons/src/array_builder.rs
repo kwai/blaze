@@ -343,6 +343,10 @@ impl ArrayBuilder for NullBuilder {
     }
 
     fn finish(&mut self) -> ArrayRef {
+        self.finish_cloned()
+    }
+
+    fn finish_cloned(&self) -> ArrayRef {
         Arc::new(NullArray::new(self.len))
     }
 
@@ -362,12 +366,12 @@ impl ArrayBuilder for NullBuilder {
 pub struct ConfiguredDecimalBuilder<T: DecimalType> {
     inner: PrimitiveBuilder<T>,
     precision: u8,
-    scale: u8,
+    scale: i8,
 }
 
 #[allow(unused)]
 impl<T: DecimalType> ConfiguredDecimalBuilder<T> {
-    pub fn with_capacity(capacity: usize, precision: u8, scale: u8) -> Self {
+    pub fn with_capacity(capacity: usize, precision: u8, scale: i8) -> Self {
         Self {
             inner: PrimitiveBuilder::with_capacity(capacity),
             precision,
@@ -391,7 +395,7 @@ impl<T: DecimalType> ConfiguredDecimalBuilder<T> {
         self.precision
     }
 
-    pub fn scale(&self) -> u8 {
+    pub fn scale(&self) -> i8 {
         self.scale
     }
 }
@@ -409,6 +413,15 @@ impl<T: DecimalType> ArrayBuilder for ConfiguredDecimalBuilder<T> {
         Arc::new(
             self.inner
                 .finish()
+                .with_precision_and_scale(self.precision, self.scale)
+                .unwrap(),
+        )
+    }
+
+    fn finish_cloned(&self) -> ArrayRef {
+        Arc::new(
+            self.inner
+                .finish_cloned()
                 .with_precision_and_scale(self.precision, self.scale)
                 .unwrap(),
         )

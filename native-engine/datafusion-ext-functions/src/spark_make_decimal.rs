@@ -25,7 +25,7 @@ pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         _ => unreachable!("make_decimal.precision is not int32 value"),
     };
     let scale = match &args[2] {
-        &ColumnarValue::Scalar(ScalarValue::Int32(Some(scale))) => scale as u8,
+        &ColumnarValue::Scalar(ScalarValue::Int32(Some(scale))) => scale as i8,
         _ => unreachable!("make_decimal.scale is not int32 value"),
     };
     assert!(

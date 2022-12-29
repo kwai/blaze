@@ -109,7 +109,7 @@ impl InMemSpillInfo {
     }
 
     fn into_file_spill(self, disk_manager: &DiskManager) -> Result<FileSpillInfo> {
-        let mut file = disk_manager.create_tmp_file()?;
+        let mut file = disk_manager.create_tmp_file("shuffle_spill_file")?;
         file.write_all(&self.frozen)?;
         file.rewind()?;
         Ok(FileSpillInfo {

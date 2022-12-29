@@ -328,13 +328,13 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
             return Ok(0);
         }
 
-        let spillfile = self.runtime.disk_manager.create_tmp_file()?;
+        let spillfile = self.runtime.disk_manager.create_tmp_file("shuffle_spill_file")?;
         let offsets = spill_into(
             &mut buffered_partitions,
             spillfile.path(),
             self.num_output_partitions,
         )
-            .await?;
+        .await?;
 
         let mut spills = self.spills.lock().await;
         let freed = self.metrics.mem_used().set(0);

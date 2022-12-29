@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["datafusion/simd", "prost/no-recursion-limit"]
 [dependencies]
-datafusion = "14.0.0"
+datafusion = "15.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "../datafusion-ext-exprs" }
 datafusion-ext-file-formats = { path = "../datafusion-ext-file-formats" }

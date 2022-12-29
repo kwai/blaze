@@ -66,7 +66,7 @@ pub fn spark_round_n(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                 ColumnarValue::Array(Arc::new(
                     output
                         .finish()
-                        .with_precision_and_scale(*precision, n as u8)?,
+                        .with_precision_and_scale(*precision, n as i8)?,
                 ))
             }
             dt => {
@@ -89,7 +89,7 @@ fn round_f64(v: f64, n: i32) -> f64 {
     (v * scale).round() / scale
 }
 
-fn round_decimal(i128_val: i128, scale: u8, n: i32) -> Option<i128> {
+fn round_decimal(i128_val: i128, scale: i8, n: i32) -> Option<i128> {
     let decimal = BigDecimal::new(BigInt::from(i128_val), scale as i64);
     let rounded = decimal.round(n as i64);
     rounded.as_bigint_and_exponent().0.to_i128()

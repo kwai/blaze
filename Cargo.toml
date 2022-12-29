@@ -24,9 +24,6 @@ members = [
     "native-engine/blaze-commons",
     "native-engine/blaze-serde",
 ]
-exclude = [
-    "utils/mkipcdict"
-]
 
 [profile.release-lto]
 inherits = "release"
@@ -40,14 +37,13 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-arrow = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" } # fix issue https://github.com/apache/arrow-rs/issues/3061
-arrow-array = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
-arrow-buffer = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
-arrow-cast = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
-arrow-data = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
-arrow-ipc = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
-arrow-schema = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
-arrow-select = { git = "https://github.com/viirya/arrow-rs.git", rev = "ccec98d43e0ad7dfe8452f5548c23ae0d572115b" }
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "b7a33317c2abf265f4ab6b3fe636f87c4d01334c" }
-parquet = { path = "patched/parquet-26.0.0-kwai" }
+arrow-array = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
+arrow-buffer = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
+arrow-cast = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
+arrow-data = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
+arrow-ipc = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
+arrow-schema = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
+arrow-select = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
+datafusion = { git = "https://github.com/apache/arrow-datafusion.git", tag = "15.0.0" }
+parquet = { path = "patched/parquet-28.0.0-kwai" }
 
