@@ -17,23 +17,19 @@
 package org.apache.spark.sql.blaze
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateMode
+import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.SparkEnv
-import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateMode
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
-import org.apache.spark.sql.catalyst.plans.physical.{RangePartitioning, RoundRobinPartitioning}
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.SortExec
 import org.apache.spark.sql.execution.UnionExec
-import org.apache.spark.sql.execution.aggregate.{
-  HashAggregateExec,
-  ObjectHashAggregateExec,
-  SortAggregateExec
-}
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
+import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
+import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
@@ -42,7 +38,6 @@ import org.apache.spark.sql.execution.LocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
-import org.apache.spark.sql.types.TimestampType
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -50,7 +45,6 @@ object BlazeConvertStrategy extends Logging {
   val depthTag: TreeNodeTag[Int] = TreeNodeTag("blaze.depth")
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
   val convertStrategyTag: TreeNodeTag[ConvertStrategy] = TreeNodeTag("blaze.convert.strategy")
-  val hashAggrModeTag: TreeNodeTag[AggregateMode] = TreeNodeTag("blaze.hash.aggr.mode")
 
   def apply(exec: SparkPlan): Unit = {
     exec.foreach(_.setTagValue(convertibleTag, true))
@@ -73,17 +67,6 @@ object BlazeConvertStrategy extends Logging {
       converted match {
         case e if NativeHelper.isNative(e) =>
           exec.setTagValue(convertibleTag, true)
-
-          // set aggregation mode
-          exec match {
-            case e: HashAggregateExec =>
-              exec.setTagValue(
-                hashAggrModeTag,
-                NativeHashAggregateExec.getAggrMode(
-                  e.aggregateExpressions,
-                  e.requiredChildDistributionExpressions))
-            case _ =>
-          }
 
         case _ =>
           exec.setTagValue(convertibleTag, false)
@@ -137,8 +120,7 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: TakeOrderedAndProjectExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: HashAggregateExec
-          if isAlwaysConvert(e.child) || !e.getTagValue(hashAggrModeTag).contains(Partial) =>
+      case e: HashAggregateExec if isAlwaysConvert(e.child) || !isPartialHashAggregate(e) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: ExpandExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
@@ -199,13 +181,6 @@ object BlazeConvertStrategy extends Logging {
               !isNeverConvert(child) &&
               isNeverConvert(e))
         }
-        // [ aggregateExpressions > threshold ]
-        dontConvertIf(
-          e,
-          e.isInstanceOf[HashAggregateExec] &&
-            isPartialHashAggregate(e) &&
-            !isNeverConvert(e) &&
-            e.asInstanceOf[HashAggregateExec].aggregateExpressions.length > 5)
       }
     }
   }

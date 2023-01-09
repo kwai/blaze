@@ -18,7 +18,9 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+
 import org.apache.spark._
+
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
@@ -27,6 +29,7 @@ import org.apache.spark.shuffle.{
   ShuffleWriteProcessor,
   ShuffleWriter
 }
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.errors.attachTree
@@ -49,7 +52,11 @@ case class ArrowShuffleExchangeExec(
   // NOTE: coordinator can be null after serialization/deserialization,
   //       e.g. it can be null on the Executor side
   lazy val writeMetrics: Map[String, SQLMetric] =
-    SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext)
+    SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext) ++ Map(
+      NativeHelper
+        .getDefaultNativeMetrics(sparkContext)
+        .filterKeys(Set("elapsed_compute", "spilled_bytes", "spill_count"))
+        .toSeq: _*)
   lazy val readMetrics: Map[String, SQLMetric] =
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val metrics: Map[String, SQLMetric] = readMetrics ++ writeMetrics ++ Map(
@@ -74,7 +81,8 @@ case class ArrowShuffleExchangeExec(
           // but the size is smaller than autoBroadcastThreshold. in this situation
           // spark incorrectly turns SMJ into BHJ and always fails the broadcast. so we
           // have to manually increase the stats by setting the dataSizeFactor.
-          val numRecordsWritten = metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN).value
+          val numRecordsWritten =
+            metrics(SQLShuffleWriteMetricsReporter.SHUFFLE_RECORDS_WRITTEN).value
           val broadcastCountLimit = 512000000 / 4
           val broadcastThreshold = SQLConf.get.getConf(SQLConf.AUTO_BROADCASTJOIN_THRESHOLD)
           if (numRecordsWritten >= broadcastCountLimit

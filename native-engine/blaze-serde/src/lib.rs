@@ -14,11 +14,11 @@
 
 use crate::error::PlanSerDeError;
 use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
-use datafusion::logical_expr::AggregateFunction;
 use datafusion::logical_expr::Operator;
 use datafusion::physical_plan::joins::utils::JoinSide;
 use datafusion::prelude::JoinType;
 use datafusion::scalar::ScalarValue;
+use datafusion_ext_plans::agg::AggFunction;
 
 // include the generated protobuf source as a submodule
 #[allow(clippy::all)]
@@ -124,27 +124,14 @@ impl From<protobuf::JoinSide> for JoinSide {
     }
 }
 
-impl From<protobuf::AggregateFunction> for AggregateFunction {
-    fn from(agg_fun: protobuf::AggregateFunction) -> AggregateFunction {
+impl From<protobuf::AggFunction> for AggFunction {
+    fn from(agg_fun: protobuf::AggFunction) -> AggFunction {
         match agg_fun {
-            protobuf::AggregateFunction::Min => AggregateFunction::Min,
-            protobuf::AggregateFunction::Max => AggregateFunction::Max,
-            protobuf::AggregateFunction::Sum => AggregateFunction::Sum,
-            protobuf::AggregateFunction::Avg => AggregateFunction::Avg,
-            protobuf::AggregateFunction::Count => AggregateFunction::Count,
-            protobuf::AggregateFunction::ApproxDistinct => {
-                AggregateFunction::ApproxDistinct
-            }
-            protobuf::AggregateFunction::ArrayAgg => AggregateFunction::ArrayAgg,
-            protobuf::AggregateFunction::Variance => AggregateFunction::Variance,
-            protobuf::AggregateFunction::VariancePop => AggregateFunction::VariancePop,
-            protobuf::AggregateFunction::Covariance => AggregateFunction::Covariance,
-            protobuf::AggregateFunction::CovariancePop => {
-                AggregateFunction::CovariancePop
-            }
-            protobuf::AggregateFunction::Stddev => AggregateFunction::Stddev,
-            protobuf::AggregateFunction::StddevPop => AggregateFunction::StddevPop,
-            protobuf::AggregateFunction::Correlation => AggregateFunction::Correlation,
+            protobuf::AggFunction::Min => AggFunction::MIN,
+            protobuf::AggFunction::Max => AggFunction::MAX,
+            protobuf::AggFunction::Sum => AggFunction::SUM,
+            protobuf::AggFunction::Avg => AggFunction::AVG,
+            protobuf::AggFunction::Count => AggFunction::COUNT,
         }
     }
 }

@@ -68,7 +68,7 @@ impl BucketShuffleRepartitioner {
         let num_output_partitions = partitioning.partition_count();
         let runtime = context.runtime_env();
         let batch_size = context.session_config().batch_size();
-        Self {
+        let repartitioner = Self {
             id: MemoryConsumerId::new(partition_id),
             output_data_file,
             output_index_file,
@@ -82,11 +82,9 @@ impl BucketShuffleRepartitioner {
             num_output_partitions,
             runtime,
             metrics,
-        }
-    }
-
-    fn used(&self) -> usize {
-        self.metrics.mem_used().value()
+        };
+        repartitioner.runtime.register_requester(&repartitioner.id);
+        repartitioner
     }
 
     fn spilled_bytes(&self) -> usize {
@@ -292,7 +290,7 @@ impl Debug for BucketShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("BucketShuffleRepartitioner")
             .field("id", &self.id())
-            .field("memory_used", &self.used())
+            .field("memory_used", &self.mem_used())
             .field("spilled_bytes", &self.spilled_bytes())
             .field("spilled_count", &self.spill_count())
             .finish()
@@ -319,8 +317,10 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
 
     async fn spill(&self) -> Result<usize> {
         log::info!(
-            "bucket repartitioner start spilling, used={:.2} MB",
-            self.used() as f64 / 1e6);
+            "bucket repartitioner start spilling, used={:.2} MB, {}",
+            self.mem_used() as f64 / 1e6,
+            self.memory_manager(),
+        );
 
         let mut buffered_partitions = self.buffered_partitions.lock().await;
         // we could always get a chance to free some memory as long as we are holding some
@@ -338,16 +338,17 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
 
         let mut spills = self.spills.lock().await;
         let freed = self.metrics.mem_used().set(0);
-        self.metrics.record_spill(freed);
 
         log::info!(
             "bucket repartitioner spilled into file, freed={:.2} MB",
             freed as f64 / 1e6);
 
-        spills.push(FileSpillInfo {
+        let file_spill = FileSpillInfo {
             file: spillfile,
             offsets,
-        });
+        };
+        self.metrics.record_spill(file_spill.bytes_size());
+        spills.push(file_spill);
         Ok(freed)
     }
 
@@ -358,7 +359,7 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
 
 impl Drop for BucketShuffleRepartitioner {
     fn drop(&mut self) {
-        self.runtime.drop_consumer(self.id(), self.used());
+        self.runtime.drop_consumer(self.id(), self.mem_used());
     }
 }
 

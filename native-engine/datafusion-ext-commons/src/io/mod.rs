@@ -14,6 +14,7 @@
 
 use std::io::{Seek, SeekFrom, Read, Write};
 use std::sync::Arc;
+use arrow::record_batch::RecordBatchOptions;
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
@@ -91,6 +92,7 @@ pub fn name_batch(
     name_schema: &SchemaRef,
 ) -> ArrowResult<RecordBatch> {
 
+    let row_count = batch.num_rows();
     let schema = Arc::new(Schema::new(batch
         .schema()
         .fields()
@@ -99,9 +101,58 @@ pub fn name_batch(
         .map(|(i, field)| field.clone().with_name(name_schema.field(i).name()))
         .collect()));
 
-    RecordBatch::try_new(
+    RecordBatch::try_new_with_options(
         schema,
         batch.columns().iter() .map(|column| column.clone()).collect(),
+        &RecordBatchOptions::new().with_row_count(Some(row_count)),
     )
 }
 
+pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> ArrowResult<()> {
+    while len >= 128 {
+        let v = len % 128;
+        len /= 128;
+        write_u8(128 + v as u8, output)?;
+    }
+    write_u8(len as u8, output)?;
+    Ok(())
+}
+
+pub fn read_len<R: Read>(input: &mut R) -> ArrowResult<usize> {
+    let mut len = 0usize;
+    let mut factor = 1;
+    loop {
+        let v = read_u8(input)?;
+        if v < 128 {
+            len += (v as usize) * factor;
+            break;
+        }
+        len += (v - 128) as usize * factor;
+        factor *= 128;
+    }
+    Ok(len)
+}
+
+pub fn write_u8<W: Write>(n: u8, output: &mut W) -> ArrowResult<()> {
+    output.write_all(&[n])?;
+    Ok(())
+}
+
+pub fn read_u8<R: Read>(input: &mut R) -> ArrowResult<u8> {
+    let mut buf = [0; 1];
+    input.read_exact(&mut buf)?;
+    Ok(buf[0])
+}
+
+pub fn read_bytes_slice<R: Read>(
+    input: &mut R,
+    len: usize,
+) -> ArrowResult<Box<[u8]>> {
+
+    // safety - assume_init() is safe for [u8]
+    let mut byte_slice = unsafe {
+        Box::new_uninit_slice(len).assume_init()
+    };
+    input.read_exact(byte_slice.as_mut())?;
+    Ok(byte_slice)
+}

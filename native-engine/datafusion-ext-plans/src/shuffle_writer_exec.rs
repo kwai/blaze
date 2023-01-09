@@ -101,8 +101,6 @@ impl ExecutionPlan for ShuffleWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, context.clone())?;
-
         let repartitioner: Arc<dyn ShuffleRepartitioner> =
             match &self.partitioning {
                 p if p.partition_count() == 1 =>
@@ -133,6 +131,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 p => unreachable!("unsupported partitioning: {:?}", p),
             };
 
+        let input = self.input.execute(partition, context.clone())?;
         let stream = repartitioner.execute(
             input,
             context.session_config().batch_size(),

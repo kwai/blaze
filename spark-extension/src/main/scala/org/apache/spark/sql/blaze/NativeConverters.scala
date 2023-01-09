@@ -86,11 +86,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
-import org.apache.spark.sql.catalyst.expressions.aggregate.StddevPop
-import org.apache.spark.sql.catalyst.expressions.aggregate.StddevSamp
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
-import org.apache.spark.sql.catalyst.expressions.aggregate.VariancePop
-import org.apache.spark.sql.catalyst.expressions.aggregate.VarianceSamp
 import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
 import org.apache.spark.sql.catalyst.expressions.BitwiseOr
 import org.apache.spark.sql.catalyst.expressions.BoundReference
@@ -114,10 +110,10 @@ import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveGenericUDF
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
-import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
@@ -250,17 +246,6 @@ object NativeConverters {
     def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => pb.PhysicalExprNode.Builder)
         : pb.PhysicalExprNode =
       buildFn(pb.PhysicalExprNode.newBuilder()).build()
-
-    def buildAggrExprNode(
-        aggrFunction: pb.AggregateFunction,
-        child: Expression): pb.PhysicalExprNode =
-      buildExprNode {
-        _.setAggregateExpr(
-          pb.PhysicalAggregateExprNode
-            .newBuilder()
-            .setAggrFunction(aggrFunction)
-            .setExpr(convertExpr(child, useAttrExprId)))
-      }
 
     def buildBinaryExprNode(
         left: Expression,
@@ -445,10 +430,33 @@ object NativeConverters {
       case LessThan(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Lt")
       case GreaterThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "GtEq")
       case LessThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "LtEq")
-      case Add(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Plus")
-      case Subtract(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Minus")
-      case e @ Multiply(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Multiply")
+
+      case e @ Add(lhs, rhs) =>
+        if (lhs.dataType != e.dataType)
+          return convertExpr(Add(Cast(lhs, e.dataType), rhs), useAttrExprId)
+        if (rhs.dataType != e.dataType)
+          return convertExpr(Add(lhs, Cast(rhs, e.dataType)), useAttrExprId)
+        buildBinaryExprNode(lhs, rhs, "Plus")
+
+      case e @ Subtract(lhs, rhs) =>
+        if (lhs.dataType != e.dataType)
+          return convertExpr(Subtract(Cast(lhs, e.dataType), rhs), useAttrExprId)
+        if (rhs.dataType != e.dataType)
+          return convertExpr(Subtract(lhs, Cast(rhs, e.dataType)), useAttrExprId)
+        buildBinaryExprNode(lhs, rhs, "Minus")
+
+      case e @ Multiply(lhs, rhs) =>
+        if (lhs.dataType != e.dataType)
+          return convertExpr(Multiply(Cast(lhs, e.dataType), rhs), useAttrExprId)
+        if (rhs.dataType != e.dataType)
+          return convertExpr(Multiply(lhs, Cast(rhs, e.dataType)), useAttrExprId)
+        buildBinaryExprNode(lhs, rhs, "Multiply")
+
       case e @ Divide(lhs, rhs) =>
+        if (lhs.dataType != e.dataType)
+          return convertExpr(Divide(Cast(lhs, e.dataType), rhs), useAttrExprId)
+        if (rhs.dataType != e.dataType)
+          return convertExpr(Divide(lhs, Cast(rhs, e.dataType)), useAttrExprId)
         val promotedDataType = (lhs.dataType, rhs.dataType) match {
           case (lt: DecimalType, rt: DecimalType) =>
             val (p1, s1) = (lt.precision, lt.scale)
@@ -698,23 +706,38 @@ object NativeConverters {
       // aggr add new parameter filter
       case e: AggregateExpression =>
         assert(Shims.get.exprShims.getAggregateExpressionFilter(e).isEmpty)
-        convertExpr(e.aggregateFunction)
-      case Min(_1) => buildAggrExprNode(pb.AggregateFunction.MIN, _1)
-      case Max(_1) => buildAggrExprNode(pb.AggregateFunction.MAX, _1)
-      case Sum(_1) => buildAggrExprNode(pb.AggregateFunction.SUM, _1)
-      case Average(_1) => buildAggrExprNode(pb.AggregateFunction.AVG, _1)
-      case Count(Seq(_1)) => buildAggrExprNode(pb.AggregateFunction.COUNT, _1)
-      case Count(_n) if !_n.exists(_.nullable) =>
-        buildAggrExprNode(pb.AggregateFunction.COUNT, Literal.apply(1))
-      case VarianceSamp(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE, _1)
-      case VariancePop(_1) => buildAggrExprNode(pb.AggregateFunction.VARIANCE_POP, _1)
-      case StddevSamp(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV, _1)
-      case StddevPop(_1) => buildAggrExprNode(pb.AggregateFunction.STDDEV_POP, _1)
+        val aggBuilder = pb.PhysicalAggExprNode
+          .newBuilder()
+
+        e.aggregateFunction match {
+          case Max(child) =>
+            aggBuilder.setAggFunction(pb.AggFunction.MAX)
+            aggBuilder.addChildren(convertExpr(child, useAttrExprId))
+          case Min(child) =>
+            aggBuilder.setAggFunction(pb.AggFunction.MIN)
+            aggBuilder.addChildren(convertExpr(child, useAttrExprId))
+          case Sum(child) =>
+            aggBuilder.setAggFunction(pb.AggFunction.SUM)
+            aggBuilder.addChildren(convertExpr(child, useAttrExprId))
+          case Average(child) =>
+            aggBuilder.setAggFunction(pb.AggFunction.AVG)
+            aggBuilder.addChildren(convertExpr(child, useAttrExprId))
+          case Count(Seq(child1)) =>
+            aggBuilder.setAggFunction(pb.AggFunction.COUNT)
+            aggBuilder.addChildren(convertExpr(child1, useAttrExprId))
+          case Count(children) if !children.exists(_.nullable) =>
+            aggBuilder.setAggFunction(pb.AggFunction.COUNT)
+            aggBuilder.addChildren(convertExpr(Literal.apply(1), useAttrExprId))
+        }
+        pb.PhysicalExprNode
+          .newBuilder()
+          .setAggExpr(aggBuilder)
+          .build()
 
       // hive UDFJson
       case e
           if (isHiveSimpleUDF(e)
-            && getFunctionClassName(e) == Some("org.apache.hadoop.hive.ql.udf.UDFJson")
+            && getFunctionClassName(e).contains("org.apache.hadoop.hive.ql.udf.UDFJson")
             && SparkEnv.get.conf.getBoolean(
               "spark.blaze.udf.UDFJson.enabled",
               defaultValue = true)

@@ -860,15 +860,19 @@ dependencies = [
  "blaze-commons",
  "datafusion",
  "datafusion-ext-commons",
+ "datafusion-ext-exprs",
  "futures",
+ "hashbrown 0.13.1",
  "itertools",
  "jni",
  "log",
  "once_cell",
+ "panic-message",
  "paste",
  "tempfile",
  "tokio",
  "voracious_radix_sort",
+ "zstd 0.11.2+zstd.1.5.2",
 ]
 
 [[package]]

@@ -16,20 +16,11 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import java.nio.file.Paths
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.file.Files
-import java.util.Random
 import java.util.UUID
-import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.HashPartitioner
-import org.apache.spark.Partition
 import org.apache.spark.Partitioner
-import org.apache.spark.RangePartitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
@@ -43,31 +34,19 @@ import org.blaze.protobuf.ShuffleWriterExecNode
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.sort.SortShuffleManager
-import org.apache.spark.shuffle.IndexShuffleBlockResolver
-import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
-import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
-import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
-import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
-import org.apache.spark.sql.catalyst.expressions.BoundReference
-import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
-import org.apache.spark.sql.catalyst.plans.physical.RangePartitioning
-import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.SinglePartition
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -78,16 +57,8 @@ import org.apache.spark.sql.execution.UnsafeRowSerializer
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReaderBase
 import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
-import org.apache.spark.sql.execution.PartitionIdPassthrough
-import org.apache.spark.sql.execution.RecordBinaryComparator
-import org.apache.spark.sql.execution.UnsafeExternalRowSorter
-import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec.createShuffleWriteProcessor
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
-import org.apache.spark.util.collection.unsafe.sort.PrefixComparators
-import org.apache.spark.util.collection.unsafe.sort.RecordComparator
-import org.apache.spark.util.MutablePair
 
 abstract class ArrowShuffleExchangeBase(
     override val outputPartitioning: Partitioning,
@@ -119,13 +90,7 @@ abstract class ArrowShuffleExchangeBase(
       nativeHashExprs)
   }
 
-  val nativeSchema: Schema = child match {
-    case e: NativeHashAggregateExec if e.aggrMode == Partial || e.aggrMode == PartialMerge =>
-      e.nativeOutputSchema
-    case _ =>
-      Util.getNativeSchema(child.output)
-  }
-
+  val nativeSchema: Schema = Util.getNativeSchema(child.output)
   val nativeHashExprs: List[PhysicalExprNode] = outputPartitioning match {
     case HashPartitioning(expressions, _) =>
       expressions.map(expr => NativeConverters.convertExpr(expr)).toList
@@ -213,6 +178,8 @@ abstract class ArrowShuffleExchangeBase(
         case ("compute_elapsed", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
+        case ("spilled_bytes", v) => metrics("spilled_bytes").add(v)
+        case ("spill_count", v) => metrics("spill_count").add(v)
         case _ =>
       }))
 

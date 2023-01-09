@@ -124,6 +124,12 @@ struct FileSpillInfo {
     offsets: Vec<u64>,
 }
 
+impl FileSpillInfo {
+    fn bytes_size(&self) -> usize {
+        self.offsets.last().map(|&v| v as usize).unwrap_or(0)
+    }
+}
+
 fn evaluate_hashes(
     partitioning: &Partitioning,
     batch: &RecordBatch,

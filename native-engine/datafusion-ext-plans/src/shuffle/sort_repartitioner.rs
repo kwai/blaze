@@ -63,7 +63,7 @@ impl Debug for SortShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("SortShuffleRepartitioner")
             .field("id", &self.id())
-            .field("memory_used", &self.used())
+            .field("memory_used", &self.mem_used())
             .field("spilled_bytes", &self.spilled_bytes())
             .field("spilled_count", &self.spill_count())
             .finish()
@@ -94,11 +94,11 @@ impl SortShuffleRepartitioner {
             file_spills: Mutex::default(),
             partitioning,
             num_output_partitions,
-            runtime: runtime.clone(),
+            runtime,
             batch_size,
             metrics,
         };
-        runtime.register_requester(repartitioner.id());
+        repartitioner.runtime.register_requester(repartitioner.id());
         repartitioner
     }
 
@@ -203,10 +203,6 @@ impl SortShuffleRepartitioner {
         Ok(())
     }
 
-    fn used(&self) -> usize {
-        self.metrics.mem_used().value()
-    }
-
     fn spilled_bytes(&self) -> usize {
         self.metrics.spilled_bytes().value()
     }
@@ -236,17 +232,18 @@ impl MemoryConsumer for SortShuffleRepartitioner {
 
     async fn spill(&self) -> Result<usize> {
         const DISK_SPILL_BUFFERED_SIZE_LIMIT: usize = 16777216;
-
         log::info!(
-            "sort repartitioner start spilling, used={:.2} MB",
-            self.used() as f64 / 1e6);
+            "sort repartitioner start spilling, used={:.2} MB, {}",
+            self.mem_used() as f64 / 1e6,
+            self.memory_manager(),
+        );
 
         let mut in_mem_spills = self.in_mem_spills.lock().await;
         let in_mem_size = in_mem_spills
             .iter()
             .map(|spill| spill.mem_size())
             .sum::<usize>();
-        let buffered_size = self.used().saturating_sub(in_mem_size);
+        let buffered_size = self.mem_used().saturating_sub(in_mem_size);
         let mut freed = 0;
 
         // first try spill current buffered batches to in-mem spills
@@ -283,11 +280,13 @@ impl MemoryConsumer for SortShuffleRepartitioner {
             .0;
         let pop_spill = in_mem_spills.remove(pop_index);
         freed += pop_spill.mem_size();
-        file_spills.push(pop_spill.into_file_spill(&self.runtime.disk_manager)?);
+
+        let file_spill = pop_spill.into_file_spill(&self.runtime.disk_manager)?;
+        self.metrics.record_spill(file_spill.bytes_size());
+        file_spills.push(file_spill);
 
         // now we have enough memory for the coming batch
         self.metrics.mem_used().sub(freed as usize);
-        self.metrics.record_spill(freed);
         log::info!(
             "sort repartitioner spilled into file, freed={:.2} MB",
             freed as f64 / 1e6);
@@ -460,21 +459,20 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             output_index.flush()?;
             Ok::<(), DataFusionError>(())
         })
-            .await
-            .map_err(|e| {
-                DataFusionError::Execution(format!("shuffle write error: {:?}", e))
-            })??;
+        .await
+        .map_err(|e| {
+            DataFusionError::Execution(format!("shuffle write error: {:?}", e))
+        })??;
 
         let used = self.metrics.mem_used().set(0);
         self.shrink(used);
         Ok(())
     }
-
 }
 
 impl Drop for SortShuffleRepartitioner {
     fn drop(&mut self) {
-        self.runtime.drop_consumer(self.id(), self.used());
+        self.runtime.drop_consumer(self.id(), self.mem_used());
     }
 }
 

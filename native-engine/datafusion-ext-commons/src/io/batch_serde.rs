@@ -18,8 +18,9 @@ use arrow::array::*;
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::*;
 use arrow::error::{ArrowError, Result as ArrowResult};
-use arrow::record_batch::RecordBatch;
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use bitvec::prelude::BitVec;
+use crate::io::{read_bytes_slice, read_len, read_u8, write_len, write_u8};
 
 pub fn write_batch<W: Write>(
     batch: &RecordBatch,
@@ -118,14 +119,12 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
     }
 
     // read nullables
-    let mut nullables_bytes = vec![0; (num_columns + 7) / 8];
-    input.read_exact(&mut nullables_bytes)?;
-    let nullables = BitVec::<u8>::from_vec(nullables_bytes);
+    let nullables_bytes = read_bytes_slice(&mut input, (num_columns + 7) / 8)?;
+    let nullables = BitVec::<u8>::from_vec(nullables_bytes.into());
 
     // read whether arrays have null buffers (which may differ from nullables)
-    let mut has_null_buffers_bytes = vec![0; (num_columns + 7) / 8];
-    input.read_exact(&mut has_null_buffers_bytes)?;
-    let has_null_buffers = BitVec::<u8>::from_vec(has_null_buffers_bytes);
+    let has_null_buffers_bytes = read_bytes_slice(&mut input, (num_columns + 7) / 8)?;
+    let has_null_buffers = BitVec::<u8>::from_vec(has_null_buffers_bytes.into());
 
     // create schema
     let schema = Arc::new(Schema::new(data_types
@@ -184,7 +183,11 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
     }
 
     // create batch
-    Ok(RecordBatch::try_new(schema, columns)?)
+    Ok(RecordBatch::try_new_with_options(
+        schema,
+        columns,
+        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+    )?)
 }
 
 fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResult<()> {
@@ -267,18 +270,15 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
 
     let null_buffer: Option<Buffer> = if has_null_buffer {
         let null_buffer_len = (num_rows + 7) / 8;
-        let mut mutable_null_buffer = MutableBuffer::from_len_zeroed(null_buffer_len);
-        input.read_exact(&mut mutable_null_buffer)?;
-        Some(mutable_null_buffer.into())
+        Some(Buffer::from(read_bytes_slice(input, null_buffer_len)?))
     } else {
         None
     };
 
     let data_buffers: Vec<Buffer> = {
         let data_buffer_len = num_rows * PT::get_byte_width();
-        let mut mutable_data_buffer = MutableBuffer::from_len_zeroed(data_buffer_len);
-        input.read_exact(&mut mutable_data_buffer)?;
-        vec![mutable_data_buffer.into()]
+        let data_buffer = Buffer::from(read_bytes_slice(input, data_buffer_len)?);
+        vec![data_buffer]
     };
 
     let array_data = ArrayData::try_new(
@@ -311,18 +311,16 @@ fn read_boolean_array<R: Read>(
 
     let null_buffer: Option<Buffer> = if has_null_buffer {
         let null_buffer_len = (num_rows + 7) / 8;
-        let mut mutable_null_buffer = MutableBuffer::from_len_zeroed(null_buffer_len);
-        input.read_exact(&mut mutable_null_buffer)?;
-        Some(mutable_null_buffer.into())
+        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
+        Some(null_buffer)
     } else {
         None
     };
 
     let data_buffers: Vec<Buffer> = {
         let data_buffer_len = (num_rows + 7) / 8;
-        let mut mutable_data_buffer = MutableBuffer::from_len_zeroed(data_buffer_len);
-        input.read_exact(&mut mutable_data_buffer)?;
-        vec![mutable_data_buffer.into()]
+        let data_buffer = Buffer::from(read_bytes_slice(input, data_buffer_len)?);
+        vec![data_buffer]
     };
 
     let array_data = ArrayData::try_new(
@@ -361,10 +359,7 @@ fn read_string_array<R: Read>(
 ) -> ArrowResult<ArrayRef> {
 
     let null_buffer: Option<Buffer> = if has_null_buffer {
-        let null_buffer_len = (num_rows + 7) / 8;
-        let mut mutable_null_buffer = MutableBuffer::from_len_zeroed(null_buffer_len);
-        input.read_exact(&mut mutable_null_buffer)?;
-        Some(mutable_null_buffer.into())
+        Some(Buffer::from(read_bytes_slice(input, (num_rows + 7) / 8)?))
     } else {
         None
     };
@@ -381,10 +376,7 @@ fn read_string_array<R: Read>(
     let offsets_buffer: Buffer = offsets_buffer.into();
 
     let data_len = cur_offset;
-    let mut data_buffer = MutableBuffer::from_len_zeroed(data_len);
-    input.read_exact(&mut data_buffer)?;
-    let data_buffer: Buffer = data_buffer.into();
-
+    let data_buffer = Buffer::from(read_bytes_slice(input, data_len)?);
     let array_data = ArrayData::try_new(
         DataType::Utf8,
         num_rows,
@@ -394,42 +386,6 @@ fn read_string_array<R: Read>(
         vec![],
     )?;
     Ok(make_array(array_data))
-}
-
-fn write_len<W: Write>(mut len: usize, output: &mut W) -> ArrowResult<()> {
-    while len >= 128 {
-        let v = len % 128;
-        len /= 128;
-        write_u8(128 + v as u8, output)?;
-    }
-    write_u8(len as u8, output)?;
-    Ok(())
-}
-
-fn read_len<R: Read>(input: &mut R) -> ArrowResult<usize> {
-    let mut len = 0usize;
-    let mut factor = 1;
-    loop {
-        let v = read_u8(input)?;
-        if v < 128 {
-            len += (v as usize) * factor;
-            break;
-        }
-        len += (v - 128) as usize * factor;
-        factor *= 128;
-    }
-    Ok(len)
-}
-
-fn write_u8<W: Write>(n: u8, output: &mut W) -> ArrowResult<()> {
-    output.write_all(&[n])?;
-    Ok(())
-}
-
-fn read_u8<R: Read>(input: &mut R) -> ArrowResult<u8> {
-    let mut buf = [0; 1];
-    input.read_exact(&mut buf)?;
-    Ok(buf[0])
 }
 
 #[cfg(test)]

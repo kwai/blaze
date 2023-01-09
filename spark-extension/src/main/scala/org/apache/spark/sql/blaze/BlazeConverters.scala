@@ -21,70 +21,62 @@ import java.util.UUID
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.SparkEnv
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.aggregate.Final
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec}
-import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
-import org.apache.spark.sql.execution.joins.{
-  BroadcastHashJoinExec,
-  BuildLeft,
-  BuildRight,
-  CartesianProductExec,
-  SortMergeJoinExec
-}
-import org.apache.spark.sql.execution.{
-  CollectLimitExec,
-  FileSourceScanExec,
-  FilterExec,
-  GlobalLimitExec,
-  LocalLimitExec,
-  ProjectExec,
-  SortExec,
-  SparkPlan,
-  TakeOrderedAndProjectExec,
-  UnaryExecNode,
-  UnionExec
-}
+import org.apache.spark.sql.execution.CollectLimitExec
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FilterExec
+import org.apache.spark.sql.execution.GlobalLimitExec
+import org.apache.spark.sql.execution.LocalLimitExec
+import org.apache.spark.sql.execution.ProjectExec
+import org.apache.spark.sql.execution.SortExec
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
+import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.UnionExec
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
+import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
-import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToUnsafeRowExec
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastHashJoinExec
+import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
+import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
+import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
+import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortExec
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinExec
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastHashJoinExec
-import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
-import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
-import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
-import org.apache.spark.SparkEnv
-
-import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.aggregate.Final
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
-import org.apache.spark.sql.catalyst.expressions.aggregate.PartialMerge
-import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.window.WindowExec
-import org.apache.spark.sql.execution.command.DataWritingCommandExec
-import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
-import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
+import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.blaze.plan.Util
+import org.apache.spark.sql.execution.command.DataWritingCommandExec
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
+import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
+import org.apache.spark.sql.execution.joins.BuildLeft
+import org.apache.spark.sql.execution.joins.BuildRight
+import org.apache.spark.sql.execution.joins.CartesianProductExec
+import org.apache.spark.sql.execution.joins.SortMergeJoinExec
+import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 
@@ -246,7 +238,7 @@ object BlazeConverters extends Logging {
     logDebug(s"  optionalBucketSet: ${optionalBucketSet}")
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
-    return Shims.get.parquetScanShims.createParquetScan(exec)
+    Shims.get.parquetScanShims.createParquetScan(exec)
   }
 
   def convertProjectExec(exec: ProjectExec): SparkPlan = {
@@ -464,22 +456,23 @@ object BlazeConverters extends Logging {
       exec.groupingExpressions,
       exec.aggregateExpressions,
       exec.aggregateAttributes,
+      exec.initialInputBufferOffset,
       addRenameColumnsExec(convertToNative(exec.child)))
 
-    nativeAggr.aggrMode match {
-      case Partial | PartialMerge =>
-        nativeAggr
-      case Final =>
-        try {
-          NativeProjectExec(exec.resultExpressions, nativeAggr)
-        } catch {
-          case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
-            logWarning(
-              s"Error projecting resultExpressions, failback to non-native projection: " +
-                s"${e.getMessage}")
-            ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
-        }
+    val isFinal = exec.requiredChildDistributionExpressions.isDefined &&
+      exec.aggregateExpressions.forall(_.mode == Final)
+    if (isFinal) { // wraps with a projection to handle resutExpressions
+      try {
+        return NativeProjectExec(exec.resultExpressions, nativeAggr)
+      } catch {
+        case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
+          logWarning(
+            s"Error projecting resultExpressions, failback to non-native projection: " +
+              s"${e.getMessage}")
+          return ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
+      }
     }
+    nativeAggr
   }
 
   def convertExpandExec(exec: ExpandExec): SparkPlan = {
