@@ -866,6 +866,7 @@ dependencies = [
  "itertools",
  "jni",
  "log",
+ "lz4_flex",
  "once_cell",
  "panic-message",
  "paste",
@@ -1447,6 +1448,15 @@ checksum = "d7be8908e2ed6f31c02db8a9fa962f03e36c53fbfde437363eae3306b85d7e17"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "lz4_flex"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a8cbbb2831780bc3b9c15a41f5b49222ef756b6730a95f3decfdd15903eb5a3"
+dependencies = [
+ "twox-hash",
 ]
 
 [[package]]

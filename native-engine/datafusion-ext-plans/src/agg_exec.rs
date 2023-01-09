@@ -34,7 +34,7 @@ use datafusion_ext_commons::streams::receiver_stream::ReceiverStream;
 
 use crate::agg::{AggAccumRef, AggExpr, GroupingExpr};
 use crate::agg::agg_helper::AggContext;
-use crate::agg::agg_tables::{AggTables, InMemHashTable};
+use crate::agg::agg_tables::{AggTables, InMemTable};
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -192,7 +192,7 @@ async fn execute_agg(
             agg_ctx.create_children_input_arrays(&input_batch)?;
 
         // update to in-mem table
-        tables.update_in_mem(|in_mem: &mut InMemHashTable| {
+        tables.update_in_mem(|in_mem: &mut InMemTable| {
             for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
                 in_mem.update(
                     &agg_ctx,
