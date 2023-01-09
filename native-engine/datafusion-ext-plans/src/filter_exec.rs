@@ -21,13 +21,12 @@ use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
 use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
+use datafusion::physical_plan::metrics::{MetricsSet, MetricValue};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 
 #[derive(Debug, Clone)]
 pub struct FilterExec {
     inner: Arc<datafusion::physical_plan::filter::FilterExec>,
-    metrics: ExecutionPlanMetricsSet,
 }
 
 impl FilterExec {
@@ -42,7 +41,6 @@ impl FilterExec {
             )?);
         Ok(Self {
             inner,
-            metrics: ExecutionPlanMetricsSet::new(),
         })
     }
 }
@@ -87,16 +85,27 @@ impl ExecutionPlan for FilterExec {
             .session_config()
             .batch_size();
         let filtered = self.inner.execute(partition, context)?;
+        let elapsed_compute = self.inner
+            .metrics()
+            .unwrap()
+            .iter()
+            .filter_map(|m| match m.value() {
+                MetricValue::ElapsedCompute(timer) => Some(timer.clone()),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+
         let coalesced = Box::pin(CoalesceStream::new(
             filtered,
             batch_size,
-            BaselineMetrics::new(&self.metrics, partition),
+            elapsed_compute,
         ));
         Ok(coalesced)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
-        Some(self.metrics.clone_inner())
+        self.inner.metrics()
     }
 
     fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {

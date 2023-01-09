@@ -163,15 +163,16 @@ async fn execute_agg(
         BaselineMetrics::new(&metrics, partition_id),
         task_context.clone(),
     ));
-    drop(timer);
 
     // start processing input batches
     let input = input.execute(partition_id, task_context.clone())?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         task_context.session_config().batch_size(),
-        BaselineMetrics::new(&metrics, partition_id),
+        BaselineMetrics::new(&metrics, partition_id).elapsed_compute().clone(),
     ));
+    drop(timer);
+
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = baseline_metrics.elapsed_compute().timer();
 
@@ -243,7 +244,7 @@ async fn execute_agg_no_grouping(
 ) -> Result<SendableRecordBatchStream> {
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
     let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-    let _timer = elapsed_compute.timer();
+    let timer = elapsed_compute.timer();
 
     let mut accums: Box<[AggAccumRef]> = agg_ctx.aggs
         .iter()
@@ -255,8 +256,10 @@ async fn execute_agg_no_grouping(
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         task_context.session_config().batch_size(),
-        BaselineMetrics::new(&metrics, partition_id),
+        baseline_metrics.elapsed_compute().clone(),
     ));
+    drop(timer);
+
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         // compute agg children projected arrays
         let agg_children_projected_arrays =

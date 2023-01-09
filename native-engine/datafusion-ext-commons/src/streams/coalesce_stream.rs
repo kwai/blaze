@@ -19,7 +19,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::physical_plan::{RecordBatchStream, SendableRecordBatchStream};
 use datafusion::physical_plan::coalesce_batches::concat_batches;
-use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::Time;
 use futures::{Stream, StreamExt};
 
 pub struct CoalesceStream {
@@ -27,21 +27,21 @@ pub struct CoalesceStream {
     staging_batches: Vec<RecordBatch>,
     staging_rows: usize,
     batch_size: usize,
-    metrics: BaselineMetrics,
+    elapsed_compute: Time,
 }
 
 impl CoalesceStream {
     pub fn new(
         input: SendableRecordBatchStream,
         batch_size: usize,
-        metrics: BaselineMetrics,
+        elapsed_compute: Time,
     ) -> Self {
         Self {
             input,
             staging_batches: vec![],
             staging_rows: 0,
             batch_size,
-            metrics,
+            elapsed_compute,
         }
     }
 
@@ -63,34 +63,31 @@ impl RecordBatchStream for CoalesceStream {
 }
 
 impl Stream for CoalesceStream {
-    type Item = datafusion::arrow::error::Result<RecordBatch>;
+    type Item = arrow::error::Result<RecordBatch>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let elapsed_time = self.elapsed_compute.clone();
         loop {
             match ready!(self.input.poll_next_unpin(cx)).transpose()? {
                 Some(batch) => {
+                    let _timer = elapsed_time.timer();
                     if batch.num_rows() > 0 {
                         self.staging_rows += batch.num_rows();
                         self.staging_batches.push(batch);
                         if self.staging_rows >= self.batch_size {
                             let coalesced = self.coalesce()?;
-                            return self.metrics.record_poll(
-                                Poll::Ready(Some(Ok(coalesced)))
-                            );
+                            return Poll::Ready(Some(Ok(coalesced)));
                         }
                         continue;
                     }
                 }
                 None if !self.staging_batches.is_empty() => {
+                    let _timer = elapsed_time.timer();
                     let coalesced = self.coalesce()?;
-                    return self.metrics.record_poll(
-                        Poll::Ready(Some(Ok(coalesced)))
-                    );
+                    return Poll::Ready(Some(Ok(coalesced)));
                 }
                 None => {
-                    return self.metrics.record_poll(
-                        Poll::Ready(None)
-                    );
+                    return Poll::Ready(None);
                 }
             }
         }
