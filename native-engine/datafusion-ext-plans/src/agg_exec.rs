@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use arrow::array::ArrayRef;
-use arrow::datatypes::{DataType, Field, SchemaRef};
+use arrow::datatypes::{Field, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::{RowConverter, SortField};
-use datafusion::common::{DataFusionError, Result, ScalarValue, Statistics};
+use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{
@@ -36,7 +36,7 @@ use std::fmt::{Debug, Formatter};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-use crate::agg::agg_helper::AggContext;
+use crate::agg::agg_helper::{AggContext, AggRecord};
 use crate::agg::agg_tables::{AggTables, InMemTable};
 use crate::agg::{AggAccumRef, AggExpr, GroupingExpr};
 
@@ -136,25 +136,28 @@ impl ExecutionPlan for AggExec {
 
 async fn execute_agg(
     input: Arc<dyn ExecutionPlan>,
-    task_context: Arc<TaskContext>,
+    context: Arc<TaskContext>,
+    agg_ctx: Arc<AggContext>,
+    partition_id: usize,
+    metrics: ExecutionPlanMetricsSet,
+) -> Result<SendableRecordBatchStream> {
+
+    if !agg_ctx.groupings.is_empty() {
+        execute_agg_with_grouping(input, context, agg_ctx, partition_id, metrics).await
+    } else {
+        execute_agg_no_grouping(input, context, agg_ctx, partition_id, metrics).await
+    }
+}
+
+async fn execute_agg_with_grouping(
+    input: Arc<dyn ExecutionPlan>,
+    context: Arc<TaskContext>,
     agg_ctx: Arc<AggContext>,
     partition_id: usize,
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
     let timer = baseline_metrics.elapsed_compute().timer();
-
-    // aggregate with no groupings
-    if agg_ctx.groupings.is_empty() {
-        return execute_agg_no_grouping(
-            input,
-            task_context,
-            agg_ctx,
-            partition_id,
-            metrics,
-        )
-        .await;
-    }
 
     // create grouping row converter and parser
     let mut grouping_row_converter = RowConverter::new(
@@ -171,20 +174,19 @@ async fn execute_agg(
         agg_ctx.clone(),
         partition_id,
         BaselineMetrics::new(&metrics, partition_id),
-        task_context.clone(),
+        context.clone(),
     ));
+    drop(timer);
 
     // start processing input batches
-    let input = input.execute(partition_id, task_context.clone())?;
+    let input = input.execute(partition_id, context.clone())?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
-        task_context.session_config().batch_size(),
+        context.session_config().batch_size(),
         BaselineMetrics::new(&metrics, partition_id)
             .elapsed_compute()
             .clone(),
     ));
-    drop(timer);
-
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = baseline_metrics.elapsed_compute().timer();
 
@@ -255,7 +257,7 @@ async fn execute_agg(
 
 async fn execute_agg_no_grouping(
     input: Arc<dyn ExecutionPlan>,
-    task_context: Arc<TaskContext>,
+    context: Arc<TaskContext>,
     agg_ctx: Arc<AggContext>,
     partition_id: usize,
     metrics: ExecutionPlanMetricsSet,
@@ -269,16 +271,15 @@ async fn execute_agg_no_grouping(
         .iter()
         .map(|agg: &AggExpr| agg.agg.create_accum())
         .collect::<Result<_>>()?;
-
-    // start processing input batches
-    let input = input.execute(partition_id, task_context.clone())?;
-    let mut coalesced = Box::pin(CoalesceStream::new(
-        input,
-        task_context.session_config().batch_size(),
-        baseline_metrics.elapsed_compute().clone(),
-    ));
     drop(timer);
 
+    // start processing input batches
+    let input = input.execute(partition_id, context.clone())?;
+    let mut coalesced = Box::pin(CoalesceStream::new(
+        input,
+        context.session_config().batch_size(),
+        baseline_metrics.elapsed_compute().clone(),
+    ));
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = elapsed_compute.timer();
 
@@ -302,24 +303,14 @@ async fn execute_agg_no_grouping(
     }
 
     // output
+    // in no-grouping mode, we always output only one record, so it is not
+    // necessary to record elapsed computed time.
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
-    let agg_ctx_clonned = agg_ctx.clone();
-    let elapsed_time_clonned = baseline_metrics.elapsed_compute().clone();
-
-    let mut stub_row_converter = RowConverter::new(vec![SortField::new(DataType::Int8)])?;
-    let stub_row: Box<[u8]> = stub_row_converter
-        .convert_columns(&[ScalarValue::Int8(None).to_array()])?
-        .row(0)
-        .as_ref()
-        .into();
-    let record = (stub_row, accums);
-
+    let output_schema = agg_ctx.output_schema.clone();
     let join_handle = tokio::task::spawn(async move {
         let err_sender = sender.clone();
         if let Err(e) = AssertUnwindSafe(async move {
-            let agg_ctx = agg_ctx_clonned;
-            let mut timer = elapsed_time_clonned.timer();
-
+            let record: AggRecord = (Box::default(), accums);
             let batch_result = agg_ctx
                 .build_agg_columns(&[record])
                 .map_err(|e| ArrowError::ExternalError(Box::new(e)))
@@ -332,7 +323,6 @@ async fn execute_agg_no_grouping(
                 });
 
             log::info!("aggregate exec (no grouping) outputing one record");
-            timer.stop();
             sender.send(batch_result).await.unwrap();
         })
         .catch_unwind()
@@ -349,7 +339,7 @@ async fn execute_agg_no_grouping(
     });
 
     Ok(Box::pin(ReceiverStream::new(
-        agg_ctx.output_schema.clone(),
+        output_schema,
         receiver,
         baseline_metrics,
         vec![join_handle],
