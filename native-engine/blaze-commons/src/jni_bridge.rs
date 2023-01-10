@@ -327,6 +327,7 @@ pub struct JavaClasses<'a> {
     pub classloader: JObject<'a>,
 
     pub cJniBridge: JniBridge<'a>,
+    pub cJniUtil: JniUtil<'a>,
     pub cClass: JavaClass<'a>,
     pub cJavaThrowable: JavaThrowable<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
@@ -384,6 +385,7 @@ impl JavaClasses<'static> {
                 jvm: env.get_java_vm().unwrap(),
                 classloader: get_global_ref_jobject(env, classloader).unwrap(),
                 cJniBridge: jni_bridge,
+                cJniUtil: JniUtil::new(env).unwrap(),
 
                 cClass: JavaClass::new(env).unwrap(),
                 cJavaThrowable: JavaThrowable::new(env).unwrap(),
@@ -487,6 +489,29 @@ impl<'a> JniBridge<'a> {
                 "()Z",
             )?,
             method_isTaskRunning_ret: ReturnType::Primitive(Primitive::Boolean),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JniUtil<'a> {
+    pub class: JClass<'a>,
+    pub method_readFullyFromFSDataInputStream: JStaticMethodID,
+    pub method_readFullyFromFSDataInputStream_ret: ReturnType,
+}
+impl<'a> JniUtil<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniUtil";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JniUtil<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JniUtil {
+            class,
+            method_readFullyFromFSDataInputStream: env.get_static_method_id(
+                class,
+                "readFullyFromFSDataInputStream",
+                "(Lorg/apache/hadoop/fs/FSDataInputStream;JLjava/nio/ByteBuffer;)V",
+            )?,
+            method_readFullyFromFSDataInputStream_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

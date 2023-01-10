@@ -26,6 +26,7 @@ configurations.implementation {
     exclude module: "hive-hbase-handler"
     exclude module: "htrace-core"
     exclude module: "htrace-core-t"
+    exclude module: "zstd-jni"
 }
 
 apply plugin: "com.google.protobuf"

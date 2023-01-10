@@ -16,7 +16,7 @@ use blaze_commons::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
     jni_new_object, jni_new_string,
 };
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::Result;
 use jni::objects::{GlobalRef, JObject};
 
 pub struct FsProvider(GlobalRef);
@@ -54,25 +54,13 @@ pub struct FsDataInputStream(GlobalRef);
 
 impl FsDataInputStream {
     pub fn read_fully(&self, pos: u64, buf: &mut [u8]) -> Result<()> {
-        jni_call!(HadoopFSDataInputStream(self.0.as_obj()).seek(pos as i64) -> ())?;
-
-        let mut total_read_size = 0;
-        let channel =
-            jni_call_static!(JavaChannels.newChannel(self.0.as_obj()) -> JObject)?;
-        let buffer = jni_new_direct_byte_buffer!(buf)?;
-
-        while total_read_size < buf.len() {
-            let read_size = jni_call!(
-                JavaReadableByteChannel(channel).read(buffer) -> i32
-            )?;
-            if read_size == -1 {
-                return Err(DataFusionError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "FSDataInputStream.read() got unexpected EOF".to_string(),
-                )));
-            }
-            total_read_size += read_size as usize;
-        }
+        jni_call_static!(
+            JniUtil.readFullyFromFSDataInputStream(
+                self.0.as_obj(),
+                pos as i64,
+                jni_new_direct_byte_buffer!(buf)?
+            ) -> ()
+        )?;
         Ok(())
     }
 }
