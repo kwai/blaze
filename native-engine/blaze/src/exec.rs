@@ -25,8 +25,8 @@ use blaze_serde::protobuf::TaskDefinition;
 use datafusion::execution::disk_manager::DiskManagerConfig;
 use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
-use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
+use datafusion::physical_plan::metrics::Time;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use futures::{FutureExt, StreamExt};
 use jni::objects::JObject;
@@ -38,6 +38,7 @@ use once_cell::sync::OnceCell;
 use prost::Message;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
 use tokio::runtime::Runtime;
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 
 use crate::metrics::update_spark_metric_node;
 use crate::{handle_unwinded_scope, is_task_running, SESSION};
@@ -155,7 +156,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         let task_ctx = session_ctx.task_ctx();
         let batch_size = task_ctx.session_config().batch_size();
 
-        let mut stream = execution_plan
+        let stream = execution_plan
             .execute(task_id.partition_id as usize, task_ctx)
             .unwrap();
 
@@ -198,10 +199,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
         runtime.clone().runtime.as_ref().unwrap().spawn(async move {
             AssertUnwindSafe(async move {
-                let mut staging_batches = vec![];
-                let mut num_staging_rows = 0;
-                let mut total_rows = 0;
-
                 let output_batch = |batch: RecordBatch| -> datafusion::common::Result<bool> {
                     // value_queue -> (schema_ptr, array_ptr)
                     let mut input = JObject::null();
@@ -245,40 +242,20 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 };
 
                 // load batches
-                while let Some(r) = stream.next().await {
+                let mut total_rows = 0;
+                let mut coalesced = Box::pin(
+                    CoalesceStream::new(stream, batch_size, Time::new())
+                );
+                while let Some(r) = coalesced.next().await {
                     match r {
                         Ok(batch) => {
-                            let num_rows = batch.num_rows();
-                            if num_rows == 0 {
-                                continue;
-                            }
-                            total_rows += num_rows;
-
-                            staging_batches.push(batch);
-                            num_staging_rows += num_rows;
-                            if num_staging_rows >= batch_size {
-                                let batch = concat_batches(
-                                    &stream.schema(),
-                                    &staging_batches,
-                                    num_staging_rows
-                                ).unwrap();
-                                staging_batches.clear();
-                                num_staging_rows = 0;
-                                output_batch(batch).unwrap();
-                            }
+                            total_rows = batch.num_rows();
+                            output_batch(batch).unwrap();
                         }
                         Err(e) => {
                             panic!("stream.next() error: {:?}", e);
                         }
                     }
-                }
-                if num_staging_rows > 0 {
-                    let batch = concat_batches(
-                        &stream.schema(),
-                        &std::mem::take(&mut staging_batches),
-                        num_staging_rows
-                    ).unwrap();
-                    output_batch(batch).unwrap();
                 }
 
                 // value_queue -> (discard)
