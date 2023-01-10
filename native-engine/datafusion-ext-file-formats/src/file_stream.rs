@@ -215,6 +215,9 @@ impl<F: FormatReader> Stream for FileStream<F> {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
+        let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
+        let _timer = elapsed_compute.timer();
+
         let result = self.poll_inner(cx);
         self.baseline_metrics.record_poll(result)
     }

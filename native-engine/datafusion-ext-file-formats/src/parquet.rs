@@ -206,6 +206,10 @@ impl ExecutionPlan for ParquetExec {
         partition_index: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
+        let timer = baseline_metrics.elapsed_compute().timer();
+
         // get fs object from jni bridge resource
         let fs_provider =
             Arc::new(FsProvider::new(jni_new_global_ref!(jni_call_static!(
@@ -225,6 +229,7 @@ impl ExecutionPlan for ParquetExec {
             table_schema: self.base_config.file_schema.clone(),
             metrics: self.metrics.clone(),
         };
+        drop(timer);
 
         let stream = FileStream::new(
             fs_provider,
@@ -232,7 +237,7 @@ impl ExecutionPlan for ParquetExec {
             partition_index,
             context,
             opener,
-            BaselineMetrics::new(&self.metrics, partition_index),
+            baseline_metrics,
         )?;
         Ok(Box::pin(stream))
     }
