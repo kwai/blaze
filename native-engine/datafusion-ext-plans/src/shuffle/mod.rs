@@ -20,12 +20,12 @@ use datafusion::common::Result;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::DiskManager;
 use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
-use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use futures::StreamExt;
 use tempfile::NamedTempFile;
 use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 
 pub mod sort_repartitioner;
 pub mod bucket_repartitioner;
@@ -41,61 +41,29 @@ pub trait ShuffleRepartitioner: Send + Sync {
 impl dyn ShuffleRepartitioner {
     pub async fn execute(
         self: Arc<Self>,
-        mut input: SendableRecordBatchStream,
+        input: SendableRecordBatchStream,
         batch_size: usize,
         metrics: BaselineMetrics,
     ) -> Result<SendableRecordBatchStream> {
-        let mut staging_batches = vec![];
-        let mut num_staging_rows = 0;
 
-        macro_rules! flush_staging_batches {
-            () => {{
-                let batch = concat_batches(
-                    &input.schema(),
-                    &std::mem::take(&mut staging_batches),
-                    num_staging_rows)?;
-                let batch_mem_size = batch.get_array_memory_size();
-                log::info!(
-                    "{} flushing record batch with {} rows, bytes size={}",
-                    self.name(),
-                    batch.num_rows(),
-                    batch_mem_size,
-                );
-                metrics.record_output(batch.num_rows());
-                self.insert_batch(batch).await?;
-            }}
-        }
+        let input_schema = input.schema();
 
-        while let Some(batch) = input.next().await {
-            let _timer = metrics.elapsed_compute().timer();
-            let batch = batch?;
+        // coalesce input
+        let mut coalesced = Box::pin(CoalesceStream::new(
+            input,
+            batch_size,
+            metrics.elapsed_compute().clone(),
+        ));
 
-            if batch.num_rows() == 0 {
-                continue;
-            }
-            num_staging_rows += batch.num_rows();
-            staging_batches.push(batch);
-
-            // NOTE: in shuffle writer exec, the output_rows metrics represents the
-            // number of rows those are written to output data file.
-            if num_staging_rows >= batch_size {
-                flush_staging_batches!();
-                num_staging_rows = 0;
-            }
-        }
-
-        let _timer = metrics.elapsed_compute().timer();
-        if !staging_batches.is_empty() {
-            flush_staging_batches!()
+        // process all input batches
+        while let Some(batch) = coalesced.next().await.transpose()? {
+            metrics.record_output(batch.num_rows());
+            self.insert_batch(batch).await?;
         }
         self.shuffle_write().await?;
 
         // shuffle writer always has empty output
-        Ok(Box::pin(MemoryStream::try_new(
-            vec![],
-            input.schema(),
-            None,
-        )?))
+        Ok(Box::pin(MemoryStream::try_new(vec![], input_schema, None)?))
     }
 }
 

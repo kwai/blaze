@@ -33,6 +33,7 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::sync::Arc;
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 
 #[derive(Debug, Clone)]
 pub struct IpcReaderExec {
@@ -93,7 +94,7 @@ impl ExecutionPlan for IpcReaderExec {
     fn execute(
         &self,
         partition: usize,
-        _context: Arc<TaskContext>,
+        context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
         let size_counter = MetricBuilder::new(&self.metrics).counter("size", partition);
@@ -112,12 +113,19 @@ impl ExecutionPlan for IpcReaderExec {
 
         let schema = self.schema.clone();
         let mode = self.mode;
-        Ok(Box::pin(IpcReaderStream::new(
+        let ipc_stream = Box::pin(IpcReaderStream::new(
             schema,
             segments,
             mode,
             baseline_metrics,
             size_counter,
+        ));
+        Ok(Box::pin(CoalesceStream::new(
+            ipc_stream,
+            context.session_config().batch_size(),
+            BaselineMetrics::new(&self.metrics, partition)
+                .elapsed_compute()
+                .clone(),
         )))
     }
 
