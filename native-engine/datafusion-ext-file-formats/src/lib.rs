@@ -31,9 +31,9 @@ use std::{
 
 pub use self::parquet::ParquetExec;
 use async_trait::async_trait;
-use datafusion::arrow::array::new_null_array;
-use datafusion::arrow::record_batch::RecordBatchOptions;
-use datafusion::arrow::{
+use arrow::array::new_null_array;
+use arrow::record_batch::RecordBatchOptions;
+use arrow::{
     array::ArrayRef,
     datatypes::{Field, Schema, SchemaRef},
     error::{ArrowError, Result as ArrowResult},

@@ -42,7 +42,7 @@ use crate::record::Row;
 use crate::schema::types::Type as SchemaType;
 use crate::util::{io::TryClone, memory::ByteBufferPtr};
 use bytes::{Buf, Bytes};
-use thrift::protocol::{TCompactInputProtocol, TSerializable};
+use thrift::protocol::{TCompactInputProtocol};
 // export `SliceableCursor` and `FileSource` publicly so clients can
 // re-use the logic in their own ParquetFileWriter wrappers
 pub use crate::util::io::FileSource;

@@ -15,9 +15,9 @@
 use std::io::{Seek, Write};
 use std::sync::Arc;
 use async_trait::async_trait;
-use datafusion::arrow::error::Result as ArrowResult;
+use arrow::error::Result as ArrowResult;
 use datafusion::common::Result;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::record_batch::RecordBatch;
 use datafusion::execution::DiskManager;
 use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
 use datafusion::physical_plan::memory::MemoryStream;

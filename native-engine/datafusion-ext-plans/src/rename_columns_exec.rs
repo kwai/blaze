@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::{Field, Schema, SchemaRef};
+use arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
@@ -170,7 +170,7 @@ impl RecordBatchStream for RenameColumnsStream {
 }
 
 impl Stream for RenameColumnsStream {
-    type Item = datafusion::arrow::error::Result<RecordBatch>;
+    type Item = arrow::error::Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

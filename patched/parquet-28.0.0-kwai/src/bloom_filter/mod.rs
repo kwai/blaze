@@ -31,7 +31,7 @@ use std::hash::Hasher;
 use std::io::Write;
 use std::sync::Arc;
 use thrift::protocol::{
-    TCompactInputProtocol, TCompactOutputProtocol, TOutputProtocol, TSerializable,
+    TCompactInputProtocol, TCompactOutputProtocol, TOutputProtocol,
 };
 use twox_hash::XxHash64;
 

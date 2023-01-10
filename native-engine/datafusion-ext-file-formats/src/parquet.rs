@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::{any::Any, convert::TryInto};
 
 use bytes::Bytes;
-use datafusion::arrow::{
+use arrow::{
     array::ArrayRef,
     datatypes::{Schema, SchemaRef},
     error::ArrowError,

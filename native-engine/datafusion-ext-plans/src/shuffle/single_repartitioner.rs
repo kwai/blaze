@@ -17,7 +17,7 @@ use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, Write};
 use async_trait::async_trait;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use once_cell::sync::OnceCell;

@@ -14,8 +14,8 @@
 
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::physical_plan::{RecordBatchStream, SendableRecordBatchStream};
 use datafusion::physical_plan::coalesce_batches::concat_batches;

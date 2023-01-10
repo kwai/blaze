@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use crate::down_cast_any_ref;
-use datafusion::arrow::array::{Array, FixedSizeListArray};
-use datafusion::arrow::compute::concat;
-use datafusion::arrow::datatypes::Field;
-use datafusion::arrow::{
+use arrow::array::{Array, FixedSizeListArray};
+use arrow::compute::concat;
+use arrow::datatypes::Field;
+use arrow::{
     datatypes::{DataType, Schema},
     record_batch::RecordBatch,
 };

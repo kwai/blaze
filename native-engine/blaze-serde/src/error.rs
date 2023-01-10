@@ -20,7 +20,7 @@ use std::{
     io, result,
 };
 
-use datafusion::arrow::error::ArrowError;
+use arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
 
 pub type Result<T> = result::Result<T, PlanSerDeError>;

@@ -18,9 +18,9 @@ use blaze_commons::{
     jni_call, jni_delete_local_ref, jni_get_object_class, jni_get_string,
     jni_new_direct_byte_buffer, jni_new_global_ref, ResultExt,
 };
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{BaselineMetrics, Count};

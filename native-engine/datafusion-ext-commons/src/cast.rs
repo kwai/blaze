@@ -14,8 +14,8 @@
 
 use std::str::FromStr;
 use std::sync::Arc;
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::*;
+use arrow::array::*;
+use arrow::datatypes::*;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
 use num::{Bounded, FromPrimitive, Integer, Signed, ToPrimitive};
@@ -91,14 +91,14 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
             // default cast
             match value {
                 ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    datafusion::arrow::compute::kernels::cast::cast(
+                    arrow::compute::kernels::cast::cast(
                         &array,
                         cast_type,
                     )?,
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array = datafusion::arrow::compute::kernels::cast::cast(
+                    let cast_array = arrow::compute::kernels::cast::cast(
                         &scalar_array,
                         cast_type,
                     )?;
@@ -135,7 +135,7 @@ fn try_cast_string_array_to_integer(
         DataType::Int16 => cast!(Int16),
         DataType::Int32 => cast!(Int32),
         DataType::Int64 => cast!(Int64),
-        _ => datafusion::arrow::compute::cast(array, cast_type)?,
+        _ => arrow::compute::cast(array, cast_type)?,
     })
 }
 

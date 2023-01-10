@@ -22,7 +22,7 @@ use crate::bloom_filter::Sbbf;
 use crate::format as parquet;
 use crate::format::{ColumnIndex, OffsetIndex, RowGroup};
 use std::{io::Write, sync::Arc};
-use thrift::protocol::{TCompactOutputProtocol, TOutputProtocol, TSerializable};
+use thrift::protocol::{TCompactOutputProtocol, TOutputProtocol};
 
 use crate::basic::PageType;
 use crate::column::writer::{

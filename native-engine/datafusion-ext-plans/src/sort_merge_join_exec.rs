@@ -1,10 +1,10 @@
-use datafusion::arrow::array::*;
-use datafusion::arrow::compute::kernels::take::take;
-use datafusion::arrow::compute::SortOptions;
-use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
-use datafusion::arrow::error::ArrowError;
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::array::*;
+use arrow::compute::kernels::take::take;
+use arrow::compute::SortOptions;
+use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
+use arrow::error::ArrowError;
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::logical_expr::JoinType;
@@ -1016,11 +1016,11 @@ fn row_equal(
 #[cfg(test)]
 mod tests {
     use crate::sort_merge_join_exec::SortMergeJoinExec;
-    use datafusion::arrow;
-    use datafusion::arrow::array::*;
-    use datafusion::arrow::compute::SortOptions;
-    use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use datafusion::arrow::record_batch::RecordBatch;
+    use arrow;
+    use arrow::array::*;
+    use arrow::compute::SortOptions;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_sorted_eq;
     use datafusion::error::Result;
     use datafusion::logical_expr::JoinType;

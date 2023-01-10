@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use datafusion::arrow::array::*;
+use arrow::array::*;
 use datafusion::common::Result;
 use datafusion::common::ScalarValue;
 use datafusion::physical_plan::ColumnarValue;

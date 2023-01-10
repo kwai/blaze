@@ -14,7 +14,7 @@
 
 use async_trait::async_trait;
 use blaze_commons::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
-use datafusion::arrow::datatypes::SchemaRef;
+use arrow::datatypes::SchemaRef;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;

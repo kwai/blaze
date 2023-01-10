@@ -17,8 +17,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::SchemaRef;
-
+use arrow::datatypes::SchemaRef;
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;

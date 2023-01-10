@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
@@ -120,7 +120,7 @@ impl RecordBatchStream for EmptyStream {
 }
 
 impl Stream for EmptyStream {
-    type Item = datafusion::arrow::error::Result<RecordBatch>;
+    type Item = arrow::error::Result<RecordBatch>;
 
     fn poll_next(
         self: Pin<&mut Self>,

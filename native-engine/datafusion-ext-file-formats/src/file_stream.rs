@@ -27,8 +27,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use crate::{ObjectMeta, PartitionedFile};
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
+use arrow::datatypes::SchemaRef;
+use arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
 use datafusion::common::ScalarValue;
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::Result;

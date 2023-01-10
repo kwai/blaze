@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::down_cast_any_ref;
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::*;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::array::*;
+use arrow::datatypes::*;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_plan::PhysicalExpr;
@@ -162,9 +162,9 @@ fn compute_iif(
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
-    use datafusion::arrow::record_batch::RecordBatch;
-    use datafusion::arrow::array::*;
-    use datafusion::arrow::datatypes::*;
+    use arrow::record_batch::RecordBatch;
+    use arrow::array::*;
+    use arrow::datatypes::*;
     use datafusion::logical_expr::Operator::Gt;
     use datafusion::physical_expr::expressions::{BinaryExpr, Column};
     use datafusion::physical_expr::PhysicalExpr;

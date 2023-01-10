@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::down_cast_any_ref;
-use datafusion::arrow::datatypes::*;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::*;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;

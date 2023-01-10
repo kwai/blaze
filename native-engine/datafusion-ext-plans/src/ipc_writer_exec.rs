@@ -17,9 +17,9 @@ use blaze_commons::{
     jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer,
     jni_new_global_ref, jni_new_string,
 };
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::ArrowError;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use arrow::error::ArrowError;
+use arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;

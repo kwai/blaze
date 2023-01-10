@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::error::PlanSerDeError;
-use datafusion::arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
+use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 use datafusion::logical_expr::Operator;
 use datafusion::physical_plan::joins::utils::JoinSide;
 use datafusion::prelude::JoinType;
@@ -187,11 +187,11 @@ impl protobuf::IntervalUnit {
     }
 }
 
-impl TryInto<datafusion::arrow::datatypes::DataType>
+impl TryInto<arrow::datatypes::DataType>
     for &protobuf::arrow_type::ArrowTypeEnum
 {
     type Error = PlanSerDeError;
-    fn try_into(self) -> Result<datafusion::arrow::datatypes::DataType, Self::Error> {
+    fn try_into(self) -> Result<arrow::datatypes::DataType, Self::Error> {
         use protobuf::arrow_type;
         Ok(match self {
             arrow_type::ArrowTypeEnum::None(_) => DataType::Null,
@@ -316,8 +316,8 @@ impl TryInto<datafusion::arrow::datatypes::DataType>
 }
 
 #[allow(clippy::from_over_into)]
-impl Into<datafusion::arrow::datatypes::DataType> for protobuf::PrimitiveScalarType {
-    fn into(self) -> datafusion::arrow::datatypes::DataType {
+impl Into<arrow::datatypes::DataType> for protobuf::PrimitiveScalarType {
+    fn into(self) -> arrow::datatypes::DataType {
         match self {
             protobuf::PrimitiveScalarType::Bool => DataType::Boolean,
             protobuf::PrimitiveScalarType::Uint8 => DataType::UInt8,

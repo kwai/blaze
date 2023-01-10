@@ -1,5 +1,5 @@
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
@@ -102,7 +102,7 @@ impl RecordBatchStream for LimitStream {
 }
 
 impl Stream for LimitStream {
-    type Item = datafusion::arrow::error::Result<RecordBatch>;
+    type Item = arrow::error::Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

@@ -17,8 +17,8 @@ use std::fmt::Formatter;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, ready};
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::SchemaRef;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Statistics};
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
@@ -156,7 +156,7 @@ impl RecordBatchStream for ExpandStream {
 }
 
 impl Stream for ExpandStream {
-    type Item = datafusion::arrow::error::Result<RecordBatch>;
+    type Item = arrow::error::Result<RecordBatch>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // continue processing current batch

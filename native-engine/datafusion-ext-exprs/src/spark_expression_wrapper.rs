@@ -16,8 +16,8 @@ use crate::down_cast_any_ref;
 use blaze_commons::{
     jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::record_batch::RecordBatch;
 use datafusion::common::ScalarValue;
 use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;

@@ -15,7 +15,7 @@
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use datafusion::arrow::datatypes::SchemaRef;
+use arrow::datatypes::SchemaRef;
 use datafusion::common::Statistics;
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;

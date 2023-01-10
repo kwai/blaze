@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use arrow::array::{Array, new_null_array};
 use arrow::datatypes::DataType;
-use datafusion::arrow::array::StringArray;
+use arrow::array::StringArray;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
 

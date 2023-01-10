@@ -16,9 +16,9 @@ use std::io::{Seek, SeekFrom, Read, Write};
 use std::sync::Arc;
 use arrow::record_batch::RecordBatchOptions;
 
-use datafusion::arrow::datatypes::{Schema, SchemaRef};
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::datatypes::{Schema, SchemaRef};
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
 
 mod batch_serde;
 

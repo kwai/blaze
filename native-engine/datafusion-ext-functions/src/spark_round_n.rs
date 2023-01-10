@@ -15,7 +15,7 @@
 use arrow::datatypes::{DataType, Float32Type, Float64Type};
 use bigdecimal::num_bigint::BigInt;
 use bigdecimal::{BigDecimal, ToPrimitive};
-use datafusion::arrow::array::*;
+use arrow::array::*;
 use datafusion::common::Result;
 use datafusion::common::{DataFusionError, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
@@ -98,7 +98,7 @@ fn round_decimal(i128_val: i128, scale: i8, n: i32) -> Option<i128> {
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
-    use datafusion::arrow::array::*;
+    use arrow::array::*;
     use datafusion::common::ScalarValue;
     use datafusion::logical_expr::ColumnarValue;
     use crate::spark_round_n::spark_round_n;

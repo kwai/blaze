@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use datafusion::arrow::array::*;
-use datafusion::arrow::compute::*;
-use datafusion::arrow::datatypes::*;
+use arrow::array::*;
+use arrow::compute::*;
+use arrow::datatypes::*;
 use datafusion::common::DataFusionError;
 use datafusion::common::Result;
 use datafusion::physical_plan::ColumnarValue;
@@ -29,7 +29,7 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         ColumnarValue::Array(array) => {
             macro_rules! handle {
                 ($dt:ident) => {{
-                    type T = paste::paste! {datafusion::arrow::datatypes::[<$dt Type>]};
+                    type T = paste::paste! {arrow::datatypes::[<$dt Type>]};
                     let array = as_primitive_array::<T>(array);
                     let eq_zeros = eq_scalar(array, T::default_value())?;
                     Arc::new(nullif(array, &eq_zeros)?) as ArrayRef
@@ -37,7 +37,7 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             }
             macro_rules! handle_decimal {
                 ($dt:ident, $precision:expr, $scale:expr) => {{
-                    type T = paste::paste! {datafusion::arrow::datatypes::[<$dt Type>]};
+                    type T = paste::paste! {arrow::datatypes::[<$dt Type>]};
                     let array =
                         array.as_any().downcast_ref::<PrimitiveArray<T>>().unwrap();
                     let _0 = <T as ArrowPrimitiveType>::Native::from_le_bytes(

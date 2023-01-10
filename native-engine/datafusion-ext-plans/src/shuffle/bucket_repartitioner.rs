@@ -21,10 +21,10 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 use async_trait::async_trait;
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::*;
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::array::*;
+use arrow::datatypes::*;
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
@@ -164,7 +164,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
                         .columns()
                         .iter()
                         .map(|c| {
-                            datafusion::arrow::compute::take(c, &indices, None)
+                            arrow::compute::take(c, &indices, None)
                         })
                         .collect::<ArrowResult<Vec<ArrayRef>>>()?,
                 )?;

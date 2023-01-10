@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_object};
-use datafusion::arrow::array::{make_array_from_raw, StructArray};
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::array::{make_array_from_raw, StructArray};
+use arrow::datatypes::SchemaRef;
+use arrow::error::Result as ArrowResult;
+use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{

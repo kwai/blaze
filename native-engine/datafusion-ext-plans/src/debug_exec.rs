@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::SchemaRef;
+use arrow::datatypes::SchemaRef;
 
-use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::arrow::util::pretty::pretty_format_batches;
+use arrow::record_batch::RecordBatch;
+use arrow::util::pretty::pretty_format_batches;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
@@ -141,7 +141,7 @@ impl RecordBatchStream for DebugStream {
 }
 
 impl Stream for DebugStream {
-    type Item = datafusion::arrow::error::Result<RecordBatch>;
+    type Item = arrow::error::Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

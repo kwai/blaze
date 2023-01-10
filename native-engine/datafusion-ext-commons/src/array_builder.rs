@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::*;
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::array::*;
+use arrow::datatypes::*;
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
 use paste::paste;
 use std::any::Any;
 use std::sync::Arc;

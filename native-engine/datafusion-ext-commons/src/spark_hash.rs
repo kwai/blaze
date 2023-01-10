@@ -16,8 +16,8 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::{
+use arrow::array::*;
+use arrow::datatypes::{
     ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type,
     Int8Type, TimeUnit,
 };
@@ -316,7 +316,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::spark_hash::{create_hashes, pmod};
-    use datafusion::arrow::array::{
+    use arrow::array::{
         ArrayRef, Int32Array, Int64Array, Int8Array, StringArray,
     };
     use datafusion::from_slice::FromSlice;
