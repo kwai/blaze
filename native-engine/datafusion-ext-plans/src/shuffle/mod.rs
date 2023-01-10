@@ -56,9 +56,11 @@ impl dyn ShuffleRepartitioner {
 
         // process all input batches
         while let Some(batch) = coalesced.next().await.transpose()? {
+            let _timer = metrics.elapsed_compute().timer();
             metrics.record_output(batch.num_rows());
             self.insert_batch(batch).await?;
         }
+        let _timer = metrics.elapsed_compute().timer();
         self.shuffle_write().await?;
 
         // shuffle writer always has empty output
