@@ -261,6 +261,8 @@ async fn execute_agg_no_grouping(
     drop(timer);
 
     while let Some(input_batch) = coalesced.next().await.transpose()? {
+        let _timer = elapsed_compute.timer();
+
         // compute agg children projected arrays
         let agg_children_projected_arrays =
             agg_ctx.create_children_input_arrays(&input_batch)?;
