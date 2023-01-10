@@ -48,7 +48,7 @@ use datafusion::logical_expr::{
     ExprSchemable,
 };
 use datafusion::physical_expr::create_physical_expr;
-use datafusion::prelude::lit;
+use datafusion::prelude::{and, lit};
 use datafusion::{
     error::{DataFusionError, Result},
     logical_expr::{Expr, Operator},
@@ -752,43 +752,31 @@ fn build_is_not_null_column_expr(
     }
 }
 
-fn build_start_with_predicate_expression_expr(
-    col: &Expr,
-    prefix: &Expr,
+fn build_starts_with_predicate_expression_expr(
+    column: &Column,
+    prefix: &str,
     schema: &Schema,
     required_columns: &mut RequiredStatColumns,
 ) -> Result<Expr> {
-    let need_col: Option<Column> = match col.clone() {
-        Expr::Column(col1) => Some(col1),
-        _ => None,
-    };
-    let length = match &prefix {
-        Expr::Literal(ScalarValue::Utf8(str)) => str.as_ref().unwrap().len() as i32,
-        _ => -1,
-    };
-    let field = schema
-        .field_with_name(&need_col.as_ref().unwrap().name)
-        .unwrap();
+    let column_expr = Expr::Column(column.clone());
+    let field = schema.field_with_name(&column.name)?;
+    let min = required_columns.min_column_expr(column, &column_expr, field)?;
+    let max = required_columns.max_column_expr(column, &column_expr, field)?;
 
-    let min = required_columns
-        .min_column_expr(need_col.as_ref().unwrap(), col, field)
-        .unwrap();
-    let max = required_columns
-        .max_column_expr(need_col.as_ref().unwrap(), col, field)
-        .unwrap();
-
-    let first = substring(
+    let min_prefix = substring(
         min,
-        Expr::Literal(ScalarValue::Int64(Some(0))),
-        Expr::Literal(ScalarValue::Int64(Some(length as i64))),
+        Expr::Literal(ScalarValue::Int64(Some(1))),
+        Expr::Literal(ScalarValue::Int64(Some(prefix.len() as i64 + 1))),
     );
-    let second = substring(
+    let max_prefix = substring(
         max,
-        Expr::Literal(ScalarValue::Int64(Some(0))),
-        Expr::Literal(ScalarValue::Int64(Some(length as i64))),
+        Expr::Literal(ScalarValue::Int64(Some(1))),
+        Expr::Literal(ScalarValue::Int64(Some(prefix.len() as i64 + 1))),
     );
-    let prefix = prefix.clone();
-    Ok(first.lt_eq(prefix.clone()).and(prefix.lt_eq(second)))
+    Ok(and(
+        min_prefix.lt_eq(Expr::Literal(prefix.into())),
+        max_prefix.gt_eq(Expr::Literal(prefix.into())),
+    ))
 }
 
 /// Translate logical filter expression into pruning predicate
@@ -808,19 +796,30 @@ fn build_predicate_expression(
 
     // predicate expression can only be a binary expression
     let (left, op, right) = match expr {
-        Expr::ScalarUDF { fun: _, args } => {
-            let col = args.get(0).ok_or(DataFusionError::Execution(String::from(
-                "parse column error",
-            )))?;
-            let prefix = args.get(1).ok_or(DataFusionError::Execution(String::from(
-                "parse prefix error",
-            )))?;
-            return build_start_with_predicate_expression_expr(
-                col,
-                prefix,
-                schema,
-                required_columns,
-            );
+        Expr::ScalarUDF { fun, args } => {
+            if fun.name == "string_starts_with" {
+                let column = match args.get(0) {
+                    Some(Expr::Column(column)) => column,
+                    _ => return Err(DataFusionError::NotImplemented(
+                        format!("pruning unsupported")
+                    ))
+                };
+                let prefix = match args.get(1) {
+                    Some(Expr::Literal(ScalarValue::Utf8(Some(prefix)))) => prefix,
+                    _ => return Err(DataFusionError::NotImplemented(
+                        format!("pruning unsupported")
+                    ))
+                };
+                return build_starts_with_predicate_expression_expr(
+                    column,
+                    prefix,
+                    schema,
+                    required_columns,
+                );
+            }
+            return Err(DataFusionError::NotImplemented(
+                format!("UDF unsupported for pruning")
+            ));
         }
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => (left, *op, right),
         Expr::IsNull(expr) => {

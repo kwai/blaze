@@ -187,11 +187,14 @@ pub fn convert_physical_expr_to_logical_expr(
         args.push(Expr::Literal(ScalarValue::Utf8(Some(
             expr1.prefix().to_string(),
         ))));
-        let return_type: ReturnTypeFunction = Arc::new(|_| panic!("place"));
-        let func: ScalarFunctionImplementation = Arc::new(|_| panic!("place"));
+
+        let func: ScalarFunctionImplementation = Arc::new(|_| panic!("placeholder"));
+        let return_type: ReturnTypeFunction = Arc::new(|_| {
+            Ok(Arc::new(DataType::Boolean))
+        });
         Ok(Expr::ScalarUDF {
             fun: Arc::from(ScalarUDF::new(
-                "string_start_with",
+                "string_starts_with",
                 &Signature::new(VariadicEqual, Volatility::Immutable),
                 &return_type,
                 &func,
