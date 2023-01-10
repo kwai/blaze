@@ -14,6 +14,7 @@
 
 use crate::down_cast_any_ref;
 use arrow::array::*;
+use arrow::compute;
 use arrow::datatypes::*;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result, ScalarValue};
@@ -22,7 +23,6 @@ use datafusion::physical_plan::PhysicalExpr;
 use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
-use arrow::compute;
 
 /// Computes logical AND/OR with short circuiting
 #[derive(Debug)]
@@ -51,7 +51,7 @@ impl SparkLogicalExpr {
     pub fn new(
         left: Arc<dyn PhysicalExpr>,
         right: Arc<dyn PhysicalExpr>,
-        op: SparkLogicalOp
+        op: SparkLogicalOp,
     ) -> Self {
         Self { left, right, op }
     }
@@ -102,70 +102,87 @@ impl PhysicalExpr for SparkLogicalExpr {
 fn evaluate_and(
     left: &Arc<dyn PhysicalExpr>,
     right: &Arc<dyn PhysicalExpr>,
-    batch: &RecordBatch
+    batch: &RecordBatch,
 ) -> Result<ColumnarValue> {
     Ok(match left.evaluate(batch)? {
-        ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => right.evaluate(batch)?,
-        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))),
-
-        ColumnarValue::Scalar(s) if s.is_null() => {
-            match right.evaluate(batch)? {
-                ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => ColumnarValue::Scalar(ScalarValue::Boolean(None)),
-                ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))),
-                ColumnarValue::Scalar(v) if v.is_null() => ColumnarValue::Scalar(ScalarValue::Boolean(None)),
-                ColumnarValue::Array(array) => {
-                    ColumnarValue::Array(compute::nullif(&array, as_boolean_array(&array))?)
-                }
-                _ => return Err(DataFusionError::Internal(format!("AND: invalid operands")))
-            }
+        ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => {
+            right.evaluate(batch)?
         }
+        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => {
+            ColumnarValue::Scalar(ScalarValue::Boolean(Some(false)))
+        }
+
+        ColumnarValue::Scalar(s) if s.is_null() => match right.evaluate(batch)? {
+            ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => {
+                ColumnarValue::Scalar(ScalarValue::Boolean(None))
+            }
+            ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => {
+                ColumnarValue::Scalar(ScalarValue::Boolean(Some(false)))
+            }
+            ColumnarValue::Scalar(v) if v.is_null() => {
+                ColumnarValue::Scalar(ScalarValue::Boolean(None))
+            }
+            ColumnarValue::Array(array) => {
+                ColumnarValue::Array(compute::nullif(&array, as_boolean_array(&array))?)
+            }
+            _ => return Err(DataFusionError::Internal("AND: invalid operands".to_string())),
+        },
         ColumnarValue::Array(left) => {
             let left_prim = as_boolean_array(&left);
             let right_selected = if left_prim.null_count() > 0 {
-                right.evaluate_selection(batch, &compute::not(
-                    &compute::prep_null_mask_filter(&compute::not(&left_prim)?))?
+                right.evaluate_selection(
+                    batch,
+                    &compute::not(&compute::prep_null_mask_filter(&compute::not(
+                        left_prim,
+                    )?))?,
                 )?
             } else {
                 right.evaluate_selection(batch, left_prim)?
             };
             let right = right_selected.into_array(left.len());
             let right_prim = as_boolean_array(&right);
-            ColumnarValue::Array(
-                Arc::new(compute::and_kleene(left_prim, right_prim)?)
-            )
+            ColumnarValue::Array(Arc::new(compute::and_kleene(left_prim, right_prim)?))
         }
-        _ => return Err(DataFusionError::Internal(format!("AND: invalid operands")))
+        _ => return Err(DataFusionError::Internal("AND: invalid operands".to_string())),
     })
 }
 
 fn evaluate_or(
     left: &Arc<dyn PhysicalExpr>,
     right: &Arc<dyn PhysicalExpr>,
-    batch: &RecordBatch
+    batch: &RecordBatch,
 ) -> Result<ColumnarValue> {
     Ok(match left.evaluate(batch)? {
-        ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))),
-        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => right.evaluate(batch)?,
-
-        ColumnarValue::Scalar(s) if s.is_null() => {
-            match right.evaluate(batch)? {
-                ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))),
-                ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => ColumnarValue::Scalar(ScalarValue::Boolean(None)),
-                ColumnarValue::Scalar(v) if v.is_null() => ColumnarValue::Scalar(ScalarValue::Boolean(None)),
-                ColumnarValue::Array(array) => {
-                    ColumnarValue::Array(
-                        compute::nullif(&array, &compute::not(as_boolean_array(&array))?)?
-                    )
-                }
-                _ => return Err(DataFusionError::Internal(format!("OR: invalid operands")))
-            }
+        ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => {
+            ColumnarValue::Scalar(ScalarValue::Boolean(Some(true)))
         }
+        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => {
+            right.evaluate(batch)?
+        }
+
+        ColumnarValue::Scalar(s) if s.is_null() => match right.evaluate(batch)? {
+            ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => {
+                ColumnarValue::Scalar(ScalarValue::Boolean(Some(true)))
+            }
+            ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => {
+                ColumnarValue::Scalar(ScalarValue::Boolean(None))
+            }
+            ColumnarValue::Scalar(v) if v.is_null() => {
+                ColumnarValue::Scalar(ScalarValue::Boolean(None))
+            }
+            ColumnarValue::Array(array) => ColumnarValue::Array(compute::nullif(
+                &array,
+                &compute::not(as_boolean_array(&array))?,
+            )?),
+            _ => return Err(DataFusionError::Internal("OR: invalid operands".to_string())),
+        },
         ColumnarValue::Array(left) => {
             let left_prim = as_boolean_array(&left);
             let right_selected = if left_prim.null_count() > 0 {
-                right.evaluate_selection(batch, &compute::not(
-                    &compute::prep_null_mask_filter(&left_prim)
-                )?)?
+                right.evaluate_selection(
+                    batch,
+                    &compute::not(&compute::prep_null_mask_filter(left_prim))?,
+                )?
             } else {
                 right.evaluate_selection(batch, &compute::not(left_prim)?)?
             };
@@ -173,18 +190,18 @@ fn evaluate_or(
             let right_prim = as_boolean_array(&right);
             ColumnarValue::Array(Arc::new(compute::or_kleene(left_prim, right_prim)?))
         }
-        _ => return Err(DataFusionError::Internal(format!("OR: invalid operands")))
+        _ => return Err(DataFusionError::Internal("OR: invalid operands".to_string())),
     })
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::spark_logical::{SparkLogicalExpr, SparkLogicalOp};
     use arrow::array::*;
     use arrow::record_batch::RecordBatch;
     use datafusion::physical_expr::expressions::Column;
     use datafusion::physical_expr::PhysicalExpr;
-    use crate::spark_logical::{SparkLogicalExpr, SparkLogicalOp};
+    use std::sync::Arc;
 
     #[test]
     fn test() {
@@ -213,7 +230,8 @@ mod test {
         let batch = RecordBatch::try_from_iter_with_nullable([
             ("a", arg1, true),
             ("b", arg2, true),
-        ]).unwrap();
+        ])
+        .unwrap();
 
         // +---------+---------+---------+---------+
         // | AND     | TRUE    | FALSE   | UNKNOWN |
@@ -226,19 +244,25 @@ mod test {
             Arc::new(Column::new("a", 0)),
             Arc::new(Column::new("b", 1)),
             SparkLogicalOp::And,
-        ).evaluate(&batch).unwrap().into_array(9);
+        )
+        .evaluate(&batch)
+        .unwrap()
+        .into_array(9);
 
-        assert_eq!(as_boolean_array(&output).into_iter().collect::<Vec<_>>(), vec![
-            Some(true),
-            Some(false),
-            None,
-            Some(false),
-            Some(false),
-            Some(false),
-            None,
-            Some(false),
-            None,
-        ]);
+        assert_eq!(
+            as_boolean_array(&output).into_iter().collect::<Vec<_>>(),
+            vec![
+                Some(true),
+                Some(false),
+                None,
+                Some(false),
+                Some(false),
+                Some(false),
+                None,
+                Some(false),
+                None,
+            ]
+        );
 
         // +---------+---------+---------+---------+
         // | OR      | TRUE    | FALSE   | UNKNOWN |
@@ -251,18 +275,24 @@ mod test {
             Arc::new(Column::new("a", 0)),
             Arc::new(Column::new("b", 1)),
             SparkLogicalOp::Or,
-        ).evaluate(&batch).unwrap().into_array(9);
+        )
+        .evaluate(&batch)
+        .unwrap()
+        .into_array(9);
 
-        assert_eq!(as_boolean_array(&output).into_iter().collect::<Vec<_>>(), vec![
-            Some(true),
-            Some(true),
-            Some(true),
-            Some(true),
-            Some(false),
-            None,
-            Some(true),
-            None,
-            None,
-        ]);
+        assert_eq!(
+            as_boolean_array(&output).into_iter().collect::<Vec<_>>(),
+            vec![
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(false),
+                None,
+                Some(true),
+                None,
+                None,
+            ]
+        );
     }
 }

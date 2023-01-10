@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::array::*;
 use arrow::datatypes::{DataType, Float32Type, Float64Type};
 use bigdecimal::num_bigint::BigInt;
 use bigdecimal::{BigDecimal, ToPrimitive};
-use arrow::array::*;
 use datafusion::common::Result;
 use datafusion::common::{DataFusionError, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
@@ -97,11 +97,11 @@ fn round_decimal(i128_val: i128, scale: i8, n: i32) -> Option<i128> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::spark_round_n::spark_round_n;
     use arrow::array::*;
     use datafusion::common::ScalarValue;
     use datafusion::logical_expr::ColumnarValue;
-    use crate::spark_round_n::spark_round_n;
+    use std::sync::Arc;
 
     #[test]
     fn test_float() {
@@ -115,8 +115,10 @@ mod test {
         // round with n >= 0
         let output = spark_round_n(&[
             ColumnarValue::Array(input.clone()),
-            ColumnarValue::Scalar(ScalarValue::Int32(Some(5)))
-        ]).unwrap().into_array(4);
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),
+        ])
+        .unwrap()
+        .into_array(4);
 
         assert_eq!(
             output
@@ -125,28 +127,29 @@ mod test {
                 .unwrap()
                 .into_iter()
                 .collect::<Vec<_>>(),
-            vec![
-                Some(123.00000),
-                Some(123.45600),
-                Some(123.45679),
-                None,
-            ]
+            vec![Some(123.00000), Some(123.45600), Some(123.45679), None,]
         );
     }
     #[test]
     fn test_decimal() {
-        let input: ArrayRef = Arc::new(Decimal128Array::from_iter(&[
-            Some(123000000),
-            Some(123456000),
-            Some(123456789),
-            None,
-        ]).with_precision_and_scale(9, 6).unwrap());
+        let input: ArrayRef = Arc::new(
+            Decimal128Array::from_iter(&[
+                Some(123000000),
+                Some(123456000),
+                Some(123456789),
+                None,
+            ])
+            .with_precision_and_scale(9, 6)
+            .unwrap(),
+        );
 
         // round with n >= 0
         let output = spark_round_n(&[
             ColumnarValue::Array(input.clone()),
-            ColumnarValue::Scalar(ScalarValue::Int32(Some(5)))
-        ]).unwrap().into_array(4);
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),
+        ])
+        .unwrap()
+        .into_array(4);
 
         assert_eq!(
             output
@@ -155,12 +158,7 @@ mod test {
                 .unwrap()
                 .into_iter()
                 .collect::<Vec<_>>(),
-            vec![
-                Some(12300000),
-                Some(12345600),
-                Some(12345679),
-                None,
-            ]
+            vec![Some(12300000), Some(12345600), Some(12345679), None,]
         );
     }
 }

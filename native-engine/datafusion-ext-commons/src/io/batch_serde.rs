@@ -12,22 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::sync::Arc;
+use crate::io::{read_bytes_slice, read_len, read_u8, write_len, write_u8};
 use arrow::array::*;
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::*;
 use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use bitvec::prelude::BitVec;
-use crate::io::{read_bytes_slice, read_len, read_u8, write_len, write_u8};
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::sync::Arc;
 
 pub fn write_batch<W: Write>(
     batch: &RecordBatch,
     output: &mut W,
     compress: bool,
 ) -> ArrowResult<()> {
-
     let mut output: Box<dyn Write> = if compress {
         Box::new(BufWriter::new(zstd::Encoder::new(output, 1)?.auto_finish()))
     } else {
@@ -61,39 +60,68 @@ pub fn write_batch<W: Write>(
     // write columns
     for column in batch.columns() {
         match column.data_type() {
-            DataType::Null => {},
-            DataType::Boolean =>
-                write_boolean_array(as_boolean_array(column), &mut output)?,
-            DataType::Int8 =>
-                write_primitive_array(as_primitive_array::<Int8Type>(column), &mut output)?,
-            DataType::Int16 =>
-                write_primitive_array(as_primitive_array::<Int16Type>(column), &mut output)?,
-            DataType::Int32 =>
-                write_primitive_array(as_primitive_array::<Int32Type>(column), &mut output)?,
-            DataType::Int64 =>
-                write_primitive_array(as_primitive_array::<Int64Type>(column), &mut output)?,
-            DataType::UInt8 =>
-                write_primitive_array(as_primitive_array::<UInt8Type>(column), &mut output)?,
-            DataType::UInt16 =>
-                write_primitive_array(as_primitive_array::<UInt16Type>(column), &mut output)?,
-            DataType::UInt32 =>
-                write_primitive_array(as_primitive_array::<UInt32Type>(column), &mut output)?,
-            DataType::UInt64 =>
-                write_primitive_array(as_primitive_array::<UInt64Type>(column), &mut output)?,
-            DataType::Float32 =>
-                write_primitive_array(as_primitive_array::<Float32Type>(column), &mut output)?,
-            DataType::Float64 =>
-                write_primitive_array(as_primitive_array::<Float64Type>(column), &mut output)?,
-            DataType::Decimal128(_, _) =>
-                write_primitive_array(as_primitive_array::<Decimal128Type>(column), &mut output)?,
-            DataType::Utf8 =>
-                write_string_array(as_string_array(column), &mut output)?,
-            DataType::Date32 =>
-                write_primitive_array(as_primitive_array::<Date32Type>(column), &mut output)?,
-            DataType::Date64 =>
-                write_primitive_array(as_primitive_array::<Date64Type>(column), &mut output)?,
+            DataType::Null => {}
+            DataType::Boolean => {
+                write_boolean_array(as_boolean_array(column), &mut output)?
+            }
+            DataType::Int8 => write_primitive_array(
+                as_primitive_array::<Int8Type>(column),
+                &mut output,
+            )?,
+            DataType::Int16 => write_primitive_array(
+                as_primitive_array::<Int16Type>(column),
+                &mut output,
+            )?,
+            DataType::Int32 => write_primitive_array(
+                as_primitive_array::<Int32Type>(column),
+                &mut output,
+            )?,
+            DataType::Int64 => write_primitive_array(
+                as_primitive_array::<Int64Type>(column),
+                &mut output,
+            )?,
+            DataType::UInt8 => write_primitive_array(
+                as_primitive_array::<UInt8Type>(column),
+                &mut output,
+            )?,
+            DataType::UInt16 => write_primitive_array(
+                as_primitive_array::<UInt16Type>(column),
+                &mut output,
+            )?,
+            DataType::UInt32 => write_primitive_array(
+                as_primitive_array::<UInt32Type>(column),
+                &mut output,
+            )?,
+            DataType::UInt64 => write_primitive_array(
+                as_primitive_array::<UInt64Type>(column),
+                &mut output,
+            )?,
+            DataType::Float32 => write_primitive_array(
+                as_primitive_array::<Float32Type>(column),
+                &mut output,
+            )?,
+            DataType::Float64 => write_primitive_array(
+                as_primitive_array::<Float64Type>(column),
+                &mut output,
+            )?,
+            DataType::Decimal128(_, _) => write_primitive_array(
+                as_primitive_array::<Decimal128Type>(column),
+                &mut output,
+            )?,
+            DataType::Utf8 => write_string_array(as_string_array(column), &mut output)?,
+            DataType::Date32 => write_primitive_array(
+                as_primitive_array::<Date32Type>(column),
+                &mut output,
+            )?,
+            DataType::Date64 => write_primitive_array(
+                as_primitive_array::<Date64Type>(column),
+                &mut output,
+            )?,
             other => {
-                return Err(ArrowError::IoError(format!("unsupported data type: {}", other)));
+                return Err(ArrowError::IoError(format!(
+                    "unsupported data type: {}",
+                    other
+                )));
             }
         }
     }
@@ -101,7 +129,6 @@ pub fn write_batch<W: Write>(
 }
 
 pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordBatch> {
-
     let mut input: Box<dyn Read> = if compress {
         Box::new(BufReader::new(zstd::Decoder::new(input)?))
     } else {
@@ -127,57 +154,101 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
     let has_null_buffers = BitVec::<u8>::from_vec(has_null_buffers_bytes.into());
 
     // create schema
-    let schema = Arc::new(Schema::new(data_types
-        .iter()
-        .enumerate()
-        .map(|(i, data_type)| Field::new("", data_type.clone(), nullables[i]))
-        .collect()));
+    let schema = Arc::new(Schema::new(
+        data_types
+            .iter()
+            .enumerate()
+            .map(|(i, data_type)| Field::new("", data_type.clone(), nullables[i]))
+            .collect(),
+    ));
 
     // read columns
     let mut columns = vec![];
     for i in 0..num_columns {
         columns.push(match schema.field(i).data_type() {
-            DataType::Null =>
-                Arc::new(NullArray::new(num_rows)),
-            DataType::Boolean =>
-                read_boolean_array(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Int8 =>
-                read_primitive_array::<_, Int8Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Int16 =>
-                read_primitive_array::<_, Int16Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Int32 =>
-                read_primitive_array::<_, Int32Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Int64 =>
-                read_primitive_array::<_, Int64Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::UInt8 =>
-                read_primitive_array::<_, UInt8Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::UInt16 =>
-                read_primitive_array::<_, UInt16Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::UInt32 =>
-                read_primitive_array::<_, UInt32Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::UInt64 =>
-                read_primitive_array::<_, UInt64Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Float32 =>
-                read_primitive_array::<_, Float32Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Float64 =>
-                read_primitive_array::<_, Float64Type>(num_rows, has_null_buffers[i], &mut input)?,
+            DataType::Null => Arc::new(NullArray::new(num_rows)),
+            DataType::Boolean => {
+                read_boolean_array(num_rows, has_null_buffers[i], &mut input)?
+            }
+            DataType::Int8 => read_primitive_array::<_, Int8Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::Int16 => read_primitive_array::<_, Int16Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::Int32 => read_primitive_array::<_, Int32Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::Int64 => read_primitive_array::<_, Int64Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::UInt8 => read_primitive_array::<_, UInt8Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::UInt16 => read_primitive_array::<_, UInt16Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::UInt32 => read_primitive_array::<_, UInt32Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::UInt64 => read_primitive_array::<_, UInt64Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::Float32 => read_primitive_array::<_, Float32Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::Float64 => read_primitive_array::<_, Float64Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
             DataType::Decimal128(prec, scale) => {
                 let array = read_primitive_array::<_, Decimal128Type>(
                     num_rows,
                     has_null_buffers[i],
                     &mut input,
                 )?;
-                Arc::new(Decimal128Array::from(array.data().clone())
-                    .with_precision_and_scale(*prec, *scale)?)
+                Arc::new(
+                    Decimal128Array::from(array.data().clone())
+                        .with_precision_and_scale(*prec, *scale)?,
+                )
             }
-            DataType::Date32 =>
-                read_primitive_array::<_, Date32Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Date64 =>
-                read_primitive_array::<_, Date64Type>(num_rows, has_null_buffers[i], &mut input)?,
-            DataType::Utf8 =>
-                read_string_array(num_rows, has_null_buffers[i], &mut input)?,
+            DataType::Date32 => read_primitive_array::<_, Date32Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::Date64 => read_primitive_array::<_, Date64Type>(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+            )?,
+            DataType::Utf8 => {
+                read_string_array(num_rows, has_null_buffers[i], &mut input)?
+            }
             other => {
-                return Err(ArrowError::IoError(format!("unsupported data type: {}", other)));
+                return Err(ArrowError::IoError(format!(
+                    "unsupported data type: {}",
+                    other
+                )));
             }
         });
     }
@@ -210,12 +281,13 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
             write_u8(15, output)?;
             write_u8(*prec, output)?;
             write_u8(*scale as u8, output)?;
-        },
+        }
         DataType::Utf8 => write_u8(16, output)?,
         other => {
-            return Err(ArrowError::NotYetImplemented(
-                format!("write_data_type: unsupported data type: {:?}", other)
-            ));
+            return Err(ArrowError::NotYetImplemented(format!(
+                "write_data_type: unsupported data type: {:?}",
+                other
+            )));
         }
     }
     Ok(())
@@ -241,12 +313,13 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
             let prec = read_u8(input)?;
             let scale = read_u8(input)? as i8;
             DataType::Decimal128(prec, scale)
-        },
+        }
         16 => DataType::Utf8,
         other => {
-            return Err(ArrowError::NotYetImplemented(
-                format!("read_data_type: unsupported data type: {:?}", other)
-            ));
+            return Err(ArrowError::NotYetImplemented(format!(
+                "read_data_type: unsupported data type: {:?}",
+                other
+            )));
         }
     })
 }
@@ -267,7 +340,6 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
     has_null_buffer: bool,
     input: &mut R,
 ) -> ArrowResult<ArrayRef> {
-
     let null_buffer: Option<Buffer> = if has_null_buffer {
         let null_buffer_len = (num_rows + 7) / 8;
         Some(Buffer::from(read_bytes_slice(input, null_buffer_len)?))
@@ -308,7 +380,6 @@ fn read_boolean_array<R: Read>(
     has_null_buffer: bool,
     input: &mut R,
 ) -> ArrowResult<ArrayRef> {
-
     let null_buffer: Option<Buffer> = if has_null_buffer {
         let null_buffer_len = (num_rows + 7) / 8;
         let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
@@ -334,10 +405,7 @@ fn read_boolean_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_string_array<W: Write>(
-    array: &StringArray,
-    output: &mut W,
-) -> ArrowResult<()> {
+fn write_string_array<W: Write>(array: &StringArray, output: &mut W) -> ArrowResult<()> {
     if let Some(null_buffer) = array.data().null_buffer() {
         output.write_all(null_buffer.as_slice())?;
     }
@@ -357,7 +425,6 @@ fn read_string_array<R: Read>(
     has_null_buffer: bool,
     input: &mut R,
 ) -> ArrowResult<ArrayRef> {
-
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(Buffer::from(read_bytes_slice(input, (num_rows + 7) / 8)?))
     } else {
@@ -390,11 +457,11 @@ fn read_string_array<R: Read>(
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
-    use std::sync::Arc;
+    use crate::io::batch_serde::{read_batch, write_batch};
     use arrow::array::*;
     use arrow::record_batch::RecordBatch;
-    use crate::io::batch_serde::{read_batch, write_batch};
+    use std::io::Cursor;
+    use std::sync::Arc;
 
     #[test]
     fn test_write_and_read_batch() {
@@ -420,7 +487,8 @@ mod test {
             ("", array1, true),
             ("", array2, true),
             ("", array3, true),
-        ]).unwrap();
+        ])
+        .unwrap();
 
         let mut buf = vec![];
         write_batch(&batch, &mut buf, true).unwrap();

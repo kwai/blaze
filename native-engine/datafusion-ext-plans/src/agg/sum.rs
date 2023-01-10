@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use crate::agg::{load_scalar, save_scalar, Agg, AggAccum, AggAccumRef};
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{downcast_value, Result, ScalarValue};
@@ -22,7 +20,9 @@ use datafusion::error::DataFusionError;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
 use paste::paste;
-use crate::agg::{AggAccum, Agg, load_scalar, save_scalar, AggAccumRef};
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 pub struct AggSum {
     child: Arc<dyn PhysicalExpr>,
@@ -32,9 +32,7 @@ pub struct AggSum {
 
 impl AggSum {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accum_fields = vec![
-            Field::new("sum", data_type.clone(), true),
-        ];
+        let accum_fields = vec![Field::new("sum", data_type.clone(), true)];
         Ok(Self {
             child,
             data_type,
@@ -72,21 +70,17 @@ impl Agg for AggSum {
 
     fn create_accum(&self) -> Result<AggAccumRef> {
         Ok(Box::new(AggSumAccum {
-            partial: self.data_type.clone().try_into()?
+            partial: self.data_type.clone().try_into()?,
         }))
     }
 
-    fn prepare_partial_args(
-        &self,
-        partial_inputs: &[ArrayRef],
-    ) -> Result<Vec<ArrayRef>> {
+    fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // cast arg1 to target data type
-        Ok(vec![
-            datafusion_ext_commons::cast::cast(
-                ColumnarValue::Array(partial_inputs[0].clone()),
-                self.accum_fields[0].data_type(),
-            )?.into_array(0),
-        ])
+        Ok(vec![datafusion_ext_commons::cast::cast(
+            ColumnarValue::Array(partial_inputs[0].clone()),
+            self.accum_fields[0].data_type(),
+        )?
+        .into_array(0)])
     }
 }
 
@@ -125,11 +119,10 @@ impl AggAccum for AggSumAccum {
                 type TArray = paste! {[<$tyname Array>]};
                 let value = downcast_value!(values[0], TArray);
                 if value.is_valid(row_idx) {
-                    *$partial_value = Some(
-                        $partial_value.unwrap_or_default() + value.value(row_idx)
-                    );
+                    *$partial_value =
+                        Some($partial_value.unwrap_or_default() + value.value(row_idx));
                 }
-            }}
+            }};
         }
 
         match &mut self.partial {
@@ -146,9 +139,10 @@ impl AggAccum for AggSumAccum {
             ScalarValue::UInt64(v) => handle!(UInt64, v),
             ScalarValue::Decimal128(v, _, _) => handle!(Decimal128, v),
             other => {
-                return Err(DataFusionError::NotImplemented(
-                    format!("unsupported data type in sum(): {}", other)
-                ));
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type in sum(): {}",
+                    other
+                )));
             }
         }
         Ok(())
@@ -160,10 +154,9 @@ impl AggAccum for AggSumAccum {
                 type TArray = paste! {[<$tyname Array>]};
                 let value = downcast_value!(values[0], TArray);
                 let sum = arrow::compute::sum(value);
-                *$partial_value = Some(
-                    $partial_value.unwrap_or_default() + sum.unwrap_or_default()
-                );
-            }}
+                *$partial_value =
+                    Some($partial_value.unwrap_or_default() + sum.unwrap_or_default());
+            }};
         }
 
         match &mut self.partial {
@@ -180,9 +173,10 @@ impl AggAccum for AggSumAccum {
             ScalarValue::UInt64(v) => handle!(UInt64, v),
             ScalarValue::Decimal128(v, _, _) => handle!(Decimal128, v),
             other => {
-                return Err(DataFusionError::NotImplemented(
-                    format!("unsupported data type in sum(): {}", other)
-                ));
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type in sum(): {}",
+                    other
+                )));
             }
         }
         Ok(())
@@ -217,7 +211,7 @@ impl AggSumAccum {
         macro_rules! handle {
             ($a:expr, $b:expr) => {{
                 *$a = Some($a.unwrap() + $b.unwrap());
-            }}
+            }};
         }
         match (&mut self.partial, another_value) {
             (ScalarValue::Float32(a), ScalarValue::Float32(b)) => handle!(a, b),
@@ -230,11 +224,14 @@ impl AggSumAccum {
             (ScalarValue::UInt16(a), ScalarValue::UInt16(b)) => handle!(a, b),
             (ScalarValue::UInt32(a), ScalarValue::UInt32(b)) => handle!(a, b),
             (ScalarValue::UInt64(a), ScalarValue::UInt64(b)) => handle!(a, b),
-            (ScalarValue::Decimal128(a, _, _), ScalarValue::Decimal128(b, _, _)) => handle!(a, b),
+            (ScalarValue::Decimal128(a, _, _), ScalarValue::Decimal128(b, _, _)) => {
+                handle!(a, b)
+            }
             (other, _) => {
-                return Err(DataFusionError::NotImplemented(
-                    format!("unsupported data type in sum(): {}", other)
-                ));
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type in sum(): {}",
+                    other
+                )));
             }
         }
         Ok(())

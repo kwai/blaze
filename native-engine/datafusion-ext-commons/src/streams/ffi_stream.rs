@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_object};
 use arrow::array::{make_array_from_raw, StructArray};
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
+use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_object};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::physical_plan::common::batch_byte_size;
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, Count
-};
+use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
 use datafusion::physical_plan::RecordBatchStream;
 use futures::Stream;
 use jni::objects::{GlobalRef, JObject};

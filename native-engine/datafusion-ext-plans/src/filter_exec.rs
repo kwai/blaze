@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::datatypes::SchemaRef;
+use datafusion::common::Result;
+use datafusion::common::Statistics;
+use datafusion::execution::context::TaskContext;
+use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
+use datafusion::physical_plan::metrics::{MetricValue, MetricsSet};
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+};
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use arrow::datatypes::SchemaRef;
-use datafusion::common::Statistics;
-use datafusion::common::Result;
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream};
-use datafusion::physical_plan::metrics::{MetricsSet, MetricValue};
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 
 #[derive(Debug, Clone)]
 pub struct FilterExec {
@@ -34,14 +36,10 @@ impl FilterExec {
         predicate: Arc<dyn PhysicalExpr>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Result<Self> {
-        let inner = Arc::new(
-            datafusion::physical_plan::filter::FilterExec::try_new(
-                predicate,
-                input,
-            )?);
-        Ok(Self {
-            inner,
-        })
+        let inner = Arc::new(datafusion::physical_plan::filter::FilterExec::try_new(
+            predicate, input,
+        )?);
+        Ok(Self { inner })
     }
 }
 
@@ -81,11 +79,10 @@ impl ExecutionPlan for FilterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let batch_size = context
-            .session_config()
-            .batch_size();
+        let batch_size = context.session_config().batch_size();
         let filtered = self.inner.execute(partition, context)?;
-        let elapsed_compute = self.inner
+        let elapsed_compute = self
+            .inner
             .metrics()
             .unwrap()
             .iter()
@@ -96,11 +93,8 @@ impl ExecutionPlan for FilterExec {
             .next()
             .unwrap();
 
-        let coalesced = Box::pin(CoalesceStream::new(
-            filtered,
-            batch_size,
-            elapsed_compute,
-        ));
+        let coalesced =
+            Box::pin(CoalesceStream::new(filtered, batch_size, elapsed_compute));
         Ok(coalesced)
     }
 

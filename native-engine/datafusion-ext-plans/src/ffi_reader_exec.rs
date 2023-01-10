@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_commons::{
-    jni_call, jni_call_static, jni_new_global_ref,
-    jni_new_string,
-};
 use arrow::datatypes::SchemaRef;
+use blaze_commons::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
@@ -25,8 +22,7 @@ use datafusion::physical_plan::metrics::{
 };
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning,
-    SendableRecordBatchStream, Statistics,
+    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
 use datafusion_ext_commons::streams::ffi_stream::FFIReaderStream;
 use jni::objects::JObject;

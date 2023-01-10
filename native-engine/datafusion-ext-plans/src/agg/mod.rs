@@ -20,17 +20,17 @@ pub mod max;
 pub mod min;
 pub mod sum;
 
+use arrow::array::*;
+use arrow::datatypes::*;
+use datafusion::common::{downcast_value, DataFusionError, Result, ScalarValue};
+use datafusion::logical_expr::aggregate_function;
+use datafusion::physical_expr::PhysicalExpr;
+use datafusion_ext_commons::array_builder::ConfiguredDecimal128Builder;
+use datafusion_ext_exprs::cast::TryCastExpr;
+use paste::paste;
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
-use arrow::array::*;
-use arrow::datatypes::*;
-use datafusion::common::{DataFusionError, downcast_value, Result, ScalarValue};
-use datafusion::logical_expr::aggregate_function;
-use datafusion::physical_expr::PhysicalExpr;
-use paste::paste;
-use datafusion_ext_commons::array_builder::ConfiguredDecimal128Builder;
-use datafusion_ext_exprs::cast::TryCastExpr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggMode {
@@ -81,10 +81,7 @@ pub trait Agg: Send + Sync + Debug {
     fn nullable(&self) -> bool;
     fn accum_fields(&self) -> &[Field];
     fn create_accum(&self) -> Result<AggAccumRef>;
-    fn prepare_partial_args(
-        &self,
-        partial_inputs: &[ArrayRef],
-    ) -> Result<Vec<ArrayRef>> {
+    fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         Ok(partial_inputs.iter().map(Clone::clone).collect())
     }
 }
@@ -114,14 +111,13 @@ pub fn create_agg(
     children: &[Arc<dyn PhysicalExpr>],
     input_schema: &SchemaRef,
 ) -> Result<Arc<dyn Agg>> {
-
     Ok(match agg_function {
         AggFunction::COUNT => {
             let return_type = DataType::Int64;
             Arc::new(count::AggCount::try_new(children[0].clone(), return_type)?)
         }
         AggFunction::SUM => {
-            let arg_type = children[0].data_type(&input_schema)?;
+            let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Sum,
                 &[arg_type],
@@ -132,7 +128,7 @@ pub fn create_agg(
             )?)
         }
         AggFunction::AVG => {
-            let arg_type = children[0].data_type(&input_schema)?;
+            let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Avg,
                 &[arg_type],
@@ -143,7 +139,7 @@ pub fn create_agg(
             )?)
         }
         AggFunction::MAX => {
-            let arg_type = children[0].data_type(&input_schema)?;
+            let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Max,
                 &[arg_type],
@@ -154,7 +150,7 @@ pub fn create_agg(
             )?)
         }
         AggFunction::MIN => {
-            let arg_type = children[0].data_type(&input_schema)?;
+            let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Min,
                 &[arg_type],
@@ -167,10 +163,7 @@ pub fn create_agg(
     })
 }
 
-fn save_scalar(
-    scalar: &ScalarValue,
-    builder: &mut Box<dyn ArrayBuilder>,
-) -> Result<()> {
+fn save_scalar(scalar: &ScalarValue, builder: &mut Box<dyn ArrayBuilder>) -> Result<()> {
     macro_rules! handle {
         ($tyname:ident, $partial_value:expr) => {{
             let builder = builder
@@ -182,7 +175,7 @@ fn save_scalar(
             } else {
                 builder.append_null();
             }
-        }}
+        }};
     }
     match scalar {
         ScalarValue::Null => {}
@@ -206,17 +199,18 @@ fn save_scalar(
                 .downcast_mut::<StringBuilder>()
                 .unwrap();
             if let Some(partial_value) = v {
-                builder.append_value(partial_value.to_owned());
+                builder.append_value(partial_value);
             } else {
                 builder.append_null();
             }
-        },
+        }
         ScalarValue::Date32(v) => handle!(Date32, v),
         ScalarValue::Date64(v) => handle!(Date64, v),
         other => {
-            return Err(DataFusionError::NotImplemented(
-                format!("unsupported data type: {}", other)
-            ));
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type: {}",
+                other
+            )));
         }
     }
     Ok(())
@@ -232,7 +226,7 @@ fn load_scalar(scalar: &mut ScalarValue, value: &ArrayRef, row_idx: usize) -> Re
             } else {
                 *$partial_value = None;
             }
-        }}
+        }};
     }
     match scalar {
         ScalarValue::Null => {}
@@ -261,15 +255,15 @@ fn load_scalar(scalar: &mut ScalarValue, value: &ArrayRef, row_idx: usize) -> Re
             } else {
                 *v = None;
             }
-        },
+        }
         ScalarValue::Date32(v) => handle!(Date32, v),
         ScalarValue::Date64(v) => handle!(Date64, v),
         other => {
-            return Err(DataFusionError::NotImplemented(
-                format!("unsupported data type: {}", other)
-            ));
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type: {}",
+                other
+            )));
         }
     }
     Ok(())
 }
-

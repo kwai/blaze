@@ -23,12 +23,12 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::{any::Any, convert::TryInto};
 
-use bytes::Bytes;
 use arrow::{
     array::ArrayRef,
     datatypes::{Schema, SchemaRef},
     error::ArrowError,
 };
+use bytes::Bytes;
 use datafusion::common::Column;
 use datafusion::datasource::listing::FileRange;
 use datafusion::logical_expr::Expr;

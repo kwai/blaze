@@ -12,27 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::str::FromStr;
-use std::sync::Arc;
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
 use num::{Bounded, FromPrimitive, Integer, Signed, ToPrimitive};
 use paste::paste;
+use std::str::FromStr;
+use std::sync::Arc;
 
 pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue> {
     match (&value.data_type(), cast_type) {
-        (_, &DataType::Null) => {
-            match value {
-                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    Arc::new(NullArray::new(array.len()))
-                )),
-                ColumnarValue::Scalar(_) => Ok(ColumnarValue::Scalar(
-                    ScalarValue::Null
-                )),
+        (_, &DataType::Null) => match value {
+            ColumnarValue::Array(array) => {
+                Ok(ColumnarValue::Array(Arc::new(NullArray::new(array.len()))))
             }
-        }
+            ColumnarValue::Scalar(_) => Ok(ColumnarValue::Scalar(ScalarValue::Null)),
+        },
         (&DataType::Utf8, &DataType::Int8)
         | (&DataType::Utf8, &DataType::Int16)
         | (&DataType::Utf8, &DataType::Int32)
@@ -44,10 +40,8 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array = try_cast_string_array_to_integer(
-                        &scalar_array,
-                        cast_type,
-                    )?;
+                    let cast_array =
+                        try_cast_string_array_to_integer(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }
@@ -61,10 +55,8 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array = try_cast_string_array_to_decimal(
-                        &scalar_array,
-                        cast_type,
-                    )?;
+                    let cast_array =
+                        try_cast_string_array_to_decimal(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }
@@ -78,10 +70,8 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array = try_cast_decimal_array_to_string(
-                        &scalar_array,
-                        cast_type,
-                    )?;
+                    let cast_array =
+                        try_cast_decimal_array_to_string(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }
@@ -91,17 +81,12 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
             // default cast
             match value {
                 ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    arrow::compute::kernels::cast::cast(
-                        &array,
-                        cast_type,
-                    )?,
+                    arrow::compute::kernels::cast::cast(&array, cast_type)?,
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array = arrow::compute::kernels::cast::cast(
-                        &scalar_array,
-                        cast_type,
-                    )?;
+                    let cast_array =
+                        arrow::compute::kernels::cast::cast(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }

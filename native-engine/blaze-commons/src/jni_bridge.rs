@@ -89,35 +89,41 @@ macro_rules! jni_map_error_with_env {
                         .get_string(message_obj.into())
                         .map(|s| String::from(s))
                         .unwrap();
-                    Err($crate::jni_bridge::datafusion::error::DataFusionError::External(
-                        format!(
-                            "Java exception thrown at {}:{}: {}",
-                            file!(),
-                            line!(),
-                            message
-                        )
-                        .into(),
-                    ))
+                    Err(
+                        $crate::jni_bridge::datafusion::error::DataFusionError::External(
+                            format!(
+                                "Java exception thrown at {}:{}: {}",
+                                file!(),
+                                line!(),
+                                message
+                            )
+                            .into(),
+                        ),
+                    )
                 } else {
-                    Err($crate::jni_bridge::datafusion::error::DataFusionError::External(
-                        format!(
-                            "Java exception thrown at {}:{}: (no message)",
-                            file!(),
-                            line!()
-                        )
-                        .into(),
-                    ))
+                    Err(
+                        $crate::jni_bridge::datafusion::error::DataFusionError::External(
+                            format!(
+                                "Java exception thrown at {}:{}: (no message)",
+                                file!(),
+                                line!()
+                            )
+                            .into(),
+                        ),
+                    )
                 }
             }
-            Err(err) => Err($crate::jni_bridge::datafusion::error::DataFusionError::External(
-                format!(
-                    "Unknown JNI error occurred at {}:{}: {:?}",
-                    file!(),
-                    line!(),
-                    err
-                )
-                .into(),
-            )),
+            Err(err) => Err(
+                $crate::jni_bridge::datafusion::error::DataFusionError::External(
+                    format!(
+                        "Unknown JNI error occurred at {}:{}: {:?}",
+                        file!(),
+                        line!(),
+                        err
+                    )
+                    .into(),
+                ),
+            ),
         }
     }};
 }

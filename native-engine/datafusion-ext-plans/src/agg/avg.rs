@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use crate::agg::count::AggCountAccum;
+use crate::agg::sum::AggSumAccum;
+use crate::agg::{Agg, AggAccum, AggAccumRef};
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
-use paste::paste;
 use datafusion_ext_commons::array_builder::ConfiguredDecimal128Builder;
-use crate::agg::{AggAccum, Agg, AggAccumRef};
-use crate::agg::count::AggCountAccum;
-use crate::agg::sum::AggSumAccum;
+use paste::paste;
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 pub struct AggAvg {
     child: Arc<dyn PhysicalExpr>,
@@ -79,23 +79,17 @@ impl Agg for AggAvg {
             sum: AggSumAccum {
                 partial: self.data_type.clone().try_into()?,
             },
-            count: AggCountAccum {
-                partial: 0,
-            },
+            count: AggCountAccum { partial: 0 },
         }))
     }
 
-    fn prepare_partial_args(
-        &self,
-        partial_inputs: &[ArrayRef],
-    ) -> Result<Vec<ArrayRef>> {
+    fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // cast arg1 to target data type
-        Ok(vec![
-            datafusion_ext_commons::cast::cast(
-                ColumnarValue::Array(partial_inputs[0].clone()),
-                self.accum_fields[0].data_type(),
-            )?.into_array(0),
-        ])
+        Ok(vec![datafusion_ext_commons::cast::cast(
+            ColumnarValue::Array(partial_inputs[0].clone()),
+            self.accum_fields[0].data_type(),
+        )?
+        .into_array(0)])
     }
 }
 
@@ -140,10 +134,11 @@ impl AggAccum for AggAvgAccum {
                     builder.append_null();
                     return Ok(());
                 }
-                let sum = $partial_value.unwrap() as <TType as ArrowPrimitiveType>::Native;
+                let sum =
+                    $partial_value.unwrap() as <TType as ArrowPrimitiveType>::Native;
                 let avg = sum / (count as <TType as ArrowPrimitiveType>::Native);
                 builder.append_value(avg);
-            }}
+            }};
         }
         match &self.sum.partial {
             ScalarValue::Float32(v) => handle!(Float32, v),
@@ -159,11 +154,12 @@ impl AggAccum for AggAvgAccum {
             ScalarValue::Decimal128(v, _, _) => {
                 type Decimal128Builder = ConfiguredDecimal128Builder;
                 handle!(Decimal128, v)
-            },
+            }
             other => {
-                return Err(DataFusionError::NotImplemented(
-                    format!("unsupported data type in avg(): {}", other)
-                ));
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type in avg(): {}",
+                    other
+                )));
             }
         }
         Ok(())
@@ -193,8 +189,10 @@ impl AggAccum for AggAvgAccum {
         partial_agg_values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-        self.sum.partial_merge_from_array(partial_agg_values, row_idx)?;
-        self.count.partial_merge_from_array(&partial_agg_values[1..], row_idx)?;
+        self.sum
+            .partial_merge_from_array(partial_agg_values, row_idx)?;
+        self.count
+            .partial_merge_from_array(&partial_agg_values[1..], row_idx)?;
         Ok(())
     }
 }

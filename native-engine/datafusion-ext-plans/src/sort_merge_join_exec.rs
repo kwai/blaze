@@ -695,9 +695,9 @@ async fn join_combined(
     }
 
     drop(total_timer);
-    metrics.elapsed_compute().add_duration(
-        Duration::from_nanos((total_time.value() - io_time.value()) as u64)
-    );
+    metrics.elapsed_compute().add_duration(Duration::from_nanos(
+        (total_time.value() - io_time.value()) as u64,
+    ));
     Ok(())
 }
 
@@ -790,9 +790,9 @@ async fn join_semi(
     }
 
     drop(total_timer);
-    metrics.elapsed_compute().add_duration(
-        Duration::from_nanos((total_time.value() - io_time.value()) as u64)
-    );
+    metrics.elapsed_compute().add_duration(Duration::from_nanos(
+        (total_time.value() - io_time.value()) as u64,
+    ));
     Ok(())
 }
 

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use blaze_commons::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
-use arrow::datatypes::SchemaRef;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
@@ -27,13 +27,13 @@ use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use datafusion_ext_commons::streams::ipc_stream::{IpcReadMode, IpcReaderStream};
 use jni::objects::JObject;
 use std::any::Any;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 
 #[derive(Debug, Clone)]
 pub struct IpcReaderExec {

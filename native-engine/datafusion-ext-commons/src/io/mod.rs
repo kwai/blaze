@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Seek, SeekFrom, Read, Write};
-use std::sync::Arc;
 use arrow::record_batch::RecordBatchOptions;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
 
 use arrow::datatypes::{Schema, SchemaRef};
 use arrow::error::Result as ArrowResult;
@@ -33,12 +33,14 @@ pub fn write_one_batch<W: Write + Seek>(
 
     // nameless - reduce column names from serialized data, the names are
     // always available in the read size
-    let nameless_schema = Arc::new(Schema::new(batch
-        .schema()
-        .fields()
-        .iter()
-        .map(|field| field.clone().with_name(""))
-        .collect()));
+    let nameless_schema = Arc::new(Schema::new(
+        batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.clone().with_name(""))
+            .collect(),
+    ));
     let batch = name_batch(batch, &nameless_schema)?;
 
     // write ipc_length placeholder
@@ -62,12 +64,11 @@ pub fn read_one_batch<R: Read>(
     schema: Option<SchemaRef>,
     compress: bool,
 ) -> ArrowResult<Option<RecordBatch>> {
-
     // read ipc length
     let mut ipc_length_buf = [0u8; 8];
     if let Err(e) = input.read_exact(&mut ipc_length_buf) {
         if e.kind() == std::io::ErrorKind::UnexpectedEof {
-            return Ok(None)
+            return Ok(None);
         }
         return Err(e.into());
     }
@@ -82,7 +83,7 @@ pub fn read_one_batch<R: Read>(
 
     // recover schema name
     if let Some(schema) = schema.as_ref() {
-        return Ok(Some(name_batch(&nameless_batch, schema)?))
+        return Ok(Some(name_batch(&nameless_batch, schema)?));
     }
     Ok(Some(nameless_batch))
 }
@@ -91,19 +92,24 @@ pub fn name_batch(
     batch: &RecordBatch,
     name_schema: &SchemaRef,
 ) -> ArrowResult<RecordBatch> {
-
     let row_count = batch.num_rows();
-    let schema = Arc::new(Schema::new(batch
-        .schema()
-        .fields()
-        .iter()
-        .enumerate()
-        .map(|(i, field)| field.clone().with_name(name_schema.field(i).name()))
-        .collect()));
+    let schema = Arc::new(Schema::new(
+        batch
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(i, field)| field.clone().with_name(name_schema.field(i).name()))
+            .collect(),
+    ));
 
     RecordBatch::try_new_with_options(
         schema,
-        batch.columns().iter() .map(|column| column.clone()).collect(),
+        batch
+            .columns()
+            .iter()
+            .map(|column| column.clone())
+            .collect(),
         &RecordBatchOptions::new().with_row_count(Some(row_count)),
     )
 }
@@ -144,15 +150,9 @@ pub fn read_u8<R: Read>(input: &mut R) -> ArrowResult<u8> {
     Ok(buf[0])
 }
 
-pub fn read_bytes_slice<R: Read>(
-    input: &mut R,
-    len: usize,
-) -> ArrowResult<Box<[u8]>> {
-
+pub fn read_bytes_slice<R: Read>(input: &mut R, len: usize) -> ArrowResult<Box<[u8]>> {
     // safety - assume_init() is safe for [u8]
-    let mut byte_slice = unsafe {
-        Box::new_uninit_slice(len).assume_init()
-    };
+    let mut byte_slice = unsafe { Box::new_uninit_slice(len).assume_init() };
     input.read_exact(byte_slice.as_mut())?;
     Ok(byte_slice)
 }

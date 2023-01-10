@@ -14,13 +14,14 @@
 
 use std::fmt::Debug;
 
+use crate::io::read_one_batch;
+use arrow::datatypes::SchemaRef;
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
 use blaze_commons::{
     jni_call, jni_delete_local_ref, jni_get_object_class, jni_get_string,
     jni_new_direct_byte_buffer, jni_new_global_ref, ResultExt,
 };
-use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
@@ -34,7 +35,6 @@ use std::io::{Read, SeekFrom};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use crate::io::read_one_batch;
 
 #[derive(Debug, Clone, Copy)]
 pub enum IpcReadMode {
@@ -90,11 +90,11 @@ impl IpcReaderStream {
 
         let schema = self.schema.clone();
         self.reader = Some(match self.mode {
-            IpcReadMode::ChannelUncompressed =>
-                get_channel_reader(Some(schema), segment, false)?,
+            IpcReadMode::ChannelUncompressed => {
+                get_channel_reader(Some(schema), segment, false)?
+            }
 
-            IpcReadMode::Channel =>
-                get_channel_reader(Some(schema), segment, true)?,
+            IpcReadMode::Channel => get_channel_reader(Some(schema), segment, true)?,
 
             IpcReadMode::ChannelAndFileSegment => {
                 let segment_class = jni_get_object_class!(segment)?;
@@ -161,7 +161,9 @@ impl Stream for IpcReaderStream {
         if let Some(reader) = &mut self.reader {
             if let Some(batch) = reader.next_batch()? {
                 self.size_counter.add(batch_byte_size(&batch));
-                return self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(batch))));
+                return self
+                    .baseline_metrics
+                    .record_poll(Poll::Ready(Some(Ok(batch))));
             }
         }
 
@@ -205,7 +207,9 @@ impl Read for ReadableByteChannelReader {
         }
         let jbuf = jni_new_direct_byte_buffer!(buf).to_io_result()?;
 
-        while jni_call!(JavaBuffer(jbuf).hasRemaining() -> jboolean).to_io_result()? == JNI_TRUE {
+        while jni_call!(JavaBuffer(jbuf).hasRemaining() -> jboolean).to_io_result()?
+            == JNI_TRUE
+        {
             let read_bytes = jni_call!(
                 JavaReadableByteChannel(self.channel.as_obj()).read(jbuf) -> jint
             )
@@ -234,11 +238,7 @@ pub struct RecordBatchReader {
 }
 
 impl RecordBatchReader {
-    pub fn new(
-        input: Box<dyn Read>,
-        schema: Option<SchemaRef>,
-        compress: bool,
-    ) -> Self {
+    pub fn new(input: Box<dyn Read>, schema: Option<SchemaRef>, compress: bool) -> Self {
         Self {
             input,
             schema,

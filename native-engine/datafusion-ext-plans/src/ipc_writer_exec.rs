@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::datatypes::SchemaRef;
+use arrow::error::ArrowError;
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use blaze_commons::{
     jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer,
     jni_new_global_ref, jni_new_string,
 };
-use arrow::datatypes::SchemaRef;
-use arrow::error::ArrowError;
-use arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;

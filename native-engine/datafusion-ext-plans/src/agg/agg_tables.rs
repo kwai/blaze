@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
-use std::mem::size_of;
-use std::sync::Arc;
+use crate::agg::agg_helper::{AggContext, AggRecord};
+use crate::agg::{AggAccumRef, AggMode};
 use arrow::array::ArrayRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -22,17 +21,22 @@ use arrow::row::RowConverter;
 use async_trait::async_trait;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
-use datafusion::execution::{DiskManager, MemoryConsumer, MemoryConsumerId, MemoryManager};
 use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
+use datafusion::execution::{
+    DiskManager, MemoryConsumer, MemoryConsumerId, MemoryManager,
+};
 use datafusion::physical_plan::metrics::{BaselineMetrics, Time};
+use datafusion_ext_commons::io::{
+    read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch,
+};
 use futures::lock::Mutex;
 use hashbrown::HashMap;
 use lz4_flex::frame::FrameDecoder;
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
+use std::mem::size_of;
+use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
-use crate::agg::agg_helper::{AggContext, AggRecord};
-use crate::agg::{AggAccumRef, AggMode};
 
 pub struct AggTables {
     in_mem: Mutex<InMemTable>,
@@ -72,7 +76,7 @@ impl AggTables {
         let mut in_mem = self.in_mem.lock().await;
         let old_mem_used = in_mem.mem_used();
 
-        process(&mut *in_mem)?;
+        process(&mut in_mem)?;
         let new_mem_used = in_mem.mem_used();
         drop(in_mem);
 
@@ -88,7 +92,6 @@ impl AggTables {
             let mem_freed = old_mem_used - new_mem_used;
             self.shrink(mem_freed);
             self.metrics.mem_used().sub(mem_freed);
-
         }
         Ok(())
     }
@@ -107,28 +110,26 @@ impl AggTables {
         let in_mem = std::mem::take(&mut *in_mem_locked);
         let spilled = std::mem::take(&mut *spilled_locked);
 
-        let num_mem_spills = spilled
-            .iter()
-            .filter(|spill| spill.mem_size > 0)
-            .count();
+        let num_mem_spills = spilled.iter().filter(|spill| spill.mem_size > 0).count();
         let num_disk_spills = spilled.len() - num_mem_spills;
 
-        log::info!("aggregate exec starts outputing with mem-spills={}, disk-spills={}",
+        log::info!(
+            "aggregate exec starts outputing with mem-spills={}, disk-spills={}",
             num_mem_spills,
             num_disk_spills,
         );
 
         // only one in-mem table, directly output it
         if spilled.is_empty() {
-            for chunk in in_mem.grouping_mappings
+            for chunk in in_mem
+                .grouping_mappings
                 .into_iter()
                 .collect::<Vec<_>>()
                 .chunks_mut(batch_size)
             {
-                let batch = self.agg_ctx.convert_records_to_batch(
-                    &mut grouping_row_converter,
-                    chunk,
-                )?;
+                let batch = self
+                    .agg_ctx
+                    .convert_records_to_batch(&mut grouping_row_converter, chunk)?;
                 timer.stop();
                 sender.send(Ok(batch)).await.unwrap();
                 timer.restart();
@@ -151,14 +152,13 @@ impl AggTables {
         macro_rules! flush_staging {
             () => {{
                 let records = std::mem::take(&mut staging_records);
-                let batch = self.agg_ctx.convert_records_to_batch(
-                    &mut grouping_row_converter,
-                    &records,
-                )?;
+                let batch = self
+                    .agg_ctx
+                    .convert_records_to_batch(&mut grouping_row_converter, &records)?;
                 timer.stop();
                 sender.send(Ok(batch)).await.unwrap();
                 timer.restart();
-            }}
+            }};
         }
 
         // create a tournament loser tree to do the merging
@@ -169,7 +169,7 @@ impl AggTables {
                     (_, None) => true,
                     (Some(c1), Some(c2)) => c1.0 < c2.0,
                 }
-            }}
+            }};
         }
         let mut loser_tree = vec![usize::MAX; cursors.len()];
         for i in 0..cursors.len() {
@@ -191,7 +191,8 @@ impl AggTables {
         loop {
             // extract min cursor with the loser tree
             let min_cursor = &mut cursors[loser_tree[0]];
-            if min_cursor.peek().is_none() { // all cursors are finished
+            if min_cursor.peek().is_none() {
+                // all cursors are finished
                 break;
             }
             let min_record = min_cursor.next()?.unwrap();
@@ -201,17 +202,13 @@ impl AggTables {
                 None => current_record = Some(min_record),
                 Some(current_record) => {
                     if min_record.0 == current_record.0 {
-                        current_record.1
+                        current_record
+                            .1
                             .iter_mut()
-                            .zip(Vec::from(min_record.1).into_iter())
-                            .map(|(a, b)| a.partial_merge(b))
-                            .collect::<Result<_>>()?;
-
+                            .zip(Vec::from(min_record.1).into_iter()).try_for_each(|(a, b)| a.partial_merge(b))?;
                     } else {
-                        staging_records.push(std::mem::replace(
-                            current_record,
-                            min_record,
-                        ));
+                        staging_records
+                            .push(std::mem::replace(current_record, min_record));
                         if staging_records.len() >= batch_size {
                             flush_staging!();
                         }
@@ -248,7 +245,7 @@ impl AggTables {
 #[async_trait]
 impl MemoryConsumer for AggTables {
     fn name(&self) -> String {
-        format!("AggTables")
+        "AggTables".to_string()
     }
 
     fn id(&self) -> &MemoryConsumerId {
@@ -280,17 +277,16 @@ impl MemoryConsumer for AggTables {
         let spill = in_mem.try_into_mem_spilled(&self.agg_ctx)?;
         freed -= spill.mem_size as isize;
         spilled.push(spill);
-        log::info!("aggregate table spilled into memory, freed={:.2} MB",
+        log::info!(
+            "aggregate table spilled into memory, freed={:.2} MB",
             freed as f64 / 1e6
         );
 
         // move mem-spilled into disk-spilled if necessary
         let spilled_count_limit = 5;
         loop {
-            let mem_spill_count = spilled
-                .iter()
-                .filter(|spill| spill.mem_size > 0)
-                .count();
+            let mem_spill_count =
+                spilled.iter().filter(|spill| spill.mem_size > 0).count();
             if freed > 0 && mem_spill_count < spilled_count_limit {
                 break;
             }
@@ -314,13 +310,13 @@ impl MemoryConsumer for AggTables {
 
             log::info!(
                 "aggregate table spilled into file, freed={:.2} MB",
-                freed as f64 / 1e6);
+                freed as f64 / 1e6
+            );
         }
 
         let freed = freed as usize;
         self.metrics.mem_used().sub(freed);
         Ok(freed)
-
     }
 
     fn mem_used(&self) -> usize {
@@ -330,7 +326,9 @@ impl MemoryConsumer for AggTables {
 
 impl Drop for AggTables {
     fn drop(&mut self) {
-        self.context.runtime_env().drop_consumer(self.id(), self.mem_used());
+        self.context
+            .runtime_env()
+            .drop_consumer(self.id(), self.mem_used());
     }
 }
 
@@ -372,27 +370,28 @@ impl InMemTable {
             let mut is_new = false;
 
             // find or create a new entry
-            let entry = self.grouping_mappings
+            let entry = self
+                .grouping_mappings
                 .entry(grouping_row)
                 .or_insert_with(|| {
                     is_new = true;
                     Box::new([])
                 });
             if is_new {
-                *entry = agg_ctx.aggs
+                *entry = agg_ctx
+                    .aggs
                     .iter()
                     .map(|agg| agg.agg.create_accum())
                     .collect::<Result<Box<[AggAccumRef]>>>()?;
 
                 self.data_mem_used += grouping_row_mem_size;
-                self.data_mem_used += entry
-                    .iter()
-                    .map(|accum| accum.mem_size())
-                    .sum::<usize>();
+                self.data_mem_used +=
+                    entry.iter().map(|accum| accum.mem_size()).sum::<usize>();
             }
             entry
         } else {
-            let accums = agg_ctx.aggs
+            let accums = agg_ctx
+                .aggs
                 .iter()
                 .map(|agg| agg.agg.create_accum())
                 .collect::<Result<Box<[AggAccumRef]>>>()?;
@@ -404,13 +403,12 @@ impl InMemTable {
         for (idx, accum) in entry.iter_mut().enumerate() {
             mem_diff -= accum.mem_size() as isize;
             if agg_ctx.aggs[idx].mode == AggMode::Partial {
-                accum.partial_update(
-                    &agg_children_projected_arrays[idx],
-                    row_idx)?;
+                accum.partial_update(&agg_children_projected_arrays[idx], row_idx)?;
             } else {
                 accum.partial_merge_from_array(
                     &agg_children_projected_arrays[idx],
-                    row_idx)?;
+                    row_idx,
+                )?;
             }
             mem_diff += accum.mem_size() as isize;
         }
@@ -420,9 +418,7 @@ impl InMemTable {
 
     fn into_sorted_vec(self) -> Vec<AggRecord> {
         let mut vec = if self.is_hash {
-            self.grouping_mappings
-                .into_iter()
-                .collect::<Vec<_>>()
+            self.grouping_mappings.into_iter().collect::<Vec<_>>()
         } else {
             self.unsorted
         };
@@ -430,11 +426,7 @@ impl InMemTable {
         vec
     }
 
-    fn try_into_mem_spilled(
-        self,
-        agg_ctx: &Arc<AggContext>,
-    ) -> Result<SpilledTable> {
-
+    fn try_into_mem_spilled(self, agg_ctx: &Arc<AggContext>) -> Result<SpilledTable> {
         let spilled_buf = vec![];
         let zwriter = lz4_flex::frame::FrameEncoder::new(spilled_buf);
         let mut writer = BufWriter::with_capacity(65536, zwriter);
@@ -497,7 +489,10 @@ impl SpilledTable {
         agg_ctx: &Arc<AggContext>,
     ) -> Result<SpilledTableIterator> {
         let mut iter = SpilledTableIterator {
-            input: BufReader::with_capacity(65536, FrameDecoder::new(self.spilled_reader)),
+            input: BufReader::with_capacity(
+                65536,
+                FrameDecoder::new(self.spilled_reader),
+            ),
             agg_ctx: agg_ctx.clone(),
             cur_accum_batch: None,
             cur_accum_idx: 0,
@@ -520,14 +515,15 @@ impl SpilledTableIterator {
         let current = std::mem::take(&mut self.cur_record);
 
         // load next accum batch if necessary
-        if self.cur_accum_idx >= self.cur_accum_batch
-            .as_ref()
-            .map(|batch| batch.num_rows())
-            .unwrap_or(0)
+        if self.cur_accum_idx
+            >= self
+                .cur_accum_batch
+                .as_ref()
+                .map(|batch| batch.num_rows())
+                .unwrap_or(0)
         {
             self.cur_accum_idx = 0;
-            self.cur_accum_batch = read_one_batch(
-                &mut self.input, None, false)?;
+            self.cur_accum_batch = read_one_batch(&mut self.input, None, false)?;
             if self.cur_accum_batch.is_none() {
                 self.cur_record = None;
                 return Ok(current);
@@ -536,10 +532,7 @@ impl SpilledTableIterator {
 
         // read grouping row
         let grouping_row_buf_len = read_len(&mut self.input)?;
-        let grouping_row = read_bytes_slice(
-            &mut self.input,
-            grouping_row_buf_len,
-        )?;
+        let grouping_row = read_bytes_slice(&mut self.input, grouping_row_buf_len)?;
 
         // read accums
         let mut accums = vec![];
@@ -574,10 +567,7 @@ impl TableCursor {
         Ok(TableCursor::Sorted(iter, first))
     }
 
-    fn try_new_spilled(
-        table: SpilledTable,
-        agg_ctx: &Arc<AggContext>,
-    ) -> Result<Self> {
+    fn try_new_spilled(table: SpilledTable, agg_ctx: &Arc<AggContext>) -> Result<Self> {
         let mut iter = table.try_into_iterator(agg_ctx)?;
         let first = iter.next().transpose()?;
         Ok(TableCursor::Spilled(iter, first))
@@ -585,9 +575,7 @@ impl TableCursor {
 
     fn next(&mut self) -> Result<Option<AggRecord>> {
         match self {
-            TableCursor::Sorted(iter, peek) => {
-                Ok(std::mem::replace(peek, iter.next()))
-            }
+            TableCursor::Sorted(iter, peek) => Ok(std::mem::replace(peek, iter.next())),
             TableCursor::Spilled(iter, peek) => {
                 Ok(std::mem::replace(peek, iter.next().transpose()?))
             }
@@ -596,12 +584,8 @@ impl TableCursor {
 
     fn peek(&self) -> Option<&AggRecord> {
         match self {
-            TableCursor::Sorted(_, peek) => {
-                peek.as_ref()
-            }
-            TableCursor::Spilled(_, peek) => {
-                peek.as_ref()
-            }
+            TableCursor::Sorted(_, peek) => peek.as_ref(),
+            TableCursor::Spilled(_, peek) => peek.as_ref(),
         }
     }
 }

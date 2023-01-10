@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use crate::down_cast_any_ref;
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::record_batch::RecordBatch;
 use blaze_commons::{
     jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use arrow::record_batch::RecordBatch;
 use datafusion::common::ScalarValue;
 use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
@@ -169,14 +169,11 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
             );
 
         // FIXME: use arrow stream reader/writer instead
-        let output_batch = match read_one_batch(
-            &mut reader,
-            Some(output_schema.clone()),
-            false,
-        )? {
-            Some(batch) => batch,
-            None => RecordBatch::new_empty(output_schema.clone()),
-        };
+        let output_batch =
+            match read_one_batch(&mut reader, Some(output_schema.clone()), false)? {
+                Some(batch) => batch,
+                None => RecordBatch::new_empty(output_schema),
+            };
 
         if input_contains_array {
             Ok(ColumnarValue::Array(output_batch.column(0).clone()))

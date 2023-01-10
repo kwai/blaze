@@ -26,6 +26,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use crate::fs::FsProvider;
+use crate::{FileScanConfig, PartitionColumnProjector};
 use crate::{ObjectMeta, PartitionedFile};
 use arrow::datatypes::SchemaRef;
 use arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
@@ -38,8 +40,6 @@ use datafusion::physical_plan::RecordBatchStream;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{ready, FutureExt, Stream, StreamExt};
-use crate::fs::FsProvider;
-use crate::{FileScanConfig, PartitionColumnProjector};
 
 /// A fallible future that resolves to a stream of [`RecordBatch`]
 pub type ReaderFuture =

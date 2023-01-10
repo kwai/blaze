@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
 use arrow::array::ArrayRef;
 use arrow::datatypes::{DataType, Field, SchemaRef};
 use arrow::error::ArrowError;
@@ -24,17 +20,25 @@ use arrow::row::{RowConverter, SortField};
 use datafusion::common::{DataFusionError, Result, ScalarValue, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
+use datafusion::physical_plan::metrics::{
+    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
+};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use futures::stream::once;
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use datafusion_ext_commons::streams::receiver_stream::ReceiverStream;
+use futures::stream::once;
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 
-use crate::agg::{AggAccumRef, AggExpr, GroupingExpr};
 use crate::agg::agg_helper::AggContext;
 use crate::agg::agg_tables::{AggTables, InMemTable};
+use crate::agg::{AggAccumRef, AggExpr, GroupingExpr};
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -50,14 +54,12 @@ impl AggExec {
         initial_input_buffer_offset: usize,
         input: Arc<dyn ExecutionPlan>,
     ) -> Result<Self> {
-        let agg_ctx = Arc::new(
-            AggContext::try_new(
-                input.schema(),
-                groupings,
-                aggs,
-                initial_input_buffer_offset,
-            )?
-        );
+        let agg_ctx = Arc::new(AggContext::try_new(
+            input.schema(),
+            groupings,
+            aggs,
+            initial_input_buffer_offset,
+        )?);
 
         Ok(Self {
             input,
@@ -88,7 +90,10 @@ impl ExecutionPlan for AggExec {
         vec![self.input.clone()]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn ExecutionPlan>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(Self {
             input: children[0].clone(),
             agg_ctx: self.agg_ctx.clone(),
@@ -96,20 +101,23 @@ impl ExecutionPlan for AggExec {
         }))
     }
 
-    fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
         let stream = execute_agg(
             self.input.clone(),
-            context.clone(),
+            context,
             self.agg_ctx.clone(),
             partition,
             self.metrics.clone(),
-        ).map_err(|e| {
-            ArrowError::ExternalError(Box::new(e))
-        });
+        )
+        .map_err(|e| ArrowError::ExternalError(Box::new(e)));
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(stream).try_flatten()
+            once(stream).try_flatten(),
         )))
     }
 
@@ -133,7 +141,6 @@ async fn execute_agg(
     partition_id: usize,
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
-
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
     let timer = baseline_metrics.elapsed_compute().timer();
 
@@ -145,16 +152,19 @@ async fn execute_agg(
             agg_ctx,
             partition_id,
             metrics,
-        ).await;
+        )
+        .await;
     }
 
     // create grouping row converter and parser
     let mut grouping_row_converter = RowConverter::new(
-        agg_ctx.grouping_schema
+        agg_ctx
+            .grouping_schema
             .fields()
-            .into_iter()
+            .iter()
             .map(|field: &Field| SortField::new(field.data_type().clone()))
-            .collect())?;
+            .collect(),
+    )?;
 
     // create tables
     let tables = Arc::new(AggTables::new(
@@ -169,7 +179,9 @@ async fn execute_agg(
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         task_context.session_config().batch_size(),
-        BaselineMetrics::new(&metrics, partition_id).elapsed_compute().clone(),
+        BaselineMetrics::new(&metrics, partition_id)
+            .elapsed_compute()
+            .clone(),
     ));
     drop(timer);
 
@@ -177,7 +189,8 @@ async fn execute_agg(
         let _timer = baseline_metrics.elapsed_compute().timer();
 
         // compute grouping rows
-        let grouping_arrays: Vec<ArrayRef> = agg_ctx.groupings
+        let grouping_arrays: Vec<ArrayRef> = agg_ctx
+            .groupings
             .iter()
             .map(|grouping: &GroupingExpr| grouping.expr.evaluate(&input_batch))
             .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
@@ -192,17 +205,19 @@ async fn execute_agg(
             agg_ctx.create_children_input_arrays(&input_batch)?;
 
         // update to in-mem table
-        tables.update_in_mem(|in_mem: &mut InMemTable| {
-            for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
-                in_mem.update(
-                    &agg_ctx,
-                    grouping_row,
-                    &agg_children_input_arrays,
-                    row_idx,
-                )?;
-            }
-            Ok(())
-        }).await?;
+        tables
+            .update_in_mem(|in_mem: &mut InMemTable| {
+                for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
+                    in_mem.update(
+                        &agg_ctx,
+                        grouping_row,
+                        &agg_children_input_arrays,
+                        row_idx,
+                    )?;
+                }
+                Ok(())
+            })
+            .await?;
     }
 
     // merge all tables and output
@@ -212,18 +227,21 @@ async fn execute_agg(
     let join_handle = tokio::task::spawn(async move {
         let err_sender = sender.clone();
         let result = AssertUnwindSafe(async move {
-            tables.output(
-                grouping_row_converter,
-                elapsed_time_clonned,
-                sender,
-            ).await
-        }).catch_unwind().await;
+            tables
+                .output(grouping_row_converter, elapsed_time_clonned, sender)
+                .await
+        })
+        .catch_unwind()
+        .await;
 
         if let Err(e) = result {
             let err_message = panic_message::panic_message(&e).to_owned();
-            err_sender.send(Err(ArrowError::ExternalError(
-                Box::new(DataFusionError::Execution(err_message))
-            ))).await.unwrap();
+            err_sender
+                .send(Err(ArrowError::ExternalError(Box::new(
+                    DataFusionError::Execution(err_message),
+                ))))
+                .await
+                .unwrap();
         }
     });
 
@@ -246,7 +264,8 @@ async fn execute_agg_no_grouping(
     let elapsed_compute = baseline_metrics.elapsed_compute().clone();
     let timer = elapsed_compute.timer();
 
-    let mut accums: Box<[AggAccumRef]> = agg_ctx.aggs
+    let mut accums: Box<[AggAccumRef]> = agg_ctx
+        .aggs
         .iter()
         .map(|agg: &AggExpr| agg.agg.create_accum())
         .collect::<Result<_>>()?;
@@ -287,8 +306,7 @@ async fn execute_agg_no_grouping(
     let agg_ctx_clonned = agg_ctx.clone();
     let elapsed_time_clonned = baseline_metrics.elapsed_compute().clone();
 
-    let mut stub_row_converter =
-        RowConverter::new(vec![SortField::new(DataType::Int8)])?;
+    let mut stub_row_converter = RowConverter::new(vec![SortField::new(DataType::Int8)])?;
     let stub_row: Box<[u8]> = stub_row_converter
         .convert_columns(&[ScalarValue::Int8(None).to_array()])?
         .row(0)
@@ -302,23 +320,31 @@ async fn execute_agg_no_grouping(
             let agg_ctx = agg_ctx_clonned;
             let mut timer = elapsed_time_clonned.timer();
 
-            let batch_result = agg_ctx.build_agg_columns(&[record])
+            let batch_result = agg_ctx
+                .build_agg_columns(&[record])
                 .map_err(|e| ArrowError::ExternalError(Box::new(e)))
-                .and_then(|agg_columns| RecordBatch::try_new_with_options(
-                    agg_ctx.output_schema.clone(),
-                    agg_columns,
-                    &RecordBatchOptions::new().with_row_count(Some(1)),
-                ));
+                .and_then(|agg_columns| {
+                    RecordBatch::try_new_with_options(
+                        agg_ctx.output_schema.clone(),
+                        agg_columns,
+                        &RecordBatchOptions::new().with_row_count(Some(1)),
+                    )
+                });
 
             log::info!("aggregate exec (no grouping) outputing one record");
             timer.stop();
             sender.send(batch_result).await.unwrap();
-
-        }).catch_unwind().await {
+        })
+        .catch_unwind()
+        .await
+        {
             let err_message = panic_message::panic_message(&e).to_owned();
-            err_sender.send(Err(ArrowError::ExternalError(
-                Box::new(DataFusionError::Execution(err_message))
-            ))).await.unwrap();
+            err_sender
+                .send(Err(ArrowError::ExternalError(Box::new(
+                    DataFusionError::Execution(err_message),
+                ))))
+                .await
+                .unwrap();
         }
     });
 

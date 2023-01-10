@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::task::Poll;
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -20,6 +19,7 @@ use datafusion::physical_plan::common::AbortOnDropMany;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::RecordBatchStream;
 use futures::Stream;
+use std::task::Poll;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 

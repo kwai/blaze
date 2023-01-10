@@ -14,31 +14,35 @@
 
 //! Defines the sort-based shuffle writer
 
+use crate::shuffle::{
+    evaluate_hashes, evaluate_partition_ids, FileSpillInfo, ShuffleRepartitioner,
+};
+use arrow::array::*;
+use arrow::datatypes::*;
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+use datafusion::common::{DataFusionError, Result};
+use datafusion::execution::context::TaskContext;
+use datafusion::execution::memory_manager::ConsumerType;
+use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
+use datafusion::physical_plan::coalesce_batches::concat_batches;
+use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::Partitioning;
+use datafusion_ext_commons::array_builder::{
+    builder_extend, make_batch, new_array_builders,
+};
+use datafusion_ext_commons::io::write_one_batch;
+use futures::lock::Mutex;
+use itertools::Itertools;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
-use async_trait::async_trait;
-use arrow::array::*;
-use arrow::datatypes::*;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::execution::memory_manager::ConsumerType;
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
-use datafusion::physical_plan::metrics::BaselineMetrics;
-use datafusion::physical_plan::Partitioning;
-use futures::lock::Mutex;
-use datafusion::physical_plan::coalesce_batches::concat_batches;
-use itertools::Itertools;
 use tokio::task;
-use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
-use datafusion_ext_commons::io::write_one_batch;
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, FileSpillInfo, ShuffleRepartitioner};
 
 pub struct BucketShuffleRepartitioner {
     id: MemoryConsumerId,
@@ -145,10 +149,8 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             let output = &mut buffered_partitions[partition_id];
 
             if end - start < output.staging_size {
-                mem_diff += output.append_rows(
-                    input.columns(),
-                    &shuffled_partition_ids[start..end],
-                )?;
+                mem_diff += output
+                    .append_rows(input.columns(), &shuffled_partition_ids[start..end])?;
             } else {
                 // for bigger slice, we can use column based operation
                 // to build batches and directly append to output.
@@ -163,9 +165,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
                     input
                         .columns()
                         .iter()
-                        .map(|c| {
-                            arrow::compute::take(c, &indices, None)
-                        })
+                        .map(|c| arrow::compute::take(c, &indices, None))
                         .collect::<ArrowResult<Vec<ArrayRef>>>()?,
                 )?;
                 mem_diff += output.append_batch(batch)?;
@@ -201,7 +201,8 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
         let output_spills = spills.drain(..).collect::<Vec<_>>();
         log::info!(
             "bucket partitioner start writing with {} disk spills",
-            output_spills.len());
+            output_spills.len()
+        );
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
@@ -222,7 +223,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
                 for spill in &output_spills {
                     let length = spill.offsets[i + 1] - spill.offsets[i];
                     if length > 0 {
-                        let mut spill_file = File::open(&spill.file.path())?;
+                        let mut spill_file = File::open(spill.file.path())?;
                         spill_file.seek(SeekFrom::Start(spill.offsets[i]))?;
                         std::io::copy(&mut spill_file.take(length), &mut output_data)?;
                     }
@@ -280,10 +281,10 @@ async fn spill_into(
         offsets[num_output_partitions] = spill_data.stream_position()?;
         Ok(offsets)
     })
-        .await
-        .map_err(|e| {
-            DataFusionError::Execution(format!("Error occurred while spilling {}", e))
-        })?
+    .await
+    .map_err(|e| {
+        DataFusionError::Execution(format!("Error occurred while spilling {}", e))
+    })?
 }
 
 impl Debug for BucketShuffleRepartitioner {
@@ -300,7 +301,7 @@ impl Debug for BucketShuffleRepartitioner {
 #[async_trait]
 impl MemoryConsumer for BucketShuffleRepartitioner {
     fn name(&self) -> String {
-        format!("BucketShuffleRepartitioner")
+        "BucketShuffleRepartitioner".to_string()
     }
 
     fn id(&self) -> &MemoryConsumerId {
@@ -328,7 +329,10 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
             return Ok(0);
         }
 
-        let spillfile = self.runtime.disk_manager.create_tmp_file("shuffle_spill_file")?;
+        let spillfile = self
+            .runtime
+            .disk_manager
+            .create_tmp_file("shuffle_spill_file")?;
         let offsets = spill_into(
             &mut buffered_partitions,
             spillfile.path(),
@@ -341,7 +345,8 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
 
         log::info!(
             "bucket repartitioner spilled into file, freed={:.2} MB",
-            freed as f64 / 1e6);
+            freed as f64 / 1e6
+        );
 
         let file_spill = FileSpillInfo {
             file: spillfile,

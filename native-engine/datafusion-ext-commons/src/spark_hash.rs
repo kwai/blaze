@@ -316,9 +316,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::spark_hash::{create_hashes, pmod};
-    use arrow::array::{
-        ArrayRef, Int32Array, Int64Array, Int8Array, StringArray,
-    };
+    use arrow::array::{ArrayRef, Int32Array, Int64Array, Int8Array, StringArray};
     use datafusion::from_slice::FromSlice;
 
     #[test]

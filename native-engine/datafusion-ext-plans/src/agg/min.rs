@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use crate::agg::{load_scalar, save_scalar, Agg, AggAccum, AggAccumRef};
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{downcast_value, Result, ScalarValue};
 use datafusion::error::DataFusionError;
 use datafusion::physical_expr::PhysicalExpr;
 use paste::paste;
-use crate::agg::{AggAccum, Agg, load_scalar, save_scalar, AggAccumRef};
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 pub struct AggMin {
     child: Arc<dyn PhysicalExpr>,
@@ -31,9 +31,7 @@ pub struct AggMin {
 
 impl AggMin {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accum_fields = vec![
-            Field::new("min", data_type.clone(), true),
-        ];
+        let accum_fields = vec![Field::new("min", data_type.clone(), true)];
         Ok(Self {
             child,
             data_type,
@@ -71,7 +69,7 @@ impl Agg for AggMin {
 
     fn create_accum(&self) -> Result<AggAccumRef> {
         Ok(Box::new(AggMinAccum {
-            partial: self.data_type.clone().try_into()?
+            partial: self.data_type.clone().try_into()?,
         }))
     }
 }
@@ -116,7 +114,7 @@ impl AggAccum for AggMinAccum {
                         *$partial_value = Some(new);
                     }
                 }
-            }}
+            }};
         }
 
         match &mut self.partial {
@@ -149,13 +147,14 @@ impl AggAccum for AggMinAccum {
                         *v = Some(new.to_owned());
                     }
                 }
-            },
+            }
             ScalarValue::Date32(v) => handle!(Date32, v),
             ScalarValue::Date64(v) => handle!(Date64, v),
             other => {
-                return Err(DataFusionError::NotImplemented(
-                    format!("unsupported data type in min(): {}", other)
-                ));
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type in min(): {}",
+                    other
+                )));
             }
         }
         Ok(())
@@ -171,7 +170,7 @@ impl AggAccum for AggMinAccum {
                         *$partial_value = Some(w);
                     }
                 }
-            }}
+            }};
         }
 
         match &mut self.partial {
@@ -179,7 +178,7 @@ impl AggAccum for AggMinAccum {
             ScalarValue::Boolean(v) => {
                 let value = downcast_value!(values[0], BooleanArray);
                 if let Some(w) = arrow::compute::min_boolean(value) {
-                    if v.is_none() || v.unwrap() > w {
+                    if v.is_none() || v.unwrap() & !w {
                         *v = Some(w);
                     }
                 }
@@ -202,13 +201,14 @@ impl AggAccum for AggMinAccum {
                         *v = Some(w.to_owned());
                     }
                 }
-            },
+            }
             ScalarValue::Date32(v) => handle!(Date32, v),
             ScalarValue::Date64(v) => handle!(Date64, v),
             other => {
-                return Err(DataFusionError::NotImplemented(
-                    format!("unsupported data type in min(): {}", other)
-                ));
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type in min(): {}",
+                    other
+                )));
             }
         }
         Ok(())
@@ -245,7 +245,7 @@ impl AggMinAccum {
                 if $b.unwrap() < $a.unwrap() {
                     *$a = $b;
                 }
-            }}
+            }};
         }
         match (&mut self.partial, another_value) {
             (ScalarValue::Float32(a), ScalarValue::Float32(b)) => handle!(a, b),
@@ -258,7 +258,9 @@ impl AggMinAccum {
             (ScalarValue::UInt16(a), ScalarValue::UInt16(b)) => handle!(a, b),
             (ScalarValue::UInt32(a), ScalarValue::UInt32(b)) => handle!(a, b),
             (ScalarValue::UInt64(a), ScalarValue::UInt64(b)) => handle!(a, b),
-            (ScalarValue::Decimal128(a, _, _), ScalarValue::Decimal128(b, _, _)) => handle!(a, b),
+            (ScalarValue::Decimal128(a, _, _), ScalarValue::Decimal128(b, _, _)) => {
+                handle!(a, b)
+            }
             (ScalarValue::Utf8(a), ScalarValue::Utf8(b)) => {
                 if b.as_ref().unwrap() < a.as_ref().unwrap() {
                     *a = b;
@@ -267,9 +269,10 @@ impl AggMinAccum {
             (ScalarValue::Date32(a), ScalarValue::Date32(b)) => handle!(a, b),
             (ScalarValue::Date64(a), ScalarValue::Date64(b)) => handle!(a, b),
             (other, _) => {
-                return Err(DataFusionError::NotImplemented(
-                    format!("unsupported data type in min(): {}", other)
-                ));
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type in min(): {}",
+                    other
+                )));
             }
         }
         Ok(())

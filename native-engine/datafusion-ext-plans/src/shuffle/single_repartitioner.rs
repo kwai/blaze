@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::shuffle::ShuffleRepartitioner;
+use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+use datafusion::common::Result;
+use datafusion::error::DataFusionError;
+use datafusion_ext_commons::io::write_one_batch;
+use once_cell::sync::OnceCell;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, Write};
-use async_trait::async_trait;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::error::DataFusionError;
-use once_cell::sync::OnceCell;
-use datafusion_ext_commons::io::write_one_batch;
-use crate::shuffle::ShuffleRepartitioner;
 
 pub struct SingleShuffleRepartitioner {
     output_data_file: String,
@@ -32,16 +32,12 @@ pub struct SingleShuffleRepartitioner {
 
 impl Debug for SingleShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SortShuffleRepartitioner")
-            .finish()
+        f.debug_struct("SortShuffleRepartitioner").finish()
     }
 }
 
 impl SingleShuffleRepartitioner {
-    pub fn new(
-        output_data_file: String,
-        output_index_file: String,
-    ) -> Self {
+    pub fn new(output_data_file: String, output_index_file: String) -> Self {
         Self {
             output_data_file,
             output_index_file,
@@ -50,13 +46,15 @@ impl SingleShuffleRepartitioner {
     }
 
     fn get_output_data(&self) -> Result<&File> {
-        self.output_data.get_or_try_init(|| OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.output_data_file)
-        )
-        .map_err(|e| DataFusionError::IoError(e))
+        self.output_data
+            .get_or_try_init(|| {
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&self.output_data_file)
+            })
+            .map_err(DataFusionError::IoError)
     }
 }
 

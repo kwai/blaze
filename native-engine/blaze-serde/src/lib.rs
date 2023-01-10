@@ -187,9 +187,7 @@ impl protobuf::IntervalUnit {
     }
 }
 
-impl TryInto<arrow::datatypes::DataType>
-    for &protobuf::arrow_type::ArrowTypeEnum
-{
+impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnum {
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<arrow::datatypes::DataType, Self::Error> {
         use protobuf::arrow_type;

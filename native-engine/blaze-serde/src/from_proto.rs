@@ -21,10 +21,13 @@ use arrow::datatypes::SchemaRef;
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::{Expr, ReturnTypeFunction, ScalarFunctionImplementation, ScalarUDF, Signature, Volatility};
 use datafusion::logical_expr::Operator;
-use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
 use datafusion::logical_expr::TypeSignature::VariadicEqual;
+use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
+use datafusion::logical_expr::{
+    Expr, ReturnTypeFunction, ScalarFunctionImplementation, ScalarUDF, Signature,
+    Volatility,
+};
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
 use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
@@ -43,17 +46,19 @@ use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
 };
 use datafusion::scalar::ScalarValue;
+use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_file_formats::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
-use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
-use datafusion_ext_plans::agg::{AggMode, create_agg, GroupingExpr, AggExpr, AggFunction};
+use datafusion_ext_plans::agg::{
+    create_agg, AggExpr, AggFunction, AggMode, GroupingExpr,
+};
 use datafusion_ext_plans::agg_exec::AggExec;
 use datafusion_ext_plans::debug_exec::DebugExec;
 use datafusion_ext_plans::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext_plans::expand_exec::ExpandExec;
-use datafusion_ext_plans::filter_exec::FilterExec;
 use datafusion_ext_plans::ffi_reader_exec::FFIReaderExec;
+use datafusion_ext_plans::filter_exec::FilterExec;
 use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext_plans::limit_exec::LimitExec;
@@ -111,7 +116,7 @@ pub fn convert_physical_expr_to_logical_expr(
     } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
         Ok(Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr {
             left: Box::new(convert_physical_expr_to_logical_expr(expr.left())?),
-            op: expr.op().clone(),
+            op: *expr.op(),
             right: Box::new(convert_physical_expr_to_logical_expr(expr.right())?),
         }))
     } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
@@ -140,35 +145,35 @@ pub fn convert_physical_expr_to_logical_expr(
         }))
     } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
         Ok(Expr::Not(Box::new(convert_physical_expr_to_logical_expr(
-            &expr.arg(),
+            expr.arg(),
         )?)))
     } else if let Some(expr) = expr.downcast_ref::<IsNullExpr>() {
         Ok(Expr::IsNull(Box::new(
-            convert_physical_expr_to_logical_expr(&expr.arg())?,
+            convert_physical_expr_to_logical_expr(expr.arg())?,
         )))
     } else if let Some(expr) = expr.downcast_ref::<IsNotNullExpr>() {
         Ok(Expr::IsNotNull(Box::new(
-            convert_physical_expr_to_logical_expr(&expr.arg())?,
+            convert_physical_expr_to_logical_expr(expr.arg())?,
         )))
     } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
         Ok(Expr::InList {
-            expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr())?),
+            expr: Box::new(convert_physical_expr_to_logical_expr(expr.expr())?),
             list: expr
                 .list()
                 .iter()
-                .map(|e| convert_physical_expr_to_logical_expr(e))
+                .map(convert_physical_expr_to_logical_expr)
                 .collect::<Result<Vec<_>, DataFusionError>>()?,
             negated: expr.negated(),
         })
     } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
         Ok(Expr::Negative(Box::new(
-            convert_physical_expr_to_logical_expr(&expr.arg())?,
+            convert_physical_expr_to_logical_expr(expr.arg())?,
         )))
     } else if let Some(expr) = expr.downcast_ref::<Literal>() {
         Ok(Expr::Literal(expr.value().clone()))
     } else if let Some(expr) = expr.downcast_ref::<CastExpr>() {
         Ok(Expr::Cast(Cast {
-            expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr())?),
+            expr: Box::new(convert_physical_expr_to_logical_expr(expr.expr())?),
             data_type: expr.cast_type().clone(),
         }))
     } else if let Some(expr) = expr.downcast_ref::<TryCastExpr>() {
@@ -179,38 +184,32 @@ pub fn convert_physical_expr_to_logical_expr(
     } else if let Some(expr1) = expr.downcast_ref::<StringStartsWithExpr>() {
         let mut args = Vec::new();
         args.push(convert_physical_expr_to_logical_expr(expr1.expr())?);
-        args.push(Expr::Literal(ScalarValue::Utf8(Some(expr1.prefix().to_string()))));
-        let return_type:ReturnTypeFunction = Arc::new(|_| panic!("place"));
-        let func:ScalarFunctionImplementation = Arc::new(|_| panic!("place"));
+        args.push(Expr::Literal(ScalarValue::Utf8(Some(
+            expr1.prefix().to_string(),
+        ))));
+        let return_type: ReturnTypeFunction = Arc::new(|_| panic!("place"));
+        let func: ScalarFunctionImplementation = Arc::new(|_| panic!("place"));
         Ok(Expr::ScalarUDF {
             fun: Arc::from(ScalarUDF::new(
                 "string_start_with",
                 &Signature::new(VariadicEqual, Volatility::Immutable),
                 &return_type,
-                &func)),
-            args
-        }
-        )
-    } else if let Some(_) = expr.downcast_ref::<ScalarFunctionExpr>() {
-        Err(DataFusionError::Plan(format!(
-            "converting physical ScalarFunctionExpr to logical is not supported"
-        )))
-    } else if let Some(_) = expr.downcast_ref::<SparkExpressionWrapperExpr>() {
-        Err(DataFusionError::Plan(format!(
-            "converting physical SparkExpressionWrapperExpr to logical is not supported"
-        )))
-    } else if let Some(_) = expr.downcast_ref::<GetIndexedFieldExpr>() {
-        Err(DataFusionError::Plan(format!(
-            "converting physical GetIndexedFieldExpr to logical is not supported"
-        )))
-    } else if let Some(_) = expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>() {
+                &func,
+            )),
+            args,
+        })
+    } else if expr.downcast_ref::<ScalarFunctionExpr>().is_some() {
+        Err(DataFusionError::Plan("converting physical ScalarFunctionExpr to logical is not supported".to_string()))
+    } else if expr.downcast_ref::<SparkExpressionWrapperExpr>().is_some() {
+        Err(DataFusionError::Plan("converting physical SparkExpressionWrapperExpr to logical is not supported".to_string()))
+    } else if expr.downcast_ref::<GetIndexedFieldExpr>().is_some() {
+        Err(DataFusionError::Plan("converting physical GetIndexedFieldExpr to logical is not supported".to_string()))
+    } else if expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>().is_some() {
         Err(DataFusionError::Plan(
-            format!("converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported")
+            "converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported".to_string()
         ))
     } else {
-        Err(DataFusionError::Plan(format!(
-            "Expression binding not implemented yet"
-        )))
+        Err(DataFusionError::Plan("Expression binding not implemented yet".to_string()))
     }
 }
 
@@ -260,7 +259,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .iter()
                     .filter_map(|predicate| {
                         try_parse_physical_expr(
-                            &predicate,
+                            predicate,
                             &conf.file_schema,
                         ).and_then(|expr| {
                             convert_physical_expr_to_logical_expr(&expr).map_err(|err| {
@@ -529,21 +528,27 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::Agg(agg) => {
-                let input: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(agg.input)?;
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(agg.input)?;
                 let input_schema = input.schema();
 
-                let agg_modes = agg.mode.iter().map(|&mode| {
-                    protobuf::AggMode::from_i32(mode).ok_or_else(|| {
-                        proto_error(format!("invalid AggMode {}", mode))
-                    }).map(|mode| match mode {
-                        protobuf::AggMode::Partial => AggMode::Partial,
-                        protobuf::AggMode::PartialMerge => AggMode::PartialMerge,
-                        protobuf::AggMode::Final => AggMode::Final,
+                let agg_modes = agg
+                    .mode
+                    .iter()
+                    .map(|&mode| {
+                        protobuf::AggMode::from_i32(mode)
+                            .ok_or_else(|| {
+                                proto_error(format!("invalid AggMode {}", mode))
+                            })
+                            .map(|mode| match mode {
+                                protobuf::AggMode::Partial => AggMode::Partial,
+                                protobuf::AggMode::PartialMerge => AggMode::PartialMerge,
+                                protobuf::AggMode::Final => AggMode::Final,
+                            })
                     })
-                }).collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<Vec<_>, _>>()?;
 
-                let physical_groupings: Vec<GroupingExpr> = agg.grouping_expr
+                let physical_groupings: Vec<GroupingExpr> = agg
+                    .grouping_expr
                     .iter()
                     .zip(agg.grouping_expr_name.iter())
                     .map(|(expr, name)| {
@@ -576,24 +581,20 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             }
                         };
 
-                        let agg_function = protobuf::AggFunction::from_i32(
-                            agg_node.agg_function,
-                        )
-                        .ok_or_else(|| {
-                            proto_error(format!(
-                                "Received an unknown aggregate function: {}",
-                                agg_node.agg_function
-                            ))
-                        })?;
-                        let agg_children_exprs = agg_node.children
+                        let agg_function =
+                            protobuf::AggFunction::from_i32(agg_node.agg_function)
+                                .ok_or_else(|| {
+                                    proto_error(format!(
+                                        "Received an unknown aggregate function: {}",
+                                        agg_node.agg_function
+                                    ))
+                                })?;
+                        let agg_children_exprs = agg_node
+                            .children
                             .iter()
                             .map(|expr| {
-                                try_parse_physical_expr(
-                                    expr,
-                                    &input_schema,
-                                ).and_then(|expr| {
-                                    Ok(bind(expr, &input_schema)?)
-                                })
+                                try_parse_physical_expr(expr, &input_schema)
+                                    .and_then(|expr| Ok(bind(expr, &input_schema)?))
                             })
                             .collect::<Result<Vec<_>, _>>()?;
 
@@ -608,7 +609,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-
 
                 Ok(Arc::new(AggExec::try_new(
                     physical_groupings,
@@ -636,25 +636,25 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::Expand(expand) => {
                 let schema = Arc::new(convert_required!(expand.schema)?);
-                let input: Arc<dyn ExecutionPlan> =
-                    convert_box_required!(expand.input)?;
-                let projections = expand.projections
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(expand.input)?;
+                let projections = expand
+                    .projections
                     .iter()
                     .map(|projection| {
-                        projection.expr.iter().map(|expr| {
-                            Ok(bind(
-                                try_parse_physical_expr(expr, &input.schema())?,
-                                &input.schema(),
-                            )?)
-                        })
-                        .collect::<Result<Vec<_>, Self::Error>>()
-                    }).collect::<Result<Vec<_>, _>>()?;
+                        projection
+                            .expr
+                            .iter()
+                            .map(|expr| {
+                                Ok(bind(
+                                    try_parse_physical_expr(expr, &input.schema())?,
+                                    &input.schema(),
+                                )?)
+                            })
+                            .collect::<Result<Vec<_>, Self::Error>>()
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
 
-                Ok(Arc::new(ExpandExec::try_new(
-                    schema,
-                    projections,
-                    input,
-                )?))
+                Ok(Arc::new(ExpandExec::try_new(schema, projections, input)?))
             }
         }
     }
@@ -834,7 +834,7 @@ fn try_parse_physical_expr(
             let args = e
                 .args
                 .iter()
-                .map(|x| try_parse_physical_expr(&x, input_schema))
+                .map(|x| try_parse_physical_expr(x, input_schema))
                 .collect::<Result<Vec<_>, _>>()?;
 
             let execution_props = ExecutionProps::new();
@@ -895,21 +895,17 @@ fn try_parse_physical_expr(
             let op = match e.op.as_str() {
                 "And" => SparkLogicalOp::And,
                 "Or" => SparkLogicalOp::Or,
-                _ => panic!("SparkLogicalExpr.op must be one of [And, Or]")
+                _ => panic!("SparkLogicalExpr.op must be one of [And, Or]"),
             };
             Arc::new(SparkLogicalExpr::new(arg1, arg2, op))
         }
         ExprType::IifExpr(e) => {
-            let condition = try_parse_physical_expr_box_required(&e.condition, input_schema)?;
+            let condition =
+                try_parse_physical_expr_box_required(&e.condition, input_schema)?;
             let truthy = try_parse_physical_expr_box_required(&e.truthy, input_schema)?;
             let falsy = try_parse_physical_expr_box_required(&e.falsy, input_schema)?;
             let data_type = convert_required!(e.data_type)?;
-            Arc::new(IIfExpr::new(
-                condition,
-                truthy,
-                falsy,
-                data_type,
-            ))
+            Arc::new(IIfExpr::new(condition, truthy, falsy, data_type))
         }
     };
 
@@ -948,9 +944,8 @@ pub fn parse_protobuf_hash_partitioning(
                 .hash_expr
                 .iter()
                 .map(|e| {
-                    try_parse_physical_expr(e, &input.schema()).and_then(|e| {
-                        Ok(bind(e, &input.schema())?)
-                    })
+                    try_parse_physical_expr(e, &input.schema())
+                        .and_then(|e| Ok(bind(e, &input.schema())?))
                 })
                 .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
 

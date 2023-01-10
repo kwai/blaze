@@ -30,7 +30,6 @@ use std::{
 };
 
 pub use self::parquet::ParquetExec;
-use async_trait::async_trait;
 use arrow::array::new_null_array;
 use arrow::record_batch::RecordBatchOptions;
 use arrow::{
@@ -39,9 +38,12 @@ use arrow::{
     error::{ArrowError, Result as ArrowResult},
     record_batch::RecordBatch,
 };
+use async_trait::async_trait;
 use datafusion::datasource::listing::FileRange;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::{ColumnarValue, ColumnStatistics, ExecutionPlan, Statistics};
+use datafusion::physical_plan::{
+    ColumnStatistics, ColumnarValue, ExecutionPlan, Statistics,
+};
 use datafusion::{error::Result, scalar::ScalarValue};
 
 mod file_stream;
@@ -236,10 +238,10 @@ impl SchemaAdapter {
                 // blaze: try to cast if column type does not match table field type
                 match datafusion_ext_commons::cast::cast(
                     ColumnarValue::Array(batch_cols[batch_idx].clone()),
-                    table_field.data_type()
+                    table_field.data_type(),
                 )? {
                     ColumnarValue::Array(casted) => cols.push(casted),
-                    ColumnarValue::Scalar(_) => unreachable!()
+                    ColumnarValue::Scalar(_) => unreachable!(),
                 }
             } else {
                 cols.push(new_null_array(table_field.data_type(), batch_rows))

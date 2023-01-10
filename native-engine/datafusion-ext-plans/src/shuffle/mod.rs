@@ -12,24 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Seek, Write};
-use std::sync::Arc;
-use async_trait::async_trait;
 use arrow::error::Result as ArrowResult;
-use datafusion::common::Result;
 use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+use datafusion::common::Result;
 use datafusion::execution::DiskManager;
-use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::BaselineMetrics;
-use futures::StreamExt;
-use tempfile::NamedTempFile;
+use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
 use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
+use futures::StreamExt;
+use std::io::{Seek, Write};
+use std::sync::Arc;
+use tempfile::NamedTempFile;
 
-pub mod sort_repartitioner;
 pub mod bucket_repartitioner;
 pub mod single_repartitioner;
+pub mod sort_repartitioner;
 
 #[async_trait]
 pub trait ShuffleRepartitioner: Send + Sync {
@@ -45,7 +45,6 @@ impl dyn ShuffleRepartitioner {
         batch_size: usize,
         metrics: BaselineMetrics,
     ) -> Result<SendableRecordBatchStream> {
-
         let input_schema = input.schema();
 
         // coalesce input
@@ -101,13 +100,13 @@ impl FileSpillInfo {
 fn evaluate_hashes(
     partitioning: &Partitioning,
     batch: &RecordBatch,
-) -> ArrowResult<Vec<u32>>{
+) -> ArrowResult<Vec<u32>> {
     match partitioning {
         Partitioning::Hash(exprs, _) => {
             let mut hashes_buf = vec![];
             let arrays = exprs
                 .iter()
-                .map(|expr| Ok(expr.evaluate(&batch)?.into_array(batch.num_rows())))
+                .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())))
                 .collect::<Result<Vec<_>>>()?;
 
             // use identical seed as spark hash partition
@@ -117,17 +116,13 @@ fn evaluate_hashes(
             create_hashes(&arrays, &mut hashes_buf)?;
             Ok(hashes_buf)
         }
-        _ => unreachable!("unsupported partitioning: {:?}", partitioning)
+        _ => unreachable!("unsupported partitioning: {:?}", partitioning),
     }
 }
 
-fn evaluate_partition_ids(
-    hashes: &[u32],
-    num_partitions: usize
-) -> Vec<u32> {
+fn evaluate_partition_ids(hashes: &[u32], num_partitions: usize) -> Vec<u32> {
     hashes
         .iter()
         .map(|hash| pmod(*hash, num_partitions) as u32)
         .collect()
-
 }

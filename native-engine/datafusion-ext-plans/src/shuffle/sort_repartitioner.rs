@@ -12,6 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::shuffle::{
+    evaluate_hashes, evaluate_partition_ids, FileSpillInfo, InMemSpillInfo,
+    ShuffleRepartitioner,
+};
+use arrow::array::*;
+use arrow::compute;
+use arrow::compute::TakeOptions;
+use arrow::datatypes::SchemaRef;
+use arrow::error::Result as ArrowResult;
+use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+use datafusion::common::{DataFusionError, Result};
+use datafusion::execution::context::TaskContext;
+use datafusion::execution::memory_manager::ConsumerType;
+use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
+use datafusion::physical_plan::coalesce_batches::concat_batches;
+use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::Partitioning;
+use datafusion_ext_commons::io::write_one_batch;
+use futures::lock::Mutex;
 use std::cmp::Ordering;
 use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
@@ -19,29 +40,11 @@ use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
-use async_trait::async_trait;
-use arrow::array::*;
-use arrow::compute::TakeOptions;
-use arrow::compute;
-use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::execution::memory_manager::ConsumerType;
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
-use datafusion::physical_plan::metrics::BaselineMetrics;
-use datafusion::physical_plan::Partitioning;
-use datafusion_ext_commons::io::write_one_batch;
-use futures::lock::Mutex;
-use datafusion::physical_plan::coalesce_batches::concat_batches;
+use std::sync::Arc;
 use tokio::task;
-use voracious_radix_sort::{Radixable, RadixSort};
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, FileSpillInfo, InMemSpillInfo, ShuffleRepartitioner};
+use voracious_radix_sort::{RadixSort, Radixable};
 
 pub struct SortShuffleRepartitioner {
     memory_consumer_id: MemoryConsumerId,
@@ -104,7 +107,7 @@ impl SortShuffleRepartitioner {
 
     async fn spill_buffered_to_in_mem(
         &self,
-        in_mem_spills: &mut Vec<InMemSpillInfo>
+        in_mem_spills: &mut Vec<InMemSpillInfo>,
     ) -> Result<()> {
         let mut buffered_batches = self.buffered_batches.lock().await;
         if buffered_batches.is_empty() {
@@ -120,7 +123,8 @@ impl SortShuffleRepartitioner {
         let batch = concat_batches(
             &self.schema,
             &std::mem::take::<Vec<RecordBatch>>(&mut buffered_batches),
-            num_buffered_rows)?;
+            num_buffered_rows,
+        )?;
 
         let hashes = evaluate_hashes(&self.partitioning, &batch)?;
         let partition_ids = evaluate_partition_ids(&hashes, num_output_partitions);
@@ -150,28 +154,27 @@ impl SortShuffleRepartitioner {
         macro_rules! write_sub_batch {
             ($range:expr) => {{
                 let sub_pi_vec = &pi_vec[$range];
-                let sub_indices = UInt32Array::from_iter_values(
-                    sub_pi_vec.iter().map(|pi| pi.index));
+                let sub_indices =
+                    UInt32Array::from_iter_values(sub_pi_vec.iter().map(|pi| pi.index));
 
                 let sub_batch = RecordBatch::try_new(
                     self.schema.clone(),
                     batch
                         .columns()
                         .iter()
-                        .map(|column| compute::take(
-                            column,
-                            &sub_indices,
-                            Some(TakeOptions {
-                                check_bounds: false
-                            })))
-                        .collect::<ArrowResult<Vec<_>>>()?
+                        .map(|column| {
+                            compute::take(
+                                column,
+                                &sub_indices,
+                                Some(TakeOptions {
+                                    check_bounds: false,
+                                }),
+                            )
+                        })
+                        .collect::<ArrowResult<Vec<_>>>()?,
                 )?;
-                write_one_batch(
-                    &sub_batch,
-                    &mut frozen_cursor,
-                    true,
-                )?;
-            }}
+                write_one_batch(&sub_batch, &mut frozen_cursor, true)?;
+            }};
         }
 
         // write sorted data into in-mem spill
@@ -196,9 +199,9 @@ impl SortShuffleRepartitioner {
         cur_spill.frozen.shrink_to_fit();
 
         // add one extra offset at last to ease partition length computation
-        cur_spill.offsets.resize(
-            num_output_partitions + 1,
-            cur_spill.frozen.len() as u64);
+        cur_spill
+            .offsets
+            .resize(num_output_partitions + 1, cur_spill.frozen.len() as u64);
         in_mem_spills.push(cur_spill);
         Ok(())
     }
@@ -215,7 +218,7 @@ impl SortShuffleRepartitioner {
 #[async_trait]
 impl MemoryConsumer for SortShuffleRepartitioner {
     fn name(&self) -> String {
-        format!("SortShuffleRepartitioner")
+        "SortShuffleRepartitioner".to_string()
     }
 
     fn id(&self) -> &MemoryConsumerId {
@@ -247,17 +250,18 @@ impl MemoryConsumer for SortShuffleRepartitioner {
         let mut freed = 0;
 
         // first try spill current buffered batches to in-mem spills
-        if in_mem_spills.is_empty()
-            || buffered_size >= DISK_SPILL_BUFFERED_SIZE_LIMIT
-        {
+        if in_mem_spills.is_empty() || buffered_size >= DISK_SPILL_BUFFERED_SIZE_LIMIT {
             self.spill_buffered_to_in_mem(&mut in_mem_spills).await?;
-            freed = self.metrics
+            freed = self
+                .metrics
                 .mem_used()
-                .set(in_mem_size).saturating_sub(in_mem_size);
+                .set(in_mem_size)
+                .saturating_sub(in_mem_size);
 
             log::info!(
                 "sort repartitioner spilled into memory, freed={:.2} MB",
-                freed as f64 / 1e6);
+                freed as f64 / 1e6
+            );
 
             // some memory freed - finish current spill
             if freed > 0 {
@@ -267,9 +271,7 @@ impl MemoryConsumer for SortShuffleRepartitioner {
 
         // persist max in-mem spill and free some memory
         if in_mem_spills.is_empty() {
-            return Err(DataFusionError::ResourcesExhausted(
-                format!("not enough memory for sort repartitioner")
-            ))
+            return Err(DataFusionError::ResourcesExhausted("not enough memory for sort repartitioner".to_string()));
         }
         let mut file_spills = self.file_spills.lock().await;
         let pop_index = in_mem_spills
@@ -286,10 +288,11 @@ impl MemoryConsumer for SortShuffleRepartitioner {
         file_spills.push(file_spill);
 
         // now we have enough memory for the coming batch
-        self.metrics.mem_used().sub(freed as usize);
+        self.metrics.mem_used().sub(freed);
         log::info!(
             "sort repartitioner spilled into file, freed={:.2} MB",
-            freed as f64 / 1e6);
+            freed as f64 / 1e6
+        );
         Ok(freed)
     }
 
@@ -318,7 +321,8 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         self.metrics.mem_used().add(mem_increase);
 
         let mut buffered_batches = self.buffered_batches.lock().await;
-        self.buffered_mem_size.fetch_add(input.get_array_memory_size(), SeqCst);
+        self.buffered_mem_size
+            .fetch_add(input.get_array_memory_size(), SeqCst);
         buffered_batches.push(input);
         Ok(())
     }
@@ -334,7 +338,8 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         log::info!(
             "sort partitioner start writing with {} in-mem spills and {} disk spills",
             in_mem_spills.len(),
-            file_spills.len());
+            file_spills.len()
+        );
 
         // define spill cursor. partial-ord is reversed because we
         // need to find mininum using a binary heap
@@ -372,11 +377,11 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 self.cur.eq(&other.cur)
             }
         }
-        impl Eq for SpillCursor {
-        }
+        impl Eq for SpillCursor {}
         impl PartialOrd for SpillCursor {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.cur.partial_cmp(&other.cur)
+                self.cur
+                    .partial_cmp(&other.cur)
                     .map(std::cmp::Ordering::reverse)
             }
         }
@@ -393,11 +398,12 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 .map(Spill::InMem)
                 .chain(file_spills.into_iter().map(Spill::File))
                 .map(|spill| {
-                    let mut cursor = SpillCursor {spill, cur: 0};
+                    let mut cursor = SpillCursor { spill, cur: 0 };
                     cursor.skip_empty_partitions();
                     cursor
                 })
-                .filter(|spill| !spill.finished()));
+                .filter(|spill| !spill.finished()),
+        );
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
@@ -422,8 +428,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     min_spill.spill.offsets()[cur_partition_id],
                     min_spill.spill.offsets()[cur_partition_id + 1],
                 );
-                let spill_range =
-                    spill_offset_start as usize..spill_offset_end as usize;
+                let spill_range = spill_offset_start as usize..spill_offset_end as usize;
 
                 match &mut min_spill.spill {
                     Spill::InMem(s) => {
@@ -434,7 +439,8 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                         file.seek(SeekFrom::Start(spill_offset_start))?;
                         std::io::copy(
                             &mut file.take(spill_range.len() as u64),
-                            &mut output_data)?;
+                            &mut output_data,
+                        )?;
                     }
                 }
 
@@ -448,9 +454,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             output_data.flush()?;
 
             // add one extra offset at last to ease partition length computation
-            offsets.resize(
-                num_output_partitions + 1,
-                output_data.stream_position()?);
+            offsets.resize(num_output_partitions + 1, output_data.stream_position()?);
 
             let mut output_index = File::create(index_file)?;
             for offset in offsets {

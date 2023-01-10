@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use crate::agg::{Agg, AggAccum, AggAccumRef};
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{downcast_value, Result};
 use datafusion::error::DataFusionError;
 use datafusion::physical_expr::PhysicalExpr;
-use crate::agg::{AggAccum, Agg, AggAccumRef};
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 pub struct AggCount {
     child: Arc<dyn PhysicalExpr>,
@@ -32,12 +32,10 @@ impl AggCount {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         assert_eq!(data_type, DataType::Int64);
 
-        let accum_fields = vec![
-            Field::new("count", data_type.clone(), true),
-        ];
+        let accum_fields = vec![Field::new("count", data_type.clone(), true)];
         Ok(Self {
             child,
-            data_type: data_type,
+            data_type,
             accum_fields,
         })
     }
@@ -71,9 +69,7 @@ impl Agg for AggCount {
     }
 
     fn create_accum(&self) -> Result<AggAccumRef> {
-        Ok(Box::new(AggCountAccum {
-            partial: 0
-        }))
+        Ok(Box::new(AggCountAccum { partial: 0 }))
     }
 }
 
@@ -110,10 +106,7 @@ impl AggAccum for AggCountAccum {
     }
 
     fn save_final(&self, builder: &mut Box<dyn ArrayBuilder>) -> Result<()> {
-        let builder = builder
-            .as_any_mut()
-            .downcast_mut::<Int64Builder>()
-            .unwrap();
+        let builder = builder.as_any_mut().downcast_mut::<Int64Builder>().unwrap();
         builder.append_value(self.partial);
         Ok(())
     }

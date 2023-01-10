@@ -12,21 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::datatypes::SchemaRef;
+use arrow::record_batch::RecordBatch;
+use datafusion::common::Result;
+use datafusion::common::{DataFusionError, Statistics};
+use datafusion::execution::context::TaskContext;
+use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
+use datafusion::physical_plan::metrics::{
+    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
+};
+use datafusion::physical_plan::Partitioning::UnknownPartitioning;
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream,
+};
+use futures::{Stream, StreamExt};
 use std::any::Any;
 use std::fmt::Formatter;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll, ready};
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{DataFusionError, Statistics};
-use datafusion::common::Result;
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::Partitioning::UnknownPartitioning;
-use futures::{Stream, StreamExt};
+use std::task::{ready, Context, Poll};
 
 #[derive(Debug, Clone)]
 pub struct ExpandExec {
@@ -52,11 +57,10 @@ impl ExpandExec {
                     .transpose()?;
 
                 if projection_data_type.as_ref() != Some(schema_data_type) {
-                    return Err(DataFusionError::Plan(
-                        format!("ExpandExec data type not matches: {:?} vs {:?}",
-                            projection_data_type,
-                            schema_data_type
-                        )));
+                    return Err(DataFusionError::Plan(format!(
+                        "ExpandExec data type not matches: {:?} vs {:?}",
+                        projection_data_type, schema_data_type
+                    )));
                 }
             }
         }
@@ -94,7 +98,6 @@ impl ExecutionPlan for ExpandExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-
         if children.len() != 1 {
             return Err(DataFusionError::Plan(
                 "ExpandExec expects one children".to_string(),
@@ -113,7 +116,6 @@ impl ExecutionPlan for ExpandExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
         let input = self.input.execute(partition, context)?;
 
@@ -158,7 +160,10 @@ impl RecordBatchStream for ExpandStream {
 impl Stream for ExpandStream {
     type Item = arrow::error::Result<RecordBatch>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         // continue processing current batch
         if let Some(batch) = &self.current_batch {
             let _timer = self.metrics.elapsed_compute();
@@ -175,9 +180,9 @@ impl Stream for ExpandStream {
                 self.current_batch = None;
                 self.current_projection_id = 0;
             }
-            return self.metrics.record_poll(
-                Poll::Ready(Some(Ok(output_batch)))
-            );
+            return self
+                .metrics
+                .record_poll(Poll::Ready(Some(Ok(output_batch))));
         }
 
         // current batch has been consumed, poll next batch

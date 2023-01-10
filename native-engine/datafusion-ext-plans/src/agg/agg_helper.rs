@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use crate::agg::{AggAccumRef, AggExpr, GroupingExpr};
 use arrow::array::ArrayRef;
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -21,7 +20,8 @@ use arrow::row::RowConverter;
 use datafusion::common::Result;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion_ext_commons::array_builder::new_array_builders;
-use crate::agg::{AggAccumRef, AggExpr, GroupingExpr};
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 pub type AggRecord = (Box<[u8]>, Box<[AggAccumRef]>);
 
@@ -36,10 +36,7 @@ pub struct AggContext {
 
 impl Debug for AggContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[groupings={:?}, aggs={:?}]",
-               self.groupings,
-               self.aggs,
-        )
+        write!(f, "[groupings={:?}, aggs={:?}]", self.groupings, self.aggs,)
     }
 }
 
@@ -50,40 +47,45 @@ impl AggContext {
         aggs: Vec<AggExpr>,
         initial_input_buffer_offset: usize,
     ) -> Result<Self> {
-        let grouping_schema = Arc::new(Schema::new(groupings
-            .iter()
-            .map(|grouping: &GroupingExpr| Ok(Field::new(
-                grouping.field_name.as_str(),
-                grouping.expr.data_type(&input_schema)?,
-                grouping.expr.nullable(&input_schema)?,
-            )))
-            .collect::<Result<_>>()?));
+        let grouping_schema = Arc::new(Schema::new(
+            groupings
+                .iter()
+                .map(|grouping: &GroupingExpr| {
+                    Ok(Field::new(
+                        grouping.field_name.as_str(),
+                        grouping.expr.data_type(&input_schema)?,
+                        grouping.expr.nullable(&input_schema)?,
+                    ))
+                })
+                .collect::<Result<_>>()?,
+        ));
 
         let mut agg_fields = vec![];
         for agg in &aggs {
             if agg.mode.is_partial() || agg.mode.is_partial_merge() {
-                agg_fields.extend(
-                    agg.agg.accum_fields().iter().map(|field| field
-                        .clone()
-                        .with_name(partial_output_field_name(
-                            &agg.field_name,
-                            field.name(),
-                        ))
-                    ));
+                agg_fields.extend(agg.agg.accum_fields().iter().map(|field| {
+                    field.clone().with_name(partial_output_field_name(
+                        &agg.field_name,
+                        field.name(),
+                    ))
+                }));
             } else {
                 agg_fields.push(Field::new(
                     &agg.field_name,
                     agg.agg.data_type().clone(),
-                    agg.agg.nullable()
+                    agg.agg.nullable(),
                 ));
             }
         }
         let agg_schema = Arc::new(Schema::new(agg_fields));
 
-        let output_schema = Arc::new(Schema::new([
-            grouping_schema.fields().clone(),
-            agg_schema.fields().clone(),
-        ].concat()));
+        let output_schema = Arc::new(Schema::new(
+            [
+                grouping_schema.fields().clone(),
+                agg_schema.fields().clone(),
+            ]
+            .concat(),
+        ));
 
         Ok(Self {
             output_schema,
@@ -99,7 +101,6 @@ impl AggContext {
         &self,
         input_batch: &RecordBatch,
     ) -> Result<Vec<Vec<ArrayRef>>> {
-
         let mut input_arrays = Vec::with_capacity(self.aggs.len());
         let mut cached_partial_args: Vec<(Arc<dyn PhysicalExpr>, ArrayRef)> = vec![];
         let mut buffer_offset = self.initial_input_buffer_offset;
@@ -115,10 +116,10 @@ impl AggContext {
                         .iter()
                         .find(|(cached_expr, _)| expr.eq(cached_expr))
                         .map(|(_, values)| Ok(values.clone()))
-                        .unwrap_or_else(|| expr
-                            .evaluate(input_batch)
-                            .map(|r| r.into_array(input_batch.num_rows()))
-                        )?;
+                        .unwrap_or_else(|| {
+                            expr.evaluate(input_batch)
+                                .map(|r| r.into_array(input_batch.num_rows()))
+                        })?;
                     cached_partial_args.push((expr.clone(), value.clone()));
                     values.push(value);
                 }
@@ -126,9 +127,10 @@ impl AggContext {
                 // find accum arrays by buffer offset
                 let num_accum_fields = agg.agg.accum_fields().len();
                 values.extend(
-                    input_batch.columns()[buffer_offset..].iter()
-                        .take(num_accum_fields)
-                        .map(|array| array.clone()));
+                    input_batch.columns()[buffer_offset..]
+                        .iter()
+                        .take(num_accum_fields).cloned(),
+                );
                 buffer_offset += num_accum_fields;
             }
             input_arrays.push(values);
@@ -136,15 +138,8 @@ impl AggContext {
         Ok(input_arrays)
     }
 
-    pub fn build_agg_columns(
-        &self,
-        records: &[AggRecord],
-    ) -> Result<Vec<ArrayRef>> {
-
-        let mut agg_builders = new_array_builders(
-            &self.agg_schema,
-            records.len(),
-        );
+    pub fn build_agg_columns(&self, records: &[AggRecord]) -> Result<Vec<ArrayRef>> {
+        let mut agg_builders = new_array_builders(&self.agg_schema, records.len());
         for (_, accums) in records {
             let mut col_offset = 0;
             for (idx, accum) in accums.iter().enumerate() {
@@ -160,7 +155,10 @@ impl AggContext {
                 }
             }
         }
-        Ok(agg_builders.iter_mut().map(|array| array.finish()).collect())
+        Ok(agg_builders
+            .iter_mut()
+            .map(|array| array.finish())
+            .collect())
     }
 
     pub fn convert_records_to_batch(
@@ -168,12 +166,13 @@ impl AggContext {
         grouping_row_converter: &mut RowConverter,
         records: &[AggRecord],
     ) -> Result<RecordBatch> {
-
         let row_count = records.len();
         let grouping_row_parser = grouping_row_converter.parser();
-        let grouping_columns = grouping_row_converter.convert_rows(records
-            .iter()
-            .map(|(row, _)| grouping_row_parser.parse(row)))?;
+        let grouping_columns = grouping_row_converter.convert_rows(
+            records
+                .iter()
+                .map(|(row, _)| grouping_row_parser.parse(row)),
+        )?;
         let agg_columns = self.build_agg_columns(records)?;
 
         Ok(RecordBatch::try_new_with_options(
@@ -184,9 +183,6 @@ impl AggContext {
     }
 }
 
-fn partial_output_field_name(
-    agg_field_name: &str,
-    accum_filed_name: &str,
-) -> String {
+fn partial_output_field_name(agg_field_name: &str, accum_filed_name: &str) -> String {
     format!("{}[{}]", agg_field_name, accum_filed_name)
 }

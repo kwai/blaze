@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use async_trait::async_trait;
 use arrow::datatypes::SchemaRef;
+use async_trait::async_trait;
 
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty::pretty_format_batches;

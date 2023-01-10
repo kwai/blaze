@@ -18,9 +18,13 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use crate::shuffle::bucket_repartitioner::BucketShuffleRepartitioner;
+use crate::shuffle::single_repartitioner::SingleShuffleRepartitioner;
+use crate::shuffle::sort_repartitioner::SortShuffleRepartitioner;
+use crate::shuffle::ShuffleRepartitioner;
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
+use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
@@ -32,12 +36,8 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
-use futures::{TryFutureExt, TryStreamExt};
 use futures::stream::once;
-use crate::shuffle::bucket_repartitioner::BucketShuffleRepartitioner;
-use crate::shuffle::ShuffleRepartitioner;
-use crate::shuffle::single_repartitioner::SingleShuffleRepartitioner;
-use crate::shuffle::sort_repartitioner::SortShuffleRepartitioner;
+use futures::{TryFutureExt, TryStreamExt};
 
 /// The shuffle writer operator maps each input partition to M output partitions based on a
 /// partitioning scheme. No guarantees are made about the order of the resulting partitions.
@@ -101,48 +101,46 @@ impl ExecutionPlan for ShuffleWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let repartitioner: Arc<dyn ShuffleRepartitioner> =
-            match &self.partitioning {
-                p if p.partition_count() == 1 =>
-                    Arc::new(SingleShuffleRepartitioner::new(
-                        self.output_data_file.clone(),
-                        self.output_index_file.clone(),
-                    )),
-                p @ Partitioning::Hash(_, _) if p.partition_count() < 200 =>
-                    Arc::new(BucketShuffleRepartitioner::new(
-                        partition,
-                        self.output_data_file.clone(),
-                        self.output_index_file.clone(),
-                        self.schema(),
-                        self.partitioning.clone(),
-                        BaselineMetrics::new(&self.metrics, partition),
-                        context.clone(),
-                    )),
-                Partitioning::Hash(_, _) =>
-                    Arc::new(SortShuffleRepartitioner::new(
-                        partition,
-                        self.output_data_file.clone(),
-                        self.output_index_file.clone(),
-                        self.schema(),
-                        self.partitioning.clone(),
-                        BaselineMetrics::new(&self.metrics, partition),
-                        context.clone(),
-                    )),
-                p => unreachable!("unsupported partitioning: {:?}", p),
-            };
+        let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
+            p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
+                self.output_data_file.clone(),
+                self.output_index_file.clone(),
+            )),
+            p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
+                Arc::new(BucketShuffleRepartitioner::new(
+                    partition,
+                    self.output_data_file.clone(),
+                    self.output_index_file.clone(),
+                    self.schema(),
+                    self.partitioning.clone(),
+                    BaselineMetrics::new(&self.metrics, partition),
+                    context.clone(),
+                ))
+            }
+            Partitioning::Hash(_, _) => Arc::new(SortShuffleRepartitioner::new(
+                partition,
+                self.output_data_file.clone(),
+                self.output_index_file.clone(),
+                self.schema(),
+                self.partitioning.clone(),
+                BaselineMetrics::new(&self.metrics, partition),
+                context.clone(),
+            )),
+            p => unreachable!("unsupported partitioning: {:?}", p),
+        };
 
         let input = self.input.execute(partition, context.clone())?;
-        let stream = repartitioner.execute(
-            input,
-            context.session_config().batch_size(),
-            BaselineMetrics::new(&self.metrics, partition),
-        ).map_err(|e| {
-            ArrowError::ExternalError(Box::new(e))
-        });
+        let stream = repartitioner
+            .execute(
+                input,
+                context.session_config().batch_size(),
+                BaselineMetrics::new(&self.metrics, partition),
+            )
+            .map_err(|e| ArrowError::ExternalError(Box::new(e)));
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(stream).try_flatten()
+            once(stream).try_flatten(),
         )))
     }
 
