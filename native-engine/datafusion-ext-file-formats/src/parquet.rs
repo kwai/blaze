@@ -39,7 +39,7 @@ use datafusion::parquet::file::{
     metadata::{ParquetMetaData, RowGroupMetaData},
     statistics::Statistics as ParquetStatistics,
 };
-use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::{BaselineMetrics, MetricValue, Time};
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
@@ -51,6 +51,7 @@ use datafusion::{
     },
     scalar::ScalarValue,
 };
+use datafusion::physical_plan::Metric;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use jni::objects::JObject;
@@ -210,11 +211,28 @@ impl ExecutionPlan for ParquetExec {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
         let timer = baseline_metrics.elapsed_compute().timer();
 
+        let io_time = Time::default();
+        let io_time_metric = Arc::new(Metric::new(
+            MetricValue::Time {
+                name: "io_time".into(),
+                time: io_time.clone(),
+            },
+            Some(partition_index),
+        ));
+        self.metrics.register(io_time_metric.clone());
+
         // get fs object from jni bridge resource
         let fs_provider =
-            Arc::new(FsProvider::new(jni_new_global_ref!(jni_call_static!(
-                JniBridge.getResource(jni_new_string!(&self.fs_resource_id)?) -> JObject
-            )?)?));
+            Arc::new(FsProvider::new(
+                jni_new_global_ref!(
+                    jni_call_static!(
+                        JniBridge.getResource(
+                            jni_new_string!(&self.fs_resource_id)?
+                        ) -> JObject
+                    )?
+                )?,
+                &io_time,
+            ));
 
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,

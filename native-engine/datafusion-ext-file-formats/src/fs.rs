@@ -17,46 +17,70 @@ use blaze_commons::{
     jni_new_object, jni_new_string,
 };
 use datafusion::error::Result;
+use datafusion::physical_plan::metrics::Time;
 use jni::objects::{GlobalRef, JObject};
 
-pub struct FsProvider(GlobalRef);
+pub struct FsProvider {
+    fs_provider: GlobalRef,
+    io_time: Time,
+}
 
 impl FsProvider {
-    pub fn new(fs_provider: GlobalRef) -> Self {
-        Self(fs_provider)
+    pub fn new(fs_provider: GlobalRef, io_time_metric: &Time) -> Self {
+        Self {
+            fs_provider,
+            io_time: io_time_metric.clone(),
+        }
     }
 
     pub fn provide(&self, path: &str) -> Result<Fs> {
+        let _timer = self.io_time.timer();
         let fs = jni_call!(
-            ScalaFunction1(self.0.as_obj()).apply(jni_new_string!(path)?) -> JObject
+            ScalaFunction1(self.fs_provider.as_obj()).apply(
+                jni_new_string!(path)?
+            ) -> JObject
         )?;
-        Ok(Fs::new(jni_new_global_ref!(fs)?))
+        Ok(Fs::new(jni_new_global_ref!(fs)?, &self.io_time))
     }
 }
 
-pub struct Fs(GlobalRef);
+pub struct Fs {
+    fs: GlobalRef,
+    io_time: Time,
+}
 
 impl Fs {
-    pub fn new(fs: GlobalRef) -> Self {
-        Self(fs)
+    pub fn new(fs: GlobalRef, io_time_metric: &Time) -> Self {
+        Self {
+            fs,
+            io_time: io_time_metric.clone(),
+        }
     }
 
     pub fn open(&self, path: &str) -> Result<FsDataInputStream> {
+        let _timer = self.io_time.timer();
         let path = jni_new_object!(HadoopPath, jni_new_string!(path)?)?;
         let fin = jni_call!(
-            HadoopFileSystem(self.0.as_obj()).open(path) -> JObject
+            HadoopFileSystem(self.fs.as_obj()).open(path) -> JObject
         )?;
-        Ok(FsDataInputStream(jni_new_global_ref!(fin)?))
+        Ok(FsDataInputStream {
+            stream: jni_new_global_ref!(fin)?,
+            io_time: self.io_time.clone(),
+        })
     }
 }
 
-pub struct FsDataInputStream(GlobalRef);
+pub struct FsDataInputStream {
+    stream: GlobalRef,
+    io_time: Time,
+}
 
 impl FsDataInputStream {
     pub fn read_fully(&self, pos: u64, buf: &mut [u8]) -> Result<()> {
+        let _timer = self.io_time.timer();
         jni_call_static!(
             JniUtil.readFullyFromFSDataInputStream(
-                self.0.as_obj(),
+                self.stream.as_obj(),
                 pos as i64,
                 jni_new_direct_byte_buffer!(buf)?
             ) -> ()
@@ -67,8 +91,9 @@ impl FsDataInputStream {
 
 impl Drop for FsDataInputStream {
     fn drop(&mut self) {
+        let _timer = self.io_time.timer();
         if let Err(e) = jni_call!(
-            HadoopFSDataInputStream(self.0.as_obj()).close() -> ()
+            HadoopFSDataInputStream(self.stream.as_obj()).close() -> ()
         ) {
             log::warn!("error closing hadoop FSDatainputStream: {:?}", e);
         }

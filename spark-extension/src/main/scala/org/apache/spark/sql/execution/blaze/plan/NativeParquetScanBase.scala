@@ -57,7 +57,8 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
       ("predicate_evaluation_errors", SQLMetrics
         .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
       ("row_groups_pruned", SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned")) :+
-      ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")): _*)
+      ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) :+
+      ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time")): _*)
 
   override val output: Seq[Attribute] = basedFileScan.output
   override val outputPartitioning: Partitioning = basedFileScan.outputPartitioning
