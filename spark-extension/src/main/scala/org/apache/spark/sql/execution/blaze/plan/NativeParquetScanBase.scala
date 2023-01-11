@@ -19,20 +19,28 @@ package org.apache.spark.sql.execution.blaze.plan
 import java.net.URI
 import java.security.PrivilegedExceptionAction
 import java.util.UUID
+
 import scala.collection.JavaConverters._
+import scala.collection.mutable
+
 import org.apache.hadoop.fs.FileSystem
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.LeafExecNode
-import org.apache.spark.sql.execution.datasources.FileScanRDD
-import org.apache.spark.{Partition, TaskContext}
+import org.apache.spark.Partition
+import org.apache.spark.TaskContext
+import org.blaze.{protobuf => pb}
+import org.blaze.protobuf.FileGroup
+
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
-import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeHelper
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.LeafExecNode
+import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.PartitionedFile
@@ -41,24 +49,26 @@ import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
-import org.blaze.{protobuf => pb}
-import org.blaze.protobuf.FileGroup
-import org.apache.spark.sql.blaze.NativeSupports
 
 abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
     extends LeafExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeHelper
-      .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
-      .toSeq :+
-      ("predicate_evaluation_errors", SQLMetrics
-        .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
-      ("row_groups_pruned", SQLMetrics.createMetric(sparkContext, "Native.row_groups_pruned")) :+
-      ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) :+
-      ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time")): _*)
+  override lazy val metrics: Map[String, SQLMetric] = mutable
+    .LinkedHashMap(
+      NativeHelper
+        .getDefaultNativeMetrics(sparkContext)
+        .filterKeys(Set("output_rows", "elapsed_compute"))
+        .toSeq :+
+        ("predicate_evaluation_errors", SQLMetrics
+          .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
+        ("row_groups_pruned", SQLMetrics
+          .createMetric(sparkContext, "Native.row_groups_pruned")) :+
+        ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) :+
+        ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time")) :+
+        ("io_time_getfs", SQLMetrics
+          .createNanoTimingMetric(sparkContext, "Native.io_time_getfs")): _*)
+    .toMap
 
   override val output: Seq[Attribute] = basedFileScan.output
   override val outputPartitioning: Partitioning = basedFileScan.outputPartitioning
@@ -160,11 +170,15 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         JniBridge.resourcesMap.put(
           resourceId,
           (location: String) => {
-            NativeHelper.currentUser.doAs(new PrivilegedExceptionAction[FileSystem] {
+            val getfsTimeMetric = metrics("io_time_getfs")
+            val currentTimeMillis = System.currentTimeMillis()
+            val fs = NativeHelper.currentUser.doAs(new PrivilegedExceptionAction[FileSystem] {
               override def run(): FileSystem = {
                 FileSystem.get(new URI(location), sharedConf)
               }
             })
+            getfsTimeMetric.add((System.currentTimeMillis() - currentTimeMillis) * 1000000)
+            fs
           })
 
         val nativeFileGroupsPartitioned = nativeFileGroups.zipWithIndex

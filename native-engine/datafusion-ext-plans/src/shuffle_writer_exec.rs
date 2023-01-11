@@ -105,6 +105,7 @@ impl ExecutionPlan for ShuffleWriterExec {
             p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
                 self.output_data_file.clone(),
                 self.output_index_file.clone(),
+                BaselineMetrics::new(&self.metrics, partition),
             )),
             p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
                 Arc::new(BucketShuffleRepartitioner::new(

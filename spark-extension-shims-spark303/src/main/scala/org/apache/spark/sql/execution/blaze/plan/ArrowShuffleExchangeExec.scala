@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
+import scala.collection.immutable.SortedMap
+import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 
@@ -24,11 +26,7 @@ import org.apache.spark._
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.{
-  ShuffleWriteMetricsReporter,
-  ShuffleWriteProcessor,
-  ShuffleWriter
-}
+import org.apache.spark.shuffle.{ShuffleWriteMetricsReporter, ShuffleWriteProcessor, ShuffleWriter}
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -51,16 +49,25 @@ case class ArrowShuffleExchangeExec(
 
   // NOTE: coordinator can be null after serialization/deserialization,
   //       e.g. it can be null on the Executor side
-  lazy val writeMetrics: Map[String, SQLMetric] =
-    SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext) ++ Map(
-      NativeHelper
-        .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(Set("elapsed_compute", "spilled_bytes", "spill_count"))
-        .toSeq: _*)
+  lazy val writeMetrics: Map[String, SQLMetric] = (
+    mutable.LinkedHashMap[String, SQLMetric]() ++
+      SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext) ++
+      mutable.LinkedHashMap(
+        NativeHelper
+          .getDefaultNativeMetrics(sparkContext)
+          .filterKeys(Set("spilled_bytes", "spill_count"))
+          .toSeq: _*))
+    .toMap
+
   lazy val readMetrics: Map[String, SQLMetric] =
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
-  override lazy val metrics: Map[String, SQLMetric] = readMetrics ++ writeMetrics ++ Map(
-    "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))
+
+  override lazy val metrics: Map[String, SQLMetric] = (
+    mutable.LinkedHashMap[String, SQLMetric]() ++
+      readMetrics ++
+      writeMetrics ++
+      Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size")))
+    .toMap
 
   private val estimatedIpcCount: Int =
     Math.max(child.outputPartitioning.numPartitions * outputPartitioning.numPartitions, 1)

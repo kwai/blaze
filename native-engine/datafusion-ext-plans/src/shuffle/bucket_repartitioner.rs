@@ -107,6 +107,8 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
+        let _timer = self.metrics.elapsed_compute().timer();
+
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
         let hashes = evaluate_hashes(&self.partitioning, &input)?;
@@ -188,6 +190,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
+        let _timer = self.metrics.elapsed_compute().timer();
         let num_output_partitions = self.num_output_partitions;
         let mut buffered_partitions = self.buffered_partitions.lock().await;
         let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];

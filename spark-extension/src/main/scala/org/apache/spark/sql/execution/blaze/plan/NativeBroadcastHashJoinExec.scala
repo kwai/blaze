@@ -17,30 +17,11 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.plans.JoinType
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.BinaryExecNode
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
-import org.apache.spark.sql.execution.joins.BuildLeft
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.Partition
-
-import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeConverters
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.NativeHelper
-import org.apache.spark.sql.catalyst.plans.ExistenceJoin
-import org.apache.spark.sql.catalyst.plans.InnerLike
-import org.apache.spark.sql.catalyst.plans.LeftExistence
-import org.apache.spark.sql.catalyst.plans.LeftOuter
-import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.OneToOneDependency
+import org.apache.spark.Partition
 import org.blaze.protobuf.ColumnIndex
 import org.blaze.protobuf.HashJoinExecNode
 import org.blaze.protobuf.JoinFilter
@@ -48,7 +29,27 @@ import org.blaze.protobuf.JoinOn
 import org.blaze.protobuf.JoinSide
 import org.blaze.protobuf.PhysicalPlanNode
 
+import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeHelper
+import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.ExistenceJoin
+import org.apache.spark.sql.catalyst.plans.InnerLike
+import org.apache.spark.sql.catalyst.plans.LeftExistence
+import org.apache.spark.sql.catalyst.plans.LeftOuter
+import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.execution.BinaryExecNode
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
+import org.apache.spark.sql.execution.joins.BuildLeft
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics
 
 case class NativeBroadcastHashJoinExec(
     override val left: SparkPlan,
@@ -83,12 +84,15 @@ case class NativeBroadcastHashJoinExec(
     }
   }
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeHelper
-      .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(
-        Set("output_rows", "output_batches", "input_rows", "input_batches", "join_time"))
-      .toSeq: _*)
+  override lazy val metrics: Map[String, SQLMetric] = mutable
+    .LinkedHashMap(
+      NativeHelper
+        .getDefaultNativeMetrics(sparkContext)
+        .filterKeys(Set("output_rows", "output_batches", "input_rows", "input_batches"))
+        .toSeq :+
+        ("build_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.build_time")) :+
+        ("probe_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.probe_time")): _*)
+    .toMap
 
   private val nativeJoinOn = leftKeys.zip(rightKeys).map {
     case (leftKey, rightKey) =>

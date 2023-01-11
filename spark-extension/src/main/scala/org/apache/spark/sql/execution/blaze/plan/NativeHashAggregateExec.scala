@@ -18,8 +18,10 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 import org.apache.spark.OneToOneDependency
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -60,11 +62,13 @@ case class NativeHashAggregateExec(
     with NativeSupports
     with Logging {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
-    NativeHelper
-      .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute", "spilled_bytes", "spill_count"))
-      .toSeq: _*)
+  override lazy val metrics: Map[String, SQLMetric] = mutable
+    .LinkedHashMap(
+      NativeHelper
+        .getDefaultNativeMetrics(sparkContext)
+        .filterKeys(Set("output_rows", "elapsed_compute", "spilled_bytes", "spill_count"))
+        .toSeq: _*)
+    .toMap
 
   override def requiredChildDistribution: List[Distribution] = {
     requiredChildDistributionExpressions match {

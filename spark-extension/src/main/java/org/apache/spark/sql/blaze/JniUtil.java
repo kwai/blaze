@@ -27,7 +27,9 @@ public class JniUtil {
   public static void readFullyFromFSDataInputStream(FSDataInputStream in, long pos, ByteBuffer buf)
       throws IOException {
 
-    in.seek(pos);
+    if (pos != in.getPos()) {
+      in.seek(pos);
+    }
     ReadableByteChannel channel = Channels.newChannel(in);
 
     while (buf.hasRemaining()) {
