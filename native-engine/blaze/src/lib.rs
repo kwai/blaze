@@ -27,10 +27,6 @@ mod metrics;
 
 static SESSION: OnceCell<SessionContext> = OnceCell::new();
 
-// use mimalloc as default global allocator
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 fn handle_unwinded(err: Box<dyn Any + Send>) {
     // default handling:
     //  * caused by Interrupted/TaskKilled: do nothing but just print a message.
