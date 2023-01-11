@@ -350,23 +350,6 @@ object NativeConverters {
 
       // in
       case In(value, list) if list.forall(_.isInstanceOf[Literal]) =>
-        // TODO:
-        //  some types are not yet supported if datafusion (like Date32), keep
-        //  this code until they are implemented
-        val supportedTypes = Seq(
-          FloatType,
-          DoubleType,
-          ByteType,
-          ShortType,
-          IntegerType,
-          LongType,
-          BooleanType,
-          StringType)
-        if (!supportedTypes.contains(value.dataType)) {
-          throw new NotImplementedError(
-            s"native In() does not support data type: ${value.dataType}")
-        }
-
         buildExprNode {
           _.setInList(
             pb.PhysicalInListNode
@@ -376,24 +359,7 @@ object NativeConverters {
         }
 
       // in
-      case InSet(value, set) =>
-        // TODO:
-        //  some types are not yet supported if datafusion (like Date32), keep
-        //  this code until they are implemented
-        val supportedTypes = Seq(
-          FloatType,
-          DoubleType,
-          ByteType,
-          ShortType,
-          IntegerType,
-          LongType,
-          BooleanType,
-          StringType)
-        if (!supportedTypes.contains(value.dataType)) {
-          throw new NotImplementedError(
-            s"native InSet() does not support data type: ${value.dataType}")
-        }
-
+      case InSet(value, set) if set.forall(_.isInstanceOf[Literal]) =>
         buildExprNode {
           _.setInList(
             pb.PhysicalInListNode
