@@ -80,8 +80,17 @@ case class ConvertToNativeExec(override val child: SparkPlan)
         JniBridge.resourcesMap.put(
           resourceId,
           () => {
+            // FIXME:
+            //  arrow-rs batch.get_array_memory_size() cannot work on ffi
+            //  batches. so we use a smaller batch size to force batch coalesce
+            //  in native side
             val exportIter =
-              new ArrowFFIExportIterator(inputRowIter, renamedSchema, timeZoneId, context)
+              new ArrowFFIExportIterator(
+                inputRowIter,
+                renamedSchema,
+                timeZoneId,
+                context,
+                recordBatchSize = NativeHelper.batchSize - 1)
             new InterruptibleIterator(context, exportIter)
           })
 

@@ -105,14 +105,8 @@ impl SortShuffleRepartitioner {
         repartitioner
     }
 
-    async fn spill_buffered_to_in_mem(
-        &self,
-        in_mem_spills: &mut Vec<InMemSpillInfo>,
-    ) -> Result<()> {
+    async fn spill_buffered_to_in_mem(&self) -> Result<InMemSpillInfo> {
         let mut buffered_batches = self.buffered_batches.lock().await;
-        if buffered_batches.is_empty() {
-            return Ok(());
-        }
 
         // combine all buffered batches
         let num_output_partitions = self.num_output_partitions;
@@ -202,8 +196,8 @@ impl SortShuffleRepartitioner {
         cur_spill
             .offsets
             .resize(num_output_partitions + 1, cur_spill.frozen.len() as u64);
-        in_mem_spills.push(cur_spill);
-        Ok(())
+        self.buffered_mem_size.store(0, SeqCst);
+        Ok(cur_spill)
     }
 
     fn spilled_bytes(&self) -> usize {
@@ -234,7 +228,6 @@ impl MemoryConsumer for SortShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<usize> {
-        const DISK_SPILL_BUFFERED_SIZE_LIMIT: usize = 16777216;
         log::info!(
             "sort repartitioner start spilling, used={:.2} MB, {}",
             self.mem_used() as f64 / 1e6,
@@ -242,57 +235,50 @@ impl MemoryConsumer for SortShuffleRepartitioner {
         );
 
         let mut in_mem_spills = self.in_mem_spills.lock().await;
-        let in_mem_size = in_mem_spills
-            .iter()
-            .map(|spill| spill.mem_size())
-            .sum::<usize>();
-        let buffered_size = self.mem_used().saturating_sub(in_mem_size);
-        let mut freed = 0;
+        let mut file_spills = self.file_spills.lock().await;
+        let mut freed = 0isize;
 
         // first try spill current buffered batches to in-mem spills
-        if in_mem_spills.is_empty() || buffered_size >= DISK_SPILL_BUFFERED_SIZE_LIMIT {
-            self.spill_buffered_to_in_mem(&mut in_mem_spills).await?;
-            freed = self
-                .metrics
-                .mem_used()
-                .set(in_mem_size)
-                .saturating_sub(in_mem_size);
-
-            log::info!(
-                "sort repartitioner spilled into memory, freed={:.2} MB",
-                freed as f64 / 1e6
-            );
-
-            // some memory freed - finish current spill
-            if freed > 0 {
-                return Ok(freed);
-            }
-        }
-
-        // persist max in-mem spill and free some memory
-        if in_mem_spills.is_empty() {
-            return Err(DataFusionError::ResourcesExhausted("not enough memory for sort repartitioner".to_string()));
-        }
-        let mut file_spills = self.file_spills.lock().await;
-        let pop_index = in_mem_spills
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, spill)| spill.mem_size())
-            .unwrap()
-            .0;
-        let pop_spill = in_mem_spills.remove(pop_index);
-        freed += pop_spill.mem_size();
-
-        let file_spill = pop_spill.into_file_spill(&self.runtime.disk_manager)?;
-        self.metrics.record_spill(file_spill.bytes_size());
-        file_spills.push(file_spill);
-
-        // now we have enough memory for the coming batch
-        self.metrics.mem_used().sub(freed);
+        let buffered_mem_size = self.buffered_mem_size.load(SeqCst);
+        freed += buffered_mem_size as isize;
+        let in_mem_spill = self.spill_buffered_to_in_mem().await?;
+        freed -= in_mem_spill.mem_size() as isize;
         log::info!(
-            "sort repartitioner spilled into file, freed={:.2} MB",
+            "sort repartitioner spilled into memory, freed={:.2} MB",
             freed as f64 / 1e6
         );
+        in_mem_spills.push(in_mem_spill);
+
+        // move mem-spilled into disk-spilled if necessary
+        loop {
+            let spills_total_used = in_mem_spills
+                .iter()
+                .map(|spill| spill.mem_size())
+                .sum::<usize>();
+            if freed > 0 && buffered_mem_size > spills_total_used / 2 {
+                break;
+            }
+            let pop_index = in_mem_spills
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, spill)| spill.mem_size())
+                .unwrap()
+                .0;
+            let pop_spill = in_mem_spills.remove(pop_index);
+            let pop_spill_mem_size = pop_spill.mem_size();
+            freed += pop_spill_mem_size as isize;
+
+            let file_spill = pop_spill.into_file_spill(&self.runtime.disk_manager)?;
+            self.metrics.record_spill(file_spill.bytes_size());
+            file_spills.push(file_spill);
+
+            log::info!(
+                "sort repartitioner spilled into file, freed={:.2} MB",
+                pop_spill_mem_size as f64 / 1e6
+            );
+        }
+        let freed = freed as usize;
+        self.metrics.mem_used().sub(freed);
         Ok(freed)
     }
 
@@ -323,8 +309,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         self.metrics.mem_used().add(mem_increase);
 
         let mut buffered_batches = self.buffered_batches.lock().await;
-        self.buffered_mem_size
-            .fetch_add(input.get_array_memory_size(), SeqCst);
+        self.buffered_mem_size.fetch_add(mem_increase, SeqCst);
         buffered_batches.push(input);
         Ok(())
     }
@@ -335,7 +320,9 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let mut file_spills = self.file_spills.lock().await;
 
         // spill all buffered batches
-        self.spill_buffered_to_in_mem(&mut in_mem_spills).await?;
+        if self.buffered_mem_size.load(SeqCst) > 0 {
+            in_mem_spills.push(self.spill_buffered_to_in_mem().await?);
+        }
         let in_mem_spills = in_mem_spills.drain(..);
         let file_spills = file_spills.drain(..);
         log::info!(

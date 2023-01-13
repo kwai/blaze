@@ -272,25 +272,29 @@ impl MemoryConsumer for AggTables {
 
         // first try spill in-mem into spilled
         let in_mem = std::mem::take(&mut *in_mem);
-        freed += in_mem.mem_used() as isize;
+        let in_mem_used = in_mem.mem_used();
+        freed += in_mem_used as isize;
 
         let spill = in_mem.try_into_mem_spilled(&self.agg_ctx)?;
-        freed -= spill.mem_size as isize;
+        let spill_mem_used = spill.mem_size;
+        freed -= spill_mem_used as isize;
         spilled.push(spill);
         log::info!(
-            "aggregate table spilled into memory, freed={:.2} MB",
+            "aggregate table spilled into memory ({:.2} MB into {:.2} MB), freed={:.2} MB",
+            in_mem_used as f64 / 1e6,
+            spill_mem_used as f64 / 1e6,
             freed as f64 / 1e6
         );
 
         // move mem-spilled into disk-spilled if necessary
-        let spilled_count_limit = 5;
         loop {
-            let mem_spill_count =
-                spilled.iter().filter(|spill| spill.mem_size > 0).count();
-            if freed > 0 && mem_spill_count < spilled_count_limit {
+            let spills_total_used = spilled
+                .iter()
+                .map(|spill| spill.mem_size)
+                .sum::<usize>();
+            if freed > 0 && in_mem_used > spills_total_used / 2 {
                 break;
             }
-
             let max_spill_idx = spilled
                 .iter_mut()
                 .enumerate()
@@ -300,8 +304,9 @@ impl MemoryConsumer for AggTables {
             let spill_count = spilled.len();
             spilled.swap(max_spill_idx, spill_count - 1);
             let max_spill = spilled.pop().unwrap();
+            let max_spill_mem_size = max_spill.mem_size;
 
-            self.metrics.record_spill(max_spill.mem_size);
+            self.metrics.record_spill(max_spill_mem_size);
             freed += max_spill.mem_size as isize;
 
             // move max_spill into file
@@ -310,7 +315,7 @@ impl MemoryConsumer for AggTables {
 
             log::info!(
                 "aggregate table spilled into file, freed={:.2} MB",
-                freed as f64 / 1e6
+                max_spill_mem_size as f64 / 1e6
             );
         }
 
@@ -344,11 +349,20 @@ pub struct InMemTable {
 impl InMemTable {
     pub fn mem_used(&self) -> usize {
         // TODO: use more precise mem_used calculation
-        self.data_mem_used
+        let mem = self.data_mem_used
             + size_of::<AggRecord>() * self.unsorted.capacity()
             + size_of::<AggRecord>() * self.grouping_mappings.capacity()
             + size_of::<u64>() * self.grouping_mappings.capacity()
-            + size_of::<Self>()
+            + size_of::<Self>();
+
+        // NOTE: when spilling in hash mode, the hash table is first transformed
+        //  to a sorted vec. this operation requires extra memory. to avoid
+        //  oom, we report more memory usage than actually used.
+        if self.is_hash {
+            mem * 2
+        } else {
+            mem
+        }
     }
 
     pub fn num_records(&self) -> usize {
@@ -362,11 +376,11 @@ impl InMemTable {
         agg_children_projected_arrays: &[Vec<ArrayRef>],
         row_idx: usize,
     ) -> Result<()> {
+        let grouping_row_mem_size = grouping_row.as_ref().len();
         let mut mem_diff = 0isize;
 
         // get entry from hash/unsorted table
         let entry = if self.is_hash {
-            let grouping_row_mem_size = grouping_row.as_ref().len();
             let mut is_new = false;
 
             // find or create a new entry
@@ -395,6 +409,11 @@ impl InMemTable {
                 .iter()
                 .map(|agg| agg.agg.create_accum())
                 .collect::<Result<Box<[AggAccumRef]>>>()?;
+
+            self.data_mem_used += grouping_row_mem_size;
+            self.data_mem_used +=
+                accums.iter().map(|accum| accum.mem_size()).sum::<usize>();
+
             self.unsorted.push((grouping_row, accums));
             &mut self.unsorted.last_mut().unwrap().1
         };
@@ -455,9 +474,10 @@ impl InMemTable {
         let zwriter = writer
             .into_inner()
             .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
-        let spilled_buf = zwriter
+        let mut spilled_buf = zwriter
             .finish()
             .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
+        spilled_buf.shrink_to_fit();
         let mem_size = spilled_buf.len();
 
         Ok(SpilledTable {
