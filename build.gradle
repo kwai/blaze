@@ -167,7 +167,7 @@ shadowJar {
 task cargo(type: Exec) {
 	workingDir "."
 	executable "${projectDir}/build-native.sh"
-	args += [project.hasProperty("mode") ? getProperty("mode") : "debug"]
+	args += [project.hasProperty("mode") ? getProperty("mode") : "release"]
 }
 
 tasks.shadowJar.dependsOn tasks.cargo

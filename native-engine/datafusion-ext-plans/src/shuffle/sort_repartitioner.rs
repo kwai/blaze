@@ -228,9 +228,10 @@ impl MemoryConsumer for SortShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<usize> {
+        let current_used = self.mem_used();
         log::info!(
             "sort repartitioner start spilling, used={:.2} MB, {}",
-            self.mem_used() as f64 / 1e6,
+            current_used as f64 / 1e6,
             self.memory_manager(),
         );
 
@@ -251,11 +252,7 @@ impl MemoryConsumer for SortShuffleRepartitioner {
 
         // move mem-spilled into disk-spilled if necessary
         loop {
-            let spills_total_used = in_mem_spills
-                .iter()
-                .map(|spill| spill.mem_size())
-                .sum::<usize>();
-            if freed > 0 && buffered_mem_size > spills_total_used / 2 {
+            if freed > 0 && current_used - freed as usize <= current_used / 2 {
                 break;
             }
             let pop_index = in_mem_spills

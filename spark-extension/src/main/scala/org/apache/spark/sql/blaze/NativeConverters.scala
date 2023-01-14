@@ -475,13 +475,7 @@ object NativeConverters {
         buildBinaryExprNode(e.left, e.right, "Like")
 
       // if rhs is complex in and/or operators, use short-circuiting implementation
-      case e @ And(lhs, rhs)
-          if e.find(HiveUDFUtil.isHiveUDF).isDefined ||
-            rhs.map(_ => 1).sum >= 10 ||
-            rhs.map(_.dataType).exists {
-              case NullType | BooleanType | _: NumericType => false
-              case _ => true
-            } =>
+      case e @ And(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
         buildExprNode {
           _.setSparkLogicalExpr(
             pb.SparkLogicalExprNode
@@ -490,13 +484,7 @@ object NativeConverters {
               .setArg2(convertExpr(rhs, useAttrExprId))
               .setOp("And"))
         }
-      case e @ Or(lhs, rhs)
-          if e.find(HiveUDFUtil.isHiveUDF).isDefined ||
-            rhs.map(_ => 1).sum >= 10 ||
-            rhs.map(_.dataType).exists {
-              case NullType | BooleanType | _: NumericType => false
-              case _ => true
-            } =>
+      case e @ Or(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
         buildExprNode {
           _.setSparkLogicalExpr(
             pb.SparkLogicalExprNode

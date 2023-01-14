@@ -25,15 +25,17 @@ members = [
     "native-engine/blaze-serde",
 ]
 
-[profile.release-lto]
-inherits = "release"
+[profile.release]
+opt-level = 3
 lto = true
 codegen-units = 1
 
-[profile.release]
-opt-level = 3
 
-[profile.dev]
+[profile.test]
+debug = false
+opt-level = 1
+lto = false
+codegen-units = 16
 overflow-checks = false
 
 [patch.crates-io]
