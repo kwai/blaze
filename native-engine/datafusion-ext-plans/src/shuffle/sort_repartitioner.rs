@@ -251,10 +251,7 @@ impl MemoryConsumer for SortShuffleRepartitioner {
         in_mem_spills.push(in_mem_spill);
 
         // move mem-spilled into disk-spilled if necessary
-        loop {
-            if freed > 0 && current_used - freed as usize <= current_used / 2 {
-                break;
-            }
+        while (freed as usize) < current_used / 2 {
             let pop_index = in_mem_spills
                 .iter()
                 .enumerate()

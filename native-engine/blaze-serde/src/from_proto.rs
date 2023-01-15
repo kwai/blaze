@@ -30,7 +30,7 @@ use datafusion::logical_expr::{
 };
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
 use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
-use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
+use datafusion::physical_plan::joins::PartitionMode;
 use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
@@ -54,6 +54,7 @@ use datafusion_ext_plans::agg::{
     create_agg, AggExpr, AggFunction, AggMode, GroupingExpr,
 };
 use datafusion_ext_plans::agg_exec::AggExec;
+use datafusion_ext_plans::broadcast_hash_join_exec::BroadcastHashJoinExec;
 use datafusion_ext_plans::debug_exec::DebugExec;
 use datafusion_ext_plans::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext_plans::expand_exec::ExpandExec;
@@ -319,7 +320,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let join_type = protobuf::JoinType::from_i32(sort_merge_join.join_type)
                     .ok_or_else(|| {
                     proto_error(format!(
-                        "Received a HashJoinNode message with unknown JoinType {}",
+                        "Received a SortMergeJoinNode message with unknown JoinType {}",
                         sort_merge_join.join_type
                     ))
                 })?;
@@ -497,7 +498,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     protobuf::PartitionMode::CollectLeft => PartitionMode::CollectLeft,
                     protobuf::PartitionMode::Partitioned => PartitionMode::Partitioned,
                 };
-                Ok(Arc::new(HashJoinExec::try_new(
+                Ok(Arc::new(BroadcastHashJoinExec::try_new(
                     left,
                     right,
                     on,
