@@ -29,7 +29,7 @@ members = [
 opt-level = 3
 lto = true
 codegen-units = 1
-
+strip = true
 
 [profile.test]
 debug = false
@@ -37,6 +37,7 @@ opt-level = 1
 lto = false
 codegen-units = 16
 overflow-checks = false
+strip = true
 
 [patch.crates-io]
 arrow-array = { git = "https://github.com/apache/arrow-rs.git", tag = "28.0.0" }
