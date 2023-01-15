@@ -17,8 +17,6 @@
 package org.apache.spark.sql.blaze
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateMode
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.SparkPlan
@@ -28,16 +26,16 @@ import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.SortExec
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
-import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
+import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.GlobalLimitExec
 import org.apache.spark.sql.execution.LocalLimitExec
-import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
-import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
+import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
+import org.apache.spark.sql.execution.aggregate.SortAggregateExec
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -95,7 +93,7 @@ object BlazeConvertStrategy extends Logging {
     exec.foreachUp {
       case exec if isNeverConvert(exec) || isAlwaysConvert(exec) =>
       // already decided, do nothing
-      case e: ShuffleExchangeExec =>
+      case e: ShuffleExchangeExec if isAlwaysConvert(e.child) || !isAggregate(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: BroadcastExchangeExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
@@ -120,7 +118,7 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: TakeOrderedAndProjectExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: HashAggregateExec if isAlwaysConvert(e.child) || !isPartialHashAggregate(e) =>
+      case e: HashAggregateExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: ExpandExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
@@ -152,52 +150,43 @@ object BlazeConvertStrategy extends Logging {
       }
 
       exec.foreach { e =>
-        // [ (non-native) -> Filter(native) ]
-        dontConvertIf(
-          e,
-          e.isInstanceOf[FilterExec] && !isNeverConvert(e) && isNeverConvert(e.children.head))
+        // NonNative -> NativeFilter
+        // don't use NativeFilter because it requires ConvertToNative with a lot of records
+        if (!isNeverConvert(e) && e.isInstanceOf[FilterExec]) {
+          val child = e.children.head
+          dontConvertIf(e, isNeverConvert(child))
+        }
 
-        // [ (non-native) -> PartialAggr(native) ]
-        dontConvertIf(
-          e,
-          e.isInstanceOf[HashAggregateExec] &&
-            isPartialHashAggregate(e) &&
-            !isNeverConvert(e) &&
-            isNeverConvert(e.children.head))
+        // NonNative -> NativeAgg
+        // don't use NativeAgg because it requires ConvertToNative with a lot of records
+        if (!isNeverConvert(e) && isAggregate(e)) {
+          val child = e.children.head
+          dontConvertIf(e, isNeverConvert(child))
+        }
 
-        // [ HashAggr/ObjectAggr/SortAggr -> ShuffleExchange(native) ]
-        dontConvertIf(
-          e,
-          e.isInstanceOf[ShuffleExchangeExec] &&
-            isAggregate(e.children.head) &&
-            !isNeverConvert(e) &&
-            isNeverConvert(e.children.head))
+        // Agg -> NativeShuffle
+        // don't use NativeShuffle because the next stage is like to use non-native shuffle reader
+        if (!isNeverConvert(e) && e.isInstanceOf[ShuffleExchangeLike]) {
+          val child = e.children.head
+          dontConvertIf(e, isAggregate(child) && isNeverConvert(child))
+        }
 
-        // [ NativeParquetScan -> (non-native) ]
-        e.children.foreach { child =>
-          dontConvertIf(
-            child,
-            child.isInstanceOf[FileSourceScanExec] &&
-              !isNeverConvert(child) &&
-              isNeverConvert(e))
+        // NativeParquetScan -> NonNative
+        // don't use NativeParquetScan because it requires ConvertToNative with a lot of records
+        if (isNeverConvert(e)) {
+          e.children.find(_.isInstanceOf[FileSourceScanExec]) match {
+            case Some(scan) => dontConvertIf(scan, !isNeverConvert(scan))
+            case _ =>
+          }
         }
       }
     }
   }
 
-  private def isPartialHashAggregate(e: SparkPlan): Boolean = {
-    e match {
-      case e: HashAggregateExec => e.requiredChildDistributionExpressions.isEmpty
-      case _ => false
-    }
-  }
   private def isAggregate(e: SparkPlan): Boolean = {
-    e match {
-      case e: HashAggregateExec => e.requiredChildDistributionExpressions.isEmpty
-      case _: ObjectHashAggregateExec => true
-      case _: SortAggregateExec => true
-      case _ => false
-    }
+    e.isInstanceOf[HashAggregateExec] ||
+    e.isInstanceOf[SortAggregateExec] ||
+    e.isInstanceOf[ObjectHashAggregateExec]
   }
 }
 
