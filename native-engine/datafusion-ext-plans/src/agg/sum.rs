@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::{load_scalar, save_scalar, Agg, AggAccum, AggAccumRef};
+use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
-use datafusion::common::{downcast_value, Result, ScalarValue};
+use datafusion::common::{Result, ScalarValue};
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
@@ -28,15 +28,21 @@ pub struct AggSum {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     accum_fields: Vec<Field>,
+    accums_initial: Vec<ScalarValue>,
+    partial_updater: fn(&mut ScalarValue, &ArrayRef, usize),
 }
 
 impl AggSum {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         let accum_fields = vec![Field::new("sum", data_type.clone(), true)];
+        let accums_initial = vec![ScalarValue::try_from(&data_type)?];
+        let partial_updater = get_partial_updater(&data_type)?;
         Ok(Self {
             child,
             data_type,
             accum_fields,
+            accums_initial,
+            partial_updater,
         })
     }
 }
@@ -68,10 +74,8 @@ impl Agg for AggSum {
         &self.accum_fields
     }
 
-    fn create_accum(&self) -> Result<AggAccumRef> {
-        Ok(Box::new(AggSumAccum {
-            partial: self.data_type.clone().try_into()?,
-        }))
+    fn accums_initial(&self) -> &[ScalarValue] {
+        &self.accums_initial
     }
 
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
@@ -82,65 +86,43 @@ impl Agg for AggSum {
         )?
         .into_array(0)])
     }
-}
 
-pub struct AggSumAccum {
-    pub partial: ScalarValue,
-}
-
-impl AggAccum for AggSumAccum {
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        let partial_updater = self.partial_updater;
+        partial_updater(&mut accums[0], &values[0], row_idx);
+        Ok(())
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        Box::new(*self)
-    }
-
-    fn mem_size(&self) -> usize {
-        self.partial.size()
-    }
-
-    fn load(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        load_scalar(&mut self.partial, &values[0], row_idx)
-    }
-
-    fn save(&self, builders: &mut [Box<dyn ArrayBuilder>]) -> Result<()> {
-        save_scalar(&self.partial, &mut builders[0])
-    }
-
-    fn save_final(&self, builder: &mut Box<dyn ArrayBuilder>) -> Result<()> {
-        save_scalar(&self.partial, builder)
-    }
-
-    fn partial_update(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
+    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
         macro_rules! handle {
-            ($tyname:ident, $partial_value:expr) => {{
-                type TArray = paste! {[<$tyname Array>]};
-                let value = downcast_value!(values[0], TArray);
-                if value.is_valid(row_idx) {
-                    *$partial_value =
-                        Some($partial_value.unwrap_or_default() + value.value(row_idx));
+            ($ty:ident) => {{
+                type TArray = paste! {[<$ty Array>]};
+                let value = values[0].as_any().downcast_ref::<TArray>().unwrap();
+                if let Some(sum) = arrow::compute::sum(value) {
+                    match &mut accums[0] {
+                        ScalarValue::$ty(w @ None, ..) => *w = Some(sum),
+                        ScalarValue::$ty(Some(w), ..) => *w += sum,
+                        _ => unreachable!()
+                    }
                 }
-            }};
+            }}
         }
-
-        match &mut self.partial {
-            ScalarValue::Null => {}
-            ScalarValue::Float32(v) => handle!(Float32, v),
-            ScalarValue::Float64(v) => handle!(Float64, v),
-            ScalarValue::Int8(v) => handle!(Int8, v),
-            ScalarValue::Int16(v) => handle!(Int16, v),
-            ScalarValue::Int32(v) => handle!(Int32, v),
-            ScalarValue::Int64(v) => handle!(Int64, v),
-            ScalarValue::UInt8(v) => handle!(UInt8, v),
-            ScalarValue::UInt16(v) => handle!(UInt16, v),
-            ScalarValue::UInt32(v) => handle!(UInt32, v),
-            ScalarValue::UInt64(v) => handle!(UInt64, v),
-            ScalarValue::Decimal128(v, _, _) => handle!(Decimal128, v),
+        match values[0].data_type() {
+            DataType::Null => {},
+            DataType::Float32 => handle!(Float32),
+            DataType::Float64 => handle!(Float64),
+            DataType::Int8 => handle!(Int8),
+            DataType::Int16 => handle!(Int16),
+            DataType::Int32 => handle!(Int32),
+            DataType::Int64 => handle!(Int64),
+            DataType::UInt8 => handle!(UInt8),
+            DataType::UInt16 => handle!(UInt16),
+            DataType::UInt32 => handle!(UInt32),
+            DataType::UInt64 => handle!(UInt64),
+            DataType::Decimal128(..) => handle!(Decimal128),
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in sum(): {}",
+                    "unsupported data type in max(): {}",
                     other
                 )));
             }
@@ -148,92 +130,62 @@ impl AggAccum for AggSumAccum {
         Ok(())
     }
 
-    fn partial_update_all(&mut self, values: &[ArrayRef]) -> Result<()> {
-        macro_rules! handle {
-            ($tyname:ident, $partial_value:expr) => {{
-                type TArray = paste! {[<$tyname Array>]};
-                let value = downcast_value!(values[0], TArray);
-                let sum = arrow::compute::sum(value);
-                *$partial_value =
-                    Some($partial_value.unwrap_or_default() + sum.unwrap_or_default());
-            }};
-        }
+    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        self.partial_update(accums, values, row_idx)
+    }
 
-        match &mut self.partial {
-            ScalarValue::Null => {}
-            ScalarValue::Float32(v) => handle!(Float32, v),
-            ScalarValue::Float64(v) => handle!(Float64, v),
-            ScalarValue::Int8(v) => handle!(Int8, v),
-            ScalarValue::Int16(v) => handle!(Int16, v),
-            ScalarValue::Int32(v) => handle!(Int32, v),
-            ScalarValue::Int64(v) => handle!(Int64, v),
-            ScalarValue::UInt8(v) => handle!(UInt8, v),
-            ScalarValue::UInt16(v) => handle!(UInt16, v),
-            ScalarValue::UInt32(v) => handle!(UInt32, v),
-            ScalarValue::UInt64(v) => handle!(UInt64, v),
-            ScalarValue::Decimal128(v, _, _) => handle!(Decimal128, v),
-            other => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in sum(): {}",
-                    other
-                )));
-            }
-        }
+    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
+        accums[0] = accums[0].add(std::mem::replace(&mut values[0], ScalarValue::Null))?;
         Ok(())
     }
 
-    fn partial_merge(&mut self, another: AggAccumRef) -> Result<()> {
-        let another_sum = another.into_any().downcast::<AggSumAccum>().unwrap();
-        self.partial_merge_scalar(another_sum.partial)
-    }
-
-    fn partial_merge_from_array(
-        &mut self,
-        partial_agg_values: &[ArrayRef],
-        row_idx: usize,
-    ) -> Result<()> {
-        let mut scalar: ScalarValue = self.partial.get_datatype().try_into()?;
-        load_scalar(&mut scalar, &partial_agg_values[0], row_idx)?;
-        self.partial_merge_scalar(scalar)
+    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
+        self.partial_update_all(accums, values)
     }
 }
 
-impl AggSumAccum {
-    pub fn partial_merge_scalar(&mut self, another_value: ScalarValue) -> Result<()> {
-        if another_value.is_null() {
-            return Ok(());
-        }
-        if self.partial.is_null() {
-            self.partial = another_value;
-            return Ok(());
-        }
+fn get_partial_updater(
+    dt: &DataType
+) -> Result<fn(&mut ScalarValue, &ArrayRef, usize)> {
 
-        macro_rules! handle {
-            ($a:expr, $b:expr) => {{
-                *$a = Some($a.unwrap() + $b.unwrap());
-            }};
+    macro_rules! get_fn {
+        ($ty:ident) => {{
+            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
+                type TArray = paste! {[<$ty Array>]};
+                let value = v.as_any().downcast_ref::<TArray>().unwrap();
+                if value.is_valid(i) {
+                    let v = value.value(i);
+                    match acc {
+                        ScalarValue::$ty(w @ None, ..) => {
+                            *w = Some(v);
+                        }
+                        ScalarValue::$ty(Some(w), ..) => {
+                            *w += v;
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            })
+        }};
+    }
+    match dt {
+        DataType::Null => Ok(|_, _, _| ()),
+        DataType::Float32 => get_fn!(Float32),
+        DataType::Float64 => get_fn!(Float64),
+        DataType::Int8 => get_fn!(Int8),
+        DataType::Int16 => get_fn!(Int16),
+        DataType::Int32 => get_fn!(Int32),
+        DataType::Int64 => get_fn!(Int64),
+        DataType::UInt8 => get_fn!(UInt8),
+        DataType::UInt16 => get_fn!(UInt16),
+        DataType::UInt32 => get_fn!(UInt32),
+        DataType::UInt64 => get_fn!(UInt64),
+        DataType::Decimal128(..) => get_fn!(Decimal128),
+        other => {
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type in sum(): {}",
+                other
+            )));
         }
-        match (&mut self.partial, another_value) {
-            (ScalarValue::Float32(a), ScalarValue::Float32(b)) => handle!(a, b),
-            (ScalarValue::Float64(a), ScalarValue::Float64(b)) => handle!(a, b),
-            (ScalarValue::Int8(a), ScalarValue::Int8(b)) => handle!(a, b),
-            (ScalarValue::Int16(a), ScalarValue::Int16(b)) => handle!(a, b),
-            (ScalarValue::Int32(a), ScalarValue::Int32(b)) => handle!(a, b),
-            (ScalarValue::Int64(a), ScalarValue::Int64(b)) => handle!(a, b),
-            (ScalarValue::UInt8(a), ScalarValue::UInt8(b)) => handle!(a, b),
-            (ScalarValue::UInt16(a), ScalarValue::UInt16(b)) => handle!(a, b),
-            (ScalarValue::UInt32(a), ScalarValue::UInt32(b)) => handle!(a, b),
-            (ScalarValue::UInt64(a), ScalarValue::UInt64(b)) => handle!(a, b),
-            (ScalarValue::Decimal128(a, _, _), ScalarValue::Decimal128(b, _, _)) => {
-                handle!(a, b)
-            }
-            (other, _) => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in sum(): {}",
-                    other
-                )));
-            }
-        }
-        Ok(())
     }
 }

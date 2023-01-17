@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::{Agg, AggAccum, AggAccumRef};
+use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
-use datafusion::common::{downcast_value, Result};
+use datafusion::common::{downcast_value, Result, ScalarValue};
 use datafusion::error::DataFusionError;
 use datafusion::physical_expr::PhysicalExpr;
 use std::any::Any;
@@ -26,6 +26,7 @@ pub struct AggCount {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     accum_fields: Vec<Field>,
+    accums_initial: Vec<ScalarValue>,
 }
 
 impl AggCount {
@@ -33,10 +34,12 @@ impl AggCount {
         assert_eq!(data_type, DataType::Int64);
 
         let accum_fields = vec![Field::new("count", data_type.clone(), true)];
+        let accums_initial = vec![ScalarValue::Int64(Some(0))];
         Ok(Self {
             child,
             data_type,
             accum_fields,
+            accums_initial,
         })
     }
 }
@@ -68,77 +71,56 @@ impl Agg for AggCount {
         &self.accum_fields
     }
 
-    fn create_accum(&self) -> Result<AggAccumRef> {
-        Ok(Box::new(AggCountAccum { partial: 0 }))
-    }
-}
-
-pub struct AggCountAccum {
-    pub partial: i64,
-}
-
-impl AggAccum for AggCountAccum {
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn accums_initial(&self) -> &[ScalarValue] {
+        &self.accums_initial
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        Box::new(*self)
-    }
-
-    fn mem_size(&self) -> usize {
-        std::mem::size_of_val(&self.partial)
-    }
-
-    fn load(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        let value = downcast_value!(values[0], Int64Array);
-        self.partial = value.value(row_idx);
-        Ok(())
-    }
-
-    fn save(&self, builders: &mut [Box<dyn ArrayBuilder>]) -> Result<()> {
-        let builder = builders[0]
-            .as_any_mut()
-            .downcast_mut::<Int64Builder>()
-            .unwrap();
-        builder.append_value(self.partial);
-        Ok(())
-    }
-
-    fn save_final(&self, builder: &mut Box<dyn ArrayBuilder>) -> Result<()> {
-        let builder = builder.as_any_mut().downcast_mut::<Int64Builder>().unwrap();
-        builder.append_value(self.partial);
-        Ok(())
-    }
-
-    fn partial_update(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        if values[0].is_valid(row_idx) {
-            self.partial += 1;
+    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        match &mut accums[0] {
+            ScalarValue::Int64(Some(count)) => {
+                *count += values[0].is_valid(row_idx) as i64
+            },
+            _ => unreachable!()
         }
         Ok(())
     }
 
-    fn partial_update_all(&mut self, values: &[ArrayRef]) -> Result<()> {
-        self.partial += values[0].len() as i64 - values[0].null_count() as i64;
+    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
+        match &mut accums[0] {
+            ScalarValue::Int64(Some(count)) => {
+                *count += (values[0].len() - values[0].null_count()) as i64;
+            },
+            _ => unreachable!()
+        }
         Ok(())
     }
 
-    fn partial_merge(&mut self, another: AggAccumRef) -> Result<()> {
-        let another_cnt = another.into_any().downcast::<AggCountAccum>().unwrap();
-        self.partial += another_cnt.partial;
+    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        let value = downcast_value!(values[0], Int64Array);
+        match &mut accums[0] {
+            ScalarValue::Int64(Some(count)) => *count += value.value(row_idx),
+            _ => unreachable!()
+        }
         Ok(())
     }
 
-    fn partial_merge_from_array(
-        &mut self,
-        partial_agg_values: &[ArrayRef],
-        row_idx: usize,
-    ) -> Result<()> {
-        let another_cnts = partial_agg_values[0]
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        self.partial += another_cnts.value(row_idx);
+    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
+        match (&mut accums[0], &values[0]) {
+            (ScalarValue::Int64(Some(w)), ScalarValue::Int64(Some(v))) => {
+                *w += v;
+            }
+            _ => unreachable!()
+        }
+        Ok(())
+    }
+
+    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
+        let value = values[0].as_any().downcast_ref::<Int64Array>().unwrap();
+        let sum = arrow::compute::sum(value);
+        match &mut accums[0] {
+            ScalarValue::Int64(Some(count)) => *count += sum.unwrap_or(0),
+            _ => unreachable!()
+        }
         Ok(())
     }
 }

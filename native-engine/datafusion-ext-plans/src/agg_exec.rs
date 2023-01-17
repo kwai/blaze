@@ -40,7 +40,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::agg::agg_helper::{AggContext, AggRecord};
 use crate::agg::agg_tables::{AggTables, InMemTable};
-use crate::agg::{AggAccumRef, AggExecMode, AggExpr, GroupingExpr};
+use crate::agg::{AggExecMode, AggExpr, GroupingExpr};
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -232,17 +232,15 @@ async fn execute_agg_with_grouping_hash(
             .map(|row| row.as_ref().into())
             .collect();
 
-        let agg_children_input_arrays =
-            agg_ctx.create_children_input_arrays(&input_batch)?;
-
         // update to in-mem table
+        let agg_input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
         tables
             .update_in_mem(|in_mem: &mut InMemTable| {
                 for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
                     in_mem.update(
                         &agg_ctx,
                         grouping_row,
-                        &agg_children_input_arrays,
+                        &agg_input_arrays,
                         row_idx,
                     )?;
                 }
@@ -268,14 +266,7 @@ async fn execute_agg_no_grouping(
 ) -> Result<SendableRecordBatchStream> {
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
     let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-    let timer = elapsed_compute.timer();
-
-    let mut accums: Box<[AggAccumRef]> = agg_ctx
-        .aggs
-        .iter()
-        .map(|agg: &AggExpr| agg.agg.create_accum())
-        .collect::<Result<_>>()?;
-    drop(timer);
+    let mut accums = agg_ctx.create_initial_accums();
 
     // start processing input batches
     let input = input.execute(partition_id, context.clone())?;
@@ -287,23 +278,11 @@ async fn execute_agg_no_grouping(
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = elapsed_compute.timer();
 
-        // compute agg children input arrays
-        let agg_children_input_arrays =
-            agg_ctx.create_children_input_arrays(&input_batch)?;
-
         // update to accums
-        for (idx, accum) in accums.iter_mut().enumerate() {
-            if agg_ctx.aggs[idx].mode.is_partial() {
-                accum.partial_update_all(&agg_children_input_arrays[idx])?;
-            } else {
-                for row_idx in 0..input_batch.num_rows() {
-                    accum.partial_merge_from_array(
-                        &agg_children_input_arrays[idx],
-                        row_idx,
-                    )?;
-                }
-            }
-        }
+        agg_ctx.partial_update_or_merge_all(
+            &mut accums,
+            &agg_ctx.create_input_arrays(&input_batch)?,
+        )?;
     }
 
     // output
@@ -312,7 +291,7 @@ async fn execute_agg_no_grouping(
     start_output(agg_ctx.clone(), baseline_metrics, |sender| async move {
         let record: AggRecord = (Box::default(), accums);
         let batch_result = agg_ctx
-            .build_agg_columns(&[record])
+            .build_agg_columns(&mut [record])
             .map_err(|e| ArrowError::ExternalError(Box::new(e)))
             .and_then(|agg_columns| {
                 RecordBatch::try_new_with_options(
@@ -377,8 +356,8 @@ async fn execute_agg_sorted(
                 .map(|row| row.as_ref().into())
                 .collect();
 
-            let agg_children_input_arrays =
-                agg_ctx.create_children_input_arrays(&input_batch)?;
+            let agg_input_arrays =
+                agg_ctx.create_input_arrays(&input_batch)?;
 
             // update to current record
             for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
@@ -387,18 +366,14 @@ async fn execute_agg_sorted(
                 if Some(&grouping_row) != current_record.as_ref().map(|r| &r.0) {
                     let finished_record = current_record.replace((
                         grouping_row,
-                        agg_ctx
-                            .aggs
-                            .iter()
-                            .map(|agg: &AggExpr| agg.agg.create_accum())
-                            .collect::<Result<_>>()?
+                        agg_ctx.create_initial_accums(),
                     ));
                     if let Some(record) = finished_record {
                         staging_records.push(record);
                         if staging_records.len() >= batch_size {
                             let batch = agg_ctx.convert_records_to_batch(
                                 &mut grouping_row_converter,
-                                &std::mem::take(&mut staging_records),
+                                &mut std::mem::take(&mut staging_records),
                             )?;
                             timer.stop();
 
@@ -415,17 +390,11 @@ async fn execute_agg_sorted(
                 }
 
                 // update to accums
-                let accums = &mut current_record.as_mut().unwrap().1;
-                for (idx, accum) in accums.iter_mut().enumerate() {
-                    if agg_ctx.aggs[idx].mode.is_partial() {
-                        accum.partial_update(&agg_children_input_arrays[idx], row_idx)?;
-                    } else {
-                        accum.partial_merge_from_array(
-                            &agg_children_input_arrays[idx],
-                            row_idx,
-                        )?;
-                    }
-                }
+                agg_ctx.partial_update_or_merge_one_row(
+                    &mut current_record.as_mut().unwrap().1,
+                    &agg_input_arrays,
+                    row_idx,
+                )?;
             }
         }
 
@@ -436,7 +405,7 @@ async fn execute_agg_sorted(
         if !staging_records.is_empty() {
             let batch = agg_ctx.convert_records_to_batch(
                 &mut grouping_row_converter,
-                &staging_records,
+                &mut staging_records,
             )?;
             timer.stop();
 

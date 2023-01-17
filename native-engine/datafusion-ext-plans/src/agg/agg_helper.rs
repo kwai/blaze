@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::{AggAccumRef, AggExecMode, AggExpr, GroupingExpr};
+use crate::agg::{AggExecMode, AggExpr, AggMode, GroupingExpr};
 use arrow::array::ArrayRef;
-use arrow::datatypes::{Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
-use datafusion::common::Result;
+use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_expr::PhysicalExpr;
-use datafusion_ext_commons::array_builder::new_array_builders;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use smallvec::SmallVec;
 
-pub type AggRecord = (Box<[u8]>, Box<[AggAccumRef]>);
+pub type AggRecord = (Box<[u8]>, Box<[ScalarValue]>);
 
 pub struct AggContext {
     pub exec_mode: AggExecMode,
@@ -32,7 +32,16 @@ pub struct AggContext {
     pub output_schema: SchemaRef,
     pub groupings: Vec<GroupingExpr>,
     pub aggs: Vec<AggExpr>,
+    pub initial_accums: Box<[ScalarValue]>,
+    pub initial_accums_mem_size: usize,
     pub initial_input_buffer_offset: usize,
+
+    // accum offsets/lens of every aggs
+    pub accums_offsets: SmallVec<[usize; 64]>,
+    pub accums_lens: SmallVec<[usize; 64]>,
+
+    // indices to accums with dynamic size (like strings)
+    pub dyn_size_accums_idxes: SmallVec<[usize; 64]>,
 }
 
 impl Debug for AggContext {
@@ -80,7 +89,6 @@ impl AggContext {
             }
         }
         let agg_schema = Arc::new(Schema::new(agg_fields));
-
         let output_schema = Arc::new(Schema::new(
             [
                 grouping_schema.fields().clone(),
@@ -89,6 +97,32 @@ impl AggContext {
             .concat(),
         ));
 
+        let initial_accums: Box<[ScalarValue]> = aggs
+            .iter()
+            .flat_map(|agg: &AggExpr| agg.agg.accums_initial())
+            .map(|acc| acc.clone())
+            .collect();
+        let initial_accums_mem_size = initial_accums
+            .iter()
+            .map(|acc| acc.size())
+            .sum::<usize>();
+        let dyn_size_accums_idxes = initial_accums
+            .iter()
+            .enumerate()
+            .filter(|(_, acc)| acc.get_datatype() == DataType::Utf8)
+            .map(|(i, _)| i)
+            .collect();
+
+        let mut accums_offsets = SmallVec::with_capacity(aggs.len());
+        let mut accums_lens = SmallVec::with_capacity(aggs.len());
+        let mut offset = 0;
+        for agg in &aggs {
+            let len = agg.agg.accum_fields().len();
+            accums_offsets.push(offset);
+            accums_lens.push(len);
+            offset += len;
+        }
+
         Ok(Self {
             exec_mode,
             output_schema,
@@ -96,24 +130,41 @@ impl AggContext {
             agg_schema,
             groupings,
             aggs,
+            initial_accums,
+            initial_accums_mem_size,
             initial_input_buffer_offset,
+            accums_offsets,
+            accums_lens,
+            dyn_size_accums_idxes,
         })
     }
 
-    pub fn create_children_input_arrays(
+    pub fn create_initial_accums(&self) -> Box<[ScalarValue]> {
+        self.initial_accums.clone()
+    }
+
+    pub fn get_accums_mem_size(&self, accums: &[ScalarValue]) -> usize {
+        let dyn_size = self.dyn_size_accums_idxes
+            .iter()
+            .map(|&i| accums[i].size())
+            .sum::<usize>();
+        self.initial_accums_mem_size + dyn_size
+    }
+
+    pub fn create_input_arrays(
         &self,
         input_batch: &RecordBatch,
     ) -> Result<Vec<Vec<ArrayRef>>> {
         let mut input_arrays = Vec::with_capacity(self.aggs.len());
         let mut cached_partial_args: Vec<(Arc<dyn PhysicalExpr>, ArrayRef)> = vec![];
-        let mut buffer_offset = self.initial_input_buffer_offset;
 
-        for agg in &self.aggs {
+        for (idx, agg) in self.aggs.iter().enumerate() {
             let mut values = vec![];
 
             if agg.mode.is_partial() {
                 // find all distincted partial input args. distinction is used
                 // to avoid duplicated evaluating the input arrays.
+                let mut cur_values = vec![];
                 for expr in &agg.agg.exprs() {
                     let value = cached_partial_args
                         .iter()
@@ -124,50 +175,70 @@ impl AggContext {
                                 .map(|r| r.into_array(input_batch.num_rows()))
                         })?;
                     cached_partial_args.push((expr.clone(), value.clone()));
-                    values.push(value);
+                    cur_values.push(value);
                 }
+                values.extend(agg.agg.prepare_partial_args(&cur_values)?);
+
             } else {
                 // find accum arrays by buffer offset
-                let num_accum_fields = agg.agg.accum_fields().len();
                 values.extend(
-                    input_batch.columns()[buffer_offset..]
+                    input_batch.columns()
                         .iter()
-                        .take(num_accum_fields).cloned(),
+                        .skip(self.initial_input_buffer_offset + self.accums_offsets[idx])
+                        .take(self.accums_lens[idx])
+                        .cloned(),
                 );
-                buffer_offset += num_accum_fields;
             }
             input_arrays.push(values);
         }
         Ok(input_arrays)
     }
 
-    pub fn build_agg_columns(&self, records: &[AggRecord]) -> Result<Vec<ArrayRef>> {
-        let mut agg_builders = new_array_builders(&self.agg_schema, records.len());
-        for (_, accums) in records {
-            let mut col_offset = 0;
-            for (idx, accum) in accums.iter().enumerate() {
-                let agg = &self.aggs[idx];
+    pub fn build_agg_columns(&self, records: &mut [AggRecord]) -> Result<Vec<ArrayRef>> {
+        let num_records = records.len();
+        let num_agg_columns = self.aggs
+            .iter()
+            .enumerate()
+            .map(|(idx, agg)| match agg.mode {
+                AggMode::Partial | AggMode::PartialMerge => self.accums_lens[idx],
+                AggMode::Final => 1,
+            })
+            .sum::<usize>();
 
-                if agg.mode.is_partial() || agg.mode.is_partial_merge() {
-                    let col_len = agg.agg.accum_fields().len();
-                    accum.save(&mut agg_builders[col_offset..][..col_len])?;
-                    col_offset += col_len;
-                } else {
-                    accum.save_final(&mut agg_builders[col_offset])?;
-                    col_offset += 1;
+        let mut agg_columns = Vec::with_capacity(num_agg_columns);
+        let mut values = vec![];
+        for (idx, agg) in self.aggs.iter().enumerate() {
+            if agg.mode.is_partial() || agg.mode.is_partial_merge() {
+                for i in 0..self.accums_lens[idx] {
+                    values.reserve(num_records);
+                    for record in records.iter_mut() {
+                        let value = std::mem::replace(
+                            &mut record.1[self.accums_offsets[idx] + i],
+                            ScalarValue::Null,
+                        );
+                        values.push(value);
+                    }
+                    let values = std::mem::take(&mut values);
+                    agg_columns.push(ScalarValue::iter_to_array(values)?);
                 }
+            } else {
+                values.reserve(num_records);
+                for record in records.iter_mut() {
+                    let value = agg.agg
+                        .final_merge(&mut record.1[self.accums_offsets[idx]..])?;
+                    values.push(value);
+                }
+                let values = std::mem::take(&mut values);
+                agg_columns.push(ScalarValue::iter_to_array(values)?);
             }
         }
-        Ok(agg_builders
-            .iter_mut()
-            .map(|array| array.finish())
-            .collect())
+        Ok(agg_columns)
     }
 
     pub fn convert_records_to_batch(
         &self,
         grouping_row_converter: &mut RowConverter,
-        records: &[AggRecord],
+        records: &mut [AggRecord],
     ) -> Result<RecordBatch> {
         let row_count = records.len();
         let grouping_row_parser = grouping_row_converter.parser();
@@ -183,6 +254,41 @@ impl AggContext {
             [grouping_columns, agg_columns].concat(),
             &RecordBatchOptions::new().with_row_count(Some(row_count)),
         )?)
+    }
+
+    pub fn partial_update_or_merge_one_row(
+        &self,
+        accums: &mut [ScalarValue],
+        input_arrays: &[Vec<ArrayRef>],
+        row_idx: usize,
+    ) -> Result<()> {
+
+        for (idx, agg) in self.aggs.iter().enumerate() {
+            let accums = &mut accums[self.accums_offsets[idx]..];
+            if self.aggs[idx].mode.is_partial() {
+                agg.agg.partial_update(accums, &input_arrays[idx], row_idx)?;
+            } else {
+                agg.agg.partial_merge(accums, &input_arrays[idx], row_idx)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn partial_update_or_merge_all(
+        &self,
+        accums: &mut [ScalarValue],
+        input_arrays: &[Vec<ArrayRef>],
+    ) -> Result<()> {
+
+        for (idx, agg) in self.aggs.iter().enumerate() {
+            let accums = &mut accums[self.accums_offsets[idx]..];
+            if self.aggs[idx].mode.is_partial() {
+                agg.agg.partial_update_all(accums, &input_arrays[idx])?;
+            } else {
+                agg.agg.partial_merge_all(accums, &input_arrays[idx])?;
+            }
+        }
+        Ok(())
     }
 }
 

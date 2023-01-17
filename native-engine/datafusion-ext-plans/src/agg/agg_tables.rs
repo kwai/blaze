@@ -13,13 +13,12 @@
 // limitations under the License.
 
 use crate::agg::agg_helper::{AggContext, AggRecord};
-use crate::agg::{AggAccumRef, AggMode};
-use arrow::array::ArrayRef;
+use arrow::array::{Array, ArrayRef};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
 use async_trait::async_trait;
-use datafusion::common::Result;
+use datafusion::common::{Result, ScalarValue};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
@@ -37,6 +36,7 @@ use lz4_flex::frame::FrameDecoder;
 use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::mem::size_of;
 use std::sync::Arc;
+use arrow::datatypes::{Field, Schema};
 use tokio::sync::mpsc::Sender;
 
 pub struct AggTables {
@@ -144,7 +144,7 @@ impl AggTables {
         // convert all tables into cursors
         let mut cursors = vec![];
         for table in spilled {
-            cursors.push(TableCursor::try_new_spilled(table, &self.agg_ctx)?);
+            cursors.push(TableCursor::try_new_spilled(table)?);
         }
         if in_mem.num_records() > 0 {
             cursors.push(TableCursor::try_new_sorted(in_mem)?);
@@ -155,10 +155,13 @@ impl AggTables {
 
         macro_rules! flush_staging {
             () => {{
-                let records = std::mem::take(&mut staging_records);
+                let mut records = std::mem::take(&mut staging_records);
                 let batch = self
                     .agg_ctx
-                    .convert_records_to_batch(&mut grouping_row_converter, &records)?;
+                    .convert_records_to_batch(
+                        &mut grouping_row_converter,
+                        &mut records,
+                    )?;
                 timer.stop();
 
                 sender.send(Ok(batch)).map_err(|err| {
@@ -202,17 +205,22 @@ impl AggTables {
                 // all cursors are finished
                 break;
             }
-            let min_record = min_cursor.next()?.unwrap();
+            let mut min_record = min_cursor.next()?.unwrap();
 
             // merge min record into current record
             match current_record.as_mut() {
                 None => current_record = Some(min_record),
                 Some(current_record) => {
                     if min_record.0 == current_record.0 {
-                        current_record
-                            .1
-                            .iter_mut()
-                            .zip(Vec::from(min_record.1).into_iter()).try_for_each(|(a, b)| a.partial_merge(b))?;
+                        // update entry
+                        let mut acc_offset = 0;
+                        for agg in &self.agg_ctx.aggs {
+                            agg.agg.partial_merge_scalar(
+                                &mut current_record.1[acc_offset..],
+                                &mut min_record.1[acc_offset..],
+                            )?;
+                            acc_offset += agg.agg.accums_initial().len();
+                        }
                     } else {
                         staging_records
                             .push(std::mem::replace(current_record, min_record));
@@ -342,7 +350,7 @@ impl Drop for AggTables {
 #[derive(Default)]
 pub struct InMemTable {
     is_hash: bool,
-    grouping_mappings: HashMap<Box<[u8]>, Box<[AggAccumRef]>>,
+    grouping_mappings: HashMap<Box<[u8]>, Box<[ScalarValue]>>,
     unsorted: Vec<AggRecord>,
     data_mem_used: usize,
 }
@@ -374,65 +382,36 @@ impl InMemTable {
         &mut self,
         agg_ctx: &Arc<AggContext>,
         grouping_row: Box<[u8]>,
-        agg_children_projected_arrays: &[Vec<ArrayRef>],
+        agg_input_arrays: &[Vec<ArrayRef>],
         row_idx: usize,
     ) -> Result<()> {
-        let grouping_row_mem_size = grouping_row.as_ref().len();
-        let mut mem_diff = 0isize;
+        let grouping_row_mem_size = grouping_row.len();
 
         // get entry from hash/unsorted table
         let entry = if self.is_hash {
-            let mut is_new = false;
-
-            // find or create a new entry
-            let entry = self
-                .grouping_mappings
+            self.grouping_mappings
                 .entry(grouping_row)
                 .or_insert_with(|| {
-                    is_new = true;
-                    Box::new([])
-                });
-            if is_new {
-                *entry = agg_ctx
-                    .aggs
-                    .iter()
-                    .map(|agg| agg.agg.create_accum())
-                    .collect::<Result<Box<[AggAccumRef]>>>()?;
+                    self.data_mem_used += agg_ctx.initial_accums_mem_size;
+                    self.data_mem_used += grouping_row_mem_size;
+                    agg_ctx.create_initial_accums()
 
-                self.data_mem_used += grouping_row_mem_size;
-                self.data_mem_used +=
-                    entry.iter().map(|accum| accum.mem_size()).sum::<usize>();
-            }
-            entry
+                })
         } else {
-            let accums = agg_ctx
-                .aggs
-                .iter()
-                .map(|agg| agg.agg.create_accum())
-                .collect::<Result<Box<[AggAccumRef]>>>()?;
-
+            self.data_mem_used += agg_ctx.initial_accums_mem_size;
             self.data_mem_used += grouping_row_mem_size;
-            self.data_mem_used +=
-                accums.iter().map(|accum| accum.mem_size()).sum::<usize>();
-
-            self.unsorted.push((grouping_row, accums));
+            self.unsorted.push((grouping_row, agg_ctx.create_initial_accums()));
             &mut self.unsorted.last_mut().unwrap().1
         };
 
         // update entry
-        for (idx, accum) in entry.iter_mut().enumerate() {
-            mem_diff -= accum.mem_size() as isize;
-            if agg_ctx.aggs[idx].mode == AggMode::Partial {
-                accum.partial_update(&agg_children_projected_arrays[idx], row_idx)?;
-            } else {
-                accum.partial_merge_from_array(
-                    &agg_children_projected_arrays[idx],
-                    row_idx,
-                )?;
-            }
-            mem_diff += accum.mem_size() as isize;
-        }
-        self.data_mem_used += mem_diff as usize;
+        let accums_old_mem_size = agg_ctx.get_accums_mem_size(entry);
+        self.data_mem_used -= accums_old_mem_size;
+
+        agg_ctx.partial_update_or_merge_one_row(entry, &agg_input_arrays, row_idx)?;
+
+        let accums_new_mem_size = agg_ctx.get_accums_mem_size(entry);
+        self.data_mem_used += accums_new_mem_size;
         Ok(())
     }
 
@@ -451,18 +430,39 @@ impl InMemTable {
         let zwriter = lz4_flex::frame::FrameEncoder::new(spilled_buf);
         let mut writer = BufWriter::with_capacity(65536, zwriter);
 
-        let grouping_records = self.into_sorted_vec();
+        let mut grouping_records = self.into_sorted_vec();
         let default_accum_batch_size = 10000;
-        for chunk in grouping_records.chunks(default_accum_batch_size) {
-            // write accums
+        for chunk in grouping_records.chunks_mut(default_accum_batch_size) {
+            let num_rows = chunk.len();
+            let num_accums = agg_ctx.accums_lens.iter().sum();
+
+            // write accums as batch
             let mut accum_writer = Cursor::new(vec![]);
-            let agg_columns = agg_ctx.build_agg_columns(chunk)?;
-            let agg_batch = RecordBatch::try_new_with_options(
-                agg_ctx.agg_schema.clone(),
-                agg_columns,
+            let mut accum_columns = Vec::with_capacity(num_accums);
+            let mut values = vec![];
+            for i in 0..num_accums {
+                values.reserve(num_rows);
+                for row_idx in 0..num_rows {
+                    let value = std::mem::replace(
+                        &mut chunk[row_idx].1[i],
+                        ScalarValue::Null,
+                    );
+                    values.push(value);
+                }
+                let array = ScalarValue::iter_to_array(std::mem::take(&mut values))?;
+                accum_columns.push(array);
+            }
+            let accum_batch = RecordBatch::try_new_with_options(
+                Arc::new(Schema::new(accum_columns
+                    .iter()
+                    .map(|array: &ArrayRef| {
+                        Field::new("", array.data_type().clone(), array.null_count() > 0)
+                    })
+                    .collect())),
+                accum_columns,
                 &RecordBatchOptions::new().with_row_count(Some(chunk.len())),
             )?;
-            write_one_batch(&agg_batch, &mut accum_writer, false)?;
+            write_one_batch(&accum_batch, &mut accum_writer, false)?;
             writer.write_all(&accum_writer.into_inner())?;
 
             // write grouping rows
@@ -505,16 +505,12 @@ impl SpilledTable {
         })
     }
 
-    fn try_into_iterator(
-        self,
-        agg_ctx: &Arc<AggContext>,
-    ) -> Result<SpilledTableIterator> {
+    fn try_into_iterator(self) -> Result<SpilledTableIterator> {
         let mut iter = SpilledTableIterator {
             input: BufReader::with_capacity(
                 65536,
                 FrameDecoder::new(self.spilled_reader),
             ),
-            agg_ctx: agg_ctx.clone(),
             cur_accum_batch: None,
             cur_accum_idx: 0,
             cur_record: None,
@@ -526,7 +522,6 @@ impl SpilledTable {
 
 struct SpilledTableIterator {
     input: BufReader<FrameDecoder<Box<dyn Read + Send>>>,
-    agg_ctx: Arc<AggContext>,
     cur_accum_batch: Option<RecordBatch>,
     cur_accum_idx: usize,
     cur_record: Option<AggRecord>,
@@ -556,17 +551,15 @@ impl SpilledTableIterator {
         let grouping_row = read_bytes_slice(&mut self.input, grouping_row_buf_len)?;
 
         // read accums
-        let mut accums = vec![];
-        for agg in &self.agg_ctx.aggs {
-            let mut accum = agg.agg.create_accum()?;
-            accum.load(
-                self.cur_accum_batch.as_ref().unwrap().columns(),
-                self.cur_accum_idx,
-            )?;
-            accums.push(accum);
-        }
+        let accums: Box<[ScalarValue]> = self.cur_accum_batch
+            .as_ref()
+            .unwrap()
+            .columns()
+            .iter()
+            .map(|column| ScalarValue::try_from_array(column, self.cur_accum_idx))
+            .collect::<Result<_>>()?;
+        self.cur_record = Some((grouping_row, accums));
         self.cur_accum_idx += 1;
-        self.cur_record = Some((grouping_row, accums.into()));
         Ok(current)
     }
 }
@@ -588,8 +581,8 @@ impl TableCursor {
         Ok(TableCursor::Sorted(iter, first))
     }
 
-    fn try_new_spilled(table: SpilledTable, agg_ctx: &Arc<AggContext>) -> Result<Self> {
-        let mut iter = table.try_into_iterator(agg_ctx)?;
+    fn try_new_spilled(table: SpilledTable) -> Result<Self> {
+        let mut iter = table.try_into_iterator()?;
         let first = iter.next().transpose()?;
         Ok(TableCursor::Spilled(iter, first))
     }

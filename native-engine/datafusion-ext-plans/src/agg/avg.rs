@@ -12,37 +12,52 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::count::AggCountAccum;
-use crate::agg::sum::AggSumAccum;
-use crate::agg::{Agg, AggAccum, AggAccumRef};
+use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
-use datafusion_ext_commons::array_builder::ConfiguredDecimal128Builder;
 use paste::paste;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use crate::agg::count::AggCount;
+use crate::agg::sum::AggSum;
 
 pub struct AggAvg {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
+    agg_sum: AggSum,
+    agg_count: AggCount,
     accum_fields: Vec<Field>,
+    accums_initial: Vec<ScalarValue>,
+    final_merger: fn(ScalarValue, i64) -> ScalarValue,
 }
 
 impl AggAvg {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accum_fields = vec![
-            Field::new("sum", data_type.clone(), true),
-            Field::new("count", DataType::Int64, false),
-        ];
+        let agg_sum = AggSum::try_new(child.clone(), data_type.clone())?;
+        let agg_count = AggCount::try_new(child.clone(), DataType::Int64)?;
+        let accum_fields = [
+            agg_sum.accum_fields(),
+            agg_count.accum_fields(),
+        ].concat();
+        let accums_initial = [
+            agg_sum.accums_initial(),
+            agg_count.accums_initial(),
+        ].concat();
+        let final_merger = get_final_merger(&data_type)?;
+
         Ok(Self {
             child,
             data_type,
+            agg_sum,
+            agg_count,
             accum_fields,
+            accums_initial,
+            final_merger,
         })
     }
 }
@@ -74,13 +89,8 @@ impl Agg for AggAvg {
         &self.accum_fields
     }
 
-    fn create_accum(&self) -> Result<AggAccumRef> {
-        Ok(Box::new(AggAvgAccum {
-            sum: AggSumAccum {
-                partial: self.data_type.clone().try_into()?,
-            },
-            count: AggCountAccum { partial: 0 },
-        }))
+    fn accums_initial(&self) -> &[ScalarValue] {
+        &self.accums_initial
     }
 
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
@@ -91,108 +101,86 @@ impl Agg for AggAvg {
         )?
         .into_array(0)])
     }
+
+    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        self.agg_sum.partial_update(accums, values, row_idx)?;
+        self.agg_count.partial_update(&mut accums[1..], values, row_idx)?;
+        Ok(())
+    }
+
+    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
+        self.agg_sum.partial_update_all(accums, values)?;
+        self.agg_count.partial_update_all(&mut accums[1..], values)?;
+        Ok(())
+    }
+
+    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        self.agg_sum.partial_merge(accums, values, row_idx)?;
+        self.agg_count.partial_merge(&mut accums[1..], &values[1..], row_idx)?;
+        Ok(())
+    }
+
+    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
+        self.agg_sum.partial_merge_scalar(accums, values)?;
+        self.agg_count.partial_merge_scalar(&mut accums[1..], &mut values[1..])?;
+        Ok(())
+    }
+
+    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
+        self.agg_sum.partial_merge_all(accums, values)?;
+        self.agg_count.partial_merge_all(&mut accums[1..], &values[1..])?;
+        Ok(())
+    }
+
+    fn final_merge(&self, accums: &mut [ScalarValue]) -> Result<ScalarValue> {
+        let sum = self.agg_sum.final_merge(accums)?;
+        let count = match self.agg_count.final_merge(&mut accums[1..])? {
+            ScalarValue::Int64(Some(count)) => count,
+            _ => unreachable!(),
+        };
+        let final_merger = self.final_merger;
+        Ok(final_merger(sum, count))
+    }
 }
 
-pub struct AggAvgAccum {
-    pub sum: AggSumAccum,
-    pub count: AggCountAccum,
-}
+fn get_final_merger(
+    dt: &DataType
+) -> Result<fn(ScalarValue, i64) -> ScalarValue> {
 
-impl AggAccum for AggAvgAccum {
-    fn as_any(&self) -> &dyn Any {
-        self
+    macro_rules! get_fn {
+        ($ty:ident) => {{
+            Ok(|mut sum: ScalarValue, count: i64| {
+                type TArrowType = paste! {[<$ty Type>]};
+                type TNative = <TArrowType as ArrowPrimitiveType>::Native;
+                match &mut sum {
+                    ScalarValue::$ty(None, ..) => {}
+                    ScalarValue::$ty(Some(sum), ..) => {
+                        *sum /= (count as TNative);
+                    }
+                    _ => unreachable!(),
+                };
+                sum
+            })
+        }};
     }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        Box::new(*self)
-    }
-
-    fn mem_size(&self) -> usize {
-        self.sum.mem_size() + self.count.mem_size()
-    }
-
-    fn load(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        self.sum.load(values, row_idx)?;
-        self.count.load(&values[1..], row_idx)?;
-        Ok(())
-    }
-
-    fn save(&self, builders: &mut [Box<dyn ArrayBuilder>]) -> Result<()> {
-        self.sum.save(builders)?;
-        self.count.save(&mut builders[1..])?;
-        Ok(())
-    }
-
-    fn save_final(&self, builder: &mut Box<dyn ArrayBuilder>) -> Result<()> {
-        macro_rules! handle {
-            ($tyname:ident, $partial_value:expr) => {{
-                type TType = paste! {[<$tyname Type>]};
-                type TBuilder = paste! {[<$tyname Builder>]};
-                let builder = builder.as_any_mut().downcast_mut::<TBuilder>().unwrap();
-                let count = self.count.partial;
-                if self.sum.partial.is_null() || count.is_zero() {
-                    builder.append_null();
-                    return Ok(());
-                }
-                let sum =
-                    $partial_value.unwrap() as <TType as ArrowPrimitiveType>::Native;
-                let avg = sum / (count as <TType as ArrowPrimitiveType>::Native);
-                builder.append_value(avg);
-            }};
+    match dt {
+        DataType::Null => Ok(|_, _| ScalarValue::Null),
+        DataType::Float32 => get_fn!(Float32),
+        DataType::Float64 => get_fn!(Float64),
+        DataType::Int8 => get_fn!(Int8),
+        DataType::Int16 => get_fn!(Int16),
+        DataType::Int32 => get_fn!(Int32),
+        DataType::Int64 => get_fn!(Int64),
+        DataType::UInt8 => get_fn!(UInt8),
+        DataType::UInt16 => get_fn!(UInt16),
+        DataType::UInt32 => get_fn!(UInt32),
+        DataType::UInt64 => get_fn!(UInt64),
+        DataType::Decimal128(..) => get_fn!(Decimal128),
+        other => {
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type in sum(): {}",
+                other
+            )));
         }
-        match &self.sum.partial {
-            ScalarValue::Float32(v) => handle!(Float32, v),
-            ScalarValue::Float64(v) => handle!(Float64, v),
-            ScalarValue::Int8(v) => handle!(Int8, v),
-            ScalarValue::Int16(v) => handle!(Int16, v),
-            ScalarValue::Int32(v) => handle!(Int32, v),
-            ScalarValue::Int64(v) => handle!(Int64, v),
-            ScalarValue::UInt8(v) => handle!(UInt8, v),
-            ScalarValue::UInt16(v) => handle!(UInt16, v),
-            ScalarValue::UInt32(v) => handle!(UInt32, v),
-            ScalarValue::UInt64(v) => handle!(UInt64, v),
-            ScalarValue::Decimal128(v, _, _) => {
-                type Decimal128Builder = ConfiguredDecimal128Builder;
-                handle!(Decimal128, v)
-            }
-            other => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in avg(): {}",
-                    other
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    fn partial_update(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        self.sum.partial_update(values, row_idx)?;
-        self.count.partial_update(values, row_idx)?;
-        Ok(())
-    }
-
-    fn partial_update_all(&mut self, values: &[ArrayRef]) -> Result<()> {
-        self.sum.partial_update_all(values)?;
-        self.count.partial_update_all(values)?;
-        Ok(())
-    }
-
-    fn partial_merge(&mut self, another: AggAccumRef) -> Result<()> {
-        let another_avg = another.into_any().downcast::<AggAvgAccum>().unwrap();
-        self.sum.partial_merge_scalar(another_avg.sum.partial)?;
-        self.count.partial += another_avg.count.partial;
-        Ok(())
-    }
-
-    fn partial_merge_from_array(
-        &mut self,
-        partial_agg_values: &[ArrayRef],
-        row_idx: usize,
-    ) -> Result<()> {
-        self.sum
-            .partial_merge_from_array(partial_agg_values, row_idx)?;
-        self.count
-            .partial_merge_from_array(&partial_agg_values[1..], row_idx)?;
-        Ok(())
     }
 }

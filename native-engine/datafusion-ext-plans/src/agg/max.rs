@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::{load_scalar, save_scalar, Agg, AggAccum, AggAccumRef};
+use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
-use datafusion::common::{downcast_value, Result, ScalarValue};
+use datafusion::common::{Result, ScalarValue};
 use datafusion::error::DataFusionError;
 use datafusion::physical_expr::PhysicalExpr;
 use paste::paste;
@@ -27,15 +27,21 @@ pub struct AggMax {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     accum_fields: Vec<Field>,
+    accums_initial: Vec<ScalarValue>,
+    partial_updater: fn(&mut ScalarValue, &ArrayRef, usize),
 }
 
 impl AggMax {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         let accum_fields = vec![Field::new("max", data_type.clone(), true)];
+        let accums_initial = vec![ScalarValue::try_from(&data_type)?];
+        let partial_updater = get_partial_updater(&data_type)?;
         Ok(Self {
             child,
             data_type,
             accum_fields,
+            accums_initial,
+            partial_updater,
         })
     }
 }
@@ -67,89 +73,64 @@ impl Agg for AggMax {
         &self.accum_fields
     }
 
-    fn create_accum(&self) -> Result<AggAccumRef> {
-        Ok(Box::new(AggMaxAccum {
-            partial: self.data_type.clone().try_into()?,
-        }))
-    }
-}
-
-pub struct AggMaxAccum {
-    pub partial: ScalarValue,
-}
-
-impl AggAccum for AggMaxAccum {
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn accums_initial(&self) -> &[ScalarValue] {
+        &self.accums_initial
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        Box::new(*self)
+    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        let partial_updater = self.partial_updater;
+        partial_updater(&mut accums[0], &values[0], row_idx);
+        Ok(())
     }
 
-    fn mem_size(&self) -> usize {
-        self.partial.size()
-    }
-
-    fn load(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        load_scalar(&mut self.partial, &values[0], row_idx)
-    }
-
-    fn save(&self, builders: &mut [Box<dyn ArrayBuilder>]) -> Result<()> {
-        save_scalar(&self.partial, &mut builders[0])
-    }
-
-    fn save_final(&self, builder: &mut Box<dyn ArrayBuilder>) -> Result<()> {
-        save_scalar(&self.partial, builder)
-    }
-
-    fn partial_update(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()> {
+    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
         macro_rules! handle {
-            ($tyname:ident, $partial_value:expr) => {{
-                type TArray = paste! {[<$tyname Array>]};
-                let value = downcast_value!(values[0], TArray);
-                if value.is_valid(row_idx) {
-                    let new = value.value(row_idx);
-                    if $partial_value.is_none() || new < $partial_value.unwrap() {
-                        *$partial_value = Some(new);
+            ($ty:ident, $maxfun:ident) => {{
+                type TArray = paste! {[<$ty Array>]};
+                let value = values[0].as_any().downcast_ref::<TArray>().unwrap();
+                if let Some(max) = arrow::compute::$maxfun(value) {
+                    match &mut accums[0] {
+                        ScalarValue::$ty(w @ None, ..) => *w = Some(max),
+                        ScalarValue::$ty(Some(w), ..) => {
+                            if *w < max {
+                                *w = max;
+                            }
+                        }
+                        _ => unreachable!()
                     }
                 }
-            }};
+            }}
         }
-
-        match &mut self.partial {
-            ScalarValue::Null => {}
-            ScalarValue::Boolean(v) => handle!(Boolean, v),
-            ScalarValue::Float32(v) => handle!(Float32, v),
-            ScalarValue::Float64(v) => handle!(Float64, v),
-            ScalarValue::Int8(v) => handle!(Int8, v),
-            ScalarValue::Int16(v) => handle!(Int16, v),
-            ScalarValue::Int32(v) => handle!(Int32, v),
-            ScalarValue::Int64(v) => handle!(Int64, v),
-            ScalarValue::UInt8(v) => handle!(UInt8, v),
-            ScalarValue::UInt16(v) => handle!(UInt16, v),
-            ScalarValue::UInt32(v) => handle!(UInt32, v),
-            ScalarValue::UInt64(v) => handle!(UInt64, v),
-            ScalarValue::Decimal128(v, _, _) => {
-                let value = downcast_value!(values[0], Decimal128Array);
-                if value.is_valid(row_idx) {
-                    let new = value.value(row_idx);
-                    if v.is_none() || new < v.unwrap() {
-                        *v = Some(new);
+        match values[0].data_type() {
+            DataType::Null => {},
+            DataType::Boolean => handle!(Boolean, max_boolean),
+            DataType::Float32 => handle!(Float32, max),
+            DataType::Float64 => handle!(Float64, max),
+            DataType::Int8 => handle!(Int8, max),
+            DataType::Int16 => handle!(Int16, max),
+            DataType::Int32 => handle!(Int32, max),
+            DataType::Int64 => handle!(Int64, max),
+            DataType::UInt8 => handle!(UInt8, max),
+            DataType::UInt16 => handle!(UInt16, max),
+            DataType::UInt32 => handle!(UInt32, max),
+            DataType::UInt64 => handle!(UInt64, max),
+            DataType::Decimal128(_, _) => handle!(Decimal128, max),
+            DataType::Utf8 => {
+                let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();
+                if let Some(max) = arrow::compute::max_string(value) {
+                    match &mut accums[0] {
+                        ScalarValue::Utf8(w @ None, ..) => *w = Some(max.to_owned()),
+                        ScalarValue::Utf8(Some(w), ..) => {
+                            if w.as_str() < max {
+                                *w = max.to_owned();
+                            }
+                        }
+                        _ => unreachable!()
                     }
                 }
             }
-            ScalarValue::Utf8(v) => {
-                let value = downcast_value!(values[0], StringArray);
-                if value.is_valid(row_idx) {
-                    let new = value.value(row_idx);
-                    if v.is_none() || new > v.as_ref().unwrap().as_str() {
-                        *v = Some(new.to_owned());
-                    }
-                }
-            }
-            ScalarValue::Date32(v) => handle!(Date32, v),
-            ScalarValue::Date64(v) => handle!(Date64, v),
+            DataType::Date32 => handle!(Date32, max),
+            DataType::Date64 => handle!(Date64, max),
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "unsupported data type in max(): {}",
@@ -160,121 +141,110 @@ impl AggAccum for AggMaxAccum {
         Ok(())
     }
 
-    fn partial_update_all(&mut self, values: &[ArrayRef]) -> Result<()> {
-        macro_rules! handle {
-            ($tyname:ident, $partial_value:expr) => {{
-                type TArray = paste! {[<$tyname Array>]};
-                let value = downcast_value!(values[0], TArray);
-                if let Some(w) = arrow::compute::max(value) {
-                    if $partial_value.is_none() || $partial_value.unwrap() < w {
-                        *$partial_value = Some(w);
-                    }
-                }
-            }};
-        }
+    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        self.partial_update(accums, values, row_idx)
+    }
 
-        match &mut self.partial {
-            ScalarValue::Null => {}
-            ScalarValue::Boolean(v) => {
-                let value = downcast_value!(values[0], BooleanArray);
-                if let Some(w) = arrow::compute::max_boolean(value) {
-                    if v.is_none() || !v.unwrap() & w {
-                        *v = Some(w);
-                    }
-                }
-            }
-            ScalarValue::Float32(v) => handle!(Float32, v),
-            ScalarValue::Float64(v) => handle!(Float64, v),
-            ScalarValue::Int8(v) => handle!(Int8, v),
-            ScalarValue::Int16(v) => handle!(Int16, v),
-            ScalarValue::Int32(v) => handle!(Int32, v),
-            ScalarValue::Int64(v) => handle!(Int64, v),
-            ScalarValue::UInt8(v) => handle!(UInt8, v),
-            ScalarValue::UInt16(v) => handle!(UInt16, v),
-            ScalarValue::UInt32(v) => handle!(UInt32, v),
-            ScalarValue::UInt64(v) => handle!(UInt64, v),
-            ScalarValue::Decimal128(v, _, _) => handle!(Decimal128, v),
-            ScalarValue::Utf8(v) => {
-                let value = downcast_value!(values[0], StringArray);
-                if let Some(w) = arrow::compute::max_string(value) {
-                    if v.is_none() || v.as_ref().unwrap().as_str() < w {
-                        *v = Some(w.to_owned());
-                    }
-                }
-            }
-            ScalarValue::Date32(v) => handle!(Date32, v),
-            ScalarValue::Date64(v) => handle!(Date64, v),
-            other => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in max(): {}",
-                    other
-                )));
-            }
+    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
+        if accums[0].is_null() || accums[0] < values[0] {
+            accums[0] = std::mem::replace(&mut values[0], ScalarValue::Null);
         }
         Ok(())
     }
 
-    fn partial_merge(&mut self, another: AggAccumRef) -> Result<()> {
-        let another_max = another.into_any().downcast::<AggMaxAccum>().unwrap();
-        self.partial_merge_scalar(another_max.partial)
-    }
-
-    fn partial_merge_from_array(
-        &mut self,
-        partial_agg_values: &[ArrayRef],
-        row_idx: usize,
-    ) -> Result<()> {
-        let mut scalar: ScalarValue = self.partial.get_datatype().try_into()?;
-        load_scalar(&mut scalar, &partial_agg_values[0], row_idx)?;
-        self.partial_merge_scalar(scalar)
+    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
+        self.partial_update_all(accums, values)
     }
 }
 
-impl AggMaxAccum {
-    pub fn partial_merge_scalar(&mut self, another_value: ScalarValue) -> Result<()> {
-        if another_value.is_null() {
-            return Ok(());
-        }
-        if self.partial.is_null() {
-            self.partial = another_value;
-            return Ok(());
-        }
+fn get_partial_updater(
+    dt: &DataType
+) -> Result<fn(&mut ScalarValue, &ArrayRef, usize)> {
 
-        macro_rules! handle {
-            ($a:expr, $b:expr) => {{
-                if $b.unwrap() > $a.unwrap() {
-                    *$a = $b;
+    macro_rules! get_fn {
+        ($ty:ident) => {{
+            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
+                type TArray = paste! {[<$ty Array>]};
+                let value = v.as_any().downcast_ref::<TArray>().unwrap();
+                if value.is_valid(i) {
+                    let v = value.value(i);
+                    match acc {
+                        ScalarValue::Null | ScalarValue::$ty(None) => {
+                            *acc = ScalarValue::from(v);
+                        }
+                        ScalarValue::$ty(Some(w)) => {
+                            if *w < v {
+                                *w = v;
+                            }
+                        }
+                        _ => unreachable!()
+                    }
                 }
-            }};
-        }
-        match (&mut self.partial, another_value) {
-            (ScalarValue::Float32(a), ScalarValue::Float32(b)) => handle!(a, b),
-            (ScalarValue::Float64(a), ScalarValue::Float64(b)) => handle!(a, b),
-            (ScalarValue::Int8(a), ScalarValue::Int8(b)) => handle!(a, b),
-            (ScalarValue::Int16(a), ScalarValue::Int16(b)) => handle!(a, b),
-            (ScalarValue::Int32(a), ScalarValue::Int32(b)) => handle!(a, b),
-            (ScalarValue::Int64(a), ScalarValue::Int64(b)) => handle!(a, b),
-            (ScalarValue::UInt8(a), ScalarValue::UInt8(b)) => handle!(a, b),
-            (ScalarValue::UInt16(a), ScalarValue::UInt16(b)) => handle!(a, b),
-            (ScalarValue::UInt32(a), ScalarValue::UInt32(b)) => handle!(a, b),
-            (ScalarValue::UInt64(a), ScalarValue::UInt64(b)) => handle!(a, b),
-            (ScalarValue::Decimal128(a, _, _), ScalarValue::Decimal128(b, _, _)) => {
-                handle!(a, b)
-            }
-            (ScalarValue::Utf8(a), ScalarValue::Utf8(b)) => {
-                if b.as_ref().unwrap() > a.as_ref().unwrap() {
-                    *a = b;
+            })
+        }}
+    }
+    match dt {
+        DataType::Null => Ok(|_, _, _| ()),
+        DataType::Boolean => get_fn!(Boolean),
+        DataType::Float32 => get_fn!(Float32),
+        DataType::Float64 => get_fn!(Float64),
+        DataType::Int8 => get_fn!(Int8),
+        DataType::Int16 => get_fn!(Int16),
+        DataType::Int32 => get_fn!(Int32),
+        DataType::Int64 => get_fn!(Int64),
+        DataType::UInt8 => get_fn!(UInt8),
+        DataType::UInt16 => get_fn!(UInt16),
+        DataType::UInt32 => get_fn!(UInt32),
+        DataType::UInt64 => get_fn!(UInt64),
+        DataType::Decimal128(_, _) => {
+            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
+                let value = v.as_any().downcast_ref::<Decimal128Array>().unwrap();
+                if value.is_valid(i) {
+                    let v = value.value(i);
+                    match acc {
+                        ScalarValue::Decimal128(None, _, _) => {
+                            *acc = ScalarValue::Decimal128(
+                                Some(v),
+                                value.precision(),
+                                value.scale(),
+                            );
+                        }
+                        ScalarValue::Decimal128(Some(w), _, _) => {
+                            if *w < v {
+                                *w = v;
+                            }
+                        }
+                        _ => unreachable!()
+                    }
                 }
-            }
-            (ScalarValue::Date32(a), ScalarValue::Date32(b)) => handle!(a, b),
-            (ScalarValue::Date64(a), ScalarValue::Date64(b)) => handle!(a, b),
-            (other, _) => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in max(): {}",
-                    other
-                )));
-            }
+            })
+        },
+        DataType::Utf8 => {
+            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
+                let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+                if value.is_valid(i) {
+                    let v = value.value(i);
+                    match acc {
+                        ScalarValue::Utf8(None) => {
+                            *acc = ScalarValue::from(v);
+                        }
+                        ScalarValue::Utf8(Some(w)) => {
+                            if w.as_str() < v {
+                                *w = v.to_owned();
+                            }
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            })
         }
-        Ok(())
+        DataType::Date32 => get_fn!(Date32),
+        DataType::Date64 => get_fn!(Date64),
+        other => {
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type in max(): {}",
+                other
+            )));
+        }
     }
 }

@@ -22,12 +22,10 @@ pub mod sum;
 
 use arrow::array::*;
 use arrow::datatypes::*;
-use datafusion::common::{downcast_value, DataFusionError, Result, ScalarValue};
+use datafusion::common::{Result, ScalarValue};
 use datafusion::logical_expr::aggregate_function;
 use datafusion::physical_expr::PhysicalExpr;
-use datafusion_ext_commons::array_builder::ConfiguredDecimal128Builder;
 use datafusion_ext_exprs::cast::TryCastExpr;
-use paste::paste;
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -86,31 +84,51 @@ pub trait Agg: Send + Sync + Debug {
     fn data_type(&self) -> &DataType;
     fn nullable(&self) -> bool;
     fn accum_fields(&self) -> &[Field];
-    fn create_accum(&self) -> Result<AggAccumRef>;
+    fn accums_initial(&self) -> &[ScalarValue];
+
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
+        // default implementation: directly return the inputs
         Ok(partial_inputs.iter().map(Clone::clone).collect())
     }
-}
 
-pub trait AggAccum: Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any>;
-    fn mem_size(&self) -> usize;
-    fn load(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()>;
-    fn save(&self, builders: &mut [Box<dyn ArrayBuilder>]) -> Result<()>;
-    fn save_final(&self, builder: &mut Box<dyn ArrayBuilder>) -> Result<()>;
-
-    fn partial_update(&mut self, values: &[ArrayRef], row_idx: usize) -> Result<()>;
-    fn partial_update_all(&mut self, values: &[ArrayRef]) -> Result<()>;
-
-    fn partial_merge(&mut self, another: AggAccumRef) -> Result<()>;
-    fn partial_merge_from_array(
-        &mut self,
-        partial_agg_values: &[ArrayRef],
+    fn partial_update(
+        &self,
+        accums: &mut [ScalarValue],
+        values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()>;
+
+    fn partial_update_all(
+        &self,
+        accums: &mut [ScalarValue],
+        values: &[ArrayRef],
+    ) -> Result<()>;
+
+    fn partial_merge(
+        &self,
+        accums: &mut [ScalarValue],
+        values: &[ArrayRef],
+        row_idx: usize,
+    ) -> Result<()>;
+
+    fn partial_merge_scalar(
+        &self,
+        accums: &mut [ScalarValue],
+        values: &mut [ScalarValue],
+    ) -> Result<()>;
+
+    fn partial_merge_all(
+        &self,
+        accums: &mut [ScalarValue],
+        values: &[ArrayRef],
+    ) -> Result<()>;
+
+    fn final_merge(&self, accums: &mut [ScalarValue]) -> Result<ScalarValue> {
+        // default implementation: use accums[0] as final value
+        // works for sum/max/min/count etc
+        Ok(std::mem::replace(&mut accums[0], ScalarValue::Null))
+    }
 }
-pub type AggAccumRef = Box<dyn AggAccum>;
 
 pub fn create_agg(
     agg_function: AggFunction,
@@ -167,109 +185,4 @@ pub fn create_agg(
             )?)
         }
     })
-}
-
-fn save_scalar(scalar: &ScalarValue, builder: &mut Box<dyn ArrayBuilder>) -> Result<()> {
-    macro_rules! handle {
-        ($tyname:ident, $partial_value:expr) => {{
-            let builder = builder
-                .as_any_mut()
-                .downcast_mut::<paste! {[<$tyname Builder>]}>()
-                .unwrap();
-            if let Some(partial_value) = $partial_value {
-                builder.append_value(*partial_value);
-            } else {
-                builder.append_null();
-            }
-        }};
-    }
-    match scalar {
-        ScalarValue::Null => {}
-        ScalarValue::Float32(v) => handle!(Float32, v),
-        ScalarValue::Float64(v) => handle!(Float64, v),
-        ScalarValue::Int8(v) => handle!(Int8, v),
-        ScalarValue::Int16(v) => handle!(Int16, v),
-        ScalarValue::Int32(v) => handle!(Int32, v),
-        ScalarValue::Int64(v) => handle!(Int64, v),
-        ScalarValue::UInt8(v) => handle!(UInt8, v),
-        ScalarValue::UInt16(v) => handle!(UInt16, v),
-        ScalarValue::UInt32(v) => handle!(UInt32, v),
-        ScalarValue::UInt64(v) => handle!(UInt64, v),
-        ScalarValue::Decimal128(v, _, _) => {
-            type Decimal128Builder = ConfiguredDecimal128Builder;
-            handle!(Decimal128, v)
-        }
-        ScalarValue::Utf8(v) => {
-            let builder = builder
-                .as_any_mut()
-                .downcast_mut::<StringBuilder>()
-                .unwrap();
-            if let Some(partial_value) = v {
-                builder.append_value(partial_value);
-            } else {
-                builder.append_null();
-            }
-        }
-        ScalarValue::Date32(v) => handle!(Date32, v),
-        ScalarValue::Date64(v) => handle!(Date64, v),
-        other => {
-            return Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type: {}",
-                other
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn load_scalar(scalar: &mut ScalarValue, value: &ArrayRef, row_idx: usize) -> Result<()> {
-    macro_rules! handle {
-        ($tyname:ident, $partial_value:expr) => {{
-            type TArray = paste! {[<$tyname Array>]};
-            let value = downcast_value!(value, TArray);
-            if value.is_valid(row_idx) {
-                *$partial_value = Some(value.value(row_idx));
-            } else {
-                *$partial_value = None;
-            }
-        }};
-    }
-    match scalar {
-        ScalarValue::Null => {}
-        ScalarValue::Float32(v) => handle!(Float32, v),
-        ScalarValue::Float64(v) => handle!(Float64, v),
-        ScalarValue::Int8(v) => handle!(Int8, v),
-        ScalarValue::Int16(v) => handle!(Int16, v),
-        ScalarValue::Int32(v) => handle!(Int32, v),
-        ScalarValue::Int64(v) => handle!(Int64, v),
-        ScalarValue::UInt8(v) => handle!(UInt8, v),
-        ScalarValue::UInt16(v) => handle!(UInt16, v),
-        ScalarValue::UInt32(v) => handle!(UInt32, v),
-        ScalarValue::UInt64(v) => handle!(UInt64, v),
-        ScalarValue::Decimal128(v, _, _) => {
-            let value = downcast_value!(value, Decimal128Array);
-            if value.is_valid(row_idx) {
-                *v = Some(value.value(row_idx));
-            } else {
-                *v = None;
-            }
-        }
-        ScalarValue::Utf8(v) => {
-            let value = downcast_value!(value, StringArray);
-            if value.is_valid(row_idx) {
-                *v = Some(value.value(row_idx).to_owned());
-            } else {
-                *v = None;
-            }
-        }
-        ScalarValue::Date32(v) => handle!(Date32, v),
-        ScalarValue::Date64(v) => handle!(Date64, v),
-        other => {
-            return Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type: {}",
-                other
-            )));
-        }
-    }
-    Ok(())
 }
