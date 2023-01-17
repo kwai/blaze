@@ -173,8 +173,17 @@ object BlazeConvertStrategy extends Logging {
           dontConvertIf(e, isAggregate(child) && isNeverConvert(child))
         }
 
+        // NativeExpand -> NonNative
+        // don't use NativeExpand because it requires ConvertToUnsafeRow with a lot of records
+        if (isNeverConvert(e)) {
+          e.children.find(_.isInstanceOf[ExpandExec]) match {
+            case Some(expand) => dontConvertIf(expand, !isNeverConvert(expand))
+            case _ =>
+          }
+        }
+
         // NativeParquetScan -> NonNative
-        // don't use NativeParquetScan because it requires ConvertToNative with a lot of records
+        // don't use NativeParquetScan because it requires ConvertToUnsafeRow with a lot of records
         if (isNeverConvert(e)) {
           e.children.find(_.isInstanceOf[FileSourceScanExec]) match {
             case Some(scan) => dontConvertIf(scan, !isNeverConvert(scan))
