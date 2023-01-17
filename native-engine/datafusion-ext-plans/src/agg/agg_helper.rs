@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::{AggAccumRef, AggExpr, GroupingExpr};
+use crate::agg::{AggAccumRef, AggExecMode, AggExpr, GroupingExpr};
 use arrow::array::ArrayRef;
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -26,6 +26,7 @@ use std::sync::Arc;
 pub type AggRecord = (Box<[u8]>, Box<[AggAccumRef]>);
 
 pub struct AggContext {
+    pub exec_mode: AggExecMode,
     pub grouping_schema: SchemaRef,
     pub agg_schema: SchemaRef,
     pub output_schema: SchemaRef,
@@ -42,6 +43,7 @@ impl Debug for AggContext {
 
 impl AggContext {
     pub fn try_new(
+        exec_mode: AggExecMode,
         input_schema: SchemaRef,
         groupings: Vec<GroupingExpr>,
         aggs: Vec<AggExpr>,
@@ -88,6 +90,7 @@ impl AggContext {
         ));
 
         Ok(Self {
+            exec_mode,
             output_schema,
             grouping_schema,
             agg_schema,

@@ -460,12 +460,18 @@ enum JoinSide {
 
 message AggExecNode {
   PhysicalPlanNode input = 1;
-  repeated PhysicalExprNode grouping_expr = 2;
-  repeated PhysicalExprNode agg_expr = 3;
-  repeated AggMode mode = 4;
-  repeated string grouping_expr_name = 5;
-  repeated string agg_expr_name = 6;
-  uint64 initial_input_buffer_offset = 7;
+  AggExecMode exec_mode = 2;
+  repeated PhysicalExprNode grouping_expr = 3;
+  repeated PhysicalExprNode agg_expr = 4;
+  repeated AggMode mode = 5;
+  repeated string grouping_expr_name = 6;
+  repeated string agg_expr_name = 7;
+  uint64 initial_input_buffer_offset = 8;
+}
+
+enum AggExecMode {
+  HASH_AGG = 0;
+  SORT_AGG = 1;
 }
 
 enum AggMode {

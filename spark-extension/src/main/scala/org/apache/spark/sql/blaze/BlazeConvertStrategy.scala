@@ -120,6 +120,8 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: HashAggregateExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: SortAggregateExec if isAlwaysConvert(e.child) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: ExpandExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 

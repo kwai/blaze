@@ -56,7 +56,7 @@ import org.apache.spark.sql.execution.blaze.plan.ConvertToUnsafeRowExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastHashJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
-import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
@@ -76,6 +76,7 @@ import org.apache.spark.sql.execution.joins.CartesianProductExec
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.ExpandExec
+import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
@@ -164,6 +165,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertTakeOrderedAndProjectExec)
       case e: HashAggregateExec if enableAggr => // aggregate
         tryConvert(e, convertHashAggregateExec)
+      case e: SortAggregateExec if enableAggr => // aggregate
+        tryConvert(e, convertSortAggregateExec)
       case e: ExpandExec if enableExpand => // aggregate
         tryConvert(e, convertExpandExec)
 
@@ -451,7 +454,36 @@ object BlazeConverters extends Logging {
   def convertHashAggregateExec(exec: HashAggregateExec): SparkPlan = {
     logDebug(
       s"Converting HashAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
-    val nativeAggr = NativeHashAggregateExec(
+    val nativeAggr = NativeAggExec(
+      NativeAggExec.HashAgg,
+      exec.requiredChildDistributionExpressions,
+      exec.groupingExpressions,
+      exec.aggregateExpressions,
+      exec.aggregateAttributes,
+      exec.initialInputBufferOffset,
+      addRenameColumnsExec(convertToNative(exec.child)))
+
+    val isFinal = exec.requiredChildDistributionExpressions.isDefined &&
+      exec.aggregateExpressions.forall(_.mode == Final)
+    if (isFinal) { // wraps with a projection to handle resutExpressions
+      try {
+        return NativeProjectExec(exec.resultExpressions, nativeAggr)
+      } catch {
+        case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
+          logWarning(
+            s"Error projecting resultExpressions, failback to non-native projection: " +
+              s"${e.getMessage}")
+          return ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
+      }
+    }
+    nativeAggr
+  }
+
+  def convertSortAggregateExec(exec: SortAggregateExec): SparkPlan = {
+    logDebug(
+      s"Converting SortAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+    val nativeAggr = NativeAggExec(
+      NativeAggExec.SortAgg,
       exec.requiredChildDistributionExpressions,
       exec.groupingExpressions,
       exec.aggregateExpressions,

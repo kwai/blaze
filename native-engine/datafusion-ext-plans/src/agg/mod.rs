@@ -33,6 +33,12 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggExecMode {
+    HashAgg,
+    SortAgg,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggMode {
     Partial,
     PartialMerge,

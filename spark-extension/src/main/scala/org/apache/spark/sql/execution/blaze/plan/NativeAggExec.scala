@@ -44,14 +44,15 @@ import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
-import org.apache.spark.sql.execution.blaze.plan.NativeHashAggregateExec._
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec._
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.LongType
 import org.blaze.{protobuf => pb}
 
-case class NativeHashAggregateExec(
+case class NativeAggExec(
+    execMode: AggExecMode,
     requiredChildDistributionExpressions: Option[Seq[Expression]],
     groupingExpressions: Seq[NamedExpression],
     aggregateExpressions: Seq[AggregateExpression],
@@ -80,11 +81,12 @@ case class NativeHashAggregateExec(
 
   private val _ensurePreviousNativeAggrExecExists: Unit = {
     @tailrec
-    def findPreviousNativeAggrExec(exec: SparkPlan = this.child): NativeHashAggregateExec = {
+    def findPreviousNativeAggrExec(exec: SparkPlan = this.child): NativeAggExec = {
       findPreviousNativeAggrExec(exec match {
-        case e: NativeHashAggregateExec => return e
+        case e: NativeAggExec => return e
         case e: ReusedExchangeExec => e.child
         case e: ArrowShuffleExchangeBase => e.child
+        case e: NativeSortExec if execMode == SortAgg => e.child
         case e: UnaryExecNode if e.nodeName.contains("QueryStage") => e.child
         case e: UnaryExecNode if e.nodeName.contains("InputAdapter") => e.child
         case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
@@ -105,32 +107,9 @@ case class NativeHashAggregateExec(
       case (aggr, aggrAttr) => getNativeAggrInfo(aggr, aggrAttr)
     }
 
-  val nativeOutputSchema: pb.Schema = {
-    val schemaBuilder = Util.getNativeSchema(groupingExpressions).toBuilder
-    for (aggrInfo <- nativeAggrInfos) {
-      aggrInfo.mode match {
-        case Partial | PartialMerge =>
-          for ((attr, i) <- aggrInfo.outputPartialAttrs.zipWithIndex) {
-            schemaBuilder.addColumns(
-              pb.Field
-                .newBuilder()
-                .setName(attr.name)
-                .setArrowType(aggrInfo.outputPartialNativeType(i))
-                .setNullable(attr.nullable))
-          }
-        case Final =>
-          val outputAttr = aggrInfo.outputAttr
-          schemaBuilder.addColumns(
-            pb.Field
-              .newBuilder()
-              .setName(Util.getFieldNameByExprId(outputAttr))
-              .setArrowType(NativeConverters.convertDataType(outputAttr.dataType))
-              .setNullable(outputAttr.nullable))
-        case Complete =>
-          throw new NotImplementedError("aggrMode = Complete not yet supported")
-      }
-    }
-    schemaBuilder.build()
+  val nativeExecMode: pb.AggExecMode = execMode match {
+    case HashAgg => pb.AggExecMode.HASH_AGG
+    case SortAgg => pb.AggExecMode.SORT_AGG
   }
 
   val nativeAggrs: Seq[pb.PhysicalExprNode] =
@@ -179,6 +158,7 @@ case class NativeHashAggregateExec(
           .setAgg(
             pb.AggExecNode
               .newBuilder()
+              .setExecMode(nativeExecMode)
               .addAllAggExprName(nativeAggrNames.asJava)
               .addAllGroupingExprName(nativeGroupingNames.asJava)
               .addAllMode(nativeAggrModes.asJava)
@@ -188,7 +168,7 @@ case class NativeHashAggregateExec(
               .setInput(inputPlan))
           .build()
       },
-      friendlyName = s"NativeRDD.HashAggregate")
+      friendlyName = s"NativeRDD.$execMode")
   }
 
   override def doCanonicalize(): SparkPlan =
@@ -204,10 +184,17 @@ case class NativeHashAggregateExec(
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 
-  override val nodeName: String =
-    s"NativeHashAggregate"
+  override val nodeName: String = execMode match {
+    case HashAgg => "NativeHashAggregate"
+    case SortAgg => "NativeSortAggregate"
+  }
 }
-object NativeHashAggregateExec {
+
+object NativeAggExec {
+  trait AggExecMode;
+  case object HashAgg extends AggExecMode
+  case object SortAgg extends AggExecMode
+
   case class NativeAggrPartialState(stateAttr: Attribute, arrowType: pb.ArrowType)
 
   object NativeAggrPartialState {

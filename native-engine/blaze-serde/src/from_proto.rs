@@ -50,9 +50,7 @@ use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_file_formats::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
-use datafusion_ext_plans::agg::{
-    create_agg, AggExpr, AggFunction, AggMode, GroupingExpr,
-};
+use datafusion_ext_plans::agg::{create_agg, AggExpr, AggFunction, AggMode, GroupingExpr, AggExecMode};
 use datafusion_ext_plans::agg_exec::AggExec;
 use datafusion_ext_plans::broadcast_hash_join_exec::BroadcastHashJoinExec;
 use datafusion_ext_plans::debug_exec::DebugExec;
@@ -535,6 +533,15 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(agg.input)?;
                 let input_schema = input.schema();
 
+                let exec_mode = protobuf::AggExecMode::from_i32(agg.exec_mode)
+                    .ok_or_else(|| {
+                        proto_error(format!("invalid AggExecMode {}", agg.exec_mode))
+                    })
+                    .map(|exec_mode| match exec_mode {
+                        protobuf::AggExecMode::HashAgg => AggExecMode::HashAgg,
+                        protobuf::AggExecMode::SortAgg => AggExecMode::SortAgg,
+                    })?;
+
                 let agg_modes = agg
                     .mode
                     .iter()
@@ -615,6 +622,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 Ok(Arc::new(AggExec::try_new(
+                    exec_mode,
                     physical_groupings,
                     physical_aggs,
                     agg.initial_input_buffer_offset as usize,

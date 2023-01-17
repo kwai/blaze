@@ -23,19 +23,19 @@ use std::task::Poll;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
-pub struct ReceiverStream {
+pub struct ReceiverStream<T> {
     schema: SchemaRef,
     input: Receiver<ArrowResult<RecordBatch>>,
     baseline_metrics: BaselineMetrics,
-    _drop_helper: AbortOnDropMany<()>,
+    _drop_helper: AbortOnDropMany<T>,
 }
 
-impl ReceiverStream {
+impl<T> ReceiverStream<T> {
     pub fn new(
         schema: SchemaRef,
         input: Receiver<ArrowResult<RecordBatch>>,
         baseline_metrics: BaselineMetrics,
-        join_handles: Vec<JoinHandle<()>>,
+        join_handles: Vec<JoinHandle<T>>,
     ) -> Self {
         Self {
             schema,
@@ -46,7 +46,7 @@ impl ReceiverStream {
     }
 }
 
-impl Stream for ReceiverStream {
+impl<T> Stream for ReceiverStream<T> {
     type Item = ArrowResult<RecordBatch>;
 
     fn poll_next(
@@ -58,7 +58,7 @@ impl Stream for ReceiverStream {
     }
 }
 
-impl RecordBatchStream for ReceiverStream {
+impl<T> RecordBatchStream for ReceiverStream<T> {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

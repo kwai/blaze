@@ -31,6 +31,7 @@ use datafusion_ext_commons::io::{
     read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch,
 };
 use futures::lock::Mutex;
+use futures::TryFutureExt;
 use hashbrown::HashMap;
 use lz4_flex::frame::FrameDecoder;
 use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
@@ -131,7 +132,10 @@ impl AggTables {
                     .agg_ctx
                     .convert_records_to_batch(&mut grouping_row_converter, chunk)?;
                 timer.stop();
-                sender.send(Ok(batch)).await.unwrap();
+
+                sender.send(Ok(batch)).map_err(|err| {
+                    DataFusionError::Execution(format!("{:?}", err))
+                }).await?;
                 timer.restart();
             }
             return Ok(());
@@ -156,7 +160,10 @@ impl AggTables {
                     .agg_ctx
                     .convert_records_to_batch(&mut grouping_row_converter, &records)?;
                 timer.stop();
-                sender.send(Ok(batch)).await.unwrap();
+
+                sender.send(Ok(batch)).map_err(|err| {
+                    DataFusionError::Execution(format!("{:?}", err))
+                }).await?;
                 timer.restart();
             }};
         }
