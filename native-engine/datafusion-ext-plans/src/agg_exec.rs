@@ -402,6 +402,10 @@ async fn execute_agg_sorted(
                             )?;
                             timer.stop();
 
+                            log::info!(
+                                "aggregate exec (sorted) outputing one batch: num_rows={}",
+                                batch.num_rows(),
+                            );
                             sender.send(Ok(batch)).map_err(|err| {
                                 DataFusionError::Execution(format!("{:?}", err))
                             }).await?;
@@ -436,6 +440,10 @@ async fn execute_agg_sorted(
             )?;
             timer.stop();
 
+            log::info!(
+                "aggregate exec (sorted) outputing one batch: num_rows={}",
+                batch.num_rows(),
+            );
             sender.send(Ok(batch)).map_err(|err| {
                 DataFusionError::Execution(format!("{:?}", err))
             }).await?;
