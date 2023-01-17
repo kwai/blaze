@@ -1,13 +1,13 @@
 FROM centos:7
 
 # fast rebuild the image
-RUN echo '483978A0-C70C-4EAD-8854-ED405B0C77EF'
+RUN echo '08556F26-AB9F-4339-BB60-620D4042EEB5'
 
 RUN yum update -y
-RUN yum install -y centos-release-scl
+RUN yum install -y centos-release-scl epel-release
 
 # install common tools
-RUN yum install -y libzip unzip wget
+RUN yum install -y libzip unzip wget cmake3 openssl-devel
 
 # install gcc-11
 RUN yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
@@ -31,3 +31,14 @@ RUN echo 'export PATH="$PATH:/gradle-bin/bin"' >> ~/.bashrc
 RUN wget -O /protobuf-21.7-linux-x86_64.zip https://github.com/protocolbuffers/protobuf/releases/download/v21.7/protoc-21.7-linux-x86_64.zip
 RUN mkdir /protobuf-bin && (cd /protobuf-bin && unzip /protobuf-21.7-linux-x86_64.zip)
 RUN echo 'export PATH="$PATH:/protobuf-bin/bin"' >> ~/.bashrc
+
+# install mold linker
+RUN wget -O /mold-v1.9.0.tar.gz https://github.com/rui314/mold/archive/refs/tags/v1.9.0.tar.gz
+RUN tar -xf /mold-v1.9.0.tar.gz
+RUN cd /mold-1.9.0 && source ~/.bashrc && cmake3 -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=c++ . && make -j8 && make install
+
+# use mold as rust's default linker
+RUN ln -s /usr/local/bin/ld.mold /usr/bin/ld.lld
+RUN echo '[target.x86_64-unknown-linux-gnu]' >> ~/.cargo/config
+RUN echo 'rustflags = ["-C", "link-arg=-fuse-ld=lld"]' >> ~/.cargo/config
+
