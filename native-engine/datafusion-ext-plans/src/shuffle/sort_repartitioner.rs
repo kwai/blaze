@@ -32,10 +32,8 @@ use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::io::write_one_batch;
+use derivative::Derivative;
 use futures::lock::Mutex;
-use std::cmp::Ordering;
-use std::collections::binary_heap::PeekMut;
-use std::collections::BinaryHeap;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
@@ -44,7 +42,8 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 use tokio::task;
-use voracious_radix_sort::{RadixSort, Radixable};
+use voracious_radix_sort::{Radixable, RadixSort};
+use datafusion_ext_commons::loser_tree::LoserTree;
 
 pub struct SortShuffleRepartitioner {
     memory_consumer_id: MemoryConsumerId,
@@ -134,7 +133,7 @@ impl SortShuffleRepartitioner {
                 index: i as u32,
             })
             .collect::<Vec<_>>();
-        RadixSort::voracious_sort(&mut pi_vec);
+        pi_vec.voracious_sort();
 
         // write to in-mem spill
         let mut cur_partition_id = 0;
@@ -327,9 +326,15 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // define spill cursor. partial-ord is reversed because we
         // need to find mininum using a binary heap
+        #[derive(Derivative)]
+        #[derivative(PartialOrd, PartialEq, Ord, Eq)]
         struct SpillCursor {
-            spill: Spill,
             cur: usize,
+
+            #[derivative(PartialOrd = "ignore")]
+            #[derivative(PartialEq = "ignore")]
+            #[derivative(Ord = "ignore")]
+            spill: Spill,
         }
         impl SpillCursor {
             fn skip_empty_partitions(&mut self) {
@@ -356,27 +361,9 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 }
             }
         }
-        impl PartialEq for SpillCursor {
-            fn eq(&self, other: &Self) -> bool {
-                self.cur.eq(&other.cur)
-            }
-        }
-        impl Eq for SpillCursor {}
-        impl PartialOrd for SpillCursor {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.cur
-                    .partial_cmp(&other.cur)
-                    .map(std::cmp::Ordering::reverse)
-            }
-        }
-        impl Ord for SpillCursor {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                self.partial_cmp(other).unwrap()
-            }
-        }
 
-        // use heap to select partitions from spills
-        let mut spills = BinaryHeap::from_iter(
+        // use loser tree to select partitions from spills
+        let mut spills: LoserTree<SpillCursor> = LoserTree::new_by(
             in_mem_spills
                 .into_iter()
                 .map(Spill::InMem)
@@ -386,8 +373,13 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     cursor.skip_empty_partitions();
                     cursor
                 })
-                .filter(|spill| !spill.finished()),
-        );
+                .filter(|spill| !spill.finished())
+                .collect(),
+            |c1: &SpillCursor, c2: &SpillCursor| match (c1, c2) {
+                (c1, _2) if c1.finished() => false,
+                (_1, c2) if c2.finished() => true,
+                (c1, c2) => c1 < c2,
+            });
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
@@ -403,36 +395,40 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             let mut cur_partition_id = 0;
 
             // append partition in each spills
-            while let Some(mut min_spill) = spills.peek_mut() {
-                while cur_partition_id < min_spill.cur {
-                    offsets.push(output_data.stream_position()?);
-                    cur_partition_id += 1;
-                }
-                let (spill_offset_start, spill_offset_end) = (
-                    min_spill.spill.offsets()[cur_partition_id],
-                    min_spill.spill.offsets()[cur_partition_id + 1],
-                );
-                let spill_range = spill_offset_start as usize..spill_offset_end as usize;
-
-                match &mut min_spill.spill {
-                    Spill::InMem(s) => {
-                        output_data.write_all(&s.frozen[spill_range])?;
+            if spills.len() > 0 {
+                loop {
+                    let mut min_spill = spills.peek_mut();
+                    if min_spill.finished() {
+                        break;
                     }
-                    Spill::File(s) => {
-                        let mut file = s.file.as_file().try_clone()?;
-                        file.seek(SeekFrom::Start(spill_offset_start))?;
-                        std::io::copy(
-                            &mut file.take(spill_range.len() as u64),
-                            &mut output_data,
-                        )?;
-                    }
-                }
 
-                // forward partition id in min_spill
-                min_spill.cur += 1;
-                min_spill.skip_empty_partitions();
-                if min_spill.finished() {
-                    PeekMut::pop(min_spill);
+                    while cur_partition_id < min_spill.cur {
+                        offsets.push(output_data.stream_position()?);
+                        cur_partition_id += 1;
+                    }
+                    let (spill_offset_start, spill_offset_end) = (
+                        min_spill.spill.offsets()[cur_partition_id],
+                        min_spill.spill.offsets()[cur_partition_id + 1],
+                    );
+                    let spill_range = spill_offset_start as usize..spill_offset_end as usize;
+
+                    match &mut min_spill.spill {
+                        Spill::InMem(s) => {
+                            output_data.write_all(&s.frozen[spill_range])?;
+                        }
+                        Spill::File(s) => {
+                            let mut file = s.file.as_file().try_clone()?;
+                            file.seek(SeekFrom::Start(spill_offset_start))?;
+                            std::io::copy(
+                                &mut file.take(spill_range.len() as u64),
+                                &mut output_data,
+                            )?;
+                        }
+                    }
+
+                    // forward partition id in min_spill
+                    min_spill.cur += 1;
+                    min_spill.skip_empty_partitions();
                 }
             }
             output_data.flush()?;
@@ -464,25 +460,17 @@ impl Drop for SortShuffleRepartitioner {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Derivative)]
+#[derivative(Clone, Copy, Default, PartialOrd, PartialEq, Ord, Eq)]
 struct PI {
     partition_id: u32,
     hash: u32,
+
+    #[derivative(PartialOrd = "ignore")]
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Ord = "ignore")]
     index: u32,
 }
-
-impl PartialOrd for PI {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.key().partial_cmp(&other.key())
-    }
-}
-
-impl PartialEq for PI {
-    fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
-    }
-}
-
 impl Radixable<u64> for PI {
     type Key = u64;
 

@@ -38,6 +38,7 @@ use std::mem::size_of;
 use std::sync::Arc;
 use arrow::datatypes::{Field, Schema};
 use tokio::sync::mpsc::Sender;
+use datafusion_ext_commons::loser_tree::LoserTree;
 
 pub struct AggTables {
     in_mem: Mutex<InMemTable>,
@@ -125,6 +126,7 @@ impl AggTables {
             for chunk in in_mem
                 .grouping_mappings
                 .into_iter()
+                .map(|(_1, _2)| AggRecord::new(_1, _2))
                 .collect::<Vec<_>>()
                 .chunks_mut(batch_size)
             {
@@ -172,35 +174,19 @@ impl AggTables {
         }
 
         // create a tournament loser tree to do the merging
-        macro_rules! cursor_lt {
-            ($cursor1:expr, $cursor2:expr) => {{
-                match ($cursor1.peek(), $cursor2.peek()) {
-                    (None, _) => false,
-                    (_, None) => true,
-                    (Some(c1), Some(c2)) => c1.0 < c2.0,
-                }
-            }};
-        }
-        let mut loser_tree = vec![usize::MAX; cursors.len()];
-        for i in 0..cursors.len() {
-            let mut winner = i;
-            let mut cmp_node = (cursors.len() + i) / 2;
-            while cmp_node != 0 && loser_tree[cmp_node] != usize::MAX {
-                let challenger = loser_tree[cmp_node];
-                if cursor_lt!(&cursors[challenger], &cursors[winner]) {
-                    loser_tree[cmp_node] = winner;
-                    winner = challenger;
-                } else {
-                    loser_tree[cmp_node] = challenger;
-                }
-                cmp_node /= 2;
-            }
-            loser_tree[cmp_node] = winner;
-        }
+        // the mem-table and at least one spill should be in the tree
+        let mut cursors: LoserTree<TableCursor> = LoserTree::new_by(
+            cursors,
+            |c1: &TableCursor, c2: &TableCursor| match (c1.peek(), c2.peek()) {
+                (None, _) => false,
+                (_, None) => true,
+                (Some(c1), Some(c2)) => c1 < c2,
+            });
+        assert!(cursors.len() > 0);
 
         loop {
             // extract min cursor with the loser tree
-            let min_cursor = &mut cursors[loser_tree[0]];
+            let mut min_cursor = cursors.peek_mut();
             if min_cursor.peek().is_none() {
                 // all cursors are finished
                 break;
@@ -211,13 +197,13 @@ impl AggTables {
             match current_record.as_mut() {
                 None => current_record = Some(min_record),
                 Some(current_record) => {
-                    if min_record.0 == current_record.0 {
+                    if &min_record == current_record {
                         // update entry
                         let mut acc_offset = 0;
                         for agg in &self.agg_ctx.aggs {
                             agg.agg.partial_merge_scalar(
-                                &mut current_record.1[acc_offset..],
-                                &mut min_record.1[acc_offset..],
+                                &mut current_record.accums[acc_offset..],
+                                &mut min_record.accums[acc_offset..],
                             )?;
                             acc_offset += agg.agg.accums_initial().len();
                         }
@@ -230,19 +216,6 @@ impl AggTables {
                     }
                 }
             }
-
-            // adjust loser tree
-            let mut winner = loser_tree[0];
-            let mut cmp_node = (cursors.len() + winner) / 2;
-            while cmp_node != 0 {
-                let challenger = loser_tree[cmp_node];
-                if cursor_lt!(&cursors[challenger], &cursors[winner]) {
-                    loser_tree[cmp_node] = winner;
-                    winner = challenger;
-                }
-                cmp_node /= 2;
-            }
-            loser_tree[0] = winner;
         }
         if let Some(record) = current_record {
             staging_records.push(record);
@@ -400,8 +373,10 @@ impl InMemTable {
         } else {
             self.data_mem_used += agg_ctx.initial_accums_mem_size;
             self.data_mem_used += grouping_row_mem_size;
-            self.unsorted.push((grouping_row, agg_ctx.create_initial_accums()));
-            &mut self.unsorted.last_mut().unwrap().1
+            self.unsorted.push(
+                AggRecord::new(grouping_row, agg_ctx.create_initial_accums())
+            );
+            &mut self.unsorted.last_mut().unwrap().accums
         };
 
         // update entry
@@ -417,11 +392,18 @@ impl InMemTable {
 
     fn into_sorted_vec(self) -> Vec<AggRecord> {
         let mut vec = if self.is_hash {
-            self.grouping_mappings.into_iter().collect::<Vec<_>>()
+            self.grouping_mappings
+                .into_iter()
+                .map(|(_1, _2)| AggRecord::new(_1, _2))
+                .collect::<Vec<_>>()
         } else {
             self.unsorted
         };
-        vec.sort_by(|(g1, _), (g2, _)| g1.cmp(g2));
+
+        // TODO:
+        //  sorting a large amount of byte slices is inefficient. we should
+        //  consider using some radix technology to improve this operation.
+        vec.sort();
         vec
     }
 
@@ -444,7 +426,7 @@ impl InMemTable {
                 values.reserve(num_rows);
                 for row_idx in 0..num_rows {
                     let value = std::mem::replace(
-                        &mut chunk[row_idx].1[i],
+                        &mut chunk[row_idx].accums[i],
                         ScalarValue::Null,
                     );
                     values.push(value);
@@ -466,9 +448,9 @@ impl InMemTable {
             writer.write_all(&accum_writer.into_inner())?;
 
             // write grouping rows
-            for (grouping_row, _) in chunk {
-                write_len(grouping_row.as_ref().len(), &mut writer)?;
-                writer.write_all(grouping_row.as_ref())?;
+            for record in chunk {
+                write_len(record.grouping.as_ref().len(), &mut writer)?;
+                writer.write_all(record.grouping.as_ref())?;
             }
         }
 
@@ -558,7 +540,7 @@ impl SpilledTableIterator {
             .iter()
             .map(|column| ScalarValue::try_from_array(column, self.cur_accum_idx))
             .collect::<Result<_>>()?;
-        self.cur_record = Some((grouping_row, accums));
+        self.cur_record = Some(AggRecord::new(grouping_row, accums));
         self.cur_accum_idx += 1;
         Ok(current)
     }

@@ -19,11 +19,26 @@ use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_expr::PhysicalExpr;
+use derivative::Derivative;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use smallvec::SmallVec;
 
-pub type AggRecord = (Box<[u8]>, Box<[ScalarValue]>);
+#[derive(Derivative)]
+#[derivative(PartialOrd, PartialEq, Ord, Eq)]
+pub struct AggRecord {
+    pub grouping: Box<[u8]>,
+
+    #[derivative(PartialOrd = "ignore")]
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Ord = "ignore")]
+    pub accums: Box<[ScalarValue]>,
+}
+impl AggRecord {
+    pub fn new(grouping: Box<[u8]>, accums: Box<[ScalarValue]>) -> Self {
+        Self {grouping, accums}
+    }
+}
 
 pub struct AggContext {
     pub exec_mode: AggExecMode,
@@ -213,7 +228,7 @@ impl AggContext {
                     values.reserve(num_records);
                     for record in records.iter_mut() {
                         let value = std::mem::replace(
-                            &mut record.1[self.accums_offsets[idx] + i],
+                            &mut record.accums[self.accums_offsets[idx] + i],
                             ScalarValue::Null,
                         );
                         values.push(value);
@@ -225,7 +240,7 @@ impl AggContext {
                 values.reserve(num_records);
                 for record in records.iter_mut() {
                     let value = agg.agg
-                        .final_merge(&mut record.1[self.accums_offsets[idx]..])?;
+                        .final_merge(&mut record.accums[self.accums_offsets[idx]..])?;
                     values.push(value);
                 }
                 let values = std::mem::take(&mut values);
@@ -245,7 +260,7 @@ impl AggContext {
         let grouping_columns = grouping_row_converter.convert_rows(
             records
                 .iter()
-                .map(|(row, _)| grouping_row_parser.parse(row)),
+                .map(|r| grouping_row_parser.parse(&r.grouping)),
         )?;
         let agg_columns = self.build_agg_columns(records)?;
 

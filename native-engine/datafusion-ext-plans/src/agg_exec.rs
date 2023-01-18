@@ -289,7 +289,7 @@ async fn execute_agg_no_grouping(
     // in no-grouping mode, we always output only one record, so it is not
     // necessary to record elapsed computed time.
     start_output(agg_ctx.clone(), baseline_metrics, |sender| async move {
-        let record: AggRecord = (Box::default(), accums);
+        let record: AggRecord = AggRecord::new(Box::default(), accums);
         let batch_result = agg_ctx
             .build_agg_columns(&mut [record])
             .map_err(|e| ArrowError::ExternalError(Box::new(e)))
@@ -363,8 +363,8 @@ async fn execute_agg_sorted(
             for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
 
                 // if group key differs, renew one and move the old record to staging
-                if Some(&grouping_row) != current_record.as_ref().map(|r| &r.0) {
-                    let finished_record = current_record.replace((
+                if Some(&grouping_row) != current_record.as_ref().map(|r| &r.grouping) {
+                    let finished_record = current_record.replace(AggRecord::new(
                         grouping_row,
                         agg_ctx.create_initial_accums(),
                     ));
@@ -391,7 +391,7 @@ async fn execute_agg_sorted(
 
                 // update to accums
                 agg_ctx.partial_update_or_merge_one_row(
-                    &mut current_record.as_mut().unwrap().1,
+                    &mut current_record.as_mut().unwrap().accums,
                     &agg_input_arrays,
                     row_idx,
                 )?;

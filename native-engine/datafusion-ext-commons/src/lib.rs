@@ -16,5 +16,6 @@
 pub mod array_builder;
 pub mod cast;
 pub mod io;
+pub mod loser_tree;
 pub mod spark_hash;
 pub mod streams;

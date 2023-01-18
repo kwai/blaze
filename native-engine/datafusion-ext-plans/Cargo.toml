@@ -14,6 +14,7 @@ blaze-commons = { path = "../blaze-commons" }
 datafusion = "15.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "../datafusion-ext-exprs" }
+derivative = "2.2.0"
 futures = "0.3"
 hashbrown = "0.13.1"
 itertools = "0.10.3"
