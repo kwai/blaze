@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_helper::{AggContext, AggRecord};
+use crate::agg::agg_helper::{AggContext, AggRecord, radix_sort_records};
 use arrow::array::{Array, ArrayRef};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -264,12 +264,14 @@ impl MemoryConsumer for AggTables {
         let in_mem_used = in_mem.mem_used();
         freed += in_mem_used as isize;
 
+        let spill_num_rows = in_mem.num_records();
         let spill = in_mem.try_into_mem_spilled(&self.agg_ctx)?;
         let spill_mem_used = spill.mem_size;
         freed -= spill_mem_used as isize;
         spilled.push(spill);
         log::info!(
-            "aggregate table spilled into memory ({:.2} MB into {:.2} MB), freed={:.2} MB",
+            "aggregate table (num_rows={}) spilled into memory ({:.2} MB into {:.2} MB), freed={:.2} MB",
+            spill_num_rows,
             in_mem_used as f64 / 1e6,
             spill_mem_used as f64 / 1e6,
             freed as f64 / 1e6
@@ -361,36 +363,42 @@ impl InMemTable {
         let grouping_row_mem_size = grouping_row.len();
 
         // get entry from hash/unsorted table
-        let entry = if self.is_hash {
-            self.grouping_mappings
+        if self.is_hash {
+            let mut is_new = false;
+            let entry = self.grouping_mappings
                 .entry(grouping_row)
                 .or_insert_with(|| {
-                    self.data_mem_used += agg_ctx.initial_accums_mem_size;
+                    is_new = true;
                     self.data_mem_used += grouping_row_mem_size;
                     agg_ctx.create_initial_accums()
 
-                })
+                });
+            if !is_new {
+                let accums_old_mem_size = agg_ctx.get_accums_mem_size(entry);
+                self.data_mem_used -= accums_old_mem_size;
+            }
+            agg_ctx.partial_update_or_merge_one_row(entry, &agg_input_arrays, row_idx)?;
+
+            let accums_new_mem_size = agg_ctx.get_accums_mem_size(entry);
+            self.data_mem_used += accums_new_mem_size;
+
         } else {
-            self.data_mem_used += agg_ctx.initial_accums_mem_size;
-            self.data_mem_used += grouping_row_mem_size;
             self.unsorted.push(
                 AggRecord::new(grouping_row, agg_ctx.create_initial_accums())
             );
-            &mut self.unsorted.last_mut().unwrap().accums
+            let entry = &mut self.unsorted.last_mut().unwrap().accums;
+            agg_ctx.partial_update_or_merge_one_row(entry, &agg_input_arrays, row_idx)?;
+
+            let accums_new_mem_size = agg_ctx.get_accums_mem_size(entry);
+            self.data_mem_used += grouping_row_mem_size;
+            self.data_mem_used += accums_new_mem_size;
         };
-
-        // update entry
-        let accums_old_mem_size = agg_ctx.get_accums_mem_size(entry);
-        self.data_mem_used -= accums_old_mem_size;
-
-        agg_ctx.partial_update_or_merge_one_row(entry, &agg_input_arrays, row_idx)?;
-
-        let accums_new_mem_size = agg_ctx.get_accums_mem_size(entry);
-        self.data_mem_used += accums_new_mem_size;
         Ok(())
     }
 
     fn into_sorted_vec(self) -> Vec<AggRecord> {
+        const USE_RADIX_SORT: bool = true;
+
         let mut vec = if self.is_hash {
             self.grouping_mappings
                 .into_iter()
@@ -400,16 +408,19 @@ impl InMemTable {
             self.unsorted
         };
 
-        // TODO:
-        //  sorting a large amount of byte slices is inefficient. we should
-        //  consider using some radix technology to improve this operation.
-        vec.sort();
+        if USE_RADIX_SORT {
+            radix_sort_records(&mut vec);
+        } else {
+            vec.sort_unstable();
+        }
         vec
     }
 
     fn try_into_mem_spilled(self, agg_ctx: &Arc<AggContext>) -> Result<SpilledTable> {
         let spilled_buf = vec![];
-        let zwriter = lz4_flex::frame::FrameEncoder::new(spilled_buf);
+        let zwriter = lz4_flex::frame::FrameEncoder::new(
+            BufWriter::with_capacity(65536, spilled_buf)
+        );
         let mut writer = BufWriter::with_capacity(65536, zwriter);
 
         let mut grouping_records = self.into_sorted_vec();
@@ -454,12 +465,12 @@ impl InMemTable {
             }
         }
 
-        let zwriter = writer
-            .into_inner()
-            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
+        let zwriter = writer.into_inner().map_err(|err| err.into_error())?;
         let mut spilled_buf = zwriter
             .finish()
-            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
+            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
+            .into_inner()
+            .map_err(|err| err.into_error())?;
         spilled_buf.shrink_to_fit();
         let mem_size = spilled_buf.len();
 
@@ -491,7 +502,9 @@ impl SpilledTable {
         let mut iter = SpilledTableIterator {
             input: BufReader::with_capacity(
                 65536,
-                FrameDecoder::new(self.spilled_reader),
+                FrameDecoder::new(
+                    Box::new(BufReader::with_capacity(65536, self.spilled_reader))
+                ),
             ),
             cur_accum_batch: None,
             cur_accum_idx: 0,

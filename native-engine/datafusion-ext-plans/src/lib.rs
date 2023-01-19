@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #![feature(new_uninit)]
+#![feature(slice_swap_unchecked)]
 
 pub mod agg;
 pub mod agg_exec;

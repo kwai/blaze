@@ -307,6 +307,82 @@ impl AggContext {
     }
 }
 
+// faster sorting records with radix+counting sort
+pub fn radix_sort_records(records: &mut Vec<AggRecord>) {
+    const LEVEL_LIMIT: usize = 16;
+    const USE_STD_SORT_LIMIT: usize = 32;
+
+    if records.len() < USE_STD_SORT_LIMIT {
+        records.sort();
+        return;
+    }
+
+    // safety:
+    // this function is performance-critical and uses a lot of unchecked
+    // functions.
+    unsafe {
+        let level = 0;
+        let l = 0;
+        let r = records.len();
+        let mut partitions = vec![(level, l, r)];
+
+        while let Some((level, l, r)) = partitions.pop() {
+            let mut bucket_ls = [0; 257];
+            let mut bucket_rs = [0; 257];
+
+            macro_rules! bucket_idx {
+                ($record:expr) => {{
+                    $record.grouping.get(level).map(|&b| b as usize + 1).unwrap_or(0)
+                }}
+            }
+
+            // step 1: count
+            for record in records.get_unchecked(l..r) {
+                *bucket_rs.get_unchecked_mut(bucket_idx!(record)) += 1;
+            }
+
+            // step 2: accumulate
+            bucket_ls[0] += l;
+            bucket_rs[0] += l;
+            for i in 1..257 {
+                bucket_ls[i] = bucket_rs[i - 1];
+                bucket_rs[i] = bucket_rs[i - 1] + bucket_rs[i];
+            }
+
+            // step 3: reorder records
+            for i in 0..257 {
+                while bucket_ls[i] < bucket_rs[i] {
+                    let record = records.get_unchecked(bucket_ls[i]);
+                    let j = bucket_idx!(record);
+                    records.swap_unchecked(
+                        *bucket_ls.get_unchecked(i),
+                        *bucket_ls.get_unchecked(j),
+                    );
+                    *bucket_ls.get_unchecked_mut(j) += 1;
+                }
+
+                // add current buckets into partitions
+                // bucket 0 is excluded because all records inside are the same
+                if i > 0 {
+                    let l = bucket_rs[i - 1];
+                    let r = bucket_rs[i];
+
+                    if level < LEVEL_LIMIT && l + USE_STD_SORT_LIMIT < r {
+                        partitions.push((level + 1, l, r));
+
+                    } else if (l..r).len() > 1 {
+                        records[l..r].sort_by(|record1, record2| {
+                            let slice1 = &record1.grouping.get_unchecked(level + 1..);
+                            let slice2 = &record2.grouping.get_unchecked(level + 1..);
+                            slice1.cmp(slice2)
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn partial_output_field_name(agg_field_name: &str, accum_filed_name: &str) -> String {
     format!("{}[{}]", agg_field_name, accum_filed_name)
 }
