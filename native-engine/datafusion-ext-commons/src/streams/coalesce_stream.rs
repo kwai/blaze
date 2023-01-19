@@ -74,7 +74,12 @@ impl Stream for CoalesceStream {
             match ready!(self.input.poll_next_unpin(cx)).transpose()? {
                 Some(batch) => {
                     let _timer = elapsed_time.timer();
-                    if batch.num_rows() > 0 {
+                    let num_rows = batch.num_rows();
+                    if num_rows > 0 {
+                        if self.staging_rows == 0 && num_rows > self.batch_size / 2 {
+                            // the batch is large enough, directly output it
+                            return Poll::Ready(Some(Ok(batch)));
+                        }
                         self.staging_rows += batch.num_rows();
                         self.staging_batches.push(batch);
                         if self.staging_rows >= self.batch_size {
