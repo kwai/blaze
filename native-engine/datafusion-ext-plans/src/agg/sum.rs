@@ -22,14 +22,17 @@ use datafusion::physical_expr::PhysicalExpr;
 use paste::paste;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
+use std::ops::Add;
 use std::sync::Arc;
+use crate::agg::agg_buf::AggBuf;
 
 pub struct AggSum {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     accum_fields: Vec<Field>,
     accums_initial: Vec<ScalarValue>,
-    partial_updater: fn(&mut ScalarValue, &ArrayRef, usize),
+    partial_updater: fn(&mut AggBuf, u64, &ArrayRef, usize),
+    partial_buf_merger: fn(&mut AggBuf, &mut AggBuf, u64),
 }
 
 impl AggSum {
@@ -37,12 +40,14 @@ impl AggSum {
         let accum_fields = vec![Field::new("sum", data_type.clone(), true)];
         let accums_initial = vec![ScalarValue::try_from(&data_type)?];
         let partial_updater = get_partial_updater(&data_type)?;
+        let partial_buf_merger = get_partial_buf_merger(&data_type)?;
         Ok(Self {
             child,
             data_type,
             accum_fields,
             accums_initial,
             partial_updater,
+            partial_buf_merger,
         })
     }
 }
@@ -87,23 +92,22 @@ impl Agg for AggSum {
         .into_array(0)])
     }
 
-    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
         let partial_updater = self.partial_updater;
-        partial_updater(&mut accums[0], &values[0], row_idx);
+        let addr = agg_buf_addrs[0];
+        partial_updater(agg_buf, addr, &values[0], row_idx);
         Ok(())
     }
 
-    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
+        let addr = agg_buf_addrs[0];
+
         macro_rules! handle {
             ($ty:ident) => {{
                 type TArray = paste! {[<$ty Array>]};
                 let value = values[0].as_any().downcast_ref::<TArray>().unwrap();
                 if let Some(sum) = arrow::compute::sum(value) {
-                    match &mut accums[0] {
-                        ScalarValue::$ty(w @ None, ..) => *w = Some(sum),
-                        ScalarValue::$ty(Some(w), ..) => *w += sum,
-                        _ => unreachable!()
-                    }
+                    partial_update_prim(agg_buf, addr, sum);
                 }
             }}
         }
@@ -122,7 +126,7 @@ impl Agg for AggSum {
             DataType::Decimal128(..) => handle!(Decimal128),
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in max(): {}",
+                    "unsupported data type in sum(): {}",
                     other
                 )));
             }
@@ -130,57 +134,94 @@ impl Agg for AggSum {
         Ok(())
     }
 
-    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        self.partial_update(accums, values, row_idx)
-    }
-
-    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
-        accums[0] = accums[0].add(std::mem::replace(&mut values[0], ScalarValue::Null))?;
+    fn partial_merge(&self, agg_buf1: &mut AggBuf, agg_buf2: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
+        let partial_buf_merger = self.partial_buf_merger;
+        let addr = agg_buf_addrs[0];
+        partial_buf_merger(agg_buf1, agg_buf2, addr);
         Ok(())
     }
+}
 
-    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
-        self.partial_update_all(accums, values)
+fn partial_update_prim<T: Copy + Add<Output = T>>(
+    agg_buf: &mut AggBuf,
+    addr: u64,
+    v: T,
+) {
+    if agg_buf.is_fixed_valid(addr) {
+        let w = agg_buf.fixed_value_mut::<T>(addr);
+        *w = v + *w;
+    } else {
+        agg_buf.set_fixed_valid(addr, true);
+        let w = agg_buf.fixed_value_mut::<T>(addr);
+        *w = v;
     }
 }
 
 fn get_partial_updater(
     dt: &DataType
-) -> Result<fn(&mut ScalarValue, &ArrayRef, usize)> {
+) -> Result<fn(&mut AggBuf, u64, &ArrayRef, usize)> {
 
-    macro_rules! get_fn {
+    macro_rules! fn_fixed {
         ($ty:ident) => {{
-            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
+            Ok(|agg_buf, addr, v, i| {
                 type TArray = paste! {[<$ty Array>]};
                 let value = v.as_any().downcast_ref::<TArray>().unwrap();
                 if value.is_valid(i) {
-                    let v = value.value(i);
-                    match acc {
-                        ScalarValue::$ty(w @ None, ..) => {
-                            *w = Some(v);
-                        }
-                        ScalarValue::$ty(Some(w), ..) => {
-                            *w += v;
-                        }
-                        _ => unreachable!(),
-                    }
+                    partial_update_prim(agg_buf, addr, value.value(i));
                 }
             })
         }};
     }
     match dt {
+        DataType::Null => Ok(|_, _, _, _| ()),
+        DataType::Float32 => fn_fixed!(Float32),
+        DataType::Float64 => fn_fixed!(Float64),
+        DataType::Int8 => fn_fixed!(Int8),
+        DataType::Int16 => fn_fixed!(Int16),
+        DataType::Int32 => fn_fixed!(Int32),
+        DataType::Int64 => fn_fixed!(Int64),
+        DataType::UInt8 => fn_fixed!(UInt8),
+        DataType::UInt16 => fn_fixed!(UInt16),
+        DataType::UInt32 => fn_fixed!(UInt32),
+        DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
+        other => {
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type in sum(): {}",
+                other
+            )));
+        }
+    }
+}
+fn get_partial_buf_merger(
+    dt: &DataType
+) -> Result<fn(&mut AggBuf, &mut AggBuf, u64)> {
+
+    macro_rules! fn_fixed {
+        ($ty:ident) => {{
+            Ok(|agg_buf1, agg_buf2, addr| {
+                type TType = paste! {[<$ty Type>]};
+                type TNative = <TType as ArrowPrimitiveType>::Native;
+                if agg_buf2.is_fixed_valid(addr) {
+                    let v = agg_buf2.fixed_value::<TNative>(addr);
+                    partial_update_prim(agg_buf1, addr, *v);
+                }
+            })
+        }}
+    }
+    match dt {
         DataType::Null => Ok(|_, _, _| ()),
-        DataType::Float32 => get_fn!(Float32),
-        DataType::Float64 => get_fn!(Float64),
-        DataType::Int8 => get_fn!(Int8),
-        DataType::Int16 => get_fn!(Int16),
-        DataType::Int32 => get_fn!(Int32),
-        DataType::Int64 => get_fn!(Int64),
-        DataType::UInt8 => get_fn!(UInt8),
-        DataType::UInt16 => get_fn!(UInt16),
-        DataType::UInt32 => get_fn!(UInt32),
-        DataType::UInt64 => get_fn!(UInt64),
-        DataType::Decimal128(..) => get_fn!(Decimal128),
+        DataType::Float32 => fn_fixed!(Float32),
+        DataType::Float64 => fn_fixed!(Float64),
+        DataType::Int8 => fn_fixed!(Int8),
+        DataType::Int16 => fn_fixed!(Int16),
+        DataType::Int32 => fn_fixed!(Int32),
+        DataType::Int64 => fn_fixed!(Int64),
+        DataType::UInt8 => fn_fixed!(UInt8),
+        DataType::UInt16 => fn_fixed!(UInt16),
+        DataType::UInt32 => fn_fixed!(UInt32),
+        DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
         other => {
             return Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in sum(): {}",

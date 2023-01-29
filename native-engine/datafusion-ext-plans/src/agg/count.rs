@@ -15,12 +15,12 @@
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
-use datafusion::common::{downcast_value, Result, ScalarValue};
-use datafusion::error::DataFusionError;
+use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_expr::PhysicalExpr;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use crate::agg::agg_buf::AggBuf;
 
 pub struct AggCount {
     child: Arc<dyn PhysicalExpr>,
@@ -75,52 +75,27 @@ impl Agg for AggCount {
         &self.accums_initial
     }
 
-    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        match &mut accums[0] {
-            ScalarValue::Int64(Some(count)) => {
-                *count += values[0].is_valid(row_idx) as i64
-            },
-            _ => unreachable!()
-        }
+    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        let addr = agg_buf_addrs[0];
+        *agg_buf.fixed_value_mut::<i64>(addr) += values[0].is_valid(row_idx) as i64;
         Ok(())
     }
 
-    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
-        match &mut accums[0] {
-            ScalarValue::Int64(Some(count)) => {
-                *count += (values[0].len() - values[0].null_count()) as i64;
-            },
-            _ => unreachable!()
-        }
+    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
+        let addr = agg_buf_addrs[0];
+        *agg_buf.fixed_value_mut::<i64>(addr) +=
+            (values[0].len() - values[0].null_count()) as i64;
         Ok(())
     }
 
-    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        let value = downcast_value!(values[0], Int64Array);
-        match &mut accums[0] {
-            ScalarValue::Int64(Some(count)) => *count += value.value(row_idx),
-            _ => unreachable!()
-        }
+    fn partial_merge(&self, agg_buf1: &mut AggBuf, agg_buf2: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
+        let addr = agg_buf_addrs[0];
+        *agg_buf1.fixed_value_mut::<i64>(addr) += agg_buf2.fixed_value::<i64>(addr);
         Ok(())
     }
 
-    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
-        match (&mut accums[0], &values[0]) {
-            (ScalarValue::Int64(Some(w)), ScalarValue::Int64(Some(v))) => {
-                *w += v;
-            }
-            _ => unreachable!()
-        }
-        Ok(())
-    }
-
-    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
-        let value = values[0].as_any().downcast_ref::<Int64Array>().unwrap();
-        let sum = arrow::compute::sum(value);
-        match &mut accums[0] {
-            ScalarValue::Int64(Some(count)) => *count += sum.unwrap_or(0),
-            _ => unreachable!()
-        }
-        Ok(())
+    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
+        let addr = agg_buf_addrs[0];
+        Ok(ScalarValue::from(*agg_buf.fixed_value::<i64>(addr)))
     }
 }

@@ -12,23 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod agg_helper;
+pub mod agg_context;
 pub mod agg_tables;
 pub mod avg;
 pub mod count;
 pub mod max;
 pub mod min;
 pub mod sum;
+mod agg_buf;
 
 use arrow::array::*;
 use arrow::datatypes::*;
-use datafusion::common::{Result, ScalarValue};
+use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion::logical_expr::aggregate_function;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion_ext_exprs::cast::TryCastExpr;
+use derivative::Derivative;
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
+use crate::agg::agg_buf::{AggBuf, AggDynStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggExecMode {
@@ -93,40 +96,102 @@ pub trait Agg: Send + Sync + Debug {
 
     fn partial_update(
         &self,
-        accums: &mut [ScalarValue],
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()>;
 
     fn partial_update_all(
         &self,
-        accums: &mut [ScalarValue],
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
         values: &[ArrayRef],
     ) -> Result<()>;
 
     fn partial_merge(
         &self,
-        accums: &mut [ScalarValue],
-        values: &[ArrayRef],
-        row_idx: usize,
+        agg_buf: &mut AggBuf,
+        merging_agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
     ) -> Result<()>;
 
-    fn partial_merge_scalar(
+    fn final_merge(
         &self,
-        accums: &mut [ScalarValue],
-        values: &mut [ScalarValue],
-    ) -> Result<()>;
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+    ) -> Result<ScalarValue> {
 
-    fn partial_merge_all(
-        &self,
-        accums: &mut [ScalarValue],
-        values: &[ArrayRef],
-    ) -> Result<()>;
+        // default implementation:
+        // extract the only one values from agg_buf and convert to ScalarValue
+        // this works for sum/min/max
+        let addr = agg_buf_addrs[0];
 
-    fn final_merge(&self, accums: &mut [ScalarValue]) -> Result<ScalarValue> {
-        // default implementation: use accums[0] as final value
-        // works for sum/max/min/count etc
-        Ok(std::mem::replace(&mut accums[0], ScalarValue::Null))
+        macro_rules! handle_fixed {
+            ($ty:ident) => {{
+                if agg_buf.is_fixed_valid(addr) {
+                    ScalarValue::$ty(Some(*agg_buf.fixed_value(addr)))
+                } else {
+                    ScalarValue::$ty(None)
+                }
+            }}
+        }
+        Ok(match self.data_type() {
+            DataType::Null => ScalarValue::Null,
+            DataType::Boolean => handle_fixed!(Boolean),
+            DataType::Float32 => handle_fixed!(Float32),
+            DataType::Float64 => handle_fixed!(Float64),
+            DataType::Int8 => handle_fixed!(Int8),
+            DataType::Int16 => handle_fixed!(Int16),
+            DataType::Int32 => handle_fixed!(Int32),
+            DataType::Int64 => handle_fixed!(Int64),
+            DataType::UInt8 => handle_fixed!(UInt8),
+            DataType::UInt16 => handle_fixed!(UInt16),
+            DataType::UInt32 => handle_fixed!(UInt32),
+            DataType::UInt64 => handle_fixed!(UInt64),
+            DataType::Decimal128(prec, scale) => {
+                let v = if agg_buf.is_fixed_valid(addr) {
+                    Some(*agg_buf.fixed_value(addr))
+                } else {
+                    None
+                };
+                ScalarValue::Decimal128(v, *prec, *scale)
+            },
+            DataType::Utf8 => {
+                ScalarValue::Utf8(agg_buf
+                    .dyn_value(addr)
+                    .as_any()
+                    .downcast_ref::<AggDynStr>()
+                    .unwrap()
+                    .value
+                    .clone())
+            }
+            DataType::Date32 => handle_fixed!(Date32),
+            DataType::Date64 => handle_fixed!(Date64),
+            other => {
+                return Err(DataFusionError::NotImplemented(format!(
+                    "unsupported data type: {}",
+                    other
+                )));
+            }
+        })
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(PartialOrd, PartialEq, Ord, Eq)]
+pub struct AggRecord {
+    pub grouping: Box<[u8]>,
+
+    #[derivative(PartialOrd = "ignore")]
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Ord = "ignore")]
+    pub agg_buf: AggBuf,
+}
+
+impl AggRecord {
+    pub fn new(grouping: Box<[u8]>, agg_buf: AggBuf) -> Self {
+        Self {grouping, agg_buf}
     }
 }
 

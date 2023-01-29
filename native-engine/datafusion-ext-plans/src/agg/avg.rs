@@ -23,6 +23,7 @@ use paste::paste;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use crate::agg::agg_buf::AggBuf;
 use crate::agg::count::AggCount;
 use crate::agg::sum::AggSum;
 
@@ -102,39 +103,27 @@ impl Agg for AggAvg {
         .into_array(0)])
     }
 
-    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        self.agg_sum.partial_update(accums, values, row_idx)?;
-        self.agg_count.partial_update(&mut accums[1..], values, row_idx)?;
+    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+        self.agg_sum.partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
+        self.agg_count.partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
         Ok(())
     }
 
-    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
-        self.agg_sum.partial_update_all(accums, values)?;
-        self.agg_count.partial_update_all(&mut accums[1..], values)?;
+    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
+        self.agg_sum.partial_update_all(agg_buf, agg_buf_addrs, values)?;
+        self.agg_count.partial_update_all(agg_buf, &agg_buf_addrs[1..], values)?;
         Ok(())
     }
 
-    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        self.agg_sum.partial_merge(accums, values, row_idx)?;
-        self.agg_count.partial_merge(&mut accums[1..], &values[1..], row_idx)?;
+    fn partial_merge(&self, agg_buf1: &mut AggBuf, agg_buf2: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
+        self.agg_sum.partial_merge(agg_buf1, agg_buf2, agg_buf_addrs)?;
+        self.agg_count.partial_merge(agg_buf1, agg_buf2, &agg_buf_addrs[1..])?;
         Ok(())
     }
 
-    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
-        self.agg_sum.partial_merge_scalar(accums, values)?;
-        self.agg_count.partial_merge_scalar(&mut accums[1..], &mut values[1..])?;
-        Ok(())
-    }
-
-    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
-        self.agg_sum.partial_merge_all(accums, values)?;
-        self.agg_count.partial_merge_all(&mut accums[1..], &values[1..])?;
-        Ok(())
-    }
-
-    fn final_merge(&self, accums: &mut [ScalarValue]) -> Result<ScalarValue> {
-        let sum = self.agg_sum.final_merge(accums)?;
-        let count = match self.agg_count.final_merge(&mut accums[1..])? {
+    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
+        let sum = self.agg_sum.final_merge(agg_buf, agg_buf_addrs)?;
+        let count = match self.agg_count.final_merge(agg_buf, &agg_buf_addrs[1..])? {
             ScalarValue::Int64(Some(count)) => count,
             _ => unreachable!(),
         };
@@ -178,7 +167,7 @@ fn get_final_merger(
         DataType::Decimal128(..) => get_fn!(Decimal128),
         other => {
             return Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type in sum(): {}",
+                "unsupported data type in avg(): {}",
                 other
             )));
         }

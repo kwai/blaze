@@ -872,7 +872,7 @@ dependencies = [
  "once_cell",
  "panic-message",
  "paste",
- "smallvec",
+ "smallbox",
  "tempfile",
  "tokio",
  "voracious_radix_sort",
@@ -2082,6 +2082,12 @@ name = "slab"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb703cfe953bccee95685111adeedb76fabe4e97549a58d16f03ea7b9367bb32"
+
+[[package]]
+name = "smallbox"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4679d6eef28b85020158619fc09769de89e90886c5de7157587d87cb72648faa"
 
 [[package]]
 name = "smallvec"

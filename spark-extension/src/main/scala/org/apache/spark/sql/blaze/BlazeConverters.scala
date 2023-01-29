@@ -454,6 +454,7 @@ object BlazeConverters extends Logging {
   def convertHashAggregateExec(exec: HashAggregateExec): SparkPlan = {
     logDebug(
       s"Converting HashAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+
     val nativeAggr = NativeAggExec(
       NativeAggExec.HashAgg,
       exec.requiredChildDistributionExpressions,
@@ -461,7 +462,10 @@ object BlazeConverters extends Logging {
       exec.aggregateExpressions,
       exec.aggregateAttributes,
       exec.initialInputBufferOffset,
-      addRenameColumnsExec(convertToNative(exec.child)))
+      exec.requiredChildDistributionExpressions match {
+        case None => addRenameColumnsExec(convertToNative(exec.child))
+        case _ => convertToNative(exec.child)
+      })
 
     val isFinal = exec.requiredChildDistributionExpressions.isDefined &&
       exec.aggregateExpressions.forall(_.mode == Final)
@@ -489,7 +493,7 @@ object BlazeConverters extends Logging {
       exec.aggregateExpressions,
       exec.aggregateAttributes,
       exec.initialInputBufferOffset,
-      addRenameColumnsExec(convertToNative(exec.child)))
+      convertToNative(exec.child))
 
     val isFinal = exec.requiredChildDistributionExpressions.isDefined &&
       exec.aggregateExpressions.forall(_.mode == Final)

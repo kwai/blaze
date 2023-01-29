@@ -22,13 +22,15 @@ use paste::paste;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use crate::agg::agg_buf::{AggBuf, AggDynStr};
 
 pub struct AggMax {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     accum_fields: Vec<Field>,
     accums_initial: Vec<ScalarValue>,
-    partial_updater: fn(&mut ScalarValue, &ArrayRef, usize),
+    partial_updater: fn(&mut AggBuf, u64, &ArrayRef, usize),
+    partial_buf_merger: fn(&mut AggBuf, &mut AggBuf, u64),
 }
 
 impl AggMax {
@@ -36,12 +38,14 @@ impl AggMax {
         let accum_fields = vec![Field::new("max", data_type.clone(), true)];
         let accums_initial = vec![ScalarValue::try_from(&data_type)?];
         let partial_updater = get_partial_updater(&data_type)?;
+        let partial_buf_merger = get_partial_buf_merger(&data_type)?;
         Ok(Self {
             child,
             data_type,
             accum_fields,
             accums_initial,
             partial_updater,
+            partial_buf_merger,
         })
     }
 }
@@ -77,60 +81,57 @@ impl Agg for AggMax {
         &self.accums_initial
     }
 
-    fn partial_update(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
         let partial_updater = self.partial_updater;
-        partial_updater(&mut accums[0], &values[0], row_idx);
+        let addr = agg_buf_addrs[0];
+        partial_updater(agg_buf, addr, &values[0], row_idx);
         Ok(())
     }
 
-    fn partial_update_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
-        macro_rules! handle {
+    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
+        let addr = agg_buf_addrs[0];
+
+        macro_rules! handle_fixed {
             ($ty:ident, $maxfun:ident) => {{
                 type TArray = paste! {[<$ty Array>]};
                 let value = values[0].as_any().downcast_ref::<TArray>().unwrap();
                 if let Some(max) = arrow::compute::$maxfun(value) {
-                    match &mut accums[0] {
-                        ScalarValue::$ty(w @ None, ..) => *w = Some(max),
-                        ScalarValue::$ty(Some(w), ..) => {
-                            if *w < max {
-                                *w = max;
-                            }
-                        }
-                        _ => unreachable!()
-                    }
+                    partial_update_prim(agg_buf, addr, max);
                 }
             }}
         }
         match values[0].data_type() {
             DataType::Null => {},
-            DataType::Boolean => handle!(Boolean, max_boolean),
-            DataType::Float32 => handle!(Float32, max),
-            DataType::Float64 => handle!(Float64, max),
-            DataType::Int8 => handle!(Int8, max),
-            DataType::Int16 => handle!(Int16, max),
-            DataType::Int32 => handle!(Int32, max),
-            DataType::Int64 => handle!(Int64, max),
-            DataType::UInt8 => handle!(UInt8, max),
-            DataType::UInt16 => handle!(UInt16, max),
-            DataType::UInt32 => handle!(UInt32, max),
-            DataType::UInt64 => handle!(UInt64, max),
-            DataType::Decimal128(_, _) => handle!(Decimal128, max),
+            DataType::Boolean => handle_fixed!(Boolean, max_boolean),
+            DataType::Float32 => handle_fixed!(Float32, max),
+            DataType::Float64 => handle_fixed!(Float64, max),
+            DataType::Int8 => handle_fixed!(Int8, max),
+            DataType::Int16 => handle_fixed!(Int16, max),
+            DataType::Int32 => handle_fixed!(Int32, max),
+            DataType::Int64 => handle_fixed!(Int64, max),
+            DataType::UInt8 => handle_fixed!(UInt8, max),
+            DataType::UInt16 => handle_fixed!(UInt16, max),
+            DataType::UInt32 => handle_fixed!(UInt32, max),
+            DataType::UInt64 => handle_fixed!(UInt64, max),
+            DataType::Decimal128(_, _) => handle_fixed!(Decimal128, max),
             DataType::Utf8 => {
                 let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();
                 if let Some(max) = arrow::compute::max_string(value) {
-                    match &mut accums[0] {
-                        ScalarValue::Utf8(w @ None, ..) => *w = Some(max.to_owned()),
-                        ScalarValue::Utf8(Some(w), ..) => {
+                    let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addr));
+                    match w {
+                        Some(w) => {
                             if w.as_str() < max {
                                 *w = max.to_owned();
                             }
                         }
-                        _ => unreachable!()
+                        w @ None => {
+                            *w = Some(max.to_owned());
+                        }
                     }
                 }
             }
-            DataType::Date32 => handle!(Date32, max),
-            DataType::Date64 => handle!(Date64, max),
+            DataType::Date32 => handle_fixed!(Date32, max),
+            DataType::Date64 => handle_fixed!(Date64, max),
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "unsupported data type in max(): {}",
@@ -141,105 +142,130 @@ impl Agg for AggMax {
         Ok(())
     }
 
-    fn partial_merge(&self, accums: &mut [ScalarValue], values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        self.partial_update(accums, values, row_idx)
-    }
-
-    fn partial_merge_scalar(&self, accums: &mut [ScalarValue], values: &mut [ScalarValue]) -> Result<()> {
-        if accums[0].is_null() || accums[0] < values[0] {
-            accums[0] = std::mem::replace(&mut values[0], ScalarValue::Null);
-        }
+    fn partial_merge(&self, agg_buf1: &mut AggBuf, agg_buf2: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
+        let partial_buf_merger = self.partial_buf_merger;
+        let addr = agg_buf_addrs[0];
+        partial_buf_merger(agg_buf1, agg_buf2, addr);
         Ok(())
     }
+}
 
-    fn partial_merge_all(&self, accums: &mut [ScalarValue], values: &[ArrayRef]) -> Result<()> {
-        self.partial_update_all(accums, values)
+fn partial_update_prim<T: Copy + PartialEq + PartialOrd>(
+    agg_buf: &mut AggBuf,
+    addr: u64,
+    v: T,
+) {
+    if agg_buf.is_fixed_valid(addr) {
+        let w = agg_buf.fixed_value_mut::<T>(addr);
+        if *w < v {
+            *w = v;
+        }
+    } else {
+        agg_buf.set_fixed_valid(addr, true);
+        let w = agg_buf.fixed_value_mut::<T>(addr);
+        *w = v;
     }
 }
 
 fn get_partial_updater(
     dt: &DataType
-) -> Result<fn(&mut ScalarValue, &ArrayRef, usize)> {
+) -> Result<fn(&mut AggBuf, u64, &ArrayRef, usize)> {
 
-    macro_rules! get_fn {
+    macro_rules! fn_fixed {
         ($ty:ident) => {{
-            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
+            Ok(|agg_buf, addr, v, i| {
                 type TArray = paste! {[<$ty Array>]};
                 let value = v.as_any().downcast_ref::<TArray>().unwrap();
                 if value.is_valid(i) {
+                    partial_update_prim(agg_buf, addr, value.value(i));
+                }
+            })
+        }}
+    }
+    match dt {
+        DataType::Null => Ok(|_, _, _, _| ()),
+        DataType::Boolean => fn_fixed!(Boolean),
+        DataType::Float32 => fn_fixed!(Float32),
+        DataType::Float64 => fn_fixed!(Float64),
+        DataType::Int8 => fn_fixed!(Int8),
+        DataType::Int16 => fn_fixed!(Int16),
+        DataType::Int32 => fn_fixed!(Int32),
+        DataType::Int64 => fn_fixed!(Int64),
+        DataType::UInt8 => fn_fixed!(UInt8),
+        DataType::UInt16 => fn_fixed!(UInt16),
+        DataType::UInt32 => fn_fixed!(UInt32),
+        DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Utf8 => {
+            Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
+                let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+                if value.is_valid(i) {
+                    let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addr));
                     let v = value.value(i);
-                    match acc {
-                        ScalarValue::Null | ScalarValue::$ty(None) => {
-                            *acc = ScalarValue::from(v);
-                        }
-                        ScalarValue::$ty(Some(w)) => {
-                            if *w < v {
-                                *w = v;
-                            }
-                        }
-                        _ => unreachable!()
+                    if w.as_ref().filter(|w| w.as_str() >= v).is_none() {
+                        *w = Some(v.to_owned());
                     }
+                }
+            })
+        }
+        DataType::Date32 => fn_fixed!(Date32),
+        DataType::Date64 => fn_fixed!(Date64),
+        other => {
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type in max(): {}",
+                other
+            )));
+        }
+    }
+}
+
+fn get_partial_buf_merger(
+    dt: &DataType
+) -> Result<fn(&mut AggBuf, &mut AggBuf, u64)> {
+
+    macro_rules! fn_fixed {
+        ($ty:ident) => {{
+            Ok(|agg_buf1, agg_buf2, addr| {
+                type TType = paste! {[<$ty Type>]};
+                type TNative = <TType as ArrowPrimitiveType>::Native;
+                if agg_buf2.is_fixed_valid(addr) {
+                    let v = agg_buf2.fixed_value::<TNative>(addr);
+                    partial_update_prim(agg_buf1, addr, *v);
                 }
             })
         }}
     }
     match dt {
         DataType::Null => Ok(|_, _, _| ()),
-        DataType::Boolean => get_fn!(Boolean),
-        DataType::Float32 => get_fn!(Float32),
-        DataType::Float64 => get_fn!(Float64),
-        DataType::Int8 => get_fn!(Int8),
-        DataType::Int16 => get_fn!(Int16),
-        DataType::Int32 => get_fn!(Int32),
-        DataType::Int64 => get_fn!(Int64),
-        DataType::UInt8 => get_fn!(UInt8),
-        DataType::UInt16 => get_fn!(UInt16),
-        DataType::UInt32 => get_fn!(UInt32),
-        DataType::UInt64 => get_fn!(UInt64),
-        DataType::Decimal128(_, _) => {
-            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
-                let value = v.as_any().downcast_ref::<Decimal128Array>().unwrap();
-                if value.is_valid(i) {
-                    let v = value.value(i);
-                    match acc {
-                        ScalarValue::Decimal128(None, _, _) => {
-                            *acc = ScalarValue::Decimal128(
-                                Some(v),
-                                value.precision(),
-                                value.scale(),
-                            );
-                        }
-                        ScalarValue::Decimal128(Some(w), _, _) => {
-                            if *w < v {
-                                *w = v;
-                            }
-                        }
-                        _ => unreachable!()
-                    }
+        DataType::Boolean => Ok(|agg_buf1, agg_buf2, addr| {
+            if agg_buf2.is_fixed_valid(addr) {
+                let v = agg_buf2.fixed_value::<bool>(addr);
+                partial_update_prim(agg_buf1, addr, *v);
+            }
+        }),
+        DataType::Float32 => fn_fixed!(Float32),
+        DataType::Float64 => fn_fixed!(Float64),
+        DataType::Int8 => fn_fixed!(Int8),
+        DataType::Int16 => fn_fixed!(Int16),
+        DataType::Int32 => fn_fixed!(Int32),
+        DataType::Int64 => fn_fixed!(Int64),
+        DataType::UInt8 => fn_fixed!(UInt8),
+        DataType::UInt16 => fn_fixed!(UInt16),
+        DataType::UInt32 => fn_fixed!(UInt32),
+        DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Utf8 => Ok(|agg_buf1, agg_buf2, addr| {
+            let v = AggDynStr::value(agg_buf2.dyn_value_mut(addr));
+            if v.is_some() {
+                let w = AggDynStr::value_mut(agg_buf1.dyn_value_mut(addr));
+                let v = v.as_ref().unwrap();
+                if w.as_ref().filter(|w| w.as_str() >= v.as_str()).is_none() {
+                    *w = Some(v.to_owned());
                 }
-            })
-        },
-        DataType::Utf8 => {
-            Ok(|acc: &mut ScalarValue, v: &ArrayRef, i: usize| {
-                let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-                if value.is_valid(i) {
-                    let v = value.value(i);
-                    match acc {
-                        ScalarValue::Utf8(None) => {
-                            *acc = ScalarValue::from(v);
-                        }
-                        ScalarValue::Utf8(Some(w)) => {
-                            if w.as_str() < v {
-                                *w = v.to_owned();
-                            }
-                        }
-                        _ => unreachable!()
-                    }
-                }
-            })
-        }
-        DataType::Date32 => get_fn!(Date32),
-        DataType::Date64 => get_fn!(Date64),
+            }
+        }),
+        DataType::Date32 => fn_fixed!(Date32),
+        DataType::Date64 => fn_fixed!(Date64),
         other => {
             return Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in max(): {}",

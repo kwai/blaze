@@ -48,8 +48,10 @@ import org.apache.spark.sql.execution.blaze.plan.NativeAggExec._
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.DataType
-import org.apache.spark.sql.types.LongType
 import org.blaze.{protobuf => pb}
+
+import org.apache.spark.sql.catalyst.expressions.ExprId
+import org.apache.spark.sql.types.BinaryType
 
 case class NativeAggExec(
     execMode: AggExecMode,
@@ -133,7 +135,13 @@ case class NativeAggExec(
         throw new NotImplementedError("aggrMode = Complete not yet supported")
     })
   override def output: Seq[Attribute] =
-    (groupingExpressions ++ nativeAggrInfos.flatMap(_.outputPartialAttrs)).map(_.toAttribute)
+    if (nativeAggrModes.contains(pb.AggMode.FINAL)) {
+      groupingExpressions.map(_.toAttribute) ++ aggregateAttributes
+    } else {
+      groupingExpressions.map(_.toAttribute) :+
+        AttributeReference("#9223372036854775807", BinaryType, nullable = false)(
+          ExprId.apply(9223372036854775807L))
+    }
 
   override def outputPartitioning: Partitioning =
     child.outputPartitioning
@@ -213,52 +221,12 @@ object NativeAggExec {
     }
   }
 
-  def getDFRowHashPartialStates(
-      aggr: AggregateExpression,
-      aggrAttr: Attribute): Seq[NativeAggrPartialState] = {
-
-    val uint64Type =
-      pb.ArrowType.newBuilder().setUINT64(pb.EmptyMessage.getDefaultInstance).build()
-    val buildPartialState =
-      (fieldName: String, dataType: DataType, nullable: Boolean, nativeDataType: pb.ArrowType) =>
-        NativeAggrPartialState(aggrAttr, fieldName, dataType, nullable, nativeDataType)
-
-    aggr.aggregateFunction match {
-      case e: Sum =>
-        Seq(buildPartialState("sum", e.dataType, e.nullable, null))
-
-      case e: Average =>
-        Seq(
-          buildPartialState("sum", e.dataType, e.nullable, null),
-          buildPartialState("count", LongType, true, null))
-
-      case _: Count =>
-        Seq(buildPartialState("count", LongType, true, null))
-
-      case e: Max =>
-        // [max]: input.dataetype
-        Seq(buildPartialState("max", e.dataType, e.nullable, null))
-
-      case e: Min =>
-        // [min]: input.data_type
-        Seq(buildPartialState("min", e.dataType, e.nullable, null))
-
-      case _ =>
-        throw new NotImplementedError(
-          s"aggregate function not supported: ${aggr.aggregateFunction}")
-    }
-  }
-
   case class NativeAggrInfo(
       mode: AggregateMode,
       nativeAggrs: Seq[pb.PhysicalExprNode],
-      outputPartialAttrs: Seq[Attribute],
-      outputPartialNativeType: Seq[pb.ArrowType],
       outputAttr: Attribute)
 
   def getNativeAggrInfo(aggr: AggregateExpression, aggrAttr: Attribute): NativeAggrInfo = {
-    val partialStates = getDFRowHashPartialStates(aggr, aggrAttr)
-    val outputPartialNativeType = partialStates.map(_.arrowType)
     val reducedAggr = AggregateExpression(
       aggr.aggregateFunction
         .mapChildren(e => createPlaceholder(NativeConverters.convertDataType(e.dataType)))
@@ -271,28 +239,10 @@ object NativeAggExec {
 
     aggr.mode match {
       case Partial =>
-        NativeAggrInfo(
-          Partial,
-          nativeAggrs = NativeConverters.convertExpr(aggr) :: Nil,
-          outputPartialAttrs = partialStates.map(_.stateAttr),
-          outputPartialNativeType,
-          outputAttr)
+        NativeAggrInfo(aggr.mode, NativeConverters.convertExpr(aggr) :: Nil, outputAttr)
 
-      case PartialMerge =>
-        NativeAggrInfo(
-          PartialMerge,
-          nativeAggrs = NativeConverters.convertExpr(reducedAggr) :: Nil,
-          outputPartialAttrs = partialStates.map(_.stateAttr),
-          outputPartialNativeType,
-          outputAttr)
-
-      case Final =>
-        NativeAggrInfo(
-          Final,
-          nativeAggrs = NativeConverters.convertExpr(reducedAggr) :: Nil,
-          outputPartialAttrs = aggrAttr :: Nil,
-          outputPartialNativeType,
-          outputAttr)
+      case PartialMerge | Final =>
+        NativeAggrInfo(aggr.mode, NativeConverters.convertExpr(reducedAggr) :: Nil, outputAttr)
 
       case Complete =>
         throw new NotImplementedError("aggrMode = Complete not yet supported")

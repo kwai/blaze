@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::ArrayRef;
+use arrow::array::{ArrayRef, BinaryArray};
 use arrow::datatypes::{Field, SchemaRef};
 use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -36,11 +36,12 @@ use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use datafusion::common::cast::as_binary_array;
 use tokio::sync::mpsc::Sender;
 
-use crate::agg::agg_helper::{AggContext, AggRecord};
+use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::{AggTables, InMemTable};
-use crate::agg::{AggExecMode, AggExpr, GroupingExpr};
+use crate::agg::{AggExecMode, AggExpr, AggRecord, GroupingExpr};
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -232,21 +233,40 @@ async fn execute_agg_with_grouping_hash(
             .map(|row| row.as_ref().into())
             .collect();
 
+        // compute input arrays
+        let input_arrays = if agg_ctx.need_partial_update {
+            agg_ctx.create_input_arrays(&input_batch)?
+        } else {
+            vec![]
+        };
+
+        // get agg_buf column
+        let empty_binary_array = BinaryArray::from_iter_values([[]; 0]);
+        let agg_buf_column = if agg_ctx.need_partial_merge {
+            as_binary_array(input_batch.columns().last().unwrap())?
+        } else {
+            &empty_binary_array
+        };
+
         // update to in-mem table
-        let agg_input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
-        tables
-            .update_in_mem(|in_mem: &mut InMemTable| {
-                for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
-                    in_mem.update(
-                        &agg_ctx,
-                        grouping_row,
-                        &agg_input_arrays,
-                        row_idx,
-                    )?;
-                }
-                Ok(())
-            })
-            .await?;
+        tables.update_in_mem(|in_mem: &mut InMemTable| {
+            let mut merging_agg_buf = agg_ctx.initial_input_agg_buf.clone();
+            for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
+                in_mem.with_entry_mut(&agg_ctx, grouping_row, |entry| {
+                    if agg_ctx.need_partial_update {
+                        agg_ctx.partial_update(entry, &input_arrays, row_idx)?;
+                    }
+                    if agg_ctx.need_partial_merge {
+                        merging_agg_buf.load_from_bytes(agg_buf_column.value(row_idx))?;
+                        agg_ctx.partial_merge(entry, &mut merging_agg_buf)?;
+                    }
+                    Ok(())
+                })?;
+
+            }
+            Ok(())
+        })
+        .await?;
     }
 
     // merge all tables and output
@@ -266,7 +286,7 @@ async fn execute_agg_no_grouping(
 ) -> Result<SendableRecordBatchStream> {
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
     let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-    let mut accums = agg_ctx.create_initial_accums();
+    let mut agg_buf = agg_ctx.initial_agg_buf.clone();
 
     // start processing input batches
     let input = input.execute(partition_id, context.clone())?;
@@ -278,18 +298,27 @@ async fn execute_agg_no_grouping(
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = elapsed_compute.timer();
 
-        // update to accums
-        agg_ctx.partial_update_or_merge_all(
-            &mut accums,
-            &agg_ctx.create_input_arrays(&input_batch)?,
-        )?;
+        // update partial aggs
+        if agg_ctx.need_partial_update {
+            let input_arrays = &agg_ctx.create_input_arrays(&input_batch)?;
+            agg_ctx.partial_update_all(&mut agg_buf, input_arrays)?;
+        }
+
+        // update partial-merge/final aggs
+        if agg_ctx.need_partial_merge {
+            let input_agg_column = as_binary_array(input_batch
+                .columns()
+                .last()
+                .unwrap())?;
+            agg_ctx.partial_merge_all(&mut agg_buf, input_agg_column)?;
+        }
     }
 
     // output
     // in no-grouping mode, we always output only one record, so it is not
     // necessary to record elapsed computed time.
     start_output(agg_ctx.clone(), baseline_metrics, |sender| async move {
-        let record: AggRecord = AggRecord::new(Box::default(), accums);
+        let record: AggRecord = AggRecord::new(Box::default(), agg_buf);
         let batch_result = agg_ctx
             .build_agg_columns(&mut [record])
             .map_err(|e| ArrowError::ExternalError(Box::new(e)))
@@ -356,17 +385,13 @@ async fn execute_agg_sorted(
                 .map(|row| row.as_ref().into())
                 .collect();
 
-            let agg_input_arrays =
-                agg_ctx.create_input_arrays(&input_batch)?;
-
             // update to current record
-            for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
-
+            for grouping_row in grouping_rows {
                 // if group key differs, renew one and move the old record to staging
                 if Some(&grouping_row) != current_record.as_ref().map(|r| &r.grouping) {
                     let finished_record = current_record.replace(AggRecord::new(
                         grouping_row,
-                        agg_ctx.create_initial_accums(),
+                        agg_ctx.initial_agg_buf.clone(),
                     ));
                     if let Some(record) = finished_record {
                         staging_records.push(record);
@@ -388,13 +413,22 @@ async fn execute_agg_sorted(
                         }
                     }
                 }
+                let agg_buf = &mut current_record.as_mut().unwrap().agg_buf;
 
-                // update to accums
-                agg_ctx.partial_update_or_merge_one_row(
-                    &mut current_record.as_mut().unwrap().accums,
-                    &agg_input_arrays,
-                    row_idx,
-                )?;
+                // update partial aggs
+                if agg_ctx.need_partial_update {
+                    let input_arrays = &agg_ctx.create_input_arrays(&input_batch)?;
+                    agg_ctx.partial_update_all(agg_buf, input_arrays)?;
+                }
+
+                // update partial-merge/final aggs
+                if agg_ctx.need_partial_merge {
+                    let input_agg_column = as_binary_array(input_batch
+                        .columns()
+                        .last()
+                        .unwrap())?;
+                    agg_ctx.partial_merge_all(agg_buf, input_agg_column)?;
+                }
             }
         }
 

@@ -21,6 +21,7 @@ use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use bitvec::prelude::BitVec;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
+use datafusion::common::cast::as_binary_array;
 
 pub fn write_batch<W: Write>(
     batch: &RecordBatch,
@@ -108,7 +109,14 @@ pub fn write_batch<W: Write>(
                 as_primitive_array::<Decimal128Type>(column),
                 &mut output,
             )?,
-            DataType::Utf8 => write_string_array(as_string_array(column), &mut output)?,
+            DataType::Utf8 => write_bytes_array(
+                as_string_array(column),
+                &mut output,
+            )?,
+            DataType::Binary => write_bytes_array(
+                as_binary_array(column)?,
+                &mut output,
+            )?,
             DataType::Date32 => write_primitive_array(
                 as_primitive_array::<Date32Type>(column),
                 &mut output,
@@ -242,7 +250,20 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
                 &mut input,
             )?,
             DataType::Utf8 => {
-                read_string_array(num_rows, has_null_buffers[i], &mut input)?
+                read_bytes_array(
+                    num_rows,
+                    has_null_buffers[i],
+                    &mut input,
+                    DataType::Utf8,
+                )?
+            }
+            DataType::Binary => {
+                read_bytes_array(
+                    num_rows,
+                    has_null_buffers[i],
+                    &mut input,
+                    DataType::Binary,
+                )?
             }
             other => {
                 return Err(ArrowError::IoError(format!(
@@ -283,6 +304,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
             write_u8(*scale as u8, output)?;
         }
         DataType::Utf8 => write_u8(16, output)?,
+        DataType::Binary => write_u8(17, output)?,
         other => {
             return Err(ArrowError::NotYetImplemented(format!(
                 "write_data_type: unsupported data type: {:?}",
@@ -315,6 +337,7 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
             DataType::Decimal128(prec, scale)
         }
         16 => DataType::Utf8,
+        17 => DataType::Binary,
         other => {
             return Err(ArrowError::NotYetImplemented(format!(
                 "read_data_type: unsupported data type: {:?}",
@@ -405,7 +428,10 @@ fn read_boolean_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_string_array<W: Write>(array: &StringArray, output: &mut W) -> ArrowResult<()> {
+fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
+    array: &GenericByteArray<T>,
+    output: &mut W,
+) -> ArrowResult<()> {
     if let Some(null_buffer) = array.data().null_buffer() {
         output.write_all(null_buffer.as_slice())?;
     }
@@ -420,10 +446,11 @@ fn write_string_array<W: Write>(array: &StringArray, output: &mut W) -> ArrowRes
     Ok(())
 }
 
-fn read_string_array<R: Read>(
+fn read_bytes_array<R: Read>(
     num_rows: usize,
     has_null_buffer: bool,
     input: &mut R,
+    data_type: DataType,
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(Buffer::from(read_bytes_slice(input, (num_rows + 7) / 8)?))
@@ -445,7 +472,7 @@ fn read_string_array<R: Read>(
     let data_len = cur_offset;
     let data_buffer = Buffer::from(read_bytes_slice(input, data_len)?);
     let array_data = ArrayData::try_new(
-        DataType::Utf8,
+        data_type,
         num_rows,
         null_buffer,
         0,
