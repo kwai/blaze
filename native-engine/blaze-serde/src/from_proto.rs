@@ -63,6 +63,7 @@ use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext_plans::limit_exec::LimitExec;
 use datafusion_ext_plans::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
+use datafusion_ext_plans::rss_shuffle_writer_exec::RssShuffleWriterExec;
 use datafusion_ext_plans::sort_merge_join_exec::SortMergeJoinExec;
 
 use crate::error::PlanSerDeError;
@@ -272,7 +273,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 PlanSerDeError::DataFusionError(err)
                             })
                         })
-                        .ok()
+                            .ok()
                     })
                     .fold(Expr::Literal(ScalarValue::from(true)), |a, b| {
                         Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr {
@@ -346,6 +347,20 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     output_partitioning.unwrap(),
                     shuffle_writer.output_data_file.clone(),
                     shuffle_writer.output_index_file.clone(),
+                )?))
+            }
+            PhysicalPlanType::RssShuffleWriter(rss_shuffle_writer) => {
+                let input: Arc<dyn ExecutionPlan> =
+                    convert_box_required!(rss_shuffle_writer.input)?;
+
+                let output_partitioning = parse_protobuf_hash_partitioning(
+                    input.clone(),
+                    rss_shuffle_writer.output_partitioning.as_ref(),
+                )?;
+                Ok(Arc::new(RssShuffleWriterExec::try_new(
+                    input,
+                    output_partitioning.unwrap(),
+                    rss_shuffle_writer.rss_partition_writer_resource_id.clone(),
                 )?))
             }
             PhysicalPlanType::IpcWriter(ipc_writer) => {
@@ -488,9 +503,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     protobuf::PartitionMode::from_i32(hashjoin.partition_mode)
                         .ok_or_else(|| {
                             proto_error(format!(
-                        "Received a HashJoinNode message with unknown PartitionMode {}",
-                        hashjoin.partition_mode
-                    ))
+                                "Received a HashJoinNode message with unknown PartitionMode {}",
+                                hashjoin.partition_mode
+                            ))
                         })?;
                 let partition_mode = match partition_mode {
                     protobuf::PartitionMode::CollectLeft => PartitionMode::CollectLeft,

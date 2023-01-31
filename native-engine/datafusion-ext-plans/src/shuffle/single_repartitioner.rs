@@ -78,7 +78,6 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        let _timer = self.metrics.elapsed_compute().timer();
         let offset = self.get_output_data()?.stream_position()?;
         let mut output_index = File::create(&self.output_index_file)?;
         output_index.write_all(&[0u8; 8])?;

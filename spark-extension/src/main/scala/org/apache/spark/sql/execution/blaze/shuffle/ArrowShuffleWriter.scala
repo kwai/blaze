@@ -20,7 +20,6 @@ import java.nio.file.{Files, Paths}
 import java.nio.{ByteBuffer, ByteOrder}
 import org.apache.spark.{Partition, ShuffleDependency, SparkConf, SparkEnv, TaskContext}
 import org.apache.spark.internal.Logging
-import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.{
   IndexShuffleBlockResolver,
@@ -28,10 +27,11 @@ import org.apache.spark.shuffle.{
   ShuffleWriteMetricsReporter,
   ShuffleWriter
 }
-import org.apache.spark.sql.blaze.{NativeHelper, NativeRDD, Shims}
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
-import org.apache.spark.storage.BlockManager
-import org.blaze.protobuf.{PhysicalPlanNode, ShuffleWriterExecNode}
+import org.apache.spark.sql.blaze.{JniBridge, NativeHelper, NativeRDD, Shims}
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.blaze.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode, ShuffleWriterExecNode}
+
+import java.util.UUID
 
 class ArrowShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V]
@@ -97,6 +97,46 @@ class ArrowShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
       partitionLengths,
       dataSize,
       context)
+  }
+
+  def nativeRssShuffleWrite(
+      nativeShuffleRDD: NativeRDD,
+      dep: ShuffleDependency[_, _, _],
+      mapId: Int,
+      context: TaskContext,
+      partition: Partition,
+      numPartitions: Int): MapStatus = {
+
+    val rssShuffleWriterObject = Shims.get.shuffleShims
+      .getRssPartitionWriter(dep.shuffleHandle, mapId, metrics, numPartitions)
+    assert(rssShuffleWriterObject.isDefined)
+    try {
+      val jniResourceId = s"RssPartitionWriter:${UUID.randomUUID().toString}"
+      JniBridge.resourcesMap.put(jniResourceId, rssShuffleWriterObject.get)
+      val nativeRssShuffleWriterExec = PhysicalPlanNode
+        .newBuilder()
+        .setRssShuffleWriter(
+          RssShuffleWriterExecNode
+            .newBuilder(nativeShuffleRDD.nativePlan(partition, context).getRssShuffleWriter)
+            .setRssPartitionWriterResourceId(jniResourceId)
+            .build())
+        .build()
+
+      val iterator = NativeHelper.executeNativePlan(
+        nativeRssShuffleWriterExec,
+        nativeShuffleRDD.metrics,
+        partition,
+        context)
+      assert(iterator.toArray.isEmpty)
+    } finally {
+      rssShuffleWriterObject.get.close(0)
+    }
+
+    val mapStatus = Shims.get.shuffleShims.getMapStatus(
+      SparkEnv.get.blockManager.shuffleServerId,
+      rssShuffleWriterObject.get.getPartitionLengthMap,
+      mapId)
+    mapStatus
   }
 
   override def stop(success: Boolean): Option[MapStatus] = None

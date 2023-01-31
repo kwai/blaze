@@ -354,7 +354,7 @@ pub struct JavaClasses<'a> {
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
     pub cSparkExpressionWrapperContext: SparkExpressionWrapperContext<'a>,
-
+    pub cSparkRssShuffleWriter: SparkRssShuffleWriter<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
 }
 
@@ -414,7 +414,7 @@ impl JavaClasses<'static> {
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
                 cSparkExpressionWrapperContext: SparkExpressionWrapperContext::new(env)
                     .unwrap(),
-
+                cSparkRssShuffleWriter: SparkRssShuffleWriter::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
             };
             log::info!("Initializing JavaClasses finished");
@@ -1015,6 +1015,43 @@ impl<'a> SparkMetricNode<'a> {
                 .unwrap(),
             method_add_ret: ReturnType::Primitive(Primitive::Void),
         })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkRssShuffleWriter<'a> {
+    pub class: JClass<'a>,
+    pub method_write: JMethodID,
+    pub method_write_ret: ReturnType,
+    pub method_close: JMethodID,
+    pub method_close_ret: ReturnType,
+}
+
+impl <'a> SparkRssShuffleWriter<'_> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/blaze/shuffle/RssPartitionWriter";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkRssShuffleWriter<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkRssShuffleWriter {
+            class,
+            method_write: env
+                .get_method_id(
+                    class,
+                    "write",
+                    "(ILjava/nio/ByteBuffer;I)V"
+                )
+                .unwrap(),
+            method_write_ret: ReturnType::Primitive(Primitive::Void),
+            method_close: env
+                .get_method_id(
+                    class,
+                    "close",
+                    "(I)V"
+                )
+                .unwrap(),
+            method_close_ret: ReturnType::Primitive(Primitive::Void),
+        }
+        )
     }
 }
 

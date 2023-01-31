@@ -81,7 +81,9 @@ object ArrowBlockStoreShuffleReaderBase {
   pathField.setAccessible(true)
 
   def getFileSegmentFromInputStream(in: InputStream): Option[FileSegment] = {
-
+    if (!bufferReleasingInputStreamClass.isInstance(in)) {
+      return None
+    }
     delegateFn.invoke(in) match {
       case in: LimitedInputStream =>
         val limit = limitField.getLong(in)

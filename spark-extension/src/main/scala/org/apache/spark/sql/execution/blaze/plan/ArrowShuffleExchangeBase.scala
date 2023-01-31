@@ -17,21 +17,21 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.blaze.protobuf.IpcReaderExecNode
-import org.blaze.protobuf.IpcReadMode
-import org.blaze.protobuf.PhysicalExprNode
-import org.blaze.protobuf.PhysicalHashRepartition
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Schema
-import org.blaze.protobuf.ShuffleWriterExecNode
-
+import org.blaze.protobuf.{
+  IpcReadMode,
+  IpcReaderExecNode,
+  PhysicalExprNode,
+  PhysicalHashRepartition,
+  PhysicalPlanNode,
+  RssShuffleWriterExecNode,
+  Schema,
+  ShuffleWriterExecNode
+}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
@@ -155,7 +155,9 @@ abstract class ArrowShuffleExchangeBase(
       friendlyName = "NativeRDD.ShuffleRead")
   }
 
-  def createNativeShuffleWriteProcessor(metrics: Map[String, SQLMetric]): ShuffleWriteProcessor
+  def createNativeShuffleWriteProcessor(
+      metrics: Map[String, SQLMetric],
+      numPartitions: Int): ShuffleWriteProcessor
 
   def prepareNativeShuffleDependency(
       rdd: RDD[InternalRow],
@@ -206,16 +208,31 @@ abstract class ArrowShuffleExchangeBase(
         }
 
         val input = nativeInputRDD.nativePlan(nativeInputPartition, taskContext)
-        val nativeShuffleWriteExec = PhysicalPlanNode
-          .newBuilder()
-          .setShuffleWriter(
-            ShuffleWriterExecNode
+        val nativeShuffleWriteExec =
+          if (SparkEnv.get.conf
+              .getBoolean("spark.blaze.shuffle.enable.rss", defaultValue = false)) {
+            PhysicalPlanNode
               .newBuilder()
-              .setInput(input)
-              .setOutputPartitioning(nativeOutputPartitioning)
-              .buildPartial()
-          ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
-          .build()
+              .setRssShuffleWriter(
+                RssShuffleWriterExecNode
+                  .newBuilder()
+                  .setInput(input)
+                  .setOutputPartitioning(nativeOutputPartitioning)
+                  .buildPartial()
+              ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
+              .build()
+          } else {
+            PhysicalPlanNode
+              .newBuilder()
+              .setShuffleWriter(
+                ShuffleWriterExecNode
+                  .newBuilder()
+                  .setInput(input)
+                  .setOutputPartitioning(nativeOutputPartitioning)
+                  .buildPartial()
+              ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
+              .build()
+          }
         nativeShuffleWriteExec
       },
       friendlyName = "NativeRDD.ShuffleWrite")
@@ -223,7 +240,7 @@ abstract class ArrowShuffleExchangeBase(
     val dependency = new ArrowShuffleDependency[Int, InternalRow, InternalRow](
       nativeShuffleRDD.map((0, _)),
       serializer = serializer,
-      shuffleWriterProcessor = createNativeShuffleWriteProcessor(metrics),
+      shuffleWriterProcessor = createNativeShuffleWriteProcessor(metrics, numPartitions),
       partitioner = new Partitioner {
         override def numPartitions: Int = outputPartitioning.numPartitions
 

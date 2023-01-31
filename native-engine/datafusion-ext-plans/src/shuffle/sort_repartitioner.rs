@@ -287,7 +287,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let _timer = self.metrics.elapsed_compute().timer();
 
         // first grow memory usage of cur batch
         // NOTE:
@@ -308,7 +307,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        let _timer = self.metrics.elapsed_compute().timer();
         let mut in_mem_spills = self.in_mem_spills.lock().await;
         let mut file_spills = self.file_spills.lock().await;
 

@@ -17,13 +17,16 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.IndexShuffleBlockResolver
+import org.apache.spark.shuffle.{
+  IndexShuffleBlockResolver,
+  ShuffleHandle,
+  ShuffleManager,
+  ShuffleWriteMetricsReporter
+}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -32,7 +35,8 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
-import org.apache.spark.storage.FileSegment
+import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
+import org.apache.spark.storage.{BlockManagerId, FileSegment}
 
 abstract class Shims {
   def rddShims: RDDShims
@@ -84,6 +88,17 @@ trait ShuffleShims {
       partitionLengths: Array[Long],
       dataSize: Long,
       context: TaskContext): MapStatus
+
+  def getRssPartitionWriter(
+      handle: ShuffleHandle,
+      mapId: Int,
+      metrics: ShuffleWriteMetricsReporter,
+      numPartitions: Int): Option[RssPartitionWriterBase]
+
+  def getMapStatus(
+      shuffleServerId: BlockManagerId,
+      PartitionLengthMap: Array[Long],
+      mapId: Long): MapStatus
 }
 
 trait ParquetScanShims {
