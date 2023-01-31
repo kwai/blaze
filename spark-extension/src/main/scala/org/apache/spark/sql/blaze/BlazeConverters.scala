@@ -463,8 +463,16 @@ object BlazeConverters extends Logging {
       exec.aggregateAttributes,
       exec.initialInputBufferOffset,
       exec.requiredChildDistributionExpressions match {
-        case None => addRenameColumnsExec(convertToNative(exec.child))
-        case _ => convertToNative(exec.child)
+        case None =>
+          addRenameColumnsExec(convertToNative(exec.child))
+        case _ =>
+          if (Shims.get.sparkPlanShims.needRenameColumns(exec.child)) {
+            val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
+              NativeAggExec.AGG_BUF_COLUMN_NAME
+            NativeRenameColumnsExec(convertToNative(exec.child), newNames)
+          } else {
+            convertToNative(exec.child)
+          }
       })
 
     val isFinal = exec.requiredChildDistributionExpressions.isDefined &&
@@ -493,7 +501,18 @@ object BlazeConverters extends Logging {
       exec.aggregateExpressions,
       exec.aggregateAttributes,
       exec.initialInputBufferOffset,
-      convertToNative(exec.child))
+      exec.requiredChildDistributionExpressions match {
+        case None =>
+          addRenameColumnsExec(convertToNative(exec.child))
+        case _ =>
+          if (Shims.get.sparkPlanShims.needRenameColumns(exec.child)) {
+            val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
+              NativeAggExec.AGG_BUF_COLUMN_NAME
+            NativeRenameColumnsExec(convertToNative(exec.child), newNames)
+          } else {
+            convertToNative(exec.child)
+          }
+      })
 
     val isFinal = exec.requiredChildDistributionExpressions.isDefined &&
       exec.aggregateExpressions.forall(_.mode == Final)
@@ -537,10 +556,7 @@ object BlazeConverters extends Logging {
   }
 
   private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
-    def needRenameColumns(exec: SparkPlan): Boolean = {
-      Shims.get.sparkPlanShims.needRenameColumns(exec)
-    }
-    if (needRenameColumns(exec)) {
+    if (Shims.get.sparkPlanShims.needRenameColumns(exec)) {
       return NativeRenameColumnsExec(exec, exec.output.map(Util.getFieldNameByExprId))
     }
     exec

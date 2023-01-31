@@ -168,7 +168,7 @@ impl AggTables {
             let in_mem_size = in_mem.mem_used();
             let spill = in_mem.try_into_l1_spill()?;
             let spill_size = spill.offheap_mem_size();
-            cursors.push(TableCursor::try_from_spill(spill, &self.agg_ctx)?);
+            cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
 
             let mem_growed = spill_size;
             self.metrics.mem_used().add(mem_growed);
@@ -179,7 +179,7 @@ impl AggTables {
             self.metrics.mem_used().sub(mem_freed);
         }
         for spill in spills {
-            cursors.push(TableCursor::try_from_spill(spill, &self.agg_ctx)?);
+            cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
         }
         let mut staging_records = Vec::with_capacity(batch_size);
         let mut current_record: Option<AggRecord> = None;
@@ -204,9 +204,9 @@ impl AggTables {
 
         // create a tournament loser tree to do the merging
         // the mem-table and at least one spill should be in the tree
-        let mut cursors: LoserTree<TableCursor> = LoserTree::new_by(
+        let mut cursors: LoserTree<SpillCursor> = LoserTree::new_by(
             cursors,
-            |c1: &TableCursor, c2: &TableCursor| match (c1.peek(), c2.peek()) {
+            |c1: &SpillCursor, c2: &SpillCursor| match (c1.peek(), c2.peek()) {
                 (None, _) => false,
                 (_, None) => true,
                 (Some(c1), Some(c2)) => c1 < c2,
@@ -220,7 +220,7 @@ impl AggTables {
                 // all cursors are finished
                 break;
             }
-            let mut min_record = min_cursor.next()?.unwrap();
+            let mut min_record = min_cursor.pop()?.unwrap();
 
             // merge min record into current record
             match current_record.as_mut() {
@@ -230,15 +230,16 @@ impl AggTables {
                         // update entry
                         for (idx, agg) in self.agg_ctx.aggs.iter().enumerate() {
                             let addr_offset = self.agg_ctx.agg_buf_addr_offsets[idx];
+                            let addrs = &self.agg_ctx.agg_buf_addrs[addr_offset..];
                             agg.agg.partial_merge(
                                 &mut current_record.agg_buf,
                                 &mut min_record.agg_buf,
-                                &self.agg_ctx.agg_buf_addrs[addr_offset..],
+                                addrs,
                             )?;
                         }
                     } else {
-                        staging_records
-                            .push(std::mem::replace(current_record, min_record));
+                        let finished = std::mem::replace(current_record, min_record);
+                        staging_records.push(finished);
                         if staging_records.len() >= batch_size {
                             flush_staging!();
                         }
@@ -429,7 +430,7 @@ impl InMemTable {
     }
 
     fn into_sorted_vec(self) -> Vec<AggRecord> {
-        const USE_RADIX_SORT: bool = true;
+        const USE_RADIX_SORT: bool = false;
 
         let mut vec = if self.is_hash {
             self.grouping_mappings
@@ -456,7 +457,7 @@ impl InMemTable {
         let mut writer = BufWriter::with_capacity(65536, zwriter);
         for record in self.into_sorted_vec() {
             // write grouping row
-            write_len(record.grouping.as_ref().len(), &mut writer)?;
+            write_len(record.grouping.as_ref().len() + 1, &mut writer)?;
             writer.write_all(record.grouping.as_ref())?;
 
             // write agg buf
@@ -474,62 +475,48 @@ impl InMemTable {
     }
 }
 
-struct SpilledTableIterator {
+struct SpillCursor {
     agg_ctx: Arc<AggContext>,
     input: BufReader<FrameDecoder<BufReader<Box<dyn Read + Send>>>>,
+    current: Option<AggRecord>,
 }
-impl SpilledTableIterator {
+impl SpillCursor {
     fn try_from_spill(
         spill: Spill,
         agg_ctx: &Arc<AggContext>,
     ) -> Result<Self> {
 
         let buf_reader = spill.into_buf_reader();
-        let mut iter = SpilledTableIterator {
+        let mut iter = SpillCursor {
             agg_ctx: agg_ctx.clone(),
             input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
+            current: None,
         };
-        iter.next().transpose()?; // first record is always None
+        iter.pop()?; // load first record into current
         Ok(iter)
     }
 
-    fn next_impl(&mut self) -> Result<Option<AggRecord>> {
+    fn peek(&self) -> &Option<AggRecord> {
+        &self.current
+    }
+
+    fn pop(&mut self) -> Result<Option<AggRecord>> {
         // read grouping
-        let grouping_buf_len = read_len(&mut self.input)?;
-        if grouping_buf_len == 0 { // EOF
-            return Ok(None);
+        let prefix = read_len(&mut self.input)?;
+        if prefix == 0 { // EOF
+            return Ok(std::mem::replace(&mut self.current, None));
         }
+        let grouping_buf_len = prefix - 1;
         let grouping = read_bytes_slice(&mut self.input, grouping_buf_len)?;
 
         // read agg buf
         let mut agg_buf = self.agg_ctx.initial_agg_buf.clone();
         agg_buf.load(&mut self.input)?;
 
-        Ok(Some(AggRecord::new(grouping, agg_buf)))
-    }
-}
-impl Iterator for SpilledTableIterator {
-    type Item = Result<AggRecord>;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next_impl().transpose()
-    }
-}
-
-struct TableCursor(SpilledTableIterator, Option<AggRecord>);
-impl TableCursor {
-    fn try_from_spill(spill: Spill, agg_ctx: &Arc<AggContext>) -> Result<Self> {
-        let mut iter = SpilledTableIterator::try_from_spill(spill, agg_ctx)?;
-        let first = iter.next().transpose()?;
-        Ok(TableCursor(iter, first))
-    }
-
-    fn next(&mut self) -> Result<Option<AggRecord>> {
-        let TableCursor(iter, peek) = self;
-        Ok(std::mem::replace(peek, iter.next().transpose()?))
-    }
-
-    fn peek(&self) -> Option<&AggRecord> {
-        self.1.as_ref()
+        return Ok(std::mem::replace(
+            &mut self.current,
+            Some(AggRecord::new(grouping, agg_buf))
+        ));
     }
 }
 

@@ -44,13 +44,13 @@ import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
-import org.apache.spark.sql.execution.blaze.plan.NativeAggExec._
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.DataType
 import org.blaze.{protobuf => pb}
 
 import org.apache.spark.sql.catalyst.expressions.ExprId
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec._
 import org.apache.spark.sql.types.BinaryType
 
 case class NativeAggExec(
@@ -139,8 +139,8 @@ case class NativeAggExec(
       groupingExpressions.map(_.toAttribute) ++ aggregateAttributes
     } else {
       groupingExpressions.map(_.toAttribute) :+
-        AttributeReference("#9223372036854775807", BinaryType, nullable = false)(
-          ExprId.apply(9223372036854775807L))
+        AttributeReference(AGG_BUF_COLUMN_NAME, BinaryType, nullable = false)(
+          ExprId.apply(AGG_BUF_COLUMN_EXPR_ID))
     }
 
   override def outputPartitioning: Partitioning =
@@ -199,6 +199,9 @@ case class NativeAggExec(
 }
 
 object NativeAggExec {
+  val AGG_BUF_COLUMN_EXPR_ID = 9223372036854775807L
+  val AGG_BUF_COLUMN_NAME = s"#$AGG_BUF_COLUMN_EXPR_ID"
+
   trait AggExecMode;
   case object HashAgg extends AggExecMode
   case object SortAgg extends AggExecMode

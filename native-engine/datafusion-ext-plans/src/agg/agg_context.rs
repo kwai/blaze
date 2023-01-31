@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::agg::{Agg, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr};
-use arrow::array::{ArrayRef, BinaryArray, BinaryBuilder};
+use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
@@ -21,6 +21,8 @@ use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_expr::PhysicalExpr;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use datafusion::common::cast::as_binary_array;
+use once_cell::sync::OnceCell;
 use crate::agg::agg_buf::{AggBuf, create_agg_buf_from_scalar};
 
 pub struct AggContext {
@@ -179,6 +181,10 @@ impl AggContext {
         &self,
         input_batch: &RecordBatch,
     ) -> Result<Vec<Vec<ArrayRef>>> {
+
+        if !self.need_partial_update {
+            return Ok(vec![]);
+        }
         let mut input_arrays = Vec::with_capacity(self.aggs.len());
         let mut cached_partial_args: Vec<(Arc<dyn PhysicalExpr>, ArrayRef)> = vec![];
 
@@ -206,6 +212,21 @@ impl AggContext {
             input_arrays.push(values);
         }
         Ok(input_arrays)
+    }
+
+    pub fn get_input_agg_buf_array<'a>(
+        &self,
+        input_batch: &'a RecordBatch,
+    ) -> Result<&'a BinaryArray> {
+
+        if self.need_partial_merge {
+            as_binary_array(input_batch.columns().last().unwrap())
+        } else {
+            static EMPTY_BINARY_ARRAY: OnceCell<BinaryArray> = OnceCell::new();
+            Ok(EMPTY_BINARY_ARRAY.get_or_init(|| {
+                BinaryArray::from_iter_values([[]; 0])
+            }))
+        }
     }
 
     pub fn build_agg_columns(&self, records: &mut [AggRecord]) -> Result<Vec<ArrayRef>> {
@@ -255,55 +276,82 @@ impl AggContext {
         )?)
     }
 
-    pub fn partial_update(
+    pub fn agg_addrs(&self, agg_idx: usize) -> &[u64] {
+        let addr_offset = self.agg_buf_addr_offsets[agg_idx];
+        &self.agg_buf_addrs[addr_offset..]
+    }
+
+    pub fn partial_update_input(
         &self,
         agg_buf: &mut AggBuf,
         input_arrays: &[Vec<ArrayRef>],
         row_idx: usize,
     ) -> Result<()> {
-        for (idx, agg) in &self.need_partial_update_aggs {
-            let addr_offset = self.agg_buf_addr_offsets[*idx];
-            let addrs = &self.agg_buf_addrs[addr_offset..];
-            agg.partial_update(agg_buf, addrs, &input_arrays[*idx], row_idx)?;
+        if self.need_partial_update {
+            for (idx, agg) in &self.need_partial_update_aggs {
+                agg.partial_update(
+                    agg_buf,
+                    self.agg_addrs(*idx),
+                    &input_arrays[*idx],
+                    row_idx,
+                )?;
+            }
         }
         Ok(())
     }
 
-    pub fn partial_update_all(
+    pub fn partial_update_input_all(
         &self,
         agg_buf: &mut AggBuf,
         input_arrays: &[Vec<ArrayRef>],
     ) -> Result<()> {
-        for (idx, agg) in &self.need_partial_update_aggs {
-            let addr_offset = self.agg_buf_addr_offsets[*idx];
-            let addrs = &self.agg_buf_addrs[addr_offset..];
-            agg.partial_update_all(agg_buf, addrs, &input_arrays[*idx])?;
+        if self.need_partial_update {
+            for (idx, agg) in &self.need_partial_update_aggs {
+                agg.partial_update_all(
+                    agg_buf,
+                    self.agg_addrs(*idx),
+                    &input_arrays[*idx],
+                )?;
+            }
         }
         Ok(())
     }
 
-    pub fn partial_merge(
+    pub fn partial_merge_input(
         &self,
         agg_buf: &mut AggBuf,
-        merging_agg_buf: &mut AggBuf,
+        agg_buf_array: &BinaryArray,
+        row_idx: usize,
     ) -> Result<()> {
-        for (idx, agg) in &self.need_partial_merge_aggs {
-            let addr_offset = self.agg_buf_addr_offsets[*idx];
-            let addrs = &self.agg_buf_addrs[addr_offset..];
-            agg.partial_merge(agg_buf, merging_agg_buf, addrs)?;
+        if self.need_partial_merge {
+            let mut input_agg_buf = self.initial_input_agg_buf.clone();
+            input_agg_buf.load_from_bytes(agg_buf_array.value(row_idx))?;
+            for (idx, agg) in &self.need_partial_merge_aggs {
+                agg.partial_merge(
+                    agg_buf,
+                    &mut input_agg_buf,
+                    self.agg_addrs(*idx))?;
+            }
         }
         Ok(())
     }
 
-    pub fn partial_merge_all(
+    pub fn partial_merge_input_all(
         &self,
         agg_buf: &mut AggBuf,
-        merging_agg_buf_column: &BinaryArray,
+        agg_buf_array: &BinaryArray,
     ) -> Result<()> {
-        let mut input_agg_buf = self.initial_input_agg_buf.clone();
-        for input_agg_buf_bytes in merging_agg_buf_column {
-            input_agg_buf.load_from_bytes(input_agg_buf_bytes.unwrap())?;
-            self.partial_merge(agg_buf, &mut input_agg_buf)?;
+        if self.need_partial_merge {
+            let mut input_agg_buf = self.initial_input_agg_buf.clone();
+            for row_idx in 0..agg_buf_array.len() {
+                input_agg_buf.load_from_bytes(agg_buf_array.value(row_idx))?;
+                for (idx, agg) in &self.need_partial_merge_aggs {
+                    agg.partial_merge(
+                        agg_buf,
+                        &mut input_agg_buf,
+                        self.agg_addrs(*idx))?;
+                }
+            }
         }
         Ok(())
     }
