@@ -16,16 +16,14 @@ use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::Result;
-use datafusion::execution::DiskManager;
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
 use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::StreamExt;
-use std::io::{Seek, Write};
 use std::sync::Arc;
-use tempfile::NamedTempFile;
+use crate::spill::Spill;
 
 pub mod sort_repartitioner;
 pub mod bucket_repartitioner;
@@ -70,35 +68,9 @@ impl dyn ShuffleRepartitioner {
     }
 }
 
-struct InMemSpillInfo {
-    frozen: Vec<u8>,
+struct ShuffleSpill {
+    spill: Spill,
     offsets: Vec<u64>,
-}
-impl InMemSpillInfo {
-    fn mem_size(&self) -> usize {
-        self.frozen.len() + self.offsets.len() * 8
-    }
-
-    fn into_file_spill(self, disk_manager: &DiskManager) -> Result<FileSpillInfo> {
-        let mut file = disk_manager.create_tmp_file("shuffle_spill_file")?;
-        file.write_all(&self.frozen)?;
-        file.rewind()?;
-        Ok(FileSpillInfo {
-            file,
-            offsets: self.offsets,
-        })
-    }
-}
-
-struct FileSpillInfo {
-    file: NamedTempFile,
-    offsets: Vec<u64>,
-}
-
-impl FileSpillInfo {
-    fn bytes_size(&self) -> usize {
-        self.offsets.last().map(|&v| v as usize).unwrap_or(0)
-    }
 }
 
 fn evaluate_hashes(

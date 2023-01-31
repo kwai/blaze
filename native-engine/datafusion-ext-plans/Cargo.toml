@@ -11,6 +11,7 @@ default = ["arrow/ffi", "datafusion/simd", "tokio/rt-multi-thread"]
 arrow = "28.0.0"
 async-trait = "0.1.56"
 blaze-commons = { path = "../blaze-commons" }
+bytesize = "1.1.0"
 datafusion = "15.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "../datafusion-ext-exprs" }

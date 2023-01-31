@@ -14,9 +14,7 @@
 
 //! Defines the sort-based shuffle writer
 
-use crate::shuffle::{
-    evaluate_hashes, evaluate_partition_ids, FileSpillInfo, ShuffleRepartitioner,
-};
+use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
 use arrow::array::*;
 use arrow::datatypes::*;
 use arrow::error::Result as ArrowResult;
@@ -39,19 +37,18 @@ use itertools::Itertools;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::io::{BufWriter, Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
+use bytesize::ByteSize;
 use tokio::task;
+use crate::spill::{dump_spills_statistics, OnHeapSpill, Spill};
 
 pub struct BucketShuffleRepartitioner {
     id: MemoryConsumerId,
     output_data_file: String,
     output_index_file: String,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
-    spills: Mutex<Vec<FileSpillInfo>>,
-    /// Sort expressions
-    /// Partitioning scheme to use
+    spills: Mutex<Vec<ShuffleSpill>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
     runtime: Arc<RuntimeEnv>,
@@ -199,11 +196,14 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
         }
 
         let mut spills = self.spills.lock().await;
-        let output_spills = spills.drain(..).collect::<Vec<_>>();
         log::info!(
-            "bucket partitioner start writing with {} disk spills",
-            output_spills.len()
+            "bucket partitioner start writing with spills: {}",
+            dump_spills_statistics(spills.iter().map(|spill| &spill.spill)),
         );
+        let mut spill_readers = spills
+            .drain(..)
+            .map(|spill| (spill.spill.into_reader(), spill.offsets))
+            .collect::<Vec<_>>();
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
@@ -221,12 +221,10 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
                 output_data.write_all(&std::mem::take(&mut output_batches[i]))?;
 
                 // append partition in each spills
-                for spill in &output_spills {
-                    let length = spill.offsets[i + 1] - spill.offsets[i];
+                for (reader, offsets) in &mut spill_readers {
+                    let length = offsets[i + 1] - offsets[i];
                     if length > 0 {
-                        let mut spill_file = File::open(spill.file.path())?;
-                        spill_file.seek(SeekFrom::Start(spill.offsets[i]))?;
-                        std::io::copy(&mut spill_file.take(length), &mut output_data)?;
+                        std::io::copy(&mut reader.take(length), &mut output_data)?;
                     }
                 }
             }
@@ -252,10 +250,11 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     }
 }
 
-/// consume the `buffered_partitions` and do spill into a single temp shuffle output file
-async fn spill_into(
+/// consumes buffered partitions and produces a spill. ensure all partitions are flushed
+/// before calling this method
+fn spill_buffered_partitions(
     buffered_partitions: &mut [PartitionBuffer],
-    path: &Path,
+    mut output: impl Write,
     num_output_partitions: usize,
 ) -> Result<Vec<u64>> {
     let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
@@ -264,28 +263,18 @@ async fn spill_into(
         buffered_partitions[i].flush()?;
         output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
     }
-    let path = path.to_owned();
 
-    task::spawn_blocking(move || {
-        let mut offsets = vec![0; num_output_partitions + 1];
-        let mut spill_data = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+    let mut offsets = vec![0; num_output_partitions + 1];
+    let mut pos = 0;
+    for i in 0..num_output_partitions {
+        offsets[i] = pos;
+        pos += output_batches[i].len() as u64;
+        output.write_all(&std::mem::take(&mut output_batches[i]))?;
+    }
 
-        for i in 0..num_output_partitions {
-            offsets[i] = spill_data.stream_position()?;
-            spill_data.write_all(&std::mem::take(&mut output_batches[i]))?;
-        }
-        // add one extra offset at last to ease partition length computation
-        offsets[num_output_partitions] = spill_data.stream_position()?;
-        Ok(offsets)
-    })
-    .await
-    .map_err(|e| {
-        DataFusionError::Execution(format!("Error occurred while spilling {}", e))
-    })?
+    // add one extra offset at last to ease partition length computation
+    offsets[num_output_partitions] = pos;
+    Ok(offsets)
 }
 
 impl Debug for BucketShuffleRepartitioner {
@@ -319,8 +308,8 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
 
     async fn spill(&self) -> Result<usize> {
         log::info!(
-            "bucket repartitioner start spilling, used={:.2} MB, {}",
-            self.mem_used() as f64 / 1e6,
+            "bucket repartitioner start spilling, used={}, {}",
+            ByteSize(self.mem_used() as u64),
             self.memory_manager(),
         );
 
@@ -330,31 +319,60 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
             return Ok(0);
         }
 
-        let spillfile = self
-            .runtime
-            .disk_manager
-            .create_tmp_file("shuffle_spill_file")?;
-        let offsets = spill_into(
-            &mut buffered_partitions,
-            spillfile.path(),
-            self.num_output_partitions,
-        )
-        .await?;
+        // flush all buffered partitions and compute spill size
+        let mut spill_size = 0;
+        for buffered_partition in &mut *buffered_partitions {
+            buffered_partition.flush()?;
+            spill_size += buffered_partition.frozen.len();
+        }
 
-        let mut spills = self.spills.lock().await;
-        let freed = self.metrics.mem_used().set(0);
-
-        log::info!(
-            "bucket repartitioner spilled into file, freed={:.2} MB",
-            freed as f64 / 1e6
-        );
-
-        let file_spill = FileSpillInfo {
-            file: spillfile,
-            offsets,
+        // try spilling into L2, then L3
+        let spill = match OnHeapSpill::try_new_incompleted(spill_size) {
+            Ok(mut on_heap_spill) => {
+                const BUFWRITE_CAPACITY: usize = 262144;
+                let offsets = spill_buffered_partitions(
+                    &mut buffered_partitions,
+                    &mut BufWriter::with_capacity(BUFWRITE_CAPACITY, &mut on_heap_spill),
+                    self.num_output_partitions,
+                )?;
+                let spill = ShuffleSpill {
+                    spill: Spill::new_l2_from(on_heap_spill),
+                    offsets
+                };
+                log::info!(
+                    "bucket repartitioner spilled into L2: size={}",
+                    ByteSize(spill_size as u64),
+                );
+                spill
+            }
+            Err(DataFusionError::ResourcesExhausted(..)) => {
+                const BUFWRITE_CAPACITY: usize = 262144;
+                let mut tmp_file =
+                    self.runtime.disk_manager.create_tmp_file("blaze L3 spill")?;
+                let offsets = spill_buffered_partitions(
+                    &mut buffered_partitions,
+                    &mut BufWriter::with_capacity(BUFWRITE_CAPACITY, &mut tmp_file),
+                    self.num_output_partitions,
+                )?;
+                let spill = ShuffleSpill {
+                    spill: Spill::try_new_l3_from(tmp_file)?,
+                    offsets,
+                };
+                log::info!(
+                    "bucket repartitioner spilled into L3: size={}",
+                    ByteSize(spill_size as u64),
+                );
+                self.metrics.record_spill(spill.spill.disk_size());
+                spill
+            }
+            Err(err) => {
+                return Err(err);
+            }
         };
-        self.metrics.record_spill(file_spill.bytes_size());
-        spills.push(file_spill);
+        let mut spills = self.spills.lock().await;
+        spills.push(spill);
+
+        let freed = self.metrics.mem_used().set(0);
         Ok(freed)
     }
 

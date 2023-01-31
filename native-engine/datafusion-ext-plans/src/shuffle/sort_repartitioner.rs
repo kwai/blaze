@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::shuffle::{
-    evaluate_hashes, evaluate_partition_ids, FileSpillInfo, InMemSpillInfo,
-    ShuffleRepartitioner,
-};
+use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
 use arrow::array::*;
 use arrow::compute;
 use arrow::compute::TakeOptions;
@@ -37,13 +34,14 @@ use futures::lock::Mutex;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
-use tokio::task;
+use bytesize::ByteSize;
 use voracious_radix_sort::{Radixable, RadixSort};
 use datafusion_ext_commons::loser_tree::LoserTree;
+use crate::spill::Spill;
 
 pub struct SortShuffleRepartitioner {
     memory_consumer_id: MemoryConsumerId,
@@ -52,8 +50,7 @@ pub struct SortShuffleRepartitioner {
     schema: SchemaRef,
     buffered_batches: Mutex<Vec<RecordBatch>>,
     buffered_mem_size: AtomicUsize,
-    in_mem_spills: Mutex<Vec<InMemSpillInfo>>,
-    file_spills: Mutex<Vec<FileSpillInfo>>,
+    spills: Mutex<Vec<ShuffleSpill>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
     runtime: Arc<RuntimeEnv>,
@@ -92,8 +89,7 @@ impl SortShuffleRepartitioner {
             schema,
             buffered_batches: Mutex::default(),
             buffered_mem_size: AtomicUsize::new(0),
-            in_mem_spills: Mutex::default(),
-            file_spills: Mutex::default(),
+            spills: Mutex::default(),
             partitioning,
             num_output_partitions,
             runtime,
@@ -104,7 +100,7 @@ impl SortShuffleRepartitioner {
         repartitioner
     }
 
-    async fn spill_buffered_to_in_mem(&self) -> Result<InMemSpillInfo> {
+    async fn spill_buffered_to_l1(&self) -> Result<ShuffleSpill> {
         let mut buffered_batches = self.buffered_batches.lock().await;
 
         // combine all buffered batches
@@ -138,11 +134,9 @@ impl SortShuffleRepartitioner {
         // write to in-mem spill
         let mut cur_partition_id = 0;
         let mut cur_slice_start = 0;
-        let mut cur_spill = InMemSpillInfo {
-            frozen: vec![],
-            offsets: vec![0],
-        };
-        let mut frozen_cursor = Cursor::new(&mut cur_spill.frozen);
+        let mut cur_spill_frozen = vec![];
+        let mut cur_spill_offsets = vec![0];
+        let mut frozen_cursor = Cursor::new(&mut cur_spill_frozen);
 
         macro_rules! write_sub_batch {
             ($range:expr) => {{
@@ -181,7 +175,7 @@ impl SortShuffleRepartitioner {
                 }
 
                 while pi_vec[cur_offset].partition_id > cur_partition_id {
-                    cur_spill.offsets.push(frozen_cursor.stream_position()?);
+                    cur_spill_offsets.push(frozen_cursor.stream_position()?);
                     cur_partition_id += 1;
                 }
             }
@@ -189,14 +183,15 @@ impl SortShuffleRepartitioner {
         if cur_slice_start < pi_vec.len() {
             write_sub_batch!(cur_slice_start..);
         }
-        cur_spill.frozen.shrink_to_fit();
 
         // add one extra offset at last to ease partition length computation
-        cur_spill
-            .offsets
-            .resize(num_output_partitions + 1, cur_spill.frozen.len() as u64);
+        cur_spill_offsets
+            .resize(num_output_partitions + 1, cur_spill_frozen.len() as u64);
         self.buffered_mem_size.store(0, SeqCst);
-        Ok(cur_spill)
+        Ok(ShuffleSpill {
+            spill: Spill::new_l1(cur_spill_frozen),
+            offsets: cur_spill_offsets,
+        })
     }
 
     fn spilled_bytes(&self) -> usize {
@@ -229,46 +224,65 @@ impl MemoryConsumer for SortShuffleRepartitioner {
     async fn spill(&self) -> Result<usize> {
         let current_used = self.mem_used();
         log::info!(
-            "sort repartitioner start spilling, used={:.2} MB, {}",
-            current_used as f64 / 1e6,
+            "sort repartitioner start spilling, used={}, {}",
+            ByteSize(current_used as u64),
             self.memory_manager(),
         );
 
-        let mut in_mem_spills = self.in_mem_spills.lock().await;
-        let mut file_spills = self.file_spills.lock().await;
+        let mut spills = self.spills.lock().await;
         let mut freed = 0isize;
 
         // first try spill current buffered batches to in-mem spills
         let buffered_mem_size = self.buffered_mem_size.load(SeqCst);
         freed += buffered_mem_size as isize;
-        let in_mem_spill = self.spill_buffered_to_in_mem().await?;
-        freed -= in_mem_spill.mem_size() as isize;
+        let in_mem_spill = self.spill_buffered_to_l1().await?;
+        freed -= in_mem_spill.spill.offheap_mem_size() as isize;
         log::info!(
-            "sort repartitioner spilled into memory, freed={:.2} MB",
-            freed as f64 / 1e6
+            "sort repartitioner spilled into memory, freed={}",
+            ByteSize(freed as u64),
         );
-        in_mem_spills.push(in_mem_spill);
+        spills.push(in_mem_spill);
 
-        // move mem-spilled into disk-spilled if necessary
+        // move mem-spilled into L2/L3 if necessary
         while (freed as usize) < current_used / 2 {
-            let pop_index = in_mem_spills
+            let pop_index = spills
                 .iter()
                 .enumerate()
-                .max_by_key(|(_, spill)| spill.mem_size())
+                .max_by_key(|(_, spill)| spill.spill.offheap_mem_size())
                 .unwrap()
                 .0;
-            let pop_spill = in_mem_spills.remove(pop_index);
-            let pop_spill_mem_size = pop_spill.mem_size();
+            let pop_spill = spills.remove(pop_index);
+            let pop_spill_mem_size = pop_spill.spill.offheap_mem_size();
             freed += pop_spill_mem_size as isize;
 
-            let file_spill = pop_spill.into_file_spill(&self.runtime.disk_manager)?;
-            self.metrics.record_spill(file_spill.bytes_size());
-            file_spills.push(file_spill);
-
-            log::info!(
-                "sort repartitioner spilled into file, freed={:.2} MB",
-                pop_spill_mem_size as f64 / 1e6
-            );
+            let spill = match pop_spill.spill.to_l2() {
+                Ok(spill) => {
+                    log::info!(
+                        "sort repartitioner spilled into L2: size={}",
+                        ByteSize(pop_spill_mem_size as u64),
+                    );
+                    ShuffleSpill {
+                        spill,
+                        offsets: pop_spill.offsets,
+                    }
+                }
+                Err(DataFusionError::ResourcesExhausted(..)) => {
+                    let spill = pop_spill.spill.to_l3(&self.runtime.disk_manager)?;
+                    log::info!(
+                        "sort repartitioner spilled into L3: size={}",
+                        ByteSize(pop_spill_mem_size as u64),
+                    );
+                    self.metrics.record_spill(pop_spill_mem_size);
+                    ShuffleSpill {
+                        spill,
+                        offsets: pop_spill.offsets,
+                    }
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            };
+            spills.push(spill);
         }
         let freed = freed as usize;
         self.metrics.mem_used().sub(freed);
@@ -307,20 +321,12 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        let mut in_mem_spills = self.in_mem_spills.lock().await;
-        let mut file_spills = self.file_spills.lock().await;
+        let mut spills = self.spills.lock().await;
 
         // spill all buffered batches
         if self.buffered_mem_size.load(SeqCst) > 0 {
-            in_mem_spills.push(self.spill_buffered_to_in_mem().await?);
+            spills.push(self.spill_buffered_to_l1().await?);
         }
-        let in_mem_spills = in_mem_spills.drain(..);
-        let file_spills = file_spills.drain(..);
-        log::info!(
-            "sort partitioner start writing with {} in-mem spills and {} disk spills",
-            in_mem_spills.len(),
-            file_spills.len()
-        );
 
         // define spill cursor. partial-ord is reversed because we
         // need to find mininum using a binary heap
@@ -332,42 +338,36 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             #[derivative(PartialOrd = "ignore")]
             #[derivative(PartialEq = "ignore")]
             #[derivative(Ord = "ignore")]
-            spill: Spill,
+            reader: Box<dyn Read + Send>,
+
+            #[derivative(PartialOrd = "ignore")]
+            #[derivative(PartialEq = "ignore")]
+            #[derivative(Ord = "ignore")]
+            offsets: Vec<u64>,
         }
         impl SpillCursor {
             fn skip_empty_partitions(&mut self) {
-                let offs = self.spill.offsets();
-                while !self.finished() && offs[self.cur + 1] == offs[self.cur] {
+                let offsets = &self.offsets;
+                while !self.finished() && offsets[self.cur + 1] == offsets[self.cur] {
                     self.cur += 1;
                 }
             }
 
             fn finished(&self) -> bool {
-                self.cur + 1 >= self.spill.offsets().len()
-            }
-        }
-
-        enum Spill {
-            InMem(InMemSpillInfo),
-            File(FileSpillInfo),
-        }
-        impl Spill {
-            fn offsets(&self) -> &[u64] {
-                match self {
-                    Spill::InMem(spill) => &spill.offsets,
-                    Spill::File(spill) => &spill.offsets,
-                }
+                self.cur + 1 >= self.offsets.len()
             }
         }
 
         // use loser tree to select partitions from spills
         let mut spills: LoserTree<SpillCursor> = LoserTree::new_by(
-            in_mem_spills
+            std::mem::take(&mut *spills)
                 .into_iter()
-                .map(Spill::InMem)
-                .chain(file_spills.into_iter().map(Spill::File))
                 .map(|spill| {
-                    let mut cursor = SpillCursor { spill, cur: 0 };
+                    let mut cursor = SpillCursor {
+                        cur: 0,
+                        reader: spill.spill.into_reader(),
+                        offsets: spill.offsets,
+                    };
                     cursor.skip_empty_partitions();
                     cursor
                 })
@@ -383,68 +383,53 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let index_file = self.output_index_file.clone();
 
         let num_output_partitions = self.num_output_partitions;
-        task::spawn_blocking(move || {
-            let mut offsets = vec![0];
-            let mut output_data = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(data_file)?;
-            let mut cur_partition_id = 0;
+        let mut offsets = vec![0];
+        let mut output_data = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(data_file)?;
+        let mut cur_partition_id = 0;
 
-            // append partition in each spills
-            if spills.len() > 0 {
-                loop {
-                    let mut min_spill = spills.peek_mut();
-                    if min_spill.finished() {
-                        break;
-                    }
-
-                    while cur_partition_id < min_spill.cur {
-                        offsets.push(output_data.stream_position()?);
-                        cur_partition_id += 1;
-                    }
-                    let (spill_offset_start, spill_offset_end) = (
-                        min_spill.spill.offsets()[cur_partition_id],
-                        min_spill.spill.offsets()[cur_partition_id + 1],
-                    );
-                    let spill_range = spill_offset_start as usize..spill_offset_end as usize;
-
-                    match &mut min_spill.spill {
-                        Spill::InMem(s) => {
-                            output_data.write_all(&s.frozen[spill_range])?;
-                        }
-                        Spill::File(s) => {
-                            let mut file = s.file.as_file().try_clone()?;
-                            file.seek(SeekFrom::Start(spill_offset_start))?;
-                            std::io::copy(
-                                &mut file.take(spill_range.len() as u64),
-                                &mut output_data,
-                            )?;
-                        }
-                    }
-
-                    // forward partition id in min_spill
-                    min_spill.cur += 1;
-                    min_spill.skip_empty_partitions();
+        // append partition in each spills
+        if spills.len() > 0 {
+            loop {
+                let mut min_spill = spills.peek_mut();
+                if min_spill.finished() {
+                    break;
                 }
-            }
-            output_data.flush()?;
 
-            // add one extra offset at last to ease partition length computation
-            offsets.resize(num_output_partitions + 1, output_data.stream_position()?);
+                while cur_partition_id < min_spill.cur {
+                    offsets.push(output_data.stream_position()?);
+                    cur_partition_id += 1;
+                }
+                let (spill_offset_start, spill_offset_end) = (
+                    min_spill.offsets[cur_partition_id],
+                    min_spill.offsets[cur_partition_id + 1],
+                );
 
-            let mut output_index = File::create(index_file)?;
-            for offset in offsets {
-                output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+                let spill_range = spill_offset_start as usize..spill_offset_end as usize;
+                let reader = &mut min_spill.reader;
+                std::io::copy(
+                    &mut reader.take(spill_range.len() as u64),
+                    &mut output_data,
+                )?;
+
+                // forward partition id in min_spill
+                min_spill.cur += 1;
+                min_spill.skip_empty_partitions();
             }
-            output_index.flush()?;
-            Ok::<(), DataFusionError>(())
-        })
-        .await
-        .map_err(|e| {
-            DataFusionError::Execution(format!("shuffle write error: {:?}", e))
-        })??;
+        }
+        output_data.flush()?;
+
+        // add one extra offset at last to ease partition length computation
+        offsets.resize(num_output_partitions + 1, output_data.stream_position()?);
+
+        let mut output_index = File::create(index_file)?;
+        for offset in offsets {
+            output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+        }
+        output_index.flush()?;
 
         let used = self.metrics.mem_used().set(0);
         self.shrink(used);

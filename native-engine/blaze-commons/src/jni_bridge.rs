@@ -356,6 +356,7 @@ pub struct JavaClasses<'a> {
     pub cSparkExpressionWrapperContext: SparkExpressionWrapperContext<'a>,
     pub cSparkRssShuffleWriter: SparkRssShuffleWriter<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
+    pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -416,6 +417,7 @@ impl JavaClasses<'static> {
                     .unwrap(),
                 cSparkRssShuffleWriter: SparkRssShuffleWriter::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
+                cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env).unwrap(),
             };
             log::info!("Initializing JavaClasses finished");
             java_classes
@@ -443,6 +445,8 @@ pub struct JniBridge<'a> {
     pub method_setTaskContext_ret: ReturnType,
     pub method_getTaskContext: JStaticMethodID,
     pub method_getTaskContext_ret: ReturnType,
+    pub method_getTaskOnHeapSpillManager: JStaticMethodID,
+    pub method_getTaskOnHeapSpillManager_ret: ReturnType,
     pub method_isTaskRunning: JStaticMethodID,
     pub method_isTaskRunning_ret: ReturnType,
 }
@@ -483,6 +487,12 @@ impl<'a> JniBridge<'a> {
                 "(Lorg/apache/spark/TaskContext;)V",
             )?,
             method_setTaskContext_ret: ReturnType::Primitive(Primitive::Void),
+            method_getTaskOnHeapSpillManager: env.get_static_method_id(
+                class,
+                "getTaskOnHeapSpillManager",
+                "()Lorg/apache/spark/sql/blaze/memory/OnHeapSpillManager;",
+            )?,
+            method_getTaskOnHeapSpillManager_ret: ReturnType::Object,
             method_isTaskRunning: env.get_static_method_id(
                 class,
                 "isTaskRunning",
@@ -1139,6 +1149,42 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                 .get_method_id(class, "finishNativeThread", "()V")
                 .unwrap(),
             method_finishNativeThread_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeOnHeapSpillManager<'a> {
+    pub class: JClass<'a>,
+    pub method_newSpill: JMethodID,
+    pub method_newSpill_ret: ReturnType,
+    pub method_writeSpill: JMethodID,
+    pub method_writeSpill_ret: ReturnType,
+    pub method_completeSpill: JMethodID,
+    pub method_completeSpill_ret: ReturnType,
+    pub method_readSpill: JMethodID,
+    pub method_readSpill_ret: ReturnType,
+    pub method_releaseSpill: JMethodID,
+    pub method_releaseSpill_ret: ReturnType,
+}
+impl<'a> BlazeOnHeapSpillManager<'a> {
+    pub const SIG_TYPE: &'static str =
+        "org/apache/spark/sql/blaze/memory/OnHeapSpillManager";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeOnHeapSpillManager<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeOnHeapSpillManager {
+            class,
+            method_newSpill: env.get_method_id(class, "newSpill", "(J)I").unwrap(),
+            method_newSpill_ret: ReturnType::Primitive(Primitive::Int),
+            method_writeSpill: env.get_method_id(class, "writeSpill", "(ILjava/nio/ByteBuffer;)V").unwrap(),
+            method_writeSpill_ret: ReturnType::Primitive(Primitive::Void),
+            method_completeSpill: env.get_method_id(class, "completeSpill", "(I)V").unwrap(),
+            method_completeSpill_ret: ReturnType::Primitive(Primitive::Void),
+            method_readSpill: env.get_method_id(class, "readSpill", "(ILjava/nio/ByteBuffer;)I").unwrap(),
+            method_readSpill_ret: ReturnType::Primitive(Primitive::Int),
+            method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V").unwrap(),
+            method_releaseSpill_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

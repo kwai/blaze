@@ -12,38 +12,43 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_context::AggContext;
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::mem::size_of;
+use std::sync::Arc;
+
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use arrow::row::RowConverter;
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
+use datafusion::execution::{
+    MemoryConsumer, MemoryConsumerId, MemoryManager,
+};
 use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
-use datafusion::execution::{
-    DiskManager, MemoryConsumer, MemoryConsumerId, MemoryManager,
-};
 use datafusion::physical_plan::metrics::{BaselineMetrics, Time};
+use futures::lock::Mutex;
+use futures::TryFutureExt;
+use hashbrown::hash_map::Entry;
+use hashbrown::HashMap;
+use lz4_flex::frame::FrameDecoder;
+use tokio::sync::mpsc::Sender;
+
 use datafusion_ext_commons::io::{
     read_bytes_slice, read_len, write_len,
 };
-use futures::lock::Mutex;
-use futures::TryFutureExt;
-use hashbrown::HashMap;
-use lz4_flex::frame::FrameDecoder;
-use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
-use std::mem::size_of;
-use std::sync::Arc;
-use hashbrown::hash_map::Entry;
-use tokio::sync::mpsc::Sender;
 use datafusion_ext_commons::loser_tree::LoserTree;
+
 use crate::agg::agg_buf::AggBuf;
+use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
+use crate::spill::{dump_spills_statistics, Spill};
 
 pub struct AggTables {
     in_mem: Mutex<InMemTable>,
-    spilled: Mutex<Vec<SpilledTable>>,
+    spills: Mutex<Vec<Spill>>,
     id: MemoryConsumerId,
     agg_ctx: Arc<AggContext>,
     context: Arc<TaskContext>,
@@ -62,7 +67,7 @@ impl AggTables {
                 is_hash: true, // only the first im-mem table uses hash
                 ..Default::default()
             }),
-            spilled: Mutex::default(),
+            spills: Mutex::default(),
             id: MemoryConsumerId::new(partition_id),
             agg_ctx,
             context,
@@ -106,24 +111,20 @@ impl AggTables {
         sender: Sender<ArrowResult<RecordBatch>>,
     ) -> Result<()> {
         let mut in_mem_locked = self.in_mem.lock().await;
-        let mut spilled_locked = self.spilled.lock().await;
+        let mut spills_locked = self.spills.lock().await;
         let mut timer = elapsed_time.timer();
 
         let batch_size = self.context.session_config().batch_size();
         let in_mem = std::mem::take(&mut *in_mem_locked);
-        let spilled = std::mem::take(&mut *spilled_locked);
-
-        let num_mem_spills = spilled.iter().filter(|spill| spill.mem_size > 0).count();
-        let num_disk_spills = spilled.len() - num_mem_spills;
+        let spills = std::mem::take(&mut *spills_locked);
 
         log::info!(
-            "aggregate exec starts outputing with mem-spills={}, disk-spills={}",
-            num_mem_spills,
-            num_disk_spills,
+            "aggregate exec starts outputing with spills: {}",
+            dump_spills_statistics(&spills),
         );
 
         // only one in-mem table, directly output it
-        if spilled.is_empty() {
+        if spills.is_empty() {
             let mut records = in_mem
                 .grouping_mappings
                 .into_iter()
@@ -165,9 +166,9 @@ impl AggTables {
             //  quires a lot of memory). if we do not spill and release the memory in
             //  time, the shuffle will run in low performance.
             let in_mem_size = in_mem.mem_used();
-            let spill = in_mem.try_into_mem_spilled()?;
-            let spill_size = spill.mem_size;
-            cursors.push(TableCursor::try_new_spilled(spill, &self.agg_ctx)?);
+            let spill = in_mem.try_into_l1_spill()?;
+            let spill_size = spill.offheap_mem_size();
+            cursors.push(TableCursor::try_from_spill(spill, &self.agg_ctx)?);
 
             let mem_growed = spill_size;
             self.metrics.mem_used().add(mem_growed);
@@ -177,8 +178,8 @@ impl AggTables {
             self.shrink(mem_freed);
             self.metrics.mem_used().sub(mem_freed);
         }
-        for spill in spilled {
-            cursors.push(TableCursor::try_new_spilled(spill, &self.agg_ctx)?);
+        for spill in spills {
+            cursors.push(TableCursor::try_from_spill(spill, &self.agg_ctx)?);
         }
         let mut staging_records = Vec::with_capacity(batch_size);
         let mut current_record: Option<AggRecord> = None;
@@ -279,12 +280,12 @@ impl MemoryConsumer for AggTables {
     async fn spill(&self) -> Result<usize> {
         let current_used = self.mem_used();
         log::info!(
-            "agg tables start spilling, used={:.2} MB, {}",
-            current_used as f64 / 1e6,
+            "agg tables start spilling, used={}, {}",
+            ByteSize(current_used as u64),
             self.memory_manager(),
         );
         let mut in_mem = self.in_mem.lock().await;
-        let mut spilled = self.spilled.lock().await;
+        let mut spilled = self.spills.lock().await;
         let mut freed = 0isize;
 
         // first try spill in-mem into spilled
@@ -293,42 +294,56 @@ impl MemoryConsumer for AggTables {
         freed += in_mem_used as isize;
 
         let spill_num_rows = in_mem.num_records();
-        let spill = in_mem.try_into_mem_spilled()?;
-        let spill_mem_used = spill.mem_size;
+        let spill = in_mem.try_into_l1_spill()?;
+        let spill_mem_used = spill.offheap_mem_size();
         freed -= spill_mem_used as isize;
         spilled.push(spill);
         log::info!(
-            "aggregate table (num_rows={}) spilled into memory ({:.2} MB into {:.2} MB), freed={:.2} MB",
+            "aggregate table (num_rows={}) spilled into memory ({} into {}), freed={}",
             spill_num_rows,
-            in_mem_used as f64 / 1e6,
-            spill_mem_used as f64 / 1e6,
-            freed as f64 / 1e6
+            ByteSize(in_mem_used as u64),
+            ByteSize(spill_mem_used as u64),
+            ByteSize(freed as u64)
         );
 
-        // move mem-spilled into disk-spilled if necessary
+        // move mem-spilled into heap or disk-spilled if necessary
         while (freed as usize) < current_used / 2 {
             let max_spill_idx = spilled
                 .iter_mut()
                 .enumerate()
-                .max_by_key(|(_, spill)| spill.mem_size)
+                .max_by_key(|(_, spill)| spill.offheap_mem_size())
                 .unwrap()
                 .0;
             let spill_count = spilled.len();
             spilled.swap(max_spill_idx, spill_count - 1);
             let max_spill = spilled.pop().unwrap();
-            let max_spill_mem_size = max_spill.mem_size;
-            freed += max_spill.mem_size as isize;
+            let max_spill_mem_size = max_spill.offheap_mem_size();
+            freed += max_spill.offheap_mem_size() as isize;
 
-            // move max_spill into file
-            let disk_manager = &self.context.runtime_env().disk_manager;
-            let disk_spill = max_spill.try_into_disk_spill(disk_manager)?;
-            self.metrics.record_spill(disk_spill.disk_size as usize);
-            spilled.push(disk_spill);
-
-            log::info!(
-                "aggregate table spilled into file, freed={:.2} MB",
-                max_spill_mem_size as f64 / 1e6
-            );
+            // try to move max_spill into on-heap
+            match max_spill.to_l2() {
+                Ok(heap_spill) => {
+                    spilled.push(heap_spill);
+                    log::info!(
+                        "aggregate table spilled into L2, freed={}",
+                        ByteSize(max_spill_mem_size as u64)
+                    );
+                },
+                Err(DataFusionError::ResourcesExhausted(..)) => {
+                    // move max_spill into file
+                    let disk_manager = &self.context.runtime_env().disk_manager;
+                    let disk_spill = max_spill.to_l3(disk_manager)?;
+                    self.metrics.record_spill(disk_spill.disk_size() as usize);
+                    spilled.push(disk_spill);
+                    log::info!(
+                        "aggregate table spilled into L3, freed={}",
+                        ByteSize(max_spill_mem_size as u64)
+                    );
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            }
         }
 
         let freed = freed as usize;
@@ -433,7 +448,7 @@ impl InMemTable {
         vec
     }
 
-    fn try_into_mem_spilled(self) -> Result<SpilledTable> {
+    fn try_into_l1_spill(self) -> Result<Spill> {
         let spilled_buf = vec![];
         let zwriter = lz4_flex::frame::FrameEncoder::new(
             BufWriter::with_capacity(65536, spilled_buf)
@@ -450,50 +465,12 @@ impl InMemTable {
         write_len(0, &mut writer)?; // EOF
 
         let zwriter = writer.into_inner().map_err(|err| err.into_error())?;
-        let mut spilled_buf = zwriter
+        let spilled_buf = zwriter
             .finish()
             .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
             .into_inner()
             .map_err(|err| err.into_error())?;
-        spilled_buf.shrink_to_fit();
-        let mem_size = spilled_buf.len();
-
-        Ok(SpilledTable {
-            spilled_reader: Box::new(Cursor::new(spilled_buf)),
-            disk_size: 0,
-            mem_size,
-        })
-    }
-}
-
-struct SpilledTable {
-    spilled_reader: Box<dyn Read + Send>,
-    mem_size: usize,
-    disk_size: u64,
-}
-
-impl SpilledTable {
-    fn try_into_disk_spill(self, disk_manager: &DiskManager) -> Result<Self> {
-        let mut spilled_reader = self.spilled_reader;
-        let mut spilled_file = disk_manager.create_tmp_file("AggDiskSpill")?;
-        std::io::copy(&mut spilled_reader, &mut spilled_file)?;
-        let disk_size = spilled_file.stream_position()?;
-        spilled_file.rewind()?;
-        Ok(SpilledTable {
-            spilled_reader: Box::new(spilled_file),
-            mem_size: 0,
-            disk_size,
-        })
-    }
-
-    fn try_into_iterator(self, agg_ctx: &Arc<AggContext>) -> Result<SpilledTableIterator> {
-        let buf_reader = BufReader::with_capacity(65536, self.spilled_reader);
-        let mut iter = SpilledTableIterator {
-            agg_ctx: agg_ctx.clone(),
-            input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
-        };
-        iter.next().transpose()?; // first record is always None
-        Ok(iter)
+        Ok(Spill::new_l1(spilled_buf))
     }
 }
 
@@ -502,6 +479,20 @@ struct SpilledTableIterator {
     input: BufReader<FrameDecoder<BufReader<Box<dyn Read + Send>>>>,
 }
 impl SpilledTableIterator {
+    fn try_from_spill(
+        spill: Spill,
+        agg_ctx: &Arc<AggContext>,
+    ) -> Result<Self> {
+
+        let buf_reader = spill.into_buf_reader();
+        let mut iter = SpilledTableIterator {
+            agg_ctx: agg_ctx.clone(),
+            input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
+        };
+        iter.next().transpose()?; // first record is always None
+        Ok(iter)
+    }
+
     fn next_impl(&mut self) -> Result<Option<AggRecord>> {
         // read grouping
         let grouping_buf_len = read_len(&mut self.input)?;
@@ -526,8 +517,8 @@ impl Iterator for SpilledTableIterator {
 
 struct TableCursor(SpilledTableIterator, Option<AggRecord>);
 impl TableCursor {
-    fn try_new_spilled(table: SpilledTable, agg_ctx: &Arc<AggContext>) -> Result<Self> {
-        let mut iter = table.try_into_iterator(agg_ctx)?;
+    fn try_from_spill(spill: Spill, agg_ctx: &Arc<AggContext>) -> Result<Self> {
+        let mut iter = SpilledTableIterator::try_from_spill(spill, agg_ctx)?;
         let first = iter.next().transpose()?;
         Ok(TableCursor(iter, first))
     }

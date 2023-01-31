@@ -21,10 +21,13 @@ import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
+import org.apache.spark.sql.blaze.memory.OnHeapSpillManager;
+import org.apache.spark.sql.blaze.memory.OnHeapSpillManager$;
 import scala.Function1;
 import scala.Unit;
 import scala.collection.Iterator;
 
+@SuppressWarnings("unused")
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
@@ -51,6 +54,10 @@ public class JniBridge {
 
   public static void setTaskContext(TaskContext tc) {
     TaskContext$.MODULE$.setTaskContext(tc);
+  }
+
+  public static OnHeapSpillManager getTaskOnHeapSpillManager() {
+    return OnHeapSpillManager$.MODULE$.current();
   }
 
   public static boolean isTaskRunning() {

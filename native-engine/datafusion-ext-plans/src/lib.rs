@@ -32,3 +32,4 @@ pub mod sort_merge_join_exec;
 pub mod rss_shuffle_writer_exec;
 
 mod shuffle;
+mod spill;
