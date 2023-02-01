@@ -31,7 +31,7 @@ pub struct RssSingleShuffleRepartitioner {
 
 impl Debug for RssSingleShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RssSortShuffleRepartitioner")
+        f.debug_struct("RssSingleShuffleRepartitioner")
             .finish()
     }
 }
@@ -51,7 +51,7 @@ impl RssSingleShuffleRepartitioner {
 #[async_trait]
 impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     fn name(&self) -> &str {
-        "single repartitioner"
+        "rss single repartitioner"
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {

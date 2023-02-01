@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.errors.attachTree
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleWriter
+import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleWriterBase
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
@@ -164,7 +164,7 @@ case class ArrowShuffleExchangeExec(
           context,
           createMetricsReporter(context))
         writer
-          .asInstanceOf[ArrowShuffleWriter[_, _]]
+          .asInstanceOf[ArrowShuffleWriterBase[_, _]]
           .nativeShuffleWrite(
             rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
             dep,

@@ -1028,7 +1028,7 @@ pub struct SparkRssShuffleWriter<'a> {
 }
 
 impl <'a> SparkRssShuffleWriter<'_> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/blaze/shuffle/RssPartitionWriter";
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/blaze/shuffle/RssPartitionWriterBase";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkRssShuffleWriter<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;

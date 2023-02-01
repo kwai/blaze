@@ -30,7 +30,7 @@ use tempfile::NamedTempFile;
 pub mod sort_repartitioner;
 pub mod bucket_repartitioner;
 pub mod single_repartitioner;
-pub mod bucket_rss_repartitioner;
+pub mod rss_bucket_repartitioner;
 pub mod rss_single_repartitioner;
 
 #[async_trait]

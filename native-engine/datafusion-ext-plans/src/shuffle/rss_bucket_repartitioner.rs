@@ -39,7 +39,7 @@ use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_arra
 use datafusion_ext_commons::io::write_one_batch;
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
 
-pub struct BucketRssShuffleRepartitioner {
+pub struct RssBucketShuffleRepartitioner {
     id: MemoryConsumerId,
     rss_partition_writer: GlobalRef,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
@@ -50,7 +50,7 @@ pub struct BucketRssShuffleRepartitioner {
     metrics: BaselineMetrics,
 }
 
-impl BucketRssShuffleRepartitioner{
+impl RssBucketShuffleRepartitioner{
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         partition_id: usize,
@@ -94,7 +94,7 @@ impl BucketRssShuffleRepartitioner{
 }
 
 #[async_trait]
-impl ShuffleRepartitioner for BucketRssShuffleRepartitioner {
+impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
     fn name(&self) -> &str {
         "bucket rss repartitioner"
     }
@@ -214,7 +214,7 @@ async fn spill_into(
 
 }
 
-impl Debug for BucketRssShuffleRepartitioner {
+impl Debug for RssBucketShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("BucketShuffleRepartitioner")
             .field("id", &self.id())
@@ -226,7 +226,7 @@ impl Debug for BucketRssShuffleRepartitioner {
 }
 
 #[async_trait]
-impl MemoryConsumer for BucketRssShuffleRepartitioner {
+impl MemoryConsumer for RssBucketShuffleRepartitioner {
     fn name(&self) -> String {
         format!("BucketRssShuffleRepartitioner")
     }
@@ -275,7 +275,7 @@ impl MemoryConsumer for BucketRssShuffleRepartitioner {
     }
 }
 
-impl Drop for BucketRssShuffleRepartitioner {
+impl Drop for RssBucketShuffleRepartitioner {
     fn drop(&mut self) { self.runtime.drop_consumer(self.id(), self.used()); }
 }
 
@@ -382,7 +382,7 @@ impl PartitionBuffer{
         Ok(mem_diff)
     }
 
-    /// flush all active and staging data into frozen bytes
+    /// flush batch to rss service
     fn flush(&mut self, partition_id: usize) -> Result<isize> {
         let mut mem_diff = 0isize;
         if self.num_active_rows > 0 {

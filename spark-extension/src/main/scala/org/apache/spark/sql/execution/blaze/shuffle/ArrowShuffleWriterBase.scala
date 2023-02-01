@@ -33,7 +33,7 @@ import org.blaze.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode, ShuffleWr
 
 import java.util.UUID
 
-class ArrowShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
+abstract class ArrowShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V]
     with Logging {
 
@@ -97,46 +97,6 @@ class ArrowShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
       partitionLengths,
       dataSize,
       context)
-  }
-
-  def nativeRssShuffleWrite(
-      nativeShuffleRDD: NativeRDD,
-      dep: ShuffleDependency[_, _, _],
-      mapId: Int,
-      context: TaskContext,
-      partition: Partition,
-      numPartitions: Int): MapStatus = {
-
-    val rssShuffleWriterObject = Shims.get.shuffleShims
-      .getRssPartitionWriter(dep.shuffleHandle, mapId, metrics, numPartitions)
-    assert(rssShuffleWriterObject.isDefined)
-    try {
-      val jniResourceId = s"RssPartitionWriter:${UUID.randomUUID().toString}"
-      JniBridge.resourcesMap.put(jniResourceId, rssShuffleWriterObject.get)
-      val nativeRssShuffleWriterExec = PhysicalPlanNode
-        .newBuilder()
-        .setRssShuffleWriter(
-          RssShuffleWriterExecNode
-            .newBuilder(nativeShuffleRDD.nativePlan(partition, context).getRssShuffleWriter)
-            .setRssPartitionWriterResourceId(jniResourceId)
-            .build())
-        .build()
-
-      val iterator = NativeHelper.executeNativePlan(
-        nativeRssShuffleWriterExec,
-        nativeShuffleRDD.metrics,
-        partition,
-        context)
-      assert(iterator.toArray.isEmpty)
-    } finally {
-      rssShuffleWriterObject.get.close(0)
-    }
-
-    val mapStatus = Shims.get.shuffleShims.getMapStatus(
-      SparkEnv.get.blockManager.shuffleServerId,
-      rssShuffleWriterObject.get.getPartitionLengthMap,
-      mapId)
-    mapStatus
   }
 
   override def stop(success: Boolean): Option[MapStatus] = None

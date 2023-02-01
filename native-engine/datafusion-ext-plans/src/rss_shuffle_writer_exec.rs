@@ -38,7 +38,7 @@ use futures::{TryFutureExt, TryStreamExt};
 use futures::stream::once;
 use jni::objects::JObject;
 use blaze_commons::{jni_call_static, jni_new_global_ref, jni_new_string};
-use crate::shuffle::bucket_rss_repartitioner::BucketRssShuffleRepartitioner;
+use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
 use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
 use crate::shuffle::ShuffleRepartitioner;
 
@@ -120,7 +120,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
                         BaselineMetrics::new(&self.metrics, partition),
                     )),
                 Partitioning::Hash(_, _) =>
-                    Arc::new(BucketRssShuffleRepartitioner::new(
+                    Arc::new(RssBucketShuffleRepartitioner::new(
                         partition,
                         rss_partition_writer,
                         self.schema(),
