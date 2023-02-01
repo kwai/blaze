@@ -27,6 +27,7 @@ import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
 
+import org.apache.spark.sql.catalyst.analysis.DecimalPrecision
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
 import org.apache.spark.sql.catalyst.expressions.Add
@@ -418,34 +419,29 @@ object NativeConverters {
         buildBinaryExprNode(lhs, rhs, "Multiply")
 
       case e @ Divide(lhs, rhs) =>
-        if (lhs.dataType != e.dataType)
+        if (!e.dataType.isInstanceOf[DecimalType] && lhs.dataType != e.dataType)
           return convertExpr(Divide(Cast(lhs, e.dataType), rhs), useAttrExprId)
-        if (rhs.dataType != e.dataType)
+        if (!e.dataType.isInstanceOf[DecimalType] && rhs.dataType != e.dataType)
           return convertExpr(Divide(lhs, Cast(rhs, e.dataType)), useAttrExprId)
+
         val promotedDataType = (lhs.dataType, rhs.dataType) match {
           case (lt: DecimalType, rt: DecimalType) =>
-            val (p1, s1) = (lt.precision, lt.scale)
-            val (p2, s2) = (rt.precision, rt.scale)
-            val scale = Math.max(6, s1 + p2 + 1)
-            val precision = Math.max(1, Math.min(p1 - s1 + s2 + scale, DecimalType.MAX_PRECISION))
-            Some(DecimalType(precision, scale))
+            Some(DecimalPrecision.widerDecimalType(lt, rt))
           case _ =>
             None
         }
-        val promotePrecision = { (expr: Expression) =>
+        val promotePrecision = (expr: Expression) => {
           promotedDataType match {
-            case Some(promoted) if promoted != expr.dataType =>
-              Cast(expr, promoted)
-            case None =>
-              expr
+            case Some(promoted) if promoted != expr.dataType => Cast(expr, promoted)
+            case _ => expr
           }
         }
 
         rhs match {
-          case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
-            buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
           case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
             buildBinaryExprNode(promotePrecision(lhs), promotePrecision(rhs), "Divide")
+          case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
+            buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
           case rhs =>
             val l = convertExpr(promotePrecision(lhs), useAttrExprId)
             val r =
