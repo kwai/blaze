@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
-use std::fmt::{Debug, Formatter};
-use std::io::Cursor;
+use crate::shuffle::ShuffleRepartitioner;
 use async_trait::async_trait;
+use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::physical_plan::metrics::BaselineMetrics;
-use jni::objects::GlobalRef;
-use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
 use datafusion_ext_commons::io::write_one_batch;
-use crate::shuffle::ShuffleRepartitioner;
+use jni::objects::GlobalRef;
+use std::fmt;
+use std::fmt::{Debug, Formatter};
+use std::io::Cursor;
 
 pub struct RssSingleShuffleRepartitioner {
     rss_partition_writer: GlobalRef,
@@ -31,19 +31,15 @@ pub struct RssSingleShuffleRepartitioner {
 
 impl Debug for RssSingleShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RssSingleShuffleRepartitioner")
-            .finish()
+        f.debug_struct("RssSingleShuffleRepartitioner").finish()
     }
 }
 
 impl RssSingleShuffleRepartitioner {
-    pub fn new(
-        rss_partition_writer: GlobalRef,
-        metrics: BaselineMetrics
-    ) -> Self {
+    pub fn new(rss_partition_writer: GlobalRef, metrics: BaselineMetrics) -> Self {
         Self {
             rss_partition_writer,
-            metrics
+            metrics,
         }
     }
 }
@@ -63,7 +59,7 @@ impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
         let rss_buffer = jni_new_direct_byte_buffer!(&mut rss_data)?;
 
         if length != 0 {
-            jni_call!(SparkRssShuffleWriter(self.rss_partition_writer.as_obj()).write(0 as i32, rss_buffer, length as i32) -> ())?;
+            jni_call!(SparkRssShuffleWriter(self.rss_partition_writer.as_obj()).write(0_i32, rss_buffer, length as i32) -> ())?;
         }
         Ok(())
     }

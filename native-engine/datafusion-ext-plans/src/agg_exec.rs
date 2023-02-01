@@ -145,7 +145,6 @@ async fn execute_agg(
     partition_id: usize,
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
-
     match agg_ctx.exec_mode {
         AggExecMode::HashAgg => {
             if !agg_ctx.groupings.is_empty() {
@@ -155,25 +154,15 @@ async fn execute_agg(
                     agg_ctx,
                     partition_id,
                     metrics,
-                ).await
+                )
+                .await
             } else {
-                execute_agg_no_grouping(
-                    input,
-                    context,
-                    agg_ctx,
-                    partition_id,
-                    metrics,
-                ).await
+                execute_agg_no_grouping(input, context, agg_ctx, partition_id, metrics)
+                    .await
             }
         }
         AggExecMode::SortAgg => {
-            execute_agg_sorted(
-                input,
-                context,
-                agg_ctx,
-                partition_id,
-                metrics,
-            ).await
+            execute_agg_sorted(input, context, agg_ctx, partition_id, metrics).await
         }
     }
 }
@@ -237,24 +226,26 @@ async fn execute_agg_with_grouping_hash(
         let agg_buf_array = agg_ctx.get_input_agg_buf_array(&input_batch)?;
 
         // update to in-mem table
-        tables.update_in_mem(|in_mem: &mut InMemTable| {
-            for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
-                in_mem.with_entry_mut(&agg_ctx, grouping_row, |agg_buf| {
-                    agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
-                    agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
-                    Ok(())
-                })?;
-
-            }
-            Ok(())
-        })
-        .await?;
+        tables
+            .update_in_mem(|in_mem: &mut InMemTable| {
+                for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
+                    in_mem.with_entry_mut(&agg_ctx, grouping_row, |agg_buf| {
+                        agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
+                        agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
+                        Ok(())
+                    })?;
+                }
+                Ok(())
+            })
+            .await?;
     }
 
     // merge all tables and output
     let elapsed_compute = baseline_metrics.elapsed_compute().clone();
     start_output(agg_ctx.clone(), baseline_metrics, |sender| async move {
-        tables.output(grouping_row_converter, elapsed_compute, sender).await?;
+        tables
+            .output(grouping_row_converter, elapsed_compute, sender)
+            .await?;
         Ok(())
     })
 }
@@ -302,9 +293,10 @@ async fn execute_agg_no_grouping(
                     &RecordBatchOptions::new().with_row_count(Some(1)),
                 )
             });
-        sender.send(batch_result).map_err(|err| {
-            DataFusionError::Execution(format!("{:?}", err))
-        }).await?;
+        sender
+            .send(batch_result)
+            .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
+            .await?;
         log::info!("aggregate exec (no grouping) outputing one record");
         Ok(())
     })
@@ -383,9 +375,12 @@ async fn execute_agg_sorted(
                                 "aggregate exec (sorted) outputing one batch: num_rows={}",
                                 batch.num_rows(),
                             );
-                            sender.send(Ok(batch)).map_err(|err| {
-                                DataFusionError::Execution(format!("{:?}", err))
-                            }).await?;
+                            sender
+                                .send(Ok(batch))
+                                .map_err(|err| {
+                                    DataFusionError::Execution(format!("{:?}", err))
+                                })
+                                .await?;
                             timer.restart();
                         }
                     }
@@ -411,9 +406,10 @@ async fn execute_agg_sorted(
                 "aggregate exec (sorted) outputing one batch: num_rows={}",
                 batch.num_rows(),
             );
-            sender.send(Ok(batch)).map_err(|err| {
-                DataFusionError::Execution(format!("{:?}", err))
-            }).await?;
+            sender
+                .send(Ok(batch))
+                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
+                .await?;
         }
         Ok(())
     })
@@ -422,9 +418,8 @@ async fn execute_agg_sorted(
 fn start_output<Fut: Future<Output = Result<()>> + Send>(
     agg_ctx: Arc<AggContext>,
     baseline_metrics: BaselineMetrics,
-    output: impl FnOnce(Sender<ArrowResult<RecordBatch>>) -> Fut + Send + 'static
+    output: impl FnOnce(Sender<ArrowResult<RecordBatch>>) -> Fut + Send + 'static,
 ) -> Result<SendableRecordBatchStream> {
-
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
     let output_schema = agg_ctx.output_schema.clone();
     let join_handle = tokio::task::spawn(async move {

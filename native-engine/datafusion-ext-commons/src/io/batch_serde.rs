@@ -19,9 +19,9 @@ use arrow::datatypes::*;
 use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use bitvec::prelude::BitVec;
+use datafusion::common::cast::as_binary_array;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
-use datafusion::common::cast::as_binary_array;
 
 pub fn write_batch<W: Write>(
     batch: &RecordBatch,
@@ -109,14 +109,8 @@ pub fn write_batch<W: Write>(
                 as_primitive_array::<Decimal128Type>(column),
                 &mut output,
             )?,
-            DataType::Utf8 => write_bytes_array(
-                as_string_array(column),
-                &mut output,
-            )?,
-            DataType::Binary => write_bytes_array(
-                as_binary_array(column)?,
-                &mut output,
-            )?,
+            DataType::Utf8 => write_bytes_array(as_string_array(column), &mut output)?,
+            DataType::Binary => write_bytes_array(as_binary_array(column)?, &mut output)?,
             DataType::Date32 => write_primitive_array(
                 as_primitive_array::<Date32Type>(column),
                 &mut output,
@@ -249,22 +243,18 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
                 has_null_buffers[i],
                 &mut input,
             )?,
-            DataType::Utf8 => {
-                read_bytes_array(
-                    num_rows,
-                    has_null_buffers[i],
-                    &mut input,
-                    DataType::Utf8,
-                )?
-            }
-            DataType::Binary => {
-                read_bytes_array(
-                    num_rows,
-                    has_null_buffers[i],
-                    &mut input,
-                    DataType::Binary,
-                )?
-            }
+            DataType::Utf8 => read_bytes_array(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+                DataType::Utf8,
+            )?,
+            DataType::Binary => read_bytes_array(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+                DataType::Binary,
+            )?,
             other => {
                 return Err(ArrowError::IoError(format!(
                     "unsupported data type: {}",

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod agg_buf;
 pub mod agg_context;
 pub mod agg_tables;
 pub mod avg;
@@ -19,8 +20,8 @@ pub mod count;
 pub mod max;
 pub mod min;
 pub mod sum;
-mod agg_buf;
 
+use crate::agg::agg_buf::{AggBuf, AggDynStr};
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{DataFusionError, Result, ScalarValue};
@@ -31,7 +32,6 @@ use derivative::Derivative;
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
-use crate::agg::agg_buf::{AggBuf, AggDynStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggExecMode {
@@ -121,7 +121,6 @@ pub trait Agg: Send + Sync + Debug {
         agg_buf: &mut AggBuf,
         agg_buf_addrs: &[u64],
     ) -> Result<ScalarValue> {
-
         // default implementation:
         // extract the only one values from agg_buf and convert to ScalarValue
         // this works for sum/min/max
@@ -134,7 +133,7 @@ pub trait Agg: Send + Sync + Debug {
                 } else {
                     ScalarValue::$ty(None)
                 }
-            }}
+            }};
         }
         Ok(match self.data_type() {
             DataType::Null => ScalarValue::Null,
@@ -156,16 +155,16 @@ pub trait Agg: Send + Sync + Debug {
                     None
                 };
                 ScalarValue::Decimal128(v, *prec, *scale)
-            },
-            DataType::Utf8 => {
-                ScalarValue::Utf8(agg_buf
+            }
+            DataType::Utf8 => ScalarValue::Utf8(
+                agg_buf
                     .dyn_value(addr)
                     .as_any()
                     .downcast_ref::<AggDynStr>()
                     .unwrap()
                     .value
-                    .clone())
-            }
+                    .clone(),
+            ),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
             other => {
@@ -191,7 +190,7 @@ pub struct AggRecord {
 
 impl AggRecord {
     pub fn new(grouping: Box<[u8]>, agg_buf: AggBuf) -> Self {
-        Self {grouping, agg_buf}
+        Self { grouping, agg_buf }
     }
 }
 

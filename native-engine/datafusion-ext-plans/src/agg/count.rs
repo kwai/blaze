@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::agg::agg_buf::AggBuf;
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -20,7 +21,6 @@ use datafusion::physical_expr::PhysicalExpr;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
-use crate::agg::agg_buf::AggBuf;
 
 pub struct AggCount {
     child: Arc<dyn PhysicalExpr>,
@@ -75,26 +75,46 @@ impl Agg for AggCount {
         &self.accums_initial
     }
 
-    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+    fn partial_update(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+        row_idx: usize,
+    ) -> Result<()> {
         let addr = agg_buf_addrs[0];
         *agg_buf.fixed_value_mut::<i64>(addr) += values[0].is_valid(row_idx) as i64;
         Ok(())
     }
 
-    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<()> {
         let addr = agg_buf_addrs[0];
         *agg_buf.fixed_value_mut::<i64>(addr) +=
             (values[0].len() - values[0].null_count()) as i64;
         Ok(())
     }
 
-    fn partial_merge(&self, agg_buf1: &mut AggBuf, agg_buf2: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
+    fn partial_merge(
+        &self,
+        agg_buf1: &mut AggBuf,
+        agg_buf2: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+    ) -> Result<()> {
         let addr = agg_buf_addrs[0];
         *agg_buf1.fixed_value_mut::<i64>(addr) += agg_buf2.fixed_value::<i64>(addr);
         Ok(())
     }
 
-    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
+    fn final_merge(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+    ) -> Result<ScalarValue> {
         let addr = agg_buf_addrs[0];
         Ok(ScalarValue::from(*agg_buf.fixed_value::<i64>(addr)))
     }

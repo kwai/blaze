@@ -14,11 +14,10 @@
 
 //! Defines the rss bucket shuffle repartitioner
 
-use std::fmt;
-use std::fmt::{Debug, Formatter};
-use std::io::Cursor;
-use std::sync::Arc;
+use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
 use async_trait::async_trait;
+use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
+use bytesize::ByteSize;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
 use datafusion::arrow::error::Result as ArrowResult;
@@ -28,16 +27,20 @@ use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
+use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
+use datafusion_ext_commons::array_builder::{
+    builder_extend, make_batch, new_array_builders,
+};
+use datafusion_ext_commons::io::write_one_batch;
 use futures::lock::Mutex;
-use datafusion::physical_plan::coalesce_batches::concat_batches;
 use itertools::Itertools;
 use jni::objects::GlobalRef;
-use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
-use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
-use datafusion_ext_commons::io::write_one_batch;
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
+use std::fmt;
+use std::fmt::{Debug, Formatter};
+use std::io::Cursor;
+use std::sync::Arc;
 
 pub struct RssBucketShuffleRepartitioner {
     id: MemoryConsumerId,
@@ -50,7 +53,7 @@ pub struct RssBucketShuffleRepartitioner {
     metrics: BaselineMetrics,
 }
 
-impl RssBucketShuffleRepartitioner{
+impl RssBucketShuffleRepartitioner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         partition_id: usize,
@@ -68,7 +71,13 @@ impl RssBucketShuffleRepartitioner{
             rss_partition_writer: rss_partition_writer.clone(),
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
-                    .map(|_| PartitionBuffer::new(schema.clone(), batch_size, rss_partition_writer.clone()))
+                    .map(|_| {
+                        PartitionBuffer::new(
+                            schema.clone(),
+                            batch_size,
+                            rss_partition_writer.clone(),
+                        )
+                    })
                     .collect::<Vec<_>>(),
             ),
             partitioning,
@@ -78,18 +87,6 @@ impl RssBucketShuffleRepartitioner{
         };
         repartitioner.runtime.register_requester(&repartitioner.id);
         repartitioner
-    }
-
-    fn used(&self) -> usize {
-        self.metrics.mem_used().value()
-    }
-
-    fn spilled_bytes(&self) -> usize {
-        self.metrics.spilled_bytes().value()
-    }
-
-    fn spill_count(&self) -> usize {
-        self.metrics.spill_count().value()
     }
 }
 
@@ -145,7 +142,7 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
                 mem_diff += output.append_rows(
                     input.columns(),
                     &shuffled_partition_ids[start..end],
-                    partition_id
+                    partition_id,
                 )?;
             } else {
                 // for bigger slice, we can use column based operation
@@ -161,9 +158,7 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
                     input
                         .columns()
                         .iter()
-                        .map(|c| {
-                            datafusion::arrow::compute::take(c, &indices, None)
-                        })
+                        .map(|c| datafusion::arrow::compute::take(c, &indices, None))
                         .collect::<ArrowResult<Vec<ArrayRef>>>()?,
                 )?;
                 mem_diff += output.append_batch(batch, partition_id)?;
@@ -204,23 +199,19 @@ async fn spill_into(
     buffered_partitions: &mut [PartitionBuffer],
     num_output_partitions: usize,
 ) -> Result<isize> {
-
-    let mut mem_diff = 0 as isize;
+    let mut mem_diff = 0_isize;
     for i in 0..num_output_partitions {
         mem_diff += buffered_partitions[i].flush(i)?;
     }
 
-    return Ok(mem_diff);
-
+    Ok(mem_diff)
 }
 
 impl Debug for RssBucketShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("BucketShuffleRepartitioner")
             .field("id", &self.id())
-            .field("memory_used", &self.used())
-            .field("spilled_bytes", &self.spilled_bytes())
-            .field("spilled_count", &self.spill_count())
+            .field("memory_used", &self.mem_used())
             .finish()
     }
 }
@@ -228,7 +219,7 @@ impl Debug for RssBucketShuffleRepartitioner {
 #[async_trait]
 impl MemoryConsumer for RssBucketShuffleRepartitioner {
     fn name(&self) -> String {
-        format!("BucketRssShuffleRepartitioner")
+        "BucketRssShuffleRepartitioner".to_string()
     }
 
     fn id(&self) -> &MemoryConsumerId {
@@ -245,28 +236,23 @@ impl MemoryConsumer for RssBucketShuffleRepartitioner {
 
     async fn spill(&self) -> Result<usize> {
         log::info!(
-            "bucket repartitioner start spilling, used={:.2} MB",
-            self.used() as f64 / 1e6);
+            "bucket repartitioner start spilling, used={}",
+            ByteSize(self.mem_used() as u64)
+        );
 
         let mut buffered_partitions = self.buffered_partitions.lock().await;
-        // we could always get a chance to free some memory as long as we are holding some
         if buffered_partitions.len() == 0 {
             return Ok(0);
         }
 
-        // let spillfile = self.runtime.disk_manager.create_tmp_file()?;
-        let mem_freed = spill_into(
-            &mut buffered_partitions,
-            self.num_output_partitions
-        ).await?;
-
-        // let mut spills = self.spills.lock().await;
+        let mem_freed =
+            spill_into(&mut buffered_partitions, self.num_output_partitions).await?;
         let freed = self.metrics.mem_used().set(0);
-        self.metrics.record_spill(freed as usize);
 
         log::info!(
-            "bucket repartitioner spilled into file, freed={:.2} MB",
-            mem_freed as f64 / 1e6);
+            "bucket repartitioner spilled into file, freed={}",
+            ByteSize(mem_freed as u64)
+        );
         Ok(freed)
     }
 
@@ -276,10 +262,12 @@ impl MemoryConsumer for RssBucketShuffleRepartitioner {
 }
 
 impl Drop for RssBucketShuffleRepartitioner {
-    fn drop(&mut self) { self.runtime.drop_consumer(self.id(), self.used()); }
+    fn drop(&mut self) {
+        self.runtime.drop_consumer(self.id(), self.mem_used());
+    }
 }
 
-struct PartitionBuffer{
+struct PartitionBuffer {
     rss_partition_writer_use: GlobalRef,
     schema: SchemaRef,
     staging: Vec<RecordBatch>,
@@ -291,8 +279,12 @@ struct PartitionBuffer{
     staging_size: usize,
 }
 
-impl PartitionBuffer{
-    fn new(schema: SchemaRef, batch_size: usize,  rss_partition_writer_use: GlobalRef) -> Self {
+impl PartitionBuffer {
+    fn new(
+        schema: SchemaRef,
+        batch_size: usize,
+        rss_partition_writer_use: GlobalRef,
+    ) -> Self {
         let staging_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
         Self {
             rss_partition_writer_use,
@@ -307,7 +299,12 @@ impl PartitionBuffer{
         }
     }
 
-    fn append_rows( &mut self, columns: &[ArrayRef], indices: &[usize], partition_id: usize,) -> Result<isize> {
+    fn append_rows(
+        &mut self,
+        columns: &[ArrayRef],
+        indices: &[usize],
+        partition_id: usize,
+    ) -> Result<isize> {
         let mut mem_diff = 0;
         let mut start = 0;
 

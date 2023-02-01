@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::io::{Cursor, Read, Write};
 use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, write_len, write_u8};
+use std::any::Any;
+use std::io::{Cursor, Read, Write};
 
 #[derive(Eq, PartialEq)]
 pub struct AggBuf {
@@ -27,19 +27,16 @@ impl Clone for AggBuf {
     fn clone(&self) -> Self {
         Self {
             fixed: self.fixed.clone(),
-            dyns: self.dyns
-                .iter()
-                .map(|v| v.clone_boxed())
-                .collect()
+            dyns: self.dyns.iter().map(|v| v.clone_boxed()).collect(),
         }
     }
 }
 
 impl AggBuf {
     pub fn mem_size(&self) -> usize {
-        std::mem::size_of::<Self>() +
-            self.fixed.len() +
-            self.dyns.iter().map(|v| v.mem_size()).sum::<usize>()
+        std::mem::size_of::<Self>()
+            + self.fixed.len()
+            + self.dyns.iter().map(|v| v.mem_size()).sum::<usize>()
     }
 
     pub fn is_fixed_valid(&self, addr: u64) -> bool {
@@ -55,17 +52,13 @@ impl AggBuf {
     pub fn fixed_value<T: Sized + Copy>(&self, addr: u64) -> &T {
         let offset = get_fixed_addr_offset(addr);
         let tptr = self.fixed[offset..][..std::mem::size_of::<T>()].as_ptr() as *const T;
-        unsafe {
-            &*tptr
-        }
+        unsafe { &*tptr }
     }
 
     pub fn fixed_value_mut<T: Sized + Copy>(&mut self, addr: u64) -> &mut T {
         let offset = get_fixed_addr_offset(addr);
         let tptr = self.fixed[offset..][..std::mem::size_of::<T>()].as_ptr() as *mut T;
-        unsafe {
-            &mut *tptr
-        }
+        unsafe { &mut *tptr }
     }
 
     pub fn dyn_value(&mut self, addr: u64) -> &Box<dyn AggDynValue> {
@@ -136,7 +129,7 @@ pub fn create_agg_buf_from_scalar(
                 }
             }
             fixed_count += 1;
-        }}
+        }};
     }
     for value in values {
         match value {
@@ -167,9 +160,10 @@ pub fn create_agg_buf_from_scalar(
             ScalarValue::Date32(v) => handle_fixed!(v, 4),
             ScalarValue::Date64(v) => handle_fixed!(v, 8),
             other => {
-                return Err(DataFusionError::Execution(
-                    format!("unsupported agg data type: {:?}", other)
-                ));
+                return Err(DataFusionError::Execution(format!(
+                    "unsupported agg data type: {:?}",
+                    other
+                )));
             }
         }
     }
@@ -244,23 +238,15 @@ pub struct AggDynStr {
 
 impl AggDynStr {
     pub fn new(value: Option<String>) -> Self {
-        Self {value}
+        Self { value }
     }
 
     pub fn value(value: &Box<dyn AggDynValue>) -> &Option<String> {
-        &value
-            .as_any()
-            .downcast_ref::<Self>()
-            .unwrap()
-            .value
+        &value.as_any().downcast_ref::<Self>().unwrap().value
     }
 
     pub fn value_mut(value: &mut Box<dyn AggDynValue>) -> &mut Option<String> {
-        &mut value
-            .as_any_mut()
-            .downcast_mut::<Self>()
-            .unwrap()
-            .value
+        &mut value.as_any_mut().downcast_mut::<Self>().unwrap().value
     }
 }
 
@@ -274,8 +260,8 @@ impl AggDynValue for AggDynStr {
     }
 
     fn mem_size(&self) -> usize {
-        std::mem::size_of::<Self>() +
-            self.value.as_ref().map(|s| s.as_bytes().len()).unwrap_or(0)
+        std::mem::size_of::<Self>()
+            + self.value.as_ref().map(|s| s.as_bytes().len()).unwrap_or(0)
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -286,9 +272,7 @@ impl AggDynValue for AggDynStr {
     }
 
     fn default_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(AggDynStr {
-            value: None
-        })
+        Box::new(AggDynStr { value: None })
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -298,17 +282,17 @@ impl AggDynValue for AggDynStr {
 
 #[inline]
 fn get_fixed_addr_offset(addr: u64) -> usize {
-    (addr & 0x00000000_ffffffff) as usize
+    (addr & 0x0000_0000_ffff_ffff) as usize
 }
 
 #[inline]
 fn get_fixed_addr_valid_idx(addr: u64) -> usize {
-    ((addr & 0x7fffffff_00000000) >> 32) as usize
+    ((addr & 0x7fff_ffff_0000_0000) >> 32) as usize
 }
 
 #[inline]
 fn get_dyn_addr_idx(addr: u64) -> usize {
-    (addr & 0x7fffffff_ffffffff) as usize
+    (addr & 0x7fff_ffff_ffff_ffff) as usize
 }
 
 #[inline]
@@ -318,14 +302,14 @@ fn make_fixed_addr(valid_idx: usize, offset: usize) -> u64 {
 
 #[inline]
 fn make_dyn_addr(idx: usize) -> u64 {
-    (idx as u64) | 0x80000000_00000000
+    (idx as u64) | 0x8000_0000_0000_0000
 }
 
 #[cfg(test)]
 mod test {
+    use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggDynStr};
     use arrow::datatypes::DataType;
     use datafusion::common::{Result, ScalarValue};
-    use crate::agg::agg_buf::{AggDynStr, create_agg_buf_from_scalar};
 
     #[test]
     fn test_agg_buf() {
@@ -341,10 +325,7 @@ mod test {
             .collect::<Result<Vec<ScalarValue>>>()
             .unwrap();
 
-        let (
-            mut agg_buf,
-            addrs,
-        ) = create_agg_buf_from_scalar(&scalars).unwrap();
+        let (mut agg_buf, addrs) = create_agg_buf_from_scalar(&scalars).unwrap();
         assert_eq!(agg_buf.is_fixed_valid(addrs[0]), false);
         assert_eq!(agg_buf.is_fixed_valid(addrs[1]), false);
         assert_eq!(agg_buf.is_fixed_valid(addrs[2]), false);
@@ -355,8 +336,8 @@ mod test {
         *agg_buf_valued.fixed_value_mut::<i64>(addrs[2]) = 1234567890123456789;
         agg_buf_valued.set_fixed_valid(addrs[1], true);
         agg_buf_valued.set_fixed_valid(addrs[2], true);
-        *AggDynStr::value_mut(agg_buf_valued.dyn_value_mut(addrs[3]))
-            = Some(format!("test"));
+        *AggDynStr::value_mut(agg_buf_valued.dyn_value_mut(addrs[3])) =
+            Some("test".to_string());
 
         // save + load
         let bytes = agg_buf_valued.save_to_bytes().unwrap();
@@ -370,7 +351,7 @@ mod test {
         assert_eq!(*agg_buf.fixed_value::<i64>(addrs[2]), 1234567890123456789);
         assert_eq!(
             *AggDynStr::value(agg_buf.dyn_value(addrs[3])),
-            Some(format!("test")),
+            Some("test".to_string()),
         );
     }
 }

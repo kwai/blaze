@@ -12,26 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::Formatter;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, Statistics};
 use datafusion::execution::context::TaskContext;
-use datafusion::execution::MemoryConsumerId;
 use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::execution::MemoryConsumerId;
 use datafusion::logical_expr::JoinType;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream};
-use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::joins::utils::{JoinFilter, JoinOn};
+use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::metrics::{MetricsSet, Time};
-use futures::{ready, Stream, StreamExt};
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream,
+};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
+use futures::{ready, Stream, StreamExt};
+use std::any::Any;
+use std::fmt::Formatter;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
 // TODO:
 //  in spark broadcast hash join, the hash table is built on driver side.
@@ -55,7 +58,6 @@ impl BroadcastHashJoinExec {
         partition_mode: PartitionMode,
         null_equals_null: &bool,
     ) -> Result<Self> {
-
         let inner = Arc::new(HashJoinExec::try_new(
             left,
             right,
@@ -65,7 +67,7 @@ impl BroadcastHashJoinExec {
             partition_mode,
             null_equals_null,
         )?);
-        Ok(Self {inner})
+        Ok(Self { inner })
     }
 }
 
@@ -101,24 +103,27 @@ impl ExecutionPlan for BroadcastHashJoinExec {
                 self.inner.on().iter().map(Clone::clone).collect::<Vec<_>>(),
                 self.inner.filter().map(Clone::clone),
                 self.inner.join_type(),
-                self.inner.partition_mode().clone(),
-                self.inner.null_equals_null()
-            )?)
+                *self.inner.partition_mode(),
+                self.inner.null_equals_null(),
+            )?),
         }))
     }
 
-    fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
         // left is always the built side, wrap it with a BroadcastSideWrapperExec
         let wrapped_left = Arc::new(BroadcastSideWrapperExec {
             inner: self.inner.children()[0].clone(),
         });
 
         // execute with the wrapped children
-        self.inner.clone().with_new_children(vec![
-            wrapped_left,
-            self.inner.children()[1].clone(),
-        ])?
-        .execute(partition, context)
+        self.inner
+            .clone()
+            .with_new_children(vec![wrapped_left, self.inner.children()[1].clone()])?
+            .execute(partition, context)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -176,11 +181,12 @@ impl ExecutionPlan for BroadcastSideWrapperExec {
         let input = self.inner.execute(partition, context.clone())?;
         let coalesced = Box::pin(CoalesceStream::new(
             input,
-            context.clone().session_config().batch_size(),
+            context.session_config().batch_size(),
             elapsed_compute,
         ));
         let mem_tracked = Box::pin(BroadcastMemTrackerStream::new(
-            context.runtime_env(), coalesced,
+            context.runtime_env(),
+            coalesced,
             partition,
         ));
         Ok(mem_tracked)
@@ -245,12 +251,8 @@ impl Stream for BroadcastMemTrackerStream {
                 );
                 Poll::Ready(Some(Ok(batch)))
             }
-            Some(Err(err)) => {
-                Poll::Ready(Some(Err(err)))
-            }
-            None => {
-                Poll::Ready(None)
-            }
+            Some(Err(err)) => Poll::Ready(Some(Err(err))),
+            None => Poll::Ready(None),
         }
     }
 }

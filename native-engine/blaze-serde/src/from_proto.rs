@@ -50,7 +50,9 @@ use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_file_formats::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
-use datafusion_ext_plans::agg::{create_agg, AggExpr, AggFunction, AggMode, GroupingExpr, AggExecMode};
+use datafusion_ext_plans::agg::{
+    create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
+};
 use datafusion_ext_plans::agg_exec::AggExec;
 use datafusion_ext_plans::broadcast_hash_join_exec::BroadcastHashJoinExec;
 use datafusion_ext_plans::debug_exec::DebugExec;
@@ -62,8 +64,8 @@ use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext_plans::limit_exec::LimitExec;
 use datafusion_ext_plans::rename_columns_exec::RenameColumnsExec;
-use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
 use datafusion_ext_plans::rss_shuffle_writer_exec::RssShuffleWriterExec;
+use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
 use datafusion_ext_plans::sort_merge_join_exec::SortMergeJoinExec;
 
 use crate::error::PlanSerDeError;
@@ -189,9 +191,8 @@ pub fn convert_physical_expr_to_logical_expr(
         ))));
 
         let func: ScalarFunctionImplementation = Arc::new(|_| panic!("placeholder"));
-        let return_type: ReturnTypeFunction = Arc::new(|_| {
-            Ok(Arc::new(DataType::Boolean))
-        });
+        let return_type: ReturnTypeFunction =
+            Arc::new(|_| Ok(Arc::new(DataType::Boolean)));
         Ok(Expr::ScalarUDF {
             fun: Arc::from(ScalarUDF::new(
                 "string_starts_with",
@@ -202,17 +203,31 @@ pub fn convert_physical_expr_to_logical_expr(
             args,
         })
     } else if expr.downcast_ref::<ScalarFunctionExpr>().is_some() {
-        Err(DataFusionError::Plan("converting physical ScalarFunctionExpr to logical is not supported".to_string()))
+        Err(DataFusionError::Plan(
+            "converting physical ScalarFunctionExpr to logical is not supported"
+                .to_string(),
+        ))
     } else if expr.downcast_ref::<SparkExpressionWrapperExpr>().is_some() {
-        Err(DataFusionError::Plan("converting physical SparkExpressionWrapperExpr to logical is not supported".to_string()))
+        Err(DataFusionError::Plan(
+            "converting physical SparkExpressionWrapperExpr to logical is not supported"
+                .to_string(),
+        ))
     } else if expr.downcast_ref::<GetIndexedFieldExpr>().is_some() {
-        Err(DataFusionError::Plan("converting physical GetIndexedFieldExpr to logical is not supported".to_string()))
-    } else if expr.downcast_ref::<FixedSizeListGetIndexedFieldExpr>().is_some() {
+        Err(DataFusionError::Plan(
+            "converting physical GetIndexedFieldExpr to logical is not supported"
+                .to_string(),
+        ))
+    } else if expr
+        .downcast_ref::<FixedSizeListGetIndexedFieldExpr>()
+        .is_some()
+    {
         Err(DataFusionError::Plan(
             "converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported".to_string()
         ))
     } else {
-        Err(DataFusionError::Plan("Expression binding not implemented yet".to_string()))
+        Err(DataFusionError::Plan(
+            "Expression binding not implemented yet".to_string(),
+        ))
     }
 }
 
@@ -503,9 +518,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     protobuf::PartitionMode::from_i32(hashjoin.partition_mode)
                         .ok_or_else(|| {
                             proto_error(format!(
-                                "Received a HashJoinNode message with unknown PartitionMode {}",
-                                hashjoin.partition_mode
-                            ))
+                        "Received a HashJoinNode message with unknown PartitionMode {}",
+                        hashjoin.partition_mode
+                    ))
                         })?;
                 let partition_mode = match partition_mode {
                     protobuf::PartitionMode::CollectLeft => PartitionMode::CollectLeft,

@@ -800,15 +800,19 @@ fn build_predicate_expression(
             if fun.name == "string_starts_with" {
                 let column = match args.get(0) {
                     Some(Expr::Column(column)) => column,
-                    _ => return Err(DataFusionError::NotImplemented(
-                        format!("pruning unsupported")
-                    ))
+                    _ => {
+                        return Err(DataFusionError::NotImplemented(
+                            "pruning unsupported".to_string(),
+                        ))
+                    }
                 };
                 let prefix = match args.get(1) {
                     Some(Expr::Literal(ScalarValue::Utf8(Some(prefix)))) => prefix,
-                    _ => return Err(DataFusionError::NotImplemented(
-                        format!("pruning unsupported")
-                    ))
+                    _ => {
+                        return Err(DataFusionError::NotImplemented(
+                            "pruning unsupported".to_string(),
+                        ))
+                    }
                 };
                 return build_starts_with_predicate_expression_expr(
                     column,
@@ -818,7 +822,7 @@ fn build_predicate_expression(
                 );
             }
             return Err(DataFusionError::NotImplemented(
-                format!("UDF unsupported for pruning")
+                "UDF unsupported for pruning".to_string(),
             ));
         }
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => (left, *op, right),

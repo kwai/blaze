@@ -14,10 +14,10 @@
 
 mod onheap_spill;
 
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use bytesize::ByteSize;
 use datafusion::common::Result;
 use datafusion::execution::DiskManager;
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use tempfile::NamedTempFile;
 
 pub use crate::spill::onheap_spill::OnHeapSpill;
@@ -27,7 +27,6 @@ pub use crate::spill::onheap_spill::OnHeapSpill;
 ///  L2: L1 data is moved into on-heap through o.a.s.blaze.memory.HeapSpillManager.
 ///  L3: L1 data is failed moving to L2, so spill to DiskManager.
 pub enum Spill {
-
     // L1 with compressed data + pos
     L1(Vec<u8>),
 
@@ -82,42 +81,34 @@ impl Spill {
         if let Spill::L1(data) = self {
             return data.len();
         }
-        return 0;
+        0
     }
 
     pub fn onheap_mem_size(&self) -> usize {
         if let Spill::L2(_, len) = self {
             return *len;
         }
-        return 0;
+        0
     }
 
     pub fn disk_size(&self) -> usize {
         if let Spill::L3(_, len) = self {
             return *len;
         }
-        return 0;
+        0
     }
 
     pub fn into_reader(self) -> Box<dyn Read + Send> {
         match self {
-            Spill::L1(data) => {
-                Box::new(Cursor::new(data))
-            }
-            Spill::L2(heap_spill, _) => {
-                Box::new(heap_spill)
-            }
-            Spill::L3(tmp_file, _) => {
-                Box::new(tmp_file)
-            }
+            Spill::L1(data) => Box::new(Cursor::new(data)),
+            Spill::L2(heap_spill, _) => Box::new(heap_spill),
+            Spill::L3(tmp_file, _) => Box::new(tmp_file),
         }
     }
 
     pub fn into_buf_reader(self) -> BufReader<Box<dyn Read + Send>> {
         match self {
-            Spill::L1(data) => {
-                BufReader::new(Box::new(Cursor::new(data)))
-            }
+            Spill::L1(data) => BufReader::new(Box::new(Cursor::new(data))),
             Spill::L2(heap_spill, _) => {
                 const BUFREAD_CAPACITY: usize = 65536;
                 BufReader::with_capacity(BUFREAD_CAPACITY, Box::new(heap_spill))
@@ -144,7 +135,7 @@ impl Spill {
     }
 }
 
-pub fn dump_spills_statistics<'a>(spills: impl IntoIterator<Item=&'a Spill>) -> String {
+pub fn dump_spills_statistics<'a>(spills: impl IntoIterator<Item = &'a Spill>) -> String {
     let mut l1_count = 0;
     let mut l2_count = 0;
     let mut l3_count = 0;

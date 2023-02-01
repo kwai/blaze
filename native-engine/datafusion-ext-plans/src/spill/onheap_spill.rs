@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Read, Write};
+use blaze_commons::{
+    jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
+};
 use datafusion::common::{DataFusionError, Result};
 use jni::objects::{GlobalRef, JObject};
-use blaze_commons::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref};
+use std::io::{Read, Write};
 
 /// A spill structure which cooperates with BlazeOnHeapSpillManager
 pub struct OnHeapSpill {
@@ -36,7 +38,7 @@ impl OnHeapSpill {
         )?;
         if spill_id == -1 {
             return Err(DataFusionError::ResourcesExhausted(
-                format!("cannot allocate on-heap spill")
+                "cannot allocate on-heap spill".to_string(),
             ));
         }
         Ok(Self {
@@ -95,7 +97,8 @@ impl Read for OnHeapSpill {
                 self.spill_id,
                 jni_new_direct_byte_buffer!(buf)?,
             ) -> i32
-        ).map(|s| s as usize)?)
+        )
+        .map(|s| s as usize)?)
     }
 }
 

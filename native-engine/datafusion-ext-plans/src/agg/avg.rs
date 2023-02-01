@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::agg::agg_buf::AggBuf;
+use crate::agg::count::AggCount;
+use crate::agg::sum::AggSum;
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -23,9 +26,6 @@ use paste::paste;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
-use crate::agg::agg_buf::AggBuf;
-use crate::agg::count::AggCount;
-use crate::agg::sum::AggSum;
 
 pub struct AggAvg {
     child: Arc<dyn PhysicalExpr>,
@@ -41,14 +41,9 @@ impl AggAvg {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         let agg_sum = AggSum::try_new(child.clone(), data_type.clone())?;
         let agg_count = AggCount::try_new(child.clone(), DataType::Int64)?;
-        let accum_fields = [
-            agg_sum.accum_fields(),
-            agg_count.accum_fields(),
-        ].concat();
-        let accums_initial = [
-            agg_sum.accums_initial(),
-            agg_count.accums_initial(),
-        ].concat();
+        let accum_fields = [agg_sum.accum_fields(), agg_count.accum_fields()].concat();
+        let accums_initial =
+            [agg_sum.accums_initial(), agg_count.accums_initial()].concat();
         let final_merger = get_final_merger(&data_type)?;
 
         Ok(Self {
@@ -103,25 +98,51 @@ impl Agg for AggAvg {
         .into_array(0)])
     }
 
-    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
-        self.agg_sum.partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
-        self.agg_count.partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
+    fn partial_update(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+        row_idx: usize,
+    ) -> Result<()> {
+        self.agg_sum
+            .partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
+        self.agg_count
+            .partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
         Ok(())
     }
 
-    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
-        self.agg_sum.partial_update_all(agg_buf, agg_buf_addrs, values)?;
-        self.agg_count.partial_update_all(agg_buf, &agg_buf_addrs[1..], values)?;
+    fn partial_update_all(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<()> {
+        self.agg_sum
+            .partial_update_all(agg_buf, agg_buf_addrs, values)?;
+        self.agg_count
+            .partial_update_all(agg_buf, &agg_buf_addrs[1..], values)?;
         Ok(())
     }
 
-    fn partial_merge(&self, agg_buf1: &mut AggBuf, agg_buf2: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
-        self.agg_sum.partial_merge(agg_buf1, agg_buf2, agg_buf_addrs)?;
-        self.agg_count.partial_merge(agg_buf1, agg_buf2, &agg_buf_addrs[1..])?;
+    fn partial_merge(
+        &self,
+        agg_buf1: &mut AggBuf,
+        agg_buf2: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+    ) -> Result<()> {
+        self.agg_sum
+            .partial_merge(agg_buf1, agg_buf2, agg_buf_addrs)?;
+        self.agg_count
+            .partial_merge(agg_buf1, agg_buf2, &agg_buf_addrs[1..])?;
         Ok(())
     }
 
-    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
+    fn final_merge(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+    ) -> Result<ScalarValue> {
         let sum = self.agg_sum.final_merge(agg_buf, agg_buf_addrs)?;
         let count = match self.agg_count.final_merge(agg_buf, &agg_buf_addrs[1..])? {
             ScalarValue::Int64(Some(count)) => count,
@@ -132,10 +153,7 @@ impl Agg for AggAvg {
     }
 }
 
-fn get_final_merger(
-    dt: &DataType
-) -> Result<fn(ScalarValue, i64) -> ScalarValue> {
-
+fn get_final_merger(dt: &DataType) -> Result<fn(ScalarValue, i64) -> ScalarValue> {
     macro_rules! get_fn {
         ($ty:ident) => {{
             Ok(|mut sum: ScalarValue, count: i64| {

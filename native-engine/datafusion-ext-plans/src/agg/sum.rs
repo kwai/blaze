@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::agg::agg_buf::AggBuf;
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -24,7 +25,6 @@ use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::ops::Add;
 use std::sync::Arc;
-use crate::agg::agg_buf::AggBuf;
 
 pub struct AggSum {
     child: Arc<dyn PhysicalExpr>,
@@ -92,14 +92,25 @@ impl Agg for AggSum {
         .into_array(0)])
     }
 
-    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+    fn partial_update(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+        row_idx: usize,
+    ) -> Result<()> {
         let partial_updater = self.partial_updater;
         let addr = agg_buf_addrs[0];
         partial_updater(agg_buf, addr, &values[0], row_idx);
         Ok(())
     }
 
-    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<()> {
         let addr = agg_buf_addrs[0];
 
         macro_rules! handle {
@@ -109,10 +120,10 @@ impl Agg for AggSum {
                 if let Some(sum) = arrow::compute::sum(value) {
                     partial_update_prim(agg_buf, addr, sum);
                 }
-            }}
+            }};
         }
         match values[0].data_type() {
-            DataType::Null => {},
+            DataType::Null => {}
             DataType::Float32 => handle!(Float32),
             DataType::Float64 => handle!(Float64),
             DataType::Int8 => handle!(Int8),
@@ -134,7 +145,12 @@ impl Agg for AggSum {
         Ok(())
     }
 
-    fn partial_merge(&self, agg_buf1: &mut AggBuf, agg_buf2: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
+    fn partial_merge(
+        &self,
+        agg_buf1: &mut AggBuf,
+        agg_buf2: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+    ) -> Result<()> {
         let partial_buf_merger = self.partial_buf_merger;
         let addr = agg_buf_addrs[0];
         partial_buf_merger(agg_buf1, agg_buf2, addr);
@@ -142,11 +158,7 @@ impl Agg for AggSum {
     }
 }
 
-fn partial_update_prim<T: Copy + Add<Output = T>>(
-    agg_buf: &mut AggBuf,
-    addr: u64,
-    v: T,
-) {
+fn partial_update_prim<T: Copy + Add<Output = T>>(agg_buf: &mut AggBuf, addr: u64, v: T) {
     if agg_buf.is_fixed_valid(addr) {
         let w = agg_buf.fixed_value_mut::<T>(addr);
         *w = v + *w;
@@ -157,10 +169,7 @@ fn partial_update_prim<T: Copy + Add<Output = T>>(
     }
 }
 
-fn get_partial_updater(
-    dt: &DataType
-) -> Result<fn(&mut AggBuf, u64, &ArrayRef, usize)> {
-
+fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, usize)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{
             Ok(|agg_buf, addr, v, i| {
@@ -193,10 +202,7 @@ fn get_partial_updater(
         }
     }
 }
-fn get_partial_buf_merger(
-    dt: &DataType
-) -> Result<fn(&mut AggBuf, &mut AggBuf, u64)> {
-
+fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, u64)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{
             Ok(|agg_buf1, agg_buf2, addr| {
@@ -207,7 +213,7 @@ fn get_partial_buf_merger(
                     partial_update_prim(agg_buf1, addr, *v);
                 }
             })
-        }}
+        }};
     }
     match dt {
         DataType::Null => Ok(|_, _, _| ()),

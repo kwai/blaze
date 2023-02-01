@@ -21,27 +21,26 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::ArrowError;
-use datafusion::datasource::TableType::Base;
+
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 
+use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
+use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
+use crate::shuffle::ShuffleRepartitioner;
+use blaze_commons::{jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{Count, MetricsSet, MetricValue, Time};
+use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{DisplayFormatType, Metric};
+use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
-use futures::{TryFutureExt, TryStreamExt};
 use futures::stream::once;
+use futures::{TryFutureExt, TryStreamExt};
 use jni::objects::JObject;
-use blaze_commons::{jni_call_static, jni_new_global_ref, jni_new_string};
-use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
-use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
-use crate::shuffle::ShuffleRepartitioner;
-
 
 /// The rss shuffle writer operator maps each input partition to M output partitions based on a
 /// partitioning scheme. No guarantees are made about the order of the resulting partitions.
@@ -89,7 +88,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             1 => Ok(Arc::new(RssShuffleWriterExec::try_new(
                 children[0].clone(),
                 self.partitioning.clone(),
-                self.rss_partition_writer_resource_id.clone()
+                self.rss_partition_writer_resource_id.clone(),
             )?)),
             _ => Err(DataFusionError::Internal(
                 "RssShuffleWriterExec wrong number of children".to_string(),
@@ -104,44 +103,41 @@ impl ExecutionPlan for RssShuffleWriterExec {
     ) -> Result<SendableRecordBatchStream> {
         let input = self.input.execute(partition, context.clone())?;
 
-
-        let rss_partition_writer = jni_new_global_ref!(
-            jni_call_static!(
+        let rss_partition_writer = jni_new_global_ref!(jni_call_static!(
             JniBridge.getResource(
                 jni_new_string!(&self.rss_partition_writer_resource_id)?
             ) -> JObject
         )?)?;
 
-        let repartitioner: Arc<dyn ShuffleRepartitioner> =
-            match &self.partitioning {
-                p if p.partition_count() == 1 =>
-                    Arc::new(RssSingleShuffleRepartitioner::new(
-                        rss_partition_writer,
-                        BaselineMetrics::new(&self.metrics, partition),
-                    )),
-                Partitioning::Hash(_, _) =>
-                    Arc::new(RssBucketShuffleRepartitioner::new(
-                        partition,
-                        rss_partition_writer,
-                        self.schema(),
-                        self.partitioning.clone(),
-                        BaselineMetrics::new(&self.metrics, partition),
-                        context.clone(),
-                    )),
-                p => unreachable!("unsupported partitioning: {:?}", p),
-            };
+        let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
+            p if p.partition_count() == 1 => {
+                Arc::new(RssSingleShuffleRepartitioner::new(
+                    rss_partition_writer,
+                    BaselineMetrics::new(&self.metrics, partition),
+                ))
+            }
+            Partitioning::Hash(_, _) => Arc::new(RssBucketShuffleRepartitioner::new(
+                partition,
+                rss_partition_writer,
+                self.schema(),
+                self.partitioning.clone(),
+                BaselineMetrics::new(&self.metrics, partition),
+                context.clone(),
+            )),
+            p => unreachable!("unsupported partitioning: {:?}", p),
+        };
 
-        let stream = repartitioner.execute(
-            input,
-            context.session_config().batch_size(),
-            BaselineMetrics::new(&self.metrics, partition),
-        ).map_err(|e| {
-            ArrowError::ExternalError(Box::new(e))
-        });
+        let stream = repartitioner
+            .execute(
+                input,
+                context.session_config().batch_size(),
+                BaselineMetrics::new(&self.metrics, partition),
+            )
+            .map_err(|e| ArrowError::ExternalError(Box::new(e)));
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(stream).try_flatten()
+            once(stream).try_flatten(),
         )))
     }
 
@@ -156,7 +152,11 @@ impl ExecutionPlan for RssShuffleWriterExec {
     ) -> std::fmt::Result {
         match t {
             DisplayFormatType::Default => {
-                write!(f, "RssShuffleWriterExec: partitioning={:?}", self.partitioning)
+                write!(
+                    f,
+                    "RssShuffleWriterExec: partitioning={:?}",
+                    self.partitioning
+                )
             }
         }
     }
@@ -171,7 +171,7 @@ impl RssShuffleWriterExec {
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
         partitioning: Partitioning,
-        rss_partition_writer_resource_id: String
+        rss_partition_writer_resource_id: String,
     ) -> Result<Self> {
         Ok(RssShuffleWriterExec {
             input,

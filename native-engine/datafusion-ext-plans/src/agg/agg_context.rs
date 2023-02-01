@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggBuf};
 use crate::agg::{Agg, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr};
 use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
+use datafusion::common::cast::as_binary_array;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_expr::PhysicalExpr;
+use once_cell::sync::OnceCell;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
-use datafusion::common::cast::as_binary_array;
-use once_cell::sync::OnceCell;
-use crate::agg::agg_buf::{AggBuf, create_agg_buf_from_scalar};
 
 pub struct AggContext {
     pub exec_mode: AggExecMode,
@@ -118,7 +118,7 @@ impl AggContext {
         let initial_accums: Box<[ScalarValue]> = aggs
             .iter()
             .flat_map(|agg: &AggExpr| agg.agg.accums_initial())
-            .map(|acc| acc.clone())
+            .cloned()
             .collect();
         let (initial_agg_buf, agg_buf_addrs) =
             create_agg_buf_from_scalar(&initial_accums)?;
@@ -141,7 +141,7 @@ impl AggContext {
         let initial_input_accums: Box<[ScalarValue]> = need_partial_merge_aggs
             .iter()
             .flat_map(|(_, agg)| agg.accums_initial())
-            .map(|acc| acc.clone())
+            .cloned()
             .collect();
         let (initial_input_agg_buf, _input_agg_buf_addrs) =
             create_agg_buf_from_scalar(&initial_input_accums)?;
@@ -181,7 +181,6 @@ impl AggContext {
         &self,
         input_batch: &RecordBatch,
     ) -> Result<Vec<Vec<ArrayRef>>> {
-
         if !self.need_partial_update {
             return Ok(vec![]);
         }
@@ -218,14 +217,11 @@ impl AggContext {
         &self,
         input_batch: &'a RecordBatch,
     ) -> Result<&'a BinaryArray> {
-
         if self.need_partial_merge {
             as_binary_array(input_batch.columns().last().unwrap())
         } else {
             static EMPTY_BINARY_ARRAY: OnceCell<BinaryArray> = OnceCell::new();
-            Ok(EMPTY_BINARY_ARRAY.get_or_init(|| {
-                BinaryArray::from_iter_values([[]; 0])
-            }))
+            Ok(EMPTY_BINARY_ARRAY.get_or_init(|| BinaryArray::from_iter_values([[]; 0])))
         }
     }
 
@@ -327,10 +323,7 @@ impl AggContext {
             let mut input_agg_buf = self.initial_input_agg_buf.clone();
             input_agg_buf.load_from_bytes(agg_buf_array.value(row_idx))?;
             for (idx, agg) in &self.need_partial_merge_aggs {
-                agg.partial_merge(
-                    agg_buf,
-                    &mut input_agg_buf,
-                    self.agg_addrs(*idx))?;
+                agg.partial_merge(agg_buf, &mut input_agg_buf, self.agg_addrs(*idx))?;
             }
         }
         Ok(())
@@ -346,10 +339,7 @@ impl AggContext {
             for row_idx in 0..agg_buf_array.len() {
                 input_agg_buf.load_from_bytes(agg_buf_array.value(row_idx))?;
                 for (idx, agg) in &self.need_partial_merge_aggs {
-                    agg.partial_merge(
-                        agg_buf,
-                        &mut input_agg_buf,
-                        self.agg_addrs(*idx))?;
+                    agg.partial_merge(agg_buf, &mut input_agg_buf, self.agg_addrs(*idx))?;
                 }
             }
         }

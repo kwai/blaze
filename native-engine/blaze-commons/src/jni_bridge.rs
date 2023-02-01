@@ -521,7 +521,9 @@ impl<'a> JniUtil<'a> {
                 "readFullyFromFSDataInputStream",
                 "(Lorg/apache/hadoop/fs/FSDataInputStream;JLjava/nio/ByteBuffer;)V",
             )?,
-            method_readFullyFromFSDataInputStream_ret: ReturnType::Primitive(Primitive::Void),
+            method_readFullyFromFSDataInputStream_ret: ReturnType::Primitive(
+                Primitive::Void,
+            ),
         })
     }
 }
@@ -1037,31 +1039,21 @@ pub struct SparkRssShuffleWriter<'a> {
     pub method_close_ret: ReturnType,
 }
 
-impl <'a> SparkRssShuffleWriter<'_> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/blaze/shuffle/RssPartitionWriterBase";
+impl<'a> SparkRssShuffleWriter<'_> {
+    pub const SIG_TYPE: &'static str =
+        "org/apache/spark/sql/execution/blaze/shuffle/RssPartitionWriterBase";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkRssShuffleWriter<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkRssShuffleWriter {
             class,
             method_write: env
-                .get_method_id(
-                    class,
-                    "write",
-                    "(ILjava/nio/ByteBuffer;I)V"
-                )
+                .get_method_id(class, "write", "(ILjava/nio/ByteBuffer;I)V")
                 .unwrap(),
             method_write_ret: ReturnType::Primitive(Primitive::Void),
-            method_close: env
-                .get_method_id(
-                    class,
-                    "close",
-                    "(I)V"
-                )
-                .unwrap(),
+            method_close: env.get_method_id(class, "close", "(I)V").unwrap(),
             method_close_ret: ReturnType::Primitive(Primitive::Void),
-        }
-        )
+        })
     }
 }
 
@@ -1177,13 +1169,21 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
             class,
             method_newSpill: env.get_method_id(class, "newSpill", "(J)I").unwrap(),
             method_newSpill_ret: ReturnType::Primitive(Primitive::Int),
-            method_writeSpill: env.get_method_id(class, "writeSpill", "(ILjava/nio/ByteBuffer;)V").unwrap(),
+            method_writeSpill: env
+                .get_method_id(class, "writeSpill", "(ILjava/nio/ByteBuffer;)V")
+                .unwrap(),
             method_writeSpill_ret: ReturnType::Primitive(Primitive::Void),
-            method_completeSpill: env.get_method_id(class, "completeSpill", "(I)V").unwrap(),
+            method_completeSpill: env
+                .get_method_id(class, "completeSpill", "(I)V")
+                .unwrap(),
             method_completeSpill_ret: ReturnType::Primitive(Primitive::Void),
-            method_readSpill: env.get_method_id(class, "readSpill", "(ILjava/nio/ByteBuffer;)I").unwrap(),
+            method_readSpill: env
+                .get_method_id(class, "readSpill", "(ILjava/nio/ByteBuffer;)I")
+                .unwrap(),
             method_readSpill_ret: ReturnType::Primitive(Primitive::Int),
-            method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V").unwrap(),
+            method_releaseSpill: env
+                .get_method_id(class, "releaseSpill", "(I)V")
+                .unwrap(),
             method_releaseSpill_ret: ReturnType::Primitive(Primitive::Void),
         })
     }

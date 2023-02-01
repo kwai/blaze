@@ -14,12 +14,16 @@
 
 //! Defines the sort-based shuffle writer
 
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
+use crate::shuffle::{
+    evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill,
+};
+use crate::spill::{dump_spills_statistics, OnHeapSpill, Spill};
 use arrow::array::*;
 use arrow::datatypes::*;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
@@ -39,9 +43,7 @@ use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
-use bytesize::ByteSize;
 use tokio::task;
-use crate::spill::{dump_spills_statistics, OnHeapSpill, Spill};
 
 pub struct BucketShuffleRepartitioner {
     id: MemoryConsumerId,
@@ -104,7 +106,6 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
         let hashes = evaluate_hashes(&self.partitioning, &input)?;
@@ -337,7 +338,7 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
                 )?;
                 let spill = ShuffleSpill {
                     spill: Spill::new_l2_from(on_heap_spill),
-                    offsets
+                    offsets,
                 };
                 log::info!(
                     "bucket repartitioner spilled into L2: size={}",
@@ -347,8 +348,10 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
             }
             Err(DataFusionError::ResourcesExhausted(..)) => {
                 const BUFWRITE_CAPACITY: usize = 262144;
-                let mut tmp_file =
-                    self.runtime.disk_manager.create_tmp_file("blaze L3 spill")?;
+                let mut tmp_file = self
+                    .runtime
+                    .disk_manager
+                    .create_tmp_file("blaze L3 spill")?;
                 let offsets = spill_buffered_partitions(
                     &mut buffered_partitions,
                     &mut BufWriter::with_capacity(BUFWRITE_CAPACITY, &mut tmp_file),

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
+use crate::shuffle::{
+    evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill,
+};
+use crate::spill::Spill;
 use arrow::array::*;
 use arrow::compute;
 use arrow::compute::TakeOptions;
@@ -20,6 +23,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
@@ -29,6 +33,7 @@ use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::io::write_one_batch;
+use datafusion_ext_commons::loser_tree::LoserTree;
 use derivative::Derivative;
 use futures::lock::Mutex;
 use std::fmt;
@@ -38,10 +43,7 @@ use std::io::{Cursor, Read, Seek, Write};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
-use bytesize::ByteSize;
-use voracious_radix_sort::{Radixable, RadixSort};
-use datafusion_ext_commons::loser_tree::LoserTree;
-use crate::spill::Spill;
+use voracious_radix_sort::{RadixSort, Radixable};
 
 pub struct SortShuffleRepartitioner {
     memory_consumer_id: MemoryConsumerId,
@@ -301,7 +303,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-
         // first grow memory usage of cur batch
         // NOTE:
         //  when spilling, buffered batches are first spilled into memory.
@@ -377,7 +378,8 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 (c1, _2) if c1.finished() => false,
                 (_1, c2) if c2.finished() => true,
                 (c1, c2) => c1 < c2,
-            });
+            },
+        );
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();

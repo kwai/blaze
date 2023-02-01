@@ -125,7 +125,11 @@ fn evaluate_and(
             ColumnarValue::Array(array) => {
                 ColumnarValue::Array(compute::nullif(&array, as_boolean_array(&array))?)
             }
-            _ => return Err(DataFusionError::Internal("AND: invalid operands".to_string())),
+            _ => {
+                return Err(DataFusionError::Internal(
+                    "AND: invalid operands".to_string(),
+                ))
+            }
         },
         ColumnarValue::Array(left) => {
             let left_prim = as_boolean_array(&left);
@@ -143,7 +147,11 @@ fn evaluate_and(
             let right_prim = as_boolean_array(&right);
             ColumnarValue::Array(Arc::new(compute::and_kleene(left_prim, right_prim)?))
         }
-        _ => return Err(DataFusionError::Internal("AND: invalid operands".to_string())),
+        _ => {
+            return Err(DataFusionError::Internal(
+                "AND: invalid operands".to_string(),
+            ))
+        }
     })
 }
 
@@ -174,7 +182,11 @@ fn evaluate_or(
                 &array,
                 &compute::not(as_boolean_array(&array))?,
             )?),
-            _ => return Err(DataFusionError::Internal("OR: invalid operands".to_string())),
+            _ => {
+                return Err(DataFusionError::Internal(
+                    "OR: invalid operands".to_string(),
+                ))
+            }
         },
         ColumnarValue::Array(left) => {
             let left_prim = as_boolean_array(&left);
@@ -190,7 +202,11 @@ fn evaluate_or(
             let right_prim = as_boolean_array(&right);
             ColumnarValue::Array(Arc::new(compute::or_kleene(left_prim, right_prim)?))
         }
-        _ => return Err(DataFusionError::Internal("OR: invalid operands".to_string())),
+        _ => {
+            return Err(DataFusionError::Internal(
+                "OR: invalid operands".to_string(),
+            ))
+        }
     })
 }
 
