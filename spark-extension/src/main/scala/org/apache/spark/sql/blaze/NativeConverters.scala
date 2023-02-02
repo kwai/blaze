@@ -28,6 +28,8 @@ import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
 
 import org.apache.spark.sql.catalyst.analysis.DecimalPrecision
+import org.apache.spark.sql.catalyst.analysis.DecimalPrecision.promotePrecision
+import org.apache.spark.sql.catalyst.analysis.DecimalPrecision.widerDecimalType
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
 import org.apache.spark.sql.catalyst.expressions.Add
@@ -100,7 +102,10 @@ import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
+import org.apache.spark.sql.catalyst.expressions.BinaryComparison
 import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
+import org.apache.spark.sql.catalyst.expressions.Pmod
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
@@ -115,6 +120,7 @@ import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveGenericUDF
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
@@ -398,68 +404,33 @@ object NativeConverters {
       case LessThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "LtEq")
 
       case e @ Add(lhs, rhs) =>
-        if (lhs.dataType != e.dataType)
-          return convertExpr(Add(Cast(lhs, e.dataType), rhs), useAttrExprId)
-        if (rhs.dataType != e.dataType)
-          return convertExpr(Add(lhs, Cast(rhs, e.dataType)), useAttrExprId)
-        buildBinaryExprNode(lhs, rhs, "Plus")
+        val resultType = arithDecimalReturnType(e)
+        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Plus")
 
       case e @ Subtract(lhs, rhs) =>
-        if (lhs.dataType != e.dataType)
-          return convertExpr(Subtract(Cast(lhs, e.dataType), rhs), useAttrExprId)
-        if (rhs.dataType != e.dataType)
-          return convertExpr(Subtract(lhs, Cast(rhs, e.dataType)), useAttrExprId)
-        buildBinaryExprNode(lhs, rhs, "Minus")
+        val resultType = arithDecimalReturnType(e)
+        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Minus")
 
       case e @ Multiply(lhs, rhs) =>
-        if (lhs.dataType != e.dataType)
-          return convertExpr(Multiply(Cast(lhs, e.dataType), rhs), useAttrExprId)
-        if (rhs.dataType != e.dataType)
-          return convertExpr(Multiply(lhs, Cast(rhs, e.dataType)), useAttrExprId)
-        buildBinaryExprNode(lhs, rhs, "Multiply")
+        val resultType = arithDecimalReturnType(e)
+        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Multiply")
 
       case e @ Divide(lhs, rhs) =>
-        if (!e.dataType.isInstanceOf[DecimalType] && lhs.dataType != e.dataType)
-          return convertExpr(Divide(Cast(lhs, e.dataType), rhs), useAttrExprId)
-        if (!e.dataType.isInstanceOf[DecimalType] && rhs.dataType != e.dataType)
-          return convertExpr(Divide(lhs, Cast(rhs, e.dataType)), useAttrExprId)
+        val resultType = arithDecimalReturnType(e)
+        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Divide")
 
-        val promotedDataType = (lhs.dataType, rhs.dataType) match {
-          case (lt: DecimalType, rt: DecimalType) =>
-            Some(DecimalPrecision.widerDecimalType(lt, rt))
-          case _ =>
-            None
-        }
-        val promotePrecision = (expr: Expression) => {
-          promotedDataType match {
-            case Some(promoted) if promoted != expr.dataType => Cast(expr, promoted)
-            case _ => expr
-          }
-        }
-
-        rhs match {
-          case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
-            buildBinaryExprNode(promotePrecision(lhs), promotePrecision(rhs), "Divide")
-          case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
-            buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
-          case rhs =>
-            val l = convertExpr(promotePrecision(lhs), useAttrExprId)
-            val r =
-              buildExtScalarFunction("NullIfZero", promotePrecision(rhs) :: Nil, rhs.dataType)
-            buildExprNode {
-              _.setBinaryExpr(
-                pb.PhysicalBinaryExprNode.newBuilder().setL(l).setR(r).setOp("Divide"))
-            }
-        }
       case e @ Remainder(lhs, rhs) =>
+        val resultType = arithDecimalReturnType(e)
         rhs match {
           case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
             buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
           case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
             buildBinaryExprNode(lhs, rhs, "Modulo")
           case rhs =>
-            val l = convertExpr(lhs, useAttrExprId)
-            val r = buildExtScalarFunction("NullIfZero", rhs :: Nil, rhs.dataType)
+            val l = convertExpr(Cast(lhs, resultType), useAttrExprId)
+            val r =
+              buildExtScalarFunction("NullIfZero", Cast(rhs, resultType) :: Nil, rhs.dataType)
+
             buildExprNode {
               _.setBinaryExpr(
                 pb.PhysicalBinaryExprNode.newBuilder().setL(l).setR(r).setOp("Modulo"))
@@ -753,6 +724,67 @@ object NativeConverters {
       Utils.tryWithResource(new ObjectInputStream(bis)) { ois =>
         ois.readObject().asInstanceOf[Expression with Serializable]
       }
+    }
+  }
+
+  private def arithDecimalReturnType(e: Expression): DecimalType = {
+    import scala.math.{max, min}
+    e match {
+      case Add(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+        val resultScale = max(s1, s2)
+        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+          DecimalType.adjustPrecisionScale(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
+        } else {
+          DecimalType.bounded(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
+        }
+
+      case Subtract(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+        val resultScale = max(s1, s2)
+        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+          DecimalType.adjustPrecisionScale(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
+        } else {
+          DecimalType.bounded(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
+        }
+
+      case Multiply(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+          DecimalType.adjustPrecisionScale(p1 + p2 + 1, s1 + s2)
+        } else {
+          DecimalType.bounded(p1 + p2 + 1, s1 + s2)
+        }
+
+      case Divide(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+          // Precision: p1 - s1 + s2 + max(6, s1 + p2 + 1)
+          // Scale: max(6, s1 + p2 + 1)
+          val intDig = p1 - s1 + s2
+          val scale = max(DecimalType.MINIMUM_ADJUSTED_SCALE, s1 + p2 + 1)
+          val prec = intDig + scale
+          DecimalType.adjustPrecisionScale(prec, scale)
+        } else {
+          var intDig = min(DecimalType.MAX_SCALE, p1 - s1 + s2)
+          var decDig = min(DecimalType.MAX_SCALE, max(6, s1 + p2 + 1))
+          val diff = (intDig + decDig) - DecimalType.MAX_SCALE
+          if (diff > 0) {
+            decDig -= diff / 2 + 1
+            intDig = DecimalType.MAX_SCALE - decDig
+          }
+          DecimalType.bounded(intDig + decDig, decDig)
+        }
+
+      case Remainder(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+          DecimalType.adjustPrecisionScale(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
+        } else {
+          DecimalType.bounded(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
+        }
+
+      case Pmod(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+          DecimalType.adjustPrecisionScale(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
+        } else {
+          DecimalType.bounded(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
+        }
     }
   }
 }
