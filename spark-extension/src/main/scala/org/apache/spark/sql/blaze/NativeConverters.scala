@@ -727,7 +727,7 @@ object NativeConverters {
     }
   }
 
-  private def arithDecimalReturnType(e: Expression): DecimalType = {
+  private def arithDecimalReturnType(e: Expression): DataType = {
     import scala.math.{max, min}
     e match {
       case Add(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
@@ -785,6 +785,7 @@ object NativeConverters {
         } else {
           DecimalType.bounded(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
         }
+      case e => e.dataType
     }
   }
 }
