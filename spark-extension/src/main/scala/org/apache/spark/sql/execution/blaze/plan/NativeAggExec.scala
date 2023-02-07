@@ -87,7 +87,7 @@ case class NativeAggExec(
       findPreviousNativeAggrExec(exec match {
         case e: NativeAggExec => return e
         case e: ReusedExchangeExec => e.child
-        case e: ArrowShuffleExchangeBase => e.child
+        case e: NativeShuffleExchangeBase => e.child
         case e: NativeSortExec if execMode == SortAgg => e.child
         case e: UnaryExecNode if e.nodeName.contains("QueryStage") => e.child
         case e: UnaryExecNode if e.nodeName.contains("InputAdapter") => e.child

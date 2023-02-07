@@ -14,16 +14,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.blaze.shims
+package org.apache.spark.sql.execution.blaze.shuffle
 
-import org.apache.spark.sql.blaze.BroadcastShims
-import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeExec
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 
-class BroadcastShimsImpl extends BroadcastShims {
-  override def createArrowBroadcastExchange(
-      mode: BroadcastMode,
-      child: SparkPlan): NativeBroadcastExchangeBase = NativeBroadcastExchangeExec(mode, child)
+class BlazeShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
+  extends BlazeShuffleWriterBase[K, V](metrics) {
+
 }

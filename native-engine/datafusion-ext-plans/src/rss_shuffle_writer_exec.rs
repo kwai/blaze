@@ -112,8 +112,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(
-                    rss_partition_writer,
-                    BaselineMetrics::new(&self.metrics, partition),
+                    rss_partition_writer
                 ))
             }
             Partitioning::Hash(_, _) => Arc::new(RssBucketShuffleRepartitioner::new(

@@ -25,16 +25,17 @@ import org.apache.spark.shuffle.{IndexShuffleBlockResolver, ShuffleHandle, Shuff
 import org.apache.spark.sql.blaze.ShuffleShims
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeExec
+import org.apache.spark.sql.execution.blaze.plan.NativeShuffleExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.NativeShuffleExchangeExec
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.storage.{BlockManagerId, FileSegment}
+import org.blaze.protobuf.{PhysicalHashRepartition, PhysicalPlanNode, ShuffleWriterExecNode}
 
 class ShuffleShimsImpl extends ShuffleShims {
   override def createArrowShuffleExchange(
                                            outputPartitioning: Partitioning,
-                                           child: SparkPlan): ArrowShuffleExchangeBase =
-    ArrowShuffleExchangeExec(outputPartitioning, child)
+                                           child: SparkPlan): NativeShuffleExchangeBase =
+    NativeShuffleExchangeExec(outputPartitioning, child)
 
   // 3.0.3 does not need numRecords,just skip
 
@@ -71,4 +72,19 @@ class ShuffleShimsImpl extends ShuffleShims {
                              partitionLengthMap: Array[Long],
                              mapId: Long): MapStatus =
     MapStatus.apply(shuffleServerId, partitionLengthMap, mapId)
+
+  override def getShuffleWriteExec(
+                                    input: PhysicalPlanNode,
+                                    nativeOutputPartitioning: PhysicalHashRepartition.Builder): PhysicalPlanNode = {
+    PhysicalPlanNode
+      .newBuilder()
+      .setShuffleWriter(
+        ShuffleWriterExecNode
+          .newBuilder()
+          .setInput(input)
+          .setOutputPartitioning(nativeOutputPartitioning)
+          .buildPartial()
+      ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
+      .build()
+  }
 }

@@ -60,14 +60,14 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 
-abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)
+abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike
     with NativeSupports {
 
   override def output: Seq[Attribute] = child.output
 
   private lazy val isNative = {
-    getTagValue(ArrowBroadcastExchangeBase.nativeExecutionTag).getOrElse(false)
+    getTagValue(NativeBroadcastExchangeBase.nativeExecutionTag).getOrElse(false)
   }
 
   def getRunId: UUID
@@ -249,6 +249,6 @@ abstract class ArrowBroadcastExchangeBase(mode: BroadcastMode, override val chil
   }
 }
 
-object ArrowBroadcastExchangeBase {
+object NativeBroadcastExchangeBase {
   def nativeExecutionTag: TreeNodeTag[Boolean] = TreeNodeTag("arrowBroadcastNativeExecution")
 }

@@ -33,7 +33,7 @@ import org.blaze.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode, ShuffleWr
 
 import java.util.UUID
 
-abstract class ArrowShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
+abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V]
     with Logging {
 

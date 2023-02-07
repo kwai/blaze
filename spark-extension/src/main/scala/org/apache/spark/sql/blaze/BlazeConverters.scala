@@ -77,7 +77,7 @@ import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.aggregate.SortAggregateExec
-import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 
@@ -407,7 +407,7 @@ object BlazeConverters extends Logging {
           case BuildLeft => getUnderlyingBroadcast(exec.left)
           case BuildRight => getUnderlyingBroadcast(exec.right)
         }
-        underlyingBroadcast.setTagValue(ArrowBroadcastExchangeBase.nativeExecutionTag, false)
+        underlyingBroadcast.setTagValue(NativeBroadcastExchangeBase.nativeExecutionTag, false)
         exec
     }
   }
@@ -419,7 +419,7 @@ object BlazeConverters extends Logging {
           s"Converting BroadcastExchangeExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
         val converted =
           Shims.get.broadcastShims.createArrowBroadcastExchange(exec.mode, exec.child)
-        converted.setTagValue(ArrowBroadcastExchangeBase.nativeExecutionTag, true)
+        converted.setTagValue(NativeBroadcastExchangeBase.nativeExecutionTag, true)
         return converted
     }
     exec

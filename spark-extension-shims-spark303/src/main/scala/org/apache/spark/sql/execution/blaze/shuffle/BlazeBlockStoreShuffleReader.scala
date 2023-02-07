@@ -32,7 +32,7 @@ import org.apache.spark.storage.BlockManager
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.ShuffleBlockFetcherIterator
 
-class ArrowBlockStoreShuffleReader[K, C](
+class BlazeBlockStoreShuffleReader[K, C](
     handle: BaseShuffleHandle[K, _, C],
     startPartition: Int,
     endPartition: Int,
@@ -43,7 +43,7 @@ class ArrowBlockStoreShuffleReader[K, C](
     startMapId: Option[Int] = None,
     endMapId: Option[Int] = None,
     shouldBatchFetch: Boolean = false)
-    extends ArrowBlockStoreShuffleReaderBase[K, C](handle, context, readMetrics)
+    extends BlazeBlockStoreShuffleReaderBase[K, C](handle, context, readMetrics)
     with Logging {
 
   override def readBlocks(): Iterator[(BlockId, InputStream)] = {

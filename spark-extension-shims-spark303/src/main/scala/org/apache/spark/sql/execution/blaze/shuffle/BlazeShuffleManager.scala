@@ -28,12 +28,12 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
 import org.apache.spark.shuffle.sort.SortShuffleManager
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency.isArrowShuffle
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArrowShuffle
 import org.apache.spark.util.collection.OpenHashSet
 
-class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
+class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 
-  import ArrowShuffleManager._
+  import BlazeShuffleManager._
   import SortShuffleManager._
 
   val sortShuffleManager = new SortShuffleManager(conf)
@@ -83,7 +83,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
 
     if (isArrowShuffle(handle)) {
-      new ArrowBlockStoreShuffleReader(
+      new BlazeBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
         startPartition,
         endPartition,
@@ -109,7 +109,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
 
     if (isArrowShuffle(handle)) {
-      new ArrowBlockStoreShuffleReader(
+      new BlazeBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
         startPartition,
         endPartition,
@@ -139,7 +139,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V] = {
 
     if (isArrowShuffle(handle)) {
-      new ArrowShuffleWriter(metrics)
+      new BlazeShuffleWriter(metrics)
     } else {
       sortShuffleManager.getWriter(handle, mapId, context, metrics)
     }
@@ -156,7 +156,7 @@ class ArrowShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   }
 }
 
-private[spark] object ArrowShuffleManager extends Logging {
+private[spark] object BlazeShuffleManager extends Logging {
   private def loadShuffleExecutorComponents(conf: SparkConf): ShuffleExecutorComponents = {
     val executorComponents = ShuffleDataIOUtils.loadShuffleDataIO(conf).executor()
     val extraConfigs = conf.getAllWithPrefix(ShuffleDataIOUtils.SHUFFLE_SPARK_CONF_PREFIX).toMap

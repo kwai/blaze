@@ -17,7 +17,6 @@ use async_trait::async_trait;
 use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
-use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion_ext_commons::io::write_one_batch;
 use jni::objects::GlobalRef;
 use std::fmt;
@@ -26,7 +25,6 @@ use std::io::Cursor;
 
 pub struct RssSingleShuffleRepartitioner {
     rss_partition_writer: GlobalRef,
-    metrics: BaselineMetrics,
 }
 
 impl Debug for RssSingleShuffleRepartitioner {
@@ -36,10 +34,9 @@ impl Debug for RssSingleShuffleRepartitioner {
 }
 
 impl RssSingleShuffleRepartitioner {
-    pub fn new(rss_partition_writer: GlobalRef, metrics: BaselineMetrics) -> Self {
+    pub fn new(rss_partition_writer: GlobalRef) -> Self {
         Self {
-            rss_partition_writer,
-            metrics,
+            rss_partition_writer
         }
     }
 }

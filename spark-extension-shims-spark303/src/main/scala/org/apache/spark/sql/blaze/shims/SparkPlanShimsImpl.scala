@@ -52,11 +52,11 @@ import org.apache.spark.sql.execution.adaptive.{
 }
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.{
-  ArrowShuffleExchangeExec,
+  NativeShuffleExchangeExec,
   NativeParquetScanExec,
   NativeUnionExec
 }
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReader
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReader
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 
 private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
@@ -116,7 +116,7 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
 
         val inputRDD = executeNative(child)
         val nativeSchema: Schema = getUnderlyingNativePlan(child)
-          .asInstanceOf[ArrowShuffleExchangeExec]
+          .asInstanceOf[NativeShuffleExchangeExec]
           .nativeSchema
         val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
 
@@ -146,7 +146,7 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
                     endReducerIndex,
                     taskContext,
                     sqlMetricsReporter)
-                  .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
+                  .asInstanceOf[BlazeBlockStoreShuffleReader[_, _]]
 
               case PartialReducerPartitionSpec(reducerIndex, startMapIndex, endMapIndex) =>
                 SparkEnv.get.shuffleManager
@@ -158,7 +158,7 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
                     reducerIndex + 1,
                     taskContext,
                     sqlMetricsReporter)
-                  .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
+                  .asInstanceOf[BlazeBlockStoreShuffleReader[_, _]]
 
               case PartialMapperPartitionSpec(mapIndex, startReducerIndex, endReducerIndex) =>
                 SparkEnv.get.shuffleManager
@@ -170,7 +170,7 @@ private[blaze] class SparkPlanShimsImpl extends SparkPlanShims with Logging {
                     endReducerIndex,
                     taskContext,
                     sqlMetricsReporter)
-                  .asInstanceOf[ArrowBlockStoreShuffleReader[_, _]]
+                  .asInstanceOf[BlazeBlockStoreShuffleReader[_, _]]
             }
 
             // store fetch iterator in jni resource before native compute

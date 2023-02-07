@@ -36,12 +36,12 @@ import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.FileSegment
 
-abstract class ArrowBlockStoreShuffleReaderBase[K, C](
+abstract class BlazeBlockStoreShuffleReaderBase[K, C](
     handle: BaseShuffleHandle[K, _, C],
     context: TaskContext,
     readMetrics: ShuffleReadMetricsReporter)
     extends ShuffleReader[K, C] {
-  import ArrowBlockStoreShuffleReaderBase._
+  import BlazeBlockStoreShuffleReaderBase._
 
   protected val dep: ShuffleDependency[K, _, C] = handle.dependency
   protected def readBlocks(): Iterator[(BlockId, InputStream)]
@@ -67,7 +67,7 @@ abstract class ArrowBlockStoreShuffleReaderBase[K, C](
       "arrow shuffle reader does not support non-native read() method")
 }
 
-object ArrowBlockStoreShuffleReaderBase {
+object BlazeBlockStoreShuffleReaderBase {
   private val bufferReleasingInputStreamClass: Class[_] =
     Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
   private val delegateFn: Method =

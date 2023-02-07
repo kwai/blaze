@@ -54,19 +54,19 @@ import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnsafeRowSerializer
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowBlockStoreShuffleReaderBase
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleDependency
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
 
-abstract class ArrowShuffleExchangeBase(
+abstract class NativeShuffleExchangeBase(
     override val outputPartitioning: Partitioning,
     override val child: SparkPlan)
     extends ShuffleExchangeLike
     with NativeSupports {
 
-  override val nodeName: String = "ArrowShuffleExchange"
+  override val nodeName: String = "NativeShuffleExchange"
 
   val serializer: UnsafeRowSerializer =
     new UnsafeRowSerializer(child.output.size, longMetric("dataSize"))
@@ -133,7 +133,7 @@ abstract class ArrowShuffleExchangeBase(
             partition.index + 1,
             taskContext,
             metricReporter)
-          .asInstanceOf[ArrowBlockStoreShuffleReaderBase[_, _]]
+          .asInstanceOf[BlazeBlockStoreShuffleReaderBase[_, _]]
 
         val ipcIterator = CompletionIterator[Object, Iterator[Object]](
           reader.readIpc(),
@@ -209,35 +209,12 @@ abstract class ArrowShuffleExchangeBase(
 
         val input = nativeInputRDD.nativePlan(nativeInputPartition, taskContext)
         val nativeShuffleWriteExec =
-          if (SparkEnv.get.conf
-              .getBoolean("spark.blaze.shuffle.enable.rss", defaultValue = false)) {
-            PhysicalPlanNode
-              .newBuilder()
-              .setRssShuffleWriter(
-                RssShuffleWriterExecNode
-                  .newBuilder()
-                  .setInput(input)
-                  .setOutputPartitioning(nativeOutputPartitioning)
-                  .buildPartial()
-              ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
-              .build()
-          } else {
-            PhysicalPlanNode
-              .newBuilder()
-              .setShuffleWriter(
-                ShuffleWriterExecNode
-                  .newBuilder()
-                  .setInput(input)
-                  .setOutputPartitioning(nativeOutputPartitioning)
-                  .buildPartial()
-              ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
-              .build()
-          }
+          Shims.get.shuffleShims.getShuffleWriteExec(input, nativeOutputPartitioning)
         nativeShuffleWriteExec
       },
       friendlyName = "NativeRDD.ShuffleWrite")
 
-    val dependency = new ArrowShuffleDependency[Int, InternalRow, InternalRow](
+    val dependency = new BlazeShuffleDependency[Int, InternalRow, InternalRow](
       nativeShuffleRDD.map((0, _)),
       serializer = serializer,
       shuffleWriterProcessor = createNativeShuffleWriteProcessor(metrics, numPartitions),
@@ -254,7 +231,7 @@ abstract class ArrowShuffleExchangeBase(
     ShuffleExchangeExec(outputPartitioning, child).canonicalized
 }
 
-object ArrowShuffleExchangeBase extends Logging {
+object NativeShuffleExchangeBase extends Logging {
 
   /**
    * Determines whether records must be defensively copied before being sent to the shuffle.

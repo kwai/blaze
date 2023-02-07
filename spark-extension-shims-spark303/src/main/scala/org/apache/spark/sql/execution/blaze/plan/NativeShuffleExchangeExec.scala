@@ -20,9 +20,7 @@ import scala.collection.immutable.SortedMap
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-
 import org.apache.spark._
-
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
@@ -34,18 +32,18 @@ import org.apache.spark.sql.catalyst.errors.attachTree
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.blaze.shuffle.ArrowShuffleWriterBase
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleWriter
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import org.apache.spark.sql.internal.SQLConf
 
-case class ArrowShuffleExchangeExec(
+case class NativeShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
     override val child: SparkPlan,
     noUserSpecifiedNumPartition: Boolean = true)
-    extends ArrowShuffleExchangeBase(outputPartitioning, child) {
+    extends NativeShuffleExchangeBase(outputPartitioning, child) {
 
   // NOTE: coordinator can be null after serialization/deserialization,
   //       e.g. it can be null on the Executor side
@@ -164,7 +162,7 @@ case class ArrowShuffleExchangeExec(
           context,
           createMetricsReporter(context))
         writer
-          .asInstanceOf[ArrowShuffleWriterBase[_, _]]
+          .asInstanceOf[BlazeShuffleWriter[_, _]]
           .nativeShuffleWrite(
             rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
             dep,

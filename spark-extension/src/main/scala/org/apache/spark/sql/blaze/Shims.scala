@@ -32,11 +32,12 @@ import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.plan.ArrowBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.ArrowShuffleExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
+import org.apache.spark.sql.execution.blaze.plan.NativeShuffleExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.storage.{BlockManagerId, FileSegment}
+import org.blaze.protobuf.{PhysicalHashRepartition, PhysicalPlanNode}
 
 abstract class Shims {
   def rddShims: RDDShims
@@ -76,7 +77,7 @@ trait SparkPlanShims {
 trait ShuffleShims {
   def createArrowShuffleExchange(
       outputPartitioning: Partitioning,
-      child: SparkPlan): ArrowShuffleExchangeBase
+      child: SparkPlan): NativeShuffleExchangeBase
 
   def createFileSegment(file: File, offset: Long, length: Long, numRecords: Long): FileSegment
 
@@ -99,6 +100,10 @@ trait ShuffleShims {
       shuffleServerId: BlockManagerId,
       PartitionLengthMap: Array[Long],
       mapId: Long): MapStatus
+
+  def getShuffleWriteExec(
+      input: PhysicalPlanNode,
+      nativeOutputPartitioning: PhysicalHashRepartition.Builder): PhysicalPlanNode
 }
 
 trait ParquetScanShims {
@@ -108,7 +113,7 @@ trait ParquetScanShims {
 trait BroadcastShims {
   def createArrowBroadcastExchange(
       mode: BroadcastMode,
-      child: SparkPlan): ArrowBroadcastExchangeBase
+      child: SparkPlan): NativeBroadcastExchangeBase
 }
 
 trait ExprShims {

@@ -44,7 +44,6 @@ use std::sync::Arc;
 
 pub struct RssBucketShuffleRepartitioner {
     id: MemoryConsumerId,
-    rss_partition_writer: GlobalRef,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     /// Partitioning scheme to use
     partitioning: Partitioning,
@@ -68,7 +67,6 @@ impl RssBucketShuffleRepartitioner {
         let batch_size = context.session_config().batch_size();
         let repartitioner = Self {
             id: MemoryConsumerId::new(partition_id),
-            rss_partition_writer: rss_partition_writer.clone(),
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
                     .map(|_| {
@@ -268,7 +266,7 @@ impl Drop for RssBucketShuffleRepartitioner {
 }
 
 struct PartitionBuffer {
-    rss_partition_writer_use: GlobalRef,
+    rss_partition_writer: GlobalRef,
     schema: SchemaRef,
     staging: Vec<RecordBatch>,
     active: Vec<Box<dyn ArrayBuilder>>,
@@ -283,11 +281,11 @@ impl PartitionBuffer {
     fn new(
         schema: SchemaRef,
         batch_size: usize,
-        rss_partition_writer_use: GlobalRef,
+        rss_partition_writer: GlobalRef,
     ) -> Self {
         let staging_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
         Self {
-            rss_partition_writer_use,
+            rss_partition_writer,
             schema,
             staging: vec![],
             active: vec![],
@@ -410,7 +408,7 @@ impl PartitionBuffer {
         let rss_buffer = jni_new_direct_byte_buffer!(&mut rss_data)?;
 
         if length != 0 {
-            jni_call!(SparkRssShuffleWriter(self.rss_partition_writer_use.clone().as_obj()).write(partition_id as i32, rss_buffer, length as i32) -> ())?;
+            jni_call!(SparkRssShuffleWriter(self.rss_partition_writer.clone().as_obj()).write(partition_id as i32, rss_buffer, length as i32) -> ())?;
         }
 
         mem_diff += frozen_batch.get_array_memory_size() as isize;

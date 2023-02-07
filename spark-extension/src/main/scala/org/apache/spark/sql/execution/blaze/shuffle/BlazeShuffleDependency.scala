@@ -32,7 +32,7 @@ import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 
-class ArrowShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
+class BlazeShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     @transient private val _rdd: RDD[_ <: Product2[K, V]],
     override val partitioner: Partitioner,
     override val serializer: Serializer = SparkEnv.get.serializer,
@@ -50,10 +50,10 @@ class ArrowShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
       mapSideCombine,
       shuffleWriterProcessor) {}
 
-object ArrowShuffleDependency extends Logging {
+object BlazeShuffleDependency extends Logging {
   def isArrowShuffle(handle: ShuffleHandle): Boolean = {
     val base = handle.asInstanceOf[BaseShuffleHandle[_, _, _]]
     val dep = base.dependency
-    dep.isInstanceOf[ArrowShuffleDependency[_, _, _]]
+    dep.isInstanceOf[BlazeShuffleDependency[_, _, _]]
   }
 }

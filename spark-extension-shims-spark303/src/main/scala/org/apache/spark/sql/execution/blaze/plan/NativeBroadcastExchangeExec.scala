@@ -25,8 +25,8 @@ import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.execution.SparkPlan
 
-case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
-    extends ArrowBroadcastExchangeBase(mode, child) {
+case class NativeBroadcastExchangeExec(mode: BroadcastMode, override val child: SparkPlan)
+    extends NativeBroadcastExchangeBase(mode, child) {
 
   override lazy val runId: UUID = UUID.randomUUID()
   override def getRunId: UUID = runId
@@ -38,7 +38,7 @@ case class ArrowBroadcastExchangeExec(mode: BroadcastMode, override val child: S
 
   @transient
   override lazy val completionFuture: concurrent.Future[Broadcast[Any]] = {
-    // ArrowBroadcastExchangeExec is not materialized until doExecuteBroadcast called
+    // NativeBroadcastExchangeExec is not materialized until doExecuteBroadcast called
     // so return a dummy future here
     Promise.successful(null).future
   }
