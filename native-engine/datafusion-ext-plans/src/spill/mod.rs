@@ -14,6 +14,7 @@
 
 mod onheap_spill;
 
+use std::fmt::{Debug, Formatter};
 use bytesize::ByteSize;
 use datafusion::common::Result;
 use datafusion::execution::DiskManager;
@@ -35,6 +36,19 @@ pub enum Spill {
 
     // L3 with temp file
     L3(NamedTempFile, usize),
+}
+
+impl Debug for Spill {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Spill::L1(data) =>
+                write!(f, "L1-spill (size={})", ByteSize(data.len() as u64)),
+            Spill::L2(_, len) =>
+                write!(f, "L2-spill (size={})", ByteSize(*len as u64)),
+            Spill::L3(_, len) =>
+                write!(f, "L3-spill (size={})", ByteSize(*len as u64)),
+        }
+    }
 }
 
 impl Spill {

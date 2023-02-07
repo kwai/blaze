@@ -305,7 +305,7 @@ impl MemoryConsumer for AggTables {
         );
 
         // move mem-spilled into heap or disk-spilled if necessary
-        while (freed as usize) < current_used / 2 {
+        while freed < current_used as isize / 2 {
             let max_spill_idx = spilled
                 .iter_mut()
                 .enumerate()

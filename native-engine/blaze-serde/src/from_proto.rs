@@ -31,7 +31,7 @@ use datafusion::logical_expr::{
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
 use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::joins::PartitionMode;
-use datafusion::physical_plan::sorts::sort::{SortExec, SortOptions};
+use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
     expressions::{
@@ -66,6 +66,7 @@ use datafusion_ext_plans::limit_exec::LimitExec;
 use datafusion_ext_plans::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext_plans::rss_shuffle_writer_exec::RssShuffleWriterExec;
 use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
+use datafusion_ext_plans::sort_exec::SortExec;
 use datafusion_ext_plans::sort_merge_join_exec::SortMergeJoinExec;
 
 use crate::error::PlanSerDeError;
@@ -449,10 +450,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 // always preserve partitioning
-                Ok(Arc::new(SortExec::new_with_partitioning(
-                    exprs,
+                Ok(Arc::new(SortExec::new(
                     input,
-                    true,
+                    exprs,
                     sort.fetch_limit.map(|limit| limit as usize),
                 )))
             }

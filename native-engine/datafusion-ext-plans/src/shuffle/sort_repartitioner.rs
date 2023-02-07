@@ -245,8 +245,8 @@ impl MemoryConsumer for SortShuffleRepartitioner {
         );
         spills.push(in_mem_spill);
 
-        // move mem-spilled into L2/L3 if necessary
-        while (freed as usize) < current_used / 2 {
+        // move L1 into L2/L3 if necessary
+        while freed < current_used as isize / 2 {
             let pop_index = spills
                 .iter()
                 .enumerate()

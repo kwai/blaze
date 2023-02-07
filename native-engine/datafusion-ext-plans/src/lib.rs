@@ -29,6 +29,7 @@ pub mod limit_exec;
 pub mod rename_columns_exec;
 pub mod rss_shuffle_writer_exec;
 pub mod shuffle_writer_exec;
+pub mod sort_exec;
 pub mod sort_merge_join_exec;
 
 mod shuffle;
