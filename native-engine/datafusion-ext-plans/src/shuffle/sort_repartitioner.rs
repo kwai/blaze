@@ -16,9 +16,7 @@ use crate::shuffle::{
     evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill,
 };
 use crate::spill::Spill;
-use arrow::array::*;
 use arrow::compute;
-use arrow::compute::TakeOptions;
 use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -29,7 +27,6 @@ use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
-use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::io::write_one_batch;
@@ -103,7 +100,9 @@ impl SortShuffleRepartitioner {
     }
 
     async fn spill_buffered_to_l1(&self) -> Result<ShuffleSpill> {
-        let mut buffered_batches = self.buffered_batches.lock().await;
+        let buffered_batches = std::mem::take(
+            &mut *self.buffered_batches.lock().await
+        );
 
         // combine all buffered batches
         let num_output_partitions = self.num_output_partitions;
@@ -111,29 +110,34 @@ impl SortShuffleRepartitioner {
             .iter()
             .map(|batch| batch.num_rows())
             .sum::<usize>();
-        let batch = concat_batches(
-            &self.schema,
-            &std::mem::take::<Vec<RecordBatch>>(&mut buffered_batches),
-            num_buffered_rows,
-        )?;
 
-        let hashes = evaluate_hashes(&self.partitioning, &batch)?;
-        let partition_ids = evaluate_partition_ids(&hashes, num_output_partitions);
+        let mut pi_vec = Vec::with_capacity(num_buffered_rows);
+        for (batch_idx, batch) in buffered_batches.iter().enumerate() {
+            let hashes = evaluate_hashes(&self.partitioning, &batch)?;
+            let partition_ids = evaluate_partition_ids(&hashes, num_output_partitions);
 
-        // compute partition ids and sorted indices by counting sort
-        let mut pi_vec = hashes
-            .into_iter()
-            .zip(partition_ids.into_iter())
-            .enumerate()
-            .map(|(i, (hash, partition_id))| PI {
-                partition_id,
-                hash,
-                index: i as u32,
-            })
-            .collect::<Vec<_>>();
+            // compute partition ids and sorted indices by counting sort
+            pi_vec.extend(hashes
+                .into_iter()
+                .zip(partition_ids.into_iter())
+                .enumerate()
+                .map(|(i, (hash, partition_id))| PI {
+                    partition_id,
+                    hash,
+                    batch_idx: batch_idx as u32,
+                    row_idx: i as u32,
+                }));
+        }
         pi_vec.voracious_sort();
 
         // write to in-mem spill
+        let mut buffered_columns = vec![vec![]; buffered_batches[0].num_columns()];
+        buffered_batches.iter().for_each(|batch| batch
+            .columns()
+            .iter()
+            .enumerate()
+            .for_each(|(col_idx, col)| buffered_columns[col_idx].push(col.as_ref())));
+
         let mut cur_partition_id = 0;
         let mut cur_slice_start = 0;
         let mut cur_spill_frozen = vec![];
@@ -143,23 +147,16 @@ impl SortShuffleRepartitioner {
         macro_rules! write_sub_batch {
             ($range:expr) => {{
                 let sub_pi_vec = &pi_vec[$range];
-                let sub_indices =
-                    UInt32Array::from_iter_values(sub_pi_vec.iter().map(|pi| pi.index));
+                let sub_indices = sub_pi_vec
+                    .iter()
+                    .map(|pi| (pi.batch_idx as usize, pi.row_idx as usize))
+                    .collect::<Vec<_>>();
 
                 let sub_batch = RecordBatch::try_new(
                     self.schema.clone(),
-                    batch
-                        .columns()
+                    buffered_columns
                         .iter()
-                        .map(|column| {
-                            compute::take(
-                                column,
-                                &sub_indices,
-                                Some(TakeOptions {
-                                    check_bounds: false,
-                                }),
-                            )
-                        })
+                        .map(|columns| compute::interleave(columns, &sub_indices))
                         .collect::<ArrowResult<Vec<_>>>()?,
                 )?;
                 write_one_batch(&sub_batch, &mut frozen_cursor, true)?;
@@ -454,7 +451,12 @@ struct PI {
     #[derivative(PartialOrd = "ignore")]
     #[derivative(PartialEq = "ignore")]
     #[derivative(Ord = "ignore")]
-    index: u32,
+    batch_idx: u32,
+
+    #[derivative(PartialOrd = "ignore")]
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Ord = "ignore")]
+    row_idx: u32,
 }
 impl Radixable<u64> for PI {
     type Key = u64;
