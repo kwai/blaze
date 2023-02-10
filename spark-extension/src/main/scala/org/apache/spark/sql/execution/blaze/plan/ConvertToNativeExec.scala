@@ -90,7 +90,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
                 renamedSchema,
                 timeZoneId,
                 context,
-                recordBatchSize = NativeHelper.batchSize - 1)
+                recordBatchSize = NativeHelper.batchSize / 4)
             new InterruptibleIterator(context, exportIter)
           })
 
