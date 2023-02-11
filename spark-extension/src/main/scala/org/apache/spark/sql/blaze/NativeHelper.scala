@@ -58,7 +58,7 @@ object NativeHelper extends Logging {
   val nativeMemory: Long =
     SparkEnv.get.conf.getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024
   val memoryFraction: Double =
-    SparkEnv.get.conf.getDouble("spark.blaze.memoryFraction", 0.75);
+    SparkEnv.get.conf.getDouble("spark.blaze.memoryFraction", 0.6);
   val tmpDirs: String =
     SparkEnv.get.blockManager.diskBlockManager.localDirs.map(_.toString).mkString(",")
 
