@@ -33,6 +33,7 @@ import scala.language.reflectiveCalls
 
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.Partition
+import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
@@ -42,6 +43,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIImportIterator
@@ -49,18 +51,28 @@ import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.storage.DiskBlockManager
 
 object NativeHelper extends Logging {
   val currentUser: UserGroupInformation = UserGroupInformation.getCurrentUser
+  private val conf: SparkConf = SparkEnv.get.conf
+  private val diskBlockManager: DiskBlockManager = SparkEnv.get.blockManager.diskBlockManager
 
-  val batchSize: Int =
-    SparkEnv.get.conf.getInt("spark.blaze.batchSize", 10000)
-  val nativeMemory: Long =
-    SparkEnv.get.conf.getLong("spark.executor.memoryOverhead", Long.MaxValue) * 1024 * 1024
-  val memoryFraction: Double =
-    SparkEnv.get.conf.getDouble("spark.blaze.memoryFraction", 0.6);
-  val tmpDirs: String =
-    SparkEnv.get.blockManager.diskBlockManager.localDirs.map(_.toString).mkString(",")
+  val batchSize: Int = conf.getInt("spark.blaze.batchSize", 10000)
+
+  val nativeMemory: Long = {
+    val MEMORY_OVERHEAD_FACTOR = 0.10
+    val MEMORY_OVERHEAD_MIN = 384L
+    val executorMemory = conf.get(config.EXECUTOR_MEMORY)
+    conf
+      .get(config.EXECUTOR_MEMORY_OVERHEAD)
+      .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * executorMemory).toLong, MEMORY_OVERHEAD_MIN))
+      .toInt * 1024 * 1024
+  }
+
+  val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.6);
+
+  val tmpDirs: String = diskBlockManager.localDirs.map(_.toString).mkString(",")
 
   def isNative(exec: SparkPlan): Boolean =
     Shims.get.sparkPlanShims.isNative(exec)
@@ -229,7 +241,13 @@ object BlazeCallNativeWrapper extends Logging {
   }
 
   private lazy val lazyInitNative: Unit = {
-    logInfo(s"Initializing native environment ...")
+    logInfo(
+      "Initializing native environment (" +
+        s"batchSize=${NativeHelper.batchSize}, " +
+        s"nativeMemory=${NativeHelper.nativeMemory}, " +
+        s"memoryFraction=${NativeHelper.memoryFraction}, " +
+        s"tmpDirs=${NativeHelper.tmpDirs}" +
+        ")")
     BlazeCallNativeWrapper.load("blaze")
     JniBridge.initNative(
       NativeHelper.batchSize,
