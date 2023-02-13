@@ -16,26 +16,34 @@
 
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.nio.file.{Files, Paths}
-import java.nio.{ByteBuffer, ByteOrder}
-import org.apache.spark.{Partition, ShuffleDependency, SparkConf, SparkEnv, TaskContext}
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.file.Files
+import java.nio.file.Paths
+
+import org.apache.spark.Partition
+import org.apache.spark.ShuffleDependency
+import org.apache.spark.SparkEnv
+import org.apache.spark.TaskContext
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.ShuffleWriterExecNode
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.{
-  IndexShuffleBlockResolver,
-  ShuffleHandle,
-  ShuffleWriteMetricsReporter,
-  ShuffleWriter
-}
-import org.apache.spark.sql.blaze.{JniBridge, NativeHelper, NativeRDD, Shims}
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.blaze.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode, ShuffleWriterExecNode}
-
-import java.util.UUID
+import org.apache.spark.shuffle.IndexShuffleBlockResolver
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.shuffle.ShuffleWriter
+import org.apache.spark.sql.blaze.NativeHelper
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.Shims
 
 abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V]
     with Logging {
+
+  // disable other off-heap memory usages
+  System.setProperty("spark.memory.offHeap.enabled", "false")
+  System.setProperty("io.netty.noPreferDirect", "true")
 
   override def write(records: Iterator[Product2[K, V]]): Unit = {}
 
