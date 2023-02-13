@@ -32,6 +32,14 @@ impl<T> LoserTree<T> {
         tree
     }
 
+    pub fn values(&self) -> &[T] {
+        &self.values
+    }
+
+    pub fn values_mut(&mut self) -> &mut [T] {
+        &mut self.values
+    }
+
     pub fn len(&self) -> usize {
         self.values.len()
     }

@@ -20,10 +20,10 @@ use std::io::{BufReader, BufWriter, Cursor, Read, Write};
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex as SyncMutex};
 use arrow::array::{Array, ArrayRef};
-use arrow::datatypes::{Field, SchemaRef};
+use arrow::datatypes::SchemaRef;
 use arrow::error::{ArrowError, Result as ArrowResult};
-use arrow::record_batch::RecordBatch;
-use arrow::row::{OwnedRow, RowConverter, Rows, SortField};
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use arrow::row::{RowConverter, Rows, SortField};
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::common::{DataFusionError, Result, Statistics};
@@ -106,12 +106,6 @@ impl ExecutionPlan for SortExec {
         let input_schema = self.input.schema();
         let batch_size = context.session_config().batch_size();
 
-        let input_row_converter = RowConverter::new(
-            input_schema.fields
-                .iter()
-                .map(|field: &Field| SortField::new(field.data_type().clone()))
-                .collect()
-        )?;
         let sort_row_converter = RowConverter::new(
             self.exprs
                 .iter()
@@ -131,7 +125,6 @@ impl ExecutionPlan for SortExec {
             exprs: self.exprs.clone(),
             input_schema: self.schema(),
             limit: self.fetch.unwrap_or(usize::MAX),
-            input_row_converter: SyncMutex::new(input_row_converter),
             sort_row_converter: SyncMutex::new(sort_row_converter),
             levels: Mutex::new(vec![None; NUM_LEVELS]),
             spills: Default::default(),
@@ -184,7 +177,6 @@ struct ExternalSorter {
     exprs: Vec<PhysicalSortExpr>,
     input_schema: SchemaRef,
     limit: usize,
-    input_row_converter: SyncMutex<RowConverter>,
     sort_row_converter: SyncMutex<RowConverter>,
     levels: Mutex<Vec<Option<SortedBatches>>>,
     spills: Mutex<Vec<Spill>>,
@@ -363,11 +355,13 @@ impl ExternalSorter {
             cur_level += 1;
         }
         let used = sorted_batches.mem_size();
+        self.grow(used);
+        self.baseline_metrics.mem_used().add(used);
+
         levels[cur_level] = Some(sorted_batches);
         drop(levels);
 
-        self.try_grow(used).await?; // trigger spill if necessary
-        self.baseline_metrics.mem_used().add(used);
+        self.try_grow(0).await?; // trigger spill if necessary
         Ok(())
     }
 
@@ -440,29 +434,50 @@ impl ExternalSorter {
         let mut cursors: LoserTree<SpillCursor> = LoserTree::new_by(
             std::mem::take(&mut *spills)
                 .into_iter()
-                .map(|spill| SpillCursor::try_from_spill(self.clone(), spill))
+                .enumerate()
+                .map(|(id, spill)| SpillCursor::try_from_spill(id, spill))
                 .collect::<Result<_>>()?,
             |c1, c2| {
-                let key1 = (c1.finished, &c1.current_key);
-                let key2 = (c2.finished, &c2.current_key);
+                let key1 = (c1.finished, &c1.cur_key);
+                let key2 = (c2.finished, &c2.cur_key);
                 key1 < key2
             });
 
         let mut num_total_output_rows = 0;
-        let mut staging_rows = Vec::with_capacity(self.batch_size);
+        let mut staging_cursor_ids = Vec::with_capacity(self.batch_size);
+
 
         macro_rules! flush_staging {
             () => {{
-                let output_rows = std::mem::take(&mut staging_rows);
-                staging_rows.reserve(self.batch_size);
+                let mut batches_base_idx = vec![];
+                let mut base_idx = 0;
+                for cursor in cursors.values() {
+                    batches_base_idx.push(base_idx);
+                    base_idx += cursor.cur_batches.len();
+                }
+                let staging_indices = std::mem::take(&mut staging_cursor_ids)
+                    .iter()
+                    .map(|&cursor_id| {
+                        let cursor = &mut cursors.values_mut()[cursor_id];
+                        let base_idx = batches_base_idx[cursor.id];
+                        let (batch_idx, row_idx) = cursor.next_row();
+                        (base_idx + batch_idx, row_idx)
+                    })
+                    .collect::<Vec<_>>();
 
-                let batch = RecordBatch::try_new(
+                let mut batches = vec![];
+                for cursor in cursors.values() {
+                    batches.extend(&cursor.cur_batches);
+                }
+                let batch = interleave_batches(
                     self.input_schema.clone(),
-                    self.input_row_converter
-                        .lock()
-                        .unwrap()
-                        .convert_rows(output_rows.iter().map(|r| r.row()))?,
+                    &batches,
+                    &staging_indices,
                 )?;
+                for cursor in cursors.values_mut() {
+                    cursor.clear_finished_batches();
+                }
+
                 timer.stop();
                 sender
                     .send(Ok(batch))
@@ -478,14 +493,16 @@ impl ExternalSorter {
             if min_cursor.finished {
                 break;
             }
-            staging_rows.push(min_cursor.pop()?.unwrap());
+            staging_cursor_ids.push(min_cursor.id);
+            min_cursor.next_key()?;
+            drop(min_cursor);
             num_total_output_rows += 1;
 
-            if staging_rows.len() >= self.batch_size {
+            if staging_cursor_ids.len() >= self.batch_size {
                 flush_staging!();
             }
         }
-        if !staging_rows.is_empty() {
+        if !staging_cursor_ids.is_empty() {
             flush_staging!();
         }
         self.shrink(self.baseline_metrics.mem_used().set(0));
@@ -771,73 +788,114 @@ impl SortedBatches {
 }
 
 struct SpillCursor {
-    sorter: Arc<ExternalSorter>,
+    id: usize,
     input: BufReader<FrameDecoder<BufReader<Box<dyn Read + Send>>>>,
     num_batches: usize,
-    current_batch_idx: usize,
-    current_rows: Option<Rows>,
-    current_row_idx: usize,
-    current_row: Option<OwnedRow>,
-    current_key: Box<[u8]>,
+    cur_loaded_num_batches: usize,
+    cur_loaded_num_rows: usize,
+    cur_batches: Vec<RecordBatch>,
+    cur_batch_idx: usize,
+    cur_row_idx: usize,
+    cur_key: Box<[u8]>,
     finished: bool,
 }
 
 impl SpillCursor {
-    fn try_from_spill(sorter: Arc<ExternalSorter>, spill: Spill) -> Result<Self> {
+    fn try_from_spill(id: usize, spill: Spill) -> Result<Self> {
+
         let buf_reader = spill.into_buf_reader();
         let mut iter = SpillCursor {
-            sorter,
+            id,
             input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
             num_batches: 0,
-            current_batch_idx: 0,
-            current_rows: None,
-            current_row_idx: 0,
-            current_key: Box::default(),
-            current_row: None,
+            cur_loaded_num_batches: 0,
+            cur_loaded_num_rows: 0,
+            cur_batches: vec![],
+            cur_batch_idx: 0,
+            cur_row_idx: 0,
+            cur_key: Box::default(),
             finished: false,
         };
         iter.num_batches = read_len(&mut iter.input)?;
-        iter.pop()?; // load first record into current
+        iter.next_key()?; // load first record into current
         Ok(iter)
     }
 
-    fn pop(&mut self) -> Result<Option<OwnedRow>> {
-        if !self.finished {
-            if self.current_rows.is_none() { // load first batch
-                self.next_batch()?;
-            }
-
-            if let Some(rows) = &self.current_rows { // always true
-                if self.current_row_idx >= rows.num_rows() { // load next batch
-                    if self.current_batch_idx == self.num_batches { // end?
-                        self.current_rows = None;
-                        self.finished = true;
-                        return Ok(std::mem::replace(&mut self.current_row, None));
-                    }
-                    self.next_batch()?;
-                    return self.pop();
-                }
-                let sorted_row_len = read_len(&mut self.input)?;
-                self.current_key = read_bytes_slice(&mut self.input, sorted_row_len)?;
-                let row = rows.row(self.current_row_idx).owned();
-                self.current_row_idx += 1;
-                return Ok(std::mem::replace(&mut self.current_row, Some(row)));
-            }
+    fn next_key(&mut self) -> Result<()> {
+        if self.finished {
+            panic!("calling next_key() on finished sort spill cursor")
         }
-        return Ok(None);
-    }
-
-    fn next_batch(&mut self) -> Result<()> {
-        let batch = read_one_batch(&mut self.input, None, false)?.unwrap();
-        let rows = self.sorter.input_row_converter
-            .lock()
-            .unwrap()
-            .convert_columns(batch.columns())?;
-        self.current_rows = Some(rows);
-        self.current_row_idx = 0;
-        self.current_batch_idx += 1;
+        if self.cur_loaded_num_batches == 0 { // load first batch
+            self.load_next_batch()?;
+        }
+        if self.cur_loaded_num_rows >= self.cur_batches.last().unwrap().num_rows() {
+            if self.cur_loaded_num_batches >= self.num_batches { // end?
+                self.finished = true;
+                return Ok(());
+            }
+            self.load_next_batch()?;
+        }
+        let sorted_row_len = read_len(&mut self.input)?;
+        self.cur_key = read_bytes_slice(&mut self.input, sorted_row_len)?;
+        self.cur_loaded_num_rows += 1;
         Ok(())
     }
+
+    fn load_next_batch(&mut self) -> Result<()> {
+        let batch = read_one_batch(&mut self.input, None, false)?.unwrap();
+        self.cur_loaded_num_batches += 1;
+        self.cur_loaded_num_rows = 0;
+        self.cur_batches.push(batch);
+        Ok(())
+    }
+
+    fn next_row(&mut self) -> (usize, usize) {
+        let batch_idx = self.cur_batch_idx;
+        let row_idx = self.cur_row_idx;
+
+        self.cur_row_idx += 1;
+        if self.cur_row_idx >= self.cur_batches[self.cur_batch_idx].num_rows() {
+            self.cur_batch_idx += 1;
+            self.cur_row_idx = 0;
+        }
+        (batch_idx, row_idx)
+    }
+
+    fn clear_finished_batches(&mut self) {
+        if self.cur_batch_idx > 0 {
+            self.cur_batches.drain(..self.cur_batch_idx);
+            self.cur_batch_idx = 0;
+        }
+    }
+}
+
+fn interleave_batches(
+    schema: SchemaRef,
+    batches: &[&RecordBatch],
+    indices: &[(usize, usize)],
+
+) -> Result<RecordBatch> {
+
+    let mut batches_arrays = vec![
+        Vec::with_capacity(batches.len()); schema.fields().len()
+    ];
+
+    for batch in batches {
+        for (col_idx, column) in batch.columns().iter().enumerate() {
+            batches_arrays[col_idx].push(column);
+        }
+    }
+
+    Ok(RecordBatch::try_new_with_options(
+        schema,
+        batches_arrays
+            .iter()
+            .map(|arrays| arrow::compute::interleave(
+                &arrays.iter().map(|array| array.as_ref()).collect::<Vec<_>>(),
+                indices))
+            .collect::<ArrowResult<Vec<_>>>()?,
+        &RecordBatchOptions::new().with_row_count(Some(indices.len())),
+    )?)
 }
 
 #[cfg(test)]
