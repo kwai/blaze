@@ -309,12 +309,16 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let mem_increase_actual = input.get_array_memory_size();
         let mem_increase = mem_increase_actual * 2;
 
-        self.try_grow(mem_increase).await?;
+        self.grow(mem_increase);
         self.metrics.mem_used().add(mem_increase);
 
         let mut buffered_batches = self.buffered_batches.lock().await;
         self.buffered_mem_size.fetch_add(mem_increase, SeqCst);
         buffered_batches.push(input);
+        drop(buffered_batches);
+
+        // try grow after inserted
+        self.try_grow(0).await?;
         Ok(())
     }
 
