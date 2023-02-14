@@ -64,10 +64,10 @@ object NativeHelper extends Logging {
     val MEMORY_OVERHEAD_FACTOR = 0.10
     val MEMORY_OVERHEAD_MIN = 384L
     val executorMemory = conf.get(config.EXECUTOR_MEMORY)
-    conf
+    val executorMemoryOverheadMiB = conf
       .get(config.EXECUTOR_MEMORY_OVERHEAD)
       .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * executorMemory).toLong, MEMORY_OVERHEAD_MIN))
-      .toInt * 1024 * 1024
+    executorMemoryOverheadMiB * 1024L * 1024L
   }
 
   val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.6);
