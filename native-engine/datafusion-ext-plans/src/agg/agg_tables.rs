@@ -381,13 +381,16 @@ impl InMemTable {
             + size_of::<AggRecord>() * self.grouping_mappings.capacity()
             + size_of::<Self>();
 
-        // NOTE: when spilling in hash mode, the hash table is first transformed
+        // NOTE:
+        //  when spilling in hash mode, the hash table is first transformed
         //  to a sorted vec. this operation requires extra memory. to avoid
         //  oom, we report more memory usage than actually used.
+        //  in-mem table is first spilled into l1, which also requires extra
+        //  memory, so add a small factor for it to avoid oom.
         if self.is_hash {
-            mem * 2
+            mem * 125 / 100 * 2
         } else {
-            mem
+            mem * 125 / 100
         }
     }
 
@@ -429,15 +432,17 @@ impl InMemTable {
         Ok(())
     }
 
-    fn into_sorted_vec(self) -> Vec<AggRecord> {
+    fn into_sorted_vec(mut self) -> Vec<AggRecord> {
         const USE_RADIX_SORT: bool = false;
 
         let mut vec = if self.is_hash {
+            self.grouping_mappings.shrink_to_fit();
             self.grouping_mappings
                 .into_iter()
                 .map(|(_1, _2)| AggRecord::new(_1, _2))
                 .collect::<Vec<_>>()
         } else {
+            self.unsorted.shrink_to_fit();
             self.unsorted
         };
 
