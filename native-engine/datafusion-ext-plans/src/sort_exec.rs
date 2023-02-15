@@ -33,7 +33,7 @@ use datafusion::execution::memory_manager::ConsumerType;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion::physical_plan::stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter};
 use futures::{FutureExt, StreamExt, TryStreamExt, TryFutureExt};
 use futures::lock::Mutex;
 use futures::stream::once;
@@ -43,7 +43,6 @@ use tokio::sync::mpsc::Sender;
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
 use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use datafusion_ext_commons::streams::receiver_stream::ReceiverStream;
 use crate::spill::{dump_spills_statistics, Spill};
 
 const NUM_LEVELS: usize = 64;
@@ -128,7 +127,6 @@ impl ExecutionPlan for SortExec {
             sort_row_converter: SyncMutex::new(sort_row_converter),
             levels: Mutex::new(vec![None; NUM_LEVELS]),
             spills: Default::default(),
-            metrics: self.metrics.clone(),
             baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
         });
         context.runtime_env().register_requester(external_sorter.id());
@@ -180,7 +178,6 @@ struct ExternalSorter {
     sort_row_converter: SyncMutex<RowConverter>,
     levels: Mutex<Vec<Option<SortedBatches>>>,
     spills: Mutex<Vec<Spill>>,
-    metrics: ExecutionPlanMetricsSet,
     baseline_metrics: BaselineMetrics,
 }
 
@@ -305,8 +302,6 @@ async fn external_sort(
     // output
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
     let output_schema = sorter.input_schema.clone();
-    let baseline_metrics = BaselineMetrics::new(&sorter.metrics, sorter.partition_id());
-
     let join_handle = tokio::task::spawn(async move {
         let err_sender = sender.clone();
         let result = AssertUnwindSafe(async move {
@@ -325,12 +320,11 @@ async fn external_sort(
                 .unwrap();
         }
     });
-    Ok(Box::pin(ReceiverStream::new(
-        output_schema,
+    Ok(RecordBatchReceiverStream::create(
+        &output_schema,
         receiver,
-        baseline_metrics,
-        vec![join_handle],
-    )))
+        join_handle,
+    ))
 }
 
 impl ExternalSorter {
@@ -365,7 +359,10 @@ impl ExternalSorter {
         Ok(())
     }
 
-    async fn output(self: Arc<Self>, sender: Sender<ArrowResult<RecordBatch>>) -> Result<()> {
+    async fn output(
+        self: Arc<Self>,
+        sender: Sender<ArrowResult<RecordBatch>>,
+    ) -> Result<()> {
         let mut timer = self.baseline_metrics.elapsed_compute().timer();
         let mut levels = self.levels.lock().await;
 
@@ -405,6 +402,8 @@ impl ExternalSorter {
                         batch,
                     )?;
                     timer.stop();
+
+                    self.baseline_metrics.record_output(batch.num_rows());
                     sender
                         .send(Ok(batch))
                         .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
@@ -477,8 +476,9 @@ impl ExternalSorter {
                 for cursor in cursors.values_mut() {
                     cursor.clear_finished_batches();
                 }
-
                 timer.stop();
+
+                self.baseline_metrics.record_output(batch.num_rows());
                 sender
                     .send(Ok(batch))
                     .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))

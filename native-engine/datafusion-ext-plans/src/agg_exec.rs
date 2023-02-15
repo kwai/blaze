@@ -23,12 +23,11 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
 };
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion::physical_plan::stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter};
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use datafusion_ext_commons::streams::receiver_stream::ReceiverStream;
 use futures::stream::once;
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use std::any::Any;
@@ -241,10 +240,9 @@ async fn execute_agg_with_grouping_hash(
     }
 
     // merge all tables and output
-    let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-    start_output(agg_ctx.clone(), baseline_metrics, |sender| async move {
+    start_output(agg_ctx.clone(), |sender| async move {
         tables
-            .output(grouping_row_converter, elapsed_compute, sender)
+            .output(grouping_row_converter, baseline_metrics, sender)
             .await?;
         Ok(())
     })
@@ -281,7 +279,7 @@ async fn execute_agg_no_grouping(
     // output
     // in no-grouping mode, we always output only one record, so it is not
     // necessary to record elapsed computed time.
-    start_output(agg_ctx.clone(), baseline_metrics, |sender| async move {
+    start_output(agg_ctx.clone(), |sender| async move {
         let record: AggRecord = AggRecord::new(Box::default(), agg_buf);
         let batch_result = agg_ctx
             .build_agg_columns(&mut [record])
@@ -291,7 +289,10 @@ async fn execute_agg_no_grouping(
                     agg_ctx.output_schema.clone(),
                     agg_columns,
                     &RecordBatchOptions::new().with_row_count(Some(1)),
-                )
+                ).map(|batch| {
+                    baseline_metrics.record_output(1);
+                    batch
+                })
             });
         sender
             .send(batch_result)
@@ -329,7 +330,7 @@ async fn execute_agg_sorted(
         context.session_config().batch_size(),
         baseline_metrics.elapsed_compute().clone(),
     ));
-    start_output(agg_ctx.clone(), baseline_metrics, |sender| async move {
+    start_output(agg_ctx.clone(), |sender| async move {
         let batch_size = context.session_config().batch_size();
         let mut staging_records = vec![];
         let mut current_record: Option<AggRecord> = None;
@@ -375,6 +376,7 @@ async fn execute_agg_sorted(
                                 "aggregate exec (sorted) outputing one batch: num_rows={}",
                                 batch.num_rows(),
                             );
+                            baseline_metrics.record_output(batch.num_rows());
                             sender
                                 .send(Ok(batch))
                                 .map_err(|err| {
@@ -417,7 +419,6 @@ async fn execute_agg_sorted(
 
 fn start_output<Fut: Future<Output = Result<()>> + Send>(
     agg_ctx: Arc<AggContext>,
-    baseline_metrics: BaselineMetrics,
     output: impl FnOnce(Sender<ArrowResult<RecordBatch>>) -> Fut + Send + 'static,
 ) -> Result<SendableRecordBatchStream> {
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
@@ -441,10 +442,9 @@ fn start_output<Fut: Future<Output = Result<()>> + Send>(
         }
     });
 
-    Ok(Box::pin(ReceiverStream::new(
-        output_schema,
+    Ok(RecordBatchReceiverStream::create(
+        &output_schema,
         receiver,
-        baseline_metrics,
-        vec![join_handle],
-    )))
+        join_handle,
+    ))
 }

@@ -26,7 +26,7 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
 use datafusion::execution::memory_manager::ConsumerType;
 use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
-use datafusion::physical_plan::metrics::{BaselineMetrics, Time};
+use datafusion::physical_plan::metrics::BaselineMetrics;
 use futures::lock::Mutex;
 use futures::TryFutureExt;
 use hashbrown::hash_map::Entry;
@@ -103,12 +103,12 @@ impl AggTables {
     pub async fn output(
         &self,
         mut grouping_row_converter: RowConverter,
-        elapsed_time: Time,
+        baseline_metrics: BaselineMetrics,
         sender: Sender<ArrowResult<RecordBatch>>,
     ) -> Result<()> {
         let mut in_mem_locked = self.in_mem.lock().await;
         let mut spills_locked = self.spills.lock().await;
-        let mut timer = elapsed_time.timer();
+        let mut timer = baseline_metrics.elapsed_compute().timer();
 
         let batch_size = self.context.session_config().batch_size();
         let in_mem = std::mem::take(&mut *in_mem_locked);
@@ -138,6 +138,7 @@ impl AggTables {
                 let batch_mem_size = batch.get_array_memory_size();
 
                 timer.stop();
+                baseline_metrics.record_output(batch.num_rows());
                 sender
                     .send(Ok(batch))
                     .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
@@ -190,6 +191,7 @@ impl AggTables {
                 )?;
                 timer.stop();
 
+                baseline_metrics.record_output(batch.num_rows());
                 sender
                     .send(Ok(batch))
                     .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
