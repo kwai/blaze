@@ -10,6 +10,7 @@ default = ["arrow/ffi", "datafusion/simd", "tokio/rt-multi-thread"]
 [dependencies]
 arrow = "28.0.0"
 async-trait = "0.1.56"
+bitvec = "1.0.1"
 blaze-commons = { path = "../blaze-commons" }
 bytesize = "1.1.0"
 datafusion = "15.0.0"

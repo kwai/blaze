@@ -1,7 +1,21 @@
+// Copyright 2022 The Blaze Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use arrow::array::*;
 use arrow::compute::kernels::take::take;
 use arrow::compute::SortOptions;
-use arrow::datatypes::{DataType, SchemaRef, TimeUnit};
+use arrow::datatypes::{DataType, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -13,9 +27,7 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::joins::utils::{
     build_join_schema, check_join_is_valid, JoinOn,
 };
-use datafusion::physical_plan::metrics::{
-    self, BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
-};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time};
 use datafusion::physical_plan::stream::{
     RecordBatchReceiverStream, RecordBatchStreamAdapter,
 };
@@ -29,12 +41,12 @@ use std::any::Any;
 use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 use std::fmt::Formatter;
-use std::sync::Arc;
+use std::ops::Range;
+use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
-
+use arrow::row::{RowConverter, Rows, SortField};
+use bitvec::vec::BitVec;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
-use itertools::izip;
-
 use tokio::sync::mpsc::Sender;
 
 #[derive(Debug)]
@@ -250,8 +262,28 @@ async fn execute_join(
         null_equals_null,
         batch_size,
     };
-    let mut left_cursor = StreamCursor::try_new(left).await?;
-    let mut right_cursor = StreamCursor::try_new(right).await?;
+    let on_row_converter = Arc::new(SyncMutex::new(
+        RowConverter::new(join_params.on_data_types
+            .iter()
+            .zip(&join_params.sort_options)
+            .map(|(data_type, sort_option)| {
+                SortField::new_with_options(data_type.clone(), *sort_option)
+            })
+            .collect())?
+    ));
+
+    let mut left_cursor = StreamCursor::try_new(
+        left,
+        on_row_converter.clone(),
+        join_params.on_left.clone(),
+        join_params.null_equals_null,
+    ).await?;
+    let mut right_cursor = StreamCursor::try_new(
+        right,
+        on_row_converter.clone(),
+        join_params.on_right.clone(),
+        join_params.null_equals_null,
+    ).await?;
 
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
     let join_params_clone = join_params.clone();
@@ -302,8 +334,8 @@ async fn join_combined(
     metrics: Arc<BaselineMetrics>,
     sender: &Sender<ArrowResult<RecordBatch>>,
 ) -> Result<()> {
-    let total_time = metrics::Time::new();
-    let io_time = metrics::Time::new();
+    let total_time = Time::new();
+    let io_time = Time::new();
     let total_timer = total_time.timer();
 
     let left_dts = join_params
@@ -333,14 +365,12 @@ async fn join_combined(
                     new_array_builders(&join_params.output_schema, join_params.batch_size)
                 }),
             )?;
-
-            {
-                let _io_timer = io_time.timer();
-                sender.send(Ok(batch)).await.ok();
-            }
-            metrics.record_output(staging_len);
             staging_len = 0;
             let _ = staging_len; // suppress value unused warnings
+
+            metrics.record_output(batch.num_rows());
+            let _ = io_time.timer();
+            sender.send(Ok(batch)).await.ok();
         }};
     }
     macro_rules! cartesian_join_lr {
@@ -417,13 +447,9 @@ async fn join_combined(
                         // for keeping input order
                         flush_staging!();
                     }
-
-                    let batch_num_rows = batch.num_rows();
-                    {
-                        let _io_timer = io_time.timer();
-                        sender.send(Ok(batch)).await.ok();
-                    }
-                    metrics.record_output(batch_num_rows);
+                    metrics.record_output(batch.num_rows());
+                    let _ = io_time.timer();
+                    sender.send(Ok(batch)).await.ok();
                 }
             }
         }};
@@ -460,21 +486,17 @@ async fn join_combined(
                         // for keeping input order
                         flush_staging!();
                     }
-
-                    let batch_num_rows = batch.num_rows();
-                    {
-                        let _io_timer = io_time.timer();
-                        sender.send(Ok(batch)).await.ok();
-                    }
-                    metrics.record_output(batch_num_rows);
+                    metrics.record_output(batch.num_rows());
+                    let _ = io_time.timer();
+                    sender.send(Ok(batch)).await.ok();
                 }
             }
         }};
     }
 
     loop {
-        let left_finished = left_cursor.current().is_none();
-        let right_finished = right_cursor.current().is_none();
+        let left_finished = left_cursor.on_rows.is_none();
+        let right_finished = right_cursor.on_rows.is_none();
         let all_finished = left_finished && right_finished;
 
         if left_finished && matches!(join_type, JoinType::Inner | JoinType::Left) {
@@ -486,57 +508,58 @@ async fn join_combined(
         if all_finished && matches!(join_type, JoinType::Full) {
             break;
         }
-        let ord = compare_cursor(left_cursor, right_cursor, &join_params);
 
-        if ord.is_lt() {
-            if matches!(join_type, JoinType::Left | JoinType::Full) {
-                let (left_batch, idx) = left_cursor.current().unwrap();
-                let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
+        let ord = compare_cursor(
+            &left_cursor,
+            &right_cursor,
+            join_params.null_equals_null,
+        );
+        match ord {
+            Ordering::Less => {
+                if matches!(join_type, JoinType::Left | JoinType::Full) {
+                    let left_batch = left_cursor.batch.as_ref().unwrap();
+                    let idx = left_cursor.idx;
+                    let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
 
-                // append <left-columns + nulls> for left/full joins
-                left_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                    builder_extend(&mut staging_l[i], c, &[idx], c.data_type());
-                });
-                right_dts.iter().enumerate().for_each(|(i, dt)| {
-                    builder_append_null(&mut staging_r[i], dt);
-                });
+                    // append <left-columns + nulls> for left/full joins
+                    left_batch.columns().iter().enumerate().for_each(|(i, c)| {
+                        builder_extend(&mut staging_l[i], c, &[idx], c.data_type());
+                    });
+                    right_dts.iter().enumerate().for_each(|(i, dt)| {
+                        builder_append_null(&mut staging_r[i], dt);
+                    });
 
-                staging_len += 1;
-                if staging_len >= join_params.batch_size {
-                    flush_staging!();
+                    staging_len += 1;
+                    if staging_len >= join_params.batch_size {
+                        flush_staging!();
+                    }
                 }
-            }
-
-            {
-                let _io_timer = io_time.timer();
                 left_cursor.forward().await?;
+                continue;
             }
-            continue;
-        }
-        if ord.is_gt() {
-            if matches!(join_type, JoinType::Right | JoinType::Full) {
-                let (right_batch, idx) = right_cursor.current().unwrap();
-                let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
+            Ordering::Greater => {
+                if matches!(join_type, JoinType::Right | JoinType::Full) {
+                    let right_batch = right_cursor.batch.as_ref().unwrap();
+                    let idx = right_cursor.idx;
+                    let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
 
-                // append <nulls + right-columns> for right/full joins
-                left_dts.iter().enumerate().for_each(|(i, dt)| {
-                    builder_append_null(&mut staging_l[i], dt);
-                });
-                right_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                    builder_extend(&mut staging_r[i], c, &[idx], c.data_type());
-                });
+                    // append <nulls + right-columns> for right/full joins
+                    left_dts.iter().enumerate().for_each(|(i, dt)| {
+                        builder_append_null(&mut staging_l[i], dt);
+                    });
+                    right_batch.columns().iter().enumerate().for_each(|(i, c)| {
+                        builder_extend(&mut staging_r[i], c, &[idx], c.data_type());
+                    });
 
-                staging_len += 1;
-                if staging_len >= join_params.batch_size {
-                    flush_staging!();
+                    staging_len += 1;
+                    if staging_len >= join_params.batch_size {
+                        flush_staging!();
+                    }
                 }
-            }
-
-            {
-                let _io_timer = io_time.timer();
                 right_cursor.forward().await?;
+                continue;
             }
-            continue;
+            Ordering::Equal => {}
         }
 
         // NOTE:
@@ -549,15 +572,15 @@ async fn join_combined(
         //  to each batch of the bigger side and the bigger side is no
         //  longer needed to be stored in memory.
 
+        let on_row = left_cursor.on_rows.as_ref().unwrap().row(left_cursor.idx).owned();
         let cursors = [left_cursor.borrow_mut(), right_cursor.borrow_mut()];
-        let ons = [&join_params.on_left, &join_params.on_right];
-
         let mut finished = [false, false];
-        let mut first_batches = [None, None];
-        let mut first_indices = [0, 0];
         let mut num_rows = [0, 0];
         let mut cur_indices = [0, 0];
-        let mut buffers = [vec![], vec![]];
+        let mut buffers = [
+            Vec::<(RecordBatch, Range<usize>)>::new(),
+            Vec::<(RecordBatch, Range<usize>)>::new(),
+        ];
 
         macro_rules! flush_buffers {
             // at least one side is finished
@@ -609,27 +632,19 @@ async fn join_combined(
                 }
             }};
         }
-        // read first row of each cursor
-        for i in 0..2 {
-            let (batch, idx) = cursors[i]
-                .current()
-                .map(|(batch, start)| (batch.clone(), start))
-                .unwrap();
-            first_batches[i] = Some(batch.clone());
-            first_indices[i] = idx;
 
+        // forward first row
+        for i in 0..2 {
+            let batch = cursors[i].batch.as_ref().unwrap();
+            let idx = cursors[i].idx;
             if idx < batch.num_rows() - 1 {
                 cur_indices[i] = idx;
             } else {
-                buffers[i].push((batch, idx..idx + 1));
+                buffers[i].push((batch.clone(), idx..idx + 1));
                 num_rows[i] += 1;
                 cur_indices[i] = 0;
             }
-
-            {
-                let _io_timer = io_time.timer();
-                cursors[i].forward().await?;
-            }
+            cursors[i].forward().await?;
         }
 
         // read rest equal rows
@@ -647,23 +662,17 @@ async fn join_combined(
                 }
             };
 
-            if cursors[i].current().is_none() {
+            if cursors[i].on_rows.is_none() {
                 finished[i] = true;
                 flush_buffers!();
                 continue;
             }
-            let (batch, idx) = cursors[i].current().unwrap();
 
-            if row_equal(
-                first_batches[i].as_ref().unwrap(),
-                ons[i],
-                first_indices[i],
-                batch,
-                ons[i],
-                idx,
-                &join_params.on_data_types,
-                join_params.null_equals_null,
-            ) {
+            let batch = cursors[i].batch.as_ref().unwrap();
+            let on_rows = cursors[i].on_rows.as_ref().unwrap();
+            let idx = cursors[i].idx;
+
+            if on_rows.row(idx).as_ref() == on_row.as_ref() {
                 // equal -- if current batch is finished, append to buffer
                 if idx == batch.num_rows() - 1 {
                     let range = cur_indices[i]..batch.num_rows();
@@ -672,11 +681,8 @@ async fn join_combined(
                     cur_indices[i] = 0;
                     flush_buffers!();
                 }
+                cursors[i].forward().await?;
 
-                {
-                    let _io_timer = io_time.timer();
-                    cursors[i].forward().await?;
-                }
             } else {
                 // unequal -- if current batch is forwarded, append to buffer, then exit
                 if idx > cur_indices[i] {
@@ -696,7 +702,11 @@ async fn join_combined(
 
     drop(total_timer);
     metrics.elapsed_compute().add_duration(Duration::from_nanos(
-        (total_time.value() - io_time.value()) as u64,
+        (total_time.value()
+            - io_time.value()
+            - left_cursor.io_time.value()
+            - right_cursor.io_time.value()
+        ) as u64,
     ));
     Ok(())
 }
@@ -708,8 +718,8 @@ async fn join_semi(
     metrics: Arc<BaselineMetrics>,
     sender: &Sender<ArrowResult<RecordBatch>>,
 ) -> Result<()> {
-    let total_time = metrics::Time::new();
-    let io_time = metrics::Time::new();
+    let total_time = Time::new();
+    let io_time = Time::new();
     let total_timer = total_time.timer();
 
     let join_type = join_params.join_type;
@@ -725,18 +735,18 @@ async fn join_semi(
                     new_array_builders(&join_params.output_schema, join_params.batch_size)
                 }),
             )?;
-            {
-                let _io_timer = io_time.timer();
-                sender.send(Ok(batch)).await.ok();
-            }
-            metrics.record_output(staging_len);
             staging_len = 0;
             let _ = staging_len; // suppress value unused warnings
+
+            metrics.record_output(batch.num_rows());
+            let _ = io_time.timer();
+            sender.send(Ok(batch)).await.ok();
         }};
     }
     macro_rules! output_left_current_record {
         () => {{
-            let (left_batch, idx) = left_cursor.current().unwrap();
+            let left_batch = left_cursor.batch.as_ref().unwrap();
+            let idx = left_cursor.idx;
             left_batch.columns().iter().enumerate().for_each(|(i, c)| {
                 builder_extend(&mut staging[i], c, &[idx], c.data_type());
             });
@@ -747,40 +757,33 @@ async fn join_semi(
         }};
     }
 
-    while left_cursor.current().is_some() {
-        if join_type == JoinType::LeftSemi && right_cursor.current().is_none() {
+    while left_cursor.on_rows.is_some() {
+        if join_type == JoinType::LeftSemi && right_cursor.on_rows.is_none() {
             break;
         }
 
-        let ord = compare_cursor(left_cursor, right_cursor, &join_params);
+        let ord = compare_cursor(
+            &left_cursor,
+            &right_cursor,
+            join_params.null_equals_null,
+        );
         match ord {
             Ordering::Less => {
                 if join_type == JoinType::LeftAnti {
                     output_left_current_record!();
                 }
-
-                {
-                    let _io_timer = io_time.timer();
-                    left_cursor.forward().await?;
-                }
+                left_cursor.forward().await?;
                 continue;
             }
             Ordering::Equal => {
                 if join_type == JoinType::LeftSemi {
                     output_left_current_record!();
                 }
-
-                {
-                    let _io_timer = io_time.timer();
-                    left_cursor.forward().await?;
-                }
+                left_cursor.forward().await?;
                 continue;
             }
             Ordering::Greater => {
-                {
-                    let _io_timer = io_time.timer();
-                    right_cursor.forward().await?;
-                }
+                right_cursor.forward().await?;
                 continue;
             }
         }
@@ -791,62 +794,83 @@ async fn join_semi(
 
     drop(total_timer);
     metrics.elapsed_compute().add_duration(Duration::from_nanos(
-        (total_time.value() - io_time.value()) as u64,
+        (total_time.value()
+            - io_time.value()
+            - left_cursor.io_time.value()
+            - right_cursor.io_time.value()
+        ) as u64,
     ));
     Ok(())
 }
 
-fn compare_cursor(
-    left: &StreamCursor,
-    right: &StreamCursor,
-    join_params: &JoinParams,
-) -> Ordering {
-    if left.current().is_none() {
-        return Ordering::Greater;
-    }
-    if right.current().is_none() {
-        return Ordering::Less;
-    }
-    let (left_batch, left_idx) = left.current().unwrap();
-    let (right_batch, right_idx) = right.current().unwrap();
-    row_compare(
-        left_batch,
-        &join_params.on_left,
-        left_idx,
-        right_batch,
-        &join_params.on_right,
-        right_idx,
-        &join_params.on_data_types,
-        &join_params.sort_options,
-        join_params.null_equals_null,
-    )
-}
-
 struct StreamCursor {
     stream: SendableRecordBatchStream,
-    batch: Option<Arc<RecordBatch>>,
+    io_time: Time,
+    on_row_converter: Arc<SyncMutex<RowConverter>>,
+    on_columns: Vec<usize>,
+    null_equals_null: bool,
+    batch: Option<RecordBatch>,
+    on_rows: Option<Rows>,
+    on_row_nulls: BitVec,
     idx: usize,
 }
 
 impl StreamCursor {
-    async fn try_new(mut stream: SendableRecordBatchStream) -> Result<Self> {
-        if let Some(batch) = stream.next().await {
-            Ok(Self {
+    async fn try_new(
+        mut stream: SendableRecordBatchStream,
+        on_row_converter: Arc<SyncMutex<RowConverter>>,
+        on_columns: Vec<usize>,
+        null_equals_null: bool,
+    ) -> Result<Self> {
+        if let Some(batch) = stream.next().await.transpose()? {
+            let mut cursor = Self {
                 stream,
-                batch: Some(Arc::new(batch?)),
+                io_time: Time::new(),
+                on_row_converter,
+                on_columns,
+                null_equals_null,
+                on_rows: None,
+                on_row_nulls: BitVec::new(),
+                batch: Some(batch),
                 idx: 0,
-            })
-        } else {
-            Ok(Self {
-                stream,
-                batch: None,
-                idx: 0,
-            })
+            };
+            cursor.update_rows()?;
+            return Ok(cursor);
         }
+
+        Ok(Self {
+            stream,
+            io_time: Time::new(),
+            on_row_converter,
+            on_columns,
+            null_equals_null,
+            on_rows: None,
+            on_row_nulls: BitVec::new(),
+            batch: None,
+            idx: 0,
+        })
     }
 
-    fn current(&self) -> Option<(&Arc<RecordBatch>, usize)> {
-        self.batch.as_ref().map(|batch| (batch, self.idx))
+    fn update_rows(&mut self) -> Result<()> {
+        if let Some(batch) = self.batch.as_ref() {
+            let on_columns = batch.project(&self.on_columns)?.columns().to_vec();
+
+            self.on_rows = Some(self.on_row_converter
+                .lock()
+                .unwrap()
+                .convert_columns(&on_columns)?);
+            self.on_row_nulls = (0..batch.num_rows())
+                .into_iter()
+                .map(|idx| !self.null_equals_null && on_columns
+                    .iter()
+                    .any(|column| column.is_null(idx))
+                )
+                .collect::<BitVec>();
+        } else {
+            self.on_rows = None;
+            self.on_row_nulls = BitVec::new();
+        }
+        Ok(())
     }
 
     async fn forward(&mut self) -> Result<()> {
@@ -856,13 +880,16 @@ impl StreamCursor {
                 return Ok(());
             }
             loop {
-                match self.stream.next().await {
+                match {
+                    let _ = self.io_time.timer();
+                    self.stream.next().await
+                } {
                     Some(batch) => {
                         let batch = batch?;
                         if batch.num_rows() == 0 {
                             continue;
                         }
-                        self.batch = Some(Arc::new(batch));
+                        self.batch = Some(batch);
                         self.idx = 0;
                         break;
                     }
@@ -873,146 +900,41 @@ impl StreamCursor {
                     }
                 }
             }
+            self.update_rows()?;
+
+        } else {
+            self.on_rows = None;
+            self.on_row_nulls = BitVec::new();
         }
         Ok(())
     }
 }
 
-fn row_compare(
-    batch1: &RecordBatch,
-    on_batch1: &[usize],
-    idx1: usize,
-    batch2: &RecordBatch,
-    on_batch2: &[usize],
-    idx2: usize,
-    on_data_types: &[DataType],
-    sort_options: &[SortOptions],
+fn compare_cursor(
+    left_cursor: &StreamCursor,
+    right_cursor: &StreamCursor,
     null_equals_null: bool,
 ) -> Ordering {
-    for (dt, sort_options, col1, col2) in izip!(
-        on_data_types,
-        sort_options,
-        on_batch1.iter().map(|&i| batch1.column(i)),
-        on_batch2.iter().map(|&i| batch2.column(i))
-    ) {
-        macro_rules! compare {
-            ($arrowty:ident) => {{
-                type A = paste::paste! {[< $arrowty Array >]};
-                let col1 = col1.as_any().downcast_ref::<A>().unwrap();
-                let col2 = col2.as_any().downcast_ref::<A>().unwrap();
-                if col1.is_valid(idx1) && col2.is_valid(idx2) {
-                    let v1 = &col1.value(idx1);
-                    let v2 = &col2.value(idx2);
-                    match v1.partial_cmp(v2).unwrap_or(Ordering::Less) {
-                        ord @ (Ordering::Greater | Ordering::Less) => {
-                            return if sort_options.descending {
-                                ord.reverse()
-                            } else {
-                                ord
-                            };
-                        }
-                        Ordering::Equal => {}
+    match (&left_cursor.on_rows, &right_cursor.on_rows) {
+        (None, _) => Ordering::Greater,
+        (_, None) => Ordering::Less,
+        (Some(left_rows), Some(right_rows)) => {
+            let left_key = &left_rows.row(left_cursor.idx);
+            let right_key = &right_rows.row(right_cursor.idx);
+            match left_key.cmp(right_key) {
+                Ordering::Greater => Ordering::Greater,
+                Ordering::Less => Ordering::Less,
+                _ => {
+                    if null_equals_null || !left_cursor.on_row_nulls[left_cursor.idx] {
+                        Ordering::Equal
+                    } else {
+                        Ordering::Less
                     }
-                } else if null_equals_null && col1.is_null(idx1) && col2.is_null(idx2) {
-                    return Ordering::Equal;
-                } else if col1.is_null(idx1) ^ !sort_options.nulls_first {
-                    return Ordering::Less;
-                } else {
-                    return Ordering::Greater;
                 }
-            }};
-        }
-        match dt {
-            DataType::Boolean => compare!(Boolean),
-            DataType::Int8 => compare!(Int8),
-            DataType::Int16 => compare!(Int16),
-            DataType::Int32 => compare!(Int32),
-            DataType::Int64 => compare!(Int64),
-            DataType::UInt8 => compare!(UInt8),
-            DataType::UInt16 => compare!(UInt16),
-            DataType::UInt32 => compare!(UInt32),
-            DataType::UInt64 => compare!(UInt64),
-            DataType::Float32 => compare!(Float32),
-            DataType::Float64 => compare!(Float64),
-            DataType::Date32 => compare!(Date32),
-            DataType::Date64 => compare!(Date64),
-            DataType::Time32(TimeUnit::Second) => compare!(Time32Second),
-            DataType::Time32(TimeUnit::Millisecond) => compare!(Time32Millisecond),
-            DataType::Time64(TimeUnit::Microsecond) => compare!(Time64Microsecond),
-            DataType::Time64(TimeUnit::Nanosecond) => compare!(Time64Nanosecond),
-            DataType::Utf8 => compare!(String),
-            DataType::LargeUtf8 => compare!(LargeString),
-            DataType::Decimal128(_, _) => compare!(Decimal128),
-            DataType::Decimal256(_, _) => compare!(Decimal256),
-            _ => unimplemented!("data type not supported in sort-merge join"),
+            }
         }
     }
-    Ordering::Equal
 }
-
-fn row_equal(
-    batch1: &RecordBatch,
-    on_batch1: &[usize],
-    idx1: usize,
-    batch2: &RecordBatch,
-    on_batch2: &[usize],
-    idx2: usize,
-    on_data_types: &[DataType],
-    null_equals_null: bool,
-) -> bool {
-    for (dt, col1, col2) in izip!(
-        on_data_types,
-        on_batch1.iter().map(|&i| batch1.column(i)),
-        on_batch2.iter().map(|&i| batch2.column(i))
-    ) {
-        macro_rules! eq {
-            ($arrowty:ident) => {{
-                type A = paste::paste! {[< $arrowty Array >]};
-                let col1 = col1.as_any().downcast_ref::<A>().unwrap();
-                let col2 = col2.as_any().downcast_ref::<A>().unwrap();
-                if col1.is_valid(idx1) && col2.is_valid(idx2) {
-                    if col1.value(idx1) != col2.value(idx2) {
-                        return false;
-                    }
-                } else if col1.is_null(idx1) && col2.is_null(idx2) {
-                    if !null_equals_null {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }};
-        }
-        match dt {
-            DataType::Boolean => eq!(Boolean),
-            DataType::Int8 => eq!(Int8),
-            DataType::Int16 => eq!(Int16),
-            DataType::Int32 => eq!(Int32),
-            DataType::Int64 => eq!(Int64),
-            DataType::UInt8 => eq!(UInt8),
-            DataType::UInt16 => eq!(UInt16),
-            DataType::UInt32 => eq!(UInt32),
-            DataType::UInt64 => eq!(UInt64),
-            DataType::Float32 => eq!(Float32),
-            DataType::Float64 => eq!(Float64),
-            DataType::Date32 => eq!(Date32),
-            DataType::Date64 => eq!(Date64),
-            DataType::Time32(TimeUnit::Second) => eq!(Time32Second),
-            DataType::Time32(TimeUnit::Millisecond) => eq!(Time32Millisecond),
-            DataType::Time64(TimeUnit::Microsecond) => eq!(Time64Microsecond),
-            DataType::Time64(TimeUnit::Nanosecond) => eq!(Time64Nanosecond),
-            DataType::Binary => eq!(Binary),
-            DataType::LargeBinary => eq!(LargeBinary),
-            DataType::Utf8 => eq!(String),
-            DataType::LargeUtf8 => eq!(LargeString),
-            DataType::Decimal128(_, _) => eq!(Decimal256),
-            DataType::Decimal256(_, _) => eq!(Decimal256),
-            _ => unimplemented!("data type not supported in sort-merge join"),
-        }
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use crate::sort_merge_join_exec::SortMergeJoinExec;
