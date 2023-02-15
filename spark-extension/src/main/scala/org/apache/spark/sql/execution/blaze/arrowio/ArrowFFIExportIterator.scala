@@ -21,11 +21,14 @@ import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
+import org.apache.spark.SPARK_BRANCH
+
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.TaskContext
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.NativeHelper
 
@@ -43,13 +46,21 @@ class ArrowFFIExportIterator(
     ArrowUtils.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
 
+  private var root: VectorSchemaRoot = _
+  private var arrowWriter: ArrowWriter = _
+
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
   override def hasNext: Boolean = allocator != null && rowIter.hasNext
 
   override def next(): (Long, Long) => Unit = {
-    val root = VectorSchemaRoot.create(arrowSchema, allocator)
-    val arrowWriter = ArrowWriter.create(root)
+    if (root == null) {
+      root = VectorSchemaRoot.create(arrowSchema, allocator)
+      arrowWriter = ArrowWriter.create(root)
+    } else {
+      root.allocateNew()
+      arrowWriter.reset()
+    }
     var rowCount = 0
 
     while (rowIter.hasNext && rowCount < recordBatchSize) {
@@ -65,12 +76,14 @@ class ArrowFFIExportIterator(
         emptyDictionaryProvider,
         ArrowArray.wrap(exportArrowArrayPtr),
         ArrowSchema.wrap(exportArrowSchemaPtr))
-      root.close()
   }
 
   private def close(): Unit =
     synchronized {
       if (allocator != null) {
+        if (root != null) {
+          root.close()
+        }
         allocator.close()
         allocator = null
       }

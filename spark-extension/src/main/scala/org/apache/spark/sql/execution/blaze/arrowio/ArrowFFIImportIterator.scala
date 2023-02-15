@@ -70,8 +70,9 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
     if (root == null) {
       val schema = Data.importSchema(allocator, consumerSchema, emptyDictionaryProvider)
       root = VectorSchemaRoot.create(schema, allocator)
+    } else {
+      root.allocateNew()
     }
-    root.clear()
 
     // NOTE: walk-around without getting the incorrect n_buffers error
     // in Data.importIntoVectorSchemaRoot()
@@ -106,6 +107,9 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
           cachedBatches.foreach(_.close())
           cachedBatches.clear()
           cachedBatches = null
+        }
+        if (root != null) {
+          root.close()
         }
         allocator.close()
         allocator = null
