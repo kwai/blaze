@@ -34,7 +34,7 @@ pub struct SingleShuffleRepartitioner {
 
 impl Debug for SingleShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SortShuffleRepartitioner").finish()
+        f.debug_struct("SingleShuffleRepartitioner").finish()
     }
 }
 

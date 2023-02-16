@@ -205,7 +205,7 @@ impl SortShuffleRepartitioner {
 #[async_trait]
 impl MemoryConsumer for SortShuffleRepartitioner {
     fn name(&self) -> String {
-        "SortShuffleRepartitioner".to_string()
+        "sort epartitioner".to_string()
     }
 
     fn id(&self) -> &MemoryConsumerId {

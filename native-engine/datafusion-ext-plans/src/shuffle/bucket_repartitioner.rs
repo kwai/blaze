@@ -280,7 +280,7 @@ fn spill_buffered_partitions(
 
 impl Debug for BucketShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BucketShuffleRepartitioner")
+        f.debug_struct("BucketRepartitioner")
             .field("id", &self.id())
             .field("memory_used", &self.mem_used())
             .field("spilled_bytes", &self.spilled_bytes())
@@ -292,7 +292,7 @@ impl Debug for BucketShuffleRepartitioner {
 #[async_trait]
 impl MemoryConsumer for BucketShuffleRepartitioner {
     fn name(&self) -> String {
-        "BucketShuffleRepartitioner".to_string()
+        "rss bucket repartitioner".to_string()
     }
 
     fn id(&self) -> &MemoryConsumerId {

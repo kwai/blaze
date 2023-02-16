@@ -354,7 +354,7 @@ pub struct JavaClasses<'a> {
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
     pub cSparkExpressionWrapperContext: SparkExpressionWrapperContext<'a>,
-    pub cSparkRssShuffleWriter: SparkRssShuffleWriter<'a>,
+    pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
 }
@@ -415,7 +415,7 @@ impl JavaClasses<'static> {
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
                 cSparkExpressionWrapperContext: SparkExpressionWrapperContext::new(env)
                     .unwrap(),
-                cSparkRssShuffleWriter: SparkRssShuffleWriter::new(env).unwrap(),
+                cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env).unwrap(),
             };
@@ -1031,7 +1031,7 @@ impl<'a> SparkMetricNode<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct SparkRssShuffleWriter<'a> {
+pub struct BlazeRssPartitionWriterBase<'a> {
     pub class: JClass<'a>,
     pub method_write: JMethodID,
     pub method_write_ret: ReturnType,
@@ -1039,13 +1039,13 @@ pub struct SparkRssShuffleWriter<'a> {
     pub method_close_ret: ReturnType,
 }
 
-impl<'a> SparkRssShuffleWriter<'_> {
+impl<'a> BlazeRssPartitionWriterBase<'_> {
     pub const SIG_TYPE: &'static str =
         "org/apache/spark/sql/execution/blaze/shuffle/RssPartitionWriterBase";
 
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkRssShuffleWriter<'a>> {
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeRssPartitionWriterBase<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(SparkRssShuffleWriter {
+        Ok(BlazeRssPartitionWriterBase {
             class,
             method_write: env
                 .get_method_id(class, "write", "(ILjava/nio/ByteBuffer;I)V")

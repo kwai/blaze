@@ -29,7 +29,7 @@ pub struct RssSingleShuffleRepartitioner {
 
 impl Debug for RssSingleShuffleRepartitioner {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RssSingleShuffleRepartitioner").finish()
+        f.debug_struct("RssSingleRepartitioner").finish()
     }
 }
 
@@ -56,7 +56,7 @@ impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
         let rss_buffer = jni_new_direct_byte_buffer!(&mut rss_data)?;
 
         if length != 0 {
-            jni_call!(SparkRssShuffleWriter(self.rss_partition_writer.as_obj()).write(0_i32, rss_buffer, length as i32) -> ())?;
+            jni_call!(BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj()).write(0_i32, rss_buffer, length as i32) -> ())?;
         }
         Ok(())
     }
