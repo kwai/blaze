@@ -346,7 +346,6 @@ message SortMergeJoinExecNode {
   repeated JoinOn on = 3;
   repeated SortOptions sort_options = 4;
   JoinType join_type = 5;
-  bool null_equals_null = 6;
 }
 
 message HashJoinExecNode {

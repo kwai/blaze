@@ -65,8 +65,6 @@ pub struct SortMergeJoinExec {
     metrics: ExecutionPlanMetricsSet,
     /// Sort options of join columns used in sorting left and right execution plans
     sort_options: Vec<SortOptions>,
-    /// If null_equals_null is true, null == null else null != null
-    null_equals_null: bool,
 }
 
 impl SortMergeJoinExec {
@@ -76,7 +74,6 @@ impl SortMergeJoinExec {
         on: JoinOn,
         join_type: JoinType,
         sort_options: Vec<SortOptions>,
-        null_equals_null: bool,
     ) -> Result<Self> {
         let left_schema = left.schema();
         let right_schema = right.schema();
@@ -101,7 +98,6 @@ impl SortMergeJoinExec {
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
             sort_options,
-            null_equals_null,
         })
     }
 }
@@ -152,7 +148,6 @@ impl ExecutionPlan for SortMergeJoinExec {
                 self.on.clone(),
                 self.join_type,
                 self.sort_options.clone(),
-                self.null_equals_null,
             )?)),
             _ => Err(DataFusionError::Internal(
                 "SortMergeJoin wrong number of children".to_string(),
@@ -184,7 +179,6 @@ impl ExecutionPlan for SortMergeJoinExec {
                     on_left,
                     on_right,
                     self.sort_options.clone(),
-                    self.null_equals_null,
                     metrics,
                 )
                 .map_err(|e| ArrowError::ExternalError(Box::new(e))),
@@ -224,7 +218,6 @@ struct JoinParams {
     on_right: Vec<usize>,
     on_data_types: Vec<DataType>,
     sort_options: Vec<SortOptions>,
-    null_equals_null: bool,
     batch_size: usize,
 }
 
@@ -237,7 +230,6 @@ async fn execute_join(
     on_left: Vec<Column>,
     on_right: Vec<Column>,
     sort_options: Vec<SortOptions>,
-    null_equals_null: bool,
     metrics: Arc<BaselineMetrics>,
 ) -> Result<SendableRecordBatchStream> {
     let left_schema = left.schema();
@@ -259,7 +251,6 @@ async fn execute_join(
         on_right,
         on_data_types,
         sort_options,
-        null_equals_null,
         batch_size,
     };
     let on_row_converter = Arc::new(SyncMutex::new(
@@ -276,13 +267,11 @@ async fn execute_join(
         left,
         on_row_converter.clone(),
         join_params.on_left.clone(),
-        join_params.null_equals_null,
     ).await?;
     let mut right_cursor = StreamCursor::try_new(
         right,
         on_row_converter.clone(),
         join_params.on_right.clone(),
-        join_params.null_equals_null,
     ).await?;
 
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
@@ -512,7 +501,6 @@ async fn join_combined(
         let ord = compare_cursor(
             &left_cursor,
             &right_cursor,
-            join_params.null_equals_null,
         );
         match ord {
             Ordering::Less => {
@@ -765,7 +753,6 @@ async fn join_semi(
         let ord = compare_cursor(
             &left_cursor,
             &right_cursor,
-            join_params.null_equals_null,
         );
         match ord {
             Ordering::Less => {
@@ -808,7 +795,6 @@ struct StreamCursor {
     io_time: Time,
     on_row_converter: Arc<SyncMutex<RowConverter>>,
     on_columns: Vec<usize>,
-    null_equals_null: bool,
     batch: Option<RecordBatch>,
     on_rows: Option<Rows>,
     on_row_nulls: BitVec,
@@ -820,7 +806,6 @@ impl StreamCursor {
         mut stream: SendableRecordBatchStream,
         on_row_converter: Arc<SyncMutex<RowConverter>>,
         on_columns: Vec<usize>,
-        null_equals_null: bool,
     ) -> Result<Self> {
         if let Some(batch) = stream.next().await.transpose()? {
             let mut cursor = Self {
@@ -828,7 +813,6 @@ impl StreamCursor {
                 io_time: Time::new(),
                 on_row_converter,
                 on_columns,
-                null_equals_null,
                 on_rows: None,
                 on_row_nulls: BitVec::new(),
                 batch: Some(batch),
@@ -843,7 +827,6 @@ impl StreamCursor {
             io_time: Time::new(),
             on_row_converter,
             on_columns,
-            null_equals_null,
             on_rows: None,
             on_row_nulls: BitVec::new(),
             batch: None,
@@ -861,7 +844,7 @@ impl StreamCursor {
                 .convert_columns(&on_columns)?);
             self.on_row_nulls = (0..batch.num_rows())
                 .into_iter()
-                .map(|idx| !self.null_equals_null && on_columns
+                .map(|idx| on_columns
                     .iter()
                     .any(|column| column.is_null(idx))
                 )
@@ -913,7 +896,6 @@ impl StreamCursor {
 fn compare_cursor(
     left_cursor: &StreamCursor,
     right_cursor: &StreamCursor,
-    null_equals_null: bool,
 ) -> Ordering {
     match (&left_cursor.on_rows, &right_cursor.on_rows) {
         (None, _) => Ordering::Greater,
@@ -925,7 +907,7 @@ fn compare_cursor(
                 Ordering::Greater => Ordering::Greater,
                 Ordering::Less => Ordering::Less,
                 _ => {
-                    if null_equals_null || !left_cursor.on_row_nulls[left_cursor.idx] {
+                    if !left_cursor.on_row_nulls[left_cursor.idx] {
                         Ordering::Equal
                     } else {
                         Ordering::Less
@@ -1084,7 +1066,6 @@ mod tests {
         on: JoinOn,
         join_type: JoinType,
         sort_options: Vec<SortOptions>,
-        null_equals_null: bool,
     ) -> Result<SortMergeJoinExec> {
         SortMergeJoinExec::try_new(
             left,
@@ -1092,7 +1073,6 @@ mod tests {
             on,
             join_type,
             sort_options,
-            null_equals_null,
         )
     }
 
@@ -1112,7 +1092,6 @@ mod tests {
         on: JoinOn,
         join_type: JoinType,
         sort_options: Vec<SortOptions>,
-        null_equals_null: bool,
     ) -> Result<(Vec<String>, Vec<RecordBatch>)> {
         let session_ctx = SessionContext::new();
         let task_ctx = session_ctx.task_ctx();
@@ -1122,7 +1101,6 @@ mod tests {
             on,
             join_type,
             sort_options,
-            null_equals_null,
         )?;
         let columns = columns(&join.schema());
 

@@ -122,7 +122,6 @@ case class NativeSortMergeJoinExec(
           .setJoinType(nativeJoinType)
           .addAllOn(nativeJoinOn.asJava)
           .addAllSortOptions(nativeSortOptions.asJava)
-          .setNullEqualsNull(false)
         PhysicalPlanNode.newBuilder().setSortMergeJoin(sortMergeJoinExec).build()
       },
       friendlyName = "NativeRDD.SortMergeJoin")

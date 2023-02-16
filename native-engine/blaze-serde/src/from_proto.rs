@@ -346,7 +346,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     on,
                     join_type.into(),
                     sort_options,
-                    sort_merge_join.null_equals_null,
                 )?))
             }
             PhysicalPlanType::ShuffleWriter(shuffle_writer) => {
