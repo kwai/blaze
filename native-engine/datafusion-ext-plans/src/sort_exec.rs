@@ -619,7 +619,7 @@ impl SortedBatches {
         // some fields are doubled for squeezing/spilling
         std::mem::size_of_val(self) +
             self.batches_mem_size * 2 +
-            self.row_mem_size +
+            self.row_mem_size * 2 +
             self.sorted_rows.capacity() * std::mem::size_of::<IndexedRow>() * 2
     }
 
