@@ -174,8 +174,9 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
 
         if mem_diff > 0 {
             let mem_increase = mem_diff as usize;
-            self.try_grow(mem_increase).await?;
+            self.grow(mem_increase);
             self.metrics.mem_used().add(mem_increase);
+            self.try_grow(0).await?;
         }
         if mem_diff < 0 {
             let mem_used = self.metrics.mem_used().value();

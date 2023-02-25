@@ -26,6 +26,7 @@ import org.apache.spark.TaskContext
 
 import org.apache.spark.internal.config.EXECUTOR_MEMORY
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config.MEMORY_FRACTION
 import org.apache.spark.memory.MemoryConsumer
 import org.apache.spark.util.Utils
 
@@ -103,9 +104,10 @@ class OnHeapSpillManager(taskContext: TaskContext)
 object OnHeapSpillManager extends Logging {
   val HEAP_SPILL_MEM_LIMIT: Long = {
     val conf = SparkEnv.get.conf
-    val fraction = conf.getDouble("blaze.heap.spill.fraction", 0.50)
+    val memoryFraction = conf.get(MEMORY_FRACTION)
+    val heapSpillFraction = conf.getDouble("spark.blaze.heap.spill.fraction", 0.75)
     val executorMemory = conf.get(EXECUTOR_MEMORY) * 1024 * 1024
-    val heapSpillMemLimit = (executorMemory * fraction).toLong
+    val heapSpillMemLimit = (executorMemory * memoryFraction * heapSpillFraction).toLong
     logInfo(s"heapSpillMemLimit=${Utils.bytesToString(heapSpillMemLimit)}")
     heapSpillMemLimit
   }

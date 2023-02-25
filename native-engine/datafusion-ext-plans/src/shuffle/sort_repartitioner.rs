@@ -300,15 +300,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        // first grow memory usage of cur batch
-        // NOTE:
-        //  when spilling, buffered batches are first spilled into memory.
-        //  batches and compressed frozen bytes are both in memory during
-        //  spill. to avoid memory overflow, we aquire more memory than
-        //  the actual bytes size.
-        let mem_increase_actual = input.get_array_memory_size();
-        let mem_increase = mem_increase_actual * 2;
-
+        let mem_increase = input.get_array_memory_size();
         self.grow(mem_increase);
         self.metrics.mem_used().add(mem_increase);
 

@@ -70,7 +70,7 @@ object NativeHelper extends Logging {
     executorMemoryOverheadMiB * 1024L * 1024L
   }
 
-  val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.6);
+  val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.4);
 
   val tmpDirs: String = diskBlockManager.localDirs.map(_.toString).mkString(",")
 

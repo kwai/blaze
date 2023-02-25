@@ -91,11 +91,9 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-
-        // in rss mode, we like to flush staging records as soon as possible
-        // we grow much more memory than actual and never shrink.
-        self.metrics.mem_used().add(input.get_array_memory_size() * 2);
-        self.grow(input.get_array_memory_size() * 2);
+        let mem_increase = input.get_array_memory_size();
+        self.metrics.mem_used().add(mem_increase);
+        self.grow(mem_increase);
         self.try_grow(0).await?;
 
         // compute partition ids

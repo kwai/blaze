@@ -376,22 +376,9 @@ pub struct InMemTable {
 impl InMemTable {
     pub fn mem_used(&self) -> usize {
         // TODO: use more precise mem_used calculation
-        let mem = self.data_mem_used
+        self.data_mem_used
             + size_of::<AggRecord>() * self.unsorted.capacity()
             + size_of::<AggRecord>() * self.grouping_mappings.capacity()
-            + size_of::<Self>();
-
-        // NOTE:
-        //  when spilling in hash mode, the hash table is first transformed
-        //  to a sorted vec. this operation requires extra memory. to avoid
-        //  oom, we report more memory usage than actually used.
-        //  in-mem table is first spilled into l1, which also requires extra
-        //  memory, so add a small factor for it to avoid oom.
-        if self.is_hash {
-            mem * 125 / 100 * 2
-        } else {
-            mem * 125 / 100
-        }
     }
 
     pub fn num_records(&self) -> usize {
@@ -432,9 +419,7 @@ impl InMemTable {
         Ok(())
     }
 
-    fn into_sorted_vec(mut self) -> Vec<AggRecord> {
-        const USE_RADIX_SORT: bool = false;
-
+    fn into_rev_sorted_vec(mut self) -> Vec<AggRecord> {
         let mut vec = if self.is_hash {
             self.grouping_mappings.shrink_to_fit();
             self.grouping_mappings
@@ -445,12 +430,7 @@ impl InMemTable {
             self.unsorted.shrink_to_fit();
             self.unsorted
         };
-
-        if USE_RADIX_SORT {
-            radix_sort_records(&mut vec);
-        } else {
-            vec.sort_unstable();
-        }
+        vec.sort_unstable_by(|_1, _2| _2.cmp(_1));
         vec
     }
 
@@ -461,13 +441,20 @@ impl InMemTable {
             spilled_buf,
         ));
         let mut writer = BufWriter::with_capacity(65536, zwriter);
-        for record in self.into_sorted_vec() {
+        let mut sorted = self.into_rev_sorted_vec();
+
+        while let Some(record) = sorted.pop() {
             // write grouping row
             write_len(record.grouping.as_ref().len() + 1, &mut writer)?;
             writer.write_all(record.grouping.as_ref())?;
 
             // write agg buf
             record.agg_buf.save(&mut writer)?;
+
+            // release memory in time
+            if sorted.len() + 1000 < sorted.capacity() {
+                sorted.shrink_to_fit();
+            }
         }
         write_len(0, &mut writer)?; // EOF
 
@@ -520,84 +507,5 @@ impl SpillCursor {
             &mut self.current,
             Some(AggRecord::new(grouping, agg_buf)),
         ))
-    }
-}
-
-// faster sorting records with radix+counting sort
-pub fn radix_sort_records(records: &mut Vec<AggRecord>) {
-    const LEVEL_LIMIT: usize = 16;
-    const USE_STD_SORT_LIMIT: usize = 32;
-
-    if records.len() < USE_STD_SORT_LIMIT {
-        records.sort();
-        return;
-    }
-
-    // safety:
-    // this function is performance-critical and uses a lot of unchecked
-    // functions.
-    unsafe {
-        let level = 0;
-        let l = 0;
-        let r = records.len();
-        let mut partitions = vec![(level, l, r)];
-
-        while let Some((level, l, r)) = partitions.pop() {
-            let mut bucket_ls = [0; 257];
-            let mut bucket_rs = [0; 257];
-
-            macro_rules! bucket_idx {
-                ($record:expr) => {{
-                    $record
-                        .grouping
-                        .get(level)
-                        .map(|&b| b as usize + 1)
-                        .unwrap_or(0)
-                }};
-            }
-
-            // step 1: count
-            for record in records.get_unchecked(l..r) {
-                *bucket_rs.get_unchecked_mut(bucket_idx!(record)) += 1;
-            }
-
-            // step 2: accumulate
-            bucket_ls[0] += l;
-            bucket_rs[0] += l;
-            for i in 1..257 {
-                bucket_ls[i] = bucket_rs[i - 1];
-                bucket_rs[i] += bucket_rs[i - 1];
-            }
-
-            // step 3: reorder records
-            for i in 0..257 {
-                while bucket_ls[i] < bucket_rs[i] {
-                    let record = records.get_unchecked(bucket_ls[i]);
-                    let j = bucket_idx!(record);
-                    records.swap_unchecked(
-                        *bucket_ls.get_unchecked(i),
-                        *bucket_ls.get_unchecked(j),
-                    );
-                    *bucket_ls.get_unchecked_mut(j) += 1;
-                }
-
-                // add current buckets into partitions
-                // bucket 0 is excluded because all records inside are the same
-                if i > 0 {
-                    let l = bucket_rs[i - 1];
-                    let r = bucket_rs[i];
-
-                    if level < LEVEL_LIMIT && l + USE_STD_SORT_LIMIT < r {
-                        partitions.push((level + 1, l, r));
-                    } else if (l..r).len() > 1 {
-                        records[l..r].sort_by(|record1, record2| {
-                            let slice1 = &record1.grouping.get_unchecked(level + 1..);
-                            let slice2 = &record2.grouping.get_unchecked(level + 1..);
-                            slice1.cmp(slice2)
-                        });
-                    }
-                }
-            }
-        }
     }
 }
