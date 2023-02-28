@@ -24,16 +24,19 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 
-import org.apache.spark.internal.config.EXECUTOR_MEMORY
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config.EXECUTOR_MEMORY
 import org.apache.spark.internal.config.MEMORY_FRACTION
 import org.apache.spark.memory.MemoryConsumer
+import org.apache.spark.storage.BlockManager
 import org.apache.spark.util.Utils
 
 class OnHeapSpillManager(taskContext: TaskContext)
     extends MemoryConsumer(taskContext.taskMemoryManager)
     with Logging {
   import org.apache.spark.sql.blaze.memory.OnHeapSpillManager._
+
+  private val _blockManager = SparkEnv.get.blockManager
   private val spills = ArrayBuffer[Option[OnHeapSpill]]()
 
   // release all spills on task completion
@@ -43,45 +46,35 @@ class OnHeapSpillManager(taskContext: TaskContext)
     all.remove(taskId)
   }
 
-  /**
-   * allocate a new spill and return its id, returns -1 if allocation failed
-   * @param capacity spill bytes size
-   * @return allocated spill id, or -1
-   */
-  def newSpill(capacity: Long): Int = {
-    var totalUsed = all.values.map(_.getUsed).sum
-    if (totalUsed + capacity > HEAP_SPILL_MEM_LIMIT) {
-      logWarning(
-        "cannot allocate a new heap-spill" +
-          f", acquiring=${Utils.bytesToString(capacity)}" +
-          f", totalUsed=${Utils.bytesToString(totalUsed)}")
-      return -1
-    }
-    val acquired = this.acquireMemory(capacity)
-    if (acquired < capacity) {
-      logWarning(
-        "cannot allocate a new heap-spill" +
-          f", acquiring=${Utils.bytesToString(capacity)}" +
-          f", acquired=${Utils.bytesToString(acquired)}")
-      this.freeMemory(acquired)
-      return -1
-    }
+  def blockManager: BlockManager = _blockManager
 
-    val taskId = TaskContext.get.taskAttemptId()
-    val spillId = spills.length
-    spills.append(Some(OnHeapSpill(spillId, capacity)))
-    totalUsed += capacity
-    logInfo(
-      "blaze allocated a heap-spill" +
-        f", taskId=$taskId" +
-        f", spillId=$spillId" +
-        f", acquired=${Utils.bytesToString(capacity)}" +
-        f", totalUsed=${Utils.bytesToString(totalUsed)}")
-    spillId
+  def memUsed: Long = getUsed
+
+  /**
+   * allocate a new spill and return its id
+   * @return allocated spill id
+   */
+  def newSpill(): Int = {
+    synchronized {
+      val spill = OnHeapSpill(this, spills.length)
+      spills.append(Some(spill))
+
+      logInfo(
+        "blaze allocated a heap-spill" +
+          f", task=${taskContext.taskAttemptId}" +
+          f", id=${spill.id}")
+      spill.id
+    }
   }
 
   def writeSpill(spillId: Int, data: ByteBuffer): Unit = {
     spills(spillId).get.write(data)
+
+    // manually trigger spill if the amount of used memory exceeded limits
+    val used = memUsed
+    if (used > HEAP_SPILL_MEM_LIMIT) {
+      spill(HEAP_SPILL_MEM_LIMIT - used, this)
+    }
   }
 
   def readSpill(spillId: Int, buf: ByteBuffer): Int = {
@@ -93,19 +86,46 @@ class OnHeapSpillManager(taskContext: TaskContext)
   }
 
   def releaseSpill(spillId: Int): Unit = {
-    spills(spillId).foreach(spill => this.freeMemory(spill.capacity))
+    spills(spillId).foreach(_.release())
     spills(spillId) = None
   }
 
-  // we do not support spilling a heap-spill at the moment
-  override def spill(size: Long, trigger: MemoryConsumer): Long = 0
+  override def spill(size: Long, trigger: MemoryConsumer): Long = {
+    logInfo(
+      "OnHeapSpillManager starts spilling" +
+        s", size=${Utils.bytesToString(size)}}" +
+        s", currentUsed=${Utils.bytesToString(memUsed)}")
+    var totalFreed = 0L
+
+    Utils.tryWithSafeFinally {
+      synchronized {
+        while (totalFreed < size) {
+          // find the max in-mem spill and spill it into disk file
+          spills.maxBy(_.map(_.memUsed).getOrElse(-1L)) match {
+            case Some(maxSpill) if maxSpill.memUsed > 0 =>
+              val freed = maxSpill.spill()
+              if (freed == 0) {
+                return totalFreed
+              }
+              totalFreed += freed
+
+            case _ =>
+              return totalFreed // no spills can be freed
+          }
+        }
+      }
+    } {
+      logInfo(s"OnHeapSpillManager finished spilling: freed=${Utils.bytesToString(totalFreed)}")
+    }
+    totalFreed
+  }
 }
 
 object OnHeapSpillManager extends Logging {
   val HEAP_SPILL_MEM_LIMIT: Long = {
     val conf = SparkEnv.get.conf
     val memoryFraction = conf.get(MEMORY_FRACTION)
-    val heapSpillFraction = conf.getDouble("spark.blaze.heap.spill.fraction", 0.75)
+    val heapSpillFraction = conf.getDouble("spark.blaze.heap.spill.fraction", 0.8)
     val executorMemory = conf.get(EXECUTOR_MEMORY) * 1024 * 1024
     val heapSpillMemLimit = (executorMemory * memoryFraction * heapSpillFraction).toLong
     logInfo(s"heapSpillMemLimit=${Utils.bytesToString(heapSpillMemLimit)}")

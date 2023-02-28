@@ -40,11 +40,11 @@ use datafusion_ext_commons::loser_tree::LoserTree;
 use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
-use crate::spill::{dump_spills_statistics, Spill};
+use crate::spill::OnHeapSpill;
 
 pub struct AggTables {
     in_mem: Mutex<InMemTable>,
-    spills: Mutex<Vec<Spill>>,
+    spills: Mutex<Vec<OnHeapSpill>>,
     id: MemoryConsumerId,
     agg_ctx: Arc<AggContext>,
     context: Arc<TaskContext>,
@@ -113,11 +113,7 @@ impl AggTables {
         let batch_size = self.context.session_config().batch_size();
         let in_mem = std::mem::take(&mut *in_mem_locked);
         let spills = std::mem::take(&mut *spills_locked);
-
-        log::info!(
-            "aggregate exec starts outputing with spills: {}",
-            dump_spills_statistics(&spills),
-        );
+        log::info!("aggregate exec starts outputing with {} spills", spills.len());
 
         // only one in-mem table, directly output it
         if spills.is_empty() {
@@ -157,24 +153,10 @@ impl AggTables {
         // convert all tables into cursors
         let mut cursors = vec![];
         if in_mem.num_records() > 0 {
-            // spill current hash table into memory
-            // NOTE: a probable approach is sorting the hash table in-place and keeping
-            //  all data in memory. this saves some spilling time.
-            //  however, in most cases, agg is followed with a shuffle (which also re-
-            //  quires a lot of memory). if we do not spill and release the memory in
-            //  time, the shuffle will run in low performance.
-            let in_mem_size = in_mem.mem_used();
-            let spill = in_mem.try_into_l1_spill()?;
-            let spill_size = spill.offheap_mem_size();
+            // spill staging records
+            let spill = in_mem.try_into_spill()?;
             cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
-
-            let mem_growed = spill_size;
-            self.metrics.mem_used().add(mem_growed);
-            self.grow(mem_growed);
-
-            let mem_freed = in_mem_size.min(self.mem_used());
-            self.shrink(mem_freed);
-            self.metrics.mem_used().sub(mem_freed);
+            self.shrink(self.metrics.mem_used().set(0));
         }
         for spill in spills {
             cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
@@ -278,76 +260,15 @@ impl MemoryConsumer for AggTables {
     }
 
     async fn spill(&self) -> Result<usize> {
-        let current_used = self.mem_used();
         log::info!(
             "agg tables start spilling, used={}, {}",
-            ByteSize(current_used as u64),
+            ByteSize(self.mem_used() as u64),
             self.memory_manager(),
         );
-        let mut in_mem = self.in_mem.lock().await;
-        let mut spilled = self.spills.lock().await;
-        let mut freed = 0isize;
+        let in_mem = std::mem::take(&mut *self.in_mem.lock().await);
+        self.spills.lock().await.push(in_mem.try_into_spill()?);
 
-        // first try spill in-mem into spilled
-        let in_mem = std::mem::take(&mut *in_mem);
-        let in_mem_used = in_mem.mem_used();
-        freed += in_mem_used as isize;
-
-        let spill_num_rows = in_mem.num_records();
-        let spill = in_mem.try_into_l1_spill()?;
-        let spill_mem_used = spill.offheap_mem_size();
-        freed -= spill_mem_used as isize;
-        spilled.push(spill);
-        log::info!(
-            "aggregate table (num_rows={}) spilled into memory ({} into {}), freed={}",
-            spill_num_rows,
-            ByteSize(in_mem_used as u64),
-            ByteSize(spill_mem_used as u64),
-            ByteSize(freed as u64)
-        );
-
-        // move mem-spilled into heap or disk-spilled if necessary
-        while freed < current_used as isize / 2 {
-            let max_spill_idx = spilled
-                .iter_mut()
-                .enumerate()
-                .max_by_key(|(_, spill)| spill.offheap_mem_size())
-                .unwrap()
-                .0;
-            let spill_count = spilled.len();
-            spilled.swap(max_spill_idx, spill_count - 1);
-            let max_spill = spilled.pop().unwrap();
-            let max_spill_mem_size = max_spill.offheap_mem_size();
-            freed += max_spill.offheap_mem_size() as isize;
-
-            // try to move max_spill into on-heap
-            match max_spill.to_l2() {
-                Ok(heap_spill) => {
-                    spilled.push(heap_spill);
-                    log::info!(
-                        "aggregate table spilled into L2, freed={}",
-                        ByteSize(max_spill_mem_size as u64)
-                    );
-                }
-                Err(DataFusionError::ResourcesExhausted(..)) => {
-                    // move max_spill into file
-                    let disk_manager = &self.context.runtime_env().disk_manager;
-                    let disk_spill = max_spill.to_l3(disk_manager)?;
-                    self.metrics.record_spill(disk_spill.disk_size());
-                    spilled.push(disk_spill);
-                    log::info!(
-                        "aggregate table spilled into L3, freed={}",
-                        ByteSize(max_spill_mem_size as u64)
-                    );
-                }
-                Err(err) => {
-                    return Err(err);
-                }
-            }
-        }
-
-        let freed = freed as usize;
-        self.metrics.mem_used().sub(freed);
+        let freed = self.metrics.mem_used().set(0);
         Ok(freed)
     }
 
@@ -434,12 +355,11 @@ impl InMemTable {
         vec
     }
 
-    fn try_into_l1_spill(self) -> Result<Spill> {
-        let spilled_buf = vec![];
-        let zwriter = lz4_flex::frame::FrameEncoder::new(BufWriter::with_capacity(
-            65536,
-            spilled_buf,
-        ));
+    fn try_into_spill(self) -> Result<OnHeapSpill> {
+        let spill = OnHeapSpill::try_new()?;
+        let zwriter = lz4_flex::frame::FrameEncoder::new(
+            BufWriter::with_capacity(65536, spill)
+        );
         let mut writer = BufWriter::with_capacity(65536, zwriter);
         let mut sorted = self.into_rev_sorted_vec();
 
@@ -459,12 +379,14 @@ impl InMemTable {
         write_len(0, &mut writer)?; // EOF
 
         let zwriter = writer.into_inner().map_err(|err| err.into_error())?;
-        let spilled_buf = zwriter
+        let mut spill = zwriter
             .finish()
             .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
             .into_inner()
             .map_err(|err| err.into_error())?;
-        Ok(Spill::new_l1(spilled_buf))
+
+        spill.complete()?;
+        Ok(spill)
     }
 }
 
@@ -474,7 +396,7 @@ struct SpillCursor {
     current: Option<AggRecord>,
 }
 impl SpillCursor {
-    fn try_from_spill(spill: Spill, agg_ctx: &Arc<AggContext>) -> Result<Self> {
+    fn try_from_spill(spill: OnHeapSpill, agg_ctx: &Arc<AggContext>) -> Result<Self> {
         let buf_reader = spill.into_buf_reader();
         let mut iter = SpillCursor {
             agg_ctx: agg_ctx.clone(),

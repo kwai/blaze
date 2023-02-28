@@ -15,44 +15,24 @@
 use blaze_commons::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
-use datafusion::common::{DataFusionError, Result};
+use datafusion::common::Result;
 use jni::objects::{GlobalRef, JObject};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 
 /// A spill structure which cooperates with BlazeOnHeapSpillManager
 pub struct OnHeapSpill {
     hsm: GlobalRef,
     spill_id: i32,
-    size: usize,
 }
 
 impl OnHeapSpill {
-    pub fn try_new_incompleted(capacity: usize) -> Result<Self> {
-        let hsm = jni_new_global_ref!(
-            jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?
-        )?;
-
-        // try to allocate a new spill
-        let spill_id = jni_call!(
-            BlazeOnHeapSpillManager(hsm.as_obj()).newSpill(capacity as i64) -> i32
-        )?;
-        if spill_id == -1 {
-            return Err(DataFusionError::ResourcesExhausted(
-                "cannot allocate on-heap spill".to_string(),
-            ));
-        }
+    pub fn try_new() -> Result<Self> {
+        let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
+        let spill_id = jni_call!(BlazeOnHeapSpillManager(hsm).newSpill() -> i32)?;
         Ok(Self {
-            hsm,
+            hsm: jni_new_global_ref!(hsm)?,
             spill_id,
-            size: 0,
         })
-    }
-
-    pub fn try_new(data: &[u8]) -> Result<Self> {
-        let mut spill = Self::try_new_incompleted(data.len())?;
-        spill.write_all(data)?;
-        spill.complete()?;
-        Ok(spill)
     }
 
     pub fn complete(&mut self) -> Result<()> {
@@ -61,8 +41,8 @@ impl OnHeapSpill {
         Ok(())
     }
 
-    pub fn size(&self) -> usize {
-        self.size
+    pub fn into_buf_reader(self) -> BufReader<Box<dyn Read + Send>> {
+        BufReader::with_capacity(65536, Box::new(self))
     }
 
     fn drop_impl(&mut self) -> Result<()> {
@@ -80,8 +60,6 @@ impl Write for OnHeapSpill {
                 std::slice::from_raw_parts_mut(buf.as_ptr() as *mut u8, buf.len())
             )?,
         ) -> ())?;
-
-        self.size += buf.len();
         Ok(buf.len())
     }
 

@@ -43,7 +43,7 @@ use tokio::sync::mpsc::Sender;
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
 use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use crate::spill::{dump_spills_statistics, Spill};
+use crate::spill::OnHeapSpill;
 
 const NUM_LEVELS: usize = 64;
 
@@ -177,7 +177,7 @@ struct ExternalSorter {
     limit: usize,
     sort_row_converter: SyncMutex<RowConverter>,
     levels: Mutex<Vec<Option<SortedBatches>>>,
-    spills: Mutex<Vec<Spill>>,
+    spills: Mutex<Vec<OnHeapSpill>>,
     baseline_metrics: BaselineMetrics,
 }
 
@@ -208,79 +208,30 @@ impl MemoryConsumer for ExternalSorter {
     }
 
     async fn spill(&self) -> Result<usize> {
-        let current_used = self.mem_used();
         log::info!(
             "external sorter start spilling, used={}, {}",
-            ByteSize(current_used as u64),
+            ByteSize(self.mem_used() as u64),
             self.memory_manager(),
         );
 
         let mut levels = self.levels.lock().await;
         let mut spills = self.spills.lock().await;
-        let mut freed = 0isize;
 
         // merge all batches in levels and spill into l1
         let mut in_mem_batches: Option<SortedBatches> = None;
         for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]) {
             if let Some(existed) = level {
-                freed += existed.mem_size() as isize;
                 match &mut in_mem_batches {
                     Some(in_mem_batches) => in_mem_batches.merge(existed),
                     None => in_mem_batches = Some(existed),
                 }
             }
         }
-        let in_mem_spill = in_mem_batches.unwrap().try_into_l1_spill(
+        spills.push(in_mem_batches.unwrap().try_into_spill(
             &self.input_schema,
             self.batch_size,
-        )?;
-        freed -= in_mem_spill.offheap_mem_size() as isize;
-        log::info!(
-            "external sorter spilled into memory, freed={}",
-            ByteSize(freed as u64),
-        );
-        spills.push(in_mem_spill);
-
-        // move L1 into L2/L3 if necessary
-        while freed < current_used as isize / 2 {
-            let max_spill_idx = spills
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, spill)| spill.offheap_mem_size())
-                .unwrap()
-                .0;
-            let spill_count = spills.len();
-            spills.swap(max_spill_idx, spill_count - 1);
-            let max_spill = spills.pop().unwrap();
-            let max_spill_mem_size = max_spill.offheap_mem_size();
-            freed += max_spill_mem_size as isize;
-
-            let spill = match max_spill.to_l2() {
-                Ok(spill) => {
-                    log::info!(
-                        "external sorter spilled into L2: size={}",
-                        ByteSize(max_spill_mem_size as u64),
-                    );
-                    spill
-                }
-                Err(DataFusionError::ResourcesExhausted(..)) => {
-                    let spill = max_spill
-                        .to_l3(&self.context.runtime_env().disk_manager)?;
-                    log::info!(
-                        "external sorter spilled into L3: size={}",
-                        ByteSize(max_spill_mem_size as u64),
-                    );
-                    self.baseline_metrics.record_spill(max_spill_mem_size);
-                    spill
-                }
-                Err(err) => {
-                    return Err(err);
-                }
-            };
-            spills.push(spill);
-        }
-        let freed = freed as usize;
-        self.baseline_metrics.mem_used().sub(freed);
+        )?);
+        let freed = self.baseline_metrics.mem_used().set(0);
         Ok(freed)
     }
 
@@ -386,12 +337,9 @@ impl ExternalSorter {
         };
 
         drop(levels);
-        let mut spills = self.spills.lock().await;
 
-        log::info!(
-            "sort exec starts outputing with spills: {}",
-            dump_spills_statistics(&*spills),
-        );
+        let mut spills = self.spills.lock().await;
+        log::info!("sort exec starts outputing with {} spills", spills.len());
 
         // no spills -- output in-mem batches
         if spills.is_empty() {
@@ -415,18 +363,14 @@ impl ExternalSorter {
             return Ok(());
         }
 
-        // move in-mem batches into l1-spill, so we can free memory as soon as possible
+        // move in-mem batches into spill, so we can free memory as soon as possible
         if let Some(in_mem_batches) = in_mem_batches {
-            let in_mem_size = in_mem_batches.mem_size();
-            let in_mem_spill = in_mem_batches.try_into_l1_spill(
+            let in_mem_spill = in_mem_batches.try_into_spill(
                 &self.input_schema,
                 self.batch_size,
             )?;
-            self.grow(in_mem_spill.offheap_mem_size());
-            self.baseline_metrics.mem_used().add(in_mem_spill.offheap_mem_size());
-            self.baseline_metrics.mem_used().sub(in_mem_size);
-            self.shrink(in_mem_size);
             spills.push(in_mem_spill);
+            self.shrink(self.baseline_metrics.mem_used().set(0));
         }
 
         // use loser tree to merge all spills
@@ -741,19 +685,18 @@ impl SortedBatches {
         Ok(())
     }
 
-    fn try_into_l1_spill(
+    fn try_into_spill(
         mut self,
         schema: &SchemaRef,
         batch_size: usize,
-    ) -> Result<Spill> {
+    ) -> Result<OnHeapSpill> {
 
         self.squeeze(batch_size)?;
 
-        let spilled_buf = vec![];
-        let zwriter = lz4_flex::frame::FrameEncoder::new(BufWriter::with_capacity(
-            65536,
-            spilled_buf,
-        ));
+        let spill = OnHeapSpill::try_new()?;
+        let zwriter = lz4_flex::frame::FrameEncoder::new(
+            BufWriter::with_capacity(65536, spill)
+        );
         let mut writer = BufWriter::with_capacity(65536, zwriter);
         let mut cur_rows = 0;
 
@@ -777,12 +720,14 @@ impl SortedBatches {
         }
 
         let zwriter = writer.into_inner().map_err(|err| err.into_error())?;
-        let spilled_buf = zwriter
+        let mut spill = zwriter
             .finish()
             .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
             .into_inner()
             .map_err(|err| err.into_error())?;
-        Ok(Spill::new_l1(spilled_buf))
+
+        spill.complete()?;
+        Ok(spill)
     }
 }
 
@@ -800,8 +745,7 @@ struct SpillCursor {
 }
 
 impl SpillCursor {
-    fn try_from_spill(id: usize, spill: Spill) -> Result<Self> {
-
+    fn try_from_spill(id: usize, spill: OnHeapSpill) -> Result<Self> {
         let buf_reader = spill.into_buf_reader();
         let mut iter = SpillCursor {
             id,

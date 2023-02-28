@@ -1167,7 +1167,7 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeOnHeapSpillManager {
             class,
-            method_newSpill: env.get_method_id(class, "newSpill", "(J)I").unwrap(),
+            method_newSpill: env.get_method_id(class, "newSpill", "()I").unwrap(),
             method_newSpill_ret: ReturnType::Primitive(Primitive::Int),
             method_writeSpill: env
                 .get_method_id(class, "writeSpill", "(ILjava/nio/ByteBuffer;)V")
