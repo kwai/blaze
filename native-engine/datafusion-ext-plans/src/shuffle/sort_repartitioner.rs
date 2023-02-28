@@ -35,7 +35,7 @@ use futures::lock::Mutex;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::sync::Arc;
 use voracious_radix_sort::{RadixSort, Radixable};
 use crate::spill::OnHeapSpill;
@@ -139,7 +139,7 @@ impl SortShuffleRepartitioner {
         let mut cur_spill = OnHeapSpill::try_new()?;
         let mut cur_spill_writer = BufWriter::with_capacity(65536, &mut cur_spill);
         let mut cur_spill_offsets = vec![0];
-        let mut frozen = vec![];
+        let mut offset = 0;
 
         macro_rules! write_sub_batch {
             ($range:expr) => {{
@@ -156,14 +156,14 @@ impl SortShuffleRepartitioner {
                         .map(|columns| compute::interleave(columns, &sub_indices))
                         .collect::<ArrowResult<Vec<_>>>()?,
                 )?;
-                let mut cursor = Cursor::new(&mut frozen);
-                cursor.seek(SeekFrom::End(0))?;
-                write_one_batch(&sub_batch, &mut cursor, true)?;
+                let mut buf = vec![];
+                write_one_batch(&sub_batch, &mut Cursor::new(&mut buf), true)?;
+                offset += buf.len() as u64;
+                cur_spill_writer.write(&buf)?;
             }};
         }
 
         // write sorted data into in-mem spill
-        let mut offset = 0u64;
         for cur_offset in 0..pi_vec.len() {
             if pi_vec[cur_offset].partition_id > cur_partition_id
                 || cur_offset - cur_slice_start >= self.batch_size
@@ -172,11 +172,8 @@ impl SortShuffleRepartitioner {
                     write_sub_batch!(cur_slice_start..cur_offset);
                     cur_slice_start = cur_offset;
                 }
-
                 while pi_vec[cur_offset].partition_id > cur_partition_id {
-                    offset += frozen.len() as u64;
                     cur_spill_offsets.push(offset);
-                    cur_spill_writer.write(&std::mem::take(&mut frozen))?;
                     cur_partition_id += 1;
                 }
             }
