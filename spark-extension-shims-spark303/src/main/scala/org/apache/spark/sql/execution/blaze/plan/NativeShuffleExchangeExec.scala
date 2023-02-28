@@ -53,7 +53,7 @@ case class NativeShuffleExchangeExec(
       mutable.LinkedHashMap(
         NativeHelper
           .getDefaultNativeMetrics(sparkContext)
-          .filterKeys(Set("spilled_bytes", "spill_count"))
+          .filterKeys(Set("spilled_bytes"))
           .toSeq: _*))
     .toMap
 

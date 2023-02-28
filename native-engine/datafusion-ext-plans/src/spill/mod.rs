@@ -14,4 +14,20 @@
 
 mod onheap_spill;
 
+use datafusion::common::Result;
+use jni::objects::JObject;
+use jni::sys::jlong;
+use blaze_commons::{jni_call, jni_call_static};
 pub use crate::spill::onheap_spill::OnHeapSpill;
+
+pub fn get_spills_disk_usage(spill_ids: &[i32]) -> Result<u64> {
+    let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
+    let mut total_usage = 0u64;
+
+    for &id in spill_ids {
+        let usage = jni_call!(BlazeOnHeapSpillManager(hsm)
+            .getSpillDiskUsage(id) -> jlong)?;
+        total_usage += usage as u64;
+    }
+    Ok(total_usage)
+}

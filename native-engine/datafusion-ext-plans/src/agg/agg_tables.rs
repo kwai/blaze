@@ -40,7 +40,7 @@ use datafusion_ext_commons::loser_tree::LoserTree;
 use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
-use crate::spill::OnHeapSpill;
+use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 
 pub struct AggTables {
     in_mem: Mutex<InMemTable>,
@@ -235,6 +235,15 @@ impl AggTables {
             flush_staging!();
         }
 
+        // update disk spill size
+        let spill_ids = cursors
+            .values()
+            .iter()
+            .map(|cursor| cursor.spill_id)
+            .collect::<Vec<_>>();
+        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+        self.metrics.record_spill(spill_disk_usage as usize);
+
         let used = self.metrics.mem_used().set(0);
         self.shrink(used);
         Ok(())
@@ -392,14 +401,17 @@ impl InMemTable {
 
 struct SpillCursor {
     agg_ctx: Arc<AggContext>,
+    spill_id: i32,
     input: BufReader<FrameDecoder<BufReader<Box<dyn Read + Send>>>>,
     current: Option<AggRecord>,
 }
 impl SpillCursor {
     fn try_from_spill(spill: OnHeapSpill, agg_ctx: &Arc<AggContext>) -> Result<Self> {
+        let spill_id = spill.id();
         let buf_reader = spill.into_buf_reader();
         let mut iter = SpillCursor {
             agg_ctx: agg_ctx.clone(),
+            spill_id,
             input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
             current: None,
         };

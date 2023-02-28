@@ -113,8 +113,7 @@ object NativeHelper extends Logging {
       "input_batches" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
       "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"),
-      "spilled_bytes" -> SQLMetrics.createSizeMetric(sc, "Native.spilled_bytes"),
-      "spill_count" -> SQLMetrics.createMetric(sc, "Native.spill_count"))
+      "spilled_bytes" -> SQLMetrics.createSizeMetric(sc, "Native.spilled_bytes"))
 }
 
 case class MetricNode(

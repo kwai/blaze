@@ -38,7 +38,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::sync::Arc;
 use voracious_radix_sort::{RadixSort, Radixable};
-use crate::spill::OnHeapSpill;
+use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 
 pub struct SortShuffleRepartitioner {
     memory_consumer_id: MemoryConsumerId,
@@ -276,6 +276,11 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             #[derivative(PartialOrd = "ignore")]
             #[derivative(PartialEq = "ignore")]
             #[derivative(Ord = "ignore")]
+            spill_id: i32,
+
+            #[derivative(PartialOrd = "ignore")]
+            #[derivative(PartialEq = "ignore")]
+            #[derivative(Ord = "ignore")]
             reader: BufReader<Box<dyn Read + Send>>,
 
             #[derivative(PartialOrd = "ignore")]
@@ -303,6 +308,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 .map(|spill| {
                     let mut cursor = SpillCursor {
                         cur: 0,
+                        spill_id: spill.spill.id(),
                         reader: spill.spill.into_buf_reader(),
                         offsets: spill.offsets,
                     };
@@ -369,6 +375,15 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
         }
         output_index.flush()?;
+
+        // update disk spill size
+        let spill_ids = spills
+            .values()
+            .iter()
+            .map(|cursor| cursor.spill_id)
+            .collect::<Vec<_>>();
+        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+        self.metrics.record_spill(spill_disk_usage as usize);
 
         let used = self.metrics.mem_used().set(0);
         self.shrink(used);

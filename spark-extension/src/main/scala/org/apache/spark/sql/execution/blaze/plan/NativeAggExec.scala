@@ -69,7 +69,7 @@ case class NativeAggExec(
     .LinkedHashMap(
       NativeHelper
         .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(Set("output_rows", "elapsed_compute", "spilled_bytes", "spill_count"))
+        .filterKeys(Set("output_rows", "elapsed_compute", "spilled_bytes"))
         .toSeq: _*)
     .toMap
 

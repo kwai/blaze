@@ -35,6 +35,10 @@ impl OnHeapSpill {
         })
     }
 
+    pub fn id(&self) -> i32 {
+        self.spill_id
+    }
+
     pub fn complete(&mut self) -> Result<()> {
         jni_call!(BlazeOnHeapSpillManager(self.hsm.as_obj())
             .completeSpill(self.spill_id) -> ())?;

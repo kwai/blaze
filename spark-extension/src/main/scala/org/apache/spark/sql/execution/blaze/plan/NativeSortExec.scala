@@ -52,7 +52,7 @@ case class NativeSortExec(
   override lazy val metrics: Map[String, SQLMetric] = Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute", "spilled_bytes", "spill_count"))
+      .filterKeys(Set("output_rows", "elapsed_compute", "spilled_bytes"))
       .toSeq: _*)
 
   override def output: Seq[Attribute] = child.output

@@ -43,7 +43,7 @@ use tokio::sync::mpsc::Sender;
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
 use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use crate::spill::OnHeapSpill;
+use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 
 const NUM_LEVELS: usize = 64;
 
@@ -449,6 +449,16 @@ impl ExternalSorter {
         if !staging_cursor_ids.is_empty() {
             flush_staging!();
         }
+
+        // update disk spill size
+        let spill_ids = cursors
+            .values()
+            .iter()
+            .map(|cursor| cursor.spill_id)
+            .collect::<Vec<_>>();
+        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+        self.baseline_metrics.record_spill(spill_disk_usage as usize);
+
         self.shrink(self.baseline_metrics.mem_used().set(0));
         Ok(())
     }
@@ -733,6 +743,7 @@ impl SortedBatches {
 
 struct SpillCursor {
     id: usize,
+    spill_id: i32,
     input: BufReader<FrameDecoder<BufReader<Box<dyn Read + Send>>>>,
     num_batches: usize,
     cur_loaded_num_batches: usize,
@@ -746,9 +757,11 @@ struct SpillCursor {
 
 impl SpillCursor {
     fn try_from_spill(id: usize, spill: OnHeapSpill) -> Result<Self> {
+        let spill_id = spill.id();
         let buf_reader = spill.into_buf_reader();
         let mut iter = SpillCursor {
             id,
+            spill_id,
             input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
             num_batches: 0,
             cur_loaded_num_batches: 0,

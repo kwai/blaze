@@ -85,6 +85,10 @@ class OnHeapSpillManager(taskContext: TaskContext)
     spills(spillId).get.complete()
   }
 
+  def getSpillDiskUsage(spillId: Int): Long = {
+    spills(spillId).get.diskUsed
+  }
+
   def releaseSpill(spillId: Int): Unit = {
     spills(spillId).foreach(_.release())
     spills(spillId) = None

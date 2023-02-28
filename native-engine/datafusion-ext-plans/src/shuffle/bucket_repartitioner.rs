@@ -17,7 +17,7 @@
 use crate::shuffle::{
     evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill,
 };
-use crate::spill::OnHeapSpill;
+use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 use arrow::array::*;
 use arrow::datatypes::*;
 use arrow::error::Result as ArrowResult;
@@ -200,6 +200,11 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
         let mut spills = self.spills.lock().await;
         log::info!("bucket partitioner start writing with {} spills", spills.len());
 
+        let spill_ids: Vec<i32> = spills
+            .iter()
+            .map(|spill| spill.spill.id())
+            .collect();
+
         let mut spill_readers = spills
             .drain(..)
             .map(|spill| {
@@ -245,6 +250,10 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
         .map_err(|e| {
             DataFusionError::Execution(format!("shuffle write error: {:?}", e))
         })??;
+
+        // update disk spill size
+        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+        self.metrics.record_spill(spill_disk_usage as usize);
 
         let used = self.metrics.mem_used().set(0);
         self.shrink(used);
