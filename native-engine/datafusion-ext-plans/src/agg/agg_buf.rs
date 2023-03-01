@@ -36,7 +36,9 @@ impl AggBuf {
     pub fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.fixed.len()
-            + self.dyns.iter().map(|v| v.mem_size()).sum::<usize>()
+            + self.dyns.iter().map(|v| {
+                std::mem::size_of_val(v) + v.mem_size()
+            }).sum::<usize>()
     }
 
     pub fn is_fixed_valid(&self, addr: u64) -> bool {
@@ -150,7 +152,7 @@ pub fn create_agg_buf_from_scalar(
                 addrs.push(make_dyn_addr(dyns.len()));
                 match v {
                     Some(v) => {
-                        dyns.push(Box::new(AggDynStr::new(Some(v.clone()))));
+                        dyns.push(Box::new(AggDynStr::new(Some(v.clone().into()))));
                     }
                     None => {
                         dyns.push(Box::new(AggDynStr::new(None)));
@@ -203,7 +205,7 @@ impl dyn AggDynValue {
                 let len = len - 1;
                 let value_buf = read_bytes_slice(&mut r, len)?;
                 let value = String::from_utf8_lossy(&value_buf);
-                dyn_str.value = Some(value.to_string());
+                dyn_str.value = Some(value.into());
             } else {
                 dyn_str.value = None;
             }
@@ -233,19 +235,19 @@ impl dyn AggDynValue {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct AggDynStr {
-    pub value: Option<String>,
+    pub value: Option<Box<str>>,
 }
 
 impl AggDynStr {
-    pub fn new(value: Option<String>) -> Self {
+    pub fn new(value: Option<Box<str>>) -> Self {
         Self { value }
     }
 
-    pub fn value(value: &Box<dyn AggDynValue>) -> &Option<String> {
+    pub fn value(value: &Box<dyn AggDynValue>) -> &Option<Box<str>> {
         &value.as_any().downcast_ref::<Self>().unwrap().value
     }
 
-    pub fn value_mut(value: &mut Box<dyn AggDynValue>) -> &mut Option<String> {
+    pub fn value_mut(value: &mut Box<dyn AggDynValue>) -> &mut Option<Box<str>> {
         &mut value.as_any_mut().downcast_mut::<Self>().unwrap().value
     }
 }
@@ -261,7 +263,7 @@ impl AggDynValue for AggDynStr {
 
     fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self.value.as_ref().map(|s| s.as_bytes().len()).unwrap_or(0)
+            + self.value.as_ref().map(|s| s.len()).unwrap_or(0)
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {

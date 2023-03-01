@@ -163,7 +163,8 @@ pub trait Agg: Send + Sync + Debug {
                     .downcast_ref::<AggDynStr>()
                     .unwrap()
                     .value
-                    .clone(),
+                    .as_ref()
+                    .map(|s| s.as_ref().to_owned())
             ),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),

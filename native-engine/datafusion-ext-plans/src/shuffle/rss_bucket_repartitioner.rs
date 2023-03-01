@@ -16,7 +16,7 @@
 
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
 use async_trait::async_trait;
-use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
+use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_direct_byte_buffer};
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
 use datafusion::arrow::error::Result as ArrowResult;
@@ -322,5 +322,6 @@ fn write_batch_to_rss(
             buf,
             data_len as i32,
         ) -> ())?;
+    jni_delete_local_ref!(buf.into())?;
     Ok(())
 }

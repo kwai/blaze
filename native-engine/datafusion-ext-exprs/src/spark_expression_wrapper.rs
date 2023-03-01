@@ -15,9 +15,7 @@
 use crate::down_cast_any_ref;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
-use blaze_commons::{
-    jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
-};
+use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
 use datafusion::common::ScalarValue;
 use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
@@ -162,6 +160,7 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
         let output_channel = jni_call!(
             SparkExpressionWrapperContext(jcontext.as_obj()).eval(batch_byte_buffer) -> JObject
         )?;
+        jni_delete_local_ref!(batch_byte_buffer.into())?;
 
         let mut reader =
             datafusion_ext_commons::streams::ipc_stream::ReadableByteChannelReader::new(

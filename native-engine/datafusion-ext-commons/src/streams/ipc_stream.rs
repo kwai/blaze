@@ -108,6 +108,7 @@ impl IpcReaderStream {
                 }
             }
         });
+        jni_delete_local_ref!(segment)?;
         Ok(true)
     }
 }
@@ -118,7 +119,6 @@ pub fn get_channel_reader(
     compressed: bool,
 ) -> Result<RecordBatchReader> {
     let global_ref = jni_new_global_ref!(channel)?;
-    jni_delete_local_ref!(channel)?;
     let channel_reader = ReadableByteChannelReader::new(global_ref);
 
     Ok(RecordBatchReader::new(
@@ -205,13 +205,12 @@ impl Read for ReadableByteChannelReader {
         if self.closed {
             return Ok(0);
         }
-        let jbuf = jni_new_direct_byte_buffer!(buf).to_io_result()?;
-
-        while jni_call!(JavaBuffer(jbuf).hasRemaining() -> jboolean).to_io_result()?
+        let buf = jni_new_direct_byte_buffer!(buf).to_io_result()?;
+        while jni_call!(JavaBuffer(buf).hasRemaining() -> jboolean).to_io_result()?
             == JNI_TRUE
         {
             let read_bytes = jni_call!(
-                JavaReadableByteChannel(self.channel.as_obj()).read(jbuf) -> jint
+                JavaReadableByteChannel(self.channel.as_obj()).read(buf) -> jint
             )
             .to_io_result()?;
 
@@ -220,7 +219,8 @@ impl Read for ReadableByteChannelReader {
                 break;
             }
         }
-        let position = jni_call!(JavaBuffer(jbuf).position() -> jint).to_io_result()?;
+        let position = jni_call!(JavaBuffer(buf).position() -> jint).to_io_result()?;
+        jni_delete_local_ref!(buf.into())?;
         Ok(position as usize)
     }
 }

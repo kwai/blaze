@@ -131,12 +131,12 @@ impl Agg for AggMax {
                     let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addr));
                     match w {
                         Some(w) => {
-                            if w.as_str() < max {
-                                *w = max.to_owned();
+                            if w.as_ref() < max {
+                                *w = max.to_owned().into();
                             }
                         }
                         w @ None => {
-                            *w = Some(max.to_owned());
+                            *w = Some(max.to_owned().into());
                         }
                     }
                 }
@@ -215,8 +215,8 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
                 if value.is_valid(i) {
                     let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addr));
                     let v = value.value(i);
-                    if w.as_ref().filter(|w| w.as_str() >= v).is_none() {
-                        *w = Some(v.to_owned());
+                    if w.as_ref().filter(|w| w.as_ref() >= v).is_none() {
+                        *w = Some(v.to_owned().into());
                     }
                 }
             })
@@ -269,7 +269,7 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
             if v.is_some() {
                 let w = AggDynStr::value_mut(agg_buf1.dyn_value_mut(addr));
                 let v = v.as_ref().unwrap();
-                if w.as_ref().filter(|w| w.as_str() >= v.as_str()).is_none() {
+                if w.as_ref().filter(|w| w.as_ref() >= v.as_ref()).is_none() {
                     *w = Some(v.to_owned());
                 }
             }

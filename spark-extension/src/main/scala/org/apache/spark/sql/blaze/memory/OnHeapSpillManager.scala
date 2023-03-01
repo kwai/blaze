@@ -23,7 +23,6 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.EXECUTOR_MEMORY
 import org.apache.spark.internal.config.MEMORY_FRACTION
@@ -38,6 +37,7 @@ class OnHeapSpillManager(taskContext: TaskContext)
 
   private val _blockManager = SparkEnv.get.blockManager
   private val spills = ArrayBuffer[Option[OnHeapSpill]]()
+  private var numHoldingSpills = 0
 
   // release all spills on task completion
   taskContext.addTaskCompletionListener { _ =>
@@ -58,11 +58,10 @@ class OnHeapSpillManager(taskContext: TaskContext)
     synchronized {
       val spill = OnHeapSpill(this, spills.length)
       spills.append(Some(spill))
+      numHoldingSpills += 1
 
-      logInfo(
-        "blaze allocated a heap-spill" +
-          f", task=${taskContext.taskAttemptId}" +
-          f", id=${spill.id}")
+      logInfo(s"blaze allocated a heap-spill, task=${taskContext.taskAttemptId}, id=${spill.id}")
+      dumpStatus()
       spill.id
     }
   }
@@ -71,9 +70,9 @@ class OnHeapSpillManager(taskContext: TaskContext)
     spills(spillId).get.write(data)
 
     // manually trigger spill if the amount of used memory exceeded limits
-    val used = memUsed
-    if (used > HEAP_SPILL_MEM_LIMIT) {
-      spill(HEAP_SPILL_MEM_LIMIT - used, this)
+    val totalUsed = all.values.map(_.memUsed).sum
+    if (totalUsed > HEAP_SPILL_MEM_LIMIT) {
+      all.values.maxBy(_.memUsed).spill(totalUsed - HEAP_SPILL_MEM_LIMIT, this)
     }
   }
 
@@ -82,46 +81,61 @@ class OnHeapSpillManager(taskContext: TaskContext)
   }
 
   def completeSpill(spillId: Int): Unit = {
-    spills(spillId).get.complete()
+    val spill = spills(spillId).get
+    spill.complete()
+
+    logInfo(
+      "blaze completed a heap-spill" +
+        s", task=${taskContext.taskAttemptId}" +
+        s", id=$spillId" +
+        s", size=${Utils.bytesToString(spill.size)}")
+    dumpStatus()
   }
 
   def getSpillDiskUsage(spillId: Int): Long = {
-    spills(spillId).get.diskUsed
+    spills(spillId).map(_.diskUsed).getOrElse(0)
   }
 
   def releaseSpill(spillId: Int): Unit = {
-    spills(spillId).foreach(_.release())
+    spills(spillId) match {
+      case Some(spill) =>
+        spill.release()
+        numHoldingSpills -= 1
+        logInfo(s"blaze released a heap-spill, task: ${taskContext.taskAttemptId}, id: $spillId")
+        dumpStatus()
+      case None =>
+    }
     spills(spillId) = None
   }
 
   override def spill(size: Long, trigger: MemoryConsumer): Long = {
-    logInfo(
-      "OnHeapSpillManager starts spilling" +
-        s", size=${Utils.bytesToString(size)}}" +
-        s", currentUsed=${Utils.bytesToString(memUsed)}")
+    logInfo(s"OnHeapSpillManager starts spilling, size=${Utils.bytesToString(size)}}")
+    dumpStatus()
     var totalFreed = 0L
 
     Utils.tryWithSafeFinally {
       synchronized {
-        while (totalFreed < size) {
-          // find the max in-mem spill and spill it into disk file
-          spills.maxBy(_.map(_.memUsed).getOrElse(-1L)) match {
-            case Some(maxSpill) if maxSpill.memUsed > 0 =>
-              val freed = maxSpill.spill()
-              if (freed == 0) {
-                return totalFreed
-              }
-              totalFreed += freed
-
-            case _ =>
-              return totalFreed // no spills can be freed
-          }
+        spills.foreach {
+          case Some(spill) if spill.memUsed > 0 =>
+            totalFreed += spill.spill()
+            if (totalFreed >= size) {
+              return totalFreed
+            }
+          case _ =>
         }
       }
     } {
       logInfo(s"OnHeapSpillManager finished spilling: freed=${Utils.bytesToString(totalFreed)}")
+      dumpStatus()
     }
     totalFreed
+  }
+
+  private def dumpStatus(): Unit = {
+    logInfo(
+      s"OnHeapSpillManager (task=${taskContext.taskAttemptId}) status" +
+        s": numHoldingSpills=$numHoldingSpills" +
+        s", memUsed=${Utils.bytesToString(memUsed)}")
   }
 }
 

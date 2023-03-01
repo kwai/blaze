@@ -14,7 +14,7 @@
 
 use crate::shuffle::ShuffleRepartitioner;
 use async_trait::async_trait;
-use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
+use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_direct_byte_buffer};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion_ext_commons::io::write_one_batch;
@@ -56,8 +56,10 @@ impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
         let rss_buffer = jni_new_direct_byte_buffer!(&mut rss_data)?;
 
         if length != 0 {
-            jni_call!(BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj()).write(0_i32, rss_buffer, length as i32) -> ())?;
+            jni_call!(BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj())
+                .write(0_i32, rss_buffer, length as i32) -> ())?;
         }
+        jni_delete_local_ref!(rss_buffer.into())?;
         Ok(())
     }
 

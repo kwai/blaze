@@ -169,12 +169,12 @@ pub async fn write_ipc(
             )?;
             std::mem::drop(timer);
 
-            let jbuf = jni_new_direct_byte_buffer!(&mut buffer)?;
+            let buf = jni_new_direct_byte_buffer!(&mut buffer)?;
             let consumed = jni_call!(
-                ScalaFunction1(ipc_consumer.as_obj()).apply(jbuf) -> JObject
+                ScalaFunction1(ipc_consumer.as_obj()).apply(buf) -> JObject
             )?;
             jni_delete_local_ref!(consumed)?;
-            jni_delete_local_ref!(jbuf.into())?;
+            jni_delete_local_ref!(buf.into())?;
         }}
     }
 

@@ -22,69 +22,69 @@ import java.nio.channels.FileChannel
 
 import scala.collection.mutable
 
-import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.memory.OnHeapSpill.BLOCK_SIZE
-import org.apache.spark.storage.BlockId
-import org.apache.spark.util.Utils
 
 case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
   private var status: OnHeapSpill.Status = OnHeapSpill.Writing
-  private var diskSpilledBlock: Option[(BlockId, RandomAccessFile, FileChannel)] = None
+  private var diskSpilledFile: Option[FileChannel] = None
   private var diskSpilledReadOffset = 0L
   private var writtenSize = 0L
   private var readSize = 0L
   private val dataBlockQueue = mutable.Queue[ByteBuffer]()
+  private var memAllocated = 0L
+
+  def size: Long = writtenSize
 
   def memUsed: Long = dataBlockQueue.length * BLOCK_SIZE
 
   def diskUsed: Long =
-    diskSpilledBlock match {
-      case Some((_, file, _)) => file.length()
+    diskSpilledFile match {
+      case Some(channel) => channel.size()
       case None => 0
     }
 
   def write(buf: ByteBuffer): Unit = {
-    assert(status == OnHeapSpill.Writing)
-
-    // allocate memory for incoming data
-    val numBytesWritingToNewBlock =
-      buf.remaining() - dataBlockQueue.lastOption.map(_.remaining()).getOrElse(0)
-    val numNewBlocks = (numBytesWritingToNewBlock + BLOCK_SIZE - 1) / BLOCK_SIZE
-
-    var ownedMemory: Long = dataBlockQueue.length * BLOCK_SIZE
-    if (numNewBlocks > 0) {
-      ownedMemory += hsm.acquireMemory(numNewBlocks * BLOCK_SIZE)
+    // reserve memory before writing
+    val numAcquiringBlocks = (buf.limit() + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    if (diskSpilledFile.isEmpty && !acquireMemory(numAcquiringBlocks * BLOCK_SIZE)) {
+      spill()
     }
 
     synchronized {
-      while (buf.hasRemaining) {
-        if (!dataBlockQueue.lastOption.exists(_.hasRemaining)) {
-          dataBlockQueue.enqueue(ByteBuffer.allocate(BLOCK_SIZE))
-        }
-        val destBuf = dataBlockQueue.last
-        val srcBuf = buf.slice()
-        val nTransfer = Math.min(srcBuf.remaining(), destBuf.remaining())
-        srcBuf.limit(nTransfer)
-        destBuf.put(srcBuf)
-        buf.position(buf.position() + nTransfer)
-        writtenSize += nTransfer
-      }
+      assert(status == OnHeapSpill.Writing)
+      diskSpilledFile match {
+        case Some(channel) =>
+          // write to file
+          channel.position(channel.size())
+          while (buf.hasRemaining && channel.write(buf) >= 0) {}
+          channel.force(false)
 
-      // if not enough memory is allocated, spill all data in current heap-spill
-      if (ownedMemory < memUsed) {
-        spillAll()
-        hsm.freeMemory(ownedMemory)
+        case None =>
+          // write to in-mem data queue
+          while (buf.hasRemaining) {
+            if (!dataBlockQueue.lastOption.exists(_.hasRemaining)) {
+              dataBlockQueue.enqueue(ByteBuffer.allocate(BLOCK_SIZE))
+            }
+            val destBuf = dataBlockQueue.last
+            val srcBuf = buf.slice()
+            val nTransfer = Math.min(srcBuf.remaining(), destBuf.remaining())
+            srcBuf.limit(nTransfer)
+            destBuf.put(srcBuf)
+            buf.position(buf.position() + nTransfer)
+            writtenSize += nTransfer
+          }
+          shrinkMemory()
       }
     }
+
   }
 
   def read(buf: ByteBuffer): Int = {
-    assert(status == OnHeapSpill.Reading)
-
     synchronized {
-      diskSpilledBlock match {
-        case Some((_, _, channel)) =>
+      assert(status == OnHeapSpill.Reading)
+      diskSpilledFile match {
+        case Some(channel) =>
           // read from file
           channel.position(readSize - diskSpilledReadOffset)
           while (buf.hasRemaining && channel.read(buf) >= 0) {}
@@ -93,7 +93,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
           // read from in-mem data queue
           while (buf.hasRemaining && dataBlockQueue.nonEmpty) {
             if (!dataBlockQueue.head.hasRemaining) {
-              hsm.freeMemory(dataBlockQueue.dequeue().capacity())
+              dataBlockQueue.dequeue()
             }
             if (dataBlockQueue.nonEmpty) {
               val srcBuf = dataBlockQueue.head
@@ -106,6 +106,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
               srcBuf.position(srcBuf.position() + nTransfer)
             }
           }
+          shrinkMemory()
       }
       readSize += buf.position()
       buf.position()
@@ -113,36 +114,50 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
   }
 
   def complete(): Unit = {
-    assert(status == OnHeapSpill.Writing)
-
     synchronized {
-      // mark last block.hasRemaining = false
-      dataBlockQueue.lastOption match {
-        case Some(buf) if buf.hasRemaining => buf.limit(buf.position())
-        case _ =>
-      }
-
-      if (this.diskSpilledBlock.nonEmpty) {
-        val freed = this.spillInternal() // spill all data if it is partially spilled
-        hsm.freeMemory(freed)
-      }
+      assert(status == OnHeapSpill.Writing)
       dataBlockQueue.foreach(_.flip())
       status = OnHeapSpill.Reading
+      shrinkMemory(shrinkToFit = true)
     }
-
-    logInfo(
-      "completed on-heap spill data" +
-        f", task=${TaskContext.get.taskAttemptId}" +
-        f", id=$id" +
-        f", size=${Utils.bytesToString(writtenSize)}")
   }
 
   def spill(): Long = {
     synchronized {
-      val freed = spillInternal()
-      hsm.freeMemory(freed)
-      freed
+      if (diskSpilledFile.nonEmpty) { // already spilled
+        return 0L
+      }
+      spillInternal()
     }
+  }
+
+  /**
+   * allocate memory from hsm
+   * @param size the amount of allocating memory
+   * @return true if the memory is fulfilled, otherwise false
+   */
+  private def acquireMemory(size: Long): Boolean = {
+    val allocated = hsm.acquireMemory(size)
+    memAllocated += allocated
+    allocated == size
+  }
+
+  /**
+   * shrink to actual memory usage
+   */
+  private def shrinkMemory(shrinkToFit: Boolean = false): Unit = {
+    if (memAllocated > memUsed) {
+      if (shrinkToFit || memAllocated - memUsed >= BLOCK_SIZE) {
+        freeMemory(memAllocated - memUsed)
+      }
+    }
+  }
+
+  private def freeMemory(size: Long): Long = {
+    val freed = Math.min(memAllocated, size)
+    hsm.freeMemory(freed)
+    memAllocated -= freed
+    freed
   }
 
   /**
@@ -150,84 +165,45 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
    * @return freed memory size
    */
   private def spillInternal(): Long = {
-    var freed = 0L
-    val (_, file, channel) = diskSpilledBlock match {
-      case Some((blockId, file, channel)) => (blockId, file, channel)
+    val channel = diskSpilledFile match {
+      case Some(_) => throw new RuntimeException("unreachable: double spilled")
       case _ =>
-        val (blockId, file) = hsm.blockManager.diskBlockManager.createTempLocalBlock()
-        val randomAccessFile = new RandomAccessFile(file, "rw")
-        val channel = randomAccessFile.getChannel
-        diskSpilledBlock = Some((blockId, randomAccessFile, channel))
+        val file = hsm.blockManager.diskBlockManager.createTempLocalBlock()._2
+        val channel = new RandomAccessFile(file, "rw").getChannel
+        diskSpilledFile = Some(channel)
         diskSpilledReadOffset = readSize
-        (blockId, randomAccessFile, channel)
-    }
-    channel.position(file.length())
-
-    // write all completed blocks to file
-    status match {
-      case OnHeapSpill.Writing =>
-        while (dataBlockQueue.nonEmpty && !dataBlockQueue.head.hasRemaining) {
-          val buf = dataBlockQueue.dequeue()
-          buf.flip()
-          while (buf.hasRemaining && channel.write(buf) >= 0) {}
-          freed += BLOCK_SIZE
-        }
-
-      case OnHeapSpill.Reading =>
-        while (dataBlockQueue.nonEmpty) {
-          val buf = dataBlockQueue.dequeue()
-          while (buf.hasRemaining && channel.write(buf) >= 0) {}
-          freed += BLOCK_SIZE
-        }
+        channel
     }
 
-    logInfo(
-      "on-heap spill data spilled into file" +
-        f", task=${TaskContext.get.taskAttemptId}" +
-        f", id=$id" +
-        f", freed=${Utils.bytesToString(freed)}")
-    freed
-  }
-
-  private def spillAll(): Long = {
-    if (this.diskSpilledBlock.isEmpty) {
-      return 0L
+    // flip for reading
+    if (status == OnHeapSpill.Writing) {
+      dataBlockQueue.foreach(_.flip())
     }
 
-    dataBlockQueue.lastOption match {
-      case Some(buf) if buf.hasRemaining => buf.limit(buf.position())
-      case _ =>
-    }
-    this.spillInternal() // spill all data if it is partially spilled
+    // write all blocks to file
+    channel.position(channel.size())
+    dataBlockQueue.foreach(buf => {
+      while (buf.hasRemaining && channel.write(buf) >= 0) {}
+      channel.force(false)
+    })
+    dataBlockQueue.clear()
+    freeMemory(memAllocated)
   }
 
   def release(): Unit = {
     this.synchronized {
-      val freed = memUsed
-
-      // release in-mem data
       dataBlockQueue.clear()
-      hsm.freeMemory(freed)
+      freeMemory(memAllocated)
 
       // release disk data
-      diskSpilledBlock.foreach {
-        case (blockId, _, channel) =>
-          channel.close()
-          hsm.blockManager.removeBlock(blockId, tellMaster = false)
-      }
-      diskSpilledBlock = None
-
-      logInfo(
-        "on-heap spill data released" +
-          f", task=${TaskContext.get.taskAttemptId}" +
-          f", id=$id" +
-          f", freed=${Utils.bytesToString(freed)}")
+      diskSpilledFile.foreach(_.close())
+      diskSpilledFile = None
     }
   }
 }
 
 object OnHeapSpill {
-  val BLOCK_SIZE: Int = 1048576
+  val BLOCK_SIZE: Int = 4194304
 
   sealed abstract class Status()
   final case object Writing extends Status()
