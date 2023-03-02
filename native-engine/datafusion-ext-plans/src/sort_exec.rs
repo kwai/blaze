@@ -47,6 +47,10 @@ use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 
 const NUM_LEVELS: usize = 64;
 
+// reserve memory for each spill
+// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB + batches=~100KB
+const SPILL_OFFHEAP_MEM_COST: usize = 300000;
+
 #[derive(Debug)]
 pub struct SortExec {
     input: Arc<dyn ExecutionPlan>,
@@ -231,8 +235,11 @@ impl MemoryConsumer for ExternalSorter {
             &self.input_schema,
             self.batch_size,
         )?);
-        let freed = self.baseline_metrics.mem_used().set(0);
-        Ok(freed)
+
+        // NOTE: discount one spill to ensure the freed memory is alway positive
+        let cur_mem_used = (spills.len() - 1) * SPILL_OFFHEAP_MEM_COST;
+        let old_mem_used = self.baseline_metrics.mem_used().set(cur_mem_used);
+        Ok(old_mem_used - cur_mem_used)
     }
 
     fn mem_used(&self) -> usize {
@@ -370,7 +377,15 @@ impl ExternalSorter {
                 self.batch_size,
             )?;
             spills.push(in_mem_spill);
-            self.shrink(self.baseline_metrics.mem_used().set(0));
+
+            // adjust mem usage
+            let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
+            match self.baseline_metrics.mem_used().value() {
+                v if v > cur_mem_used => self.shrink(v - cur_mem_used),
+                v if v < cur_mem_used => self.grow(cur_mem_used - v),
+                _ => {}
+            }
+            self.baseline_metrics.mem_used().set(cur_mem_used);
         }
 
         // use loser tree to merge all spills
@@ -704,10 +719,9 @@ impl SortedBatches {
         self.squeeze(batch_size)?;
 
         let spill = OnHeapSpill::try_new()?;
-        let zwriter = lz4_flex::frame::FrameEncoder::new(
+        let mut writer = lz4_flex::frame::FrameEncoder::new(
             BufWriter::with_capacity(65536, spill)
         );
-        let mut writer = BufWriter::with_capacity(65536, zwriter);
         let mut cur_rows = 0;
 
         // write batch1 + rows1, batch2 + rows2, ...
@@ -729,8 +743,7 @@ impl SortedBatches {
             }
         }
 
-        let zwriter = writer.into_inner().map_err(|err| err.into_error())?;
-        let mut spill = zwriter
+        let mut spill = writer
             .finish()
             .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
             .into_inner()
@@ -744,7 +757,7 @@ impl SortedBatches {
 struct SpillCursor {
     id: usize,
     spill_id: i32,
-    input: BufReader<FrameDecoder<BufReader<Box<dyn Read + Send>>>>,
+    input: FrameDecoder<BufReader<Box<dyn Read + Send>>>,
     num_batches: usize,
     cur_loaded_num_batches: usize,
     cur_loaded_num_rows: usize,
@@ -762,7 +775,7 @@ impl SpillCursor {
         let mut iter = SpillCursor {
             id,
             spill_id,
-            input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
+            input: FrameDecoder::new(buf_reader),
             num_batches: 0,
             cur_loaded_num_batches: 0,
             cur_loaded_num_rows: 0,

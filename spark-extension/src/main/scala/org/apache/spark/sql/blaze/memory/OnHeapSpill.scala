@@ -203,7 +203,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
 }
 
 object OnHeapSpill {
-  val BLOCK_SIZE: Int = 4194304
+  val BLOCK_SIZE: Int = 1048576
 
   sealed abstract class Status()
   final case object Writing extends Status()

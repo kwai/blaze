@@ -68,12 +68,6 @@ class OnHeapSpillManager(taskContext: TaskContext)
 
   def writeSpill(spillId: Int, data: ByteBuffer): Unit = {
     spills(spillId).get.write(data)
-
-    // manually trigger spill if the amount of used memory exceeded limits
-    val totalUsed = all.values.map(_.memUsed).sum
-    if (totalUsed > HEAP_SPILL_MEM_LIMIT) {
-      all.values.maxBy(_.memUsed).spill(totalUsed - HEAP_SPILL_MEM_LIMIT, this)
-    }
   }
 
   def readSpill(spillId: Int, buf: ByteBuffer): Int = {
@@ -109,6 +103,9 @@ class OnHeapSpillManager(taskContext: TaskContext)
   }
 
   override def spill(size: Long, trigger: MemoryConsumer): Long = {
+    if (memUsed == 0) {
+      return 0L
+    }
     logInfo(s"OnHeapSpillManager starts spilling, size=${Utils.bytesToString(size)}}")
     dumpStatus()
     var totalFreed = 0L
@@ -140,15 +137,6 @@ class OnHeapSpillManager(taskContext: TaskContext)
 }
 
 object OnHeapSpillManager extends Logging {
-  val HEAP_SPILL_MEM_LIMIT: Long = {
-    val conf = SparkEnv.get.conf
-    val memoryFraction = conf.get(MEMORY_FRACTION)
-    val heapSpillFraction = conf.getDouble("spark.blaze.heap.spill.fraction", 0.8)
-    val executorMemory = conf.get(EXECUTOR_MEMORY) * 1024 * 1024
-    val heapSpillMemLimit = (executorMemory * memoryFraction * heapSpillFraction).toLong
-    logInfo(s"heapSpillMemLimit=${Utils.bytesToString(heapSpillMemLimit)}")
-    heapSpillMemLimit
-  }
   val all: mutable.Map[Long, OnHeapSpillManager] = mutable.Map()
 
   def current: OnHeapSpillManager = {

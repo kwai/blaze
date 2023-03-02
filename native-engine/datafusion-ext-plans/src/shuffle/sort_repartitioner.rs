@@ -40,6 +40,10 @@ use std::sync::Arc;
 use voracious_radix_sort::{RadixSort, Radixable};
 use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 
+// reserve memory for each spill
+// estimated size: bufread=64KB + sizeof(offsets)=~KBs
+const SPILL_OFFHEAP_MEM_COST: usize = 70000;
+
 pub struct SortShuffleRepartitioner {
     memory_consumer_id: MemoryConsumerId,
     output_data_file: String,
@@ -227,10 +231,13 @@ impl MemoryConsumer for SortShuffleRepartitioner {
             ByteSize(self.mem_used() as u64),
             self.memory_manager(),
         );
-        self.spills.lock().await.push(self.spill_buffered_batches().await?);
+        let mut spills = self.spills.lock().await;
+        spills.push(self.spill_buffered_batches().await?);
 
-        let freed = self.metrics.mem_used().set(0);
-        Ok(freed)
+        // NOTE: discount one spill to ensure the freed memory is alway positive
+        let cur_mem_used = (spills.len() - 1) * SPILL_OFFHEAP_MEM_COST;
+        let old_mem_used = self.metrics.mem_used().set(cur_mem_used);
+        Ok(old_mem_used - cur_mem_used)
     }
 
     fn mem_used(&self) -> usize {
@@ -265,6 +272,15 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         if self.mem_used() > 0 {
             spills.push(self.spill_buffered_batches().await?);
         }
+
+        // adjust mem usage
+        let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
+        match self.metrics.mem_used().value() {
+            v if v > cur_mem_used => self.shrink(v - cur_mem_used),
+            v if v < cur_mem_used => self.grow(cur_mem_used - v),
+            _ => {}
+        }
+        self.metrics.mem_used().set(cur_mem_used);
 
         // define spill cursor. partial-ord is reversed because we
         // need to find mininum using a binary heap

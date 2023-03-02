@@ -42,6 +42,10 @@ use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
 use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 
+// reserve memory for each spill
+// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
+const SPILL_OFFHEAP_MEM_COST: usize = 200000;
+
 pub struct AggTables {
     in_mem: Mutex<InMemTable>,
     spills: Mutex<Vec<OnHeapSpill>>,
@@ -156,7 +160,15 @@ impl AggTables {
             // spill staging records
             let spill = in_mem.try_into_spill()?;
             cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
-            self.shrink(self.metrics.mem_used().set(0));
+
+            // adjust mem usage
+            let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
+            match self.metrics.mem_used().value() {
+                v if v > cur_mem_used => self.shrink(v - cur_mem_used),
+                v if v < cur_mem_used => self.grow(cur_mem_used - v),
+                _ => {}
+            }
+            self.metrics.mem_used().set(cur_mem_used);
         }
         for spill in spills {
             cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
@@ -275,10 +287,13 @@ impl MemoryConsumer for AggTables {
             self.memory_manager(),
         );
         let in_mem = std::mem::take(&mut *self.in_mem.lock().await);
-        self.spills.lock().await.push(in_mem.try_into_spill()?);
+        let mut spills = self.spills.lock().await;
+        spills.push(in_mem.try_into_spill()?);
 
-        let freed = self.metrics.mem_used().set(0);
-        Ok(freed)
+        // NOTE: discount one spill to ensure the freed memory is alway positive
+        let cur_mem_used = (spills.len() - 1) * SPILL_OFFHEAP_MEM_COST;
+        let old_mem_used = self.metrics.mem_used().set(cur_mem_used);
+        Ok(old_mem_used - cur_mem_used)
     }
 
     fn mem_used(&self) -> usize {
@@ -366,10 +381,9 @@ impl InMemTable {
 
     fn try_into_spill(self) -> Result<OnHeapSpill> {
         let spill = OnHeapSpill::try_new()?;
-        let zwriter = lz4_flex::frame::FrameEncoder::new(
+        let mut writer = lz4_flex::frame::FrameEncoder::new(
             BufWriter::with_capacity(65536, spill)
         );
-        let mut writer = BufWriter::with_capacity(65536, zwriter);
         let mut sorted = self.into_rev_sorted_vec();
 
         while let Some(record) = sorted.pop() {
@@ -387,8 +401,7 @@ impl InMemTable {
         }
         write_len(0, &mut writer)?; // EOF
 
-        let zwriter = writer.into_inner().map_err(|err| err.into_error())?;
-        let mut spill = zwriter
+        let mut spill = writer
             .finish()
             .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
             .into_inner()
@@ -402,7 +415,7 @@ impl InMemTable {
 struct SpillCursor {
     agg_ctx: Arc<AggContext>,
     spill_id: i32,
-    input: BufReader<FrameDecoder<BufReader<Box<dyn Read + Send>>>>,
+    input: FrameDecoder<BufReader<Box<dyn Read + Send>>>,
     current: Option<AggRecord>,
 }
 impl SpillCursor {
@@ -412,7 +425,7 @@ impl SpillCursor {
         let mut iter = SpillCursor {
             agg_ctx: agg_ctx.clone(),
             spill_id,
-            input: BufReader::with_capacity(65536, FrameDecoder::new(buf_reader)),
+            input: FrameDecoder::new(buf_reader),
             current: None,
         };
         iter.pop()?; // load first record into current
