@@ -9,7 +9,7 @@ plugins {
 }
 
 rootProject.group = "blaze-engine"
-rootProject.version = "1.0.2"
+rootProject.version = "1.0.3"
 
 ext {
 	shim = rootProject.properties.getOrDefault("shim", "spark303")
