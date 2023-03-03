@@ -234,10 +234,8 @@ impl MemoryConsumer for SortShuffleRepartitioner {
         let mut spills = self.spills.lock().await;
         spills.push(self.spill_buffered_batches().await?);
 
-        // NOTE: discount one spill to ensure the freed memory is alway positive
-        let cur_mem_used = (spills.len() - 1) * SPILL_OFFHEAP_MEM_COST;
-        let old_mem_used = self.metrics.mem_used().set(cur_mem_used);
-        Ok(old_mem_used - cur_mem_used)
+        let old_mem_used = self.metrics.mem_used().set(0);
+        Ok(old_mem_used)
     }
 
     fn mem_used(&self) -> usize {
