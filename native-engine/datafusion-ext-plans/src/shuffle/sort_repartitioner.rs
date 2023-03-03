@@ -250,7 +250,10 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let mem_increase = input.get_array_memory_size();
+        let mem_increase =
+            input.get_array_memory_size() +
+            input.num_rows() * std::mem::size_of::<PI>(); // for sorting
+
         self.grow(mem_increase);
         self.metrics.mem_used().add(mem_increase);
 
