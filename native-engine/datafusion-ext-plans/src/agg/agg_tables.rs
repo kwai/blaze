@@ -158,8 +158,9 @@ impl AggTables {
         let mut cursors = vec![];
         if in_mem.num_records() > 0 {
             // spill staging records
-            let spill = in_mem.try_into_spill()?;
-            cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
+            if let Some(spill) = in_mem.try_into_spill()? {
+                cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
+            }
 
             // adjust mem usage
             let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
@@ -281,17 +282,20 @@ impl MemoryConsumer for AggTables {
     }
 
     async fn spill(&self) -> Result<usize> {
-        log::info!(
-            "agg tables start spilling, used={}, {}",
-            ByteSize(self.mem_used() as u64),
-            self.memory_manager(),
-        );
-        let in_mem = std::mem::take(&mut *self.in_mem.lock().await);
-        let mut spills = self.spills.lock().await;
-        spills.push(in_mem.try_into_spill()?);
+        if let Some(spill) = std::mem::take(&mut *self.in_mem.lock().await)
+            .try_into_spill()?
+        {
+            self.spills.lock().await.push(spill);
+            let freed = self.metrics.mem_used().set(0);
 
-        let old_mem_used = self.metrics.mem_used().set(0);
-        Ok(old_mem_used)
+            log::info!(
+                "agg tables spilled {}, {}",
+                ByteSize(freed as u64),
+                self.memory_manager(),
+            );
+            return Ok(freed);
+        }
+        Ok(0)
     }
 
     fn mem_used(&self) -> usize {
@@ -377,7 +381,11 @@ impl InMemTable {
         vec
     }
 
-    fn try_into_spill(self) -> Result<OnHeapSpill> {
+    fn try_into_spill(self) -> Result<Option<OnHeapSpill>> {
+        if self.grouping_mappings.is_empty() && self.unsorted.is_empty() {
+            return Ok(None);
+        }
+
         let spill = OnHeapSpill::try_new()?;
         let mut writer = lz4_flex::frame::FrameEncoder::new(
             BufWriter::with_capacity(65536, spill)
@@ -406,7 +414,7 @@ impl InMemTable {
             .map_err(|err| err.into_error())?;
 
         spill.complete()?;
-        Ok(spill)
+        Ok(Some(spill))
     }
 }
 

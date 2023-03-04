@@ -265,7 +265,14 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
 fn spill_buffered_partitions(
     buffered_partitions: &mut [PartitionBuffer],
     num_output_partitions: usize,
-) -> Result<ShuffleSpill> {
+) -> Result<Option<ShuffleSpill>> {
+
+    // no data to spill
+    if buffered_partitions.iter().all(|p| {
+        p.frozen.is_empty() && p.num_staging_rows == 0 && p.num_active_rows == 0
+    }) {
+        return Ok(None);
+    }
 
     let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
     let mut spill = OnHeapSpill::try_new()?;
@@ -288,10 +295,10 @@ fn spill_buffered_partitions(
 
     // add one extra offset at last to ease partition length computation
     offsets[num_output_partitions] = pos;
-    Ok(ShuffleSpill {
+    Ok(Some(ShuffleSpill {
         spill,
         offsets,
-    })
+    }))
 }
 
 impl Debug for BucketShuffleRepartitioner {
@@ -324,25 +331,21 @@ impl MemoryConsumer for BucketShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<usize> {
-        log::info!(
-            "bucket repartitioner start spilling, used={}, {}",
-            ByteSize(self.mem_used() as u64),
-            self.memory_manager(),
-        );
-
-        let mut buffered_partitions = self.buffered_partitions.lock().await;
-        if buffered_partitions.len() == 0 {
-            return Ok(0);
-        }
-
-        let spill = spill_buffered_partitions(
-            &mut buffered_partitions,
+        if let Some(spill) = spill_buffered_partitions(
+            &mut *self.buffered_partitions.lock().await,
             self.num_output_partitions,
-        )?;
-        self.spills.lock().await.push(spill);
+        )? {
+            self.spills.lock().await.push(spill);
+            let freed = self.metrics.mem_used().set(0);
 
-        let freed = self.metrics.mem_used().set(0);
-        Ok(freed)
+            log::info!(
+                "bucket repartitioner spilled {}, {}",
+                ByteSize(freed as u64),
+                self.memory_manager(),
+            );
+            return Ok(freed);
+        }
+        Ok(0)
     }
 
     fn mem_used(&self) -> usize {

@@ -99,10 +99,13 @@ impl SortShuffleRepartitioner {
         repartitioner
     }
 
-    async fn spill_buffered_batches(&self) -> Result<ShuffleSpill> {
+    async fn spill_buffered_batches(&self) -> Result<Option<ShuffleSpill>> {
         let buffered_batches = std::mem::take(
             &mut *self.buffered_batches.lock().await
         );
+        if buffered_batches.is_empty() {
+            return Ok(None);
+        }
 
         // combine all buffered batches
         let num_output_partitions = self.num_output_partitions;
@@ -192,10 +195,10 @@ impl SortShuffleRepartitioner {
         drop(cur_spill_writer);
         cur_spill.complete()?;
 
-        Ok(ShuffleSpill {
+        Ok(Some(ShuffleSpill {
             spill: cur_spill,
             offsets: cur_spill_offsets,
-        })
+        }))
     }
 
     fn spilled_bytes(&self) -> usize {
@@ -226,16 +229,18 @@ impl MemoryConsumer for SortShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<usize> {
-        log::info!(
-            "sort repartitioner start spilling, used={}, {}",
-            ByteSize(self.mem_used() as u64),
-            self.memory_manager(),
-        );
-        let mut spills = self.spills.lock().await;
-        spills.push(self.spill_buffered_batches().await?);
+        if let Some(spill) = self.spill_buffered_batches().await? {
+            self.spills.lock().await.push(spill);
+            let freed = self.metrics.mem_used().set(0);
 
-        let old_mem_used = self.metrics.mem_used().set(0);
-        Ok(old_mem_used)
+            log::info!(
+                "sort repartitioner spilled {}, {}",
+                ByteSize(freed as u64),
+                self.memory_manager(),
+            );
+            return Ok(freed);
+        }
+        Ok(0)
     }
 
     fn mem_used(&self) -> usize {
@@ -271,7 +276,9 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // spill all buffered batches
         if self.mem_used() > 0 {
-            spills.push(self.spill_buffered_batches().await?);
+            if let Some(spill) = self.spill_buffered_batches().await? {
+                spills.push(spill);
+            }
         }
 
         // adjust mem usage

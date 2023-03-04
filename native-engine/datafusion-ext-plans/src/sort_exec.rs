@@ -212,16 +212,9 @@ impl MemoryConsumer for ExternalSorter {
     }
 
     async fn spill(&self) -> Result<usize> {
-        log::info!(
-            "external sorter start spilling, used={}, {}",
-            ByteSize(self.mem_used() as u64),
-            self.memory_manager(),
-        );
 
+        // merge all batches in levels into one in_mem_batches
         let mut levels = self.levels.lock().await;
-        let mut spills = self.spills.lock().await;
-
-        // merge all batches in levels and spill into l1
         let mut in_mem_batches: Option<SortedBatches> = None;
         for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]) {
             if let Some(existed) = level {
@@ -231,12 +224,22 @@ impl MemoryConsumer for ExternalSorter {
                 }
             }
         }
-        spills.push(in_mem_batches.unwrap().try_into_spill(
+
+        if let Some(spill) = in_mem_batches.unwrap().try_into_spill(
             &self.input_schema,
             self.batch_size,
-        )?);
-        let old_mem_used = self.baseline_metrics.mem_used().set(0);
-        Ok(old_mem_used)
+        )? {
+            self.spills.lock().await.push(spill);
+            let freed = self.baseline_metrics.mem_used().set(0);
+
+            log::info!(
+                "external sorter spilled {}, {}",
+                ByteSize(freed as u64),
+                self.memory_manager(),
+            );
+            return Ok(freed);
+        }
+        Ok(0)
     }
 
     fn mem_used(&self) -> usize {
@@ -369,11 +372,12 @@ impl ExternalSorter {
 
         // move in-mem batches into spill, so we can free memory as soon as possible
         if let Some(in_mem_batches) = in_mem_batches {
-            let in_mem_spill = in_mem_batches.try_into_spill(
+            if let Some(in_mem_spill) = in_mem_batches.try_into_spill(
                 &self.input_schema,
                 self.batch_size,
-            )?;
-            spills.push(in_mem_spill);
+            )? {
+                spills.push(in_mem_spill);
+            }
 
             // adjust mem usage
             let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
@@ -711,8 +715,11 @@ impl SortedBatches {
         mut self,
         schema: &SchemaRef,
         batch_size: usize,
-    ) -> Result<OnHeapSpill> {
+    ) -> Result<Option<OnHeapSpill>> {
 
+        if self.batches_num_rows == 0 {
+            return Ok(None);
+        }
         self.squeeze(batch_size)?;
 
         let spill = OnHeapSpill::try_new()?;
@@ -747,7 +754,7 @@ impl SortedBatches {
             .map_err(|err| err.into_error())?;
 
         spill.complete()?;
-        Ok(spill)
+        Ok(Some(spill))
     }
 }
 

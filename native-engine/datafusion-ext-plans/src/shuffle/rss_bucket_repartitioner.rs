@@ -39,6 +39,7 @@ use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::io::Cursor;
 use std::sync::Arc;
+use bytesize::ByteSize;
 
 pub struct RssBucketShuffleRepartitioner {
     id: MemoryConsumerId,
@@ -206,13 +207,17 @@ impl MemoryConsumer for RssBucketShuffleRepartitioner {
 
     async fn spill(&self) -> Result<usize> {
         let mut buffered_partitions = self.buffered_partitions.lock().await;
-        if buffered_partitions.len() == 0 {
-            return Ok(0);
-        }
         for i in 0..self.num_output_partitions {
             buffered_partitions[i].flush_to_rss(i)?;
         }
-        Ok(self.metrics.mem_used().set(0))
+
+        let freed = self.metrics.mem_used().set(0);
+        log::info!(
+            "rss bucket repartitioner spilled {}, {}",
+            ByteSize(freed as u64),
+            self.memory_manager(),
+        );
+        Ok(freed)
     }
 
     fn mem_used(&self) -> usize {
