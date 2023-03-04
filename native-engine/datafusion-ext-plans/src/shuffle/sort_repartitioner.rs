@@ -37,7 +37,6 @@ use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::sync::Arc;
-use voracious_radix_sort::{RadixSort, Radixable};
 use crate::spill::{get_spills_disk_usage, OnHeapSpill};
 
 // reserve memory for each spill
@@ -131,7 +130,7 @@ impl SortShuffleRepartitioner {
                     row_idx: i as u32,
                 }));
         }
-        pi_vec.voracious_sort();
+        pi_vec.sort_unstable();
 
         // write to in-mem spill
         let mut buffered_columns = vec![vec![]; buffered_batches[0].num_columns()];
@@ -436,11 +435,4 @@ struct PI {
     #[derivative(PartialEq = "ignore")]
     #[derivative(Ord = "ignore")]
     row_idx: u32,
-}
-impl Radixable<u64> for PI {
-    type Key = u64;
-
-    fn key(&self) -> Self::Key {
-        (self.partition_id as u64) << 32 | self.hash as u64
-    }
 }
