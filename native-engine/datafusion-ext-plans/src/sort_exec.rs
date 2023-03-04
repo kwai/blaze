@@ -291,25 +291,36 @@ impl ExternalSorter {
 
         // create a sorted batches containing the single input batch
         let mut sorted_batches = SortedBatches::from_batch(self.clone(), batch)?;
+        self.baseline_metrics.mem_used().add(sorted_batches.mem_size());
+        self.grow(sorted_batches.batches_mem_size);
+        self.try_grow(0).await?;
 
         // merge sorted batches into levels
         let mut levels = self.levels.lock().await;
         let mut cur_level = 0;
         while let Some(existed) = std::mem::take(&mut levels[cur_level]) {
-            self.baseline_metrics.mem_used().sub(existed.mem_size());
-            self.shrink(existed.mem_size());
+            let mem_used_before_merge = sorted_batches.mem_size() + existed.mem_size();
 
             // merge and squeeze
             sorted_batches.merge(existed);
             if sorted_batches.batches_num_rows > self.limit * 2 {
                 sorted_batches.squeeze(self.batch_size)?;
             }
+
+            // adjust memory usage
+            match sorted_batches.mem_size() {
+                m if m > mem_used_before_merge => {
+                    self.baseline_metrics.mem_used().add(m - mem_used_before_merge);
+                    self.grow(m - mem_used_before_merge);
+                }
+                m if m < mem_used_before_merge => {
+                    self.baseline_metrics.mem_used().sub(mem_used_before_merge - m);
+                    self.shrink(mem_used_before_merge - m);
+                }
+                _ => {}
+            }
             cur_level += 1;
         }
-        let used = sorted_batches.mem_size();
-        self.grow(used);
-        self.baseline_metrics.mem_used().add(used);
-
         levels[cur_level] = Some(sorted_batches);
         drop(levels);
 
