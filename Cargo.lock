@@ -834,6 +834,7 @@ dependencies = [
  "async-trait",
  "blaze-commons",
  "bytes",
+ "bytesize",
  "datafusion",
  "datafusion-ext-commons",
  "futures",

@@ -29,7 +29,7 @@ pub fn write_batch<W: Write>(
     compress: bool,
 ) -> ArrowResult<()> {
     let mut output: Box<dyn Write> = if compress {
-        Box::new(BufWriter::new(zstd::Encoder::new(output, 1)?.auto_finish()))
+        Box::new(zstd::Encoder::new(output, 1)?.auto_finish())
     } else {
         Box::new(BufWriter::new(output))
     };

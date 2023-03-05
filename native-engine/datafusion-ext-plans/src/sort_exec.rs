@@ -367,13 +367,36 @@ impl ExternalSorter {
         // no spills -- output in-mem batches
         if spills.is_empty() {
             if let Some(in_mem_batches) = in_mem_batches {
-                for batch in in_mem_batches.batches {
-                    let batch = RecordBatch::try_new(
+                let mut in_mem_batches = in_mem_batches.batches
+                    .into_iter()
+                    .rev() // for popping
+                    .map(|cols| Ok(RecordBatch::try_new(
                         self.input_schema.clone(),
-                        batch,
-                    )?;
-                    timer.stop();
+                        cols,
+                    )?))
+                    .collect::<Result<Vec<RecordBatch>>>()?;
 
+                // adjust memory usage
+                let mem_used = in_mem_batches
+                    .iter()
+                    .map(|batch| batch.get_array_memory_size())
+                    .sum::<usize>();
+                match self.baseline_metrics.mem_used().set(mem_used) {
+                    m if m < mem_used => {
+                        self.grow(mem_used - m);
+                    }
+                    m if m > mem_used => {
+                        self.shrink(m - mem_used);
+                    }
+                    _ => {}
+                }
+
+                // output batches
+                while let Some(batch) = in_mem_batches.pop() {
+                    self.baseline_metrics.mem_used().sub(batch.get_array_memory_size());
+                    self.shrink(batch.get_array_memory_size());
+
+                    timer.stop();
                     self.baseline_metrics.record_output(batch.num_rows());
                     sender
                         .send(Ok(batch))
@@ -381,7 +404,6 @@ impl ExternalSorter {
                         .await?;
                     timer.restart();
                 }
-                self.shrink(self.baseline_metrics.mem_used().set(0));
             }
             return Ok(());
         }
@@ -602,10 +624,8 @@ impl SortedBatches {
     }
 
     fn mem_size(&self) -> usize {
-        // TODO: use more precise mem_used calculation
-        self.sorted_rows.capacity() * std::mem::size_of::<IndexedRow>() +
-            self.batches_mem_size * 2 + // batches are duplicated during squeezing
-            self.batches_num_rows * std::mem::size_of::<IndexedRow>() +
+        self.batches_mem_size * 2 + // batches are duplicated during squeezing
+            self.sorted_rows.capacity() * 2 * std::mem::size_of::<IndexedRow>() +
             self.row_mem_size
     }
 

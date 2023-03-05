@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use blaze_commons::{jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object, jni_new_string};
+use bytesize::ByteSize;
 use datafusion::error::Result;
 use datafusion::physical_plan::metrics::Time;
 use jni::objects::{GlobalRef, JObject};
@@ -75,6 +76,11 @@ pub struct FsDataInputStream {
 impl FsDataInputStream {
     pub fn read_fully(&self, pos: u64, buf: &mut [u8]) -> Result<()> {
         let _timer = self.io_time.timer();
+        log::info!(
+            "FSDataInputStream.readFully: pos={}, len={}",
+            pos,
+            ByteSize(buf.len() as u64));
+        
         let buf = jni_new_direct_byte_buffer!(buf)?;
         jni_call_static!(
             JniUtil.readFullyFromFSDataInputStream(

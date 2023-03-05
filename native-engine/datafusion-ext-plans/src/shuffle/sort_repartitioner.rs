@@ -118,7 +118,7 @@ impl SortShuffleRepartitioner {
             let hashes = evaluate_hashes(&self.partitioning, &batch)?;
             let partition_ids = evaluate_partition_ids(&hashes, num_output_partitions);
 
-            // compute partition ids and sorted indices by counting sort
+            // compute partition ids and sorted indices
             pi_vec.extend(hashes
                 .into_iter()
                 .zip(partition_ids.into_iter())
@@ -283,12 +283,15 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // adjust mem usage
         let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
-        match self.metrics.mem_used().value() {
-            v if v > cur_mem_used => self.shrink(v - cur_mem_used),
-            v if v < cur_mem_used => self.grow(cur_mem_used - v),
+        match self.metrics.mem_used().set(cur_mem_used) {
+            m if m > cur_mem_used => {
+                self.shrink(m - cur_mem_used);
+            }
+            m if m < cur_mem_used => {
+                self.grow(cur_mem_used - m);
+            }
             _ => {}
         }
-        self.metrics.mem_used().set(cur_mem_used);
 
         // define spill cursor. partial-ord is reversed because we
         // need to find mininum using a binary heap
