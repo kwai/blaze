@@ -279,6 +279,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 spills.push(spill);
             }
         }
+        log::info!("sort repartitioner starts outputing with {} spills", spills.len());
 
         // adjust mem usage
         let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;

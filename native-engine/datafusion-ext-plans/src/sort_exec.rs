@@ -292,7 +292,7 @@ impl ExternalSorter {
         // create a sorted batches containing the single input batch
         let mut sorted_batches = SortedBatches::from_batch(self.clone(), batch)?;
         self.baseline_metrics.mem_used().add(sorted_batches.mem_size());
-        self.grow(sorted_batches.batches_mem_size);
+        self.grow(sorted_batches.mem_size());
         self.try_grow(0).await?;
 
         // merge sorted batches into levels
@@ -339,9 +339,6 @@ impl ExternalSorter {
         let mut in_mem_batches: Option<SortedBatches> = None;
         for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]) {
             if let Some(existed) = level {
-                self.baseline_metrics.mem_used().sub(existed.mem_size());
-                self.shrink(existed.mem_size());
-
                 match &mut in_mem_batches {
                     Some(in_mem_batches) => in_mem_batches.merge(existed),
                     None => in_mem_batches = Some(existed),
@@ -350,10 +347,18 @@ impl ExternalSorter {
         }
         if let Some(in_mem_batches) = &mut in_mem_batches {
             in_mem_batches.squeeze(self.batch_size)?;
-            self.grow(in_mem_batches.mem_size());
-            self.baseline_metrics.mem_used().add(in_mem_batches.mem_size());
-        };
-
+            match self.baseline_metrics.mem_used().set(in_mem_batches.mem_size()) {
+                m if m < in_mem_batches.mem_size() => {
+                    self.grow(in_mem_batches.mem_size() - m);
+                }
+                m if m > in_mem_batches.mem_size() => {
+                    self.shrink(m - in_mem_batches.mem_size());
+                }
+                _ => {}
+            }
+        } else {
+            self.shrink(self.baseline_metrics.mem_used().set(0));
+        }
         drop(levels);
 
         let mut spills = self.spills.lock().await;
@@ -600,6 +605,7 @@ impl SortedBatches {
         // TODO: use more precise mem_used calculation
         self.sorted_rows.capacity() * std::mem::size_of::<IndexedRow>() +
             self.batches_mem_size * 2 + // batches are duplicated during squeezing
+            self.batches_num_rows * std::mem::size_of::<IndexedRow>() +
             self.row_mem_size
     }
 
