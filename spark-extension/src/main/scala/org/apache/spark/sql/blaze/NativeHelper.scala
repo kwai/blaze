@@ -244,15 +244,13 @@ object BlazeCallNativeWrapper extends Logging {
       "Initializing native environment (" +
         s"batchSize=${NativeHelper.batchSize}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
-        s"memoryFraction=${NativeHelper.memoryFraction}, " +
-        s"tmpDirs=${NativeHelper.tmpDirs}" +
-        ")")
+        s"memoryFraction=${NativeHelper.memoryFraction})")
+
     BlazeCallNativeWrapper.load("blaze")
     JniBridge.initNative(
       NativeHelper.batchSize,
       NativeHelper.nativeMemory,
-      NativeHelper.memoryFraction,
-      NativeHelper.tmpDirs)
+      NativeHelper.memoryFraction)
   }
 
   private def load(name: String): Unit = {

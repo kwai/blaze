@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::panic::AssertUnwindSafe;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use arrow::array::{export_array_into_raw, StructArray};
@@ -31,7 +30,7 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::{FutureExt, StreamExt};
 use jni::objects::JObject;
-use jni::objects::{GlobalRef, JClass, JString};
+use jni::objects::{GlobalRef, JClass};
 use jni::sys::{jboolean, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use log::LevelFilter;
@@ -81,7 +80,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
     batch_size: i64,
     native_memory: i64,
     memory_fraction: f64,
-    tmp_dirs: JString,
 ) {
     handle_unwinded_scope(|| {
         // init logging
@@ -92,11 +90,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
 
         // init datafusion session context
         SESSION.get_or_init(|| {
-            let dirs = jni_get_string!(tmp_dirs)
-                .unwrap()
-                .split(',')
-                .map(PathBuf::from)
-                .collect::<Vec<_>>();
             let max_memory = native_memory as usize;
             let batch_size = batch_size as usize;
             let runtime_config = RuntimeConfig::new()
@@ -104,7 +97,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
                     max_memory,
                     memory_fraction,
                 })
-                .with_disk_manager(DiskManagerConfig::NewSpecified(dirs));
+                .with_disk_manager(DiskManagerConfig::Disabled);
 
             let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
             let config = SessionConfig::new().with_batch_size(batch_size);
