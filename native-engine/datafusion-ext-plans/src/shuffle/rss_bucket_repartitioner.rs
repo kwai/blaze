@@ -91,7 +91,9 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
     }
 
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let mem_increase = input.get_array_memory_size();
+        // batch records are first shuffled and inserted into array builders, which may
+        // have doubled capacity in worse case.
+        let mem_increase = input.get_array_memory_size() * 2;
         self.metrics.mem_used().add(mem_increase);
         self.grow(mem_increase);
         self.try_grow(0).await?;
