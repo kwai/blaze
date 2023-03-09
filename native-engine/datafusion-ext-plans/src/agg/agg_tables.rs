@@ -82,24 +82,19 @@ impl AggTables {
         process: impl FnOnce(&mut InMemTable) -> Result<()>,
     ) -> Result<()> {
         let mut in_mem = self.in_mem.lock().await;
-        let old_mem_used = in_mem.mem_used();
-
         process(&mut in_mem)?;
+
         let new_mem_used = in_mem.mem_used();
+        let old_mem_used = self.metrics.mem_used().set(new_mem_used);
         drop(in_mem);
 
-        // NOTE: the memory usage is already changed before we call try_grow(),
-        // so we first call grow() to increase memory usage, and then call
-        // try_grow(0) to spill if necessary.
         if new_mem_used > old_mem_used {
             let mem_increased = new_mem_used - old_mem_used;
             self.grow(mem_increased);
-            self.metrics.mem_used().add(mem_increased);
             self.try_grow(0).await?;
         } else if new_mem_used < old_mem_used {
             let mem_freed = old_mem_used - new_mem_used;
             self.shrink(mem_freed);
-            self.metrics.mem_used().sub(mem_freed);
         }
         Ok(())
     }
@@ -322,10 +317,14 @@ pub struct InMemTable {
 
 impl InMemTable {
     pub fn mem_used(&self) -> usize {
-        // TODO: use more precise mem_used calculation
+        // hash table is first transformed to sorted table
         self.data_mem_used
-            + size_of::<AggRecord>() * self.unsorted.capacity()
-            + size_of::<AggRecord>() * self.grouping_mappings.capacity()
+            + self.unsorted.capacity() * size_of::<AggRecord>()
+            + self.grouping_mappings.capacity() * (
+                1 // one-byte payload per entry according to hashbrown's doc
+                    + size_of::<AggRecord>() // hashmap entries
+                    + size_of::<AggRecord>() // hashmap is sorted into vec during spill
+            )
     }
 
     pub fn num_records(&self) -> usize {
