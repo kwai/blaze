@@ -98,10 +98,11 @@ impl SortShuffleRepartitioner {
         repartitioner
     }
 
-    async fn spill_buffered_batches(&self) -> Result<Option<ShuffleSpill>> {
-        let buffered_batches = std::mem::take(
-            &mut *self.buffered_batches.lock().await
-        );
+    fn spill_buffered_batches(
+        &self,
+        buffered_batches: &[RecordBatch],
+    ) -> Result<Option<ShuffleSpill>> {
+
         if buffered_batches.is_empty() {
             return Ok(None);
         }
@@ -228,7 +229,9 @@ impl MemoryConsumer for SortShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<usize> {
-        if let Some(spill) = self.spill_buffered_batches().await? {
+        if let Some(spill) = self.spill_buffered_batches(
+            &std::mem::take(&mut *self.buffered_batches.lock().await),
+        )? {
             self.spills.lock().await.push(spill);
             let freed = self.metrics.mem_used().set(0);
 
@@ -274,10 +277,10 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let mut spills = self.spills.lock().await;
 
         // spill all buffered batches
-        if self.mem_used() > 0 {
-            if let Some(spill) = self.spill_buffered_batches().await? {
-                spills.push(spill);
-            }
+        if let Some(spill) = self.spill_buffered_batches(
+            &std::mem::take(&mut *self.buffered_batches.lock().await),
+        )? {
+            spills.push(spill);
         }
         log::info!("sort repartitioner starts outputing with {} spills", spills.len());
 
