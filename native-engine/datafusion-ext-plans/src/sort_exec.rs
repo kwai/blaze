@@ -108,6 +108,7 @@ impl ExecutionPlan for SortExec {
     fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
         let input_schema = self.input.schema();
         let batch_size = context.session_config().batch_size();
+        let squeeze_batch_size = (batch_size as f64).sqrt() as usize;
 
         let sort_row_converter = RowConverter::new(
             self.exprs
@@ -124,7 +125,7 @@ impl ExecutionPlan for SortExec {
         let external_sorter = Arc::new(ExternalSorter {
             id: MemoryConsumerId::new(partition),
             context: context.clone(),
-            batch_size,
+            squeeze_batch_size,
             exprs: self.exprs.clone(),
             input_schema: self.schema(),
             limit: self.fetch.unwrap_or(usize::MAX),
@@ -145,10 +146,18 @@ impl ExecutionPlan for SortExec {
         ));
         let stream = external_sort(coalesced, external_sorter);
 
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
+        let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(stream).try_flatten(),
-        )))
+        ));
+        let coalesced = Box::pin(CoalesceStream::new(
+            output,
+            batch_size,
+            BaselineMetrics::new(&self.metrics, partition)
+                .elapsed_compute()
+                .clone(),
+        ));
+        Ok(coalesced)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -175,7 +184,7 @@ impl ExecutionPlan for SortExec {
 struct ExternalSorter {
     id: MemoryConsumerId,
     context: Arc<TaskContext>,
-    batch_size: usize,
+    squeeze_batch_size: usize,
     exprs: Vec<PhysicalSortExpr>,
     input_schema: SchemaRef,
     limit: usize,
@@ -224,10 +233,9 @@ impl MemoryConsumer for ExternalSorter {
                 }
             }
         }
-
         if let Some(spill) = in_mem_batches.unwrap().try_into_spill(
             &self.input_schema,
-            self.batch_size,
+            self.squeeze_batch_size,
         )? {
             self.spills.lock().await.push(spill);
             let freed = self.baseline_metrics.mem_used().set(0);
@@ -291,40 +299,31 @@ impl ExternalSorter {
 
         // create a sorted batches containing the single input batch
         let mut sorted_batches = SortedBatches::from_batch(self.clone(), batch)?;
-        self.baseline_metrics.mem_used().add(sorted_batches.mem_size());
-        self.grow(sorted_batches.mem_size());
-        self.try_grow(0).await?;
 
         // merge sorted batches into levels
         let mut levels = self.levels.lock().await;
         let mut cur_level = 0;
         while let Some(existed) = std::mem::take(&mut levels[cur_level]) {
-            let mem_used_before_merge = sorted_batches.mem_size() + existed.mem_size();
-
             // merge and squeeze
             sorted_batches.merge(existed);
             if sorted_batches.batches_num_rows > self.limit * 2 {
-                sorted_batches.squeeze(self.batch_size)?;
-            }
-
-            // adjust memory usage
-            match sorted_batches.mem_size() {
-                m if m > mem_used_before_merge => {
-                    self.baseline_metrics.mem_used().add(m - mem_used_before_merge);
-                    self.grow(m - mem_used_before_merge);
-                }
-                m if m < mem_used_before_merge => {
-                    self.baseline_metrics.mem_used().sub(mem_used_before_merge - m);
-                    self.shrink(mem_used_before_merge - m);
-                }
-                _ => {}
+                sorted_batches.squeeze(self.squeeze_batch_size)?;
             }
             cur_level += 1;
         }
         levels[cur_level] = Some(sorted_batches);
+
+        // adjust memory usage
+        let new_mem_size = levels.iter().flatten().map(|b| b.mem_size()).sum::<usize>();
+        let old_mem_size = self.baseline_metrics.mem_used().set(new_mem_size);
         drop(levels);
 
-        self.try_grow(0).await?; // trigger spill if necessary
+        if new_mem_size > old_mem_size {
+            self.grow(new_mem_size - old_mem_size);
+            self.try_grow(0).await?;
+        } else {
+            self.shrink(old_mem_size - new_mem_size);
+        }
         Ok(())
     }
 
@@ -346,7 +345,7 @@ impl ExternalSorter {
             }
         }
         if let Some(in_mem_batches) = &mut in_mem_batches {
-            in_mem_batches.squeeze(self.batch_size)?;
+            in_mem_batches.squeeze(self.squeeze_batch_size)?;
             match self.baseline_metrics.mem_used().set(in_mem_batches.mem_size()) {
                 m if m < in_mem_batches.mem_size() => {
                     self.grow(in_mem_batches.mem_size() - m);
@@ -412,7 +411,7 @@ impl ExternalSorter {
         if let Some(in_mem_batches) = in_mem_batches {
             if let Some(in_mem_spill) = in_mem_batches.try_into_spill(
                 &self.input_schema,
-                self.batch_size,
+                self.squeeze_batch_size,
             )? {
                 spills.push(in_mem_spill);
             }
@@ -441,7 +440,7 @@ impl ExternalSorter {
             });
 
         let mut num_total_output_rows = 0;
-        let mut staging_cursor_ids = Vec::with_capacity(self.batch_size);
+        let mut staging_cursor_ids = Vec::with_capacity(self.squeeze_batch_size);
 
 
         macro_rules! flush_staging {
@@ -496,7 +495,7 @@ impl ExternalSorter {
             drop(min_cursor);
             num_total_output_rows += 1;
 
-            if staging_cursor_ids.len() >= self.batch_size {
+            if staging_cursor_ids.len() >= self.squeeze_batch_size {
                 flush_staging!();
             }
         }
@@ -751,13 +750,13 @@ impl SortedBatches {
     fn try_into_spill(
         mut self,
         schema: &SchemaRef,
-        batch_size: usize,
+        squeeze_batch_size: usize,
     ) -> Result<Option<OnHeapSpill>> {
 
         if self.batches_num_rows == 0 {
             return Ok(None);
         }
-        self.squeeze(batch_size)?;
+        self.squeeze(squeeze_batch_size)?;
 
         let spill = OnHeapSpill::try_new()?;
         let mut writer = lz4_flex::frame::FrameEncoder::new(
