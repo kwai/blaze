@@ -23,7 +23,7 @@ use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::StreamExt;
 use std::sync::Arc;
-use crate::spill::OnHeapSpill;
+use crate::common::onheap_spill::OnHeapSpill;
 
 pub mod bucket_repartitioner;
 pub mod rss_bucket_repartitioner;
@@ -33,7 +33,6 @@ pub mod sort_repartitioner;
 
 #[async_trait]
 pub trait ShuffleRepartitioner: Send + Sync {
-    fn name(&self) -> &str;
     async fn insert_batch(&self, input: RecordBatch) -> Result<()>;
     async fn shuffle_write(&self) -> Result<()>;
 }
@@ -45,6 +44,7 @@ impl dyn ShuffleRepartitioner {
         batch_size: usize,
         metrics: BaselineMetrics,
     ) -> Result<SendableRecordBatchStream> {
+
         let input_schema = input.schema();
 
         // coalesce input

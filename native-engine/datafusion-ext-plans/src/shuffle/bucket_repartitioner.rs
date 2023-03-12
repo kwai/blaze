@@ -17,18 +17,14 @@
 use crate::shuffle::{
     evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill,
 };
-use crate::spill::{get_spills_disk_usage, OnHeapSpill};
+use crate::common::onheap_spill::OnHeapSpill;
 use arrow::array::*;
 use arrow::datatypes::*;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use bytesize::ByteSize;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::execution::memory_manager::ConsumerType;
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
 use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
@@ -38,29 +34,29 @@ use datafusion_ext_commons::array_builder::{
 use datafusion_ext_commons::io::write_one_batch;
 use futures::lock::Mutex;
 use itertools::Itertools;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Cursor, Read, Seek, SeekFrom, Write};
-use std::sync::Arc;
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::sync::{Arc, Weak};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::SeqCst;
 use tokio::task;
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 
 pub struct BucketShuffleRepartitioner {
-    id: MemoryConsumerId,
+    mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     output_data_file: String,
     output_index_file: String,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     spills: Mutex<Vec<ShuffleSpill>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
-    runtime: Arc<RuntimeEnv>,
+    outputting: AtomicBool,
     metrics: BaselineMetrics,
 }
 
 impl BucketShuffleRepartitioner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        partition_id: usize,
         output_data_file: String,
         output_index_file: String,
         schema: SchemaRef,
@@ -69,10 +65,9 @@ impl BucketShuffleRepartitioner {
         context: Arc<TaskContext>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
-        let runtime = context.runtime_env();
         let batch_size = context.session_config().batch_size();
         let repartitioner = Self {
-            id: MemoryConsumerId::new(partition_id),
+            mem_consumer_info: None,
             output_data_file,
             output_index_file,
             buffered_partitions: Mutex::new(
@@ -83,29 +78,17 @@ impl BucketShuffleRepartitioner {
             spills: Mutex::new(vec![]),
             partitioning,
             num_output_partitions,
-            runtime,
+            outputting: AtomicBool::new(false),
             metrics,
         };
-        repartitioner.runtime.register_requester(&repartitioner.id);
         repartitioner
-    }
-
-    fn spilled_bytes(&self) -> usize {
-        self.metrics.spilled_bytes().value()
-    }
-
-    fn spill_count(&self) -> usize {
-        self.metrics.spill_count().value()
     }
 }
 
 #[async_trait]
 impl ShuffleRepartitioner for BucketShuffleRepartitioner {
-    fn name(&self) -> &str {
-        "bucket repartitioner"
-    }
-
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
+
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
         let hashes = evaluate_hashes(&self.partitioning, &input)?;
@@ -171,50 +154,37 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             }
             drop(buffered_partitions);
         }
-
-        if mem_diff > 0 {
-            let mem_increase = mem_diff as usize;
-            self.grow(mem_increase);
-            self.metrics.mem_used().add(mem_increase);
-            self.try_grow(0).await?;
-        }
-        if mem_diff < 0 {
-            let mem_used = self.metrics.mem_used().value();
-            let mem_decrease = mem_used.min(-mem_diff as usize);
-            self.shrink(mem_decrease);
-            self.metrics.mem_used().set(mem_used - mem_decrease);
-        }
+        self.update_mem_used_with_diff(mem_diff).await?;
         Ok(())
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        let num_output_partitions = self.num_output_partitions;
-        let mut buffered_partitions = self.buffered_partitions.lock().await;
-        let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
+        self.outputting.store(true, SeqCst);
+        let spills = std::mem::take(&mut *self.spills.lock().await);
+        let mut buffered_partitions =
+            std::mem::take(&mut *self.buffered_partitions.lock().await);
 
-        for i in 0..num_output_partitions {
+        log::info!("bucket partitioner start writing with {} spills", spills.len());
+
+        let mut output_batches: Vec<Vec<u8>> = vec![vec![]; self.num_output_partitions];
+        for i in 0..self.num_output_partitions {
             buffered_partitions[i].flush()?;
             output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
         }
 
-        let mut spills = self.spills.lock().await;
-        log::info!("bucket partitioner start writing with {} spills", spills.len());
-
-        let spill_ids: Vec<i32> = spills
+        let raw_spills: Vec<OnHeapSpill> = spills
             .iter()
-            .map(|spill| spill.spill.id())
+            .map(|spill| spill.spill.clone())
             .collect();
 
         let mut spill_readers = spills
-            .drain(..)
-            .map(|spill| {
-                (spill.spill.into_buf_reader(), spill.offsets)
-            })
+            .into_iter()
+            .map(|spill| (spill.spill.get_buf_reader(), spill.offsets))
             .collect::<Vec<_>>();
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
-
+        let num_output_partitions = self.num_output_partitions;
         task::spawn_blocking(move || {
             let mut offsets = vec![0; num_output_partitions + 1];
             let mut output_data = OpenOptions::new()
@@ -252,11 +222,12 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
         })??;
 
         // update disk spill size
-        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+        let spill_disk_usage = raw_spills
+            .iter()
+            .map(|spill| spill.get_disk_usage().unwrap_or(0))
+            .sum::<u64>();
         self.metrics.record_spill(spill_disk_usage as usize);
-
-        let used = self.metrics.mem_used().set(0);
-        self.shrink(used);
+        self.update_mem_used(0).await?;
         Ok(())
     }
 }
@@ -275,8 +246,8 @@ fn spill_buffered_partitions(
     }
 
     let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
-    let mut spill = OnHeapSpill::try_new()?;
-    let mut spill_writer = BufWriter::with_capacity(65536, &mut spill);
+    let spill = OnHeapSpill::try_new()?;
+    let mut spill_writer = spill.get_buf_writer();
 
     for i in 0..num_output_partitions {
         buffered_partitions[i].flush()?;
@@ -301,61 +272,30 @@ fn spill_buffered_partitions(
     }))
 }
 
-impl Debug for BucketShuffleRepartitioner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BucketRepartitioner")
-            .field("id", &self.id())
-            .field("memory_used", &self.mem_used())
-            .field("spilled_bytes", &self.spilled_bytes())
-            .field("spilled_count", &self.spill_count())
-            .finish()
-    }
-}
-
 #[async_trait]
-impl MemoryConsumer for BucketShuffleRepartitioner {
-    fn name(&self) -> String {
-        "rss bucket repartitioner".to_string()
+impl MemConsumer for BucketShuffleRepartitioner {
+    fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
+        self.mem_consumer_info = Some(consumer_info);
     }
 
-    fn id(&self) -> &MemoryConsumerId {
-        &self.id
+    fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
+        &self.mem_consumer_info.as_ref().expect("consumer info net set")
     }
 
-    fn memory_manager(&self) -> Arc<MemoryManager> {
-        self.runtime.memory_manager.clone()
-    }
+    async fn spill(&self) -> Result<()> {
+        let mut partitions = self.buffered_partitions.lock().await;
 
-    fn type_(&self) -> &ConsumerType {
-        &ConsumerType::Requesting
-    }
-
-    async fn spill(&self) -> Result<usize> {
-        if let Some(spill) = spill_buffered_partitions(
-            &mut *self.buffered_partitions.lock().await,
-            self.num_output_partitions,
-        )? {
-            self.spills.lock().await.push(spill);
-            let freed = self.metrics.mem_used().set(0);
-
-            log::info!(
-                "bucket repartitioner spilled {}, {}",
-                ByteSize(freed as u64),
-                self.memory_manager(),
-            );
-            return Ok(freed);
-        }
-        Ok(0)
-    }
-
-    fn mem_used(&self) -> usize {
-        self.metrics.mem_used().value()
+        self.spills.lock().await.extend(
+            spill_buffered_partitions(&mut *partitions, self.num_output_partitions)?
+        );
+        self.update_mem_used(0).await?;
+        Ok(())
     }
 }
 
 impl Drop for BucketShuffleRepartitioner {
     fn drop(&mut self) {
-        self.runtime.drop_consumer(self.id(), self.mem_used());
+        MemManager::deregister_consumer(self);
     }
 }
 

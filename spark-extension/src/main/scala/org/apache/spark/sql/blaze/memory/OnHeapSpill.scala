@@ -46,9 +46,14 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
 
   def write(buf: ByteBuffer): Unit = {
     // reserve memory before writing
-    val numAcquiringBlocks = (buf.limit() + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    if (diskSpilledFile.isEmpty && !acquireMemory(numAcquiringBlocks * BLOCK_SIZE)) {
-      spill()
+    val numLastBlockRestBytes = dataBlockQueue.lastOption
+      .map(BLOCK_SIZE - _.position())
+      .getOrElse(0)
+    val numAcquiringBlocks = (buf.limit() + BLOCK_SIZE - 1 - numLastBlockRestBytes) / BLOCK_SIZE
+    if (numAcquiringBlocks > 0) {
+      if (diskSpilledFile.isEmpty && !acquireMemory(numAcquiringBlocks * BLOCK_SIZE)) {
+        spill()
+      }
     }
 
     synchronized {

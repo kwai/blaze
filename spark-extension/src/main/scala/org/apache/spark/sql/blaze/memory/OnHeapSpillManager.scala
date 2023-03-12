@@ -24,8 +24,6 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
-import org.apache.spark.internal.config.EXECUTOR_MEMORY
-import org.apache.spark.internal.config.MEMORY_FRACTION
 import org.apache.spark.memory.MemoryConsumer
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.util.Utils
@@ -41,9 +39,11 @@ class OnHeapSpillManager(taskContext: TaskContext)
 
   // release all spills on task completion
   taskContext.addTaskCompletionListener { _ =>
-    val taskId = taskContext.taskAttemptId()
-    spills.flatten.foreach(spill => releaseSpill(spill.id))
-    all.remove(taskId)
+    synchronized {
+      logInfo(s"task completed, start releasing all holding spills (count=$numHoldingSpills)")
+      spills.flatten.foreach(spill => releaseSpill(spill.id))
+      all.remove(taskContext.taskAttemptId())
+    }
   }
 
   def blockManager: BlockManager = _blockManager
@@ -60,26 +60,37 @@ class OnHeapSpillManager(taskContext: TaskContext)
       spills.append(Some(spill))
       numHoldingSpills += 1
 
-      logInfo(s"blaze allocated a heap-spill, task=${taskContext.taskAttemptId}, id=${spill.id}")
+      logInfo(s"allocated a spill, task=${taskContext.taskAttemptId}, id=${spill.id}")
       dumpStatus()
       spill.id
     }
   }
 
   def writeSpill(spillId: Int, data: ByteBuffer): Unit = {
-    spills(spillId).get.write(data)
+    spills(spillId)
+      .getOrElse(
+        throw new RuntimeException(
+          s"writing released spill task=${taskContext.taskAttemptId}, id=${spillId}"))
+      .write(data)
   }
 
   def readSpill(spillId: Int, buf: ByteBuffer): Int = {
-    spills(spillId).get.read(buf)
+    spills(spillId)
+      .getOrElse(
+        throw new RuntimeException(
+          s"reading released spill, task=${taskContext.taskAttemptId}, id=${spillId}"))
+      .read(buf)
   }
 
   def completeSpill(spillId: Int): Unit = {
-    val spill = spills(spillId).get
+    val spill = spills(spillId)
+      .getOrElse(
+        throw new RuntimeException(
+          s"completing released spill, task=${taskContext.taskAttemptId}, id=${spillId}"))
     spill.complete()
 
     logInfo(
-      "blaze completed a heap-spill" +
+      "completed a spill" +
         s", task=${taskContext.taskAttemptId}" +
         s", id=$spillId" +
         s", size=${Utils.bytesToString(spill.size)}")
@@ -95,7 +106,7 @@ class OnHeapSpillManager(taskContext: TaskContext)
       case Some(spill) =>
         spill.release()
         numHoldingSpills -= 1
-        logInfo(s"blaze released a heap-spill, task: ${taskContext.taskAttemptId}, id: $spillId")
+        logInfo(s"released a spill, task=${taskContext.taskAttemptId}, id=$spillId")
         dumpStatus()
       case None =>
     }
@@ -106,7 +117,7 @@ class OnHeapSpillManager(taskContext: TaskContext)
     if (memUsed == 0) {
       return 0L
     }
-    logInfo(s"OnHeapSpillManager starts spilling, size=${Utils.bytesToString(size)}}")
+    logInfo(s"starts spilling to disk, size=${Utils.bytesToString(size)}}")
     dumpStatus()
     var totalFreed = 0L
 
@@ -122,7 +133,7 @@ class OnHeapSpillManager(taskContext: TaskContext)
         }
       }
     } {
-      logInfo(s"OnHeapSpillManager finished spilling: freed=${Utils.bytesToString(totalFreed)}")
+      logInfo(s"finished spilling to disk, freed=${Utils.bytesToString(totalFreed)}")
       dumpStatus()
     }
     totalFreed
@@ -130,7 +141,7 @@ class OnHeapSpillManager(taskContext: TaskContext)
 
   private def dumpStatus(): Unit = {
     logInfo(
-      s"OnHeapSpillManager (task=${taskContext.taskAttemptId}) status" +
+      "status" +
         s": numHoldingSpills=$numHoldingSpills" +
         s", memUsed=${Utils.bytesToString(memUsed)}")
   }

@@ -14,7 +14,7 @@
 
 use arrow::array::ArrayRef;
 use arrow::datatypes::{Field, SchemaRef};
-use arrow::error::{ArrowError, Result as ArrowResult};
+use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::{RowConverter, SortField};
 use datafusion::common::{DataFusionError, Result, Statistics};
@@ -23,23 +23,22 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
 };
-use datafusion::physical_plan::stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
-use std::future::Future;
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 
 use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::{AggTables, InMemTable};
 use crate::agg::{AggExecMode, AggExpr, AggRecord, GroupingExpr};
+use crate::common::memory_manager::MemManager;
+use crate::common::output_with_sender;
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -189,10 +188,14 @@ async fn execute_agg_with_grouping_hash(
     // create tables
     let tables = Arc::new(AggTables::new(
         agg_ctx.clone(),
-        partition_id,
         BaselineMetrics::new(&metrics, partition_id),
         context.clone(),
     ));
+    MemManager::register_consumer(
+        tables.clone(),
+        format!("AggTable[partition={}]", partition_id),
+        true,
+    );
     drop(timer);
 
     // start processing input batches
@@ -240,7 +243,7 @@ async fn execute_agg_with_grouping_hash(
     }
 
     // merge all tables and output
-    start_output(agg_ctx.clone(), |sender| async move {
+    output_with_sender(agg_ctx.output_schema.clone(), |sender| async move {
         tables
             .output(grouping_row_converter, baseline_metrics, sender)
             .await?;
@@ -279,7 +282,7 @@ async fn execute_agg_no_grouping(
     // output
     // in no-grouping mode, we always output only one record, so it is not
     // necessary to record elapsed computed time.
-    start_output(agg_ctx.clone(), |sender| async move {
+    output_with_sender(agg_ctx.output_schema.clone(), |sender| async move {
         let record: AggRecord = AggRecord::new(Box::default(), agg_buf);
         let batch_result = agg_ctx
             .build_agg_columns(&mut [record])
@@ -298,7 +301,7 @@ async fn execute_agg_no_grouping(
             .send(batch_result)
             .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
             .await?;
-        log::info!("aggregate exec (no grouping) outputing one record");
+        log::info!("aggregate exec (no grouping) outputting one record");
         Ok(())
     })
 }
@@ -330,7 +333,7 @@ async fn execute_agg_sorted(
         context.session_config().batch_size(),
         baseline_metrics.elapsed_compute().clone(),
     ));
-    start_output(agg_ctx.clone(), |sender| async move {
+    output_with_sender(agg_ctx.output_schema.clone(), |sender| async move {
         let batch_size = context.session_config().batch_size();
         let mut staging_records = vec![];
         let mut current_record: Option<AggRecord> = None;
@@ -373,7 +376,7 @@ async fn execute_agg_sorted(
                             timer.stop();
 
                             log::info!(
-                                "aggregate exec (sorted) outputing one batch: num_rows={}",
+                                "aggregate exec (sorted) outputting one batch: num_rows={}",
                                 batch.num_rows(),
                             );
                             baseline_metrics.record_output(batch.num_rows());
@@ -405,7 +408,7 @@ async fn execute_agg_sorted(
             timer.stop();
 
             log::info!(
-                "aggregate exec (sorted) outputing one batch: num_rows={}",
+                "aggregate exec (sorted) outputting one batch: num_rows={}",
                 batch.num_rows(),
             );
             sender
@@ -415,36 +418,4 @@ async fn execute_agg_sorted(
         }
         Ok(())
     })
-}
-
-fn start_output<Fut: Future<Output = Result<()>> + Send>(
-    agg_ctx: Arc<AggContext>,
-    output: impl FnOnce(Sender<ArrowResult<RecordBatch>>) -> Fut + Send + 'static,
-) -> Result<SendableRecordBatchStream> {
-    let (sender, receiver) = tokio::sync::mpsc::channel(2);
-    let output_schema = agg_ctx.output_schema.clone();
-    let join_handle = tokio::task::spawn(async move {
-        let err_sender = sender.clone();
-        let result = AssertUnwindSafe(async move {
-            output(sender).await.unwrap();
-        })
-        .catch_unwind()
-        .await;
-
-        if let Err(e) = result {
-            let err_message = panic_message::panic_message(&e).to_owned();
-            err_sender
-                .send(Err(ArrowError::ExternalError(Box::new(
-                    DataFusionError::Execution(err_message),
-                ))))
-                .await
-                .unwrap();
-        }
-    });
-
-    Ok(RecordBatchReceiverStream::create(
-        &output_schema,
-        receiver,
-        join_handle,
-    ))
 }

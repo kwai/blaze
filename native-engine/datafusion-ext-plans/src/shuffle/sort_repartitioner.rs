@@ -20,31 +20,26 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use bytesize::ByteSize;
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
-use datafusion::execution::memory_manager::ConsumerType;
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::io::write_one_batch;
 use datafusion_ext_commons::loser_tree::LoserTree;
 use derivative::Derivative;
 use futures::lock::Mutex;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
-use std::sync::Arc;
-use crate::spill::{get_spills_disk_usage, OnHeapSpill};
+use std::io::{BufReader, Cursor, Read, Seek, Write};
+use std::sync::{Arc, Weak};
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
+use crate::common::onheap_spill::OnHeapSpill;
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + sizeof(offsets)=~KBs
 const SPILL_OFFHEAP_MEM_COST: usize = 70000;
 
 pub struct SortShuffleRepartitioner {
-    memory_consumer_id: MemoryConsumerId,
+    mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     output_data_file: String,
     output_index_file: String,
     schema: SchemaRef,
@@ -52,25 +47,12 @@ pub struct SortShuffleRepartitioner {
     spills: Mutex<Vec<ShuffleSpill>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
-    runtime: Arc<RuntimeEnv>,
     batch_size: usize,
     metrics: BaselineMetrics,
 }
 
-impl Debug for SortShuffleRepartitioner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SortShuffleRepartitioner")
-            .field("id", &self.id())
-            .field("memory_used", &self.mem_used())
-            .field("spilled_bytes", &self.spilled_bytes())
-            .field("spilled_count", &self.spill_count())
-            .finish()
-    }
-}
-
 impl SortShuffleRepartitioner {
     pub fn new(
-        partition_id: usize,
         output_data_file: String,
         output_index_file: String,
         schema: SchemaRef,
@@ -79,10 +61,9 @@ impl SortShuffleRepartitioner {
         context: Arc<TaskContext>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
-        let runtime = context.runtime_env();
         let batch_size = context.session_config().batch_size();
         let repartitioner = Self {
-            memory_consumer_id: MemoryConsumerId::new(partition_id),
+            mem_consumer_info: None,
             output_data_file,
             output_index_file,
             schema,
@@ -90,11 +71,9 @@ impl SortShuffleRepartitioner {
             spills: Mutex::default(),
             partitioning,
             num_output_partitions,
-            runtime,
             batch_size,
             metrics,
         };
-        repartitioner.runtime.register_requester(repartitioner.id());
         repartitioner
     }
 
@@ -143,8 +122,8 @@ impl SortShuffleRepartitioner {
 
         let mut cur_partition_id = 0;
         let mut cur_slice_start = 0;
-        let mut cur_spill = OnHeapSpill::try_new()?;
-        let mut cur_spill_writer = BufWriter::with_capacity(65536, &mut cur_spill);
+        let cur_spill = OnHeapSpill::try_new()?;
+        let mut cur_spill_writer = cur_spill.get_buf_writer();
         let mut cur_spill_offsets = vec![0];
         let mut offset = 0;
 
@@ -200,101 +179,60 @@ impl SortShuffleRepartitioner {
             offsets: cur_spill_offsets,
         }))
     }
-
-    fn spilled_bytes(&self) -> usize {
-        self.metrics.spilled_bytes().value()
-    }
-
-    fn spill_count(&self) -> usize {
-        self.metrics.spill_count().value()
-    }
 }
 
 #[async_trait]
-impl MemoryConsumer for SortShuffleRepartitioner {
-    fn name(&self) -> String {
-        "sort epartitioner".to_string()
+impl MemConsumer for SortShuffleRepartitioner {
+    fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
+        self.mem_consumer_info = Some(consumer_info);
     }
 
-    fn id(&self) -> &MemoryConsumerId {
-        &self.memory_consumer_id
+    fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
+        &self.mem_consumer_info.as_ref().expect("consumer info net set")
     }
 
-    fn memory_manager(&self) -> Arc<MemoryManager> {
-        self.runtime.memory_manager.clone()
+    async fn spill(&self) -> Result<()> {
+        let mut batches = self.buffered_batches.lock().await;
+
+        self.spills.lock().await.extend(
+            self.spill_buffered_batches(&std::mem::take(&mut *batches))?
+        );
+        self.update_mem_used(0).await?;
+        Ok(())
     }
+}
 
-    fn type_(&self) -> &ConsumerType {
-        &ConsumerType::Requesting
-    }
-
-    async fn spill(&self) -> Result<usize> {
-        if let Some(spill) = self.spill_buffered_batches(
-            &std::mem::take(&mut *self.buffered_batches.lock().await),
-        )? {
-            self.spills.lock().await.push(spill);
-            let freed = self.metrics.mem_used().set(0);
-
-            log::info!(
-                "sort repartitioner spilled {}, {}",
-                ByteSize(freed as u64),
-                self.memory_manager(),
-            );
-            return Ok(freed);
-        }
-        Ok(0)
-    }
-
-    fn mem_used(&self) -> usize {
-        self.metrics.mem_used().value()
+impl Drop for SortShuffleRepartitioner {
+    fn drop(&mut self) {
+        MemManager::deregister_consumer(self);
     }
 }
 
 #[async_trait]
 impl ShuffleRepartitioner for SortShuffleRepartitioner {
-    fn name(&self) -> &str {
-        "sort repartitioner"
-    }
-
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let mem_increase =
             input.get_array_memory_size() +
             input.num_rows() * std::mem::size_of::<PI>(); // for sorting
-
-        self.grow(mem_increase);
-        self.metrics.mem_used().add(mem_increase);
-
-        let mut buffered_batches = self.buffered_batches.lock().await;
-        buffered_batches.push(input);
-        drop(buffered_batches);
-
-        // try grow after inserted
-        self.try_grow(0).await?;
+        self.update_mem_used_with_diff(mem_increase as isize).await?;
+        self.buffered_batches.lock().await.push(input);
         Ok(())
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        let mut spills = self.spills.lock().await;
+        self.set_spillable(false);
+        let mut spills = std::mem::take(&mut *self.spills.lock().await);
+        let buffered_batches =
+            std::mem::take(&mut *self.buffered_batches.lock().await);
 
         // spill all buffered batches
-        if let Some(spill) = self.spill_buffered_batches(
-            &std::mem::take(&mut *self.buffered_batches.lock().await),
-        )? {
+        if let Some(spill) = self.spill_buffered_batches(&buffered_batches)? {
             spills.push(spill);
         }
-        log::info!("sort repartitioner starts outputing with {} spills", spills.len());
+        log::info!("sort repartitioner starts outputting with {} spills", spills.len());
 
         // adjust mem usage
-        let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
-        match self.metrics.mem_used().set(cur_mem_used) {
-            m if m > cur_mem_used => {
-                self.shrink(m - cur_mem_used);
-            }
-            m if m < cur_mem_used => {
-                self.grow(cur_mem_used - m);
-            }
-            _ => {}
-        }
+        self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST).await?;
 
         // define spill cursor. partial-ord is reversed because we
         // need to find mininum using a binary heap
@@ -302,11 +240,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         #[derivative(PartialOrd, PartialEq, Ord, Eq)]
         struct SpillCursor {
             cur: usize,
-
-            #[derivative(PartialOrd = "ignore")]
-            #[derivative(PartialEq = "ignore")]
-            #[derivative(Ord = "ignore")]
-            spill_id: i32,
 
             #[derivative(PartialOrd = "ignore")]
             #[derivative(PartialEq = "ignore")]
@@ -331,15 +264,19 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             }
         }
 
+        let raw_spills: Vec<OnHeapSpill> = spills
+            .iter()
+            .map(|spill| spill.spill.clone())
+            .collect();
+
         // use loser tree to select partitions from spills
-        let mut spills: LoserTree<SpillCursor> = LoserTree::new_by(
-            std::mem::take(&mut *spills)
+        let mut cursors: LoserTree<SpillCursor> = LoserTree::new_by(
+            spills
                 .into_iter()
                 .map(|spill| {
                     let mut cursor = SpillCursor {
                         cur: 0,
-                        spill_id: spill.spill.id(),
-                        reader: spill.spill.into_buf_reader(),
+                        reader: spill.spill.get_buf_reader(),
                         offsets: spill.offsets,
                     };
                     cursor.skip_empty_partitions();
@@ -367,9 +304,9 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let mut cur_partition_id = 0;
 
         // append partition in each spills
-        if spills.len() > 0 {
+        if cursors.len() > 0 {
             loop {
-                let mut min_spill = spills.peek_mut();
+                let mut min_spill = cursors.peek_mut();
                 if min_spill.finished() {
                     break;
                 }
@@ -407,23 +344,13 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         output_index.flush()?;
 
         // update disk spill size
-        let spill_ids = spills
-            .values()
+        let spill_disk_usage = raw_spills
             .iter()
-            .map(|cursor| cursor.spill_id)
-            .collect::<Vec<_>>();
-        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+            .map(|spill| spill.get_disk_usage().unwrap_or(0))
+            .sum::<u64>();
         self.metrics.record_spill(spill_disk_usage as usize);
-
-        let used = self.metrics.mem_used().set(0);
-        self.shrink(used);
+        self.update_mem_used(0).await?;
         Ok(())
-    }
-}
-
-impl Drop for SortShuffleRepartitioner {
-    fn drop(&mut self) {
-        self.runtime.drop_consumer(self.id(), self.mem_used());
     }
 }
 

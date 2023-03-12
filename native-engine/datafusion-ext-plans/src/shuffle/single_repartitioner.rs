@@ -20,8 +20,6 @@ use datafusion::error::DataFusionError;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion_ext_commons::io::write_one_batch;
 use once_cell::sync::OnceCell;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, Write};
 
@@ -30,12 +28,6 @@ pub struct SingleShuffleRepartitioner {
     output_index_file: String,
     output_data: OnceCell<File>,
     metrics: BaselineMetrics,
-}
-
-impl Debug for SingleShuffleRepartitioner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SingleShuffleRepartitioner").finish()
-    }
 }
 
 impl SingleShuffleRepartitioner {
@@ -67,10 +59,6 @@ impl SingleShuffleRepartitioner {
 
 #[async_trait]
 impl ShuffleRepartitioner for SingleShuffleRepartitioner {
-    fn name(&self) -> &str {
-        "single repartitioner"
-    }
-
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let _timer = self.metrics.elapsed_compute().timer();
         write_one_batch(&input, &mut self.get_output_data()?.try_clone()?, true)?;

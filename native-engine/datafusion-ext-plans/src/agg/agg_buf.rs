@@ -339,7 +339,7 @@ mod test {
         agg_buf_valued.set_fixed_valid(addrs[1], true);
         agg_buf_valued.set_fixed_valid(addrs[2], true);
         *AggDynStr::value_mut(agg_buf_valued.dyn_value_mut(addrs[3])) =
-            Some("test".to_string());
+            Some("test".to_string().into());
 
         // save + load
         let bytes = agg_buf_valued.save_to_bytes().unwrap();
@@ -353,7 +353,7 @@ mod test {
         assert_eq!(*agg_buf.fixed_value::<i64>(addrs[2]), 1234567890123456789);
         assert_eq!(
             *AggDynStr::value(agg_buf.dyn_value(addrs[3])),
-            Some("test".to_string()),
+            Some("test".to_string().into()),
         );
     }
 }

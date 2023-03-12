@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(new_uninit)]
-#![feature(slice_swap_unchecked)]
+#![feature(trait_upcasting)]
 
 pub mod agg;
 pub mod agg_exec;
 pub mod broadcast_hash_join_exec;
+pub mod common;
 pub mod debug_exec;
 pub mod empty_partitions_exec;
 pub mod expand_exec;
@@ -31,6 +31,4 @@ pub mod rss_shuffle_writer_exec;
 pub mod shuffle_writer_exec;
 pub mod sort_exec;
 pub mod sort_merge_join_exec;
-
 mod shuffle;
-mod spill;

@@ -28,6 +28,7 @@ use datafusion::physical_plan::metrics::Time;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
+use datafusion_ext_plans::common::memory_manager::MemManager;
 use futures::{FutureExt, StreamExt};
 use jni::objects::JObject;
 use jni::objects::{GlobalRef, JClass};
@@ -93,12 +94,10 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
             let max_memory = native_memory as usize;
             let batch_size = batch_size as usize;
             let runtime_config = RuntimeConfig::new()
-                .with_memory_manager(MemoryManagerConfig::New {
-                    max_memory,
-                    memory_fraction,
-                })
+                .with_memory_manager(MemoryManagerConfig::default())
                 .with_disk_manager(DiskManagerConfig::Disabled);
 
+            MemManager::init((max_memory as f64 * memory_fraction) as usize);
             let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
             let config = SessionConfig::new().with_batch_size(batch_size);
             SessionContext::with_config_rt(config, runtime)
@@ -174,6 +173,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         let runtime = Arc::new(RuntimeWrapper {
             runtime: Some(
                 tokio::runtime::Builder::new_multi_thread()
+                    .enable_time()
                     .on_thread_start(move || {
                         // propagate classloader and task context to spawned
                         // children threads

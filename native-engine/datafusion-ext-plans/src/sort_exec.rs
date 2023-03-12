@@ -16,25 +16,21 @@
 
 use std::any::Any;
 use std::fmt::Formatter;
-use std::io::{BufReader, BufWriter, Cursor, Read, Write};
-use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Mutex as SyncMutex};
+use std::io::{BufReader, Cursor, Read, Write};
+use std::sync::{Arc, Mutex as SyncMutex, Weak};
 use arrow::array::{Array, ArrayRef};
 use arrow::datatypes::SchemaRef;
-use arrow::error::{ArrowError, Result as ArrowResult};
+use arrow::error::{Result as ArrowResult};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::{RowConverter, Rows, SortField};
 use async_trait::async_trait;
-use bytesize::ByteSize;
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
-use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
-use datafusion::execution::memory_manager::ConsumerType;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter};
-use futures::{FutureExt, StreamExt, TryStreamExt, TryFutureExt};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use futures::{StreamExt, TryStreamExt, TryFutureExt};
 use futures::lock::Mutex;
 use futures::stream::once;
 use itertools::Itertools;
@@ -43,7 +39,9 @@ use tokio::sync::mpsc::Sender;
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
 use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use crate::spill::{get_spills_disk_usage, OnHeapSpill};
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
+use crate::common::output_with_sender;
+use crate::common::onheap_spill::OnHeapSpill;
 
 const NUM_LEVELS: usize = 64;
 
@@ -108,7 +106,7 @@ impl ExecutionPlan for SortExec {
     fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
         let input_schema = self.input.schema();
         let batch_size = context.session_config().batch_size();
-        let squeeze_batch_size = (batch_size as f64).sqrt() as usize;
+        let squeeze_batch_size = batch_size / batch_size.ilog2() as usize;
 
         let sort_row_converter = RowConverter::new(
             self.exprs
@@ -123,8 +121,7 @@ impl ExecutionPlan for SortExec {
         )?;
 
         let external_sorter = Arc::new(ExternalSorter {
-            id: MemoryConsumerId::new(partition),
-            context: context.clone(),
+            mem_consumer_info: None,
             squeeze_batch_size,
             exprs: self.exprs.clone(),
             input_schema: self.schema(),
@@ -134,7 +131,11 @@ impl ExecutionPlan for SortExec {
             spills: Default::default(),
             baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
         });
-        context.runtime_env().register_requester(external_sorter.id());
+        MemManager::register_consumer(
+            external_sorter.clone(),
+            format!("ExternalSorter[partition={}]", partition),
+            true,
+        );
 
         let input = self.input.execute(partition, context)?;
         let coalesced = Box::pin(CoalesceStream::new(
@@ -144,11 +145,10 @@ impl ExecutionPlan for SortExec {
                 .elapsed_compute()
                 .clone(),
         ));
-        let stream = external_sort(coalesced, external_sorter);
 
         let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(stream).try_flatten(),
+            once(external_sort(coalesced, external_sorter)).try_flatten(),
         ));
         let coalesced = Box::pin(CoalesceStream::new(
             output,
@@ -182,8 +182,7 @@ impl ExecutionPlan for SortExec {
 }
 
 struct ExternalSorter {
-    id: MemoryConsumerId,
-    context: Arc<TaskContext>,
+    mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     squeeze_batch_size: usize,
     exprs: Vec<PhysicalSortExpr>,
     input_schema: SchemaRef,
@@ -194,36 +193,20 @@ struct ExternalSorter {
     baseline_metrics: BaselineMetrics,
 }
 
-impl Drop for ExternalSorter {
-    fn drop(&mut self) {
-        self.context
-            .runtime_env()
-            .drop_consumer(self.id(), self.mem_used());
-    }
-}
-
 #[async_trait]
-impl MemoryConsumer for ExternalSorter {
-    fn name(&self) -> String {
-        "ExternalSorter".to_string()
+impl MemConsumer for ExternalSorter {
+    fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
+        self.mem_consumer_info = Some(consumer_info);
     }
 
-    fn id(&self) -> &MemoryConsumerId {
-        &self.id
+    fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
+        &self.mem_consumer_info.as_ref().expect("consumer info net set")
     }
 
-    fn memory_manager(&self) -> Arc<MemoryManager> {
-        self.context.runtime_env().memory_manager.clone()
-    }
-
-    fn type_(&self) -> &ConsumerType {
-        &ConsumerType::Requesting
-    }
-
-    async fn spill(&self) -> Result<usize> {
+    async fn spill(&self) -> Result<()> {
+        let mut levels = self.levels.lock().await;
 
         // merge all batches in levels into one in_mem_batches
-        let mut levels = self.levels.lock().await;
         let mut in_mem_batches: Option<SortedBatches> = None;
         for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]) {
             if let Some(existed) = level {
@@ -233,25 +216,23 @@ impl MemoryConsumer for ExternalSorter {
                 }
             }
         }
-        if let Some(spill) = in_mem_batches.unwrap().try_into_spill(
-            &self.input_schema,
-            self.squeeze_batch_size,
-        )? {
-            self.spills.lock().await.push(spill);
-            let freed = self.baseline_metrics.mem_used().set(0);
 
-            log::info!(
-                "external sorter spilled {}, {}",
-                ByteSize(freed as u64),
-                self.memory_manager(),
+        if let Some(in_mem_batches) = in_mem_batches {
+            self.spills.lock().await.extend(
+                in_mem_batches.try_into_spill(
+                    &self.input_schema,
+                    self.squeeze_batch_size,
+                )?
             );
-            return Ok(freed);
         }
-        Ok(0)
+        self.update_mem_used(0).await?;
+        Ok(())
     }
+}
 
-    fn mem_used(&self) -> usize {
-        self.baseline_metrics.mem_used().value()
+impl Drop for ExternalSorter {
+    fn drop(&mut self) {
+        MemManager::deregister_consumer(self);
     }
 }
 
@@ -265,32 +246,10 @@ async fn external_sort(
         sorter.insert_batch(batch).await?;
     }
 
-    // output
-    let (sender, receiver) = tokio::sync::mpsc::channel(2);
-    let output_schema = sorter.input_schema.clone();
-    let join_handle = tokio::task::spawn(async move {
-        let err_sender = sender.clone();
-        let result = AssertUnwindSafe(async move {
-            sorter.output(sender).await.unwrap()
-        })
-        .catch_unwind()
-        .await;
-
-        if let Err(e) = result {
-            let err_message = panic_message::panic_message(&e).to_owned();
-            err_sender
-                .send(Err(ArrowError::ExternalError(Box::new(
-                    DataFusionError::Execution(err_message),
-                ))))
-                .await
-                .unwrap();
-        }
-    });
-    Ok(RecordBatchReceiverStream::create(
-        &output_schema,
-        receiver,
-        join_handle,
-    ))
+    output_with_sender(input.schema(), |sender| async move {
+        sorter.output(sender).await?;
+        Ok(())
+    })
 }
 
 impl ExternalSorter {
@@ -301,29 +260,23 @@ impl ExternalSorter {
         let mut sorted_batches = SortedBatches::from_batch(self.clone(), batch)?;
 
         // merge sorted batches into levels
-        let mut levels = self.levels.lock().await;
-        let mut cur_level = 0;
-        while let Some(existed) = std::mem::take(&mut levels[cur_level]) {
-            // merge and squeeze
-            sorted_batches.merge(existed);
-            if sorted_batches.batches_num_rows > self.limit * 2 {
-                sorted_batches.squeeze(self.squeeze_batch_size)?;
+        let mem_used = {
+            let mut levels = self.levels.lock().await;
+            let mut cur_level = 0;
+            while let Some(existed) = std::mem::take(&mut levels[cur_level]) {
+                // merge and squeeze
+                sorted_batches.merge(existed);
+                if sorted_batches.batches_num_rows > self.limit * 2 {
+                    sorted_batches.squeeze(self.squeeze_batch_size)?;
+                }
+                cur_level += 1;
             }
-            cur_level += 1;
-        }
-        levels[cur_level] = Some(sorted_batches);
+            levels[cur_level] = Some(sorted_batches);
 
-        // adjust memory usage
-        let new_mem_size = levels.iter().flatten().map(|b| b.mem_size()).sum::<usize>();
-        let old_mem_size = self.baseline_metrics.mem_used().set(new_mem_size);
-        drop(levels);
-
-        if new_mem_size > old_mem_size {
-            self.grow(new_mem_size - old_mem_size);
-            self.try_grow(0).await?;
-        } else {
-            self.shrink(old_mem_size - new_mem_size);
-        }
+            // adjust memory usage
+            levels.iter().flatten().map(|b| b.mem_size()).sum::<usize>()
+        };
+        self.update_mem_used(mem_used).await?;
         Ok(())
     }
 
@@ -332,11 +285,13 @@ impl ExternalSorter {
         sender: Sender<ArrowResult<RecordBatch>>,
     ) -> Result<()> {
         let mut timer = self.baseline_metrics.elapsed_compute().timer();
-        let mut levels = self.levels.lock().await;
+        self.set_spillable(false);
+        let levels = std::mem::take(&mut *self.levels.lock().await);
+        let spills = std::mem::take(&mut *self.spills.lock().await);
 
         // merge all batches in levels
         let mut in_mem_batches: Option<SortedBatches> = None;
-        for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]) {
+        for level in levels {
             if let Some(existed) = level {
                 match &mut in_mem_batches {
                     Some(in_mem_batches) => in_mem_batches.merge(existed),
@@ -346,22 +301,10 @@ impl ExternalSorter {
         }
         if let Some(in_mem_batches) = &mut in_mem_batches {
             in_mem_batches.squeeze(self.squeeze_batch_size)?;
-            match self.baseline_metrics.mem_used().set(in_mem_batches.mem_size()) {
-                m if m < in_mem_batches.mem_size() => {
-                    self.grow(in_mem_batches.mem_size() - m);
-                }
-                m if m > in_mem_batches.mem_size() => {
-                    self.shrink(m - in_mem_batches.mem_size());
-                }
-                _ => {}
-            }
-        } else {
-            self.shrink(self.baseline_metrics.mem_used().set(0));
+            self.update_mem_used(in_mem_batches.mem_size()).await?;
         }
-        drop(levels);
 
-        let mut spills = self.spills.lock().await;
-        log::info!("sort exec starts outputing with {} spills", spills.len());
+        log::info!("sort exec starts outputting with {} spills", spills.len());
 
         // no spills -- output in-mem batches
         if spills.is_empty() {
@@ -376,24 +319,16 @@ impl ExternalSorter {
                     .collect::<Result<Vec<RecordBatch>>>()?;
 
                 // adjust memory usage
-                let mem_used = in_mem_batches
+                let mut mem_used = in_mem_batches
                     .iter()
                     .map(|batch| batch.get_array_memory_size())
                     .sum::<usize>();
-                match self.baseline_metrics.mem_used().set(mem_used) {
-                    m if m < mem_used => {
-                        self.grow(mem_used - m);
-                    }
-                    m if m > mem_used => {
-                        self.shrink(m - mem_used);
-                    }
-                    _ => {}
-                }
+                self.update_mem_used(mem_used).await?;
 
                 // output batches
                 while let Some(batch) = in_mem_batches.pop() {
-                    self.baseline_metrics.mem_used().sub(batch.get_array_memory_size());
-                    self.shrink(batch.get_array_memory_size());
+                    mem_used = mem_used.saturating_sub(batch.get_array_memory_size());
+                    self.update_mem_used(mem_used).await?;
 
                     timer.stop();
                     self.baseline_metrics.record_output(batch.num_rows());
@@ -404,10 +339,12 @@ impl ExternalSorter {
                     timer.restart();
                 }
             }
+            self.update_mem_used(0).await?;
             return Ok(());
         }
 
         // move in-mem batches into spill, so we can free memory as soon as possible
+        let mut spills = spills;
         if let Some(in_mem_batches) = in_mem_batches {
             if let Some(in_mem_spill) = in_mem_batches.try_into_spill(
                 &self.input_schema,
@@ -417,21 +354,15 @@ impl ExternalSorter {
             }
 
             // adjust mem usage
-            let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
-            match self.baseline_metrics.mem_used().value() {
-                v if v > cur_mem_used => self.shrink(v - cur_mem_used),
-                v if v < cur_mem_used => self.grow(cur_mem_used - v),
-                _ => {}
-            }
-            self.baseline_metrics.mem_used().set(cur_mem_used);
+            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST).await?;
         }
 
         // use loser tree to merge all spills
         let mut cursors: LoserTree<SpillCursor> = LoserTree::new_by(
-            std::mem::take(&mut *spills)
-                .into_iter()
+            spills
+                .iter()
                 .enumerate()
-                .map(|(id, spill)| SpillCursor::try_from_spill(id, spill))
+                .map(|(id, spill)| SpillCursor::try_from_spill(id, spill.clone()))
                 .collect::<Result<_>>()?,
             |c1, c2| {
                 let key1 = (c1.finished, &c1.cur_key);
@@ -470,9 +401,6 @@ impl ExternalSorter {
                     &batches,
                     &staging_indices,
                 )?;
-                for cursor in cursors.values_mut() {
-                    cursor.clear_finished_batches();
-                }
                 timer.stop();
 
                 self.baseline_metrics.record_output(batch.num_rows());
@@ -497,6 +425,10 @@ impl ExternalSorter {
 
             if staging_cursor_ids.len() >= self.squeeze_batch_size {
                 flush_staging!();
+
+                for cursor in cursors.values_mut() {
+                    cursor.clear_finished_batches();
+                }
             }
         }
         if !staging_cursor_ids.is_empty() {
@@ -504,15 +436,12 @@ impl ExternalSorter {
         }
 
         // update disk spill size
-        let spill_ids = cursors
-            .values()
+        let spill_disk_usage = spills
             .iter()
-            .map(|cursor| cursor.spill_id)
-            .collect::<Vec<_>>();
-        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+            .map(|spill| spill.get_disk_usage().unwrap_or(0))
+            .sum::<u64>();
         self.baseline_metrics.record_spill(spill_disk_usage as usize);
-
-        self.shrink(self.baseline_metrics.mem_used().set(0));
+        self.update_mem_used(0).await?;
         Ok(())
     }
 }
@@ -759,36 +688,30 @@ impl SortedBatches {
         self.squeeze(squeeze_batch_size)?;
 
         let spill = OnHeapSpill::try_new()?;
-        let mut writer = lz4_flex::frame::FrameEncoder::new(
-            BufWriter::with_capacity(65536, spill)
-        );
+        let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
         let mut cur_rows = 0;
 
         // write batch1 + rows1, batch2 + rows2, ...
-        write_len(self.batches.len(), &mut writer)?;
         for batch in self.batches {
-            let mut buf = vec![];
             let batch = RecordBatch::try_new(
                 schema.clone(),
                 batch,
             )?;
+
+            let mut buf = vec![];
             write_one_batch(&batch, &mut Cursor::new(&mut buf), false)?;
             writer.write_all(&buf)?;
 
-            for _ in 0..batch.num_rows() {
-                let row = &self.sorted_rows[cur_rows];
-                cur_rows += 1;
+            for row in &self.sorted_rows[cur_rows..][..batch.num_rows()] {
                 write_len(row.row.len(), &mut writer)?;
                 writer.write_all(&row.row)?;
             }
+            cur_rows += batch.num_rows();
         }
 
-        let mut spill = writer
-            .finish()
-            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
-            .into_inner()
-            .map_err(|err| err.into_error())?;
-
+        writer.finish().map_err(|err| {
+            DataFusionError::Execution(format!("{}", err))
+        })?;
         spill.complete()?;
         Ok(Some(spill))
     }
@@ -796,10 +719,8 @@ impl SortedBatches {
 
 struct SpillCursor {
     id: usize,
-    spill_id: i32,
     input: FrameDecoder<BufReader<Box<dyn Read + Send>>>,
-    num_batches: usize,
-    cur_loaded_num_batches: usize,
+    cur_batch_num_rows: usize,
     cur_loaded_num_rows: usize,
     cur_batches: Vec<RecordBatch>,
     cur_batch_idx: usize,
@@ -810,14 +731,11 @@ struct SpillCursor {
 
 impl SpillCursor {
     fn try_from_spill(id: usize, spill: OnHeapSpill) -> Result<Self> {
-        let spill_id = spill.id();
-        let buf_reader = spill.into_buf_reader();
+        let buf_reader = spill.get_buf_reader();
         let mut iter = SpillCursor {
             id,
-            spill_id,
             input: FrameDecoder::new(buf_reader),
-            num_batches: 0,
-            cur_loaded_num_batches: 0,
+            cur_batch_num_rows: 0,
             cur_loaded_num_rows: 0,
             cur_batches: vec![],
             cur_batch_idx: 0,
@@ -825,24 +743,17 @@ impl SpillCursor {
             cur_key: Box::default(),
             finished: false,
         };
-        iter.num_batches = read_len(&mut iter.input)?;
         iter.next_key()?; // load first record into current
         Ok(iter)
     }
 
     fn next_key(&mut self) -> Result<()> {
-        if self.finished {
-            panic!("calling next_key() on finished sort spill cursor")
-        }
-        if self.cur_loaded_num_batches == 0 { // load first batch
-            self.load_next_batch()?;
-        }
-        if self.cur_loaded_num_rows >= self.cur_batches.last().unwrap().num_rows() {
-            if self.cur_loaded_num_batches >= self.num_batches { // end?
-                self.finished = true;
+        assert!(!self.finished, "calling next_key() on finished sort spill cursor");
+
+        if self.cur_loaded_num_rows >= self.cur_batch_num_rows {
+            if !self.load_next_batch()? {
                 return Ok(());
             }
-            self.load_next_batch()?;
         }
         let sorted_row_len = read_len(&mut self.input)?;
         self.cur_key = read_bytes_slice(&mut self.input, sorted_row_len)?;
@@ -850,12 +761,15 @@ impl SpillCursor {
         Ok(())
     }
 
-    fn load_next_batch(&mut self) -> Result<()> {
-        let batch = read_one_batch(&mut self.input, None, false)?.unwrap();
-        self.cur_loaded_num_batches += 1;
-        self.cur_loaded_num_rows = 0;
-        self.cur_batches.push(batch);
-        Ok(())
+    fn load_next_batch(&mut self) -> Result<bool> {
+        if let Some(batch) = read_one_batch(&mut self.input, None, false)? {
+            self.cur_batch_num_rows = batch.num_rows();
+            self.cur_loaded_num_rows = 0;
+            self.cur_batches.push(batch);
+            return Ok(true);
+        }
+        self.finished = true;
+        Ok(false)
     }
 
     fn next_row(&mut self) -> (usize, usize) {

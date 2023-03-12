@@ -1057,7 +1057,7 @@ mod tests {
         join_type: JoinType,
     ) -> Result<SortMergeJoinExec> {
         let sort_options = vec![SortOptions::default(); on.len()];
-        SortMergeJoinExec::try_new(left, right, on, join_type, sort_options, false)
+        SortMergeJoinExec::try_new(left, right, on, join_type, sort_options)
     }
 
     fn join_with_options(
@@ -1083,7 +1083,7 @@ mod tests {
         join_type: JoinType,
     ) -> Result<(Vec<String>, Vec<RecordBatch>)> {
         let sort_options = vec![SortOptions::default(); on.len()];
-        join_collect_with_options(left, right, on, join_type, sort_options, false).await
+        join_collect_with_options(left, right, on, join_type, sort_options).await
     }
 
     async fn join_collect_with_options(
@@ -1309,7 +1309,6 @@ mod tests {
                 };
                 2
             ],
-            true,
         )
         .await?;
         let expected = vec![

@@ -38,6 +38,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::stream::once;
 use futures::{TryFutureExt, TryStreamExt};
+use crate::common::memory_manager::MemManager;
 
 /// The shuffle writer operator maps each input partition to M output partitions based on a
 /// partitioning scheme. No guarantees are made about the order of the resulting partitions.
@@ -102,31 +103,45 @@ impl ExecutionPlan for ShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
-            p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
-                self.output_data_file.clone(),
-                self.output_index_file.clone(),
-                BaselineMetrics::new(&self.metrics, partition),
-            )),
+            p if p.partition_count() == 1 => {
+                Arc::new(SingleShuffleRepartitioner::new(
+                    self.output_data_file.clone(),
+                    self.output_index_file.clone(),
+                    BaselineMetrics::new(&self.metrics, partition),
+                ))
+            },
             p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
-                Arc::new(BucketShuffleRepartitioner::new(
-                    partition,
+                let partitioner = Arc::new(BucketShuffleRepartitioner::new(
                     self.output_data_file.clone(),
                     self.output_index_file.clone(),
                     self.schema(),
                     self.partitioning.clone(),
                     BaselineMetrics::new(&self.metrics, partition),
                     context.clone(),
-                ))
+                ));
+                MemManager::register_consumer(
+                    partitioner.clone(),
+                    format!("BucketShufflePartitioner[partition={}]", partition),
+                    true,
+                );
+                partitioner
             }
-            Partitioning::Hash(_, _) => Arc::new(SortShuffleRepartitioner::new(
-                partition,
-                self.output_data_file.clone(),
-                self.output_index_file.clone(),
-                self.schema(),
-                self.partitioning.clone(),
-                BaselineMetrics::new(&self.metrics, partition),
-                context.clone(),
-            )),
+            Partitioning::Hash(_, _) => {
+                let partitioner = Arc::new(SortShuffleRepartitioner::new(
+                    self.output_data_file.clone(),
+                    self.output_index_file.clone(),
+                    self.schema(),
+                    self.partitioning.clone(),
+                    BaselineMetrics::new(&self.metrics, partition),
+                    context.clone(),
+                ));
+                MemManager::register_consumer(
+                    partitioner.clone(),
+                    format!("SortShufflePartitioner[partition={}]", partition),
+                    true,
+                );
+                partitioner
+            }
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
 

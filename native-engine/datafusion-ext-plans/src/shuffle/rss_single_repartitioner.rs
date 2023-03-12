@@ -19,18 +19,10 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion_ext_commons::io::write_one_batch;
 use jni::objects::GlobalRef;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
 use std::io::Cursor;
 
 pub struct RssSingleShuffleRepartitioner {
     rss_partition_writer: GlobalRef,
-}
-
-impl Debug for RssSingleShuffleRepartitioner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RssSingleRepartitioner").finish()
-    }
 }
 
 impl RssSingleShuffleRepartitioner {
@@ -43,10 +35,6 @@ impl RssSingleShuffleRepartitioner {
 
 #[async_trait]
 impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
-    fn name(&self) -> &str {
-        "rss single repartitioner"
-    }
-
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let mut cursor = Cursor::new(Vec::<u8>::new());
         write_one_batch(&input, &mut cursor, true)?;

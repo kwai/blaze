@@ -12,20 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::mem::size_of;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use arrow::row::RowConverter;
 use async_trait::async_trait;
-use bytesize::ByteSize;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
-use datafusion::execution::memory_manager::ConsumerType;
-use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use futures::lock::Mutex;
 use futures::TryFutureExt;
@@ -40,16 +37,17 @@ use datafusion_ext_commons::loser_tree::LoserTree;
 use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
-use crate::spill::{get_spills_disk_usage, OnHeapSpill};
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
+use crate::common::onheap_spill::OnHeapSpill;
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
 const SPILL_OFFHEAP_MEM_COST: usize = 200000;
 
 pub struct AggTables {
+    mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     in_mem: Mutex<InMemTable>,
     spills: Mutex<Vec<OnHeapSpill>>,
-    id: MemoryConsumerId,
     agg_ctx: Arc<AggContext>,
     context: Arc<TaskContext>,
     metrics: BaselineMetrics,
@@ -58,22 +56,20 @@ pub struct AggTables {
 impl AggTables {
     pub fn new(
         agg_ctx: Arc<AggContext>,
-        partition_id: usize,
         metrics: BaselineMetrics,
         context: Arc<TaskContext>,
     ) -> Self {
         let tables = Self {
+            mem_consumer_info: None,
             in_mem: Mutex::new(InMemTable {
                 is_hash: true, // only the first im-mem table uses hash
                 ..Default::default()
             }),
             spills: Mutex::default(),
-            id: MemoryConsumerId::new(partition_id),
             agg_ctx,
             context,
             metrics,
         };
-        tables.context.runtime_env().register_requester(tables.id());
         tables
     }
 
@@ -81,21 +77,12 @@ impl AggTables {
         &self,
         process: impl FnOnce(&mut InMemTable) -> Result<()>,
     ) -> Result<()> {
-        let mut in_mem = self.in_mem.lock().await;
-        process(&mut in_mem)?;
-
-        let new_mem_used = in_mem.mem_used();
-        let old_mem_used = self.metrics.mem_used().set(new_mem_used);
-        drop(in_mem);
-
-        if new_mem_used > old_mem_used {
-            let mem_increased = new_mem_used - old_mem_used;
-            self.grow(mem_increased);
-            self.try_grow(0).await?;
-        } else if new_mem_used < old_mem_used {
-            let mem_freed = old_mem_used - new_mem_used;
-            self.shrink(mem_freed);
-        }
+        let mem_used = {
+            let mut in_mem = self.in_mem.lock().await;
+            process(&mut in_mem)?;
+            in_mem.mem_used()
+        };
+        self.update_mem_used(mem_used).await?;
         Ok(())
     }
 
@@ -105,14 +92,14 @@ impl AggTables {
         baseline_metrics: BaselineMetrics,
         sender: Sender<ArrowResult<RecordBatch>>,
     ) -> Result<()> {
-        let mut in_mem_locked = self.in_mem.lock().await;
-        let mut spills_locked = self.spills.lock().await;
+        self.set_spillable(false);
         let mut timer = baseline_metrics.elapsed_compute().timer();
 
+        let in_mem = std::mem::take(&mut *self.in_mem.lock().await);
+        let spills = std::mem::take(&mut *self.spills.lock().await);
+
         let batch_size = self.context.session_config().batch_size();
-        let in_mem = std::mem::take(&mut *in_mem_locked);
-        let spills = std::mem::take(&mut *spills_locked);
-        log::info!("aggregate exec starts outputing with {} spills", spills.len());
+        log::info!("aggregate exec starts outputting with {} spills", spills.len());
 
         // only one in-mem table, directly output it
         if spills.is_empty() {
@@ -142,32 +129,24 @@ impl AggTables {
                 timer.restart();
 
                 // free memory of the output batch
-                let mem_freed = batch_mem_size.min(self.mem_used());
-                self.metrics.mem_used().sub(mem_freed);
-                self.shrink(mem_freed);
+                self.update_mem_used_with_diff(-(batch_mem_size as isize)).await?;
             }
+            self.update_mem_used(0).await?;
             return Ok(());
         }
 
         // convert all tables into cursors
+        let mut spills = spills;
         let mut cursors = vec![];
         if in_mem.num_records() > 0 {
             // spill staging records
             if let Some(spill) = in_mem.try_into_spill()? {
-                cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
+                spills.push(spill);
             }
-
-            // adjust mem usage
-            let cur_mem_used = spills.len() * SPILL_OFFHEAP_MEM_COST;
-            match self.metrics.mem_used().value() {
-                v if v > cur_mem_used => self.shrink(v - cur_mem_used),
-                v if v < cur_mem_used => self.grow(cur_mem_used - v),
-                _ => {}
-            }
-            self.metrics.mem_used().set(cur_mem_used);
+            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST).await?;
         }
-        for spill in spills {
-            cursors.push(SpillCursor::try_from_spill(spill, &self.agg_ctx)?);
+        for spill in &spills {
+            cursors.push(SpillCursor::try_from_spill(spill.clone(), &self.agg_ctx)?);
         }
         let mut staging_records = Vec::with_capacity(batch_size);
         let mut current_record: Option<AggRecord> = None;
@@ -244,65 +223,40 @@ impl AggTables {
         }
 
         // update disk spill size
-        let spill_ids = cursors
-            .values()
+        let spill_disk_usage = spills
             .iter()
-            .map(|cursor| cursor.spill_id)
-            .collect::<Vec<_>>();
-        let spill_disk_usage = get_spills_disk_usage(&spill_ids)?;
+            .map(|spill| spill.get_disk_usage().unwrap_or(0))
+            .sum::<u64>();
         self.metrics.record_spill(spill_disk_usage as usize);
-
-        let used = self.metrics.mem_used().set(0);
-        self.shrink(used);
+        self.update_mem_used(0).await?;
         Ok(())
     }
 }
 
 #[async_trait]
-impl MemoryConsumer for AggTables {
-    fn name(&self) -> String {
-        "AggTables".to_string()
+impl MemConsumer for AggTables {
+    fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
+        self.mem_consumer_info = Some(consumer_info);
     }
 
-    fn id(&self) -> &MemoryConsumerId {
-        &self.id
+    fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
+        &self.mem_consumer_info.as_ref().expect("consumer info net set")
     }
 
-    fn memory_manager(&self) -> Arc<MemoryManager> {
-        self.context.runtime_env().memory_manager.clone()
-    }
+    async fn spill(&self) -> Result<()> {
+        let mut in_mem = self.in_mem.lock().await;
 
-    fn type_(&self) -> &ConsumerType {
-        &ConsumerType::Requesting
-    }
-
-    async fn spill(&self) -> Result<usize> {
-        if let Some(spill) = std::mem::take(&mut *self.in_mem.lock().await)
-            .try_into_spill()?
-        {
-            self.spills.lock().await.push(spill);
-            let freed = self.metrics.mem_used().set(0);
-
-            log::info!(
-                "agg tables spilled {}, {}",
-                ByteSize(freed as u64),
-                self.memory_manager(),
-            );
-            return Ok(freed);
-        }
-        Ok(0)
-    }
-
-    fn mem_used(&self) -> usize {
-        self.metrics.mem_used().value()
+        self.spills.lock().await.extend(
+            std::mem::take(&mut *in_mem).try_into_spill()?
+        );
+        self.update_mem_used(0).await?;
+        Ok(())
     }
 }
 
 impl Drop for AggTables {
     fn drop(&mut self) {
-        self.context
-            .runtime_env()
-            .drop_consumer(self.id(), self.mem_used());
+        MemManager::deregister_consumer(self);
     }
 }
 
@@ -386,9 +340,7 @@ impl InMemTable {
         }
 
         let spill = OnHeapSpill::try_new()?;
-        let mut writer = lz4_flex::frame::FrameEncoder::new(
-            BufWriter::with_capacity(65536, spill)
-        );
+        let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
         let mut sorted = self.into_rev_sorted_vec();
 
         while let Some(record) = sorted.pop() {
@@ -406,12 +358,9 @@ impl InMemTable {
         }
         write_len(0, &mut writer)?; // EOF
 
-        let mut spill = writer
-            .finish()
-            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
-            .into_inner()
-            .map_err(|err| err.into_error())?;
-
+        writer.finish().map_err(|err| {
+            DataFusionError::Execution(format!("{}", err))
+        })?;
         spill.complete()?;
         Ok(Some(spill))
     }
@@ -419,17 +368,14 @@ impl InMemTable {
 
 struct SpillCursor {
     agg_ctx: Arc<AggContext>,
-    spill_id: i32,
     input: FrameDecoder<BufReader<Box<dyn Read + Send>>>,
     current: Option<AggRecord>,
 }
 impl SpillCursor {
     fn try_from_spill(spill: OnHeapSpill, agg_ctx: &Arc<AggContext>) -> Result<Self> {
-        let spill_id = spill.id();
-        let buf_reader = spill.into_buf_reader();
+        let buf_reader = spill.get_buf_reader();
         let mut iter = SpillCursor {
             agg_ctx: agg_ctx.clone(),
-            spill_id,
             input: FrameDecoder::new(buf_reader),
             current: None,
         };

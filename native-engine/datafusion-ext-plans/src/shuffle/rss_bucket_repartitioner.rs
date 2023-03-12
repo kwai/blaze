@@ -23,10 +23,6 @@ use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
-use datafusion::execution::memory_manager::ConsumerType;
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::execution::{MemoryConsumer, MemoryConsumerId, MemoryManager};
-use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::array_builder::{
     builder_extend, make_batch, new_array_builders,
@@ -35,36 +31,29 @@ use datafusion_ext_commons::io::write_one_batch;
 use futures::lock::Mutex;
 use itertools::Itertools;
 use jni::objects::{GlobalRef, JObject};
-use std::fmt;
-use std::fmt::{Debug, Formatter};
 use std::io::Cursor;
-use std::sync::Arc;
-use bytesize::ByteSize;
+use std::sync::{Arc, Weak};
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 
 pub struct RssBucketShuffleRepartitioner {
-    id: MemoryConsumerId,
+    mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
-    runtime: Arc<RuntimeEnv>,
-    metrics: BaselineMetrics,
 }
 
 impl RssBucketShuffleRepartitioner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        partition_id: usize,
         rss_partition_writer: GlobalRef,
         schema: SchemaRef,
         partitioning: Partitioning,
-        metrics: BaselineMetrics,
         context: Arc<TaskContext>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
-        let runtime = context.runtime_env();
         let batch_size = context.session_config().batch_size();
         let repartitioner = Self {
-            id: MemoryConsumerId::new(partition_id),
+            mem_consumer_info: None,
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
                     .into_iter()
@@ -77,27 +66,19 @@ impl RssBucketShuffleRepartitioner {
             ),
             partitioning,
             num_output_partitions,
-            runtime,
-            metrics,
         };
-        repartitioner.runtime.register_requester(&repartitioner.id);
         repartitioner
     }
 }
 
 #[async_trait]
 impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
-    fn name(&self) -> &str {
-        "bucket rss repartitioner"
-    }
-
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
+
         // batch records are first shuffled and inserted into array builders, which may
         // have doubled capacity in worse case.
         let mem_increase = input.get_array_memory_size() * 2;
-        self.metrics.mem_used().add(mem_increase);
-        self.grow(mem_increase);
-        self.try_grow(0).await?;
+        self.update_mem_used_with_diff(mem_increase as isize).await?;
 
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
@@ -174,60 +155,35 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
         for i in 0..self.num_output_partitions {
             buffered_partitions[i].flush_to_rss(i)?;
         }
+        self.update_mem_used(0).await?;
         Ok(())
     }
 }
 
-impl Debug for RssBucketShuffleRepartitioner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RssBucketRepartitioner")
-            .field("id", &self.id())
-            .field("memory_used", &self.mem_used())
-            .finish()
-    }
-}
-
 #[async_trait]
-impl MemoryConsumer for RssBucketShuffleRepartitioner {
-    fn name(&self) -> String {
-        "rss bucket repartitioner".to_string()
+impl MemConsumer for RssBucketShuffleRepartitioner {
+    fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
+        self.mem_consumer_info = Some(consumer_info);
     }
 
-    fn id(&self) -> &MemoryConsumerId {
-        &self.id
+    fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
+        &self.mem_consumer_info.as_ref().expect("consumer info net set")
     }
 
-    fn memory_manager(&self) -> Arc<MemoryManager> {
-        self.runtime.memory_manager.clone()
-    }
-
-    fn type_(&self) -> &ConsumerType {
-        &ConsumerType::Requesting
-    }
-
-    async fn spill(&self) -> Result<usize> {
-        let mut buffered_partitions = self.buffered_partitions.lock().await;
+    async fn spill(&self) -> Result<()> {
+        let mut partitions = self.buffered_partitions.lock().await;
         for i in 0..self.num_output_partitions {
-            buffered_partitions[i].flush_to_rss(i)?;
+            partitions[i].flush_to_rss(i)?;
         }
-
-        let freed = self.metrics.mem_used().set(0);
-        log::info!(
-            "rss bucket repartitioner spilled {}, {}",
-            ByteSize(freed as u64),
-            self.memory_manager(),
-        );
-        Ok(freed)
+        self.update_mem_used(0).await?;
+        Ok(())
     }
 
-    fn mem_used(&self) -> usize {
-        self.metrics.mem_used().value()
-    }
 }
 
 impl Drop for RssBucketShuffleRepartitioner {
     fn drop(&mut self) {
-        self.runtime.drop_consumer(self.id(), self.mem_used());
+        MemManager::deregister_consumer(self);
     }
 }
 

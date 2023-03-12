@@ -33,6 +33,7 @@ strip = true
 
 [profile.pre]
 inherits = "release"
+incremental = true
 debug = false
 opt-level = 1
 lto = false

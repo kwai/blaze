@@ -12,29 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use async_trait::async_trait;
 use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{Result, Statistics};
+use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::execution::MemoryConsumerId;
 use datafusion::logical_expr::JoinType;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::joins::utils::{JoinFilter, JoinOn};
 use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::metrics::{MetricsSet, Time};
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    DisplayFormatType, ExecutionPlan, Partitioning,
     SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::{ready, Stream, StreamExt};
+use futures::{StreamExt, TryStreamExt, TryFutureExt};
 use std::any::Any;
 use std::fmt::Formatter;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::sync::{Arc, Weak};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use futures::stream::once;
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
+use crate::common::output_with_sender;
 
 // TODO:
 //  in spark broadcast hash join, the hash table is built on driver side.
@@ -114,16 +113,34 @@ impl ExecutionPlan for BroadcastHashJoinExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+
+        let mem_tracker = Arc::new(MemTracker {
+            mem_consumer_info: None,
+        });
+        MemManager::register_consumer(
+            mem_tracker.clone(),
+            format!("BroadcastHashSide[partition={}]", partition),
+            false,
+        );
+
         // left is always the built side, wrap it with a BroadcastSideWrapperExec
         let wrapped_left = Arc::new(BroadcastSideWrapperExec {
             inner: self.inner.children()[0].clone(),
+            mem_tracker: mem_tracker.clone(),
         });
 
         // execute with the wrapped children
-        self.inner
+        let output = self.inner
             .clone()
             .with_new_children(vec![wrapped_left, self.inner.children()[1].clone()])?
-            .execute(partition, context)
+            .execute(partition, context)?;
+
+        // hold mem_tracker until join finished
+        let stream = Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            once(stream_holding_mem_tracker(output, mem_tracker)).try_flatten(),
+        ));
+        Ok(stream)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -143,7 +160,9 @@ impl ExecutionPlan for BroadcastHashJoinExec {
 #[derive(Debug)]
 struct BroadcastSideWrapperExec {
     inner: Arc<dyn ExecutionPlan>,
+    mem_tracker: Arc<MemTracker>,
 }
+
 impl ExecutionPlan for BroadcastSideWrapperExec {
     fn as_any(&self) -> &dyn Any {
         self
@@ -184,12 +203,12 @@ impl ExecutionPlan for BroadcastSideWrapperExec {
             context.session_config().batch_size(),
             elapsed_compute,
         ));
-        let mem_tracked = Box::pin(BroadcastMemTrackerStream::new(
-            context.runtime_env(),
-            coalesced,
-            partition,
+
+        let stream = Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            once(stream_with_mem_tracker(coalesced, self.mem_tracker.clone())).try_flatten(),
         ));
-        Ok(mem_tracked)
+        Ok(stream)
     }
 
     fn statistics(&self) -> Statistics {
@@ -197,62 +216,60 @@ impl ExecutionPlan for BroadcastSideWrapperExec {
     }
 }
 
-struct BroadcastMemTrackerStream {
-    id: MemoryConsumerId,
-    input: SendableRecordBatchStream,
-    runtime: Arc<RuntimeEnv>,
-    mem_used: usize,
+#[derive(Debug)]
+struct MemTracker {
+    mem_consumer_info: Option<Weak<MemConsumerInfo>>,
 }
 
-impl BroadcastMemTrackerStream {
-    fn new(
-        runtime: Arc<RuntimeEnv>,
-        input: SendableRecordBatchStream,
-        partition_id: usize,
-    ) -> Self {
-        Self {
-            id: MemoryConsumerId::new(partition_id),
-            input,
-            runtime,
-            mem_used: 0,
-        }
+#[async_trait]
+impl MemConsumer for MemTracker {
+    fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
+        self.mem_consumer_info = Some(consumer_info);
+    }
+
+    fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
+        &self.mem_consumer_info.as_ref().expect("consumer info net set")
     }
 }
 
-impl Drop for BroadcastMemTrackerStream {
+impl Drop for MemTracker {
     fn drop(&mut self) {
-        self.runtime.drop_consumer(&self.id, self.mem_used);
+        MemManager::deregister_consumer(self);
     }
 }
 
-impl RecordBatchStream for BroadcastMemTrackerStream {
-    fn schema(&self) -> SchemaRef {
-        self.input.schema()
-    }
-}
+async fn stream_with_mem_tracker(
+    mut input: SendableRecordBatchStream,
+    mem_tracker: Arc<MemTracker>,
+) -> Result<SendableRecordBatchStream> {
 
-impl Stream for BroadcastMemTrackerStream {
-    type Item = ArrowResult<RecordBatch>;
+    output_with_sender(input.schema(), |sender| async move {
+        let mut mem_used = 0;
+        while let Some(batch) = input.next().await.transpose()? {
+            mem_used += batch.get_array_memory_size() * 3 / 2;
+            mem_tracker.update_mem_used(mem_used).await?;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        match ready!(Pin::new(&mut self.input).poll_next_unpin(cx)) {
-            Some(Ok(batch)) => {
-                // assume the hash map uses 1.5x memory
-                let mem_increased = batch.get_array_memory_size() * 3 / 2;
-                self.runtime.grow_tracker_usage(mem_increased);
-                self.mem_used += mem_increased;
-                log::info!(
-                    "broadcast hash join received built batch, num_rows={}, total_mem_tracking={}",
-                    batch.num_rows(),
-                    self.mem_used,
-                );
-                Poll::Ready(Some(Ok(batch)))
-            }
-            Some(Err(err)) => Poll::Ready(Some(Err(err))),
-            None => Poll::Ready(None),
+            sender.send(Ok(batch))
+                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
+                .await?;
         }
-    }
+        Ok(())
+    })
 }
+
+async fn stream_holding_mem_tracker(
+    mut input: SendableRecordBatchStream,
+    mem_tracker: Arc<MemTracker>,
+) -> Result<SendableRecordBatchStream> {
+
+    output_with_sender(input.schema(), |sender| async move {
+        while let Some(batch) = input.next().await.transpose()? {
+            sender.send(Ok(batch))
+                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
+                .await?;
+        }
+        mem_tracker.update_mem_used(0).await?;
+        Ok(())
+    })
+}
+
