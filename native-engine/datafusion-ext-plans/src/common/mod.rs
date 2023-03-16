@@ -14,9 +14,10 @@
 
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
+use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
 use arrow::error::{ArrowError, Result as ArrowResult};
-use arrow::record_batch::RecordBatch;
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::{DataFusionError, Result};
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchReceiverStream;
@@ -25,6 +26,44 @@ use tokio::sync::mpsc::Sender;
 
 pub mod memory_manager;
 pub mod onheap_spill;
+
+pub struct BatchesInterleaver {
+    schema: SchemaRef,
+    batches_arrays: Vec<Vec<ArrayRef>>,
+}
+
+impl BatchesInterleaver {
+    pub fn new(schema: SchemaRef, batches: &[RecordBatch]) -> Self {
+        let mut batches_arrays: Vec<Vec<ArrayRef>> = schema
+            .fields()
+            .iter()
+            .map(|_| Vec::with_capacity(batches.len()))
+            .collect();
+        for batch in batches {
+            for (col_idx, column) in batch.columns().iter().enumerate() {
+                batches_arrays[col_idx].push(column.clone());
+            }
+        }
+
+        Self {
+            schema,
+            batches_arrays,
+        }
+    }
+
+    pub fn interleave(&self, indices: &[(usize, usize)]) -> Result<RecordBatch> {
+        Ok(RecordBatch::try_new_with_options(
+            self.schema.clone(),
+            self.batches_arrays
+                .iter()
+                .map(|arrays| arrow::compute::interleave(
+                    &arrays.iter().map(|array| array.as_ref()).collect::<Vec<_>>(),
+                    indices))
+                .collect::<ArrowResult<Vec<_>>>()?,
+            &RecordBatchOptions::new().with_row_count(Some(indices.len())),
+        )?)
+    }
+}
 
 pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
     output_schema: SchemaRef,
@@ -38,8 +77,8 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
 
             output(sender).await
         })
-        .catch_unwind()
-        .await;
+            .catch_unwind()
+            .await;
 
         if let Err(e) = result {
             let err_message = panic_message::panic_message(&e).to_owned();
@@ -58,3 +97,4 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
         join_handle,
     ))
 }
+

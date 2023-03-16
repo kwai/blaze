@@ -37,12 +37,10 @@ use itertools::Itertools;
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Weak};
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::SeqCst;
-use tokio::task;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 
 pub struct BucketShuffleRepartitioner {
+    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     output_data_file: String,
     output_index_file: String,
@@ -50,13 +48,13 @@ pub struct BucketShuffleRepartitioner {
     spills: Mutex<Vec<ShuffleSpill>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
-    outputting: AtomicBool,
     metrics: BaselineMetrics,
 }
 
 impl BucketShuffleRepartitioner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        partition_id: usize,
         output_data_file: String,
         output_index_file: String,
         schema: SchemaRef,
@@ -67,6 +65,7 @@ impl BucketShuffleRepartitioner {
         let num_output_partitions = partitioning.partition_count();
         let batch_size = context.session_config().batch_size();
         let repartitioner = Self {
+            name: format!("BucketShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
             output_data_file,
             output_index_file,
@@ -78,7 +77,6 @@ impl BucketShuffleRepartitioner {
             spills: Mutex::new(vec![]),
             partitioning,
             num_output_partitions,
-            outputting: AtomicBool::new(false),
             metrics,
         };
         repartitioner
@@ -159,12 +157,16 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        self.outputting.store(true, SeqCst);
+        self.set_spillable(false);
         let spills = std::mem::take(&mut *self.spills.lock().await);
         let mut buffered_partitions =
             std::mem::take(&mut *self.buffered_partitions.lock().await);
 
-        log::info!("bucket partitioner start writing with {} spills", spills.len());
+        log::info!(
+            "bucket partitioner start writing with {} ({} spills)",
+            self.name(),
+            spills.len(),
+        );
 
         let mut output_batches: Vec<Vec<u8>> = vec![vec![]; self.num_output_partitions];
         for i in 0..self.num_output_partitions {
@@ -185,7 +187,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
         let num_output_partitions = self.num_output_partitions;
-        task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let mut offsets = vec![0; num_output_partitions + 1];
             let mut output_data = OpenOptions::new()
                 .write(true)
@@ -205,6 +207,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
                     }
                 }
             }
+            output_data.sync_data()?;
             output_data.flush()?;
 
             // add one extra offset at last to ease partition length computation
@@ -213,6 +216,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             for offset in offsets {
                 output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
             }
+            output_index.sync_data()?;
             output_index.flush()?;
             Ok::<(), DataFusionError>(())
         })
@@ -274,6 +278,10 @@ fn spill_buffered_partitions(
 
 #[async_trait]
 impl MemConsumer for BucketShuffleRepartitioner {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
         self.mem_consumer_info = Some(consumer_info);
     }
@@ -284,10 +292,13 @@ impl MemConsumer for BucketShuffleRepartitioner {
 
     async fn spill(&self) -> Result<()> {
         let mut partitions = self.buffered_partitions.lock().await;
+        let mut spills = self.spills.lock().await;
 
-        self.spills.lock().await.extend(
-            spill_buffered_partitions(&mut *partitions, self.num_output_partitions)?
-        );
+        spills.extend(
+            spill_buffered_partitions(&mut *partitions, self.num_output_partitions)?);
+        drop(spills);
+        drop(partitions);
+
         self.update_mem_used(0).await?;
         Ok(())
     }

@@ -116,6 +116,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             }
             Partitioning::Hash(_, _) => {
                 let partitioner = Arc::new(RssBucketShuffleRepartitioner::new(
+                    partition,
                     rss_partition_writer,
                     self.schema(),
                     self.partitioning.clone(),
@@ -123,7 +124,6 @@ impl ExecutionPlan for RssShuffleWriterExec {
                 ));
                 MemManager::register_consumer(
                     partitioner.clone(),
-                    format!("RssBucketShufflePartitioner[partition={}]", partition),
                     true,
                 );
                 partitioner

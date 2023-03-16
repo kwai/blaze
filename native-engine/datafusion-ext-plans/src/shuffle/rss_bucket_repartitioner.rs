@@ -36,6 +36,7 @@ use std::sync::{Arc, Weak};
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 
 pub struct RssBucketShuffleRepartitioner {
+    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     partitioning: Partitioning,
@@ -45,6 +46,7 @@ pub struct RssBucketShuffleRepartitioner {
 impl RssBucketShuffleRepartitioner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        partition_id: usize,
         rss_partition_writer: GlobalRef,
         schema: SchemaRef,
         partitioning: Partitioning,
@@ -53,6 +55,7 @@ impl RssBucketShuffleRepartitioner {
         let num_output_partitions = partitioning.partition_count();
         let batch_size = context.session_config().batch_size();
         let repartitioner = Self {
+            name: format!("RssBucketShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
@@ -162,6 +165,10 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
 
 #[async_trait]
 impl MemConsumer for RssBucketShuffleRepartitioner {
+    fn name(&self) ->&str {
+        &self.name
+    }
+
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
         self.mem_consumer_info = Some(consumer_info);
     }
@@ -175,6 +182,7 @@ impl MemConsumer for RssBucketShuffleRepartitioner {
         for i in 0..self.num_output_partitions {
             partitions[i].flush_to_rss(i)?;
         }
+        drop(partitions);
         self.update_mem_used(0).await?;
         Ok(())
     }

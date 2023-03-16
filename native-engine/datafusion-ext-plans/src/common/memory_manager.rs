@@ -50,19 +50,14 @@ impl MemManager {
         MEM_MANAGER.get().expect("mem manager not initialized")
     }
 
-    pub fn register_consumer(
-        consumer: Arc<dyn MemConsumer>,
-        name: String,
-        spillable: bool,
-    ) {
+    pub fn register_consumer(consumer: Arc<dyn MemConsumer>, spillable: bool) {
         let consumer_info = Arc::new(MemConsumerInfo {
-            name,
             status: Mutex::new(MemConsumerStatus {
                 mem_used: 0,
                 spillable,
             }),
         });
-        log::info!("mem manager registering consumer: {}", consumer_info.name);
+        log::info!("mem manager registering consumer: {}", consumer.name());
 
         // safety:
         // get_consumer_info() is guaranteed not to be called before this operation
@@ -96,7 +91,7 @@ impl MemManager {
         assert!(mm_status.total_used >= consumer_status.mem_used);
         mm_status.num_consumers -= 1;
         let (total_old_used, total_used) =
-            mm_status.update_total_used_with_diff(consumer_status.mem_used as isize);
+            mm_status.update_total_used_with_diff(-(consumer_status.mem_used as isize));
 
         // update mm spillable status
         if consumer_status.spillable {
@@ -108,12 +103,12 @@ impl MemManager {
         // remove consumer info
         for i in 0..mm_consumers.len() {
             if Arc::ptr_eq(&mm_consumers[i], &consumer_info) {
-                log::info!("mem manager deregistered consumer: {}", consumer_info.name);
+                log::info!("mem manager deregistered consumer: {}", consumer.name());
                 mm_consumers.swap_remove(i);
 
                 drop(mm_status);
                 drop(mm_consumers);
-                print_stats(&consumer_info, total_old_used, total_used);
+                print_stats(consumer, total_old_used, total_used);
                 return;
             }
         }
@@ -146,7 +141,6 @@ impl MemManagerStatus {
 }
 
 pub struct MemConsumerInfo {
-    name: String,
     status: Mutex<MemConsumerStatus>,
 }
 
@@ -158,6 +152,7 @@ struct MemConsumerStatus {
 
 #[async_trait]
 pub trait MemConsumer: Send + Sync {
+    fn name(&self) -> &str;
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>);
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo>;
 
@@ -277,7 +272,7 @@ async fn update_consumer_mem_used_with_custom_updater(
             };
         (new_used, total_old_used, total_used, operation)
     };
-    print_stats(&consumer_info, total_old_used, total_used);
+    print_stats(consumer, total_old_used, total_used);
     let mut operation = operation;
 
     // trigger waiting for resources
@@ -291,7 +286,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         if wait.timed_out() {
             log::warn!(
                 "mem manager: consumer {} timeout waiting for resources",
-                consumer_info.name,
+                consumer.name(),
             );
             operation = Operation::Spill;
         }
@@ -301,7 +296,7 @@ async fn update_consumer_mem_used_with_custom_updater(
     if operation == Operation::Spill {
         log::info!(
             "mem manager spilling {} (mem_used: {}), total: {}/{}",
-            consumer_info.name,
+            consumer.name(),
             ByteSize(mem_used as u64),
             ByteSize(total_used as u64),
             ByteSize(mm.total as u64),
@@ -312,13 +307,13 @@ async fn update_consumer_mem_used_with_custom_updater(
     Ok(())
 }
 
-fn print_stats(by: &MemConsumerInfo, old_used: usize, new_used: usize) {
+fn print_stats(by: &dyn MemConsumer, old_used: usize, new_used: usize) {
     // print log per every 100MBs
     if new_used / 104857600 != old_used / 104857600 {
         log::info!(
-                "mem manager total used: {} (updated by consumer {})",
-                ByteSize(new_used as u64),
-                by.name,
-            );
+            "mem manager total used: {} (updated by consumer {})",
+            ByteSize(new_used as u64),
+            by.name(),
+        );
     }
 }

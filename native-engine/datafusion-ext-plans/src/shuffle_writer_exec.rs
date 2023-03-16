@@ -112,6 +112,7 @@ impl ExecutionPlan for ShuffleWriterExec {
             },
             p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
                 let partitioner = Arc::new(BucketShuffleRepartitioner::new(
+                    partition,
                     self.output_data_file.clone(),
                     self.output_index_file.clone(),
                     self.schema(),
@@ -119,15 +120,12 @@ impl ExecutionPlan for ShuffleWriterExec {
                     BaselineMetrics::new(&self.metrics, partition),
                     context.clone(),
                 ));
-                MemManager::register_consumer(
-                    partitioner.clone(),
-                    format!("BucketShufflePartitioner[partition={}]", partition),
-                    true,
-                );
+                MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
             Partitioning::Hash(_, _) => {
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
+                    partition,
                     self.output_data_file.clone(),
                     self.output_index_file.clone(),
                     self.schema(),
@@ -135,11 +133,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                     BaselineMetrics::new(&self.metrics, partition),
                     context.clone(),
                 ));
-                MemManager::register_consumer(
-                    partitioner.clone(),
-                    format!("SortShufflePartitioner[partition={}]", partition),
-                    true,
-                );
+                MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
             p => unreachable!("unsupported partitioning: {:?}", p),

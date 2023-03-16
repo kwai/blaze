@@ -115,11 +115,11 @@ impl ExecutionPlan for BroadcastHashJoinExec {
     ) -> Result<SendableRecordBatchStream> {
 
         let mem_tracker = Arc::new(MemTracker {
+            name: format!("BroadcastHashSide[partition={}]", partition),
             mem_consumer_info: None,
         });
         MemManager::register_consumer(
             mem_tracker.clone(),
-            format!("BroadcastHashSide[partition={}]", partition),
             false,
         );
 
@@ -218,11 +218,16 @@ impl ExecutionPlan for BroadcastSideWrapperExec {
 
 #[derive(Debug)]
 struct MemTracker {
+    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
 }
 
 #[async_trait]
 impl MemConsumer for MemTracker {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
         self.mem_consumer_info = Some(consumer_info);
     }

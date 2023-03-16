@@ -187,15 +187,12 @@ async fn execute_agg_with_grouping_hash(
 
     // create tables
     let tables = Arc::new(AggTables::new(
+        partition_id,
         agg_ctx.clone(),
         BaselineMetrics::new(&metrics, partition_id),
         context.clone(),
     ));
-    MemManager::register_consumer(
-        tables.clone(),
-        format!("AggTable[partition={}]", partition_id),
-        true,
-    );
+    MemManager::register_consumer(tables.clone(), true);
     drop(timer);
 
     // start processing input batches

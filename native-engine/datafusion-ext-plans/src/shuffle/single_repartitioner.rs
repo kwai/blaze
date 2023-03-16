@@ -66,10 +66,13 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
+        self.get_output_data()?.sync_data()?;
+
         let offset = self.get_output_data()?.stream_position()?;
         let mut output_index = File::create(&self.output_index_file)?;
         output_index.write_all(&[0u8; 8])?;
         output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+        output_index.sync_data()?;
         Ok(())
     }
 }

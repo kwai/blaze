@@ -45,6 +45,7 @@ use crate::common::onheap_spill::OnHeapSpill;
 const SPILL_OFFHEAP_MEM_COST: usize = 200000;
 
 pub struct AggTables {
+    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     in_mem: Mutex<InMemTable>,
     spills: Mutex<Vec<OnHeapSpill>>,
@@ -55,11 +56,13 @@ pub struct AggTables {
 
 impl AggTables {
     pub fn new(
+        partition_id: usize,
         agg_ctx: Arc<AggContext>,
         metrics: BaselineMetrics,
         context: Arc<TaskContext>,
     ) -> Self {
         let tables = Self {
+            name: format!("AggTable[partition={}]", partition_id),
             mem_consumer_info: None,
             in_mem: Mutex::new(InMemTable {
                 is_hash: true, // only the first im-mem table uses hash
@@ -99,7 +102,11 @@ impl AggTables {
         let spills = std::mem::take(&mut *self.spills.lock().await);
 
         let batch_size = self.context.session_config().batch_size();
-        log::info!("aggregate exec starts outputting with {} spills", spills.len());
+        log::info!(
+            "aggregate exec starts outputting with {} ({} spills)",
+            self.name(),
+            spills.len(),
+        );
 
         // only one in-mem table, directly output it
         if spills.is_empty() {
@@ -235,6 +242,10 @@ impl AggTables {
 
 #[async_trait]
 impl MemConsumer for AggTables {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
         self.mem_consumer_info = Some(consumer_info);
     }
@@ -245,10 +256,12 @@ impl MemConsumer for AggTables {
 
     async fn spill(&self) -> Result<()> {
         let mut in_mem = self.in_mem.lock().await;
+        let mut spills = self.spills.lock().await;
 
-        self.spills.lock().await.extend(
-            std::mem::take(&mut *in_mem).try_into_spill()?
-        );
+        spills.extend(std::mem::take(&mut *in_mem).try_into_spill()?);
+        drop(spills);
+        drop(in_mem);
+
         self.update_mem_used(0).await?;
         Ok(())
     }

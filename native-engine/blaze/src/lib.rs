@@ -17,7 +17,6 @@ use datafusion::prelude::SessionContext;
 use jni::objects::{JObject, JThrowable};
 use jni::sys::{jboolean, JNI_TRUE};
 use once_cell::sync::OnceCell;
-use std::alloc::System;
 use std::any::Any;
 use std::error::Error;
 use std::fmt::Debug;
@@ -25,10 +24,7 @@ use std::panic::AssertUnwindSafe;
 
 mod exec;
 mod metrics;
-
-// use system allocator
-#[global_allocator]
-static GLOBAL: System = System;
+mod alloc;
 
 static SESSION: OnceCell<SessionContext> = OnceCell::new();
 

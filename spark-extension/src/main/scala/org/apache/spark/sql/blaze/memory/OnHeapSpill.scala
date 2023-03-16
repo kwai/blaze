@@ -63,7 +63,6 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
           // write to file
           channel.position(channel.size())
           while (buf.hasRemaining && channel.write(buf) >= 0) {}
-          channel.force(false)
 
         case None =>
           // write to in-mem data queue
@@ -189,8 +188,8 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
     channel.position(channel.size())
     dataBlockQueue.foreach(buf => {
       while (buf.hasRemaining && channel.write(buf) >= 0) {}
-      channel.force(false)
     })
+    channel.force(false)
     dataBlockQueue.clear()
     freeMemory(memAllocated)
   }
