@@ -61,6 +61,8 @@ impl Fs {
         let fin = jni_call!(
             HadoopFileSystem(self.fs.as_obj()).open(path) -> JObject
         )?;
+
+        jni_delete_local_ref!(path)?;
         Ok(FsDataInputStream {
             stream: jni_new_global_ref!(fin)?,
             io_time: self.io_time.clone(),
