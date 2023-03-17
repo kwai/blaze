@@ -42,11 +42,12 @@ use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::ops::Range;
-use std::sync::{Arc, Mutex as SyncMutex};
+use std::sync::Arc;
 use std::time::Duration;
 use arrow::row::{RowConverter, Rows, SortField};
 use bitvec::vec::BitVec;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use parking_lot::{Mutex as SyncMutex};
 use tokio::sync::mpsc::Sender;
 
 #[derive(Debug)]
@@ -840,7 +841,6 @@ impl StreamCursor {
 
             self.on_rows = Some(self.on_row_converter
                 .lock()
-                .unwrap()
                 .convert_columns(&on_columns)?);
             self.on_row_nulls = (0..batch.num_rows())
                 .into_iter()

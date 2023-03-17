@@ -17,8 +17,7 @@
 use std::any::Any;
 use std::fmt::Formatter;
 use std::io::{BufReader, Cursor, Read, Write};
-use std::sync::{Arc, Mutex as SyncMutex, Weak};
-use arrow::array::Array;
+use std::sync::{Arc, Weak};
 use arrow::datatypes::SchemaRef;
 use arrow::error::{Result as ArrowResult};
 use arrow::record_batch::RecordBatch;
@@ -35,6 +34,7 @@ use futures::lock::Mutex;
 use futures::stream::once;
 use itertools::Itertools;
 use lz4_flex::frame::FrameDecoder;
+use parking_lot::{Mutex as SyncMutex};
 use tokio::sync::mpsc::Sender;
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
 use datafusion_ext_commons::loser_tree::LoserTree;
@@ -497,19 +497,16 @@ impl SortedBatches {
         batch: RecordBatch,
     ) -> Result<Self> {
 
-        let mut batches_mem_size = 0;
+        let batches_num_rows = batch.num_rows();
+        let batches_mem_size = batch.get_array_memory_size();
+
         let rows: Rows = sorter.sort_row_converter
             .lock()
-            .unwrap()
             .convert_columns(&sorter.exprs
                 .iter()
-                .map(|expr| expr.expr
-                    .evaluate(&batch)
-                    .map(|cv| {
-                        let array = cv.into_array(batch.num_rows());
-                        batches_mem_size += array.get_array_memory_size();
-                        array
-                    }))
+                .map(|expr| {
+                    expr.expr.evaluate(&batch).map(|cv| cv.into_array(batch.num_rows()))
+                })
                 .collect::<Result<Vec<_>>>()?
             )?;
 
@@ -526,7 +523,6 @@ impl SortedBatches {
             })
             .collect();
 
-        let batches_num_rows = batch.num_rows();
         let batches = vec![batch];
         let squeezed = false;
 
