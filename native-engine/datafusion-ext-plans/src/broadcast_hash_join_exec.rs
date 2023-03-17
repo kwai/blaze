@@ -233,7 +233,7 @@ impl MemConsumer for MemTracker {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        &self.mem_consumer_info.as_ref().expect("consumer info net set")
+        &self.mem_consumer_info.as_ref().expect("consumer info not set")
     }
 }
 

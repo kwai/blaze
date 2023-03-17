@@ -182,7 +182,7 @@ impl MemConsumer for SortShuffleRepartitioner {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        &self.mem_consumer_info.as_ref().expect("consumer info net set")
+        &self.mem_consumer_info.as_ref().expect("consumer info not set")
     }
 
     async fn spill(&self) -> Result<()> {
