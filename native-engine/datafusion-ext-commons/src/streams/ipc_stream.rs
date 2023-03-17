@@ -20,7 +20,7 @@ use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use blaze_commons::{
     jni_call, jni_delete_local_ref, jni_get_object_class, jni_get_string,
-    jni_new_direct_byte_buffer, jni_new_global_ref, ResultExt,
+    jni_new_direct_byte_buffer, jni_new_global_ref
 };
 use datafusion::error::Result;
 use datafusion::physical_plan::common::batch_byte_size;
@@ -30,7 +30,7 @@ use futures::Stream;
 use jni::objects::{GlobalRef, JObject};
 use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
 use std::fs::File;
-use std::io::Seek;
+use std::io::{Error as IoError, Seek};
 use std::io::{Read, SeekFrom};
 use std::pin::Pin;
 use std::task::Context;
@@ -205,21 +205,27 @@ impl Read for ReadableByteChannelReader {
         if self.closed {
             return Ok(0);
         }
-        let buf = jni_new_direct_byte_buffer!(buf).to_io_result()?;
-        while jni_call!(JavaBuffer(buf).hasRemaining() -> jboolean).to_io_result()?
-            == JNI_TRUE
-        {
+        let buf = jni_new_direct_byte_buffer!(buf)
+            .map_err(|err| IoError::other(err))?;
+
+        while {
+            let has_remaining = jni_call!(JavaBuffer(buf).hasRemaining() -> jboolean)
+                .map_err(|err| IoError::other(err))?;
+            has_remaining == JNI_TRUE
+        } {
             let read_bytes = jni_call!(
                 JavaReadableByteChannel(self.channel.as_obj()).read(buf) -> jint
             )
-            .to_io_result()?;
+            .map_err(|err| IoError::other(err))?;
 
             if read_bytes < 0 {
                 self.close()?;
                 break;
             }
         }
-        let position = jni_call!(JavaBuffer(buf).position() -> jint).to_io_result()?;
+
+        let position = jni_call!(JavaBuffer(buf).position() -> jint)
+            .map_err(|err| IoError::other(err))?;
         jni_delete_local_ref!(buf.into())?;
         Ok(position as usize)
     }

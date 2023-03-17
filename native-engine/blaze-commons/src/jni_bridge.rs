@@ -27,20 +27,24 @@ pub use jni::JNIEnv;
 pub use jni::JavaVM;
 pub use paste::paste;
 
-use crate::ResultExt;
 use once_cell::sync::OnceCell;
 
 thread_local! {
     pub static THREAD_JNIENV: once_cell::unsync::Lazy<JNIEnv<'static>> =
         once_cell::unsync::Lazy::new(|| {
             let jvm = &JavaClasses::get().jvm;
-            let env = jvm.attach_current_thread_permanently().unwrap_or_fatal();
+            let env = jvm
+                .attach_current_thread_permanently()
+                .expect("JVM cannot attach current thread");
+
             env.call_static_method_unchecked(
                 JavaClasses::get().cJniBridge.class,
                 JavaClasses::get().cJniBridge.method_setContextClassLoader,
                 JavaClasses::get().cJniBridge.method_setContextClassLoader_ret.clone(),
                 &[jni::sys::jvalue::from(jni::objects::JValue::from(JavaClasses::get().classloader))]
-            ).unwrap_or_fatal();
+            )
+            .expect("JVM cannot set ContextClassLoader to current thread");
+
             env
         });
 }
