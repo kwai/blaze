@@ -143,7 +143,7 @@ macro_rules! jni_new_direct_byte_buffer {
             $crate::jni_map_error_with_env!(
                 env,
                 env.new_direct_byte_buffer(
-                    unsafe { $value.get_unchecked_mut(0) as *mut u8 },
+                    unsafe { $value.get_unchecked(0) as *const u8 as *mut u8 },
                     $value.len()
                 )
             )

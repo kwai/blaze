@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_commons::{
-    jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
-};
+use blaze_commons::{jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer, jni_new_global_ref};
 use datafusion::common::Result;
 use jni::objects::{GlobalRef, JObject};
 use jni::sys::jlong;
@@ -57,13 +55,14 @@ impl OnHeapSpill {
 
 impl Write for OnHeapSpill {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        jni_call!(BlazeOnHeapSpillManager(self.0.hsm.as_obj()).writeSpill(
-            self.0.spill_id,
-            jni_new_direct_byte_buffer!(
-                std::slice::from_raw_parts_mut(buf.as_ptr() as *mut u8, buf.len())
-            )?,
-        ) -> ())?;
-        Ok(buf.len())
+        let write_len = buf.len();
+        let buf = jni_new_direct_byte_buffer!(buf)?;
+
+        jni_call!(BlazeOnHeapSpillManager(
+            self.0.hsm.as_obj()).writeSpill(self.0.spill_id, buf) -> ()
+        )?;
+        jni_delete_local_ref!(buf.into())?;
+        Ok(write_len)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -73,13 +72,12 @@ impl Write for OnHeapSpill {
 
 impl Read for OnHeapSpill {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Ok(jni_call!(
-            BlazeOnHeapSpillManager(self.0.hsm.as_obj()).readSpill(
-                self.0.spill_id,
-                jni_new_direct_byte_buffer!(buf)?,
-            ) -> i32
-        )
-        .map(|s| s as usize)?)
+        let buf = jni_new_direct_byte_buffer!(buf)?;
+        let read_len = jni_call!(BlazeOnHeapSpillManager(
+            self.0.hsm.as_obj()).readSpill(self.0.spill_id, buf) -> i32
+        )?;
+        jni_delete_local_ref!(buf.into())?;
+        Ok(read_len as usize)
     }
 }
 
