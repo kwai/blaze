@@ -313,19 +313,14 @@ impl ExternalSorter {
         // no spills -- output in-mem batches
         if spills.is_empty() {
             if let Some(in_mem_batches) = in_mem_batches {
-                let mut in_mem_batches = in_mem_batches.batches;
-
-                // adjust memory usage
-                let mut mem_used = in_mem_batches
+                let batches = in_mem_batches.batches;
+                self.update_mem_used(batches
                     .iter()
                     .map(|batch| batch.get_array_memory_size())
-                    .sum::<usize>();
-                self.update_mem_used(mem_used).await?;
+                    .sum()).await?;
 
-                // output batches
-                while let Some(batch) = in_mem_batches.pop() {
-                    mem_used = mem_used.saturating_sub(batch.get_array_memory_size());
-                    self.update_mem_used(mem_used).await?;
+                for batch in batches {
+                    let batch_mem_size = batch.get_array_memory_size();
 
                     timer.stop();
                     self.baseline_metrics.record_output(batch.num_rows());
@@ -333,7 +328,9 @@ impl ExternalSorter {
                         .send(Ok(batch))
                         .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
                         .await?;
+
                     timer.restart();
+                    self.update_mem_used_with_diff(-(batch_mem_size as isize)).await?;
                 }
             }
             self.update_mem_used(0).await?;
