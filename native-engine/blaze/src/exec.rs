@@ -173,7 +173,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         let runtime = Arc::new(RuntimeWrapper {
             runtime: Some(
                 tokio::runtime::Builder::new_multi_thread()
-                    .enable_time()
                     .on_thread_start(move || {
                         // propagate classloader and task context to spawned
                         // children threads
