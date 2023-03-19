@@ -19,7 +19,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use blaze_commons::{
-    jni_call, jni_delete_local_ref, jni_get_object_class, jni_get_string,
+    jni_call, jni_get_object_class, jni_get_string,
     jni_new_direct_byte_buffer, jni_new_global_ref
 };
 use datafusion::error::Result;
@@ -91,24 +91,25 @@ impl IpcReaderStream {
         let schema = self.schema.clone();
         self.reader = Some(match self.mode {
             IpcReadMode::ChannelUncompressed => {
-                get_channel_reader(Some(schema), segment, false)?
+                get_channel_reader(Some(schema), segment.as_obj(), false)?
             }
-
-            IpcReadMode::Channel => get_channel_reader(Some(schema), segment, true)?,
-
+            IpcReadMode::Channel => {
+                get_channel_reader(Some(schema), segment.as_obj(), true)?
+            },
             IpcReadMode::ChannelAndFileSegment => {
-                let segment_class = jni_get_object_class!(segment)?;
+                let segment_class = jni_get_object_class!(segment.as_obj())?;
+                let segment_classname_obj =
+                    jni_call!(Class(segment_class.as_obj()).getName() -> JObject)?;
                 let segment_classname =
-                    jni_call!(Class(segment_class).getName() -> JObject)?;
-                let segment_classname = jni_get_string!(segment_classname.into())?;
+                    jni_get_string!(segment_classname_obj.as_obj().into())?;
+
                 if segment_classname == "org.apache.spark.storage.FileSegment" {
-                    get_file_segment_reader(Some(schema), segment)?
+                    get_file_segment_reader(Some(schema), segment.as_obj())?
                 } else {
-                    get_channel_reader(Some(schema), segment, true)?
+                    get_channel_reader(Some(schema), segment.as_obj(), true)?
                 }
             }
         });
-        jni_delete_local_ref!(segment)?;
         Ok(true)
     }
 }
@@ -133,8 +134,8 @@ pub fn get_file_segment_reader(
     file_segment: JObject,
 ) -> Result<RecordBatchReader> {
     let file = jni_call!(SparkFileSegment(file_segment).file() -> JObject)?;
-    let path = jni_call!(JavaFile(file).getPath() -> JObject)?;
-    let path = jni_get_string!(path.into())?;
+    let path = jni_call!(JavaFile(file.as_obj()).getPath() -> JObject)?;
+    let path = jni_get_string!(path.as_obj().into())?;
     let offset = jni_call!(SparkFileSegment(file_segment).offset() -> jlong)?;
     let length = jni_call!(SparkFileSegment(file_segment).length() -> jlong)?;
 
@@ -199,37 +200,39 @@ impl ReadableByteChannelReader {
         }
         Ok(())
     }
-}
-impl Read for ReadableByteChannelReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+
+    fn read_impl(&mut self, buf: &mut [u8]) -> Result<usize> {
         if self.closed {
             return Ok(0);
         }
-        let buf = jni_new_direct_byte_buffer!(buf)
-            .map_err(|err| IoError::other(err))?;
+        let buf = jni_new_direct_byte_buffer!(buf)?;
 
         while {
-            let has_remaining = jni_call!(JavaBuffer(buf).hasRemaining() -> jboolean)
-                .map_err(|err| IoError::other(err))?;
+            let has_remaining =
+                jni_call!(JavaBuffer(buf.as_obj()).hasRemaining() -> jboolean)?;
             has_remaining == JNI_TRUE
         } {
-            let read_bytes = jni_call!(
-                JavaReadableByteChannel(self.channel.as_obj()).read(buf) -> jint
-            )
-            .map_err(|err| IoError::other(err))?;
+            let read_bytes =
+                jni_call!(JavaReadableByteChannel(self.channel.as_obj())
+                    .read(buf.as_obj()) -> jint
+                )?;
 
             if read_bytes < 0 {
                 self.close()?;
                 break;
             }
         }
-
-        let position = jni_call!(JavaBuffer(buf).position() -> jint)
-            .map_err(|err| IoError::other(err))?;
-        jni_delete_local_ref!(buf.into())?;
+        let position = jni_call!(JavaBuffer(buf.as_obj()).position() -> jint)?;
         Ok(position as usize)
     }
 }
+
+impl Read for ReadableByteChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.read_impl(buf).map_err(IoError::other)
+    }
+}
+
 impl Drop for ReadableByteChannelReader {
     fn drop(&mut self) {
         // ensure the channel is closed

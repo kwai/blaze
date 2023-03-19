@@ -102,14 +102,15 @@ impl ExecutionPlan for RssShuffleWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+
+        let resource_id = jni_new_string!(&self.rss_partition_writer_resource_id)?;
+        let rss_partition_writer_local = jni_call_static!(
+            JniBridge.getResource(resource_id.as_obj()) -> JObject
+        )?;
+        let rss_partition_writer =
+            jni_new_global_ref!(rss_partition_writer_local.as_obj())?;
+
         let input = self.input.execute(partition, context.clone())?;
-
-        let rss_partition_writer = jni_new_global_ref!(jni_call_static!(
-            JniBridge.getResource(
-                jni_new_string!(&self.rss_partition_writer_resource_id)?
-            ) -> JObject
-        )?)?;
-
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))

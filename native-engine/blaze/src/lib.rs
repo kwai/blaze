@@ -45,14 +45,13 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
         let panic_message = panic_message::panic_message(&err);
 
         // throw jvm runtime exception
-        let cause = if jni_exception_check!()? {
-            let throwable = jni_exception_occurred!()?.into();
+        if jni_exception_check!()? {
+            let throwable = jni_exception_occurred!()?;
             jni_exception_clear!()?;
-            throwable
+            throw_runtime_exception(panic_message, throwable.as_obj())?;
         } else {
-            JObject::null()
+            throw_runtime_exception(panic_message, JObject::null())?;
         };
-        throw_runtime_exception(panic_message, cause)?;
         Ok(())
     };
     recover().unwrap_or_else(|err: Box<dyn Error>| {
@@ -71,9 +70,9 @@ fn handle_unwinded_scope<E: Debug>(scope: impl FnOnce() -> Result<(), E>) {
 
 fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Result<()> {
     let msg = jni_new_string!(msg)?;
-    let e = jni_new_object!(JavaRuntimeException, msg, cause)?;
+    let e = jni_new_object!(JavaRuntimeException, msg.as_obj(), cause)?;
 
-    if let Err(err) = jni_throw!(JThrowable::from(e)) {
+    if let Err(err) = jni_throw!(JThrowable::from(e.as_obj())) {
         jni_fatal_error!(format!(
             "Error throwing RuntimeException, cannot result: {:?}",
             err

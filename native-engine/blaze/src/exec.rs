@@ -61,14 +61,16 @@ fn init_logging() {
 fn java_true() -> &'static GlobalRef {
     static OBJ_TRUE: OnceCell<GlobalRef> = OnceCell::new();
     OBJ_TRUE.get_or_init(|| {
-        jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_TRUE).unwrap()).unwrap()
+        let true_local = jni_new_object!(JavaBoolean, JNI_TRUE).unwrap();
+        jni_new_global_ref!(true_local.as_obj()).unwrap()
     })
 }
 
 fn java_false() -> &'static GlobalRef {
     static OBJ_FALSE: OnceCell<GlobalRef> = OnceCell::new();
     OBJ_FALSE.get_or_init(|| {
-        jni_new_global_ref!(jni_new_object!(JavaBoolean, JNI_FALSE).unwrap()).unwrap()
+        let false_local = jni_new_object!(JavaBoolean, JNI_FALSE).unwrap();
+        jni_new_global_ref!(false_local.as_obj()).unwrap()
     })
 }
 
@@ -120,13 +122,13 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         let wrapper_clone = wrapper.clone();
 
         // decode plan
-        let raw_task_definition: JObject = jni_call!(
+        let raw_task_definition = jni_call!(
             BlazeCallNativeWrapper(wrapper.as_obj()).getRawTaskDefinition() -> JObject
         )
         .unwrap();
 
         let task_definition = TaskDefinition::decode(
-            jni_convert_byte_array!(*raw_task_definition)
+            jni_convert_byte_array!(raw_task_definition.as_obj())
                 .unwrap()
                 .as_slice(),
         )
@@ -134,6 +136,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
         let task_id = &task_definition.task_id.expect("task_id is empty");
         let plan = &task_definition.plan.expect("plan is empty");
+        drop(raw_task_definition);
 
         // get execution plan
         let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into().unwrap();
@@ -152,10 +155,9 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             .execute(task_id.partition_id as usize, task_ctx)
             .unwrap();
 
-        let task_context = jni_new_global_ref!(
-            jni_call_static!(JniBridge.getTaskContext() -> JObject).unwrap()
-        )
-        .unwrap();
+        let task_context_local =
+            jni_call_static!(JniBridge.getTaskContext() -> JObject).unwrap();
+        let task_context = jni_new_global_ref!(task_context_local.as_obj()).unwrap();
 
         // a runtime wrapper that calls shutdown_background on dropping
         struct RuntimeWrapper {
@@ -193,22 +195,25 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             AssertUnwindSafe(async move {
                 let output_batch = |batch: RecordBatch| -> datafusion::common::Result<bool> {
                     // value_queue -> (schema_ptr, array_ptr)
-                    let mut input = JObject::null();
+                    let mut input = crate::jni_bridge::LocalRef(JObject::null());
                     while jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean)? != JNI_TRUE {
                         input = jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).dequeueWithTimeout() -> JObject)?;
 
-                        if !input.is_null() {
+                        if !input.as_obj().is_null() {
                             break;
                         }
                     }
-                    if input.is_null() { // wrapper.isFinished = true
+                    if input.as_obj().is_null() { // wrapper.isFinished = true
                         return Ok(false);
                     }
 
-                    let schema_ptr = jni_call!(ScalaTuple2(input)._1() -> JObject)?;
-                    let schema_ptr = jni_call!(JavaLong(schema_ptr).longValue() -> jlong)?;
-                    let array_ptr = jni_call!(ScalaTuple2(input)._2() -> JObject)?;
-                    let array_ptr = jni_call!(JavaLong(array_ptr).longValue() -> jlong)?;
+                    let schema_ptr_obj = jni_call!(ScalaTuple2(input.as_obj())._1() -> JObject)?;
+                    let schema_ptr =
+                        jni_call!(JavaLong(schema_ptr_obj.as_obj()).longValue() -> jlong)?;
+
+                    let array_ptr_obj = jni_call!(ScalaTuple2(input.as_obj())._2() -> JObject)?;
+                    let array_ptr =
+                        jni_call!(JavaLong(array_ptr_obj.as_obj()).longValue() -> jlong)?;
 
                     let out_schema = schema_ptr as *mut FFI_ArrowSchema;
                     let out_array = array_ptr as *mut FFI_ArrowArray;
@@ -253,7 +258,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 // value_queue -> (discard)
                 while jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).isFinished() -> jboolean).unwrap() != JNI_TRUE {
                     let input = jni_call!(BlazeCallNativeWrapper(wrapper.as_obj()).dequeueWithTimeout() -> JObject).unwrap();
-                    if !input.is_null() {
+                    if !input.as_obj().is_null() {
                         break;
                     }
                 }
@@ -270,13 +275,13 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 ).unwrap();
 
                 update_spark_metric_node(
-                    metrics,
+                    metrics.as_obj(),
                     execution_plan.clone(),
                 ).unwrap();
 
                 log::info!("Blaze native executing finished.");
                 log::info!("  total loaded rows: {}", total_rows);
-                std::mem::drop(runtime);
+                drop(runtime);
 
                 jni_call!(
                     BlazeCallNativeWrapper(wrapper.as_obj()).finishNativeThread() -> ()
@@ -296,13 +301,17 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 let e = if jni_exception_check!()? {
                     log::error!("native execution panics with an java exception");
                     log::error!("panic message: {}", panic_message);
-                    jni_exception_occurred!()?.into()
+                    jni_exception_occurred!()?
                 } else {
                     log::error!("native execution panics");
                     log::error!("panic message: {}", panic_message);
+
+                    let message = jni_new_string!(
+                        format!("native executing panics: {}", panic_message)
+                    )?;
                     jni_new_object!(
                         JavaRuntimeException,
-                        jni_new_string!(format!("native executing panics: {}", panic_message))?,
+                        message.as_obj(),
                         JObject::null()
                     )?
                 };
@@ -313,7 +322,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 ).unwrap() != JNI_TRUE {
                     log::error!("native is exiting with an exception...");
                     let enqueued = jni_call!(
-                        BlazeCallNativeWrapper(wrapper_clone.as_obj()).enqueueError(e) -> jboolean
+                        BlazeCallNativeWrapper(wrapper_clone.as_obj()).enqueueError(e.as_obj()) -> jboolean
                     )?;
                     if enqueued == JNI_TRUE {
                         break;

@@ -221,14 +221,13 @@ impl ExecutionPlan for ParquetExec {
         self.metrics.register(io_time_metric);
 
         // get fs object from jni bridge resource
-        let fs_provider = Arc::new(FsProvider::new(
-            jni_new_global_ref!(jni_call_static!(
-                JniBridge.getResource(
-                    jni_new_string!(&self.fs_resource_id)?
-                ) -> JObject
-            )?)?,
-            &io_time,
-        ));
+        let resource_id = jni_new_string!(&self.fs_resource_id)?;
+        let fs =
+            jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
+
+        let fs_provider = Arc::new(
+            FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time)
+        );
 
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,

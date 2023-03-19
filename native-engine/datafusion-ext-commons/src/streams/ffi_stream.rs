@@ -17,7 +17,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_object};
+use blaze_commons::{jni_call, jni_new_object};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
@@ -97,13 +97,10 @@ impl FFIReaderStream {
             JavaLong,
             ffi_arrow_array.as_mut() as *mut FFI_ArrowArray as i64
         )?;
-        let _unit = jni_call!(ScalaFunction2(consumer).apply(
-            ffi_arrow_schema_ptr,
-            ffi_arrow_array_ptr,
+        let _unit = jni_call!(ScalaFunction2(consumer.as_obj()).apply(
+            ffi_arrow_schema_ptr.as_obj(),
+            ffi_arrow_array_ptr.as_obj(),
         ) -> JObject)?;
-
-        // consumer is no longer needed
-        jni_delete_local_ref!(consumer)?;
 
         let imported = unsafe {
             make_array_from_raw(ffi_arrow_array.as_ref(), ffi_arrow_schema.as_ref())

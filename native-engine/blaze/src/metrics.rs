@@ -38,7 +38,7 @@ pub fn update_spark_metric_node(
         let child_metric_node = jni_call!(
             SparkMetricNode(metric_node).getChild(i as i32) -> JObject
         )?;
-        update_spark_metric_node(child_metric_node, child_plan.clone())?;
+        update_spark_metric_node(child_metric_node.as_obj(), child_plan.clone())?;
     }
     Ok(())
 }
@@ -49,7 +49,7 @@ fn update_metrics(
 ) -> datafusion::error::Result<()> {
     for &(name, value) in metric_values {
         let jname = jni_new_string!(&name)?;
-        jni_call!(SparkMetricNode(metric_node).add(jname, value) -> ())?;
+        jni_call!(SparkMetricNode(metric_node).add(jname.as_obj(), value) -> ())?;
     }
     Ok(())
 }

@@ -17,7 +17,7 @@ use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use blaze_commons::{
-    jni_call, jni_call_static, jni_delete_local_ref, jni_new_direct_byte_buffer,
+    jni_call, jni_call_static, jni_new_direct_byte_buffer,
     jni_new_global_ref, jni_new_string,
 };
 use datafusion::error::DataFusionError;
@@ -104,11 +104,11 @@ impl ExecutionPlan for IpcWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let ipc_consumer = jni_new_global_ref!(jni_call_static!(
+        let ipc_consumer_local = jni_call_static!(
             JniBridge.getResource(
-                jni_new_string!(&self.ipc_consumer_resource_id)?
-            ) -> JObject
-        )?)?;
+                jni_new_string!(&self.ipc_consumer_resource_id)?.as_obj()) -> JObject
+        )?;
+        let ipc_consumer = jni_new_global_ref!(ipc_consumer_local.as_obj())?;
         let input = self.input.execute(partition, context.clone())?;
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
@@ -167,14 +167,12 @@ pub async fn write_ipc(
                 &mut Cursor::new(&mut buffer),
                 true,
             )?;
-            std::mem::drop(timer);
+            drop(timer);
 
             let buf = jni_new_direct_byte_buffer!(&mut buffer)?;
-            let consumed = jni_call!(
-                ScalaFunction1(ipc_consumer.as_obj()).apply(buf) -> JObject
+            let _consumed = jni_call!(
+                ScalaFunction1(ipc_consumer.as_obj()).apply(buf.as_obj()) -> JObject
             )?;
-            jni_delete_local_ref!(consumed)?;
-            jni_delete_local_ref!(buf.into())?;
         }}
     }
 

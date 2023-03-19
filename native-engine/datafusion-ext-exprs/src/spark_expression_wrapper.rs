@@ -15,7 +15,7 @@
 use crate::down_cast_any_ref;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
-use blaze_commons::{jni_call, jni_delete_local_ref, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
+use blaze_commons::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
 use datafusion::common::ScalarValue;
 use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
@@ -114,18 +114,13 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let buf = jni_new_direct_byte_buffer!(self.serialized)?;
         let jcontext = self.jcontext.get_or_try_init(|| {
             let jcontext = jni_new_object!(
                 SparkExpressionWrapperContext,
-                jni_new_direct_byte_buffer!({
-                    // safety - byte buffer is not mutated in jvm side
-                    std::slice::from_raw_parts_mut(
-                        self.serialized.as_ptr() as *mut u8,
-                        self.serialized.len(),
-                    )
-                })?
+                buf.as_obj()
             )?;
-            Result::Ok(jni_new_global_ref!(jcontext)?)
+            Result::Ok(jni_new_global_ref!(jcontext.as_obj())?)
         })?;
 
         let mut batch_buffer = vec![];
@@ -158,13 +153,13 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
         write_one_batch(&input_batch, &mut Cursor::new(&mut batch_buffer), false)?;
         let batch_byte_buffer = jni_new_direct_byte_buffer!(&mut batch_buffer[..])?;
         let output_channel = jni_call!(
-            SparkExpressionWrapperContext(jcontext.as_obj()).eval(batch_byte_buffer) -> JObject
+            SparkExpressionWrapperContext(jcontext.as_obj())
+                .eval(batch_byte_buffer.as_obj()) -> JObject
         )?;
-        jni_delete_local_ref!(batch_byte_buffer.into())?;
 
         let mut reader =
             datafusion_ext_commons::streams::ipc_stream::ReadableByteChannelReader::new(
-                jni_new_global_ref!(output_channel)?,
+                jni_new_global_ref!(output_channel.as_obj())?,
             );
 
         // FIXME: use arrow stream reader/writer instead

@@ -96,15 +96,12 @@ impl ExecutionPlan for FFIReaderExec {
         partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let export_iter_provider = jni_call_static!(
-            JniBridge.getResource(
-                jni_new_string!(&self.export_iter_provider_resource_id)?
-            ) -> JObject
-        )?;
-
-        let export_iter = jni_new_global_ref!(
-            jni_call!(ScalaFunction0(export_iter_provider).apply() -> JObject)?
-        )?;
+        let resource_id = jni_new_string!(&self.export_iter_provider_resource_id)?;
+        let export_iter_provider =
+            jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
+        let export_iter_local =
+            jni_call!(ScalaFunction0(export_iter_provider.as_obj()).apply() -> JObject)?;
+        let export_iter = jni_new_global_ref!(export_iter_local.as_obj())?;
 
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
         let size_counter = MetricBuilder::new(&self.metrics).counter("size", partition);

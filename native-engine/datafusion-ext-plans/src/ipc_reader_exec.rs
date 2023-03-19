@@ -104,12 +104,12 @@ impl ExecutionPlan for IpcReaderExec {
 
         let segments_provider = jni_call_static!(
             JniBridge.getResource(
-                jni_new_string!(&self.ipc_provider_resource_id)?
+                jni_new_string!(&self.ipc_provider_resource_id)?.as_obj()
             ) -> JObject
         )?;
-        let segments = jni_new_global_ref!(
-            jni_call!(ScalaFunction0(segments_provider).apply() -> JObject)?
-        )?;
+        let segments_local =
+            jni_call!(ScalaFunction0(segments_provider.as_obj()).apply() -> JObject)?;
+        let segments = jni_new_global_ref!(segments_local.as_obj())?;
 
         let schema = self.schema.clone();
         let mode = self.mode;
