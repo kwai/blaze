@@ -539,7 +539,7 @@ impl SortedBatches {
 
     fn mem_size(&self) -> usize {
         self.batches_mem_size * 2 + // batches are duplicated during squeezing
-            self.sorted_rows.capacity() * 2 * std::mem::size_of::<IndexedRow>() +
+            self.sorted_rows.len() * 2 * std::mem::size_of::<IndexedRow>() +
             self.row_mem_size
     }
 

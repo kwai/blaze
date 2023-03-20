@@ -250,6 +250,9 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                             output_batch(batch).unwrap();
                         }
                         Err(e) => {
+                            if !is_task_running().unwrap() {
+                                break;
+                            }
                             panic!("stream.next() error: {:?}", e);
                         }
                     }
@@ -294,9 +297,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                     BlazeCallNativeWrapper(wrapper_clone.as_obj()).finishNativeThread() -> ()
                 );
 
-                if !is_task_running()? { // only handle running task
-                    return Ok(());
-                }
                 let panic_message = panic_message::panic_message(&err);
                 let e = if jni_exception_check!()? {
                     log::error!("native execution panics with an java exception");

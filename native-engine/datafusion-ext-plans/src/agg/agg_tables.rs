@@ -284,10 +284,11 @@ pub struct InMemTable {
 
 impl InMemTable {
     pub fn mem_used(&self) -> usize {
+        // includes amortized new size
         // hash table is first transformed to sorted table
         self.data_mem_used
-            + self.unsorted.capacity() * size_of::<AggRecord>()
-            + self.grouping_mappings.capacity() * (
+            + self.unsorted.len() * 2 * size_of::<AggRecord>()
+            + self.grouping_mappings.len() * (
                 1 // one-byte payload per entry according to hashbrown's doc
                     + size_of::<AggRecord>() // hashmap entries
                     + size_of::<AggRecord>() // hashmap is sorted into vec during spill

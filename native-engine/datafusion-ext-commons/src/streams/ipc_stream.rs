@@ -31,7 +31,7 @@ use jni::objects::{GlobalRef, JObject};
 use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
 use std::fs::File;
 use std::io::{Error as IoError, Seek};
-use std::io::{Read, SeekFrom};
+use std::io::{BufReader, Read, SeekFrom};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -123,7 +123,7 @@ pub fn get_channel_reader(
     let channel_reader = ReadableByteChannelReader::new(global_ref);
 
     Ok(RecordBatchReader::new(
-        Box::new(channel_reader),
+        Box::new(BufReader::with_capacity(65536, channel_reader)),
         schema,
         compressed,
     ))
