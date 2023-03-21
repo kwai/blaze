@@ -71,6 +71,7 @@ object NativeHelper extends Logging {
   }
 
   val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.4);
+  val memoryReservedFraction: Double = conf.getDouble("spark.blaze.memoryReservedFraction", 0.8);
 
   val tmpDirs: String = diskBlockManager.localDirs.map(_.toString).mkString(",")
 
@@ -244,13 +245,15 @@ object BlazeCallNativeWrapper extends Logging {
       "Initializing native environment (" +
         s"batchSize=${NativeHelper.batchSize}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
-        s"memoryFraction=${NativeHelper.memoryFraction})")
+        s"memoryFraction=${NativeHelper.memoryFraction}, " +
+        s"memoryReservedFraction=${NativeHelper.memoryReservedFraction})")
 
     BlazeCallNativeWrapper.load("blaze")
     JniBridge.initNative(
       NativeHelper.batchSize,
       NativeHelper.nativeMemory,
-      NativeHelper.memoryFraction)
+      NativeHelper.memoryFraction,
+      NativeHelper.memoryReservedFraction)
   }
 
   private def load(name: String): Unit = {

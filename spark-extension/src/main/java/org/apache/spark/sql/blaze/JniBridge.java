@@ -31,7 +31,8 @@ import scala.collection.Iterator;
 public class JniBridge {
   public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
-  public static native void initNative(long batchSize, long nativeMemory, double memoryFraction);
+  public static native void initNative(
+      long batchSize, long nativeMemory, double memoryFraction, double memoryReservedFraction);
 
   public static native void callNative(BlazeCallNativeWrapper wrapper);
 

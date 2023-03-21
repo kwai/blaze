@@ -83,6 +83,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
     batch_size: i64,
     native_memory: i64,
     memory_fraction: f64,
+    memory_reserved_fraction: f64,
 ) {
     handle_unwinded_scope(|| {
         // init logging
@@ -99,7 +100,10 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
                 .with_memory_manager(MemoryManagerConfig::default())
                 .with_disk_manager(DiskManagerConfig::Disabled);
 
-            MemManager::init((max_memory as f64 * memory_fraction) as usize);
+            MemManager::init(
+                (max_memory as f64 * memory_fraction) as usize,
+                (max_memory as f64 * memory_reserved_fraction) as usize,
+            );
             let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
             let config = SessionConfig::new().with_batch_size(batch_size);
             SessionContext::with_config_rt(config, runtime)

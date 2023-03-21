@@ -43,6 +43,7 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
 
   // disable other off-heap memory usages
   System.setProperty("spark.memory.offHeap.enabled", "false")
+  System.setProperty("io.netty.maxDirectMemory", "0")
   System.setProperty("io.netty.noPreferDirect", "true")
 
   override def write(records: Iterator[Product2[K, V]]): Unit = {}
