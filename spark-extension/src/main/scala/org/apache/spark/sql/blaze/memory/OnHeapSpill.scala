@@ -22,6 +22,8 @@ import java.nio.channels.FileChannel
 
 import scala.collection.mutable
 
+import org.apache.spark.SparkException
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.memory.OnHeapSpill.BLOCK_SIZE
 
@@ -52,7 +54,8 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
     val numAcquiringBlocks = (buf.limit() + BLOCK_SIZE - 1 - numLastBlockRestBytes) / BLOCK_SIZE
     if (numAcquiringBlocks > 0) {
       if (diskSpilledFile.isEmpty && !acquireMemory(numAcquiringBlocks * BLOCK_SIZE)) {
-        spill()
+        throw new SparkException(
+          s"OnHeapSpill cannot allocate ${numAcquiringBlocks * BLOCK_SIZE} bytes")
       }
     }
 
@@ -178,6 +181,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
         diskSpilledReadOffset = readSize
         channel
     }
+    channel.position(channel.size())
 
     // flip for reading
     if (status == OnHeapSpill.Writing) {
@@ -185,12 +189,11 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
     }
 
     // write all blocks to file
-    channel.position(channel.size())
-    dataBlockQueue.foreach(buf => {
+    while (dataBlockQueue.nonEmpty) {
+      val buf = dataBlockQueue.dequeue()
       while (buf.hasRemaining && channel.write(buf) >= 0) {}
-    })
+    }
     channel.force(false)
-    dataBlockQueue.clear()
     freeMemory(memAllocated)
   }
 
