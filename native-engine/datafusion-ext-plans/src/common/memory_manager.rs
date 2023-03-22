@@ -142,11 +142,12 @@ impl MemManagerStatus {
     }
 }
 
+#[derive(Debug)]
 pub struct MemConsumerInfo {
     status: Mutex<MemConsumerStatus>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct MemConsumerStatus {
     mem_used: usize,
     spillable: bool,

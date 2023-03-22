@@ -76,20 +76,21 @@ class ArrowFFIImportIterator(wrapper: BlazeCallNativeWrapper, taskContext: TaskC
 
     // NOTE: walk-around without getting the incorrect n_buffers error
     // in Data.importIntoVectorSchemaRoot()
-    val childrenPtr = NativeUtil.toJavaArray(
-      consumerArray.snapshot.children,
-      consumerArray.snapshot.n_children.toInt)
-    val childVectors = root.getFieldVectors
-    if (childrenPtr != null && childrenPtr.nonEmpty) {
-      childrenPtr
-        .zip(childVectors.asScala)
-        .foreach {
-          case (childPtr, vector) =>
-            val child = ArrowArray.wrap(childPtr)
-            Data.importIntoVector(allocator, child, vector, emptyDictionaryProvider)
-        }
-      root.setRowCount(root.getVector(0).getValueCount)
-    }
+//    val childrenPtr = NativeUtil.toJavaArray(
+//      consumerArray.snapshot.children,
+//      consumerArray.snapshot.n_children.toInt)
+//    val childVectors = root.getFieldVectors
+//    if (childrenPtr != null && childrenPtr.nonEmpty) {
+//      childrenPtr
+//        .zip(childVectors.asScala)
+//        .foreach {
+//          case (childPtr, vector) =>
+//            val child = ArrowArray.wrap(childPtr)
+//            Data.importIntoVector(allocator, child, vector, emptyDictionaryProvider)
+//        }
+//      root.setRowCount(root.getVector(0).getValueCount)
+//    }
+    Data.importIntoVectorSchemaRoot(allocator, consumerArray, root, emptyDictionaryProvider)
     val batch = rootAsBatch(root)
 
     consumed = true
