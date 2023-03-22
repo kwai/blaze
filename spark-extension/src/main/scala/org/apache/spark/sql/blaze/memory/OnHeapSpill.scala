@@ -54,8 +54,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
     val numAcquiringBlocks = (buf.limit() + BLOCK_SIZE - 1 - numLastBlockRestBytes) / BLOCK_SIZE
     if (numAcquiringBlocks > 0) {
       if (diskSpilledFile.isEmpty && !acquireMemory(numAcquiringBlocks * BLOCK_SIZE)) {
-        throw new SparkException(
-          s"OnHeapSpill cannot allocate ${numAcquiringBlocks * BLOCK_SIZE} bytes")
+        spill()
       }
     }
 
@@ -145,8 +144,12 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
    */
   private def acquireMemory(size: Long): Boolean = {
     val allocated = hsm.acquireMemory(size)
+    if (allocated < size) {
+      hsm.freeMemory(allocated)
+      return false
+    }
     memAllocated += allocated
-    allocated == size
+    true
   }
 
   /**
