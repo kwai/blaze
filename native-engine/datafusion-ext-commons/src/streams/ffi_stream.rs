@@ -14,7 +14,6 @@
 
 use arrow::array::{make_array_from_raw, StructArray};
 use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use blaze_commons::{jni_call, jni_new_object};
@@ -58,7 +57,7 @@ impl RecordBatchStream for FFIReaderStream {
 }
 
 impl Stream for FFIReaderStream {
-    type Item = ArrowResult<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

@@ -15,12 +15,12 @@
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
-use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::metrics::Time;
 use datafusion::physical_plan::{RecordBatchStream, SendableRecordBatchStream};
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
+use crate::concat_batches;
 
 pub struct CoalesceStream {
     input: SendableRecordBatchStream,
@@ -63,7 +63,7 @@ impl RecordBatchStream for CoalesceStream {
 }
 
 impl Stream for CoalesceStream {
-    type Item = arrow::error::Result<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

@@ -16,7 +16,7 @@ use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
-use arrow::error::{ArrowError, Result as ArrowResult};
+use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::{DataFusionError, Result};
 use datafusion::physical_plan::SendableRecordBatchStream;
@@ -67,7 +67,7 @@ impl BatchesInterleaver {
 
 pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
     output_schema: SchemaRef,
-    output: impl FnOnce(Sender<ArrowResult<RecordBatch>>) -> Fut + Send + 'static,
+    output: impl FnOnce(Sender<Result<RecordBatch>>) -> Fut + Send + 'static,
 ) -> Result<SendableRecordBatchStream> {
 
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
@@ -83,9 +83,9 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
         if let Err(e) = result {
             let err_message = panic_message::panic_message(&e).to_owned();
             err_sender
-                .send(Err(ArrowError::ExternalError(Box::new(
+                .send(Err(
                     DataFusionError::Execution(err_message),
-                ))))
+                ))
                 .await
                 .unwrap();
         }

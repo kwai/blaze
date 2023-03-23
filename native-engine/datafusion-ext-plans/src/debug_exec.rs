@@ -141,7 +141,7 @@ impl RecordBatchStream for DebugStream {
 }
 
 impl Stream for DebugStream {
-    type Item = arrow::error::Result<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

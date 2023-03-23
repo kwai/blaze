@@ -64,7 +64,7 @@ impl BroadcastHashJoinExec {
             filter,
             join_type,
             partition_mode,
-            null_equals_null,
+            null_equals_null.clone(),
         )?);
         Ok(Self { inner })
     }

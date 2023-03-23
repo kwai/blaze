@@ -120,7 +120,7 @@ impl RecordBatchStream for EmptyStream {
 }
 
 impl Stream for EmptyStream {
-    type Item = arrow::error::Result<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         self: Pin<&mut Self>,

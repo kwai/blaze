@@ -8,7 +8,7 @@ resolver = "1"
 default = ["arrow/ffi", "datafusion/simd"]
 
 [dependencies]
-arrow = "28.0.0"
+arrow = "34.0.0"
 async-trait = "0.1.56"
 base64 = "0.13.0"
 bytes = "1.2.0"

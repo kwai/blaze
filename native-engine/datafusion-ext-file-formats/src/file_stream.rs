@@ -135,7 +135,7 @@ impl<F: FormatReader> FileStream<F> {
     fn poll_inner(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<ArrowResult<RecordBatch>>> {
+    ) -> Poll<Option<Result<RecordBatch>>> {
         loop {
             match &mut self.state {
                 FileStreamState::Idle => {
@@ -196,7 +196,7 @@ impl<F: FormatReader> FileStream<F> {
                             self.state = FileStreamState::Error
                         }
 
-                        return Poll::Ready(Some(result));
+                        return Poll::Ready(Some(Ok(result?)));
                     }
                     None => self.state = FileStreamState::Idle,
                 },
@@ -209,7 +209,7 @@ impl<F: FormatReader> FileStream<F> {
 }
 
 impl<F: FormatReader> Stream for FileStream<F> {
-    type Item = ArrowResult<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

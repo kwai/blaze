@@ -170,7 +170,7 @@ impl RecordBatchStream for RenameColumnsStream {
 }
 
 impl Stream for RenameColumnsStream {
-    type Item = arrow::error::Result<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -180,9 +180,9 @@ impl Stream for RenameColumnsStream {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(batch)) => {
-                self.baseline_metrics.record_poll(Poll::Ready(Some(
-                    RecordBatch::try_new(self.schema.clone(), batch.columns().to_vec()),
-                )))
+                self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(
+                    RecordBatch::try_new(self.schema.clone(), batch.columns().to_vec())?,
+                ))))
             }
         }
     }

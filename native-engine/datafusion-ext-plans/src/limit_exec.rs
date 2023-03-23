@@ -102,7 +102,7 @@ impl RecordBatchStream for LimitStream {
 }
 
 impl Stream for LimitStream {
-    type Item = arrow::error::Result<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

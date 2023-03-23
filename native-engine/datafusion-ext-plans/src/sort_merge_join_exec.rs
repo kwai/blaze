@@ -17,7 +17,6 @@ use arrow::compute::kernels::take::take;
 use arrow::compute::SortOptions;
 use arrow::datatypes::{DataType, SchemaRef};
 use arrow::error::ArrowError;
-use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -128,10 +127,6 @@ impl ExecutionPlan for SortMergeJoinExec {
                 panic!("join type not supported: {:?}", j);
             }
         }
-    }
-
-    fn relies_on_input_order(&self) -> bool {
-        true
     }
 
     fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
@@ -307,7 +302,7 @@ async fn execute_join(
         };
 
         if let Err(e) = result {
-            sender.send(Err(e)).await.ok();
+            sender.send(Err(DataFusionError::ArrowError(e))).await.ok();
         }
     });
     Ok(RecordBatchReceiverStream::create(
@@ -322,7 +317,7 @@ async fn join_combined(
     right_cursor: &mut StreamCursor,
     join_params: JoinParams,
     metrics: Arc<BaselineMetrics>,
-    sender: &Sender<ArrowResult<RecordBatch>>,
+    sender: &Sender<Result<RecordBatch>>,
 ) -> Result<()> {
     let total_time = Time::new();
     let io_time = Time::new();
@@ -705,7 +700,7 @@ async fn join_semi(
     right_cursor: &mut StreamCursor,
     join_params: JoinParams,
     metrics: Arc<BaselineMetrics>,
-    sender: &Sender<ArrowResult<RecordBatch>>,
+    sender: &Sender<Result<RecordBatch>>,
 ) -> Result<()> {
     let total_time = Time::new();
     let io_time = Time::new();

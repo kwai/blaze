@@ -158,7 +158,7 @@ impl RecordBatchStream for ExpandStream {
 }
 
 impl Stream for ExpandStream {
-    type Item = arrow::error::Result<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

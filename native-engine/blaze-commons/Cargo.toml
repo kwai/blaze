@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "1"
 
 [dependencies]
-datafusion = "15.0.0"
+datafusion = "20.0.0"
 jni = "0.20.0"
 log = "0.4.14"
 once_cell = "1.11.0"

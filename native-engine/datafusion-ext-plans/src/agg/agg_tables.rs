@@ -16,7 +16,6 @@ use std::io::{BufReader, Read, Write};
 use std::mem::size_of;
 use std::sync::{Arc, Weak};
 
-use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use arrow::row::RowConverter;
 use async_trait::async_trait;
@@ -93,7 +92,7 @@ impl AggTables {
         &self,
         mut grouping_row_converter: RowConverter,
         baseline_metrics: BaselineMetrics,
-        sender: Sender<ArrowResult<RecordBatch>>,
+        sender: Sender<Result<RecordBatch>>,
     ) -> Result<()> {
         self.set_spillable(false);
         let mut timer = baseline_metrics.elapsed_compute().timer();

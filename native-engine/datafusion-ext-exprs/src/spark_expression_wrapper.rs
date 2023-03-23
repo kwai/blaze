@@ -115,7 +115,7 @@ impl PhysicalExpr for SparkExpressionWrapperExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let buf = jni_new_direct_byte_buffer!(self.serialized)?;
-        let jcontext = self.jcontext.get_or_try_init(|| {
+        let jcontext = self.jcontext.get_or_try_init(|| ->Result<GlobalRef> {
             let jcontext = jni_new_object!(
                 SparkExpressionWrapperContext,
                 buf.as_obj()

@@ -295,7 +295,7 @@ async fn execute_agg_no_grouping(
                 })
             });
         sender
-            .send(batch_result)
+            .send(Ok(batch_result?))
             .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
             .await?;
         log::info!("aggregate exec (no grouping) outputting one record");

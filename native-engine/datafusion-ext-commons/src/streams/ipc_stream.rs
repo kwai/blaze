@@ -150,7 +150,7 @@ pub fn get_file_segment_reader(
 }
 
 impl Stream for IpcReaderStream {
-    type Item = ArrowResult<RecordBatch>;
+    type Item = Result<RecordBatch>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

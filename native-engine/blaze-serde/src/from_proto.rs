@@ -21,7 +21,7 @@ use arrow::datatypes::SchemaRef;
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::Operator;
+use datafusion::logical_expr::{Operator, TryCast};
 use datafusion::logical_expr::TypeSignature::VariadicEqual;
 use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
 use datafusion::logical_expr::{
@@ -29,6 +29,7 @@ use datafusion::logical_expr::{
     Volatility,
 };
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
+use datafusion::physical_expr::expressions::LikeExpr;
 use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::joins::PartitionMode;
 use datafusion::physical_plan::sorts::sort::SortOptions;
@@ -180,10 +181,10 @@ pub fn convert_physical_expr_to_logical_expr(
             data_type: expr.cast_type().clone(),
         }))
     } else if let Some(expr) = expr.downcast_ref::<TryCastExpr>() {
-        Ok(Expr::TryCast {
+        Ok(Expr::TryCast(TryCast {
             expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr)?),
             data_type: expr.cast_type.clone(),
-        })
+        }))
     } else if let Some(expr1) = expr.downcast_ref::<StringStartsWithExpr>() {
         let mut args = Vec::new();
         args.push(convert_physical_expr_to_logical_expr(expr1.expr())?);
@@ -948,6 +949,13 @@ fn try_parse_physical_expr(
             let data_type = convert_required!(e.data_type)?;
             Arc::new(IIfExpr::new(condition, truthy, falsy, data_type))
         }
+        ExprType::LikeExpr(e) => Arc::new(LikeExpr::new(
+            e.negated,
+            e.case_insensitive,
+            try_parse_physical_expr_box_required(&e.expr, input_schema)?,
+            try_parse_physical_expr_box_required(&e.pattern, input_schema)?,
+        )),
+
     };
 
     Ok(pexpr)

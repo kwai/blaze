@@ -7,8 +7,8 @@ edition = "2021"
 default = ["datafusion/simd", "prost/no-recursion-limit"]
 
 [dependencies]
-arrow = "28.0.0"
-datafusion = "15.0.0"
+arrow = "34.0.0"
+datafusion = "20.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "../datafusion-ext-exprs" }
 datafusion-ext-file-formats = { path = "../datafusion-ext-file-formats" }

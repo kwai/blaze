@@ -19,7 +19,6 @@ use std::fmt::Formatter;
 use std::io::{BufReader, Cursor, Read, Write};
 use std::sync::{Arc, Weak};
 use arrow::datatypes::SchemaRef;
-use arrow::error::{Result as ArrowResult};
 use arrow::record_batch::RecordBatch;
 use arrow::row::{RowConverter, Rows, SortField};
 use async_trait::async_trait;
@@ -282,7 +281,7 @@ impl ExternalSorter {
 
     async fn output(
         self: Arc<Self>,
-        sender: Sender<ArrowResult<RecordBatch>>,
+        sender: Sender<Result<RecordBatch>>,
     ) -> Result<()> {
         let mut timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);

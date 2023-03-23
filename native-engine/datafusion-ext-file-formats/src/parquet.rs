@@ -191,9 +191,10 @@ impl ExecutionPlan for ParquetExec {
         None
     }
 
-    fn relies_on_input_order(&self) -> bool {
-        false
-    }
+    // in datafusion 20.0.0 ExecutionPlan trait not include relies_on_input_order
+    // fn relies_on_input_order(&self) -> bool {
+    //     false
+    // }
 
     fn with_new_children(
         self: Arc<Self>,

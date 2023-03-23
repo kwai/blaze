@@ -25,7 +25,6 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::coalesce_batches::concat_batches;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::array_builder::{
@@ -37,6 +36,7 @@ use itertools::Itertools;
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Weak};
+use datafusion_ext_commons::concat_batches;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 
 pub struct BucketShuffleRepartitioner {

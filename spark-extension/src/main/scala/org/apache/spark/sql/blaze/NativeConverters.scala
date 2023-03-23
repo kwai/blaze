@@ -404,20 +404,72 @@ object NativeConverters {
       case LessThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "LtEq")
 
       case e @ Add(lhs, rhs) =>
-        val resultType = arithDecimalReturnType(e)
-        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Plus")
+        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
+          val resultType = arithDecimalReturnType(e)
+          val left = Cast(lhs, DoubleType)
+          val right = Cast(rhs, DoubleType)
+          buildExprNode {
+            _.setTryCast(
+              pb.PhysicalTryCastNode
+                .newBuilder()
+                .setExpr(convertExpr(Add.apply(left, right), useAttrExprId))
+                .setArrowType(convertDataType(resultType))
+                .build())
+          }
+        } else {
+          buildBinaryExprNode(lhs, rhs, "Plus")
+        }
 
       case e @ Subtract(lhs, rhs) =>
-        val resultType = arithDecimalReturnType(e)
-        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Minus")
+        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
+          val resultType = arithDecimalReturnType(e)
+          val left = Cast(lhs, DoubleType)
+          val right = Cast(rhs, DoubleType)
+          buildExprNode {
+            _.setTryCast(
+              pb.PhysicalTryCastNode
+                .newBuilder()
+                .setExpr(convertExpr(Subtract.apply(left, right), useAttrExprId))
+                .setArrowType(convertDataType(resultType))
+                .build())
+          }
+        } else {
+          buildBinaryExprNode(lhs, rhs, "Minus")
+        }
 
       case e @ Multiply(lhs, rhs) =>
-        val resultType = arithDecimalReturnType(e)
-        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Multiply")
+        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
+          val resultType = arithDecimalReturnType(e)
+          val left = Cast(lhs, DoubleType)
+          val right = Cast(rhs, DoubleType)
+          buildExprNode {
+            _.setTryCast(
+              pb.PhysicalTryCastNode
+                .newBuilder()
+                .setExpr(convertExpr(Multiply.apply(left, right), useAttrExprId))
+                .setArrowType(convertDataType(resultType))
+                .build())
+          }
+        } else {
+          buildBinaryExprNode(lhs, rhs, "Multiply")
+        }
 
       case e @ Divide(lhs, rhs) =>
-        val resultType = arithDecimalReturnType(e)
-        buildBinaryExprNode(Cast(lhs, resultType), Cast(rhs, resultType), "Divide")
+        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
+          val resultType = arithDecimalReturnType(e)
+          val left = Cast(lhs, DoubleType)
+          val right = Cast(rhs, DoubleType)
+          buildExprNode {
+            _.setTryCast(
+              pb.PhysicalTryCastNode
+                .newBuilder()
+                .setExpr(convertExpr(Divide.apply(left, right), useAttrExprId))
+                .setArrowType(convertDataType(resultType))
+                .build())
+          }
+        } else {
+          buildBinaryExprNode(lhs, rhs, "Divide")
+        }
 
       case e @ Remainder(lhs, rhs) =>
         val resultType = arithDecimalReturnType(e)
@@ -438,7 +490,15 @@ object NativeConverters {
         }
       case e: Like =>
         assert(Shims.get.exprShims.getEscapeChar(e) == '\\')
-        buildBinaryExprNode(e.left, e.right, "Like")
+        buildExprNode {
+          _.setLikeExpr(
+            pb.PhysicalLikeExprNode
+              .newBuilder()
+              .setNegated(false)
+              .setCaseInsensitive(false)
+              .setExpr(convertExpr(e.left))
+              .setPattern(convertExpr(e.right)))
+        }
 
       // if rhs is complex in and/or operators, use short-circuiting implementation
       case e @ And(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>

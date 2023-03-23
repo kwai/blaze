@@ -79,6 +79,9 @@ message PhysicalExprNode {
     PhysicalScalarFunctionNode scalar_function = 13;
     PhysicalTryCastNode try_cast = 14;
 
+    // like/not like
+    PhysicalLikeExprNode like_expr = 20;
+
     // spark expression wrapper
     PhysicalSparkExpressionWrapperExprNode spark_expression_wrapper_expr = 10000;
 
@@ -243,6 +246,14 @@ message PhysicalCastNode {
 message PhysicalNegativeNode {
   PhysicalExprNode expr = 1;
 }
+
+message PhysicalLikeExprNode {
+  bool negated = 1;
+  bool case_insensitive = 2;
+  PhysicalExprNode expr = 3;
+  PhysicalExprNode pattern = 4;
+}
+
 
 message PhysicalSparkExpressionWrapperExprNode {
   bytes serialized = 1;

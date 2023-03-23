@@ -18,11 +18,12 @@ use std::sync::Arc;
 use arrow::array::{export_array_into_raw, StructArray};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
+
 use blaze_commons::jni_bridge::JavaClasses;
 use blaze_commons::*;
 use blaze_serde::protobuf::TaskDefinition;
+use datafusion::common::Result;
 use datafusion::execution::disk_manager::DiskManagerConfig;
-use datafusion::execution::memory_manager::MemoryManagerConfig;
 use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::metrics::Time;
 use datafusion::physical_plan::{displayable, ExecutionPlan};
@@ -85,7 +86,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
     memory_fraction: f64,
     memory_reserved_fraction: f64,
 ) {
-    handle_unwinded_scope(|| {
+    handle_unwinded_scope(|| -> Result<()> {
         // init logging
         init_logging();
 
@@ -97,7 +98,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
             let max_memory = native_memory as usize;
             let batch_size = batch_size as usize;
             let runtime_config = RuntimeConfig::new()
-                .with_memory_manager(MemoryManagerConfig::default())
                 .with_disk_manager(DiskManagerConfig::Disabled);
 
             MemManager::init(
@@ -119,7 +119,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     _: JClass,
     wrapper: JObject,
 ) {
-    handle_unwinded_scope(|| {
+    handle_unwinded_scope(|| -> Result<()> {
         log::info!("Entering blaze callNative()");
 
         let wrapper = Arc::new(jni_new_global_ref!(wrapper).unwrap());
@@ -296,7 +296,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             })
             .catch_unwind()
             .await
-            .unwrap_or_else(|err| handle_unwinded_scope(|| {
+            .unwrap_or_else(|err| handle_unwinded_scope(|| -> Result<()> {
                 let _ = jni_call!(
                     BlazeCallNativeWrapper(wrapper_clone.as_obj()).finishNativeThread() -> ()
                 );
