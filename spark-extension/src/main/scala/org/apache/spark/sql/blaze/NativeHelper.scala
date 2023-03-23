@@ -69,11 +69,7 @@ object NativeHelper extends Logging {
       .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * executorMemory).toLong, MEMORY_OVERHEAD_MIN))
     executorMemoryOverheadMiB * 1024L * 1024L
   }
-
   val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.4);
-  val memoryReservedFraction: Double = conf.getDouble("spark.blaze.memoryReservedFraction", 0.8);
-
-  val tmpDirs: String = diskBlockManager.localDirs.map(_.toString).mkString(",")
 
   def isNative(exec: SparkPlan): Boolean =
     Shims.get.sparkPlanShims.isNative(exec)
@@ -245,15 +241,13 @@ object BlazeCallNativeWrapper extends Logging {
       "Initializing native environment (" +
         s"batchSize=${NativeHelper.batchSize}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
-        s"memoryFraction=${NativeHelper.memoryFraction}, " +
-        s"memoryReservedFraction=${NativeHelper.memoryReservedFraction})")
+        s"memoryFraction=${NativeHelper.memoryFraction}")
 
     BlazeCallNativeWrapper.load("blaze")
     JniBridge.initNative(
       NativeHelper.batchSize,
       NativeHelper.nativeMemory,
-      NativeHelper.memoryFraction,
-      NativeHelper.memoryReservedFraction)
+      NativeHelper.memoryFraction)
   }
 
   private def load(name: String): Unit = {

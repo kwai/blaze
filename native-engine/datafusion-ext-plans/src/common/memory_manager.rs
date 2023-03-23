@@ -24,14 +24,13 @@ static MEM_MANAGER: OnceCell<Arc<MemManager>> = OnceCell::new();
 
 pub struct MemManager {
     total: usize,
-    max_mimalloc_reserved: usize,
     consumers: Mutex<Vec<Arc<MemConsumerInfo>>>,
     status: Mutex<MemManagerStatus>,
     cv: Condvar,
 }
 
 impl MemManager {
-    pub fn init(total: usize, max_mimalloc_reserved: usize) {
+    pub fn init(total: usize) {
         MEM_MANAGER.get_or_init(|| {
             log::info!(
                 "mem manager initialized with total memory: {}",
@@ -40,7 +39,6 @@ impl MemManager {
 
             Arc::new(MemManager {
                 total,
-                max_mimalloc_reserved,
                 consumers: Mutex::default(),
                 status: Mutex::default(),
                 cv: Condvar::default(),
@@ -305,10 +303,6 @@ async fn update_consumer_mem_used_with_custom_updater(
             ByteSize(mm.total as u64),
         );
         consumer.spill().await?;
-
-        // return some reserved memory to os if necessary
-        mi_heap_collect();
-
         return Ok(());
     }
     Ok(())
@@ -323,21 +317,4 @@ fn print_stats(by: &dyn MemConsumer, old_used: usize, new_used: usize) {
             by.name(),
         );
     }
-}
-
-fn mi_heap_collect() {
-    unsafe {
-        extern "C" {
-            static _mi_stats_main: mimalloc_rust::raw::types::mi_stats_t;
-        }
-        mimalloc_rust::raw::extended_functions::mi_stats_merge();
-        let current_reserved = _mi_stats_main.reserved.current;
-
-        if current_reserved > MemManager::get().max_mimalloc_reserved as i64 {
-            log::info!("mi_heap_collect (reserved: {})",
-                ByteSize(current_reserved as u64),
-            );
-            mimalloc_rust::raw::extended_functions::mi_collect(true);
-        }
-    };
 }
