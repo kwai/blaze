@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggBuf};
-use crate::agg::{Agg, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr};
+use crate::agg::{Agg, AGG_BUF_COLUMN_NAME, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr};
 use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -104,7 +104,7 @@ impl AggContext {
                 ));
             }
         } else {
-            agg_fields.push(Field::new("#9223372036854775807", DataType::Binary, false));
+            agg_fields.push(Field::new(AGG_BUF_COLUMN_NAME, DataType::Binary, false));
         }
         let agg_schema = Arc::new(Schema::new(agg_fields));
         let output_schema = Arc::new(Schema::new(

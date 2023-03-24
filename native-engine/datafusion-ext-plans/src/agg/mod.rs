@@ -33,6 +33,8 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+pub const AGG_BUF_COLUMN_NAME: &str = "#9223372036854775807";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggExecMode {
     HashAgg,

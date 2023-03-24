@@ -33,6 +33,7 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::{Stream, StreamExt};
+use crate::agg::AGG_BUF_COLUMN_NAME;
 
 #[derive(Debug, Clone)]
 pub struct RenameColumnsExec {
@@ -48,14 +49,24 @@ impl RenameColumnsExec {
         renamed_column_names: Vec<String>,
     ) -> Result<Self> {
         let input_schema = input.schema();
-        if renamed_column_names.len() != input_schema.fields().len() {
+        let mut new_names = vec![];
+
+        for (i, field) in input_schema.fields().iter().enumerate() {
+            if field.name() != AGG_BUF_COLUMN_NAME {
+                new_names.push(renamed_column_names[i].clone());
+            } else {
+                new_names.push(AGG_BUF_COLUMN_NAME.to_owned());
+                break;
+            }
+        }
+        if new_names.len() != input_schema.fields().len() {
             return Err(DataFusionError::Plan(format!(
                 "renamed_column_names length not matched with input schema, \
                     renames: {:?}, input schema: {}",
                 renamed_column_names, input_schema,
             )));
         }
-
+        let renamed_column_names = new_names;
         let renamed_schema = Arc::new(Schema::new(
             renamed_column_names
                 .iter()
