@@ -716,8 +716,9 @@ fn build_is_null_column_expr(
             required_columns
                 .null_count_column_expr(col, expr, null_count_field)
                 .map(|null_count_column_expr| {
-                    // IsNull(column) => null_count > 0
-                    null_count_column_expr.gt(lit::<u64>(0))
+                    // IsNull(column) => null_count is null or null_count > 0
+                    let is_null = null_count_column_expr.clone().is_null();
+                    is_null.or(null_count_column_expr.gt(lit::<u64>(0)))
                 })
                 .ok()
         }
@@ -742,9 +743,12 @@ fn build_is_not_null_column_expr(
             let num_rows_column_expr =
                 required_columns.num_rows_column_expr(col, expr, num_rows_field);
 
-            // IsNotNull(column) => null_count != num_rows
+            // IsNotNull(column) => null_count is null or null_count != num_rows
             match (null_count_column_expr, num_rows_column_expr) {
-                (Ok(a), Ok(b)) => Some(a.not_eq(b)),
+                (Ok(a), Ok(b)) => Some({
+                    let a_is_null = a.clone().is_null();
+                    a_is_null.or(a.not_eq(b))
+                }),
                 _ => None,
             }
         }

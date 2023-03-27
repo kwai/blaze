@@ -206,7 +206,11 @@ impl SchemaAdapter {
         let mut mapped: Vec<usize> = vec![];
         for idx in projections {
             let field = self.table_schema.field(*idx);
-            if let Ok(mapped_idx) = file_schema.index_of(field.name().as_str()) {
+            if let Some(mapped_idx) = file_schema
+                .fields()
+                .iter()
+                .position(|f| field.name().eq_ignore_ascii_case(f.name()))
+            {
                 // NOTE: blaze data type is not checked here because we will
                 // do some cast in adapt_batch (like binary -> string)
                 mapped.push(mapped_idx)
@@ -232,8 +236,11 @@ impl SchemaAdapter {
 
         for field_idx in projections {
             let table_field = &self.table_schema.fields()[*field_idx];
-            if let Some((batch_idx, _name)) =
-                batch_schema.column_with_name(table_field.name().as_str())
+            if let Some((batch_idx, _name)) = batch_schema
+                .fields()
+                .iter()
+                .enumerate()
+                .find(|&(_, c)| c.name().eq_ignore_ascii_case(table_field.name()))
             {
                 // blaze: try to cast if column type does not match table field type
                 match datafusion_ext_commons::cast::cast(
@@ -284,7 +291,11 @@ impl PartitionColumnProjector {
     fn new(projected_schema: SchemaRef, table_partition_cols: &[String]) -> Self {
         let mut idx_map = HashMap::new();
         for (partition_idx, partition_name) in table_partition_cols.iter().enumerate() {
-            if let Ok(schema_idx) = projected_schema.index_of(partition_name) {
+            if let Some(schema_idx) = projected_schema
+                .fields()
+                .iter()
+                .position(|f| partition_name.eq_ignore_ascii_case(f.name()))
+            {
                 idx_map.insert(partition_idx, schema_idx);
             }
         }

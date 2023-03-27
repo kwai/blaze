@@ -469,7 +469,12 @@ macro_rules! get_statistic {
 macro_rules! get_min_max_values {
     ($self:expr, $column:expr, $func:ident, $bytes_func:ident) => {{
         let (_column_index, field) =
-            if let Some((v, f)) = $self.parquet_schema.column_with_name(&$column.name) {
+            if let Some((v, f)) = $self.parquet_schema
+                .fields()
+                .iter()
+                .enumerate()
+                .find(|&(_, c)| c.name().eq_ignore_ascii_case(&$column.name))
+            {
                 (v, f)
             } else {
                 // Named column was not present
@@ -483,7 +488,7 @@ macro_rules! get_min_max_values {
         $self.row_group_metadata
             .columns()
             .iter()
-            .find(|c| c.column_descr().name() == &$column.name)
+            .find(|c| c.column_descr().name().eq_ignore_ascii_case(&$column.name))
             .and_then(|c| c.statistics())
             .map(|stats| get_statistic!(stats, $func, $bytes_func))
             .flatten()
@@ -501,11 +506,11 @@ macro_rules! get_null_count_values {
                 .row_group_metadata
                 .columns()
                 .iter()
-                .find(|c| c.column_descr().name() == &$column.name)
+                .find(|c| c.column_descr().name().eq_ignore_ascii_case(&$column.name))
             {
                 col.statistics().map(|s| s.null_count())
             } else {
-                Some($self.row_group_metadata.num_rows() as u64)
+                None
             },
         );
 
