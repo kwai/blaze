@@ -32,7 +32,6 @@ pub struct AggAvg {
     data_type: DataType,
     agg_sum: AggSum,
     agg_count: AggCount,
-    accum_fields: Vec<Field>,
     accums_initial: Vec<ScalarValue>,
     final_merger: fn(ScalarValue, i64) -> ScalarValue,
 }
@@ -41,7 +40,6 @@ impl AggAvg {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         let agg_sum = AggSum::try_new(child.clone(), data_type.clone())?;
         let agg_count = AggCount::try_new(child.clone(), DataType::Int64)?;
-        let accum_fields = [agg_sum.accum_fields(), agg_count.accum_fields()].concat();
         let accums_initial =
             [agg_sum.accums_initial(), agg_count.accums_initial()].concat();
         let final_merger = get_final_merger(&data_type)?;
@@ -51,7 +49,6 @@ impl AggAvg {
             data_type,
             agg_sum,
             agg_count,
-            accum_fields,
             accums_initial,
             final_merger,
         })
@@ -81,10 +78,6 @@ impl Agg for AggAvg {
         true
     }
 
-    fn accum_fields(&self) -> &[Field] {
-        &self.accum_fields
-    }
-
     fn accums_initial(&self) -> &[ScalarValue] {
         &self.accums_initial
     }
@@ -93,7 +86,7 @@ impl Agg for AggAvg {
         // cast arg1 to target data type
         Ok(vec![datafusion_ext_commons::cast::cast(
             ColumnarValue::Array(partial_inputs[0].clone()),
-            self.accum_fields[0].data_type(),
+            &self.data_type,
         )?
         .into_array(0)])
     }
@@ -105,10 +98,8 @@ impl Agg for AggAvg {
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-        self.agg_sum
-            .partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
-        self.agg_count
-            .partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
+        self.agg_sum.partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
+        self.agg_count.partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
         Ok(())
     }
 

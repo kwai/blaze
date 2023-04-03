@@ -402,6 +402,7 @@ async fn execute_agg_sorted(
                 &mut grouping_row_converter,
                 &mut staging_records,
             )?;
+            baseline_metrics.record_output(batch.num_rows());
             timer.stop();
 
             log::info!(

@@ -14,6 +14,7 @@
 
 use arrow::array::*;
 use arrow::datatypes::*;
+use arrow::datatypes::DataType::Struct;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use paste::paste;
@@ -40,7 +41,7 @@ pub fn make_batch(
 }
 
 pub fn builder_extend(
-    builder: &mut Box<dyn ArrayBuilder>,
+    builder: &mut (impl ArrayBuilder + ?Sized),
     array: &ArrayRef,
     indices: &[usize],
     data_type: &DataType,
@@ -160,6 +161,105 @@ pub fn builder_extend(
         }};
     }
 
+    macro_rules! append_list {
+        ($data_type:expr) => {{
+            append_list!(@match_type: $data_type)
+        }};
+        (@match_type: $data_type:expr) => {{
+            match $data_type {
+                DataType::Int8 => append_list!(@prim: Int8),
+                DataType::Int16 => append_list!(@prim: Int16),
+                DataType::Int32 => append_list!(@prim: Int32),
+                DataType::Int64 => append_list!(@prim: Int64),
+                DataType::UInt8 => append_list!(@prim: UInt8),
+                DataType::UInt16 => append_list!(@prim: UInt16),
+                DataType::UInt32 => append_list!(@prim: UInt32),
+                DataType::UInt64 => append_list!(@prim: UInt64),
+                DataType::Float32 => append_list!(@prim: Float32),
+                DataType::Float64 => append_list!(@prim: Float64),
+                DataType::Date32 => append_list!(@prim: Date32),
+                DataType::Date64 => append_list!(@prim: Date64),
+                DataType::Boolean => append_list!(@prim: Boolean),
+                DataType::Utf8 => append_list!(@prim: String),
+                DataType::LargeUtf8 => append_list!(@prim: LargeString),
+                DataType::Timestamp(TimeUnit::Second, _) => append_list!(@prim: TimestampSecond),
+                DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                    append_list!(@prim: TimestampMillisecond)
+                }
+                DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                    append_list!(@prim: TimestampMicrosecond)
+                }
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                    append_list!(@prim: TimestampNanosecond)
+                }
+                DataType::Time32(TimeUnit::Second) => append_list!(@prim: Time32Second),
+                DataType::Time32(TimeUnit::Millisecond) => append_list!(@prim: Time32Millisecond),
+                DataType::Time64(TimeUnit::Microsecond) => append_list!(@prim: Time64Microsecond),
+                DataType::Time64(TimeUnit::Nanosecond) => append_list!(@prim: Time64Nanosecond),
+                DataType::Binary => append_list!(@prim: Binary),
+                DataType::LargeBinary => append_list!(@prim: LargeBinary),
+                DataType::Decimal128(_, _) => append_list!(@prim: ConfiguredDecimal128),
+                DataType::Decimal256(_, _) => append_list!(@prim: ConfiguredDecimal256),
+                _ => unimplemented!("list type not supported: {:?}", $data_type),
+            }
+        }};
+        (@prim: $arrowty:ident) => {{
+            type ElementType = paste! {[< $arrowty Builder >]};
+            type B = ListBuilder<ElementType>;
+            type A = ListArray;
+            let t = builder.as_any_mut().downcast_mut::<B>().unwrap();
+            let f = array.as_any().downcast_ref::<A>().unwrap();
+            for &i in indices {
+                if f.is_valid(i) {
+                    builder_extend(t.values(),&f.value(i),&(0..f.value(i).len()).collect::<Vec<_>>(), f.value(i).data_type());
+                    t.append(true);
+                } else {
+                    t.append(false);
+                }
+            }
+        }};
+    }
+
+    macro_rules! append_struct {
+        ($fields:expr) => {{
+            append_struct!(@make: $fields)
+        }};
+        (@make: $fields:expr) => {{
+            type B = StructBuilder;
+            type A = StructArray;
+            let t = builder.as_any_mut().downcast_mut::<B>().unwrap();
+            let f = array.as_any().downcast_ref::<A>().unwrap();
+
+            for &i in indices {
+                if f.is_valid(i) {
+                    for j in 0..$fields.len() {
+                        let field_builders = unsafe {
+                             struct XNullBufferBuilder {
+                                _bitmap_builder: Option<BooleanBufferBuilder>,
+                                _len: usize,
+                                _capacity: usize,
+                            }
+                            struct XStructBuilder {
+                            _fields: Vec<Field>,
+                            field_builders: Vec<Box<dyn ArrayBuilder>>,
+                            _null_buffer_builder: XNullBufferBuilder,
+                            }
+                            let t: &mut XStructBuilder = std::mem::transmute(&mut (*t));
+                            std::slice::from_raw_parts_mut(t.field_builders.as_mut_ptr(), t.field_builders.len())
+                        };
+
+                        builder_extend(field_builders[j].as_mut(), &f.column(j), &[i], $fields[j].data_type());
+                    }
+                    t.append(true);
+                }
+                else {
+                    builder_append_null(t, &Struct($fields));
+                }
+
+            }
+        }};
+    }
+
     match data_type {
         DataType::Null => {
             builder
@@ -202,11 +302,13 @@ pub fn builder_extend(
         DataType::Decimal128(_, _) => append_decimal!(ConfiguredDecimal128, Decimal128),
         DataType::Decimal256(_, _) => append_decimal!(ConfiguredDecimal256, Decimal256),
         DataType::Dictionary(key_type, value_type) => append_dict!(key_type, value_type),
+        DataType::List(fields) => append_list!(fields.data_type()),
+        DataType::Struct(fields) => append_struct!(fields.to_vec()),
         dt => unimplemented!("data type not supported in builder_extend: {:?}", dt),
     }
 }
 
-pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType) {
+pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &DataType) {
     macro_rules! append {
         ($arrowty:ident) => {{
             type B = paste::paste! {[< $arrowty Builder >]};
@@ -214,6 +316,85 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
             t.append_null();
         }};
     }
+
+    macro_rules! append_null_for_list {
+        ($data_type:expr) => {{
+            append_null_for_list!(@match_type: $data_type)
+        }};
+        (@match_type: $data_type:expr) => {{
+            match $data_type {
+                DataType::Int8 => append_null_for_list!(@prim: Int8),
+                DataType::Int16 => append_null_for_list!(@prim: Int16),
+                DataType::Int32 => append_null_for_list!(@prim: Int32),
+                DataType::Int64 => append_null_for_list!(@prim: Int64),
+                DataType::UInt8 => append_null_for_list!(@prim: UInt8),
+                DataType::UInt16 => append_null_for_list!(@prim: UInt16),
+                DataType::UInt32 => append_null_for_list!(@prim: UInt32),
+                DataType::UInt64 => append_null_for_list!(@prim: UInt64),
+                DataType::Float32 => append_null_for_list!(@prim: Float32),
+                DataType::Float64 => append_null_for_list!(@prim: Float64),
+                DataType::Date32 => append_null_for_list!(@prim: Date32),
+                DataType::Date64 => append_null_for_list!(@prim: Date64),
+                DataType::Boolean => append_null_for_list!(@prim: Boolean),
+                DataType::Utf8 => append_null_for_list!(@prim: String),
+                DataType::LargeUtf8 => append_null_for_list!(@prim: LargeString),
+                DataType::Timestamp(TimeUnit::Second, _) => append_null_for_list!(@prim: TimestampSecond),
+                DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                    append_null_for_list!(@prim: TimestampMillisecond)
+                }
+                DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                    append_null_for_list!(@prim: TimestampMicrosecond)
+                }
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                    append_null_for_list!(@prim: TimestampNanosecond)
+                }
+                DataType::Time32(TimeUnit::Second) => append_null_for_list!(@prim: Time32Second),
+                DataType::Time32(TimeUnit::Millisecond) => append_null_for_list!(@prim: Time32Millisecond),
+                DataType::Time64(TimeUnit::Microsecond) => append_null_for_list!(@prim: Time64Microsecond),
+                DataType::Time64(TimeUnit::Nanosecond) => append_null_for_list!(@prim: Time64Nanosecond),
+                DataType::Binary => append_null_for_list!(@prim: Binary),
+                DataType::LargeBinary => append_null_for_list!(@prim: LargeBinary),
+                DataType::Decimal128(_, _) => append_null_for_list!(@prim: ConfiguredDecimal128),
+                DataType::Decimal256(_, _) => append_null_for_list!(@prim: ConfiguredDecimal256),
+                _ => unimplemented!("list type not supported: {:?}", $data_type),
+            }
+        }};
+        (@prim: $arrowty:ident) => {{
+            type ElementType = paste! {[< $arrowty Builder >]};
+            type B = ListBuilder<ElementType>;
+            let t = to.as_any_mut().downcast_mut::<B>().unwrap();
+            t.append(false);
+        }};
+}
+
+    macro_rules! append_null_for_struct {
+        ($fields:expr) => {{
+            append_null_for_struct!(@make: $fields)
+        }};
+        (@make: $fields:expr) => {{
+            type B = StructBuilder;
+            let t = to.as_any_mut().downcast_mut::<B>().unwrap();
+            for j in 0..$fields.len() {
+                let field_builders = unsafe {
+                     struct XNullBufferBuilder {
+                        _bitmap_builder: Option<BooleanBufferBuilder>,
+                        _len: usize,
+                        _capacity: usize,
+                    }
+                    struct XStructBuilder {
+                    _fields: Vec<Field>,
+                    field_builders: Vec<Box<dyn ArrayBuilder>>,
+                    _null_buffer_builder: XNullBufferBuilder,
+                    }
+                    let t: &mut XStructBuilder = std::mem::transmute(&mut (*t));
+                    std::slice::from_raw_parts_mut(t.field_builders.as_mut_ptr(), t.field_builders.len())
+                };
+                builder_append_null(field_builders[j].as_mut(), $fields[j].data_type());
+            }
+            t.append_null();
+        }};
+    }
+
     match data_type {
         DataType::Null => {
             to.as_any_mut()
@@ -248,6 +429,8 @@ pub fn builder_append_null(to: &mut Box<dyn ArrayBuilder>, data_type: &DataType)
         DataType::LargeUtf8 => append!(LargeString),
         DataType::Decimal128(_, _) => append!(ConfiguredDecimal128),
         DataType::Decimal256(_, _) => append!(ConfiguredDecimal256),
+        DataType::List(field) => append_null_for_list!(field.data_type()),
+        DataType::Struct(fields) => append_null_for_struct!(fields),
         dt => unimplemented!("data type not supported in builder_append_null: {:?}", dt),
     }
 }
@@ -301,6 +484,41 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
         }};
     }
 
+    macro_rules! make_list_builder {
+            ($data_type:expr) => {{
+                make_list_builder!(@match_type: $data_type)
+            }};
+            (@match_type: $data_type:expr) => {{
+                match $data_type {
+                    DataType::Int8 => make_list_builder!(@make: Int8),
+                    DataType::Int16 => make_list_builder!(@make: Int16),
+                    DataType::Int32 => make_list_builder!(@make: Int32),
+                    DataType::Int64 => make_list_builder!(@make: Int64),
+                    DataType::UInt8 => make_list_builder!(@make: UInt8),
+                    DataType::UInt16 => make_list_builder!(@make: UInt16),
+                    DataType::UInt32 => make_list_builder!(@make: UInt32),
+                    DataType::UInt64 => make_list_builder!(@make: UInt64),
+                    DataType::Float32 => make_list_builder!(@make: Float32),
+                    DataType::Float64 => make_list_builder!(@make: Float64),
+                    DataType::Date32 => make_list_builder!(@make: Date32),
+                    DataType::Date64 => make_list_builder!(@make: Date64),
+                    DataType::Boolean => make_list_builder!(@make: Boolean),
+                    DataType::Utf8 => make_list_builder!(@make: String),
+                    DataType::LargeUtf8 => make_list_builder!(@make: LargeString),
+                    DataType::Binary => make_list_builder!(@make: Binary),
+                    DataType::LargeBinary => make_list_builder!(@make: LargeBinary),
+                    _ => unimplemented!("unsupported list data type: {:?}", $data_type),
+                }
+            }};
+            (@make: $arrowty:ident) => {{
+                type TypeBuilder = paste! {[< $arrowty Builder >]};
+                Box::new(ListBuilder::with_capacity(
+                    TypeBuilder::new(),
+                    batch_size,
+                ))
+            }};
+        }
+
     match dt {
         DataType::Null => Box::new(NullBuilder::new()),
         DataType::Decimal128(precision, scale) => Box::new(
@@ -311,6 +529,9 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
         ),
         DataType::Dictionary(key_type, value_type) => {
             make_dictionary_builder!(key_type, value_type)
+        }
+        DataType::List(fields) => {
+            make_list_builder!(fields.data_type().clone())
         }
         dt => make_builder(dt, batch_size),
     }
@@ -441,3 +662,21 @@ impl<T: DecimalType> ArrayBuilder for ConfiguredDecimalBuilder<T> {
 }
 pub type ConfiguredDecimal128Builder = ConfiguredDecimalBuilder<Decimal128Type>;
 pub type ConfiguredDecimal256Builder = ConfiguredDecimalBuilder<Decimal256Type>;
+
+#[test]
+fn test_struct_array_from_vec() {
+    let strings: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("joe"),
+        None,
+        None,
+        Some("mark"),
+    ]));
+    let ints: ArrayRef =
+        Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
+
+    let arr =
+        StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())])
+            .unwrap();
+
+    eprintln!("ans is: {:#?}",arr.is_valid(1))
+}

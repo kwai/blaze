@@ -21,7 +21,6 @@ import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
-import org.apache.spark.SPARK_BRANCH
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils

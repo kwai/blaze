@@ -366,7 +366,7 @@ impl PartitionBuffer {
                 .zip(columns)
                 .for_each(|(builder, column)| {
                     builder_extend(
-                        builder,
+                        builder.as_mut(),
                         column,
                         &indices[start..][..extend_len],
                         column.data_type(),
@@ -485,6 +485,14 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
                 "dictionary key type not supported in shuffle write: {:?}",
                 dt
             ),
+        },
+        DataType::List(fields) => len * slot_size(16, fields.data_type()),
+        DataType::Struct(fields) => {
+            fields
+                .iter()
+                .map(|e| slot_size(1, e.data_type()))
+                .sum::<usize>()
+                * len
         },
         dt => unimplemented!("data type not supported in shuffle write: {:?}", dt),
     }

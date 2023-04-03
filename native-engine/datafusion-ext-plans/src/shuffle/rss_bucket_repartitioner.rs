@@ -241,7 +241,7 @@ impl PartitionBuffer {
                 .zip(columns)
                 .for_each(|(builder, column)| {
                     builder_extend(
-                        builder,
+                        builder.as_mut(),
                         column,
                         &indices[start..][..extend_len],
                         column.data_type(),

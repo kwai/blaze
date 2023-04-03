@@ -88,14 +88,12 @@ impl FFIReaderStream {
         let mut ffi_arrow_schema = Box::new(FFI_ArrowSchema::empty());
         let mut ffi_arrow_array = Box::new(FFI_ArrowArray::empty());
 
-        let ffi_arrow_schema_ptr = jni_new_object!(
-            JavaLong,
+        let ffi_arrow_schema_ptr = jni_new_object!(JavaLong(
             ffi_arrow_schema.as_mut() as *mut FFI_ArrowSchema as i64
-        )?;
-        let ffi_arrow_array_ptr = jni_new_object!(
-            JavaLong,
+        ))?;
+        let ffi_arrow_array_ptr = jni_new_object!(JavaLong(
             ffi_arrow_array.as_mut() as *mut FFI_ArrowArray as i64
-        )?;
+        ))?;
         let _unit = jni_call!(ScalaFunction2(consumer.as_obj()).apply(
             ffi_arrow_schema_ptr.as_obj(),
             ffi_arrow_array_ptr.as_obj(),

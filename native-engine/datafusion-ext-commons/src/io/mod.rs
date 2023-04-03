@@ -15,8 +15,9 @@
 use arrow::record_batch::RecordBatchOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
+use arrow::array::{ArrayData, make_array};
 
-use arrow::datatypes::{Schema, SchemaRef};
+use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 
@@ -30,19 +31,6 @@ pub fn write_one_batch<W: Write + Seek>(
     if batch.num_rows() == 0 {
         return Ok(0);
     }
-
-    // nameless - reduce column names from serialized data, the names are
-    // always available in the read size
-    let nameless_schema = Arc::new(Schema::new(
-        batch
-            .schema()
-            .fields()
-            .iter()
-            .map(|field| field.clone().with_name(""))
-            .collect(),
-    ));
-    let batch = name_batch(batch, &nameless_schema)?;
-
     // write ipc_length placeholder
     let start_pos = output.stream_position()?;
     output.write_all(&[0u8; 8])?;
@@ -92,26 +80,58 @@ pub fn name_batch(
     batch: &RecordBatch,
     name_schema: &SchemaRef,
 ) -> ArrowResult<RecordBatch> {
-    let row_count = batch.num_rows();
-    let schema = Arc::new(Schema::new(
-        batch
-            .schema()
-            .fields()
-            .iter()
-            .enumerate()
-            .map(|(i, field)| field.clone().with_name(name_schema.field(i).name()))
-            .collect(),
-    ));
+        let row_count = batch.num_rows();
+        let schema = Arc::new(Schema::new(
+            batch
+                .schema()
+                .fields()
+                .iter()
+                .enumerate()
+                .map(|(i, field)|
+                    match field.data_type() {
+                        DataType::Struct(_) => {
+                            field.clone().with_name(name_schema.field(i).name())
+                                .with_data_type(name_schema.field(i).data_type().clone())
+                        }
+                        _ => {
+                            field.clone().with_name(name_schema.field(i).name())
+                        }
+                    }
+                )
+                .collect(),
+        ));
+        RecordBatch::try_new_with_options(
+            schema.clone(),
+            batch
+                .columns()
+                .iter()
+                .enumerate()
+                .map(|(i, column)|
+                    match column.data_type() {
+                        DataType::Struct(_) => {
+                            let null_buffer = if column.data().null_buffer().is_some() {
+                                Some(column.data().null_buffer().unwrap().clone())
+                            } else {
+                                None
+                            };
 
-    RecordBatch::try_new_with_options(
-        schema,
-        batch
-            .columns()
-            .iter()
-            .map(|column| column.clone())
-            .collect(),
-        &RecordBatchOptions::new().with_row_count(Some(row_count)),
-    )
+                            make_array(ArrayData::try_new(
+                                schema.field(i).data_type().clone(),
+                                column.data().len(),
+                                null_buffer,
+                                column.data().offset(),
+                                column.data().buffers().to_vec(),
+                                column.data().child_data().to_vec(),
+                            ).unwrap())
+                        }
+                        _ => {
+                            column.clone()
+                        }
+                    }
+                )
+                .collect(),
+            &RecordBatchOptions::new().with_row_count(Some(row_count)),
+        )
 }
 
 pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> ArrowResult<()> {

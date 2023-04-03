@@ -846,6 +846,7 @@ dependencies = [
  "log",
  "num",
  "once_cell",
+ "parking_lot",
  "paste",
 ]
 
@@ -901,6 +902,7 @@ dependencies = [
  "jni",
  "log",
  "lz4_flex",
+ "num",
  "once_cell",
  "panic-message",
  "parking_lot",

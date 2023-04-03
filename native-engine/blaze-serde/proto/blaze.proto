@@ -44,6 +44,7 @@ message PhysicalPlanNode {
     CoalesceBatchesExecNode coalesce_batches = 17;
     ExpandExecNode expand = 18;
     RssShuffleWriterExecNode rss_shuffle_writer= 19;
+    WindowExecNode window = 20;
   }
 }
 
@@ -82,11 +83,14 @@ message PhysicalExprNode {
     // like/not like
     PhysicalLikeExprNode like_expr = 20;
 
-    // spark expression wrapper
-    PhysicalSparkExpressionWrapperExprNode spark_expression_wrapper_expr = 10000;
+    // spark udf wrapper
+    PhysicalSparkUDFWrapperExprNode spark_udf_wrapper_expr = 10000;
 
     // GetIndexedField
     PhysicalGetIndexedFieldExprNode get_indexed_field_expr = 10001;
+
+    // CreateNamedStruct
+    PhysicalNamedStructExprNode named_struct = 11000;
 
     // string expressions
     StringStartsWithExprNode string_starts_with_expr = 20000;
@@ -99,12 +103,20 @@ message PhysicalExprNode {
   }
 }
 
+enum WindowFunction {
+  ROW_NUMBER = 0;
+  RANK = 1;
+  DENSE_RANK = 2;
+}
+
 enum AggFunction {
   MIN = 0;
   MAX = 1;
   SUM = 2;
   AVG = 3;
   COUNT = 4;
+  COLLECT_LIST = 5;
+  COLLECT_SET = 6;
 }
 
 message PhysicalAggExprNode {
@@ -255,7 +267,7 @@ message PhysicalLikeExprNode {
 }
 
 
-message PhysicalSparkExpressionWrapperExprNode {
+message PhysicalSparkUDFWrapperExprNode {
   bytes serialized = 1;
   ArrowType return_type = 2;
   bool return_nullable = 3;
@@ -265,6 +277,12 @@ message PhysicalSparkExpressionWrapperExprNode {
 message PhysicalGetIndexedFieldExprNode {
   PhysicalExprNode expr = 1;
   ScalarValue key = 2;
+}
+
+message PhysicalNamedStructExprNode {
+  repeated string names = 1;
+  repeated PhysicalExprNode values = 2;
+  ArrowType return_type = 3;
 }
 
 message StringStartsWithExprNode {
@@ -423,6 +441,26 @@ message RssShuffleWriterExecNode {
   PhysicalPlanNode input = 1;
   PhysicalHashRepartition output_partitioning = 2;
   string rss_partition_writer_resource_id = 3;
+}
+
+message WindowExecNode {
+  PhysicalPlanNode input = 1;
+  repeated WindowExprNode window_expr = 2;
+  repeated PhysicalExprNode partition_spec = 3;
+  repeated PhysicalExprNode order_spec = 4;
+}
+
+message WindowExprNode {
+  Field field = 1;
+  WindowFunctionType func_type = 2;
+  WindowFunction window_func = 3;
+  AggFunction agg_func = 4;
+  repeated PhysicalExprNode children = 5;
+}
+
+enum WindowFunctionType {
+  Window = 0;
+  Agg = 1;
 }
 
 message IpcWriterExecNode {

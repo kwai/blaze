@@ -21,6 +21,7 @@ use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use bitvec::prelude::BitVec;
 use datafusion::common::cast::as_binary_array;
 use std::io::{BufReader, BufWriter, Read, Write};
+use std::ops::Deref;
 use std::sync::Arc;
 
 pub fn write_batch<W: Write>(
@@ -117,6 +118,14 @@ pub fn write_batch<W: Write>(
             )?,
             DataType::Date64 => write_primitive_array(
                 as_primitive_array::<Date64Type>(column),
+                &mut output,
+            )?,
+            DataType::List(_field) => write_list_array(
+                as_list_array(column),
+                &mut output,
+            )?,
+            DataType::Struct(_) => write_struct_array(
+                as_struct_array(column),
                 &mut output,
             )?,
             other => {
@@ -255,6 +264,18 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
                 &mut input,
                 DataType::Binary,
             )?,
+            DataType::List(list_field) => read_list_array(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+                list_field.clone().deref()
+            )?,
+            DataType::Struct(fields) => read_struct_array(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+                fields.clone().deref(),
+            )?,
             other => {
                 return Err(ArrowError::IoError(format!(
                     "unsupported data type: {}",
@@ -295,6 +316,27 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
         }
         DataType::Utf8 => write_u8(16, output)?,
         DataType::Binary => write_u8(17, output)?,
+        DataType::List(field) => {
+            write_u8(18, output)?;
+            write_data_type(field.data_type(), output)?;
+            if field.is_nullable() {
+                write_u8(1, output)?;
+            } else {
+                write_u8(0, output)?;
+            }
+        },
+        DataType::Struct(fields) => {
+            write_u8(20, output)?;
+            write_len(fields.len(), output)?;
+            for field in fields {
+                write_data_type(field.data_type(), output)?;
+                if field.is_nullable() {
+                    write_u8(1, output)?;
+                } else {
+                    write_u8(0, output)?;
+                }
+            }
+        }
         other => {
             return Err(ArrowError::NotYetImplemented(format!(
                 "write_data_type: unsupported data type: {:?}",
@@ -328,6 +370,21 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
         }
         16 => DataType::Utf8,
         17 => DataType::Binary,
+        18 => {
+            let child_datatype = read_data_type(input)?;
+            let is_nullable = if read_u8(input)? == 1 {true} else {false};
+            DataType::List(Box::new(Field::new("item", child_datatype, is_nullable)))
+        }
+        20 => {
+            let field_len = read_len(input)?;
+            let mut fields = Vec::new();
+            for _i in 0..field_len {
+                let field_data_type = read_data_type(input)?;
+                let field_is_nullable = if read_u8(input)? == 1 {true} else {false};
+                fields.push(Field::new("", field_data_type, field_is_nullable));
+            }
+            DataType::Struct(fields)
+        }
         other => {
             return Err(ArrowError::NotYetImplemented(format!(
                 "read_data_type: unsupported data type: {:?}",
@@ -375,6 +432,285 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
         vec![],
     )?;
     Ok(make_array(array_data))
+}
+
+fn write_child_data<W: Write>(
+    data: &ArrayData,
+    output: &mut W,
+) -> ArrowResult<()> {
+    write_len(data.len(), output)?;
+    if let Some(null_buffer) = data.null_buffer() {
+        write_u8(1, output)?;
+        output.write_all(null_buffer.as_slice())?;
+    } else {
+        write_u8(0, output)?;
+    }
+
+    match data.data_type() {
+        DataType::Utf8 => {
+            let byte_array = StringArray::from(data.clone());
+            let mut cur_offset = 0;
+            for &offset in byte_array.value_offsets().iter().skip(1) {
+                let len = offset - cur_offset;
+                write_len(len as usize, output)?;
+                cur_offset = offset;
+            }
+            output.write_all(&byte_array.value_data())?;
+        }
+        DataType::Binary => {
+            let byte_array = BinaryArray::from(data.clone());
+            let mut cur_offset = 0;
+            for &offset in byte_array.value_offsets().iter().skip(1) {
+                let len = offset - cur_offset;
+                write_len(len as usize, output)?;
+                cur_offset = offset;
+            }
+            output.write_all(&byte_array.value_data())?;
+        }
+        _ => {
+            output.write_all(data.buffers()[0].as_slice())?;
+        }
+    }
+    Ok(())
+}
+
+fn write_list_array<W: Write>(
+    array: &ListArray,
+    output: &mut W,
+) -> ArrowResult<()> {
+    // write outside array null_buffer and offset_buffer
+    if let Some(null_buffer) = array.data().null_buffer() {
+        output.write_all(null_buffer.as_slice())?;
+    }
+
+    let mut cur_offset = 0;
+    for &offset in array.value_offsets().iter().skip(1) {
+        let len = offset - cur_offset;
+        write_len(len as usize, output)?;
+        cur_offset = offset;
+    }
+
+    // write list child_data
+    if array.data().child_data().len() == 1 {
+        write_child_data(array.data().child_data().get(0).unwrap(), output)?;
+    } else {
+        return Err(ArrowError::InvalidArgumentError("ListArray should contain a single child array (values array)".to_string()))
+    }
+    Ok(())
+}
+
+fn read_list_array<R: Read>(
+    num_rows: usize,
+    has_null_buffer: bool,
+    input: &mut R,
+    list_field: &Field ,
+) -> ArrowResult<ArrayRef> {
+    let null_buffer: Option<Buffer> = if has_null_buffer {
+        let null_buffer_len = (num_rows + 7) / 8;
+        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
+        Some(null_buffer)
+    } else {
+        None
+    };
+
+    let mut cur_offset = 0;
+    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
+    offsets_buffer.push(0u32);
+    for _ in 0..num_rows {
+        let len = read_len(input)?;
+        let offset = cur_offset + len;
+        offsets_buffer.push(offset as u32);
+        cur_offset = offset;
+    }
+    let offsets_buffer = vec![offsets_buffer.into()];
+
+    let child_data_len = read_len(input)?;
+    let child_has_null_buffer = if read_u8(input)? == 1 {true} else {false};
+
+    let child_data = get_child_array_data(child_data_len, child_has_null_buffer, input, list_field)?;
+
+    let list_array_data = ArrayData::try_new(
+        DataType::List(Box::new(list_field.clone())),
+        num_rows,
+        null_buffer,
+        0,
+        offsets_buffer,
+        vec![child_data],
+    )?;
+    Ok(make_array(list_array_data))
+}
+
+fn get_child_array_data<R: Read>(
+    child_data_len: usize,
+    child_has_null_buffer: bool,
+    input: &mut R,
+    field_context: &Field,
+) -> ArrowResult<ArrayData> {
+    let child_data = match field_context.data_type() {
+        DataType::Null => {
+            Arc::new(NullArray::new(child_data_len))
+        }
+        DataType::Boolean => {
+            read_boolean_array(child_data_len, child_has_null_buffer, input)?
+        }
+        DataType::Int8 => read_primitive_array::<_, Int8Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Int16 => read_primitive_array::<_, Int16Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Int32 => read_primitive_array::<_, Int32Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Int64 => read_primitive_array::<_, Int64Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::UInt8 => read_primitive_array::<_, UInt8Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::UInt16 => read_primitive_array::<_, UInt16Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::UInt32 => read_primitive_array::<_, UInt32Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::UInt64 => read_primitive_array::<_, UInt64Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Float32 => read_primitive_array::<_, Float32Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Float64 => read_primitive_array::<_, Float64Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Decimal128(prec, scale) => {
+            let array = read_primitive_array::<_, Decimal128Type>(
+                child_data_len,
+                child_has_null_buffer,
+                input,
+            )?;
+            Arc::new(
+                Decimal128Array::from(array.data().clone())
+                    .with_precision_and_scale(*prec, *scale)?,
+            )
+        }
+        DataType::Date32 => read_primitive_array::<_, Date32Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Date64 => read_primitive_array::<_, Date64Type>(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+        )?,
+        DataType::Utf8 => read_bytes_array(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+            DataType::Utf8,
+        )?,
+        DataType::Binary => read_bytes_array(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+            DataType::Binary,
+        )?,
+        DataType::List(list_field) => read_list_array(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+            list_field.clone().deref(),
+        )?,
+        DataType::Struct(fields) => read_struct_array(
+            child_data_len,
+            child_has_null_buffer,
+            input,
+            fields.clone().deref(),
+        )?,
+        other => {
+            return Err(ArrowError::IoError(format!(
+                "unsupported nesting list data type: {}",
+                other
+            )));
+        }
+    }.data().clone();
+    Ok(child_data)
+}
+
+fn write_struct_array<W: Write>(
+    array: &StructArray,
+    output: &mut W,
+) -> ArrowResult<()> {
+    // write struct null_buffer
+    if let Some(null_buffer) = array.data().null_buffer() {
+        output.write_all(null_buffer.as_slice())?;
+    }
+
+    // write struct child_data
+    let child_data_num = array.data().child_data().len();
+    write_len(child_data_num, output)?;
+    if !array.data().child_data().is_empty() {
+        for child in array.data().child_data() {
+            write_child_data(child, output)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn read_struct_array<R: Read>(
+    num_rows: usize,
+    has_null_buffer: bool,
+    input: &mut R,
+    fields: &[Field],
+) -> ArrowResult<ArrayRef> {
+    let null_buffer: Option<Buffer> = if has_null_buffer {
+        let null_buffer_len = (num_rows + 7) / 8;
+        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
+        Some(null_buffer)
+    } else {
+        None
+    };
+
+    let child_data_num = read_len(input)?;
+    let mut child_data: Vec<ArrayData> = vec![];
+
+    for i in 0.. child_data_num {
+        let child_data_len = read_len(input)?;
+        let child_has_null_buffer = if read_u8(input)? == 1 {true} else {false};
+        child_data.push(get_child_array_data(child_data_len, child_has_null_buffer, input, fields.get(i).unwrap())?);
+    }
+
+    let struct_array_data = ArrayData::try_new(
+        DataType::Struct(fields.to_vec()),
+        num_rows,
+        null_buffer,
+        0,
+        vec![],
+        child_data
+    )?;
+    Ok(make_array(struct_array_data))
 }
 
 fn write_boolean_array<W: Write>(
@@ -479,9 +815,22 @@ mod test {
     use arrow::record_batch::RecordBatch;
     use std::io::Cursor;
     use std::sync::Arc;
+    use arrow::datatypes::{DataType, Field, Int32Type};
+    use arrow::datatypes::DataType::{Int32, Int64};
 
     #[test]
     fn test_write_and_read_batch() {
+
+        let data = vec![
+            Some(vec![Some(0), Some(1), Some(2)]),
+            None,
+            Some(vec![Some(6), Some(7), Some(45)]),
+        ];
+        let fixed_size_list_array: ArrayRef = Arc::new(FixedSizeListArray::from_iter_primitive::<Int32Type, _, _>(data, 3));
+        let cast_type = DataType::List(Box::new((Field::new("item", Int64, true))));
+
+        let ans = arrow::compute::kernels::cast::cast(&fixed_size_list_array, &cast_type).unwrap();
+
         let array1: ArrayRef = Arc::new(StringArray::from_iter([
             Some("20220101".to_owned()),
             Some("20220102你好🍹".to_owned()),

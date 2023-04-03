@@ -125,11 +125,13 @@ impl From<protobuf::JoinSide> for JoinSide {
 impl From<protobuf::AggFunction> for AggFunction {
     fn from(agg_fun: protobuf::AggFunction) -> AggFunction {
         match agg_fun {
-            protobuf::AggFunction::Min => AggFunction::MIN,
-            protobuf::AggFunction::Max => AggFunction::MAX,
-            protobuf::AggFunction::Sum => AggFunction::SUM,
-            protobuf::AggFunction::Avg => AggFunction::AVG,
-            protobuf::AggFunction::Count => AggFunction::COUNT,
+            protobuf::AggFunction::Min => AggFunction::Min,
+            protobuf::AggFunction::Max => AggFunction::Max,
+            protobuf::AggFunction::Sum => AggFunction::Sum,
+            protobuf::AggFunction::Avg => AggFunction::Avg,
+            protobuf::AggFunction::Count => AggFunction::Count,
+            protobuf::AggFunction::CollectList => AggFunction::CollectList,
+            protobuf::AggFunction::CollectSet => AggFunction::CollectSet,
         }
     }
 }

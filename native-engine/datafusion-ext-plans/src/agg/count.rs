@@ -25,7 +25,6 @@ use std::sync::Arc;
 pub struct AggCount {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
-    accum_fields: Vec<Field>,
     accums_initial: Vec<ScalarValue>,
 }
 
@@ -33,12 +32,10 @@ impl AggCount {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         assert_eq!(data_type, DataType::Int64);
 
-        let accum_fields = vec![Field::new("count", data_type.clone(), true)];
         let accums_initial = vec![ScalarValue::Int64(Some(0))];
         Ok(Self {
             child,
             data_type,
-            accum_fields,
             accums_initial,
         })
     }
@@ -65,10 +62,6 @@ impl Agg for AggCount {
 
     fn nullable(&self) -> bool {
         false
-    }
-
-    fn accum_fields(&self) -> &[Field] {
-        &self.accum_fields
     }
 
     fn accums_initial(&self) -> &[ScalarValue] {

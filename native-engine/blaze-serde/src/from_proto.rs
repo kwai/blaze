@@ -17,7 +17,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{SchemaRef, Field};
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
@@ -52,7 +52,7 @@ use datafusion_ext_file_formats::{
     FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile,
 };
 use datafusion_ext_plans::agg::{
-    create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
+    create_agg, AggExecMode, AggExpr, AggMode, GroupingExpr, AggFunction,
 };
 use datafusion_ext_plans::agg_exec::AggExec;
 use datafusion_ext_plans::broadcast_hash_join_exec::BroadcastHashJoinExec;
@@ -81,11 +81,14 @@ use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion_ext_exprs::cast::TryCastExpr;
 use datafusion_ext_exprs::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
 use datafusion_ext_exprs::iif::IIfExpr;
-use datafusion_ext_exprs::spark_expression_wrapper::SparkExpressionWrapperExpr;
+use datafusion_ext_exprs::named_struct::NamedStructExpr;
+use datafusion_ext_exprs::spark_udf_wrapper::SparkUDFWrapperExpr;
 use datafusion_ext_exprs::spark_logical::{SparkLogicalExpr, SparkLogicalOp};
 use datafusion_ext_exprs::string_contains::StringContainsExpr;
 use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
 use datafusion_ext_exprs::string_starts_with::StringStartsWithExpr;
+use datafusion_ext_plans::window::{WindowRankType, WindowFunction, WindowExpr};
+use datafusion_ext_plans::window_exec::WindowExec;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -209,9 +212,9 @@ pub fn convert_physical_expr_to_logical_expr(
             "converting physical ScalarFunctionExpr to logical is not supported"
                 .to_string(),
         ))
-    } else if expr.downcast_ref::<SparkExpressionWrapperExpr>().is_some() {
+    } else if expr.downcast_ref::<SparkUDFWrapperExpr>().is_some() {
         Err(DataFusionError::Plan(
-            "converting physical SparkExpressionWrapperExpr to logical is not supported"
+            "converting physical SparkUDFWrapperExpr to logical is not supported"
                 .to_string(),
         ))
     } else if expr.downcast_ref::<GetIndexedFieldExpr>().is_some() {
@@ -698,6 +701,124 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
 
                 Ok(Arc::new(ExpandExec::try_new(schema, projections, input)?))
             }
+            PhysicalPlanType::Window(window) => {
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(window.input)?;
+                let window_exprs = window.window_expr
+                    .iter()
+                    .map(|w| {
+                        let field: Field = w.field
+                            .as_ref()
+                            .ok_or_else(|| {
+                                proto_error(format!(
+                                        "physical_plan::from_proto() Unexpected sort expr {:?}",
+                                        self
+                                ))
+                            })?
+                            .try_into()?;
+
+                        let children = w.children
+                            .iter()
+                            .map(|expr| {
+                                Ok(bind(
+                                    try_parse_physical_expr(expr, &input.schema())?,
+                                    &input.schema(),
+                                )?)
+                            })
+                            .collect::<Result<Vec<_>, Self::Error>>()?;
+
+                        let window_func = match w.func_type() {
+                            protobuf::WindowFunctionType::Window => match w.window_func() {
+                                protobuf::WindowFunction::RowNumber => {
+                                    WindowFunction::RankLike(WindowRankType::RowNumber)
+                                }
+                                protobuf::WindowFunction::Rank => {
+                                    WindowFunction::RankLike(WindowRankType::Rank)
+                                }
+                                protobuf::WindowFunction::DenseRank => {
+                                    WindowFunction::RankLike(WindowRankType::DenseRank)
+                                }
+                            },
+                            protobuf::WindowFunctionType::Agg => match w.agg_func() {
+                                protobuf::AggFunction::Min => {
+                                    WindowFunction::Agg(AggFunction::Min)
+                                }
+                                protobuf::AggFunction::Max => {
+                                    WindowFunction::Agg(AggFunction::Max)
+                                }
+                                protobuf::AggFunction::Sum => {
+                                    WindowFunction::Agg(AggFunction::Sum)
+                                }
+                                protobuf::AggFunction::Avg => {
+                                    WindowFunction::Agg(AggFunction::Avg)
+                                }
+                                protobuf::AggFunction::Count => {
+                                    WindowFunction::Agg(AggFunction::Count)
+                                }
+                                protobuf::AggFunction::CollectList => {
+                                    WindowFunction::Agg(AggFunction::CollectList)
+                                }
+                                protobuf::AggFunction::CollectSet => {
+                                    WindowFunction::Agg(AggFunction::CollectSet)
+                                }
+                            },
+                        };
+                        Ok::<_, Self::Error>(WindowExpr::new(window_func, children, field))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let partition_specs = window.partition_spec
+                    .iter()
+                    .map(|expr| {
+                        Ok(bind(
+                                try_parse_physical_expr(expr, &input.schema())?,
+                                &input.schema(),
+                        )?)
+                    })
+                    .collect::<Result<Vec<_>, Self::Error>>()?;
+
+                let order_specs = window.order_spec
+                    .iter()
+                    .map(|expr| {
+                        let expr = expr.expr_type.as_ref().ok_or_else(|| {
+                            proto_error(format!(
+                                "physical_plan::from_proto() Unexpected expr {:?}",
+                                self
+                            ))
+                        })?;
+                        if let protobuf::physical_expr_node::ExprType::Sort(sort_expr) = expr {
+                            let expr = sort_expr
+                                .expr
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    proto_error(format!(
+                                        "physical_plan::from_proto() Unexpected sort expr {:?}",
+                                        self
+                                    ))
+                                })?
+                                .as_ref();
+                            Ok(PhysicalSortExpr {
+                                expr: bind(try_parse_physical_expr(expr, &input.schema())?, &input.schema())?,
+                                options: SortOptions {
+                                    descending: !sort_expr.asc,
+                                    nulls_first: sort_expr.nulls_first,
+                                },
+                            })
+                        } else {
+                            Err(PlanSerDeError::General(format!(
+                                "physical_plan::from_proto() {:?}",
+                                self
+                            )))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(Arc::new(WindowExec::try_new(
+                    input,
+                    window_exprs,
+                    partition_specs,
+                    order_specs,
+                )?))
+            }
         }
     }
 }
@@ -897,8 +1018,8 @@ fn try_parse_physical_expr(
                 &convert_required!(e.return_type)?,
             ))
         }
-        ExprType::SparkExpressionWrapperExpr(e) => {
-            Arc::new(SparkExpressionWrapperExpr::try_new(
+        ExprType::SparkUdfWrapperExpr(e) => {
+            Arc::new(SparkUDFWrapperExpr::try_new(
                 e.serialized.clone(),
                 convert_required!(e.return_type)?,
                 e.return_nullable,
@@ -956,6 +1077,16 @@ fn try_parse_physical_expr(
             try_parse_physical_expr_box_required(&e.pattern, input_schema)?,
         )),
 
+        ExprType::NamedStruct(e) => {
+            let data_type = convert_required!(e.return_type)?;
+            Arc::new(NamedStructExpr::new(
+                e.names.clone(),
+                e.values
+                    .iter()
+                    .map(|x| try_parse_physical_expr(x, input_schema))
+                    .collect::<Result<Vec<_>, _>>()?,
+                data_type))
+        }
     };
 
     Ok(pexpr)

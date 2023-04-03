@@ -91,7 +91,7 @@ object ArrowUtils {
         new Field(
           name,
           fieldType,
-          Seq(toArrowField("element", elementType, containsNull, timeZoneId)).asJava)
+          Seq(toArrowField("item", elementType, containsNull, timeZoneId)).asJava)
       case StructType(fields) =>
         val fieldType = new FieldType(nullable, ArrowType.Struct.INSTANCE, null)
         new Field(

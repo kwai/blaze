@@ -15,7 +15,6 @@
 use blaze_commons::*;
 use datafusion::prelude::SessionContext;
 use jni::objects::{JObject, JThrowable};
-use jni::sys::{jboolean, JNI_TRUE};
 use once_cell::sync::OnceCell;
 use std::any::Any;
 use std::error::Error;
@@ -24,12 +23,10 @@ use std::panic::AssertUnwindSafe;
 
 mod exec;
 mod metrics;
+mod rt;
 
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
-
-// #[global_allocator]
-// static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 static SESSION: OnceCell<SessionContext> = OnceCell::new();
 
@@ -39,8 +36,7 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if !is_task_running()? {
-            // only handle running task
+        if !is_task_running() { // only handle running task
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);
@@ -63,15 +59,21 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     });
 }
 
-fn handle_unwinded_scope<E: Debug>(scope: impl FnOnce() -> Result<(), E>) {
-    if let Err(err) = std::panic::catch_unwind(AssertUnwindSafe(|| scope().unwrap())) {
-        handle_unwinded(err);
+fn handle_unwinded_scope<T: Default, E: Debug>(
+    scope: impl FnOnce() -> Result<T, E>
+) -> T {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| scope().unwrap())) {
+        Ok(v) => v,
+        Err(err) => {
+            handle_unwinded(err);
+            T::default()
+        },
     }
 }
 
 fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Result<()> {
     let msg = jni_new_string!(msg)?;
-    let e = jni_new_object!(JavaRuntimeException, msg.as_obj(), cause)?;
+    let e = jni_new_object!(JavaRuntimeException(msg.as_obj(), cause))?;
 
     if let Err(err) = jni_throw!(JThrowable::from(e.as_obj())) {
         jni_fatal_error!(format!(
@@ -80,13 +82,4 @@ fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Resu
         ));
     }
     Ok(())
-}
-
-fn is_task_running() -> datafusion::error::Result<bool> {
-    if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE {
-        jni_exception_clear!()?;
-        log::info!("native execution completed/interrupted");
-        return Ok(false);
-    }
-    Ok(true)
 }

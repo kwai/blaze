@@ -150,7 +150,7 @@ impl AggContext {
         let mut agg_buf_addr_counts = Vec::with_capacity(aggs.len());
         let mut offset = 0;
         for agg in &aggs {
-            let len = agg.agg.accum_fields().len();
+            let len = agg.agg.accums_initial().len();
             agg_buf_addr_offsets.push(offset);
             agg_buf_addr_counts.push(len);
             offset += len;

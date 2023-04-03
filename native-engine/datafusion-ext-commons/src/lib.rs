@@ -22,6 +22,7 @@ use log::trace;
 
 pub mod array_builder;
 pub mod cast;
+pub mod ffi;
 pub mod io;
 pub mod loser_tree;
 pub mod spark_hash;

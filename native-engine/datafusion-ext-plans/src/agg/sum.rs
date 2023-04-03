@@ -29,7 +29,6 @@ use std::sync::Arc;
 pub struct AggSum {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
-    accum_fields: Vec<Field>,
     accums_initial: Vec<ScalarValue>,
     partial_updater: fn(&mut AggBuf, u64, &ArrayRef, usize),
     partial_buf_merger: fn(&mut AggBuf, &mut AggBuf, u64),
@@ -37,14 +36,12 @@ pub struct AggSum {
 
 impl AggSum {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accum_fields = vec![Field::new("sum", data_type.clone(), true)];
         let accums_initial = vec![ScalarValue::try_from(&data_type)?];
         let partial_updater = get_partial_updater(&data_type)?;
         let partial_buf_merger = get_partial_buf_merger(&data_type)?;
         Ok(Self {
             child,
             data_type,
-            accum_fields,
             accums_initial,
             partial_updater,
             partial_buf_merger,
@@ -75,10 +72,6 @@ impl Agg for AggSum {
         true
     }
 
-    fn accum_fields(&self) -> &[Field] {
-        &self.accum_fields
-    }
-
     fn accums_initial(&self) -> &[ScalarValue] {
         &self.accums_initial
     }
@@ -87,7 +80,7 @@ impl Agg for AggSum {
         // cast arg1 to target data type
         Ok(vec![datafusion_ext_commons::cast::cast(
             ColumnarValue::Array(partial_inputs[0].clone()),
-            self.accum_fields[0].data_type(),
+            &self.data_type,
         )?
         .into_array(0)])
     }

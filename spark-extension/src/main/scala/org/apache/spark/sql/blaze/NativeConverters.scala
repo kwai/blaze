@@ -20,13 +20,11 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
-
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
+import org.apache.spark.internal.Logging
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.sql.catalyst.analysis.DecimalPrecision
 import org.apache.spark.sql.catalyst.analysis.DecimalPrecision.promotePrecision
 import org.apache.spark.sql.catalyst.analysis.DecimalPrecision.widerDecimalType
@@ -85,11 +83,16 @@ import org.apache.spark.sql.catalyst.expressions.Subtract
 import org.apache.spark.sql.catalyst.expressions.Tan
 import org.apache.spark.sql.catalyst.expressions.TruncDate
 import org.apache.spark.sql.catalyst.expressions.Upper
-import org.apache.spark.sql.catalyst.expressions.aggregate.Average
-import org.apache.spark.sql.catalyst.expressions.aggregate.Count
-import org.apache.spark.sql.catalyst.expressions.aggregate.Max
-import org.apache.spark.sql.catalyst.expressions.aggregate.Min
-import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
+import org.apache.spark.sql.catalyst.expressions.aggregate.{
+  AggregateExpression,
+  Average,
+  CollectList,
+  CollectSet,
+  Count,
+  Max,
+  Min,
+  Sum
+}
 import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
 import org.apache.spark.sql.catalyst.expressions.BitwiseOr
 import org.apache.spark.sql.catalyst.expressions.BoundReference
@@ -100,13 +103,16 @@ import org.apache.spark.sql.catalyst.expressions.PromotePrecision
 import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
-import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
 import org.apache.spark.sql.catalyst.expressions.BinaryComparison
 import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
 import org.apache.spark.sql.catalyst.expressions.Pmod
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
+import org.apache.spark.sql.catalyst.expressions.CreateArray
+import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
+import org.apache.spark.sql.catalyst.expressions.GetArrayItem
+import org.apache.spark.sql.catalyst.expressions.GetStructField
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -144,7 +150,9 @@ import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
-object NativeConverters {
+import scala.collection.mutable.ArrayBuffer
+
+object NativeConverters extends Logging {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
     dt match {
       case NullType => pb.PrimitiveScalarType.NULL
@@ -184,6 +192,48 @@ object NativeConverters {
             .newBuilder()
             .setWhole(Math.max(t.precision, 1))
             .setFractional(t.scale)
+            .build())
+
+      // array/list
+      case a: ArrayType =>
+        if (a.elementType.isInstanceOf[ArrayType] | a.elementType.isInstanceOf[StructType]) {
+          throw new NotImplementedError(
+            s"Data type conversion not implemented Array nesting ${a.elementType.simpleString}")
+        }
+        arrowTypeBuilder.setLIST(
+          org.blaze.protobuf.List
+            .newBuilder()
+            .setFieldType(
+              pb.Field
+                .newBuilder()
+                .setName("item")
+                .setArrowType(convertDataType(a.elementType))
+                .setNullable(a.containsNull))
+            .build())
+
+      case s: StructType =>
+        s.fields
+          .map(_.dataType)
+          .foreach(e =>
+            if (e.isInstanceOf[ArrayType] | e.isInstanceOf[StructType]) {
+              throw new NotImplementedError(
+                s"Data type conversion not implemented Struct nesting ${e.simpleString}")
+            })
+        arrowTypeBuilder.setSTRUCT(
+          org.blaze.protobuf.Struct
+            .newBuilder()
+            .addAllSubFieldTypes(
+              s.fields
+                .map(
+                  e =>
+                    pb.Field
+                      .newBuilder()
+                      .setArrowType(convertDataType(e.dataType))
+                      .setName(e.name)
+                      .setNullable(e.nullable)
+                      .build())
+                .toList
+                .asJava)
             .build())
 
       case _ =>
@@ -708,11 +758,57 @@ object NativeConverters {
           case Count(children) if !children.exists(_.nullable) =>
             aggBuilder.setAggFunction(pb.AggFunction.COUNT)
             aggBuilder.addChildren(convertExpr(Literal.apply(1), useAttrExprId))
+          case CollectList(child, _, _) =>
+            aggBuilder.setAggFunction(pb.AggFunction.COLLECT_LIST)
+            aggBuilder.addChildren(convertExpr(child, useAttrExprId))
+          case CollectSet(child, _, _) =>
+            aggBuilder.setAggFunction(pb.AggFunction.COLLECT_SET)
+            aggBuilder.addChildren(convertExpr(child, useAttrExprId))
         }
         pb.PhysicalExprNode
           .newBuilder()
           .setAggExpr(aggBuilder)
           .build()
+
+      case e: CreateArray => buildExtScalarFunction("MakeArray", e.children, e.dataType)
+
+      case e: CreateNamedStruct =>
+        val NameVec = new ArrayBuffer[String]()
+        val ValuesVec = new ArrayBuffer[Expression]()
+        for (Seq(name, value) <- e.children.grouped(2)) {
+          assert(name.isInstanceOf[Literal])
+          NameVec += name.toString()
+          ValuesVec += value
+        }
+
+        buildExprNode {
+          _.setNamedStruct(
+            pb.PhysicalNamedStructExprNode
+              .newBuilder()
+              .addAllNames(NameVec.toList.asJava)
+              .addAllValues(ValuesVec.map(value => convertExpr(value)).toList.asJava)
+              .setReturnType(convertDataType(e.dataType)))
+        }
+
+      case GetArrayItem(child, Literal(ordinalValue: Number, _)) =>
+        buildExprNode {
+          _.setGetIndexedFieldExpr(
+            pb.PhysicalGetIndexedFieldExprNode
+              .newBuilder()
+              .setExpr(convertExpr(child))
+              .setKey(convertValue(
+                ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
+                LongType)))
+        }
+
+      case GetStructField(child, _, name) =>
+        buildExprNode {
+          _.setGetIndexedFieldExpr(
+            pb.PhysicalGetIndexedFieldExprNode
+              .newBuilder()
+              .setExpr(convertExpr(child))
+              .setKey(convertValue(name.get, StringType)))
+        }
 
       // hive UDFJson
       case e
@@ -727,33 +823,24 @@ object NativeConverters {
             && e.children(1).isInstanceOf[Literal]) =>
         buildExtScalarFunction("GetJsonObject", e.children, StringType)
 
-      // hive UDF
-      case e if isHiveSimpleUDF(e) || isHiveGenericUDF(e) =>
-        assert(
-          SparkEnv.get.conf.getBoolean("spark.blaze.udf.enabled", defaultValue = false),
-          "stop converting UDF because spark.blaze.udf.enabled = false")
+      // hive UDF and other unsupported expressions
+      case e =>
         val bounded = e.withNewChildren(e.children.zipWithIndex.map {
           case (param, index) => BoundReference(index, param.dataType, param.nullable)
         })
         val serialized = serializeExpression(bounded.asInstanceOf[Expression with Serializable])
+        logWarning(s"expression is not supported in blaze and fallbacks to spark: $e")
 
         pb.PhysicalExprNode
           .newBuilder()
-          .setSparkExpressionWrapperExpr(
-            pb.PhysicalSparkExpressionWrapperExprNode
+          .setSparkUdfWrapperExpr(
+            pb.PhysicalSparkUDFWrapperExprNode
               .newBuilder()
               .setSerialized(ByteString.copyFrom(serialized))
               .setReturnType(convertDataType(bounded.dataType))
               .setReturnNullable(bounded.nullable)
               .addAllParams(e.children.map(expr => convertExpr(expr, useAttrExprId)).asJava))
           .build()
-
-      case unsupportedExpression =>
-        // scalastyle:off throwerror
-        throw new NotImplementedError(
-          s"unsupported exception: " +
-            s"${unsupportedExpression} (${unsupportedExpression.getClass.getName})")
-      // scalastyle:on throwerror
     }
   }
 

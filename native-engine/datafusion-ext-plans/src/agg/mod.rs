@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod agg_buf;
+pub mod agg_buf;
 pub mod agg_context;
 pub mod agg_tables;
 pub mod avg;
@@ -20,6 +20,8 @@ pub mod count;
 pub mod max;
 pub mod min;
 pub mod sum;
+pub mod collect_list;
+pub mod collect_set;
 
 use crate::agg::agg_buf::{AggBuf, AggDynStr};
 use arrow::array::*;
@@ -63,11 +65,13 @@ impl AggMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggFunction {
-    COUNT,
-    SUM,
-    AVG,
-    MAX,
-    MIN,
+    Count,
+    Sum,
+    Avg,
+    Max,
+    Min,
+    CollectList,
+    CollectSet,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +92,6 @@ pub trait Agg: Send + Sync + Debug {
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;
     fn data_type(&self) -> &DataType;
     fn nullable(&self) -> bool;
-    fn accum_fields(&self) -> &[Field];
     fn accums_initial(&self) -> &[ScalarValue];
 
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
@@ -203,11 +206,11 @@ pub fn create_agg(
     input_schema: &SchemaRef,
 ) -> Result<Arc<dyn Agg>> {
     Ok(match agg_function {
-        AggFunction::COUNT => {
+        AggFunction::Count => {
             let return_type = DataType::Int64;
             Arc::new(count::AggCount::try_new(children[0].clone(), return_type)?)
         }
-        AggFunction::SUM => {
+        AggFunction::Sum => {
             let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Sum,
@@ -218,7 +221,7 @@ pub fn create_agg(
                 return_type,
             )?)
         }
-        AggFunction::AVG => {
+        AggFunction::Avg => {
             let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Avg,
@@ -229,7 +232,7 @@ pub fn create_agg(
                 return_type,
             )?)
         }
-        AggFunction::MAX => {
+        AggFunction::Max => {
             let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Max,
@@ -240,7 +243,7 @@ pub fn create_agg(
                 return_type,
             )?)
         }
-        AggFunction::MIN => {
+        AggFunction::Min => {
             let arg_type = children[0].data_type(input_schema)?;
             let return_type = aggregate_function::return_type(
                 &aggregate_function::AggregateFunction::Min,
@@ -250,6 +253,16 @@ pub fn create_agg(
                 Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
                 return_type,
             )?)
+        }
+        AggFunction::CollectList => {
+            let arg_type = children[0].data_type(input_schema)?;
+            let return_type = DataType::List(Box::new(Field::new("item", arg_type.clone(), true)));
+            Arc::new(collect_list::AggCollectList::try_new(children[0].clone(), return_type, arg_type)?)
+        }
+        AggFunction::CollectSet => {
+            let arg_type = children[0].data_type(input_schema)?;
+            let return_type = DataType::List(Box::new(Field::new("item", arg_type.clone(), true)));
+            Arc::new(collect_set::AggCollectSet::try_new(children[0].clone(), return_type, arg_type)?)
         }
     })
 }

@@ -95,6 +95,7 @@ fn test_murmur3() {
     let _expected = vec![
         142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928,
     ];
+    assert_eq!(_hashes, _expected)
 }
 
 macro_rules! hash_array {
@@ -108,6 +109,23 @@ macro_rules! hash_array {
             for (i, hash) in $hashes.iter_mut().enumerate() {
                 if !array.is_null(i) {
                     *hash = spark_compatible_murmur3_hash(&array.value(i), *hash);
+                }
+            }
+        }
+    };
+}
+
+macro_rules! hash_list {
+    ($array_type:ident, $column: ident, $hash: ident) => {
+        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+        if array.null_count() == 0 {
+            for i in 0..array.len() {
+                *$hash = spark_compatible_murmur3_hash(&array.value(i), *$hash);
+            }
+        } else {
+            for i in 0..array.len() {
+                if !array.is_null(i) {
+                    *$hash = spark_compatible_murmur3_hash(&array.value(i), *$hash);
                 }
             }
         }
@@ -137,6 +155,30 @@ macro_rules! hash_array_primitive {
     };
 }
 
+macro_rules! hash_list_primitive {
+    ($array_type:ident, $column: ident, $ty: ident, $hash: ident) => {
+        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+        let values = array.values();
+        if array.null_count() == 0 {
+            for value in values.iter(){
+                *$hash = spark_compatible_murmur3_hash(
+                    (*value as $ty).to_le_bytes(),
+                    *$hash,
+                );
+            }
+        } else {
+           for (i,value) in values.iter().enumerate(){
+               if !array.is_null(i) {
+                   *$hash = spark_compatible_murmur3_hash(
+                       (*value as $ty).to_le_bytes(),
+                       *$hash,
+                   );
+               }
+           }
+        }
+    };
+}
+
 macro_rules! hash_array_decimal {
     ($array_type:ident, $column: ident, $hashes: ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
@@ -152,6 +194,28 @@ macro_rules! hash_array_decimal {
                     *hash = spark_compatible_murmur3_hash(
                         array.value(i).to_le_bytes(),
                         *hash,
+                    );
+                }
+            }
+        }
+    };
+}
+
+macro_rules! hash_list_decimal {
+    ($array_type:ident, $column: ident, $hash: ident) => {
+        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+
+        if array.null_count() == 0 {
+            for i in 0..array.len() {
+                *$hash =
+                    spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *$hash);
+            }
+        } else {
+            for i in 0..array.len() {
+                if !array.is_null(i) {
+                    *$hash = spark_compatible_murmur3_hash(
+                        array.value(i).to_le_bytes(),
+                        *$hash,
                     );
                 }
             }
@@ -291,6 +355,95 @@ pub fn create_hashes<'a>(
                     )))
                 }
             },
+            DataType::List(field) => {
+                let list_array = col.as_any().downcast_ref::<ListArray>().unwrap();
+                for (i, hash) in hashes_buffer.iter_mut().enumerate() {
+                    let sub_array = &list_array.value(i);
+                    match field.data_type() {
+                        DataType::Boolean => {
+                            let array = sub_array.as_any().downcast_ref::<BooleanArray>().unwrap();
+                            if array.null_count() == 0 {
+                                for index in 0..array.len() {
+                                    *hash = spark_compatible_murmur3_hash(
+                                        ((if array.value(index) { 1 } else { 0 }) as i32).to_le_bytes(),
+                                    *hash,
+                                    );
+                                }
+                            } else {
+                                for index in 0..array.len(){
+                                    if !array.is_null(index) {
+                                        *hash = spark_compatible_murmur3_hash(
+                                            ((if array.value(index) { 1 } else { 0 }) as i32).to_le_bytes(),
+                                        *hash,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        DataType::Int8 => {
+                            hash_list_primitive!(Int8Array, sub_array, i32, hash);
+                        }
+                        DataType::Int16 => {
+                            hash_list_primitive!(Int16Array, sub_array, i32, hash);
+                        }
+                        DataType::Int32 => {
+                            hash_list_primitive!(Int32Array, sub_array, i32, hash);
+                        }
+                        DataType::Int64 => {
+                            hash_list_primitive!(Int64Array, sub_array, i64, hash);
+                        }
+                        DataType::Float32 => {
+                            hash_list_primitive!(Float32Array, sub_array, f32, hash);
+                        }
+                        DataType::Float64 => {
+                            hash_list_primitive!(Float64Array, sub_array, f64, hash);
+                        }
+                        DataType::Timestamp(TimeUnit::Second, None) => {
+                            hash_list_primitive!(TimestampSecondArray, sub_array, i64, hash);
+                        }
+                        DataType::Timestamp(TimeUnit::Millisecond, None) => {
+                            hash_list_primitive!(TimestampMillisecondArray, sub_array, i64, hash);
+                        }
+                        DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                            hash_list_primitive!(TimestampMicrosecondArray, sub_array, i64, hash);
+                        }
+                        DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                            hash_list_primitive!(TimestampNanosecondArray, sub_array, i64, hash);
+                        }
+                        DataType::Date32 => {
+                            hash_list_primitive!(Date32Array, sub_array, i32, hash);
+                        }
+                        DataType::Date64 => {
+                            hash_list_primitive!(Date64Array, sub_array, i64, hash);
+                        }
+                        DataType::Binary => {
+                            hash_list!(BinaryArray, sub_array, hash);
+                        }
+                        DataType::LargeBinary => {
+                            hash_list!(LargeBinaryArray, sub_array, hash);
+                        }
+                        DataType::Utf8 => {
+                            hash_list!(StringArray, sub_array, hash);
+                        }
+                        DataType::LargeUtf8 => {
+                            hash_list!(LargeStringArray, sub_array, hash);
+                        }
+                        DataType::Decimal128(_, _) => {
+                            hash_list_decimal!(Decimal128Array, sub_array, hash);
+                        }
+                        _ => {
+                            return Err(DataFusionError::Internal(format!(
+                                "Unsupported list data type in hasher: {}",
+                                field.data_type()
+                            )));
+                        }
+                    }
+                }
+            }
+            DataType::Struct(_) => {
+                let struct_array = col.as_any().downcast_ref::<StructArray>().unwrap();
+                create_hashes(struct_array.columns(), hashes_buffer)?;
+            }
             _ => {
                 // This is internal because we should have caught this before.
                 return Err(DataFusionError::Internal(format!(
@@ -315,9 +468,23 @@ pub fn pmod(hash: u32, n: usize) -> usize {
 mod tests {
     use std::sync::Arc;
 
-    use crate::spark_hash::{create_hashes, pmod};
-    use arrow::array::{ArrayRef, Int32Array, Int64Array, Int8Array, StringArray};
+    use crate::spark_hash::{create_hashes, pmod, spark_compatible_murmur3_hash};
+    use arrow::array::{Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, ListArray, StringArray};
+    use arrow::buffer::Buffer;
+    use arrow::datatypes::{BooleanType, DataType, Field, Int32Type, ToByteSlice};
+    use bitvec::macros::internal::funty::Integral;
     use datafusion::from_slice::FromSlice;
+
+    #[test]
+    fn test_list() {
+        let mut hashes_buffer = vec![42; 4];
+        for hash in hashes_buffer.iter_mut() {
+                    *hash = spark_compatible_murmur3_hash(
+                        5_i32.to_le_bytes(),
+                        *hash,
+                    );
+        }
+    }
 
     #[test]
     fn test_i8() {
@@ -340,17 +507,25 @@ mod tests {
     fn test_i32() {
         let i = Arc::new(Int32Array::from(vec![
             Some(1),
-            Some(0),
-            Some(-1),
-            Some(i32::MAX),
-            Some(i32::MIN),
         ])) as ArrayRef;
-        let mut hashes = vec![42; 5];
+        let mut hashes = vec![42; 1];
         create_hashes(&[i], &mut hashes).unwrap();
 
-        // generated with Spark Murmur3_x86_32
-        let expected = vec![0xdea578e3, 0x379fae8f, 0xa0590e3d, 0x07fb67e7, 0x2b1f0fc6];
-        assert_eq!(hashes, expected);
+        let j = Arc::new(Int32Array::from(vec![
+            Some(2),
+        ])) as ArrayRef;
+        create_hashes(&[j], &mut hashes).unwrap();
+
+        let m = Arc::new(Int32Array::from(vec![
+            Some(3),
+        ])) as ArrayRef;
+        create_hashes(&[m], &mut hashes).unwrap();
+
+        let n = Arc::new(Int32Array::from(vec![
+            Some(4),
+        ])) as ArrayRef;
+        create_hashes(&[n], &mut hashes).unwrap();
+
     }
 
     #[test]

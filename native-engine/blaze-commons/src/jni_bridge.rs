@@ -186,7 +186,7 @@ macro_rules! jni_new_string {
 
 #[macro_export]
 macro_rules! jni_new_object {
-    ($clsname:ident $(,$args:expr)*) => {{
+    ($clsname:ident ($($args:expr),* $(,)?)) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
             log::trace!(
                 "jni_new_object!({}, {:?})",
@@ -262,7 +262,7 @@ macro_rules! jni_call_static {
     ($clsname:ident.$method:ident($($args:expr),* $(,)?) -> JObject) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
             jni_call_static!(env, $clsname.$method($($args,)*))
-                .and_then(|result| $crate::jni_map_error_with_env!(env, JObject::try_from(result)))
+                .and_then(|result| $crate::jni_map_error_with_env!(env, $crate::jni_bridge::JObject::try_from(result)))
                 .map(|s| $crate::jni_bridge::LocalRef(s.into()))
         })
     }};
@@ -394,7 +394,7 @@ pub struct JavaClasses<'a> {
     pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
-    pub cSparkExpressionWrapperContext: SparkExpressionWrapperContext<'a>,
+    pub cSparkUDFWrapperContext: SparkUDFWrapperContext<'a>,
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
@@ -454,7 +454,7 @@ impl JavaClasses<'static> {
                 cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
-                cSparkExpressionWrapperContext: SparkExpressionWrapperContext::new(env)
+                cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env)
                     .unwrap(),
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
@@ -1099,29 +1099,19 @@ impl<'a> BlazeRssPartitionWriterBase<'_> {
 }
 
 #[allow(non_snake_case)]
-pub struct SparkExpressionWrapperContext<'a> {
+pub struct SparkUDFWrapperContext<'a> {
     pub class: JClass<'a>,
     pub ctor: JMethodID,
-    pub method_eval: JMethodID,
-    pub method_eval_ret: ReturnType,
 }
-impl<'a> SparkExpressionWrapperContext<'a> {
+impl<'a> SparkUDFWrapperContext<'a> {
     pub const SIG_TYPE: &'static str =
-        "org/apache/spark/sql/blaze/SparkExpressionWrapperContext";
+        "org/apache/spark/sql/blaze/SparkUDFWrapperContext";
 
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkExpressionWrapperContext<'a>> {
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkUDFWrapperContext<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(SparkExpressionWrapperContext {
+        Ok(SparkUDFWrapperContext {
             class,
-            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
-            method_eval: env
-                .get_method_id(
-                    class,
-                    "eval",
-                    "(Ljava/nio/ByteBuffer;)Ljava/nio/channels/ReadableByteChannel;",
-                )
-                .unwrap(),
-            method_eval_ret: ReturnType::Object,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;JJ)V")?,
         })
     }
 }
@@ -1129,20 +1119,16 @@ impl<'a> SparkExpressionWrapperContext<'a> {
 #[allow(non_snake_case)]
 pub struct BlazeCallNativeWrapper<'a> {
     pub class: JClass<'a>,
-    pub method_isFinished: JMethodID,
-    pub method_isFinished_ret: ReturnType,
     pub method_getRawTaskDefinition: JMethodID,
     pub method_getRawTaskDefinition_ret: ReturnType,
     pub method_getMetrics: JMethodID,
     pub method_getMetrics_ret: ReturnType,
-    pub method_enqueueWithTimeout: JMethodID,
-    pub method_enqueueWithTimeout_ret: ReturnType,
-    pub method_enqueueError: JMethodID,
-    pub method_enqueueError_ret: ReturnType,
-    pub method_dequeueWithTimeout: JMethodID,
-    pub method_dequeueWithTimeout_ret: ReturnType,
-    pub method_finishNativeThread: JMethodID,
-    pub method_finishNativeThread_ret: ReturnType,
+    pub method_setArrowFFIStreamPtr: JMethodID,
+    pub method_setArrowFFIStreamPtr_ret: ReturnType,
+    pub method_isError: JMethodID,
+    pub method_isError_ret: ReturnType,
+    pub method_setError: JMethodID,
+    pub method_setError_ret: ReturnType,
 }
 impl<'a> BlazeCallNativeWrapper<'a> {
     pub const SIG_TYPE: &'static str =
@@ -1152,12 +1138,12 @@ impl<'a> BlazeCallNativeWrapper<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeCallNativeWrapper {
             class,
-            method_isFinished: env.get_method_id(class, "isFinished", "()Z").unwrap(),
-            method_isFinished_ret: ReturnType::Primitive(Primitive::Boolean),
             method_getRawTaskDefinition: env
                 .get_method_id(class, "getRawTaskDefinition", "()[B")
                 .unwrap(),
             method_getRawTaskDefinition_ret: ReturnType::Array,
+            method_setArrowFFIStreamPtr: env.get_method_id(class, "setArrowFFIStreamPtr", "(J)V").unwrap(),
+            method_setArrowFFIStreamPtr_ret: ReturnType::Primitive(Primitive::Void),
             method_getMetrics: env
                 .get_method_id(
                     class,
@@ -1166,22 +1152,10 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                 )
                 .unwrap(),
             method_getMetrics_ret: ReturnType::Object,
-            method_enqueueWithTimeout: env
-                .get_method_id(class, "enqueueWithTimeout", "(Ljava/lang/Object;)Z")
-                .unwrap(),
-            method_enqueueWithTimeout_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_enqueueError: env
-                .get_method_id(class, "enqueueError", "(Ljava/lang/Object;)Z")
-                .unwrap(),
-            method_enqueueError_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_dequeueWithTimeout: env
-                .get_method_id(class, "dequeueWithTimeout", "()Ljava/lang/Object;")
-                .unwrap(),
-            method_dequeueWithTimeout_ret: ReturnType::Object,
-            method_finishNativeThread: env
-                .get_method_id(class, "finishNativeThread", "()V")
-                .unwrap(),
-            method_finishNativeThread_ret: ReturnType::Primitive(Primitive::Void),
+            method_isError: env.get_method_id(class, "isError", "()Z").unwrap(),
+            method_isError_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_setError: env.get_method_id(class, "setError", "(Ljava/lang/Throwable;)V").unwrap(),
+            method_setError_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

@@ -23,6 +23,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchReceiverStream;
 use futures::FutureExt;
 use tokio::sync::mpsc::Sender;
+use blaze_commons::is_task_running;
 
 pub mod memory_manager;
 pub mod onheap_spill;
@@ -71,23 +72,21 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
 ) -> Result<SendableRecordBatchStream> {
 
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
+    let err_sender = sender.clone();
     let join_handle = tokio::task::spawn(async move {
-        let err_sender = sender.clone();
         let result = AssertUnwindSafe(async move {
-
             output(sender).await
         })
-            .catch_unwind()
-            .await;
+        .catch_unwind()
+        .await
+        .map_err(|err| DataFusionError::Execution(format!("{:?}", err)));
 
-        if let Err(e) = result {
-            let err_message = panic_message::panic_message(&e).to_owned();
-            err_sender
-                .send(Err(
-                    DataFusionError::Execution(err_message),
-                ))
-                .await
-                .unwrap();
+        if let Err(e) | Ok(Err(e)) = result {
+            err_sender.send(Err(e)).await.unwrap_or_else(|err| {
+                if is_task_running() {
+                    panic!("error sending batch: {}", err);
+                }
+            });
         }
     });
 

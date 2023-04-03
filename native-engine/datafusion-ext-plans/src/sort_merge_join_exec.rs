@@ -365,10 +365,10 @@ async fn join_combined(
                     let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
 
                     $batch1.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(&mut staging_l[i], c, &[l], c.data_type());
+                        builder_extend(staging_l[i].as_mut(), c, &[l], c.data_type());
                     });
                     $batch2.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(&mut staging_r[i], c, &[r], c.data_type())
+                        builder_extend(staging_r[i].as_mut(), c, &[r], c.data_type())
                     });
 
                     staging_len += 1;
@@ -387,10 +387,10 @@ async fn join_combined(
                     let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
 
                     $batch1.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(&mut staging_l[i], c, &[l], c.data_type());
+                        builder_extend(staging_l[i].as_mut(), c, &[l], c.data_type());
                     });
                     $batch2.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(&mut staging_r[i], c, &[r], c.data_type())
+                        builder_extend(staging_r[i].as_mut(), c, &[r], c.data_type())
                     });
 
                     staging_len += 1;
@@ -507,10 +507,10 @@ async fn join_combined(
 
                     // append <left-columns + nulls> for left/full joins
                     left_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(&mut staging_l[i], c, &[idx], c.data_type());
+                        builder_extend(staging_l[i].as_mut(), c, &[idx], c.data_type());
                     });
                     right_dts.iter().enumerate().for_each(|(i, dt)| {
-                        builder_append_null(&mut staging_r[i], dt);
+                        builder_append_null(staging_r[i].as_mut(), dt);
                     });
 
                     staging_len += 1;
@@ -529,10 +529,10 @@ async fn join_combined(
 
                     // append <nulls + right-columns> for right/full joins
                     left_dts.iter().enumerate().for_each(|(i, dt)| {
-                        builder_append_null(&mut staging_l[i], dt);
+                        builder_append_null(staging_l[i].as_mut(), dt);
                     });
                     right_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(&mut staging_r[i], c, &[idx], c.data_type());
+                        builder_extend(staging_r[i].as_mut(), c, &[idx], c.data_type());
                     });
 
                     staging_len += 1;
@@ -732,7 +732,7 @@ async fn join_semi(
             let left_batch = left_cursor.batch.as_ref().unwrap();
             let idx = left_cursor.idx;
             left_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                builder_extend(&mut staging[i], c, &[idx], c.data_type());
+                builder_extend(staging[i].as_mut(), c, &[idx], c.data_type());
             });
             staging_len += 1;
             if staging_len >= join_params.batch_size {

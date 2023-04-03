@@ -40,7 +40,6 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::stream::once;
 use futures::{TryFutureExt, TryStreamExt};
-use jni::objects::JObject;
 use crate::common::memory_manager::MemManager;
 
 /// The rss shuffle writer operator maps each input partition to M output partitions based on a

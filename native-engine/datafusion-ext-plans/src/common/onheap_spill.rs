@@ -14,7 +14,7 @@
 
 use blaze_commons::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref};
 use datafusion::common::Result;
-use jni::objects::{GlobalRef, JObject};
+use jni::objects::GlobalRef;
 use jni::sys::jlong;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;

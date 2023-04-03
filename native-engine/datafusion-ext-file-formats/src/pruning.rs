@@ -710,6 +710,14 @@ fn build_is_null_column_expr(
 ) -> Option<Expr> {
     match expr {
         Expr::Column(ref col) => {
+            if !schema.fields
+                .iter()
+                .filter(|e| e.data_type().is_nested())
+                .filter(|e| e.name() == &col.name)
+                .collect::<Vec<_>>()
+                .is_empty() {
+                return None
+            }
             let field = schema.field_with_name(&col.name).ok()?;
 
             let null_count_field = &Field::new(field.name(), DataType::UInt64, true);
@@ -733,6 +741,15 @@ fn build_is_not_null_column_expr(
 ) -> Option<Expr> {
     match expr {
         Expr::Column(ref col) => {
+            if !schema.fields
+                .iter()
+                .filter(|e| e.data_type().is_nested())
+                .filter(|e| e.name() == &col.name)
+                .collect::<Vec<_>>()
+                .is_empty() {
+                return None
+            }
+
             let field = schema.field_with_name(&col.name).ok()?;
 
             let null_count_field = &Field::new(field.name(), DataType::UInt64, true);

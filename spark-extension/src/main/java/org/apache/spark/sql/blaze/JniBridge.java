@@ -33,7 +33,9 @@ public class JniBridge {
 
   public static native void initNative(long batchSize, long nativeMemory, double memoryFraction);
 
-  public static native void callNative(BlazeCallNativeWrapper wrapper);
+  public static native long callNative(BlazeCallNativeWrapper wrapper);
+
+  public static native void finalizeNative(long ptr);
 
   public static ClassLoader getContextClassLoader() {
     return Thread.currentThread().getContextClassLoader();

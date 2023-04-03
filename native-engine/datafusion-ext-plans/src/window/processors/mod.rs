@@ -12,25 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(trait_upcasting)]
-
-pub mod agg;
-pub mod agg_exec;
-pub mod broadcast_hash_join_exec;
-pub mod common;
-pub mod debug_exec;
-pub mod empty_partitions_exec;
-pub mod expand_exec;
-pub mod ffi_reader_exec;
-pub mod filter_exec;
-pub mod ipc_reader_exec;
-pub mod ipc_writer_exec;
-pub mod limit_exec;
-pub mod rename_columns_exec;
-pub mod rss_shuffle_writer_exec;
-pub mod shuffle_writer_exec;
-pub mod sort_exec;
-pub mod sort_merge_join_exec;
-pub mod window;
-pub mod window_exec;
-mod shuffle;
+pub mod rank_processor;
+pub mod row_number_processor;
+pub mod agg_processor;

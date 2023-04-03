@@ -54,7 +54,6 @@ use datafusion::{
 };
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, TryStreamExt};
-use jni::objects::JObject;
 use log::{debug, warn};
 use once_cell::sync::OnceCell;
 
