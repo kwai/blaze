@@ -23,6 +23,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicReference
 
+import org.apache.spark.InterruptibleIterator
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
 import org.blaze.protobuf.PartitionId
@@ -48,7 +49,9 @@ case class BlazeCallNativeWrapper(
 
   logInfo(s"Start executing native plan")
   private var nativeRuntimePtr = JniBridge.callNative(this)
-  private var batchIterator = new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr)
+  private var batchIterator = new InterruptibleIterator[ColumnarBatch](
+    context,
+    new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr))
 
   context.addTaskCompletionListener(_ => close())
   context.addTaskFailureListener((_, err) => close())
@@ -98,7 +101,7 @@ case class BlazeCallNativeWrapper(
   private def close(): Unit = {
     synchronized {
       if (batchIterator != null) {
-        batchIterator.close()
+        batchIterator.delegate.asInstanceOf[ArrowFFIStreamImportIterator].close()
         batchIterator = null
       }
       if (nativeRuntimePtr != 0) {

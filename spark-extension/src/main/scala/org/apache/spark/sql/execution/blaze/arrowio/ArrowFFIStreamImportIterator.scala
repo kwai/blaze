@@ -36,7 +36,13 @@ class ArrowFFIStreamImportIterator(taskContext: TaskContext, arrowFFIStreamPtr: 
     if (currentBatchNotConsumed) {
       return true
     }
-    currentBatchNotConsumed = reader.loadNextBatch()
+
+    try {
+      currentBatchNotConsumed = reader.loadNextBatch()
+    } catch {
+      case _ if taskContext.isCompleted() || taskContext.isInterrupted() =>
+        currentBatchNotConsumed = false
+    }
     currentBatchNotConsumed
   }
 

@@ -18,7 +18,9 @@ package org.apache.spark.sql.blaze
 
 import java.nio.ByteBuffer
 
+import org.apache.spark.InterruptibleIterator
 import org.apache.spark.TaskContext
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.InternalRow
@@ -27,6 +29,7 @@ import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamImportIterator
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.vectorized.ColumnarBatch
 
 case class SparkUDFWrapperContext(
     serialized: ByteBuffer,
@@ -34,13 +37,17 @@ case class SparkUDFWrapperContext(
     arrowExportFFIStreamPtr: Long)
     extends Logging {
 
+  val taskContext = TaskContext.get()
   val expr: Expression = NativeConverters.deserializeExpression({
     val bytes = new Array[Byte](serialized.remaining())
     serialized.get(bytes)
     bytes
   })
 
-  val importStream = new ArrowFFIStreamImportIterator(TaskContext.get(), arrowImportFFIStreamPtr)
+  val importStream = new InterruptibleIterator[ColumnarBatch](
+    taskContext,
+    new ArrowFFIStreamImportIterator(taskContext, arrowImportFFIStreamPtr))
+
   val outputRows: Iterator[Iterator[InternalRow]] = importStream.map(batch => {
     val batchedParamRows = ColumnarHelper.batchAsRowIter(batch)
     val batchedResultRows = batchedParamRows.map(row => InternalRow(expr.eval(row)))
