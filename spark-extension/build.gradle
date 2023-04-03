@@ -5,7 +5,7 @@ def versions = [
     ],
     spark241kwaiae: [
         scalaVersion: "2.11.12",
-        sparkVersion: "2.11:2.4.1U1.9.33-SNAPSHOT",
+        sparkVersion: "2.11:2.4.1U1.9.44-master-BETA-SNAPSHOT",
     ]
 ][shim]
 
