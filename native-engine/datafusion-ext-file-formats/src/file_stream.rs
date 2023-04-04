@@ -107,7 +107,6 @@ impl<F: FormatReader> FileStream<F> {
     pub fn new(
         fs_provider: Arc<FsProvider>,
         config: &FileScanConfig,
-        partition: usize,
         _context: Arc<TaskContext>,
         file_reader: F,
         baseline_metrics: BaselineMetrics,
@@ -118,10 +117,8 @@ impl<F: FormatReader> FileStream<F> {
             &config.table_partition_cols,
         );
 
-        let files = config.file_groups[partition].clone();
-
         Ok(Self {
-            file_iter: files.into(),
+            file_iter: config.file_group.clone().into(),
             projected_schema,
             remain: config.limit,
             file_reader,

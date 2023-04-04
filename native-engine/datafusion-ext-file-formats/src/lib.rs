@@ -56,11 +56,13 @@ mod pruning;
 /// any given file format.
 #[derive(Debug, Clone)]
 pub struct FileScanConfig {
+    /// Number of output partitions
+    pub num_partitions: usize,
     /// Schema before projection. It contains the columns that are expected
     /// to be in the files without the table partition columns.
     pub file_schema: SchemaRef,
-    /// List of files to be processed, grouped into partitions
-    pub file_groups: Vec<Vec<PartitionedFile>>,
+    /// List of files to be processed
+    pub file_group: Vec<PartitionedFile>,
     /// Estimated overall statistics of the files, taking `filters` into account.
     pub statistics: Statistics,
     /// Columns on which to project the data. Indexes that are higher than the

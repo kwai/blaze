@@ -349,13 +349,14 @@ message Statistics {
 }
 
 message FileScanExecConf {
-  repeated FileGroup file_groups = 1;
-  Schema schema = 2;
-  repeated uint32 projection = 4;
-  ScanLimit limit = 5;
-  Statistics statistics = 6;
-  repeated string table_partition_cols = 7;
-  Schema partition_schema = 8;
+  int64 num_partitions = 1;
+  FileGroup file_group = 2;
+  Schema schema = 3;
+  repeated uint32 projection = 5;
+  ScanLimit limit = 6;
+  Statistics statistics = 7;
+  repeated string table_partition_cols = 8;
+  Schema partition_schema = 9;
 }
 
 message ParquetScanExecNode {

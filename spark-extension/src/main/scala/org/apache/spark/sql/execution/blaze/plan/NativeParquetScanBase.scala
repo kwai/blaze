@@ -43,6 +43,7 @@ import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.datasources.FilePartition
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.types.NullType
@@ -80,6 +81,9 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
     }
   }
 
+  private val numOutputPartitions = outputPartitioning.numPartitions
+  private val partitionSchema = basedFileScan.relation.partitionSchema
+
   private val nativePruningPredicateFilters = basedFileScan.dataFilters
     .map(expr => NativeConverters.convertExpr(expr, useAttrExprId = false))
 
@@ -90,26 +94,24 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         // avoid converting unsupported type in non-used fields
         StructField(field.name, NullType)
     }))
-  private val nativeFileGroups: Array[pb.FileGroup] = {
-    val partitions = inputFileScanRDD.filePartitions.toArray
 
+  private val nativePartitionSchema =
+    NativeConverters.convertSchema(partitionSchema)
+
+  private val nativeFileGroups = (partition: FilePartition) => {
     // compute file sizes
-    val fileSizes = partitions
-      .flatMap(_.files)
+    val fileSizes = partition.files
       .groupBy(_.filePath)
       .mapValues(_.map(_.length).sum)
 
     // list input file statuses
-    def nativePartitionedFile(file: PartitionedFile) = {
-      val nativePartitionValues =
-        basedFileScan.relation.partitionSchema.zipWithIndex
-          .map {
-            case (field, index) =>
-              NativeConverters.convertValue(
-                file.partitionValues.get(index, field.dataType),
-                field.dataType)
-          }
-
+    val nativePartitionedFile = (file: PartitionedFile) => {
+      val nativePartitionValues = partitionSchema.zipWithIndex.map {
+        case (field, index) =>
+          NativeConverters.convertValue(
+            file.partitionValues.get(index, field.dataType),
+            field.dataType)
+      }
       pb.PartitionedFile
         .newBuilder()
         .setPath(file.filePath)
@@ -124,13 +126,10 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
             .build())
         .build()
     }
-
-    partitions.map { partition =>
-      pb.FileGroup
-        .newBuilder()
-        .addAllFiles(partition.files.map(nativePartitionedFile).toList.asJava)
-        .build()
-    }
+    pb.FileGroup
+      .newBuilder()
+      .addAllFiles(partition.files.map(nativePartitionedFile).toList.asJava)
+      .build()
   }
 
   override def doExecuteNative(): NativeRDD = {
@@ -148,8 +147,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         case _ =>
       }))
     val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
-    val partCols = basedFileScan.relation.partitionSchema.map(_.name)
-    val partitionSchema = NativeConverters.convertSchema(basedFileScan.relation.partitionSchema)
+    val partCols = partitionSchema.map(_.name)
 
     val relation = basedFileScan.relation
     val sparkSession = relation.sparkSession
@@ -181,20 +179,16 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
             fs
           })
 
-        val nativeFileGroupsPartitioned = nativeFileGroups.zipWithIndex
-          .map {
-            case (fileGroup, index) if index == partition.index => fileGroup
-            case (_, _) => FileGroup.getDefaultInstance
-          }
-
+        val nativeFileGroup = nativeFileGroups(partition.asInstanceOf[FilePartition])
         val nativeParquetScanConf = pb.FileScanExecConf
           .newBuilder()
+          .setNumPartitions(numOutputPartitions)
           .setStatistics(pb.Statistics.getDefaultInstance)
           .setSchema(nativeFileSchema)
-          .addAllFileGroups(nativeFileGroupsPartitioned.toList.asJava)
+          .setFileGroup(nativeFileGroup)
           .addAllProjection(projection.map(Integer.valueOf).asJava)
           .addAllTablePartitionCols(partCols.asJava)
-          .setPartitionSchema(partitionSchema)
+          .setPartitionSchema(nativePartitionSchema)
           .build()
 
         val nativeParquetScanExecBuilder = pb.ParquetScanExecNode

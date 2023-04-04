@@ -1232,12 +1232,13 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         let statistics = convert_required!(self.statistics)?;
         let partition_schema = Arc::new(convert_required!(self.partition_schema)?);
         Ok(FileScanConfig {
+            num_partitions: self.num_partitions as usize,
             file_schema: schema,
-            file_groups: self
-                .file_groups
-                .iter()
-                .map(|f| f.try_into())
-                .collect::<Result<Vec<_>, _>>()?,
+            file_group: self
+                .file_group
+                .as_ref()
+                .expect("missing FileScanConfig.file_group")
+                .try_into()?,
             statistics,
             projection,
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),

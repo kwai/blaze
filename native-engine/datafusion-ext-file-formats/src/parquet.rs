@@ -96,7 +96,7 @@ impl ParquetExec {
         predicate: Option<Expr>,
     ) -> Self {
         debug!("Creating ParquetExec, files: {:?}, projection {:?}, predicate: {:?}, limit: {:?}",
-            base_config.file_groups, base_config.projection, predicate, base_config.limit);
+            base_config.file_group, base_config.projection, predicate, base_config.limit);
 
         let metrics = ExecutionPlanMetricsSet::new();
         let predicate_creation_errors =
@@ -183,7 +183,7 @@ impl ExecutionPlan for ParquetExec {
 
     /// Get the output partitioning of this plan
     fn output_partitioning(&self) -> Partitioning {
-        Partitioning::UnknownPartitioning(self.base_config.file_groups.len())
+        Partitioning::UnknownPartitioning(self.base_config.num_partitions)
     }
 
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
@@ -247,7 +247,6 @@ impl ExecutionPlan for ParquetExec {
         let stream = FileStream::new(
             fs_provider,
             &self.base_config,
-            partition_index,
             context,
             opener,
             baseline_metrics,
