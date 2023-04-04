@@ -140,13 +140,11 @@ impl ExecutionPlan for ShuffleWriterExec {
         };
 
         let input = self.input.execute(partition, context.clone())?;
-        let stream = repartitioner
-            .execute(
-                input,
-                context.session_config().batch_size(),
-                BaselineMetrics::new(&self.metrics, partition),
-            )
-            .map_err(|e| ArrowError::ExternalError(Box::new(e)));
+        let stream = repartitioner.execute(
+            input,
+            context.session_config().batch_size(),
+            BaselineMetrics::new(&self.metrics, partition),
+        ).map_err(|e| ArrowError::ExternalError(Box::new(e)));
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),

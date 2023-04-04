@@ -73,9 +73,18 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
 
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
     let err_sender = sender.clone();
+
     let join_handle = tokio::task::spawn(async move {
         let result = AssertUnwindSafe(async move {
-            output(sender).await
+            let err_sender = sender.clone();
+            if let Err(err) = output(sender).await {
+                err_sender.send(Err(err))
+                    .await
+                    .map_err(|err| DataFusionError::Execution(
+                        format!("output_with_sender channel error: {}", err)
+                    ))?;
+            }
+            Ok(())
         })
         .catch_unwind()
         .await
@@ -83,8 +92,14 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
 
         if let Err(e) | Ok(Err(e)) = result {
             err_sender.send(Err(e)).await.unwrap_or_else(|err| {
-                if is_task_running() {
-                    panic!("error sending batch: {}", err);
+                let task_running = is_task_running();
+                log::warn!(
+                    "output_with_sender broken (task_running={}): {}",
+                    task_running,
+                    err,
+                );
+                if task_running {
+                    panic!("output_with_sender channel error: {}", err);
                 }
             });
         }

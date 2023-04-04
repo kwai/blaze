@@ -36,26 +36,29 @@ class ArrowFFIStreamExporter(
     arrowFFIStreamPtr: Long)
     extends Logging {
 
+  private val mutex = new Object()
   private var allocator =
     ArrowUtils.rootAllocator.newChildAllocator("arrowFFIStreamExporter", 0, Long.MaxValue)
 
-  private val arrowReader: ArrowReader = new ArrowReader(allocator) {
+  private val stream = ArrowArrayStream.wrap(arrowFFIStreamPtr)
+  private val reader: ArrowReader = new ArrowReader(allocator) {
     val arrowWriter: ArrowWriter = ArrowWriter.create(getVectorSchemaRoot)
 
-    override def loadNextBatch(): Boolean = {
-      if (batchedRows.hasNext) {
-        arrowWriter.reset()
-
-        batchedRows
-          .next()
-          .foreach(row => {
-            arrowWriter.write(row)
-          })
-        arrowWriter.finish()
-        return true
+    override def loadNextBatch(): Boolean =
+      mutex.synchronized {
+        taskContext.killTaskIfInterrupted()
+        if (batchedRows.hasNext) {
+          arrowWriter.reset()
+          batchedRows
+            .next()
+            .foreach(row => {
+              arrowWriter.write(row)
+            })
+          arrowWriter.finish()
+          return true
+        }
+        false
       }
-      false
-    }
 
     override def bytesRead(): Long = 0L
     override def closeReadSource(): Unit = {}
@@ -69,16 +72,16 @@ class ArrowFFIStreamExporter(
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
   def exportArrayStream(): Unit = {
-    Data.exportArrayStream(allocator, arrowReader, ArrowArrayStream.wrap(arrowFFIStreamPtr))
+    Data.exportArrayStream(allocator, reader, stream)
   }
 
-  private def close(): Unit = {
-    synchronized {
+  private def close(): Unit =
+    mutex.synchronized {
       if (allocator != null) {
-        arrowReader.close()
+        reader.close()
+        stream.close()
         allocator.close()
         allocator = null
       }
     }
-  }
 }

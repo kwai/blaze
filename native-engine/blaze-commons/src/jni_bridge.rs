@@ -1125,8 +1125,6 @@ pub struct BlazeCallNativeWrapper<'a> {
     pub method_getMetrics_ret: ReturnType,
     pub method_setArrowFFIStreamPtr: JMethodID,
     pub method_setArrowFFIStreamPtr_ret: ReturnType,
-    pub method_isError: JMethodID,
-    pub method_isError_ret: ReturnType,
     pub method_setError: JMethodID,
     pub method_setError_ret: ReturnType,
 }
@@ -1152,8 +1150,6 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                 )
                 .unwrap(),
             method_getMetrics_ret: ReturnType::Object,
-            method_isError: env.get_method_id(class, "isError", "()Z").unwrap(),
-            method_isError_ret: ReturnType::Primitive(Primitive::Boolean),
             method_setError: env.get_method_id(class, "setError", "(Ljava/lang/Throwable;)V").unwrap(),
             method_setError_ret: ReturnType::Primitive(Primitive::Void),
         })

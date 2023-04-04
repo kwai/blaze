@@ -71,7 +71,7 @@ impl SparkUDFWrapperExpr {
         let mut param_fields = Vec::with_capacity(params.len());
         for param in &params {
             param_fields.push(Field::new(
-                &format!("_c{}", param_fields.len()),
+                "",
                 param.data_type(&input_schema)?,
                 param.nullable(&input_schema)?,
             ));
@@ -116,6 +116,12 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        if !is_task_running() {
+            return Err(DataFusionError::Execution(
+                format!("SparkUDFWrapper: is_task_running=false")
+            ));
+        }
+
         let context = self.context.get_or_try_init(|| {
             WrapperContext::try_new(&self.serialized, &self.params_schema)
         })?;
@@ -136,15 +142,9 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         context
             .export_tx
             .send(Some(Ok(params_batch.clone())))
-            .or_else(|err| {
-                if is_task_running() {
-                    Err(DataFusionError::Execution(
-                        format!("error receiving batch: {}", err)
-                    ))
-                } else {
-                    Ok(())
-                }
-            })?;
+            .or_else(|err| Err(DataFusionError::Execution(
+                format!("error sending batch: {}", err)
+            )))?;
 
         // receive batch from context
         let return_array = context
@@ -152,7 +152,9 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             .lock()
             .next()
             .transpose()?
-            .expect("expect Some(record_batch), got None");
+            .ok_or_else(|| {
+                DataFusionError::Execution(format!("error receiving batch"))
+            })?;
         Ok(ColumnarValue::Array(return_array.column(0).clone()))
     }
 
@@ -171,14 +173,6 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             children,
             self.input_schema.clone(),
         )?))
-    }
-}
-
-impl Drop for SparkUDFWrapperExpr {
-    fn drop(&mut self) {
-        if let Some(context) = self.context.get() {
-            let _ = context.export_tx.send(None); // end stream
-        }
     }
 }
 

@@ -71,11 +71,9 @@ case class BlazeCallNativeWrapper(
   protected def getMetrics: MetricNode =
     metrics
 
-  protected def isError: Boolean =
-    error.get() == null
-
   protected def setError(error: Throwable): Unit = {
     this.error.set(error)
+    this.close()
   }
 
   protected def setArrowFFIStreamPtr(ptr: Long): Unit = {

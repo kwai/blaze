@@ -41,16 +41,18 @@ class ArrowReaderIterator(channel: ReadableByteChannel, taskContext: TaskContext
   override def next(): InternalRow = rowIter.next()
 
   private def nextBatch(): Boolean =
-    root != null && {
-      while (!rowIter.hasNext) {
-        if (!arrowReader.loadNextBatch()) {
-          rowIter = Iterator.empty
-          close()
-          return false
+    synchronized {
+      root != null && {
+        while (!rowIter.hasNext) {
+          if (!arrowReader.loadNextBatch()) {
+            rowIter = Iterator.empty
+            close()
+            return false
+          }
+          rowIter = ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(root))
         }
-        rowIter = ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(root))
+        true
       }
-      true
     }
 
   def close(): Unit =

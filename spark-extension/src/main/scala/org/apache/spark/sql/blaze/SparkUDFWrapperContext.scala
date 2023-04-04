@@ -37,28 +37,32 @@ case class SparkUDFWrapperContext(
     arrowExportFFIStreamPtr: Long)
     extends Logging {
 
-  val taskContext = TaskContext.get()
-  val expr: Expression = NativeConverters.deserializeExpression({
-    val bytes = new Array[Byte](serialized.remaining())
-    serialized.get(bytes)
-    bytes
-  })
+  private val _init: Unit = {
+    val taskContext = TaskContext.get()
+    val expr: Expression = NativeConverters.deserializeExpression({
+      val bytes = new Array[Byte](serialized.remaining())
+      serialized.get(bytes)
+      bytes
+    })
 
-  val importStream = new InterruptibleIterator[ColumnarBatch](
-    taskContext,
-    new ArrowFFIStreamImportIterator(taskContext, arrowImportFFIStreamPtr))
+    val importStream = new InterruptibleIterator[ColumnarBatch](
+      taskContext,
+      new ArrowFFIStreamImportIterator(taskContext, arrowImportFFIStreamPtr))
 
-  val outputRows: Iterator[Iterator[InternalRow]] = importStream.map(batch => {
-    val batchedParamRows = ColumnarHelper.batchAsRowIter(batch)
-    val batchedResultRows = batchedParamRows.map(row => InternalRow(expr.eval(row)))
-    batchedResultRows
-  })
+    val outputRows: Iterator[Iterator[InternalRow]] = importStream.map(batch => {
+      val batchedParamRows = ColumnarHelper.batchAsRowIter(batch)
+      val batchedResultRows = batchedParamRows.map(row => InternalRow(expr.eval(row)))
+      batchedResultRows
+    })
 
-  val outputSchema: StructType = StructType(StructField("", expr.dataType, expr.nullable) :: Nil)
-  val exporter = new ArrowFFIStreamExporter(
-    TaskContext.get(),
-    outputRows,
-    outputSchema,
-    arrowExportFFIStreamPtr)
-  exporter.exportArrayStream()
+    val outputSchema: StructType = StructType(
+      StructField("", expr.dataType, expr.nullable) :: Nil)
+
+    val exporter = new ArrowFFIStreamExporter(
+      TaskContext.get(),
+      outputRows,
+      outputSchema,
+      arrowExportFFIStreamPtr)
+    exporter.exportArrayStream()
+  }
 }

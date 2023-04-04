@@ -52,30 +52,31 @@ class ArrowFFIExportIterator(
 
   override def hasNext: Boolean = allocator != null && rowIter.hasNext
 
-  override def next(): (Long, Long) => Unit = {
-    if (root == null) {
-      root = VectorSchemaRoot.create(arrowSchema, allocator)
-      arrowWriter = ArrowWriter.create(root)
-    } else {
-      root.allocateNew()
-      arrowWriter.reset()
-    }
-    var rowCount = 0
+  override def next(): (Long, Long) => Unit =
+    synchronized {
+      if (root == null) {
+        root = VectorSchemaRoot.create(arrowSchema, allocator)
+        arrowWriter = ArrowWriter.create(root)
+      } else {
+        root.allocateNew()
+        arrowWriter.reset()
+      }
+      var rowCount = 0
 
-    while (rowIter.hasNext && rowCount < recordBatchSize) {
-      arrowWriter.write(rowIter.next())
-      rowCount += 1
-    }
-    arrowWriter.finish()
+      while (rowIter.hasNext && rowCount < recordBatchSize) {
+        arrowWriter.write(rowIter.next())
+        rowCount += 1
+      }
+      arrowWriter.finish()
 
-    (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) =>
-      Data.exportVectorSchemaRoot(
-        allocator,
-        root,
-        emptyDictionaryProvider,
-        ArrowArray.wrap(exportArrowArrayPtr),
-        ArrowSchema.wrap(exportArrowSchemaPtr))
-  }
+      (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) =>
+        Data.exportVectorSchemaRoot(
+          allocator,
+          root,
+          emptyDictionaryProvider,
+          ArrowArray.wrap(exportArrowArrayPtr),
+          ArrowSchema.wrap(exportArrowSchemaPtr))
+    }
 
   private def close(): Unit =
     synchronized {

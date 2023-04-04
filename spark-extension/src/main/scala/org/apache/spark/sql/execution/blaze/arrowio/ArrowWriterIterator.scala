@@ -53,31 +53,32 @@ class ArrowWriterIterator(
 
   override def hasNext: Boolean = allocator != null && rowIter.hasNext
 
-  override def next(): ReadableByteChannel = {
-    val root = VectorSchemaRoot.create(arrowSchema, allocator)
-    val arrowWriter = ArrowWriter.create(root)
-    var rowCount = 0
+  override def next(): ReadableByteChannel =
+    synchronized {
+      val root = VectorSchemaRoot.create(arrowSchema, allocator)
+      val arrowWriter = ArrowWriter.create(root)
+      var rowCount = 0
 
-    while (rowIter.hasNext && rowCount < recordBatchSize) {
-      arrowWriter.write(rowIter.next())
-      rowCount += 1
-    }
-    arrowWriter.finish()
-
-    Utils.tryWithResource(new ByteArrayOutputStream()) { outputStream =>
-      Utils.tryWithResource(Channels.newChannel(outputStream)) { channel =>
-        val writer = new ArrowStreamWriter(root, emptyDictionaryProvider, channel)
-        writer.start()
-        writer.writeBatch()
-        writer.end()
-        writer.close()
+      while (rowIter.hasNext && rowCount < recordBatchSize) {
+        arrowWriter.write(rowIter.next())
+        rowCount += 1
       }
-      root.close()
+      arrowWriter.finish()
 
-      val in = new ByteArrayInputStream(outputStream.toByteArray)
-      Channels.newChannel(in)
+      Utils.tryWithResource(new ByteArrayOutputStream()) { outputStream =>
+        Utils.tryWithResource(Channels.newChannel(outputStream)) { channel =>
+          val writer = new ArrowStreamWriter(root, emptyDictionaryProvider, channel)
+          writer.start()
+          writer.writeBatch()
+          writer.end()
+          writer.close()
+        }
+        root.close()
+
+        val in = new ByteArrayInputStream(outputStream.toByteArray)
+        Channels.newChannel(in)
+      }
     }
-  }
 
   def close(): Unit =
     synchronized {

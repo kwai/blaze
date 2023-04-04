@@ -32,19 +32,20 @@ class ArrowFFIStreamImportIterator(taskContext: TaskContext, arrowFFIStreamPtr: 
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
 
-  override def hasNext: Boolean = {
-    if (currentBatchNotConsumed) {
-      return true
-    }
+  override def hasNext: Boolean =
+    synchronized {
+      if (currentBatchNotConsumed) {
+        return true
+      }
 
-    try {
-      currentBatchNotConsumed = reader.loadNextBatch()
-    } catch {
-      case _ if taskContext.isCompleted() || taskContext.isInterrupted() =>
-        currentBatchNotConsumed = false
+      try {
+        currentBatchNotConsumed = reader.loadNextBatch()
+      } catch {
+        case _ if taskContext.isCompleted() || taskContext.isInterrupted() =>
+          currentBatchNotConsumed = false
+      }
+      currentBatchNotConsumed
     }
-    currentBatchNotConsumed
-  }
 
   override def next(): ColumnarBatch = {
     currentBatchNotConsumed = false

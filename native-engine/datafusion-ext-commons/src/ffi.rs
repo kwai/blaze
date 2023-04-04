@@ -39,7 +39,13 @@ impl Iterator for MpscBatchReader {
         self.receiver
             .recv()
             .unwrap_or_else(|err| {
-                if is_task_running() {
+                let task_running = is_task_running();
+                log::warn!(
+                    "MpscBatchReader broken (task_running={}): {}",
+                    task_running,
+                    err,
+                );
+                if task_running {
                     Some(Err(DataFusionError::Execution(
                         format!("error receiving batch: {}", err)
                     )))
