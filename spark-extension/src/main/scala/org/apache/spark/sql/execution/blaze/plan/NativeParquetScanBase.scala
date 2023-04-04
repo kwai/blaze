@@ -81,7 +81,6 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
     }
   }
 
-  private val numOutputPartitions = outputPartitioning.numPartitions
   private val partitionSchema = basedFileScan.relation.partitionSchema
 
   private val nativePruningPredicateFilters = basedFileScan.dataFilters
@@ -98,12 +97,13 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
   private val nativePartitionSchema =
     NativeConverters.convertSchema(partitionSchema)
 
-  private val nativeFileGroups = (partition: FilePartition) => {
-    // compute file sizes
-    val fileSizes = partition.files
-      .groupBy(_.filePath)
-      .mapValues(_.map(_.length).sum)
+  private val fileSizes = inputFileScanRDD.filePartitions
+    .flatMap(_.files)
+    .groupBy(_.filePath)
+    .mapValues(_.map(_.length).sum)
+    .map(identity) // make this map serializable
 
+  private val nativeFileGroups = (partition: FilePartition) => {
     // list input file statuses
     val nativePartitionedFile = (file: PartitionedFile) => {
       val nativePartitionValues = partitionSchema.zipWithIndex.map {
@@ -149,12 +149,12 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
     val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
     val partCols = partitionSchema.map(_.name)
 
-    val relation = basedFileScan.relation
-    val sparkSession = relation.sparkSession
+    val sparkSession = basedFileScan.relation.sparkSession
     val hadoopConf =
       sparkSession.sessionState.newHadoopConfWithOptions(basedFileScan.relation.options)
     val broadcastedHadoopConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+    val numPartitions = partitions.length
 
     new NativeRDD(
       sparkContext,
@@ -182,7 +182,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         val nativeFileGroup = nativeFileGroups(partition.asInstanceOf[FilePartition])
         val nativeParquetScanConf = pb.FileScanExecConf
           .newBuilder()
-          .setNumPartitions(numOutputPartitions)
+          .setNumPartitions(numPartitions)
           .setStatistics(pb.Statistics.getDefaultInstance)
           .setSchema(nativeFileSchema)
           .setFileGroup(nativeFileGroup)
