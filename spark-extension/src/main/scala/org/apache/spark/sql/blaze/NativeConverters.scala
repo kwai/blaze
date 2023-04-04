@@ -20,14 +20,14 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
+
 import com.google.protobuf.ByteString
+
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.blaze.{protobuf => pb}
-import org.apache.spark.sql.catalyst.analysis.DecimalPrecision
-import org.apache.spark.sql.catalyst.analysis.DecimalPrecision.promotePrecision
-import org.apache.spark.sql.catalyst.analysis.DecimalPrecision.widerDecimalType
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
 import org.apache.spark.sql.catalyst.expressions.Add
@@ -83,36 +83,33 @@ import org.apache.spark.sql.catalyst.expressions.Subtract
 import org.apache.spark.sql.catalyst.expressions.Tan
 import org.apache.spark.sql.catalyst.expressions.TruncDate
 import org.apache.spark.sql.catalyst.expressions.Upper
-import org.apache.spark.sql.catalyst.expressions.aggregate.{
-  AggregateExpression,
-  Average,
-  CollectList,
-  CollectSet,
-  Count,
-  Max,
-  Min,
-  Sum
-}
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.aggregate.Average
+import org.apache.spark.sql.catalyst.expressions.aggregate.CollectList
+import org.apache.spark.sql.catalyst.expressions.aggregate.CollectSet
+import org.apache.spark.sql.catalyst.expressions.aggregate.Count
+import org.apache.spark.sql.catalyst.expressions.aggregate.Max
+import org.apache.spark.sql.catalyst.expressions.aggregate.Min
+import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
+import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
 import org.apache.spark.sql.catalyst.expressions.BitwiseOr
 import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.CheckOverflow
-import org.apache.spark.sql.catalyst.expressions.If
-import org.apache.spark.sql.catalyst.expressions.MakeDecimal
-import org.apache.spark.sql.catalyst.expressions.PromotePrecision
-import org.apache.spark.sql.catalyst.expressions.ShiftLeft
-import org.apache.spark.sql.catalyst.expressions.ShiftRight
-import org.apache.spark.sql.catalyst.expressions.UnscaledValue
-import org.apache.spark.sql.catalyst.expressions.Alias
-import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
-import org.apache.spark.sql.catalyst.expressions.BinaryComparison
-import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
-import org.apache.spark.sql.catalyst.expressions.Pmod
-import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.catalyst.expressions.CreateArray
 import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
 import org.apache.spark.sql.catalyst.expressions.GetArrayItem
 import org.apache.spark.sql.catalyst.expressions.GetStructField
+import org.apache.spark.sql.catalyst.expressions.If
+import org.apache.spark.sql.catalyst.expressions.Length
+import org.apache.spark.sql.catalyst.expressions.MakeDecimal
+import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
+import org.apache.spark.sql.catalyst.expressions.Pmod
+import org.apache.spark.sql.catalyst.expressions.PromotePrecision
+import org.apache.spark.sql.catalyst.expressions.ShiftLeft
+import org.apache.spark.sql.catalyst.expressions.ShiftRight
+import org.apache.spark.sql.catalyst.expressions.Unevaluable
+import org.apache.spark.sql.catalyst.expressions.UnscaledValue
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -124,7 +121,6 @@ import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
-import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveGenericUDF
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
@@ -149,8 +145,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
-
-import scala.collection.mutable.ArrayBuffer
+import org.blaze.{protobuf => pb}
 
 object NativeConverters extends Logging {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -618,6 +613,8 @@ object NativeConverters extends Logging {
       case e: Signum => buildScalarFunction(pb.ScalarFunction.Signum, e.children, e.dataType)
       case e: OctetLength =>
         buildScalarFunction(pb.ScalarFunction.OctetLength, e.children, e.dataType)
+      case Length(arg) if arg.dataType == StringType =>
+        buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
       case e: Concat => buildScalarFunction(pb.ScalarFunction.Concat, e.children, e.dataType)
       case e: Lower => buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
       case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
@@ -875,7 +872,8 @@ object NativeConverters extends Logging {
   }
 
   private def arithDecimalReturnType(e: Expression): DataType = {
-    import scala.math.{max, min}
+    import scala.math.max
+    import scala.math.min
     e match {
       case Add(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
         val resultScale = max(s1, s2)
