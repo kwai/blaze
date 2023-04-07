@@ -89,6 +89,9 @@ use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
 use datafusion_ext_exprs::string_starts_with::StringStartsWithExpr;
 use datafusion_ext_plans::window::{WindowRankType, WindowFunction, WindowExpr};
 use datafusion_ext_plans::window_exec::WindowExec;
+use datafusion_ext_plans::generate::create_generator;
+use crate::protobuf::GenerateFunction;
+use datafusion_ext_plans::generate_exec::GenerateExec;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -817,6 +820,46 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     window_exprs,
                     partition_specs,
                     order_specs,
+                )?))
+            }
+            PhysicalPlanType::Generate(generate) => {
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(generate.input)?;
+                let input_schema = input.schema();
+                let pb_generator = generate.generator.as_ref().expect("missing generator");
+                let pb_generator_children = &pb_generator.child;
+                let pb_generate_func = GenerateFunction::from_i32(pb_generator.func)
+                    .expect("unsupported generate function");
+
+                let func = match pb_generate_func {
+                    GenerateFunction::Explode =>
+                        datafusion_ext_plans::generate::GenerateFunc::Explode,
+                    GenerateFunction::PosExplode =>
+                        datafusion_ext_plans::generate::GenerateFunc::PosExplode,
+                };
+                let children = pb_generator_children
+                    .iter()
+                    .map(|expr| Ok::<_, PlanSerDeError>(
+                        bind(try_parse_physical_expr(expr, &input_schema)?, &input_schema)?
+                    ))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let generator = create_generator(&input_schema, func, children)?;
+                let generator_output_schema = Arc::new(Schema::new(generate.generator_output
+                    .iter()
+                    .map(|field| field.try_into())
+                    .collect::<Result<_, PlanSerDeError>>()?
+                ));
+
+                let required_child_output_cols = generate.required_child_output
+                    .iter()
+                    .map(|name| Ok(Column::new_with_schema(name, &input_schema)?))
+                    .collect::<Result<_, PlanSerDeError>>()?;
+
+                Ok(Arc::new(GenerateExec::try_new(
+                    input,
+                    generator,
+                    required_child_output_cols,
+                    generator_output_schema,
+                    generate.outer,
                 )?))
             }
         }

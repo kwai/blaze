@@ -37,6 +37,7 @@ import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
 import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.window.WindowExec
+import org.apache.spark.sql.execution.GenerateExec
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -126,6 +127,8 @@ object BlazeConvertStrategy extends Logging {
       case e: ExpandExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: WindowExec if isAlwaysConvert(e.child) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: GenerateExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: ObjectHashAggregateExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)

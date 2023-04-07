@@ -45,12 +45,23 @@ codegen-units = 16
 strip = true
 
 [patch.crates-io]
-arrow-array = { git = "https://github.com/apache/arrow-rs.git", tag = "34.0.0" }
-arrow-buffer = { git = "https://github.com/apache/arrow-rs.git", tag = "34.0.0" }
-arrow-cast = { git = "https://github.com/apache/arrow-rs.git", tag = "34.0.0" }
-arrow-data = { git = "https://github.com/apache/arrow-rs.git", tag = "34.0.0" }
-arrow-ipc = { git = "https://github.com/apache/arrow-rs.git", tag = "34.0.0" }
-arrow-schema = { git = "https://github.com/apache/arrow-rs.git", tag = "34.0.0" }
-arrow-select = { git = "https://github.com/apache/arrow-rs.git", tag = "34.0.0" }
+arrow = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-arith = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-array = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-buffer = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-cast = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-csv = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-data = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-flight = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-integration-test = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-integration-testing = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-ipc = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-json = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-ord = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-row = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-schema = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-select = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+arrow-string = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
+object_store = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }
 datafusion = { git = "https://github.com/apache/arrow-datafusion.git", tag = "20.0.0" }
 parquet = { path = "patched/parquet-34.0.0-kwai" }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![feature(let_chains)]
 #![feature(trait_upcasting)]
 
 pub mod agg;
@@ -23,6 +24,8 @@ pub mod empty_partitions_exec;
 pub mod expand_exec;
 pub mod ffi_reader_exec;
 pub mod filter_exec;
+pub mod generate;
+pub mod generate_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod limit_exec;

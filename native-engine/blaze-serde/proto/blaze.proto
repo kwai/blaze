@@ -45,6 +45,7 @@ message PhysicalPlanNode {
     ExpandExecNode expand = 18;
     RssShuffleWriterExecNode rss_shuffle_writer= 19;
     WindowExecNode window = 20;
+    GenerateExecNode generate = 21;
   }
 }
 
@@ -462,6 +463,24 @@ message WindowExprNode {
 enum WindowFunctionType {
   Window = 0;
   Agg = 1;
+}
+
+message GenerateExecNode {
+  PhysicalPlanNode input = 1;
+  Generator generator = 2;
+  repeated string required_child_output = 3;
+  repeated Field generator_output = 4;
+  bool outer = 5;
+}
+
+message Generator {
+  GenerateFunction func = 1;
+  repeated PhysicalExprNode child = 2;
+}
+
+enum GenerateFunction {
+  Explode = 0;
+  PosExplode = 1;
 }
 
 message IpcWriterExecNode {

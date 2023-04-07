@@ -81,6 +81,8 @@ import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.sql.execution.GenerateExec
+import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
 import org.apache.spark.sql.types.AtomicType
 
 object BlazeConverters extends Logging {
@@ -111,6 +113,8 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.expand", defaultValue = true)
   val enableWindow: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.window", defaultValue = true)
+  val enableGenerate: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.generate", defaultValue = true)
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
 
@@ -177,6 +181,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertExpandExec)
       case e: WindowExec if enableWindow => // window
         tryConvert(e, convertWindowExec)
+      case e: GenerateExec if enableGenerate => // generate
+        tryConvert(e, convertGenerateExec)
 
       case e if sparkPlanShims.isShuffleQueryStageInput(e) && sparkPlanShims.isNative(e) =>
         ForceNativeExecutionWrapper(e)
@@ -595,6 +601,20 @@ object BlazeConverters extends Logging {
       exec.windowExpression,
       exec.partitionSpec,
       exec.orderSpec,
+      addRenameColumnsExec(convertToNative(exec.child)))
+  }
+
+  def convertGenerateExec(exec: GenerateExec): SparkPlan = {
+    logDebug(s"Converting GenerateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+    logDebug(s"  generator: ${exec.generator}")
+    logDebug(s"  generatorOutput: ${exec.generatorOutput}")
+    logDebug(s"  requiredChildOutput: ${exec.requiredChildOutput}")
+    logDebug(s"  outer: ${exec.outer}")
+    NativeGenerateExec(
+      exec.generator,
+      exec.requiredChildOutput,
+      exec.outer,
+      exec.generatorOutput,
       addRenameColumnsExec(convertToNative(exec.child)))
   }
 
