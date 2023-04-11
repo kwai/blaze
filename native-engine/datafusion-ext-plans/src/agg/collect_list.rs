@@ -195,18 +195,17 @@ impl Agg for AggCollectList {
                     .downcast_ref::<AggDynStrList>()
                     .unwrap();
                 let mut strs = vec![];
-                let mut wchars = w.strs
+                let mut woff = 0;
+                let wbytes = w.strs
                     .as_ref()
-                    .map(|str| str.as_str())
-                    .unwrap_or("")
-                    .chars();
+                    .map(|str| str.as_bytes())
+                    .unwrap_or(&[]);
+
                 for &wlen in &w.lens {
-                    let mut wstr = String::new();
-                    for _ in 0..wlen {
-                        wstr.push(wchars.next().unwrap());
-                    }
-                    wstr.shrink_to_fit();
-                    strs.push(ScalarValue::Utf8(Some(wstr)));
+                    let wlen = wlen as usize;
+                    let wstr = String::from_utf8_lossy(&wbytes[woff..][..wlen]);
+                    strs.push(ScalarValue::Utf8(Some(wstr.to_string())));
+                    woff += wlen;
                 }
                 ScalarValue::new_list(Some(strs), self.arg_type.clone())
             },
