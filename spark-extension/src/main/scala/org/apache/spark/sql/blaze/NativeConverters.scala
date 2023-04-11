@@ -25,8 +25,8 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import com.google.protobuf.ByteString
-
 import org.apache.spark.SparkEnv
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.Abs
 import org.apache.spark.sql.catalyst.expressions.Acos
@@ -146,6 +146,8 @@ import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 import org.blaze.{protobuf => pb}
+
+import org.apache.spark.sql.types.AtomicType
 
 object NativeConverters extends Logging {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -737,16 +739,16 @@ object NativeConverters extends Logging {
           .newBuilder()
 
         e.aggregateFunction match {
-          case Max(child) =>
+          case e @ Max(child) if e.dataType.isInstanceOf[AtomicType] =>
             aggBuilder.setAggFunction(pb.AggFunction.MAX)
             aggBuilder.addChildren(convertExpr(child, useAttrExprId))
-          case Min(child) =>
+          case e @ Min(child) if e.dataType.isInstanceOf[AtomicType] =>
             aggBuilder.setAggFunction(pb.AggFunction.MIN)
             aggBuilder.addChildren(convertExpr(child, useAttrExprId))
-          case Sum(child) =>
+          case e @ Sum(child) if e.dataType.isInstanceOf[AtomicType] =>
             aggBuilder.setAggFunction(pb.AggFunction.SUM)
             aggBuilder.addChildren(convertExpr(child, useAttrExprId))
-          case Average(child) =>
+          case e @ Average(child) if e.dataType.isInstanceOf[AtomicType] =>
             aggBuilder.setAggFunction(pb.AggFunction.AVG)
             aggBuilder.addChildren(convertExpr(child, useAttrExprId))
           case Count(Seq(child1)) =>
