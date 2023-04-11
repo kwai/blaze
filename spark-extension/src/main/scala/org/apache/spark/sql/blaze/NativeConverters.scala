@@ -611,8 +611,9 @@ object NativeConverters extends Logging {
           if _1.dataType.isInstanceOf[FractionalType] && n >= 0 =>
         buildExtScalarFunction("RoundN", Seq(_1, Literal(n, IntegerType)), e.dataType)
 
-      case e: Abs => buildScalarFunction(pb.ScalarFunction.Abs, e.children, e.dataType)
       case e: Signum => buildScalarFunction(pb.ScalarFunction.Signum, e.children, e.dataType)
+      case e: Abs if e.dataType.isInstanceOf[FloatType] || e.dataType.isInstanceOf[DoubleType] =>
+        buildScalarFunction(pb.ScalarFunction.Abs, e.children, e.dataType)
       case e: OctetLength =>
         buildScalarFunction(pb.ScalarFunction.OctetLength, e.children, e.dataType)
       case Length(arg) if arg.dataType == StringType =>
