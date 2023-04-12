@@ -108,6 +108,9 @@ pub fn builder_extend(
                 DataType::Float64 => append_dict!(@prim: $keyarrowty, Float64),
                 DataType::Date32 => append_dict!(@prim: $keyarrowty, Date32),
                 DataType::Date64 => append_dict!(@prim: $keyarrowty, Date64),
+                DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                    append_dict!(@prim: $keyarrowty, TimestampMicrosecond)
+                }
                 DataType::Utf8 => append_dict!(@str: $keyarrowty, i32),
                 DataType::LargeUtf8 => append_dict!(@str: $keyarrowty, i64),
                 _ => unimplemented!("dictionary value type not supported: {:?}", $value_type),
@@ -467,6 +470,9 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                 DataType::Float64 => make_dictionary_builder!(@make: $keyarrowty, Float64),
                 DataType::Date32 => make_dictionary_builder!(@make: $keyarrowty, Date32),
                 DataType::Date64 => make_dictionary_builder!(@make: $keyarrowty, Date64),
+                DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                    make_dictionary_builder!(@make: $keyarrowty, TimestampMicrosecond)
+                }
                 DataType::Utf8 | DataType::LargeUtf8 => {
                     make_dictionary_builder!(@make_str: $keyarrowty)
                 }
@@ -502,6 +508,7 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                     DataType::Float64 => make_list_builder!(@make: Float64),
                     DataType::Date32 => make_list_builder!(@make: Date32),
                     DataType::Date64 => make_list_builder!(@make: Date64),
+                    DataType::Timestamp(TimeUnit::Microsecond, _) => make_list_builder!(@make: TimestampMicrosecond),
                     DataType::Boolean => make_list_builder!(@make: Boolean),
                     DataType::Utf8 => make_list_builder!(@make: String),
                     DataType::LargeUtf8 => make_list_builder!(@make: LargeString),

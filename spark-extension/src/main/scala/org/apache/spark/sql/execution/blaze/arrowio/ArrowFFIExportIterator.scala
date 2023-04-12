@@ -34,13 +34,12 @@ import org.apache.spark.sql.blaze.NativeHelper
 class ArrowFFIExportIterator(
     rowIter: Iterator[InternalRow],
     schema: StructType,
-    timeZoneId: String,
     taskContext: TaskContext,
     recordBatchSize: Int = NativeHelper.batchSize)
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 
-  private val arrowSchema = ArrowUtils.toArrowSchema(schema, timeZoneId)
+  private val arrowSchema = ArrowUtils.toArrowSchema(schema, NativeHelper.tz)
   private var allocator =
     ArrowUtils.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new MapDictionaryProvider()

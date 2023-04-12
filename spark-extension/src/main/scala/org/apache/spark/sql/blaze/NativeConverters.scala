@@ -161,6 +161,8 @@ object NativeConverters extends Logging {
       case FloatType => pb.PrimitiveScalarType.FLOAT32
       case DoubleType => pb.PrimitiveScalarType.FLOAT64
       case StringType => pb.PrimitiveScalarType.UTF8
+      case DateType => pb.PrimitiveScalarType.DATE32
+      case TimestampType => pb.PrimitiveScalarType.TIME_MICROSECOND
       case _: DecimalType => pb.PrimitiveScalarType.DECIMAL128
       case _: ArrayType => pb.PrimitiveScalarType.UTF8 // FIXME
       case _ => throw new NotImplementedError(s"convert $dt to DF scalar type not supported")
@@ -181,6 +183,12 @@ object NativeConverters extends Logging {
       case StringType => arrowTypeBuilder.setUTF8(pb.EmptyMessage.getDefaultInstance)
       case BinaryType => arrowTypeBuilder.setBINARY(pb.EmptyMessage.getDefaultInstance)
       case DateType => arrowTypeBuilder.setDATE32(pb.EmptyMessage.getDefaultInstance)
+      case TimestampType =>
+        arrowTypeBuilder.setTIMESTAMP(
+          pb.Timestamp
+            .newBuilder()
+            .setTimezone(NativeHelper.tz)
+            .setTimeUnit(pb.TimeUnit.Microsecond))
 
       // decimal
       case t: DecimalType =>
@@ -253,7 +261,8 @@ object NativeConverters extends Logging {
       case StringType => scalarValueBuilder.setUtf8Value(sparkValue.toString)
       case BinaryType => throw new NotImplementedError("BinaryType not yet supported")
       case DateType => scalarValueBuilder.setDate32Value(sparkValue.asInstanceOf[Int])
-      case TimestampType => throw new NotImplementedError("TimstampType not yet supported")
+      case TimestampType =>
+        scalarValueBuilder.setTimeMicrosecondValue(sparkValue.asInstanceOf[Long])
       case t: DecimalType =>
         val decimalValue = sparkValue.asInstanceOf[Decimal]
         val decimalType = convertDataType(t).getDECIMAL
@@ -391,7 +400,8 @@ object NativeConverters extends Logging {
         convertExpr(value, useAttrExprId)
 
       // cast
-      case Cast(child, dataType, _) =>
+      // not performing native cast for timestamps (will use UDFWrapper instead)
+      case Cast(child, dataType, _) if !dataType.isInstanceOf[TimestampType] =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode

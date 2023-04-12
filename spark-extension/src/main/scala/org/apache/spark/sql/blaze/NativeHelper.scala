@@ -34,6 +34,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.storage.DiskBlockManager
 
@@ -52,6 +53,7 @@ object NativeHelper extends Logging {
     executorMemoryOverheadMiB * 1024L * 1024L
   }
   val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.4);
+  val tz: String = conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
 
   def isNative(exec: SparkPlan): Boolean =
     Shims.get.sparkPlanShims.isNative(exec)

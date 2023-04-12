@@ -18,7 +18,7 @@ use std::any::Any;
 use std::hash::Hash;
 use std::io::{Cursor, Read, Write};
 use std::mem::size_of;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, TimeUnit};
 use hashbrown::HashSet;
 
 #[derive(Eq, PartialEq)]
@@ -152,6 +152,9 @@ pub fn create_agg_buf_from_scalar(
             ScalarValue::UInt16(v) => handle_fixed!(v, 2),
             ScalarValue::UInt32(v) => handle_fixed!(v, 4),
             ScalarValue::UInt64(v) => handle_fixed!(v, 8),
+            ScalarValue::Date32(v) => handle_fixed!(v, 4),
+            ScalarValue::Date64(v) => handle_fixed!(v, 8),
+            ScalarValue::TimestampMicrosecond(v, _) => handle_fixed!(v, 8),
             ScalarValue::Utf8(v) => {
                 addrs.push(make_dyn_addr(dyns.len()));
                 match v {
@@ -163,8 +166,6 @@ pub fn create_agg_buf_from_scalar(
                     }
                 }
             },
-            ScalarValue::Date32(v) => handle_fixed!(v, 4),
-            ScalarValue::Date64(v) => handle_fixed!(v, 8),
             ScalarValue::List(_, field) => {
                 macro_rules! handle_fixed_list {
                     ($ty:ty) => {{
@@ -198,6 +199,11 @@ pub fn create_agg_buf_from_scalar(
                     DataType::UInt64 => handle_fixed_list!(u64),
                     DataType::Float32 => handle_fixed_float_list!(f32),
                     DataType::Float64 => handle_fixed_float_list!(f64),
+                    DataType::Date32 => handle_fixed_list!(i32),
+                    DataType::Date64 => handle_fixed_list!(i64),
+                    DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                        handle_fixed_list!(i64)
+                    },
                     DataType::Decimal128(_, _) => handle_fixed_list!(i128),
                     DataType::Utf8 => dyns.push(match field.name().as_str() {
                         "collect_list" => Box::new(AggDynStrList::default()),

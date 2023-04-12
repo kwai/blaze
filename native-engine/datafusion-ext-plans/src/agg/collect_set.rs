@@ -132,6 +132,11 @@ impl Agg for AggCollectSet {
             DataType::UInt16 => handle_fixed!(UInt16),
             DataType::UInt32 => handle_fixed!(UInt32),
             DataType::UInt64 => handle_fixed!(UInt64),
+            DataType::Date32 => handle_fixed!(Date32),
+            DataType::Date64 => handle_fixed!(Date64),
+            DataType::Timestamp(TimeUnit::Microsecond, _) =>{
+                handle_fixed!(TimestampMicrosecond)
+            }
             DataType::Decimal128(_, _) => handle_fixed!(Decimal128),
             DataType::Utf8 => {
                 let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();
@@ -209,6 +214,24 @@ impl Agg for AggCollectSet {
             DataType::UInt64 => handle_fixed!(UInt64),
             DataType::Float32 => handle_fixed_float!(Float32),
             DataType::Float64 => handle_fixed_float!(Float64),
+            DataType::Date32 => handle_fixed!(Date32),
+            DataType::Date64 => handle_fixed!(Date64),
+            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+                let w = agg_buf
+                    .dyn_value(agg_buf_addrs[0])
+                    .as_any()
+                    .downcast_ref::<AggDynSet<i64>>()
+                    .unwrap()
+                    .values
+                    .as_ref()
+                    .map(|s| s.into_iter()
+                        .map(|v| {
+                            ScalarValue::TimestampMicrosecond(Some(v.clone()), tz.clone())
+                        })
+                        .collect::<Vec<_>>()
+                    );
+                ScalarValue::new_list(w, self.arg_type.clone())
+            },
             DataType::Decimal128(prec, scale) => {
                 let w = agg_buf
                     .dyn_value(agg_buf_addrs[0])
@@ -297,6 +320,9 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
         DataType::UInt16 => fn_fixed!(UInt16),
         DataType::UInt32 => fn_fixed!(UInt32),
         DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Date32 => fn_fixed!(Date32),
+        DataType::Date64 => fn_fixed!(Date64),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
         DataType::Utf8 => {
             Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
@@ -350,6 +376,9 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::UInt16 => fn_fixed!(u16),
         DataType::UInt32 => fn_fixed!(u32),
         DataType::UInt64 => fn_fixed!(u64),
+        DataType::Date32 => fn_fixed!(i32),
+        DataType::Date64 => fn_fixed!(i64),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(i64),
         DataType::Decimal128(_, _) => fn_fixed!(i128),
         DataType::Utf8 => Ok(|agg_buf1, agg_buf2, addr| {
             let w = agg_buf1

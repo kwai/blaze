@@ -117,6 +117,11 @@ impl Agg for AggMax {
             DataType::UInt16 => handle_fixed!(UInt16, max),
             DataType::UInt32 => handle_fixed!(UInt32, max),
             DataType::UInt64 => handle_fixed!(UInt64, max),
+            DataType::Date32 => handle_fixed!(Date32, max),
+            DataType::Date64 => handle_fixed!(Date64, max),
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                handle_fixed!(TimestampMicrosecond, max)
+            }
             DataType::Decimal128(_, _) => handle_fixed!(Decimal128, max),
             DataType::Utf8 => {
                 let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();
@@ -134,8 +139,6 @@ impl Agg for AggMax {
                     }
                 }
             }
-            DataType::Date32 => handle_fixed!(Date32, max),
-            DataType::Date64 => handle_fixed!(Date64, max),
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "unsupported data type in max(): {}",
@@ -201,6 +204,9 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
         DataType::UInt16 => fn_fixed!(UInt16),
         DataType::UInt32 => fn_fixed!(UInt32),
         DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Date32 => fn_fixed!(Date32),
+        DataType::Date64 => fn_fixed!(Date64),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
         DataType::Utf8 => {
             Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
@@ -214,8 +220,6 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
                 }
             })
         }
-        DataType::Date32 => fn_fixed!(Date32),
-        DataType::Date64 => fn_fixed!(Date64),
         other => {
             return Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in max(): {}",
@@ -256,6 +260,11 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::UInt16 => fn_fixed!(UInt16),
         DataType::UInt32 => fn_fixed!(UInt32),
         DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Date32 => fn_fixed!(Date32),
+        DataType::Date64 => fn_fixed!(Date64),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => {
+            fn_fixed!(TimestampMicrosecond)
+        }
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(|agg_buf1, agg_buf2, addr| {
             let v = AggDynStr::value(agg_buf2.dyn_value_mut(addr));
@@ -267,8 +276,6 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
                 }
             }
         }),
-        DataType::Date32 => fn_fixed!(Date32),
-        DataType::Date64 => fn_fixed!(Date64),
         other => {
             return Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in max(): {}",

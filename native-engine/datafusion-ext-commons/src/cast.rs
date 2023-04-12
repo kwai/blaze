@@ -77,6 +77,26 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 }
             }
         }
+        (&DataType::Timestamp(TimeUnit::Microsecond, _), DataType::Float64) => {
+            // timestamp to f64 = timestamp to i64 to f64, only used in agg.sum()
+            match value {
+                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
+                    arrow::compute::cast(
+                        &arrow::compute::cast(&array, &DataType::Int64)?,
+                        &DataType::Float64,
+                    )?
+                )),
+                ColumnarValue::Scalar(scalar) => {
+                    let scalar_array = scalar.to_array();
+                    let cast_array = arrow::compute::cast(
+                        &arrow::compute::cast(&scalar_array, &DataType::Int64)?,
+                        &DataType::Float64,
+                    )?;
+                    let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
+                    Ok(ColumnarValue::Scalar(cast_scalar))
+                }
+            }
+        }
         _ => {
             // default cast
             match value {

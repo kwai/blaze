@@ -120,6 +120,10 @@ pub fn write_batch<W: Write>(
                 as_primitive_array::<Date64Type>(column),
                 &mut output,
             )?,
+            DataType::Timestamp(TimeUnit::Millisecond, _) => write_primitive_array(
+                as_primitive_array::<TimestampMicrosecondType>(column),
+                &mut output,
+            )?,
             DataType::List(_field) => write_list_array(
                 as_list_array(column),
                 &mut output,
@@ -252,6 +256,13 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
                 has_null_buffers[i],
                 &mut input,
             )?,
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                read_primitive_array::<_, TimestampMicrosecondType>(
+                    num_rows,
+                    has_null_buffers[i],
+                    &mut input,
+                )?
+            }
             DataType::Utf8 => read_bytes_array(
                 num_rows,
                 has_null_buffers[i],
@@ -309,15 +320,21 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
         DataType::Float64 => write_u8(12, output)?,
         DataType::Date32 => write_u8(13, output)?,
         DataType::Date64 => write_u8(14, output)?,
+        DataType::Timestamp(TimeUnit::Microsecond, None)=> write_u8(15, output)?,
+        DataType::Timestamp(TimeUnit::Microsecond, Some(tz)) => {
+            write_u8(16, output)?;
+            write_len(tz.as_bytes().len(), output)?;
+            output.write_all(tz.as_bytes())?;
+        }
         DataType::Decimal128(prec, scale) => {
-            write_u8(15, output)?;
+            write_u8(17, output)?;
             write_u8(*prec, output)?;
             write_u8(*scale as u8, output)?;
         }
-        DataType::Utf8 => write_u8(16, output)?,
-        DataType::Binary => write_u8(17, output)?,
+        DataType::Utf8 => write_u8(18, output)?,
+        DataType::Binary => write_u8(19, output)?,
         DataType::List(field) => {
-            write_u8(18, output)?;
+            write_u8(20, output)?;
             write_data_type(field.data_type(), output)?;
             if field.is_nullable() {
                 write_u8(1, output)?;
@@ -326,7 +343,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
             }
         },
         DataType::Struct(fields) => {
-            write_u8(20, output)?;
+            write_u8(21, output)?;
             write_len(fields.len(), output)?;
             for field in fields {
                 write_data_type(field.data_type(), output)?;
@@ -363,19 +380,26 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
         12 => DataType::Float64,
         13 => DataType::Date32,
         14 => DataType::Date64,
-        15 => {
+        15 => DataType::Timestamp(TimeUnit::Microsecond, None),
+        16 => {
+            let tz_len = read_len(input)?;
+            let tz_bytes = read_bytes_slice(input, tz_len)?;
+            let tz = String::from_utf8_lossy(&tz_bytes).to_string();
+            DataType::Timestamp(TimeUnit::Microsecond, Some(tz))
+        },
+        17 => {
             let prec = read_u8(input)?;
             let scale = read_u8(input)? as i8;
             DataType::Decimal128(prec, scale)
         }
-        16 => DataType::Utf8,
-        17 => DataType::Binary,
-        18 => {
+        18 => DataType::Utf8,
+        19 => DataType::Binary,
+        20 => {
             let child_datatype = read_data_type(input)?;
             let is_nullable = if read_u8(input)? == 1 {true} else {false};
             DataType::List(Box::new(Field::new("item", child_datatype, is_nullable)))
         }
-        20 => {
+        21 => {
             let field_len = read_len(input)?;
             let mut fields = Vec::new();
             for _i in 0..field_len {
@@ -624,6 +648,13 @@ fn get_child_array_data<R: Read>(
             child_has_null_buffer,
             input,
         )?,
+        DataType::Timestamp(TimeUnit::Microsecond, _) => {
+            read_primitive_array::<_, TimestampMicrosecondType>(
+                child_data_len,
+                child_has_null_buffer,
+                input,
+            )?
+        }
         DataType::Utf8 => read_bytes_array(
             child_data_len,
             child_has_null_buffer,

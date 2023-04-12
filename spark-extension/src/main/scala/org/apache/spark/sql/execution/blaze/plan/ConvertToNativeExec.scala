@@ -65,7 +65,6 @@ case class ConvertToNativeExec(override val child: SparkPlan)
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = child.execute()
     val numInputPartitions = inputRDD.getNumPartitions
-    val timeZoneId = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
     val nativeMetrics = MetricNode(metrics, Nil)
 
     new NativeRDD(
@@ -88,7 +87,6 @@ case class ConvertToNativeExec(override val child: SparkPlan)
               new ArrowFFIExportIterator(
                 inputRowIter,
                 renamedSchema,
-                timeZoneId,
                 context,
                 recordBatchSize = NativeHelper.batchSize / 4)
             new InterruptibleIterator(context, exportIter)
