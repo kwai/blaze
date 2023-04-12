@@ -354,7 +354,9 @@ impl ExternalSorter {
             spills
                 .iter()
                 .enumerate()
-                .map(|(id, spill)| SpillCursor::try_from_spill(id, spill.clone()))
+                .map(|(id, spill)| {
+                    SpillCursor::try_from_spill(id, self.clone(), spill.clone())
+                })
                 .collect::<Result<_>>()?,
             |c1, c2| {
                 let key1 = (c1.finished, &c1.cur_key);
@@ -686,6 +688,7 @@ impl SortedBatches {
 
 struct SpillCursor {
     id: usize,
+    sorter: Arc<ExternalSorter>,
     input: FrameDecoder<BufReader<Box<dyn Read + Send>>>,
     cur_batch_num_rows: usize,
     cur_loaded_num_rows: usize,
@@ -697,10 +700,15 @@ struct SpillCursor {
 }
 
 impl SpillCursor {
-    fn try_from_spill(id: usize, spill: OnHeapSpill) -> Result<Self> {
+    fn try_from_spill(
+        id: usize,
+        sorter: Arc<ExternalSorter>,
+        spill: OnHeapSpill,
+    ) -> Result<Self> {
         let buf_reader = spill.get_buf_reader();
         let mut iter = SpillCursor {
             id,
+            sorter,
             input: FrameDecoder::new(buf_reader),
             cur_batch_num_rows: 0,
             cur_loaded_num_rows: 0,
@@ -729,7 +737,9 @@ impl SpillCursor {
     }
 
     fn load_next_batch(&mut self) -> Result<bool> {
-        if let Some(batch) = read_one_batch(&mut self.input, None, false)? {
+        if let Some(batch) = read_one_batch(
+            &mut self.input, Some(self.sorter.input_schema.clone()), false)?
+        {
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;
             self.cur_batches.push(batch);
