@@ -232,7 +232,7 @@ object NativeAggExec {
   def getNativeAggrInfo(aggr: AggregateExpression, aggrAttr: Attribute): NativeAggrInfo = {
     val reducedAggr = AggregateExpression(
       aggr.aggregateFunction
-        .mapChildren(e => createPlaceholder(NativeConverters.convertDataType(e.dataType)))
+        .mapChildren(e => createPlaceholder(e))
         .asInstanceOf[AggregateFunction],
       aggr.mode,
       aggr.isDistinct)
@@ -252,16 +252,16 @@ object NativeAggExec {
     }
   }
 
-  private def createPlaceholder(nativeDataType: pb.ArrowType): Expression = {
-    NativeExprWrapper(
-      pb.PhysicalExprNode
-        .newBuilder()
-        .setScalarFunction(
-          pb.PhysicalScalarFunctionNode
-            .newBuilder()
-            .setFun(pb.ScalarFunction.SparkExtFunctions)
-            .setName("Placeholder")
-            .setReturnType(nativeDataType))
-        .build())
+  private def createPlaceholder(e: Expression): Expression = {
+    val placeholder = pb.PhysicalExprNode
+      .newBuilder()
+      .setScalarFunction(
+        pb.PhysicalScalarFunctionNode
+          .newBuilder()
+          .setFun(pb.ScalarFunction.SparkExtFunctions)
+          .setName("Placeholder")
+          .setReturnType(NativeConverters.convertDataType(e.dataType)))
+      .build()
+    NativeExprWrapper(placeholder, e.dataType, e.nullable, e.children)
   }
 }
