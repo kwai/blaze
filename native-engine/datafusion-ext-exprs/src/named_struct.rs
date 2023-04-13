@@ -8,6 +8,7 @@ use datafusion::common::DataFusionError;
 use datafusion::logical_expr::{ColumnarValue};
 use std::fmt::{Debug, Formatter};
 use std::{any::Any, sync::Arc};
+use arrow::datatypes::TimeUnit;
 use datafusion::arrow::datatypes::Field;
 use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
 use crate::down_cast_any_ref;
@@ -112,7 +113,11 @@ impl PhysicalExpr for NamedStructExpr {
                         | DataType::UInt8
                         | DataType::UInt16
                         | DataType::UInt32
-                        | DataType::UInt64 => Ok((field_store, arg.clone(),
+                        | DataType::UInt64
+                        | DataType::Date32
+                        | DataType::Date64
+                        | DataType::Timestamp(TimeUnit::Microsecond, _)
+                        => Ok((field_store, arg.clone(),
                         )),
                         data_type => Err(DataFusionError::NotImplemented(format!(
                             "NamedStruct is not implemented for type '{:?}'.",
