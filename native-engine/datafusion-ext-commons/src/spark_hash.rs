@@ -302,13 +302,13 @@ pub fn create_hashes<'a>(
             DataType::Float64 => {
                 hash_array_primitive!(Float64Array, col, f64, hashes_buffer);
             }
-            DataType::Timestamp(TimeUnit::Second, None) => {
+            DataType::Timestamp(TimeUnit::Second, _) => {
                 hash_array_primitive!(TimestampSecondArray, col, i64, hashes_buffer);
             }
-            DataType::Timestamp(TimeUnit::Millisecond, None) => {
+            DataType::Timestamp(TimeUnit::Millisecond, _) => {
                 hash_array_primitive!(TimestampMillisecondArray, col, i64, hashes_buffer);
             }
-            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
                 hash_array_primitive!(TimestampMicrosecondArray, col, i64, hashes_buffer);
             }
             DataType::Timestamp(TimeUnit::Nanosecond, _) => {
@@ -398,13 +398,13 @@ pub fn create_hashes<'a>(
                         DataType::Float64 => {
                             hash_list_primitive!(Float64Array, sub_array, f64, hash);
                         }
-                        DataType::Timestamp(TimeUnit::Second, None) => {
+                        DataType::Timestamp(TimeUnit::Second, _) => {
                             hash_list_primitive!(TimestampSecondArray, sub_array, i64, hash);
                         }
-                        DataType::Timestamp(TimeUnit::Millisecond, None) => {
+                        DataType::Timestamp(TimeUnit::Millisecond, _) => {
                             hash_list_primitive!(TimestampMillisecondArray, sub_array, i64, hash);
                         }
-                        DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                        DataType::Timestamp(TimeUnit::Microsecond, _) => {
                             hash_list_primitive!(TimestampMicrosecondArray, sub_array, i64, hash);
                         }
                         DataType::Timestamp(TimeUnit::Nanosecond, _) => {
