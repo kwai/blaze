@@ -120,7 +120,7 @@ pub fn write_batch<W: Write>(
                 as_primitive_array::<Date64Type>(column),
                 &mut output,
             )?,
-            DataType::Timestamp(TimeUnit::Millisecond, _) => write_primitive_array(
+            DataType::Timestamp(TimeUnit::Microsecond, _) => write_primitive_array(
                 as_primitive_array::<TimestampMicrosecondType>(column),
                 &mut output,
             )?,
