@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use arrow::array::*;
 use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
+use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_expr::PhysicalExpr;
 use crate::generate::Generator;
 
@@ -77,10 +77,14 @@ impl Generator for ExplodeArray {
             }
         }
 
-        let output_array = arrow::compute::concat(&arrays
-            .iter()
-            .map(|array| array.as_ref())
-            .collect::<Vec<_>>())?;
+        let output_array = if !arrays.is_empty() {
+            arrow::compute::concat(&arrays
+                .iter()
+                .map(|array| array.as_ref())
+                .collect::<Vec<_>>())?
+        } else {
+            ScalarValue::try_from(list.value_type())?.to_array_of_size(0)
+        };
         let output_positions_array = positions.map(|positions| {
             let array: ArrayRef = Arc::new(Int32Array::from(positions));
             array
