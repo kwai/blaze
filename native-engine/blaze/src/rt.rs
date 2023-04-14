@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::error::Error;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -21,7 +20,7 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::metrics::Time;
 use datafusion::physical_plan::{ExecutionPlan, RecordBatchStream};
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use tokio::runtime::Runtime;
 use blaze_commons::{jni_call, jni_call_static, jni_exception_check, jni_exception_occurred, jni_new_global_ref, jni_new_object, jni_new_string};
@@ -101,35 +100,49 @@ impl NativeExecutionRuntime {
         };
 
         // spawn batch producer
-        let consume_stream = || async move {
+        let consume_stream = move || async move {
             while let Some(batch) = AssertUnwindSafe(stream.next())
                 .catch_unwind()
                 .await
                 .unwrap_or_else(|err| {
-                    let panic_message = panic_message::panic_message(&err);
+                    let panic_message = panic_message::get_panic_message(&err)
+                        .unwrap_or("unknown error");
                     Some(Err(DataFusionError::Execution(panic_message.to_owned())))
                 })
-                .transpose()?
+                .transpose()
+                .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
             {
-                sender.send(Some(Ok(batch)))?;
+                sender.send(Some(Ok(batch)))
+                    .map_err(|err| DataFusionError::Execution(
+                        format!("sending batch error: {}", err)
+                    ))?;
             }
-            sender.send(None)?;
-            Ok(())
+
+            sender.send(None).unwrap_or_else(|err| {
+                log::warn!(
+                    "native execution [partition={}] completing channel error: {}",
+                    partition,
+                    err,
+                );
+            });
+            log::info!("native execution [partition={}] finished", partition);
+            Ok::<_, DataFusionError>(())
         };
         nrt.rt.spawn(async move {
-            let result: Result<(), Box<dyn Error>> = consume_stream()
-                .map_ok(|_| log::info!("native execution finished"))
-                .await;
-
+            let result = consume_stream().await;
             result.unwrap_or_else(|err| handle_unwinded_scope(|| -> Result<()> {
                 let task_running = is_task_running();
                 log::warn!(
-                    "native execution broken (task_running: {}): {}",
+                    "native execution [partition={}] broken (task_running: {}): {}",
+                    partition,
                     task_running,
                     err,
                 );
                 if !task_running {
-                    log::warn!("task completed/interrupted before native execution done");
+                    log::warn!(
+                        "native execution [partition={}] task completed/interrupted before native execution done",
+                        partition,
+                    );
                     set_error(
                         &native_wrapper,
                         "task completed/interrupted",
@@ -138,25 +151,35 @@ impl NativeExecutionRuntime {
                     return Ok(());
                 }
 
-                if jni_exception_check!()? {
-                    log::error!("native execution panics with an java exception");
-                    log::error!("panic message: {}", err);
-                    let cause = jni_exception_occurred!()?;
-                    set_error(
-                        &native_wrapper,
-                        &format!("native executing panics: {}", err),
-                        Some(cause.as_obj()),
-                    )?;
-                } else {
-                    log::error!("native execution panics");
-                    log::error!("panic message: {}", err);
-                    set_error(
-                        &native_wrapper,
-                        &format!("native executing panics: {}", err),
-                        None,
-                    )?;
-                };
-                log::info!("native execution exited abnormally.");
+                let cause =
+                    if jni_exception_check!()? {
+                        log::error!(
+                            "native execution [partition={}] panics with an java exception: {}",
+                            partition,
+                            err,
+                        );
+                        Some(jni_exception_occurred!()?)
+                    } else {
+                        log::error!(
+                            "native execution [partition={}] panics: {}",
+                            partition,
+                            err,
+                        );
+                        None
+                    };
+                set_error(
+                    &native_wrapper,
+                    &format!(
+                        "native executing [partition={}] panics: {}",
+                        partition,
+                        err,
+                    ),
+                    cause.map(|e| e.as_obj()),
+                )?;
+                log::info!(
+                    "native execution [partition={}] exited abnormally.",
+                    partition,
+                );
                 Ok::<_, DataFusionError>(())
             }));
         });
@@ -164,11 +187,11 @@ impl NativeExecutionRuntime {
     }
 
     pub fn finalize(self) {
-        log::info!("finalizing native runtime (partition={})", self.partition);
+        log::info!("native execution [partition={}] finalizing", self.partition);
         let _ = self.update_metrics();
         let _ = self.ffi_stream;
         self.rt.shutdown_background();
-        log::info!("finalized native runtime (partition={})", self.partition);
+        log::info!("native execution [partition={}] finalized", self.partition);
     }
 
     fn update_metrics(&self) -> Result<()> {

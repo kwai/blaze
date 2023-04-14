@@ -17,7 +17,6 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use datafusion::common::Result;
-use datafusion::error::DataFusionError;
 use blaze_commons::is_task_running;
 
 /// RecordBatchReader for FFI_ArrowArrayStraem
@@ -39,19 +38,15 @@ impl Iterator for MpscBatchReader {
         self.receiver
             .recv()
             .unwrap_or_else(|err| {
+                // sender is unexpectedly died, terminate this stream
+                // errors should have been handled in sender side
                 let task_running = is_task_running();
                 log::warn!(
                     "MpscBatchReader broken (task_running={}): {}",
                     task_running,
                     err,
                 );
-                if task_running {
-                    Some(Err(DataFusionError::Execution(
-                        format!("error receiving batch: {}", err)
-                    )))
-                } else {
-                    None
-                }
+                None
             })
             .map(|result| {
                 result.map_err(|err| err.into())

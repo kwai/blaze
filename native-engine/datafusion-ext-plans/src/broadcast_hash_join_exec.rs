@@ -248,7 +248,7 @@ async fn stream_with_mem_tracker(
     mem_tracker: Arc<MemTracker>,
 ) -> Result<SendableRecordBatchStream> {
 
-    output_with_sender(input.schema(), |sender| async move {
+    output_with_sender("BroadcastHashJoin", input.schema(), |sender| async move {
         let mut mem_used = 0;
         while let Some(batch) = input.next().await.transpose()? {
             mem_used += batch.get_array_memory_size() * 3 / 2;
@@ -267,7 +267,7 @@ async fn stream_holding_mem_tracker(
     mem_tracker: Arc<MemTracker>,
 ) -> Result<SendableRecordBatchStream> {
 
-    output_with_sender(input.schema(), |sender| async move {
+    output_with_sender("BroadcastHashJoin", input.schema(), |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {
             sender.send(Ok(batch))
                 .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))

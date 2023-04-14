@@ -34,12 +34,11 @@ use futures::stream::once;
 use itertools::Itertools;
 use lz4_flex::frame::FrameDecoder;
 use parking_lot::{Mutex as SyncMutex};
-use tokio::sync::mpsc::Sender;
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
 use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::{BatchesInterleaver, output_with_sender};
+use crate::common::{BatchesInterleaver, output_with_sender, WrappedRecordBatchSender};
 use crate::common::onheap_spill::OnHeapSpill;
 
 const NUM_LEVELS: usize = 64;
@@ -245,7 +244,7 @@ async fn external_sort(
         sorter.insert_batch(batch).await?;
     }
 
-    output_with_sender(input.schema(), |sender| async move {
+    output_with_sender("Sort", input.schema(), |sender| async move {
         sorter.output(sender).await?;
         Ok(())
     })
@@ -281,7 +280,7 @@ impl ExternalSorter {
 
     async fn output(
         self: Arc<Self>,
-        sender: Sender<Result<RecordBatch>>,
+        sender: WrappedRecordBatchSender,
     ) -> Result<()> {
         let mut timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);

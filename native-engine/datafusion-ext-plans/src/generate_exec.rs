@@ -181,7 +181,7 @@ async fn execute_generate(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
 
-    output_with_sender(output_schema.clone(), move |sender| async move {
+    output_with_sender("Generate", output_schema.clone(), move |sender| async move {
         while let Some(batch) = input_stream.next().await.transpose()? {
             let mut timer = metrics.elapsed_compute().timer();
 

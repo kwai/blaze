@@ -59,12 +59,10 @@ case class BlazeCallNativeWrapper(
   def getBatchIterator: Iterator[ColumnarBatch] =
     CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
       batchIterator.map { batch =>
-        val throwable = error.get()
-        if (throwable != null) {
-          throw throwable
-        }
+        checkError()
         batch
       }, {
+        checkError()
         this.close()
       })
 
@@ -74,6 +72,13 @@ case class BlazeCallNativeWrapper(
   protected def setError(error: Throwable): Unit = {
     this.error.set(error)
     this.close()
+  }
+
+  protected def checkError(): Unit = {
+    val throwable = error.getAndSet(null)
+    if (throwable != null) {
+      throw throwable
+    }
   }
 
   protected def setArrowFFIStreamPtr(ptr: Long): Unit = {
@@ -106,6 +111,7 @@ case class BlazeCallNativeWrapper(
         JniBridge.finalizeNative(nativeRuntimePtr)
         nativeRuntimePtr = 0
       }
+      checkError()
     }
   }
 }

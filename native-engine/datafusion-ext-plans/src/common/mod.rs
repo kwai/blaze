@@ -21,8 +21,9 @@ use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::{DataFusionError, Result};
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchReceiverStream;
-use futures::FutureExt;
+use futures::{FutureExt, TryFutureExt};
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::SendError;
 use blaze_commons::is_task_running;
 
 pub mod memory_manager;
@@ -66,42 +67,61 @@ impl BatchesInterleaver {
     }
 }
 
+pub struct WrappedRecordBatchSender(Sender<Result<RecordBatch>>);
+impl WrappedRecordBatchSender {
+    pub async fn send(
+        &self,
+        r: Result<RecordBatch>,
+    ) -> std::result::Result<(), SendError<Result<RecordBatch>>> {
+
+        // panic if we meet an error
+        let send_result = self.0.send(Ok(r.unwrap_or_else(|err| {
+            panic!("output_with_sender: received an error: {}", err)
+        })));
+        send_result.await
+    }
+}
+
 pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
+    desc: &'static str,
     output_schema: SchemaRef,
-    output: impl FnOnce(Sender<Result<RecordBatch>>) -> Fut + Send + 'static,
+    output: impl FnOnce(WrappedRecordBatchSender) -> Fut + Send + 'static,
 ) -> Result<SendableRecordBatchStream> {
 
     let (sender, receiver) = tokio::sync::mpsc::channel(2);
     let err_sender = sender.clone();
 
     let join_handle = tokio::task::spawn(async move {
+        let wrapped = WrappedRecordBatchSender(sender);
         let result = AssertUnwindSafe(async move {
-            let err_sender = sender.clone();
-            if let Err(err) = output(sender).await {
-                err_sender.send(Err(err))
-                    .await
-                    .map_err(|err| DataFusionError::Execution(
-                        format!("output_with_sender channel error: {}", err)
-                    ))?;
-            }
-            Ok(())
+            output(wrapped).unwrap_or_else(|err| {
+                panic!(
+                    "output_with_sender[{}]: output() returns error: {}",
+                    desc,
+                    err.to_string(),
+                );
+            }).await
         })
         .catch_unwind()
         .await
-        .map_err(|err| DataFusionError::Execution(format!("{:?}", err)));
+        .map(|_| Ok(()))
+        .unwrap_or_else(|err| {
+            let panic_message = panic_message::get_panic_message(&err)
+                .unwrap_or("unknown error");
+            Err(DataFusionError::Execution(panic_message.to_owned()))
+        });
 
-        if let Err(e) | Ok(Err(e)) = result {
-            err_sender.send(Err(e)).await.unwrap_or_else(|err| {
-                let task_running = is_task_running();
-                log::warn!(
-                    "output_with_sender broken (task_running={}): {}",
-                    task_running,
-                    err,
-                );
-                if task_running {
-                    panic!("output_with_sender channel error: {}", err);
-                }
-            });
+        if let Err(err) = result {
+            let err_message = err.to_string();
+            let _ = err_sender.send(Err(err)).await;
+
+            // panic current spawn
+            panic!(
+                "output_with_sender[{}] error (task_running={}: {}",
+                desc,
+                is_task_running(),
+                err_message,
+            );
         }
     });
 

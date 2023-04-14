@@ -143,7 +143,7 @@ async fn execute_window(
             .collect::<Result<_>>()?;
 
     // start processing input batches
-    output_with_sender(context.output_schema.clone(), |sender| async move {
+    output_with_sender("Window", context.output_schema.clone(), |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {
             let window_cols: Vec<ArrayRef> = processors
                 .iter_mut()

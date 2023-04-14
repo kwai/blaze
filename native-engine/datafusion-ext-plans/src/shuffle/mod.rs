@@ -12,20 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::panic::AssertUnwindSafe;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::Result;
-use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
 use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures::StreamExt;
 use std::sync::Arc;
 use datafusion::error::DataFusionError;
 use crate::common::onheap_spill::OnHeapSpill;
+use crate::common::output_with_sender;
 
 pub mod bucket_repartitioner;
 pub mod rss_bucket_repartitioner;
@@ -57,7 +56,7 @@ impl dyn ShuffleRepartitioner {
         ));
 
         // process all input batches
-        AssertUnwindSafe(async move {
+        output_with_sender("Shuffle", input_schema, |_| async move {
             while let Some(batch) = coalesced.next().await.transpose()? {
                 let _timer = metrics.elapsed_compute().timer();
                 metrics.record_output(batch.num_rows());
@@ -67,12 +66,6 @@ impl dyn ShuffleRepartitioner {
             self.shuffle_write().await?;
             Ok::<_, DataFusionError>(())
         })
-        .catch_unwind()
-        .map_err(|e| DataFusionError::Execution(format!("{:?}", e)))
-        .await??;
-
-        // shuffle writer always has empty output
-        Ok(Box::pin(MemoryStream::try_new(vec![], input_schema, None)?))
     }
 }
 

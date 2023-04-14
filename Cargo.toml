@@ -38,11 +38,11 @@ strip = true
 [profile.pre]
 inherits = "release"
 incremental = true
-debug = false
+debug = 1
 opt-level = 1
 lto = false
 codegen-units = 16
-strip = true
+strip = false
 
 [patch.crates-io]
 arrow = { git = "https://github.com/richox/arrow-rs.git", rev = "1994e827" }

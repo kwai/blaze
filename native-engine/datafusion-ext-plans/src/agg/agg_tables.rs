@@ -16,7 +16,6 @@ use std::io::{BufReader, Read, Write};
 use std::mem::size_of;
 use std::sync::{Arc, Weak};
 
-use arrow::record_batch::RecordBatch;
 use arrow::row::RowConverter;
 use async_trait::async_trait;
 use datafusion::common::Result;
@@ -28,7 +27,6 @@ use futures::TryFutureExt;
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use lz4_flex::frame::FrameDecoder;
-use tokio::sync::mpsc::Sender;
 
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, write_len};
 use datafusion_ext_commons::loser_tree::LoserTree;
@@ -38,6 +36,7 @@ use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::OnHeapSpill;
+use crate::common::WrappedRecordBatchSender;
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
@@ -92,7 +91,7 @@ impl AggTables {
         &self,
         mut grouping_row_converter: RowConverter,
         baseline_metrics: BaselineMetrics,
-        sender: Sender<Result<RecordBatch>>,
+        sender: WrappedRecordBatchSender,
     ) -> Result<()> {
         self.set_spillable(false);
         let mut timer = baseline_metrics.elapsed_compute().timer();
