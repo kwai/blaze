@@ -315,6 +315,34 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
     )?)
 }
 
+fn write_bits_buffer<W: Write>(
+    buffer: &Buffer,
+    bits_offset: usize,
+    bits_len: usize,
+    output: &mut W,
+) -> ArrowResult<()> {
+    let mut out_buffer = vec![0u8; (bits_len + 7) / 8];
+    let in_ptr = buffer.as_ptr();
+    let out_ptr = out_buffer.as_mut_ptr();
+    let mut out_bits_offset = 0;
+
+    for i in 0..bits_len {
+        unsafe {
+            if arrow::util::bit_util::get_bit_raw(in_ptr, bits_offset + i) {
+                arrow::util::bit_util::set_bit_raw(out_ptr, out_bits_offset);
+            }
+        }
+        out_bits_offset += 1;
+    }
+    output.write_all(&out_buffer)?;
+    Ok(())
+}
+
+fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> ArrowResult<Buffer> {
+    let buf = read_bytes_slice(input, (bits_len + 7) / 8)?;
+    Ok(Buffer::from(buf))
+}
+
 fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResult<()> {
     match data_type {
         DataType::Null => write_u8(1, output)?,
@@ -476,10 +504,14 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     array: &PrimitiveArray<PT>,
     output: &mut W,
 ) -> ArrowResult<()> {
+    let item_size = PT::get_byte_width();
+    let offset = array.offset();
+    let len = array.len();
     if let Some(null_buffer) = array.data().null_buffer() {
-        output.write_all(null_buffer.as_slice())?;
+        write_bits_buffer(null_buffer, offset, len, output)?;
     }
-    output.write_all(array.data().buffers()[0].as_slice())?;
+    output.write_all(
+        &array.data().buffers()[0].as_slice()[item_size * offset..][..item_size * len])?;
     Ok(())
 }
 
@@ -489,8 +521,7 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
     input: &mut R,
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
-        let null_buffer_len = (num_rows + 7) / 8;
-        Some(Buffer::from(read_bytes_slice(input, null_buffer_len)?))
+        Some(read_bits_buffer(input, num_rows)?)
     } else {
         None
     };
@@ -563,9 +594,8 @@ fn write_list_array<W: Write>(
     array: &ListArray,
     output: &mut W,
 ) -> ArrowResult<()> {
-    // write outside array null_buffer and offset_buffer
     if let Some(null_buffer) = array.data().null_buffer() {
-        output.write_all(null_buffer.as_slice())?;
+        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
     }
 
     let mut cur_offset = 0;
@@ -591,9 +621,7 @@ fn read_list_array<R: Read>(
     list_field: &Field ,
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
-        let null_buffer_len = (num_rows + 7) / 8;
-        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
-        Some(null_buffer)
+        Some(read_bits_buffer(input, num_rows)?)
     } else {
         None
     };
@@ -629,9 +657,8 @@ fn write_map_array<W: Write>(
     array: &MapArray,
     output: &mut W,
 ) -> ArrowResult<()> {
-    // write outside map null_buffer and offset_buffer
     if let Some(null_buffer) = array.data().null_buffer() {
-        output.write_all(null_buffer.as_slice())?;
+        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
     }
 
     let mut cur_offset = 0;
@@ -647,7 +674,7 @@ fn write_map_array<W: Write>(
     if struct_data.null_count() > 0 {
         write_u8(1, output)?;
         if let Some(null_buffer) = struct_data.null_buffer() {
-            output.write_all(null_buffer.as_slice())?;
+            write_bits_buffer(null_buffer, struct_data.offset(), struct_data.len(), output)?;
         }
     } else {
         write_u8(0, output)?;
@@ -667,9 +694,7 @@ fn read_map_array<R: Read>(
     is_sorted: bool
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
-        let null_buffer_len = (num_rows + 7) / 8;
-        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
-        Some(null_buffer)
+        Some(read_bits_buffer(input, num_rows)?)
     } else {
         None
     };
@@ -844,7 +869,7 @@ fn write_struct_array<W: Write>(
 ) -> ArrowResult<()> {
     // write struct null_buffer
     if let Some(null_buffer) = array.data().null_buffer() {
-        output.write_all(null_buffer.as_slice())?;
+        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
     }
 
     // write struct child_data
@@ -866,9 +891,7 @@ fn read_struct_array<R: Read>(
     fields: &[Field],
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
-        let null_buffer_len = (num_rows + 7) / 8;
-        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
-        Some(null_buffer)
+        Some(read_bits_buffer(input, num_rows)?)
     } else {
         None
     };
@@ -898,9 +921,9 @@ fn write_boolean_array<W: Write>(
     output: &mut W,
 ) -> ArrowResult<()> {
     if let Some(null_buffer) = array.data().null_buffer() {
-        output.write_all(null_buffer.as_slice())?;
+        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
     }
-    output.write_all(array.data().buffers()[0].as_slice())?;
+    write_bits_buffer(&array.data().buffers()[0], array.offset(), array.len(), output)?;
     Ok(())
 }
 
@@ -910,16 +933,13 @@ fn read_boolean_array<R: Read>(
     input: &mut R,
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
-        let null_buffer_len = (num_rows + 7) / 8;
-        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
-        Some(null_buffer)
+        Some(read_bits_buffer(input, num_rows)?)
     } else {
         None
     };
 
     let data_buffers: Vec<Buffer> = {
-        let data_buffer_len = (num_rows + 7) / 8;
-        let data_buffer = Buffer::from(read_bytes_slice(input, data_buffer_len)?);
+        let data_buffer = read_bits_buffer(input, num_rows)?;
         vec![data_buffer]
     };
 
@@ -939,16 +959,17 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
     output: &mut W,
 ) -> ArrowResult<()> {
     if let Some(null_buffer) = array.data().null_buffer() {
-        output.write_all(null_buffer.as_slice())?;
+        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
     }
 
-    let mut cur_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
+    let first_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
+    let mut cur_offset = first_offset;
     for &offset in array.value_offsets().iter().skip(1) {
         let len = offset - cur_offset;
         write_len(len as usize, output)?;
         cur_offset = offset;
     }
-    output.write_all(&array.value_data())?;
+    output.write_all(&array.value_data()[first_offset as usize .. cur_offset as usize])?;
     Ok(())
 }
 
@@ -959,7 +980,7 @@ fn read_bytes_array<R: Read>(
     data_type: DataType,
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
-        Some(Buffer::from(read_bytes_slice(input, (num_rows + 7) / 8)?))
+        Some(read_bits_buffer(input, num_rows)?)
     } else {
         None
     };
@@ -1000,17 +1021,6 @@ mod test {
 
     #[test]
     fn test_write_and_read_batch() {
-
-        let data = vec![
-            Some(vec![Some(0), Some(1), Some(2)]),
-            None,
-            Some(vec![Some(6), Some(7), Some(45)]),
-        ];
-        let fixed_size_list_array: ArrayRef = Arc::new(FixedSizeListArray::from_iter_primitive::<Int32Type, _, _>(data, 3));
-        let cast_type = DataType::List(Box::new((Field::new("item", Int64, true))));
-
-        let ans = arrow::compute::kernels::cast::cast(&fixed_size_list_array, &cast_type).unwrap();
-
         let array1: ArrayRef = Arc::new(StringArray::from_iter([
             Some("20220101".to_owned()),
             Some("20220102你好🍹".to_owned()),
@@ -1036,11 +1046,19 @@ mod test {
         ])
         .unwrap();
 
+        // test read after write
         let mut buf = vec![];
         write_batch(&batch, &mut buf, true).unwrap();
-
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
         assert_eq!(decoded_batch, batch);
+
+        // test read after write sliced
+        let sliced = batch.slice(1, 2);
+        let mut buf = vec![];
+        write_batch(&sliced, &mut buf, true).unwrap();
+        let mut cursor = Cursor::new(buf);
+        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        assert_eq!(decoded_batch, sliced);
     }
 }
