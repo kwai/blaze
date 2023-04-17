@@ -208,7 +208,7 @@ pub fn builder_extend(
                 DataType::Date64 => append_map!(@prim: $keyarrowty, Date64),
                 DataType::Timestamp(TimeUnit::Microsecond, _) => append_map!(@prim: $keyarrowty, TimestampMicrosecond),
                 DataType::Utf8 => append_map!(@prim: $keyarrowty, String),
-                DataType::LargeUtf8 => append_map!(@prim: $keyarrowty, LargeString,),
+                DataType::LargeUtf8 => append_map!(@prim: $keyarrowty, LargeString),
                 DataType::Binary => append_map!(@prim: $keyarrowty, Binary),
                 DataType::LargeBinary => append_map!(@prim: $keyarrowty, LargeBinary),
                 _ => unimplemented!("map value type not supported: {:?}", $value_type),
