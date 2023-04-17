@@ -692,12 +692,13 @@ object NativeConverters extends Logging {
               .setExpr(convertExpr(expr, useAttrExprId))
               .setInfix(infix.toString)))
 
-      case e: Substring =>
-        val newChildren = e.children.head +: e.children.tail.map {
-          case c if c.dataType != LongType => Cast(c, LongType)
-          case c => c
-        }
-        buildScalarFunction(pb.ScalarFunction.Substr, newChildren, e.dataType)
+      case Substring(str, Literal(pos, IntegerType), Literal(len, IntegerType))
+          if pos.asInstanceOf[Int] >= 0 && len.asInstanceOf[Int] >= 0 =>
+        buildScalarFunction(
+          pb.ScalarFunction.Substr,
+          str :: Literal(pos.asInstanceOf[Long]) :: Literal(len.asInstanceOf[Long]) :: Nil,
+          StringType)
+
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
 
       case e @ If(predicate, trueValue, falseValue) =>
