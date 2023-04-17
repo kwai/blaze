@@ -173,6 +173,14 @@ pub trait Agg: Send + Sync + Debug {
             ),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
+            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+                let v = if agg_buf.is_fixed_valid(addr) {
+                    Some(*agg_buf.fixed_value(addr))
+                } else {
+                    None
+                };
+                ScalarValue::TimestampMicrosecond(v, tz.clone())
+            }
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "unsupported data type: {}",
