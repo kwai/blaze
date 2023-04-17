@@ -942,7 +942,7 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
         output.write_all(null_buffer.as_slice())?;
     }
 
-    let mut cur_offset = 0;
+    let mut cur_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
     for &offset in array.value_offsets().iter().skip(1) {
         let len = offset - cur_offset;
         write_len(len as usize, output)?;
