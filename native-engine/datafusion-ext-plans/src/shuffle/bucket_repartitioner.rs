@@ -487,6 +487,19 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
             ),
         },
         DataType::List(fields) => len * slot_size(16, fields.data_type()),
+        DataType::Map(field, _) => match field.data_type() {
+            DataType::Struct(fields) => {
+                let key_type = fields.first().unwrap().data_type();
+                let value_type = fields.last().unwrap().data_type();
+                len * (slot_size(16, key_type) + slot_size(16, value_type))
+            }
+            t => {
+                unimplemented!(
+                    "map field type: {:?}not supported in shuffle write",
+                    t
+                )
+            }
+            },
         DataType::Struct(fields) => {
             fields
                 .iter()

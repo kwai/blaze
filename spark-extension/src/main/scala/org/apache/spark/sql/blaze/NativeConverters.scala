@@ -99,6 +99,7 @@ import org.apache.spark.sql.catalyst.expressions.CheckOverflow
 import org.apache.spark.sql.catalyst.expressions.CreateArray
 import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
 import org.apache.spark.sql.catalyst.expressions.GetArrayItem
+import org.apache.spark.sql.catalyst.expressions.GetMapValue
 import org.apache.spark.sql.catalyst.expressions.GetStructField
 import org.apache.spark.sql.catalyst.expressions.If
 import org.apache.spark.sql.catalyst.expressions.Length
@@ -121,6 +122,7 @@ import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
+import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveGenericUDF
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
@@ -201,10 +203,7 @@ object NativeConverters extends Logging {
 
       // array/list
       case a: ArrayType =>
-        if (a.elementType.isInstanceOf[ArrayType] | a.elementType.isInstanceOf[StructType]) {
-          throw new NotImplementedError(
-            s"Data type conversion not implemented Array nesting ${a.elementType.simpleString}")
-        }
+        typedCheckChildTypeNested(a.elementType)
         arrowTypeBuilder.setLIST(
           org.blaze.protobuf.List
             .newBuilder()
@@ -216,14 +215,27 @@ object NativeConverters extends Logging {
                 .setNullable(a.containsNull))
             .build())
 
+      case m: MapType =>
+        typedCheckChildTypeNested(m.keyType)
+        typedCheckChildTypeNested(m.valueType)
+        arrowTypeBuilder.setMAP(
+          org.blaze.protobuf.Map
+            .newBuilder()
+            .setKeyType(
+              pb.Field
+                .newBuilder()
+                .setName("key")
+                .setArrowType(convertDataType(m.keyType))
+                .setNullable(false))
+            .setValueType(
+              pb.Field
+                .newBuilder()
+                .setName("value")
+                .setArrowType(convertDataType(m.valueType))
+                .setNullable(m.valueContainsNull))
+            .build())
       case s: StructType =>
-        s.fields
-          .map(_.dataType)
-          .foreach(e =>
-            if (e.isInstanceOf[ArrayType] | e.isInstanceOf[StructType]) {
-              throw new NotImplementedError(
-                s"Data type conversion not implemented Struct nesting ${e.simpleString}")
-            })
+        s.fields.foreach(field => typedCheckChildTypeNested(field.dataType))
         arrowTypeBuilder.setSTRUCT(
           org.blaze.protobuf.Struct
             .newBuilder()
@@ -811,6 +823,15 @@ object NativeConverters extends Logging {
                 LongType)))
         }
 
+      case GetMapValue(child, Literal(value, dataType)) =>
+        buildExprNode {
+          _.setGetMapValueExpr(
+            pb.PhysicalGetMapValueExprNode
+              .newBuilder()
+              .setExpr(convertExpr(child))
+              .setKey(convertValue(value, dataType)))
+        }
+
       case GetStructField(child, _, name) =>
         buildExprNode {
           _.setGetIndexedFieldExpr(
@@ -881,6 +902,13 @@ object NativeConverters extends Logging {
       Utils.tryWithResource(new ObjectInputStream(bis)) { ois =>
         ois.readObject().asInstanceOf[Expression with Serializable]
       }
+    }
+  }
+
+  def typedCheckChildTypeNested(dt: DataType): Unit = {
+    if (dt.isInstanceOf[ArrayType] || dt.isInstanceOf[MapType] || dt.isInstanceOf[StructType]) {
+      throw new NotImplementedError(
+        s"Data type conversion not implemented for nesting type with child type: ${dt.simpleString}")
     }
   }
 

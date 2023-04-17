@@ -350,8 +350,9 @@ impl Visitor {
                     _ => HashMap::default(),
                 };
 
+                // blaze  - fix map_field name use "entries"
                 let map_field = Field::new(
-                    map_key_value.name(),
+                    "entries",
                     DataType::Struct(vec![key_field, value_field]),
                     false, // The inner map field is always non-nullable (#1697)
                 )

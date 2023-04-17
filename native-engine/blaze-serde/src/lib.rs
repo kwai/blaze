@@ -294,6 +294,24 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                 // DataType::Union(union_types, _, union_mode)
                 unimplemented!()
             }
+            arrow_type::ArrowTypeEnum::Map(map) => {
+                let key_type: &protobuf::Field = map
+                    .as_ref()
+                    .key_type
+                    .as_ref()
+                    .ok_or_else(|| proto_error("Protobuf deserialization error: Map message missing required field 'key_type'"))?
+                    .as_ref();
+                let value_type: &protobuf::Field = map
+                    .as_ref()
+                    .value_type
+                    .as_ref()
+                    .ok_or_else(|| proto_error("Protobuf deserialization error: Map message missing required field 'value_type'"))?
+                    .as_ref();
+
+                let vec_field = vec![key_type.try_into()?, value_type.try_into()?];
+                let fields = Box::new(Field::new("entries", DataType::Struct(vec_field), false));
+                DataType::Map(fields, false)
+            }
             arrow_type::ArrowTypeEnum::Dictionary(dict) => {
                 let pb_key_datatype = dict
                     .as_ref()

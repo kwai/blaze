@@ -164,6 +164,80 @@ pub fn builder_extend(
         }};
     }
 
+    macro_rules! append_map {
+        ($key_type:expr, $value_type:expr) => {{
+            append_map!(@match_key: $key_type, $value_type)
+        }};
+        (@match_key: $key_type:expr, $value_type:expr) => {{
+            match $key_type {
+                DataType::Boolean => append_map!(@match_value: Boolean, $value_type),
+                DataType::Int8 => append_map!(@match_value: Int8, $value_type),
+                DataType::Int16 => append_map!(@match_value: Int16, $value_type),
+                DataType::Int32 => append_map!(@match_value: Int32, $value_type),
+                DataType::Int64 => append_map!(@match_value: Int64, $value_type),
+                DataType::UInt8 => append_map!(@match_value: UInt8, $value_type),
+                DataType::UInt16=> append_map!(@match_value: UInt16, $value_type),
+                DataType::UInt32 => append_map!(@match_value: UInt32, $value_type),
+                DataType::UInt64 => append_map!(@match_value: UInt64, $value_type),
+                DataType::Float32 => append_map!(@match_value: Float32, $value_type),
+                DataType::Float64 => append_map!(@match_value: Float64, $value_type),
+                DataType::Date32 => append_map!(@match_value: Date32, $value_type),
+                DataType::Date64 => append_map!(@match_value: Date64, $value_type),
+                DataType::Timestamp(TimeUnit::Microsecond, _) => append_map!(@match_value: TimestampMicrosecond, $value_type),
+                DataType::Utf8 => append_map!(@match_value: String, $value_type),
+                DataType::LargeUtf8 => append_map!(@match_value: LargeString, $value_type),
+                DataType::Binary => append_map!(@match_value: Binary, $value_type),
+                DataType::LargeBinary => append_map!(@match_value: LargeBinary, $value_type),
+                _ => unimplemented!("map key type not supported: {:?}", $key_type),
+            }
+        }};
+        (@match_value: $keyarrowty:ident, $value_type:expr) => {{
+            match $value_type {
+                DataType::Boolean => append_map!(@prim: $keyarrowty, Boolean),
+                DataType::Int8 => append_map!(@prim: $keyarrowty, Int8),
+                DataType::Int16 => append_map!(@prim: $keyarrowty, Int16),
+                DataType::Int32 => append_map!(@prim: $keyarrowty, Int32),
+                DataType::Int64 => append_map!(@prim: $keyarrowty, Int64),
+                DataType::UInt8 => append_map!(@prim: $keyarrowty, UInt8),
+                DataType::UInt16 => append_map!(@prim: $keyarrowty, UInt16),
+                DataType::UInt32 => append_map!(@prim: $keyarrowty, UInt32),
+                DataType::UInt64 => append_map!(@prim: $keyarrowty, UInt64),
+                DataType::Float32 => append_map!(@prim: $keyarrowty, Float32),
+                DataType::Float64 => append_map!(@prim: $keyarrowty, Float64),
+                DataType::Date32 => append_map!(@prim: $keyarrowty, Date32),
+                DataType::Date64 => append_map!(@prim: $keyarrowty, Date64),
+                DataType::Timestamp(TimeUnit::Microsecond, _) => append_map!(@prim: $keyarrowty, TimestampMicrosecond),
+                DataType::Utf8 => append_map!(@prim: $keyarrowty, String),
+                DataType::LargeUtf8 => append_map!(@prim: $keyarrowty, LargeString,),
+                DataType::Binary => append_map!(@prim: $keyarrowty, Binary),
+                DataType::LargeBinary => append_map!(@prim: $keyarrowty, LargeBinary),
+                _ => unimplemented!("map value type not supported: {:?}", $value_type),
+            }
+        }};
+        (@prim: $keyarrowty:ident, $valuearrowty:ident) => {{
+            type KeyType = paste! {[< $keyarrowty Builder >]};
+            type ValueType = paste! {[< $valuearrowty Builder >]};
+            type B = MapBuilder<KeyType, ValueType>;
+            let t = builder.as_any_mut().downcast_mut::<B>().unwrap();
+            let f = array.as_any().downcast_ref::<MapArray>().unwrap();
+            let fo = f.value_offsets();
+
+            for &i in indices {
+                if f.is_valid(i) {
+                    let first_index = fo[i] as usize;
+                    let last_index = fo[i + 1] as usize;
+                    if(last_index - first_index > 0) {
+                        builder_extend(t.keys(), f.keys(), (first_index..last_index).collect::<Vec<_>>().as_slice(), f.key_type());
+                        builder_extend(t.values(), f.values(), (first_index..last_index).collect::<Vec<_>>().as_slice(), f.value_type());
+                    }
+                    t.append(true).unwrap();
+                } else {
+                    t.append(false).unwrap();
+                }
+            }
+        }};
+    }
+
     macro_rules! append_list {
         ($data_type:expr) => {{
             append_list!(@match_type: $data_type)
@@ -306,6 +380,15 @@ pub fn builder_extend(
         DataType::Decimal256(_, _) => append_decimal!(ConfiguredDecimal256, Decimal256),
         DataType::Dictionary(key_type, value_type) => append_dict!(key_type, value_type),
         DataType::List(fields) => append_list!(fields.data_type()),
+        DataType::Map(field, _) => {
+            if let DataType::Struct(fields) = field.data_type() {
+                let key_type = fields.first().unwrap().data_type();
+                let value_type = fields.last().unwrap().data_type();
+                append_map!(key_type, value_type)
+            } else {
+                unimplemented!("map field not support {}", field)
+            }
+        }
         DataType::Struct(fields) => append_struct!(fields.to_vec()),
         dt => unimplemented!("data type not supported in builder_extend: {:?}", dt),
     }
@@ -526,6 +609,69 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
             }};
         }
 
+    macro_rules! make_map_builder {
+        ($key_type:expr, $value_type:expr, $map_fields_name:expr) => {{
+            make_map_builder!(@match_key: $key_type, $value_type, $map_fields_name)
+        }};
+        (@match_key: $key_type:expr, $value_type:expr, $map_fields_name:expr) => {{
+            match $key_type {
+                DataType::Boolean => make_map_builder!(@match_value: Boolean, $value_type, $map_fields_name),
+                DataType::Int8 => make_map_builder!(@match_value: Int8, $value_type, $map_fields_name),
+                DataType::Int16 => make_map_builder!(@match_value: Int16, $value_type, $map_fields_name),
+                DataType::Int32 => make_map_builder!(@match_value: Int32, $value_type, $map_fields_name),
+                DataType::Int64 => make_map_builder!(@match_value: Int64, $value_type, $map_fields_name),
+                DataType::UInt8 => make_map_builder!(@match_value: UInt8, $value_type, $map_fields_name),
+                DataType::UInt16 => make_map_builder!(@match_value: UInt16, $value_type, $map_fields_name),
+                DataType::UInt32 => make_map_builder!(@match_value: UInt32, $value_type, $map_fields_name),
+                DataType::UInt64 => make_map_builder!(@match_value: UInt64, $value_type, $map_fields_name),
+                DataType::Float32 => make_map_builder!(@match_value: Float32, $value_type, $map_fields_name),
+                DataType::Float64 => make_map_builder!(@match_value: Float64, $value_type, $map_fields_name),
+                DataType::Date32 => make_map_builder!(@match_value: Date32, $value_type, $map_fields_name),
+                DataType::Date64 => make_map_builder!(@match_value: Date64, $value_type, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Microsecond, _) => make_map_builder!(@match_value: TimestampMicrosecond, $value_type, $map_fields_name),
+                DataType::Utf8 => make_map_builder!(@match_value: String, $value_type, $map_fields_name),
+                DataType::LargeUtf8 => make_map_builder!(@match_value: LargeString, $value_type, $map_fields_name),
+                DataType::Binary => make_map_builder!(@match_value: Binary, $value_type, $map_fields_name),
+                DataType::LargeBinary => make_map_builder!(@match_value: LargeBinary, $value_type, $map_fields_name),
+                _ => unimplemented!("unsupported map key type: {:?}", $key_type),
+            }
+        }};
+        (@match_value: $keyarrowty:ident, $value_type:expr, $map_fields_name:expr) => {{
+            match $value_type {
+                DataType::Boolean => make_map_builder!(@make: $keyarrowty, Boolean, $map_fields_name),
+                DataType::Int8 => make_map_builder!(@make: $keyarrowty, Int8, $map_fields_name),
+                DataType::Int16 => make_map_builder!(@make: $keyarrowty, Int16, $map_fields_name),
+                DataType::Int32 => make_map_builder!(@make: $keyarrowty, Int32, $map_fields_name),
+                DataType::Int64 => make_map_builder!(@make: $keyarrowty, Int64, $map_fields_name),
+                DataType::UInt8 => make_map_builder!(@make: $keyarrowty, UInt8, $map_fields_name),
+                DataType::UInt16 => make_map_builder!(@make: $keyarrowty, UInt16, $map_fields_name),
+                DataType::UInt32 => make_map_builder!(@make: $keyarrowty, UInt32, $map_fields_name),
+                DataType::UInt64 => make_map_builder!(@make: $keyarrowty, UInt64, $map_fields_name),
+                DataType::Float32 => make_map_builder!(@make: $keyarrowty, Float32, $map_fields_name),
+                DataType::Float64 => make_map_builder!(@make: $keyarrowty, Float64, $map_fields_name),
+                DataType::Date32 => make_map_builder!(@make: $keyarrowty, Date32, $map_fields_name),
+                DataType::Date64 => make_map_builder!(@make: $keyarrowty, Date64, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Microsecond, _) => make_map_builder!(@make: $keyarrowty, TimestampMicrosecond, $map_fields_name),
+                DataType::Utf8  => make_map_builder!(@make: $keyarrowty, String, $map_fields_name),
+                DataType::LargeUtf8 => make_map_builder!(@make: $keyarrowty, LargeString, $map_fields_name),
+                DataType::Binary => make_map_builder!(@make: $keyarrowty, Binary, $map_fields_name),
+                DataType::LargeBinary => make_map_builder!(@make: $keyarrowty, LargeBinary, $map_fields_name),
+                _ => unimplemented!("map value type not supported: {:?}", $value_type),
+            }
+        }};
+        (@make: $keyarrowty:ident, $valuearrowty:ident, $map_fields_name:expr) => {{
+            type KeyBuilder = paste! {[< $keyarrowty Builder >]};
+            type ValueBuilder = paste! {[< $valuearrowty Builder >]};
+            Box::new(MapBuilder::with_capacity(
+                $map_fields_name,
+                KeyBuilder::new(),
+                ValueBuilder::new(),
+                batch_size,
+            ))
+        }};
+
+    }
+
     match dt {
         DataType::Null => Box::new(NullBuilder::new()),
         DataType::Decimal128(precision, scale) => Box::new(
@@ -539,6 +685,20 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
         }
         DataType::List(fields) => {
             make_list_builder!(fields.data_type().clone())
+        }
+        DataType::Map(field, _) => {
+            if let Struct(fields) = field.data_type() {
+                let map_fields_name = Some(MapFieldNames {
+                    entry: "entries".to_string(),
+                    key: "key".to_string(),
+                    value: "value".to_string()
+                });
+                let key_type = fields.first().unwrap().data_type().clone();
+                let value_type = fields.last().unwrap().data_type().clone();
+                make_map_builder!(key_type, value_type, map_fields_name)
+            } else {
+                unimplemented!("map field not support {}", field);
+            }
         }
         dt => make_builder(dt, batch_size),
     }

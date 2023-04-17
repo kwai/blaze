@@ -15,7 +15,7 @@
 use arrow::record_batch::RecordBatchOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
-use arrow::array::{ArrayData, make_array};
+use arrow::array::{Array, ArrayData, make_array};
 
 use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::error::Result as ArrowResult;
@@ -87,17 +87,7 @@ pub fn name_batch(
                 .fields()
                 .iter()
                 .enumerate()
-                .map(|(i, field)|
-                    match field.data_type() {
-                        DataType::Struct(_) => {
-                            field.clone().with_name(name_schema.field(i).name())
-                                .with_data_type(name_schema.field(i).data_type().clone())
-                        }
-                        _ => {
-                            field.clone().with_name(name_schema.field(i).name())
-                        }
-                    }
-                )
+                .map(|(i, _)|name_schema.field(i).clone())
                 .collect(),
         ));
         RecordBatch::try_new_with_options(
@@ -107,7 +97,7 @@ pub fn name_batch(
                 .iter()
                 .enumerate()
                 .map(|(i, column)|
-                    match column.data_type() {
+                    match schema.field(i).data_type() {
                         DataType::Struct(_) => {
                             let null_buffer = if column.data().null_buffer().is_some() {
                                 Some(column.data().null_buffer().unwrap().clone())
@@ -122,6 +112,38 @@ pub fn name_batch(
                                 column.data().offset(),
                                 column.data().buffers().to_vec(),
                                 column.data().child_data().to_vec(),
+                            ).unwrap())
+                        }
+                        DataType::Map(field, _) => {
+
+                            let child_nameless_data = column.data().child_data().get(0).unwrap();
+                            let child_null_buffer = if child_nameless_data.null_buffer().is_some() {
+                                Some(child_nameless_data.null_buffer().unwrap().clone())
+                            } else {
+                                None
+                            };
+                            let child_data = ArrayData::try_new(
+                                field.data_type().clone(),
+                                child_nameless_data.len(),
+                                child_null_buffer,
+                                child_nameless_data.offset(),
+                                child_nameless_data.buffers().to_vec(),
+                                child_nameless_data.child_data().to_vec(),
+                            ).unwrap();
+
+                            let null_buffer = if column.data().null_buffer().is_some() {
+                                Some(column.data().null_buffer().unwrap().clone())
+                            } else {
+                                None
+                            };
+
+                            make_array(ArrayData::try_new(
+                                schema.field(i).data_type().clone(),
+                                column.data().len(),
+                                null_buffer,
+                                column.data().offset(),
+                                column.data().buffers().to_vec(),
+                                vec![child_data],
                             ).unwrap())
                         }
                         _ => {

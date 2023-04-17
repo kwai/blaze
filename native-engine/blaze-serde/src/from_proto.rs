@@ -80,6 +80,7 @@ use crate::{from_proto_binary_op, proto_error};
 use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion_ext_exprs::cast::TryCastExpr;
 use datafusion_ext_exprs::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
+use datafusion_ext_exprs::get_map_value::GetMapValueExpr;
 use datafusion_ext_exprs::iif::IIfExpr;
 use datafusion_ext_exprs::named_struct::NamedStructExpr;
 use datafusion_ext_exprs::spark_udf_wrapper::SparkUDFWrapperExpr;
@@ -1082,6 +1083,11 @@ fn try_parse_physical_expr(
                 }
                 _ => Arc::new(GetIndexedFieldExpr::new(expr, key)),
             }
+        }
+        ExprType::GetMapValueExpr(e) => {
+            let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
+            let key = convert_required!(e.key)?;
+            Arc::new(GetMapValueExpr::new(expr, key))
         }
         ExprType::StringStartsWithExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;

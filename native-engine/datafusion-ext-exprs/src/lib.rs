@@ -25,6 +25,7 @@ pub mod string_contains;
 pub mod string_ends_with;
 pub mod string_starts_with;
 pub mod named_struct;
+pub mod get_map_value;
 
 fn down_cast_any_ref(any: &dyn Any) -> &dyn Any {
     if any.is::<Arc<dyn PhysicalExpr>>() {

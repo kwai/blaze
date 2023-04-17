@@ -128,6 +128,10 @@ pub fn write_batch<W: Write>(
                 as_list_array(column),
                 &mut output,
             )?,
+            DataType::Map(_, _) => write_map_array(
+                as_map_array(column),
+                &mut output,
+            )?,
             DataType::Struct(_) => write_struct_array(
                 as_struct_array(column),
                 &mut output,
@@ -281,6 +285,13 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
                 &mut input,
                 list_field.clone().deref()
             )?,
+            DataType::Map(map_field, is_sorted) => read_map_array(
+                num_rows,
+                has_null_buffers[i],
+                &mut input,
+                map_field.clone().deref(),
+                *is_sorted,
+            )?,
             DataType::Struct(fields) => read_struct_array(
                 num_rows,
                 has_null_buffers[i],
@@ -342,8 +353,39 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
                 write_u8(0, output)?;
             }
         },
-        DataType::Struct(fields) => {
+        DataType::Map(field, is_sorted) => {
             write_u8(21, output)?;
+            if *is_sorted {
+                write_u8(1, output)?;
+            } else {
+                write_u8(0, output)?;
+            }
+            if field.is_nullable() {
+                write_u8(1, output)?;
+            } else {
+                write_u8(0, output)?;
+            }
+            match field.data_type() {
+                DataType::Struct(fields) => {
+                    for field in fields {
+                        write_data_type(field.data_type(), output)?;
+                        if field.is_nullable() {
+                            write_u8(1, output)?;
+                        } else {
+                            write_u8(0, output)?;
+                        }
+                    }
+                }
+                other => {
+                    return  Err(ArrowError::SchemaError(format!(
+                        "Map field data_type must be Struct, but found {:#?}",
+                        other
+                    )));
+                }
+            }
+        }
+        DataType::Struct(fields) => {
+            write_u8(22, output)?;
             write_len(fields.len(), output)?;
             for field in fields {
                 write_data_type(field.data_type(), output)?;
@@ -400,6 +442,18 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
             DataType::List(Box::new(Field::new("item", child_datatype, is_nullable)))
         }
         21 => {
+            let is_sorted = if read_u8(input)? == 1 {true} else {false};
+            let is_nullable = if read_u8(input)? == 1 {true} else {false};
+            let mut fields = Vec::with_capacity(2);
+            for _i in 0..2 {
+                let field_data_type = read_data_type(input)?;
+                let field_is_nullable = if read_u8(input)? == 1 {true} else {false};
+                fields.push(Field::new("", field_data_type, field_is_nullable));
+            }
+            DataType::Map(Box::new(Field::new("entries", DataType::Struct(fields), is_nullable)), is_sorted)
+
+        }
+        22 => {
             let field_len = read_len(input)?;
             let mut fields = Vec::new();
             for _i in 0..field_len {
@@ -491,6 +545,13 @@ fn write_child_data<W: Write>(
             }
             output.write_all(&byte_array.value_data())?;
         }
+        DataType::List(_) |
+        DataType::Map(_, _) |
+        DataType::Struct(_) => {
+            return Err(ArrowError::NotYetImplemented(format!(
+                "unsupported nesting data type in write child_data",
+            )));
+        }
         _ => {
             output.write_all(data.buffers()[0].as_slice())?;
         }
@@ -562,6 +623,106 @@ fn read_list_array<R: Read>(
         vec![child_data],
     )?;
     Ok(make_array(list_array_data))
+}
+
+fn write_map_array<W: Write>(
+    array: &MapArray,
+    output: &mut W,
+) -> ArrowResult<()> {
+    // write outside map null_buffer and offset_buffer
+    if let Some(null_buffer) = array.data().null_buffer() {
+        output.write_all(null_buffer.as_slice())?;
+    }
+
+    let mut cur_offset = 0;
+    for &offset in array.value_offsets().iter().skip(1) {
+        let len = offset - cur_offset;
+        write_len(len as usize, output)?;
+        cur_offset = offset;
+    }
+
+    let struct_data = array.data().child_data().get(0).unwrap();
+
+    write_len(struct_data.len(), output)?;
+    if struct_data.null_count() > 0 {
+        write_u8(1, output)?;
+        if let Some(null_buffer) = struct_data.null_buffer() {
+            output.write_all(null_buffer.as_slice())?;
+        }
+    } else {
+        write_u8(0, output)?;
+    }
+
+    for child in struct_data.child_data() {
+        write_child_data(child, output)?;
+    }
+    Ok(())
+}
+
+fn read_map_array<R: Read>(
+    num_rows: usize,
+    has_null_buffer: bool,
+    input: &mut R,
+    map_field: &Field,
+    is_sorted: bool
+) -> ArrowResult<ArrayRef> {
+    let null_buffer: Option<Buffer> = if has_null_buffer {
+        let null_buffer_len = (num_rows + 7) / 8;
+        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
+        Some(null_buffer)
+    } else {
+        None
+    };
+
+    let mut cur_offset = 0;
+    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
+    offsets_buffer.push(0u32);
+    for _ in 0..num_rows {
+        let len = read_len(input)?;
+        let offset = cur_offset + len;
+        offsets_buffer.push(offset as u32);
+        cur_offset = offset;
+    }
+    let offsets_buffer = vec![offsets_buffer.into()];
+    let sturct_num_rows = read_len(input)?;
+    let struct_null_buffer = if read_u8(input)? == 1 {
+        let null_buffer_len = (sturct_num_rows + 7) / 8;
+        let null_buffer = Buffer::from(read_bytes_slice(input, null_buffer_len)?);
+        Some(null_buffer)
+    } else {
+        None
+    };
+    let mut struct_child_buffer = Vec::with_capacity(2);
+    let mut struct_fields = Vec::with_capacity(2);
+    if let DataType::Struct(fields) = map_field.data_type() {
+        for i in 0..2 {
+            let field = fields.get(i).unwrap();
+            let child_data_len = read_len(input)?;
+            let child_has_null_buffer = if read_u8(input)? == 1 {true} else {false};
+            struct_fields.push(field.clone());
+            struct_child_buffer.push(get_child_array_data(child_data_len, child_has_null_buffer, input, field)?);
+        }
+    }
+
+    let child_data = ArrayData::try_new(
+        DataType::Struct(struct_fields.clone()),
+        sturct_num_rows,
+        struct_null_buffer,
+        0,
+        vec![],
+        struct_child_buffer,
+    )?;
+
+    let map_data = ArrayData::try_new(
+        DataType::Map(Box::new(Field::new(map_field.name(), map_field.data_type().clone(), map_field.is_nullable())), is_sorted),
+        num_rows,
+        null_buffer,
+        0,
+        offsets_buffer,
+        vec![child_data],
+        )?;
+
+    return Ok(make_array(map_data))
 }
 
 fn get_child_array_data<R: Read>(
@@ -667,20 +828,8 @@ fn get_child_array_data<R: Read>(
             input,
             DataType::Binary,
         )?,
-        DataType::List(list_field) => read_list_array(
-            child_data_len,
-            child_has_null_buffer,
-            input,
-            list_field.clone().deref(),
-        )?,
-        DataType::Struct(fields) => read_struct_array(
-            child_data_len,
-            child_has_null_buffer,
-            input,
-            fields.clone().deref(),
-        )?,
         other => {
-            return Err(ArrowError::IoError(format!(
+            return Err(ArrowError::NotYetImplemented(format!(
                 "unsupported nesting list data type: {}",
                 other
             )));

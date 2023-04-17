@@ -440,6 +440,20 @@ pub fn create_hashes<'a>(
                     }
                 }
             }
+            DataType::Map(_, _) => {
+                let map_array = col.as_any().downcast_ref::<MapArray>().unwrap();
+                let key_array = map_array.keys();
+                let value_array = map_array.values();
+                let offsets_buffer = map_array.value_offsets();
+                let mut cur_offset = 0;
+                for (&next_offset,hash) in offsets_buffer.iter().skip(1).zip(hashes_buffer.iter_mut()){
+                    for idx in cur_offset..next_offset {
+                        update_map_hashes(key_array, idx, hash)?;
+                        update_map_hashes(value_array, idx, hash)?;
+                    }
+                    cur_offset = next_offset;
+                }
+            }
             DataType::Struct(_) => {
                 let struct_array = col.as_any().downcast_ref::<StructArray>().unwrap();
                 create_hashes(struct_array.columns(), hashes_buffer)?;
@@ -456,6 +470,110 @@ pub fn create_hashes<'a>(
     Ok(hashes_buffer)
 }
 
+
+macro_rules! hash_map_primitive {
+    ($array_type:ident, $column: ident, $ty: ident, $hash: ident, $idx: ident) => {
+        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+        *$hash = spark_compatible_murmur3_hash(
+            (array.value($idx as usize) as $ty).to_le_bytes(),
+            *$hash,
+        );
+    };
+}
+
+macro_rules! hash_map_binary {
+    ($array_type:ident, $column: ident, $hash: ident, $idx: ident) => {
+        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+        *$hash = spark_compatible_murmur3_hash(&array.value($idx as usize), *$hash);
+    };
+}
+
+macro_rules! hash_map_decimal {
+    ($array_type:ident, $column: ident, $hash: ident, $idx: ident) => {
+        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+        *$hash = spark_compatible_murmur3_hash(
+            array.value($idx as usize).to_le_bytes(),
+            *$hash,
+        );
+    };
+}
+
+fn update_map_hashes(
+    array: &ArrayRef,
+    idx: i32,
+    hash: &mut u32,
+) -> Result<()> {
+    if array.is_valid(idx as usize) {
+        match array.data_type() {
+            DataType::Boolean => {
+                let array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+                *hash = spark_compatible_murmur3_hash(
+                    ((if array.value(idx as usize) { 1 } else { 0 }) as i32).to_le_bytes(),
+                    *hash,
+                );
+            }
+            DataType::Int8 => {
+                hash_map_primitive!(Int8Array, array, i32, hash, idx);
+            }
+            DataType::Int16 => {
+                hash_map_primitive!(Int16Array, array, i32, hash, idx);
+            }
+            DataType::Int32 => {
+                hash_map_primitive!(Int32Array, array, i32, hash, idx);
+            }
+            DataType::Int64 => {
+                hash_map_primitive!(Int64Array, array, i64, hash, idx);
+            }
+            DataType::Float32 => {
+                hash_map_primitive!(Float32Array, array, f32, hash, idx);
+            }
+            DataType::Float64 => {
+                hash_map_primitive!(Float64Array, array, f64, hash, idx);
+            }
+            DataType::Timestamp(TimeUnit::Second, None) => {
+                hash_map_primitive!(TimestampSecondArray, array, i64, hash, idx);
+            }
+            DataType::Timestamp(TimeUnit::Millisecond, None) => {
+                hash_map_primitive!(TimestampMillisecondArray, array, i64, hash, idx);
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                hash_map_primitive!(TimestampMicrosecondArray, array, i64, hash, idx);
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                hash_map_primitive!(TimestampNanosecondArray, array, i64, hash, idx);
+            }
+            DataType::Date32 => {
+                hash_map_primitive!(Date32Array, array, i32, hash, idx);
+            }
+            DataType::Date64 => {
+                hash_map_primitive!(Date64Array, array, i64, hash, idx);
+            }
+            DataType::Binary => {
+                hash_map_binary!(BinaryArray, array, hash, idx);
+            }
+            DataType::LargeBinary => {
+                hash_map_binary!(LargeBinaryArray, array, hash, idx);
+            }
+            DataType::Utf8 => {
+                hash_map_binary!(StringArray, array, hash, idx);
+            }
+            DataType::LargeUtf8 => {
+                hash_map_binary!(LargeStringArray, array, hash, idx);
+            }
+            DataType::Decimal128(_, _) => {
+                hash_map_decimal!(Decimal128Array, array, hash, idx);
+            }
+            _ => {
+                return Err(DataFusionError::Internal(format!(
+                    "Unsupported map key/value data type in hasher: {}",
+                    array.data_type()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn pmod(hash: u32, n: usize) -> usize {
     let hash = hash as i32;
     let n = n as i32;
@@ -469,7 +587,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::spark_hash::{create_hashes, pmod, spark_compatible_murmur3_hash};
-    use arrow::array::{Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, ListArray, StringArray};
+    use arrow::array::{Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, ListArray, make_array, MapArray, StringArray, StructArray, UInt32Array};
     use arrow::buffer::Buffer;
     use arrow::datatypes::{BooleanType, DataType, Field, Int32Type, ToByteSlice};
     use bitvec::macros::internal::funty::Integral;
@@ -566,4 +684,119 @@ mod tests {
         let expected = vec![69, 5, 193, 171, 115];
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn test_map_array() {
+        // Construct key and values
+        let key_data = ArrayData::builder(DataType::Int32)
+            .len(8)
+            .add_buffer(Buffer::from(&[0, 1, 2, 3, 4, 5, 6, 7].to_byte_slice()))
+            .build()
+            .unwrap();
+        let value_data = ArrayData::builder(DataType::UInt32)
+            .len(8)
+            .add_buffer(Buffer::from(
+                &[0u32, 10, 20, 0, 40, 0, 60, 70].to_byte_slice(),
+            ))
+            .null_bit_buffer(Some(Buffer::from(&[0b11010110])))
+            .build()
+            .unwrap();
+
+        // Construct a buffer for value offsets, for the nested array:
+        //  [[0, 1, 2], [3, 4, 5], [6, 7]]
+        let entry_offsets = Buffer::from(&[0, 3, 6, 8].to_byte_slice());
+
+        let keys_field = Field::new("keys", DataType::Int32, false);
+        let values_field = Field::new("values", DataType::UInt32, true);
+        let entry_struct = StructArray::from(vec![
+            (keys_field.clone(), make_array(key_data)),
+            (values_field.clone(), make_array(value_data.clone())),
+        ]);
+
+        // Construct a map array from the above two
+        let map_data_type = DataType::Map(
+            Box::new(Field::new(
+                "entries",
+                entry_struct.data_type().clone(),
+                true,
+            )),
+            false,
+        );
+        let map_data = ArrayData::builder(map_data_type)
+            .len(3)
+            .add_buffer(entry_offsets)
+            .add_child_data(entry_struct.into_data())
+            .build()
+            .unwrap();
+        let map_array = MapArray::from(map_data.clone());
+
+        assert_eq!(&value_data, map_array.values().data());
+        assert_eq!(&DataType::UInt32, map_array.value_type());
+        assert_eq!(3, map_array.len());
+        assert_eq!(0, map_array.null_count());
+        assert_eq!(6, map_array.value_offsets()[2]);
+        assert_eq!(2, map_array.value_length(2));
+
+        let key_array = Arc::new(Int32Array::from(vec![0, 1, 2])) as ArrayRef;
+        let value_array =
+            Arc::new(UInt32Array::from(vec![None, Some(10u32), Some(20)])) as ArrayRef;
+        let struct_array = StructArray::from(vec![
+            (keys_field.clone(), key_array),
+            (values_field.clone(), value_array),
+        ]);
+        assert_eq!(
+            struct_array,
+            StructArray::from(map_array.value(0).into_data())
+        );
+        assert_eq!(
+            &struct_array,
+            unsafe { map_array.value_unchecked(0) }
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap()
+        );
+        for i in 0..3 {
+            assert!(map_array.is_valid(i));
+            assert!(!map_array.is_null(i));
+        }
+
+        // Now test with a non-zero offset
+        let map_data = ArrayData::builder(map_array.data_type().clone())
+            .len(2)
+            .offset(1)
+            .add_buffer(map_array.data().buffers()[0].clone())
+            .add_child_data(map_array.data().child_data()[0].clone())
+            .build()
+            .unwrap();
+        let map_array = MapArray::from(map_data);
+
+        assert_eq!(&value_data, map_array.values().data());
+        assert_eq!(&DataType::UInt32, map_array.value_type());
+        assert_eq!(2, map_array.len());
+        assert_eq!(0, map_array.null_count());
+        assert_eq!(6, map_array.value_offsets()[1]);
+        assert_eq!(2, map_array.value_length(1));
+
+        let key_array = Arc::new(Int32Array::from(vec![3, 4, 5])) as ArrayRef;
+        let value_array =
+            Arc::new(UInt32Array::from(vec![None, Some(40), None])) as ArrayRef;
+        let struct_array =
+            StructArray::from(vec![(keys_field, key_array), (values_field, value_array)]);
+        assert_eq!(
+            &struct_array,
+            map_array
+                .value(0)
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap()
+        );
+        assert_eq!(
+            &struct_array,
+            unsafe { map_array.value_unchecked(0) }
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap()
+        );
+    }
+
 }
