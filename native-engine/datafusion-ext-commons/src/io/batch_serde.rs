@@ -1016,8 +1016,10 @@ mod test {
     use arrow::record_batch::RecordBatch;
     use std::io::Cursor;
     use std::sync::Arc;
-    use arrow::datatypes::{DataType, Field, Int32Type};
+    use arrow::buffer::Buffer;
+    use arrow::datatypes::{DataType, Field, Int32Type, Schema, ToByteSlice};
     use arrow::datatypes::DataType::{Int32, Int64};
+    use arrow::util::bit_util;
 
     #[test]
     fn test_write_and_read_batch() {
@@ -1057,6 +1059,144 @@ mod test {
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
         write_batch(&sliced, &mut buf, true).unwrap();
+        let mut cursor = Cursor::new(buf);
+        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        assert_eq!(decoded_batch, sliced);
+    }
+
+    #[test]
+    fn test_write_and_read_batch_for_list_slice() {
+
+        let data1 = vec![
+            Some(vec![Some(0), Some(1), Some(2)]),
+            None,
+            Some(vec![Some(3), None, Some(5)]),
+            Some(vec![Some(6), Some(7)]),
+        ];
+        let list_array1 = Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(data1.clone()));
+
+        let list_array2 = Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(data1.clone()));
+
+        let list_array3 = Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(data1.clone()));
+
+
+        let schema = Schema::new(vec![
+            Field::new("", DataType::List(Box::new((Field::new("item", DataType::Int32, true)))), true),
+            Field::new("", DataType::List(Box::new((Field::new("item", DataType::Int32, true)))), true),
+            Field::new("", DataType::List(Box::new((Field::new("item", DataType::Int32, true)))), true),
+        ]);
+
+        let record_batch =
+            RecordBatch::try_new(Arc::new(schema), vec![list_array1, list_array2, list_array3])
+                .unwrap();
+        let sliced = record_batch.slice(0,2);
+
+        let mut buf = vec![];
+        write_batch(&sliced, &mut buf, true).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        assert_eq!(decoded_batch, sliced);
+    }
+
+    #[test]
+    fn test_write_and_read_batch_for_map_slice() {
+
+        let keys_data = ArrayData::builder(DataType::Int32)
+            .len(8)
+            .add_buffer(Buffer::from(&[0, 1, 2, 3, 4, 5, 6, 7].to_byte_slice()))
+            .build()
+            .unwrap();
+        let value_data = ArrayData::builder(DataType::UInt32)
+            .len(8)
+            .add_buffer(Buffer::from(
+                &[0u32, 10, 20, 0, 40, 0, 60, 70].to_byte_slice(),
+            ))
+            .null_bit_buffer(Some(Buffer::from(&[0b11010110])))
+            .build()
+            .unwrap();
+
+        // Construct a buffer for value offsets, for the nested array:
+        //  [[0, 1, 2], [3, 4, 5], [6, 7]]
+        let entry_offsets = Buffer::from(&[0, 3, 6, 8].to_byte_slice());
+
+        let keys = Field::new("", DataType::Int32, false);
+        let values = Field::new("", DataType::UInt32, true);
+        let entry_struct = StructArray::from(vec![
+            (keys, make_array(keys_data)),
+            (values, make_array(value_data)),
+        ]);
+
+        // Construct a map array from the above two
+        let map_data_type = DataType::Map(
+            Box::new(Field::new(
+                "entries",
+                entry_struct.data_type().clone(),
+                true,
+            )),
+            false,
+        );
+        let map_data = ArrayData::builder(map_data_type.clone())
+            .len(3)
+            .add_buffer(entry_offsets)
+            .add_child_data(entry_struct.into_data())
+            .build()
+            .unwrap();
+        let map_array1 = MapArray::from(map_data.clone());
+        let map_array2 = MapArray::from(map_data.clone());
+        let map_array3 = MapArray::from(map_data.clone());
+
+
+        let schema = Schema::new(vec![
+            Field::new("", map_data_type.clone(), false),
+            Field::new("", map_data_type.clone(), false),
+            Field::new("", map_data_type.clone(), false),
+        ]);
+
+
+        let record_batch =
+            RecordBatch::try_new(Arc::new(schema), vec![Arc::new(map_array1), Arc::new(map_array2), Arc::new(map_array3)])
+                .unwrap();
+        let sliced = record_batch.slice(1,2);
+        let mut buf = vec![];
+        write_batch(&sliced, &mut buf, true).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        assert_eq!(decoded_batch.columns(), sliced.columns());
+    }
+
+    #[test]
+    fn test_write_and_read_batch_for_struct_slice() {
+
+        let strings: ArrayRef = Arc::new(StringArray::from(vec![
+            Some("joe"),
+            None,
+            None,
+            Some("mark"),
+        ]));
+        let ints: ArrayRef =
+            Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
+
+        let arr1 =
+            StructArray::try_from(vec![("", strings.clone()), ("", ints.clone())])
+                .unwrap();
+
+
+        let schema = Schema::new(vec![
+            Field::new("", arr1.data_type().clone(), true),
+            Field::new("", arr1.data_type().clone(), true),
+            Field::new("", arr1.data_type().clone(), true),
+        ]);
+
+
+        let record_batch =
+            RecordBatch::try_new(Arc::new(schema), vec![Arc::new(arr1.clone()), Arc::new(arr1.clone()), Arc::new(arr1.clone())])
+                .unwrap();
+         let sliced = record_batch.slice(1,2);
+        let mut buf = vec![];
+        write_batch(&sliced, &mut buf, true).unwrap();
+
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
         assert_eq!(decoded_batch, sliced);
