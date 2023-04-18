@@ -26,6 +26,7 @@ import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.NullVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
+import org.apache.arrow.vector.TimeStampMicroVector;
 import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.UInt1Vector;
 import org.apache.arrow.vector.UInt2Vector;
@@ -185,8 +186,10 @@ public final class ArrowColumnVector extends ColumnVector {
       accessor = new BinaryAccessor((VarBinaryVector) vector);
     } else if (vector instanceof DateDayVector) {
       accessor = new DateAccessor((DateDayVector) vector);
+    } else if (vector instanceof TimeStampMicroVector) {
+      accessor = new TimestampAccessor((TimeStampMicroVector) vector);
     } else if (vector instanceof TimeStampMicroTZVector) {
-      accessor = new TimestampAccessor((TimeStampMicroTZVector) vector);
+      accessor = new TimestampTZAccessor((TimeStampMicroTZVector) vector);
     } else if (vector instanceof MapVector) {
       MapVector mapVector = (MapVector) vector;
       accessor = new MapAccessor(mapVector);
@@ -536,9 +539,24 @@ public final class ArrowColumnVector extends ColumnVector {
 
   private static class TimestampAccessor extends ArrowVectorAccessor {
 
+    private final TimeStampMicroVector accessor;
+
+    TimestampAccessor(TimeStampMicroVector vector) {
+      super(vector);
+      this.accessor = vector;
+    }
+
+    @Override
+    final long getLong(int rowId) {
+      return accessor.get(rowId);
+    }
+  }
+
+  private static class TimestampTZAccessor extends ArrowVectorAccessor {
+
     private final TimeStampMicroTZVector accessor;
 
-    TimestampAccessor(TimeStampMicroTZVector vector) {
+    TimestampTZAccessor(TimeStampMicroTZVector vector) {
       super(vector);
       this.accessor = vector;
     }

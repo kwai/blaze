@@ -122,10 +122,10 @@ import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
-import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveGenericUDF
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
+import org.apache.spark.sql.types.AtomicType
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
 import org.apache.spark.sql.types.ByteType
@@ -148,8 +148,6 @@ import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 import org.blaze.{protobuf => pb}
-
-import org.apache.spark.sql.types.AtomicType
 
 object NativeConverters extends Logging {
   def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
@@ -185,11 +183,12 @@ object NativeConverters extends Logging {
       case StringType => arrowTypeBuilder.setUTF8(pb.EmptyMessage.getDefaultInstance)
       case BinaryType => arrowTypeBuilder.setBINARY(pb.EmptyMessage.getDefaultInstance)
       case DateType => arrowTypeBuilder.setDATE32(pb.EmptyMessage.getDefaultInstance)
+
+      // timezone is never used in native side
       case TimestampType =>
         arrowTypeBuilder.setTIMESTAMP(
           pb.Timestamp
             .newBuilder()
-            .setTimezone(NativeHelper.tz)
             .setTimeUnit(pb.TimeUnit.Microsecond))
 
       // decimal
