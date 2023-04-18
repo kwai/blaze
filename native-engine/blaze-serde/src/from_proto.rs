@@ -77,9 +77,8 @@ use crate::{
     convert_box_required, convert_required, into_required, protobuf, DataType, Schema,
 };
 use crate::{from_proto_binary_op, proto_error};
-use datafusion::physical_plan::expressions::GetIndexedFieldExpr;
 use datafusion_ext_exprs::cast::TryCastExpr;
-use datafusion_ext_exprs::get_indexed_field::FixedSizeListGetIndexedFieldExpr;
+use datafusion_ext_exprs::get_indexed_field::GetIndexedFieldExpr;
 use datafusion_ext_exprs::get_map_value::GetMapValueExpr;
 use datafusion_ext_exprs::iif::IIfExpr;
 use datafusion_ext_exprs::named_struct::NamedStructExpr;
@@ -225,13 +224,6 @@ pub fn convert_physical_expr_to_logical_expr(
         Err(DataFusionError::Plan(
             "converting physical GetIndexedFieldExpr to logical is not supported"
                 .to_string(),
-        ))
-    } else if expr
-        .downcast_ref::<FixedSizeListGetIndexedFieldExpr>()
-        .is_some()
-    {
-        Err(DataFusionError::Plan(
-            "converting physical FixedSizeListGetIndexedFieldExpr to logical is not supported".to_string()
         ))
     } else {
         Err(DataFusionError::Plan(
@@ -1077,12 +1069,7 @@ fn try_parse_physical_expr(
         ExprType::GetIndexedFieldExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             let key = convert_required!(e.key)?;
-            match expr.data_type(input_schema)? {
-                DataType::FixedSizeList(_, _) => {
-                    Arc::new(FixedSizeListGetIndexedFieldExpr::new(expr, key))
-                }
-                _ => Arc::new(GetIndexedFieldExpr::new(expr, key)),
-            }
+            Arc::new(GetIndexedFieldExpr::new(expr, key))
         }
         ExprType::GetMapValueExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
