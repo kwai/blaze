@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
 use crate::error::PlanSerDeError;
-use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
+use arrow::datatypes::{DataType, Field, Fields, IntervalUnit, Schema, TimeUnit};
 use datafusion::logical_expr::Operator;
 use datafusion::physical_plan::joins::utils::JoinSide;
 use datafusion::prelude::JoinType;
@@ -224,7 +225,7 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                 protobuf::TimeUnit::from_i32_to_arrow(*time_unit)?,
                 match timezone.len() {
                     0 => None,
-                    _ => Some(timezone.to_owned()),
+                    _ => Some(timezone.to_owned().into()),
                 },
             ),
             arrow_type::ArrowTypeEnum::Time32(time_unit) => {
@@ -247,7 +248,7 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     .as_ref()
                     .ok_or_else(|| proto_error("Protobuf deserialization error: List message missing required field 'field_type'"))?
                     .as_ref();
-                DataType::List(Box::new(list_type.try_into()?))
+                DataType::List(Arc::new(list_type.try_into()?))
             }
             arrow_type::ArrowTypeEnum::LargeList(list) => {
                 let list_type: &protobuf::Field = list
@@ -256,7 +257,7 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     .as_ref()
                     .ok_or_else(|| proto_error("Protobuf deserialization error: List message missing required field 'field_type'"))?
                     .as_ref();
-                DataType::LargeList(Box::new(list_type.try_into()?))
+                DataType::LargeList(Arc::new(list_type.try_into()?))
             }
             arrow_type::ArrowTypeEnum::FixedSizeList(list) => {
                 let list_type: &protobuf::Field = list
@@ -266,14 +267,14 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     .ok_or_else(|| proto_error("Protobuf deserialization error: List message missing required field 'field_type'"))?
                     .as_ref();
                 let list_size = list.list_size;
-                DataType::FixedSizeList(Box::new(list_type.try_into()?), list_size)
+                DataType::FixedSizeList(Arc::new(list_type.try_into()?), list_size)
             }
             arrow_type::ArrowTypeEnum::Struct(strct) => DataType::Struct(
                 strct
                     .sub_field_types
                     .iter()
-                    .map(|field| field.try_into())
-                    .collect::<Result<Vec<_>, _>>()?,
+                    .map(|field| Ok(Arc::new(field.try_into()?)))
+                    .collect::<Result<Fields, Self::Error>>()?,
             ),
             arrow_type::ArrowTypeEnum::Union(_union) => {
                 // let union_mode = protobuf::UnionMode::from_i32(union.union_mode)
@@ -308,8 +309,11 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     .ok_or_else(|| proto_error("Protobuf deserialization error: Map message missing required field 'value_type'"))?
                     .as_ref();
 
-                let vec_field = vec![key_type.try_into()?, value_type.try_into()?];
-                let fields = Box::new(Field::new("entries", DataType::Struct(vec_field), false));
+                let vec_field = vec![
+                    Arc::new(key_type.try_into()?),
+                    Arc::new(value_type.try_into()?),
+                ];
+                let fields = Arc::new(Field::new("entries", DataType::Struct(vec_field.into()), false));
                 DataType::Map(fields, false)
             }
             arrow_type::ArrowTypeEnum::Dictionary(dict) => {
@@ -394,7 +398,7 @@ impl TryInto<DataType> for &Box<protobuf::List> {
             Some(pb_field) => {
                 let pb_field_ref = pb_field.as_ref();
                 let arrow_field: Field = pb_field_ref.try_into()?;
-                Ok(DataType::List(Box::new(arrow_field)))
+                Ok(DataType::List(Arc::new(arrow_field)))
             }
             None => Err(proto_error(
                 "List message missing required field 'field_type'",
@@ -515,7 +519,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                 let scalar_type: DataType = pb_scalar_type.try_into()?;
                 ScalarValue::List(
                     Some(typechecked_values),
-                    Box::new(Field::new("items", scalar_type, true)),
+                    Arc::new(Field::new("items", scalar_type, true)),
                 )
             }
             protobuf::scalar_value::Value::NullListValue(v) => {
@@ -524,7 +528,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                     .as_ref()
                     .ok_or_else(|| proto_error("Protobuf deserialization error: NullListValue message missing required field 'datatyp'"))?;
                 let scalar_type = pb_datatype.try_into()?;
-                ScalarValue::List(None, Box::new(Field::new("items", scalar_type, true)))
+                ScalarValue::List(None, Arc::new(Field::new("items", scalar_type, true)))
             }
             protobuf::scalar_value::Value::NullValue(v) => {
                 let null_type_enum = protobuf::PrimitiveScalarType::from_i32(*v)
@@ -578,14 +582,14 @@ impl TryInto<DataType> for &protobuf::scalar_type::Datatype {
                     ))
                 })?;
                 //Because length is checked above it is safe to unwrap .last()
-                let mut scalar_type = DataType::List(Box::new(Field::new(
+                let mut scalar_type = DataType::List(Arc::new(Field::new(
                     field_names.last().unwrap().as_str(),
                     pb_scalar_type.into(),
                     true,
                 )));
                 //Iterate over field names in reverse order except for the last item in the vector
                 for name in field_names.iter().rev().skip(1) {
-                    let new_datatype = DataType::List(Box::new(Field::new(
+                    let new_datatype = DataType::List(Arc::new(Field::new(
                         name.as_str(),
                         scalar_type,
                         true,
@@ -648,7 +652,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
             protobuf::scalar_value::Value::ListValue(v) => v.try_into()?,
             protobuf::scalar_value::Value::NullListValue(v) => ScalarValue::List(
                 None,
-                Box::new(Field::new("items", v.try_into()?, true)),
+                Arc::new(Field::new("items", v.try_into()?, true)),
             ),
             protobuf::scalar_value::Value::NullValue(null_enum) => {
                 PrimitiveScalarType::from_i32(*null_enum)
@@ -701,7 +705,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
                     .collect::<Result<Vec<_>, _>>()?;
                 datafusion::scalar::ScalarValue::List(
                     Some(typechecked_values),
-                    Box::new(Field::new(
+                    Arc::new(Field::new(
                         "items",
                         leaf_scalar_type.try_into().map_err(|err| {
                             PlanSerDeError::General(format!(
@@ -756,7 +760,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
                         0 => None,
                         _ => Some(typechecked_values),
                     },
-                    Box::new(Field::new("items", list_type.try_into()?, true)),
+                    Arc::new(Field::new("items", list_type.try_into()?, true)),
                 )
             }
         };
@@ -780,7 +784,7 @@ impl TryInto<DataType> for &protobuf::ScalarListType {
             ));
         }
 
-        let mut curr_type = DataType::List(Box::new(Field::new(
+        let mut curr_type = DataType::List(Arc::new(Field::new(
             //Since checked vector is not empty above this is safe to unwrap
             field_names.last().unwrap(),
             PrimitiveScalarType::from_i32(*deepest_type)
@@ -793,7 +797,7 @@ impl TryInto<DataType> for &protobuf::ScalarListType {
         //Iterates over field names in reverse order except for the last item in the vector
         for name in field_names.iter().rev().skip(1) {
             let temp_curr_type =
-                DataType::List(Box::new(Field::new(name, curr_type, true)));
+                DataType::List(Arc::new(Field::new(name, curr_type, true)));
             curr_type = temp_curr_type;
         }
         Ok(curr_type)

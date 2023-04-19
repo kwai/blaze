@@ -8,12 +8,12 @@ resolver = "1"
 default = ["arrow/ffi", "datafusion/simd", "tokio/rt-multi-thread"]
 
 [dependencies]
-arrow = "34.0.0"
+arrow = "37.0.0"
 async-trait = "0.1.56"
 bitvec = "1.0.1"
 blaze-commons = { path = "../blaze-commons" }
 bytesize = "1.1.0"
-datafusion = "20.0.0"
+datafusion = "22.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "../datafusion-ext-exprs" }
 derivative = "2.2.0"
@@ -29,5 +29,5 @@ parking_lot = "0.12.1"
 paste = "1.0.7"
 tempfile = "3"
 tokio = "1.19"
-zstd = "0.12.3+zstd.1.5.2"
+zstd = "0.12.3"
 num = "0.4.0"

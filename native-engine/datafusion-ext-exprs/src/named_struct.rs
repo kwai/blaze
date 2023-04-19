@@ -117,7 +117,7 @@ impl PhysicalExpr for NamedStructExpr {
                         | DataType::Date32
                         | DataType::Date64
                         | DataType::Timestamp(TimeUnit::Microsecond, _)
-                        => Ok((field_store, arg.clone(),
+                        => Ok((field_store.as_ref().clone(), arg.clone(),
                         )),
                         data_type => Err(DataFusionError::NotImplemented(format!(
                             "NamedStruct is not implemented for type '{:?}'.",

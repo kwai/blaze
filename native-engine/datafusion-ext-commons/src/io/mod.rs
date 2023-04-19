@@ -17,7 +17,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 use arrow::array::{Array, ArrayData, make_array};
 
-use arrow::datatypes::{DataType, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Fields, Schema, SchemaRef};
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 
@@ -80,80 +80,62 @@ pub fn name_batch(
     batch: &RecordBatch,
     name_schema: &SchemaRef,
 ) -> ArrowResult<RecordBatch> {
-        let row_count = batch.num_rows();
-        let schema = Arc::new(Schema::new(
-            batch
-                .schema()
-                .fields()
-                .iter()
-                .enumerate()
-                .map(|(i, _)|name_schema.field(i).clone())
-                .collect(),
-        ));
-        RecordBatch::try_new_with_options(
-            schema.clone(),
-            batch
-                .columns()
-                .iter()
-                .enumerate()
-                .map(|(i, column)|
-                    match schema.field(i).data_type() {
-                        DataType::Struct(_) => {
-                            let null_buffer = if column.data().null_buffer().is_some() {
-                                Some(column.data().null_buffer().unwrap().clone())
-                            } else {
-                                None
-                            };
-
-                            make_array(ArrayData::try_new(
-                                schema.field(i).data_type().clone(),
-                                column.data().len(),
-                                null_buffer,
-                                column.data().offset(),
-                                column.data().buffers().to_vec(),
-                                column.data().child_data().to_vec(),
-                            ).unwrap())
-                        }
-                        DataType::Map(field, _) => {
-
-                            let child_nameless_data = column.data().child_data().get(0).unwrap();
-                            let child_null_buffer = if child_nameless_data.null_buffer().is_some() {
-                                Some(child_nameless_data.null_buffer().unwrap().clone())
-                            } else {
-                                None
-                            };
-                            let child_data = ArrayData::try_new(
-                                field.data_type().clone(),
-                                child_nameless_data.len(),
-                                child_null_buffer,
-                                child_nameless_data.offset(),
-                                child_nameless_data.buffers().to_vec(),
-                                child_nameless_data.child_data().to_vec(),
-                            ).unwrap();
-
-                            let null_buffer = if column.data().null_buffer().is_some() {
-                                Some(column.data().null_buffer().unwrap().clone())
-                            } else {
-                                None
-                            };
-
-                            make_array(ArrayData::try_new(
-                                schema.field(i).data_type().clone(),
-                                column.data().len(),
-                                null_buffer,
-                                column.data().offset(),
-                                column.data().buffers().to_vec(),
-                                vec![child_data],
-                            ).unwrap())
-                        }
-                        _ => {
-                            column.clone()
-                        }
+    let row_count = batch.num_rows();
+    let schema = Arc::new(Schema::new(
+        batch
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(i, _)|name_schema.field(i).clone())
+            .collect::<Fields>(),
+    ));
+    RecordBatch::try_new_with_options(
+        schema.clone(),
+        batch
+            .columns()
+            .iter()
+            .enumerate()
+            .map(|(i, column)| {
+                let column_data = column.to_data();
+                Ok(match schema.field(i).data_type() {
+                    DataType::Struct(_) => {
+                        make_array(ArrayData::try_new(
+                            schema.field(i).data_type().clone(),
+                            column_data.len(),
+                            column_data.nulls().map(|nb| nb.buffer().clone()),
+                            column_data.offset(),
+                            column_data.buffers().to_vec(),
+                            column_data.child_data().to_vec(),
+                        )?)
                     }
-                )
-                .collect(),
-            &RecordBatchOptions::new().with_row_count(Some(row_count)),
-        )
+                    DataType::Map(field, _) => {
+                        let child_nameless_data = column_data.child_data().get(0).unwrap();
+                        let child_data = ArrayData::try_new(
+                            field.data_type().clone(),
+                            child_nameless_data.len(),
+                            child_nameless_data.nulls().map(|nb| nb.buffer().clone()),
+                            child_nameless_data.offset(),
+                            child_nameless_data.buffers().to_vec(),
+                            child_nameless_data.child_data().to_vec(),
+                        )?;
+                        make_array(ArrayData::try_new(
+                            schema.field(i).data_type().clone(),
+                            column_data.len(),
+                            column_data.nulls().map(|nb| nb.buffer().clone()),
+                            column_data.offset(),
+                            column_data.buffers().to_vec(),
+                            vec![child_data],
+                        )?)
+                    }
+                    _ => {
+                        column.clone()
+                    }
+                })
+            })
+            .collect::<ArrowResult<_>>()?,
+        &RecordBatchOptions::new().with_row_count(Some(row_count)),
+    )
 }
 
 pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> ArrowResult<()> {

@@ -264,12 +264,12 @@ pub fn create_agg(
         }
         AggFunction::CollectList => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = DataType::List(Box::new(Field::new("item", arg_type.clone(), true)));
+            let return_type = DataType::List(Arc::new(Field::new("item", arg_type.clone(), true)));
             Arc::new(collect_list::AggCollectList::try_new(children[0].clone(), return_type, arg_type)?)
         }
         AggFunction::CollectSet => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = DataType::List(Box::new(Field::new("item", arg_type.clone(), true)));
+            let return_type = DataType::List(Arc::new(Field::new("item", arg_type.clone(), true)));
             Arc::new(collect_set::AggCollectSet::try_new(children[0].clone(), return_type, arg_type)?)
         }
     })

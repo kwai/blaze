@@ -15,7 +15,7 @@
 use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggBuf};
 use crate::agg::{Agg, AGG_BUF_COLUMN_NAME, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr};
 use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
 use datafusion::common::cast::as_binary_array;
@@ -72,7 +72,7 @@ impl AggContext {
                         grouping.expr.nullable(&input_schema)?,
                     ))
                 })
-                .collect::<Result<_>>()?,
+                .collect::<Result<Fields>>()?,
         ));
 
         // final aggregates may not exist along with partial/partial-merge
@@ -109,8 +109,8 @@ impl AggContext {
         let agg_schema = Arc::new(Schema::new(agg_fields));
         let output_schema = Arc::new(Schema::new(
             [
-                grouping_schema.fields().clone(),
-                agg_schema.fields().clone(),
+                grouping_schema.fields().to_vec(),
+                agg_schema.fields().to_vec(),
             ]
             .concat(),
         ));

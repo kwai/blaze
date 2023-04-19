@@ -18,7 +18,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use arrow::datatypes::{Field, Schema, SchemaRef};
+use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::error::DataFusionError;
@@ -74,7 +74,7 @@ impl RenameColumnsExec {
                 .map(|(new_name, field)| {
                     Field::new(new_name, field.data_type().clone(), field.is_nullable())
                 })
-                .collect(),
+                .collect::<Fields>(),
         ));
 
         Ok(Self {

@@ -67,8 +67,8 @@ impl GenerateExec {
         ));
         let output_schema = Arc::new(Schema::new(
             [
-                required_child_output_schema.fields().clone(),
-                generator_output_schema.fields().clone(),
+                required_child_output_schema.fields().to_vec(),
+                generator_output_schema.fields().to_vec(),
             ].concat()
         ));
         Ok(Self {
@@ -182,7 +182,12 @@ async fn execute_generate(
 ) -> Result<SendableRecordBatchStream> {
 
     output_with_sender("Generate", output_schema.clone(), move |sender| async move {
-        while let Some(batch) = input_stream.next().await.transpose()? {
+        while let Some(batch) = input_stream
+            .next()
+            .await
+            .transpose()
+            .map_err(|err| err.context("generate: polling batches from input error"))?
+        {
             let mut timer = metrics.elapsed_compute().timer();
 
             // evaluate child output
@@ -191,11 +196,14 @@ async fn execute_generate(
                 .map(|column| column
                     .evaluate(&batch)
                     .map(|r| r.into_array(batch.num_rows())))
-                .collect::<Result<Vec<_>>>()?;
+                .collect::<Result<Vec<_>>>()
+                .map_err(|err| err.context("generate: evaluating child output arrays error"))?;
 
             // evaluate generated output
             let (generated_arrays, child_output_row_ids) =
-                generator.eval(&batch)?;
+                generator
+                    .eval(&batch)
+                    .map_err(|err| err.context("generate: evaluating generator error"))?;
 
             let (generated_arrays, child_output_row_ids) = if !outer {
                 (generated_arrays, child_output_row_ids)

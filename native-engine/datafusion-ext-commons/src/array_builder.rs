@@ -330,7 +330,7 @@ pub fn builder_extend(
                     t.append(true);
                 }
                 else {
-                    builder_append_null(t, &Struct($fields));
+                    builder_append_null(t, &Struct($fields.iter().cloned().collect()));
                 }
 
             }
@@ -389,7 +389,7 @@ pub fn builder_extend(
                 unimplemented!("map field not support {}", field)
             }
         }
-        DataType::Struct(fields) => append_struct!(fields.to_vec()),
+        DataType::Struct(fields) => append_struct!(fields),
         dt => unimplemented!("data type not supported in builder_extend: {:?}", dt),
     }
 }

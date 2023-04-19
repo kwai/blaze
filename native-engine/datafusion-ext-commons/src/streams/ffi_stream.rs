@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{make_array_from_raw, StructArray};
+use arrow::array::{ArrayData, StructArray};
 use arrow::datatypes::SchemaRef;
-use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use arrow::ffi::{ArrowArray, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use blaze_commons::{jni_call, jni_new_object};
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::Result;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
 use datafusion::physical_plan::RecordBatchStream;
@@ -85,25 +85,22 @@ impl FFIReaderStream {
         )?;
 
         // load batch from ffi
-        let mut ffi_arrow_schema = Box::new(FFI_ArrowSchema::empty());
-        let mut ffi_arrow_array = Box::new(FFI_ArrowArray::empty());
+        let mut ffi_arrow_schema = FFI_ArrowSchema::empty();
+        let mut ffi_arrow_array = FFI_ArrowArray::empty();
 
         let ffi_arrow_schema_ptr = jni_new_object!(JavaLong(
-            ffi_arrow_schema.as_mut() as *mut FFI_ArrowSchema as i64
+            &mut ffi_arrow_schema as *mut FFI_ArrowSchema as i64
         ))?;
         let ffi_arrow_array_ptr = jni_new_object!(JavaLong(
-            ffi_arrow_array.as_mut() as *mut FFI_ArrowArray as i64
+            &mut ffi_arrow_array as *mut FFI_ArrowArray as i64
         ))?;
         let _unit = jni_call!(ScalaFunction2(consumer.as_obj()).apply(
             ffi_arrow_schema_ptr.as_obj(),
             ffi_arrow_array_ptr.as_obj(),
         ) -> JObject)?;
 
-        let imported = unsafe {
-            make_array_from_raw(ffi_arrow_array.as_ref(), ffi_arrow_schema.as_ref())
-                .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
-        };
-        let struct_array = imported.as_any().downcast_ref::<StructArray>().unwrap();
+        let imported = ArrowArray::new(ffi_arrow_array, ffi_arrow_schema);
+        let struct_array = StructArray::from(ArrayData::try_from(imported)?);
         let batch = RecordBatch::from(struct_array);
 
         self.size_counter.add(batch_byte_size(&batch));

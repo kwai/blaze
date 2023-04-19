@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 use arrow::array::ArrayRef;
-use arrow::datatypes::{Field, SchemaRef};
+use arrow::datatypes::{FieldRef, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::{RowConverter, SortField};
@@ -30,9 +33,6 @@ use datafusion::physical_plan::{
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 
 use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::{AggTables, InMemTable};
@@ -144,23 +144,26 @@ async fn execute_agg(
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     match agg_ctx.exec_mode {
+        _ if !agg_ctx.groupings.is_empty() => {
+            execute_agg_with_grouping_hash(
+                input, context, agg_ctx, partition_id, metrics
+            )
+            .await
+            .map_err(|err| err.context("agg: execute_agg_with_grouping_hash() error"))
+        }
         AggExecMode::HashAgg => {
-            if !agg_ctx.groupings.is_empty() {
-                execute_agg_with_grouping_hash(
-                    input,
-                    context,
-                    agg_ctx,
-                    partition_id,
-                    metrics,
-                )
-                .await
-            } else {
-                execute_agg_no_grouping(input, context, agg_ctx, partition_id, metrics)
-                    .await
-            }
+            execute_agg_no_grouping(
+                input, context, agg_ctx, partition_id, metrics
+            )
+            .await
+            .map_err(|err| err.context("agg: execute_agg_no_grouping() error"))
         }
         AggExecMode::SortAgg => {
-            execute_agg_sorted(input, context, agg_ctx, partition_id, metrics).await
+            execute_agg_sorted(
+                input, context, agg_ctx, partition_id, metrics
+            )
+            .await
+            .map_err(|err| err.context("agg: execute_agg_sorted() error"))
         }
     }
 }
@@ -181,7 +184,7 @@ async fn execute_agg_with_grouping_hash(
             .grouping_schema
             .fields()
             .iter()
-            .map(|field: &Field| SortField::new(field.data_type().clone()))
+            .map(|field: &FieldRef| SortField::new(field.data_type().clone()))
             .collect(),
     )?;
 
@@ -204,7 +207,12 @@ async fn execute_agg_with_grouping_hash(
             .elapsed_compute()
             .clone(),
     ));
-    while let Some(input_batch) = coalesced.next().await.transpose()? {
+    while let Some(input_batch) = coalesced
+        .next()
+        .await
+        .transpose()
+        .map_err(|err| err.context("agg: polling batches from input error"))?
+    {
         let _timer = baseline_metrics.elapsed_compute().timer();
 
         // compute grouping rows
@@ -213,7 +221,8 @@ async fn execute_agg_with_grouping_hash(
             .iter()
             .map(|grouping: &GroupingExpr| grouping.expr.evaluate(&input_batch))
             .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
-            .collect::<Result<_>>()?;
+            .collect::<Result<_>>()
+            .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
         let grouping_rows: Vec<Box<[u8]>> = grouping_row_converter
             .convert_columns(&grouping_arrays)?
             .into_iter()
@@ -221,8 +230,12 @@ async fn execute_agg_with_grouping_hash(
             .collect();
 
         // compute input arrays
-        let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
-        let agg_buf_array = agg_ctx.get_input_agg_buf_array(&input_batch)?;
+        let input_arrays = agg_ctx
+            .create_input_arrays(&input_batch)
+            .map_err(|err| err.context("agg: evaluating input arrays error"))?;
+        let agg_buf_array = agg_ctx
+            .get_input_agg_buf_array(&input_batch)
+            .map_err(|err| err.context("agg: evaluating input agg-buf arrays error"))?;
 
         // update to in-mem table
         tables
@@ -243,7 +256,8 @@ async fn execute_agg_with_grouping_hash(
     output_with_sender("Agg", agg_ctx.output_schema.clone(), |sender| async move {
         tables
             .output(grouping_row_converter, baseline_metrics, sender)
-            .await?;
+            .await
+            .map_err(|err| err.context("agg: executing output error"))?;
         Ok(())
     })
 }
@@ -269,11 +283,19 @@ async fn execute_agg_no_grouping(
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = elapsed_compute.timer();
 
-        let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
-        agg_ctx.partial_update_input_all(&mut agg_buf, &input_arrays)?;
+        let input_arrays = agg_ctx
+            .create_input_arrays(&input_batch)
+            .map_err(|err| err.context("agg: evaluating input arrays error"))?;
+        agg_ctx
+            .partial_update_input_all(&mut agg_buf, &input_arrays)
+            .map_err(|err| err.context("agg: executing partial_update_input_all() error"))?;
 
-        let agg_buf_array = agg_ctx.get_input_agg_buf_array(&input_batch)?;
-        agg_ctx.partial_merge_input_all(&mut agg_buf, agg_buf_array)?;
+        let agg_buf_array = agg_ctx
+            .get_input_agg_buf_array(&input_batch)
+            .map_err(|err| err.context("agg: evaluating input agg-buf arrays error"))?;
+        agg_ctx
+            .partial_merge_input_all(&mut agg_buf, agg_buf_array)
+            .map_err(|err| err.context("agg: executing partial_merge_input_all() error"))?;
     }
 
     // output
@@ -319,7 +341,7 @@ async fn execute_agg_sorted(
             .grouping_schema
             .fields()
             .iter()
-            .map(|field: &Field| SortField::new(field.data_type().clone()))
+            .map(|field: &FieldRef| SortField::new(field.data_type().clone()))
             .collect(),
     )?;
 
@@ -344,7 +366,8 @@ async fn execute_agg_sorted(
                 .iter()
                 .map(|grouping: &GroupingExpr| grouping.expr.evaluate(&input_batch))
                 .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
-                .collect::<Result<_>>()?;
+                .collect::<Result<_>>()
+                .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
             let grouping_rows: Vec<Box<[u8]>> = grouping_row_converter
                 .convert_columns(&grouping_arrays)?
                 .into_iter()
@@ -352,8 +375,12 @@ async fn execute_agg_sorted(
                 .collect();
 
             // compute input arrays
-            let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
-            let agg_buf_array = agg_ctx.get_input_agg_buf_array(&input_batch)?;
+            let input_arrays = agg_ctx
+                .create_input_arrays(&input_batch)
+                .map_err(|err| err.context("agg: evaluating input arrays error"))?;
+            let agg_buf_array = agg_ctx
+                .get_input_agg_buf_array(&input_batch)
+                .map_err(|err| err.context("agg: evaluating input agg-buf arrays error"))?;
 
             // update to current record
             for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
@@ -388,8 +415,12 @@ async fn execute_agg_sorted(
                     }
                 }
                 let agg_buf = &mut current_record.as_mut().unwrap().agg_buf;
-                agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
-                agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
+                agg_ctx
+                    .partial_update_input(agg_buf, &input_arrays, row_idx)
+                    .map_err(|err| err.context("agg: executing partial_update_input() error"))?;
+                agg_ctx
+                    .partial_merge_input(agg_buf, agg_buf_array, row_idx)
+                    .map_err(|err| err.context("agg: executing partial_merge_input() error"))?;
             }
         }
 

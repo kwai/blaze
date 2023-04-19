@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
@@ -21,7 +22,6 @@ use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
 use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::StreamExt;
-use std::sync::Arc;
 use datafusion::error::DataFusionError;
 use crate::common::onheap_spill::OnHeapSpill;
 use crate::common::output_with_sender;
@@ -60,10 +60,16 @@ impl dyn ShuffleRepartitioner {
             while let Some(batch) = coalesced.next().await.transpose()? {
                 let _timer = metrics.elapsed_compute().timer();
                 metrics.record_output(batch.num_rows());
-                self.insert_batch(batch).await?;
+                self
+                    .insert_batch(batch)
+                    .await
+                    .map_err(|err| err.context("shuffle: executing insert_batch() error"))?;
             }
             let _timer = metrics.elapsed_compute().timer();
-            self.shuffle_write().await?;
+            self
+                .shuffle_write()
+                .await
+                .map_err(|err| err.context("shuffle: executing shuffle_write() error"))?;
             Ok::<_, DataFusionError>(())
         })
     }

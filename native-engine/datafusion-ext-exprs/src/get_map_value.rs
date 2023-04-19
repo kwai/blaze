@@ -267,7 +267,7 @@ fn get_data_type_field(data_type: &DataType) -> Result<Field> {
     match data_type {
         DataType::Map(field, _) => {
             if let DataType::Struct(fields) = field.data_type() {
-                Ok(fields.last().unwrap().clone())
+                Ok(fields[1].as_ref().clone()) // values field
             } else {
                 Err(DataFusionError::NotImplemented("Map field only support Struct".to_string()))
             }

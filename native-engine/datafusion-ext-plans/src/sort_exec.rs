@@ -241,11 +241,17 @@ async fn external_sort(
 
     // insert and sort
     while let Some(batch) = input.next().await.transpose()? {
-        sorter.insert_batch(batch).await?;
+        sorter
+            .insert_batch(batch)
+            .await
+            .map_err(|err| err.context("sort: executing insert_batch() error"))?;
     }
 
     output_with_sender("Sort", input.schema(), |sender| async move {
-        sorter.output(sender).await?;
+        sorter
+            .output(sender)
+            .await
+            .map_err(|err| err.context("sort: executing output() error"))?;
         Ok(())
     })
 }

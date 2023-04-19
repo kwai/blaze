@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::sync::{Arc, Mutex as SyncMutex};
-use arrow::datatypes::{Field, Schema, SchemaRef};
+use arrow::datatypes::{Field, FieldRef, Fields, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use arrow::row::{RowConverter, Rows, SortField};
 use datafusion::common::Result;
@@ -44,11 +44,11 @@ impl WindowContext {
     ) -> Result<Self> {
 
         let output_schema = Arc::new(Schema::new(vec![
-            input_schema.fields().clone(),
+            input_schema.fields().to_vec(),
             window_exprs
                 .iter()
                 .map(|expr: &WindowExpr| expr.field.clone())
-                .collect::<Vec<_>>()
+                .collect::<Vec<FieldRef>>()
         ].concat()));
 
         let partition_schema = Arc::new(Schema::new(partition_spec
@@ -60,7 +60,7 @@ impl WindowContext {
                     expr.nullable(&input_schema)?,
                 ))
             })
-            .collect::<Result<_>>()?));
+            .collect::<Result<Fields>>()?));
 
         let order_schema = Arc::new(Schema::new(order_spec
             .iter()
@@ -71,14 +71,14 @@ impl WindowContext {
                     expr.expr.nullable(&input_schema)?,
                 ))
             })
-            .collect::<Result<_>>()?));
+            .collect::<Result<Fields>>()?));
 
         let partition_row_converter = Arc::new(SyncMutex::new(
             RowConverter::new(partition_schema
                 .fields()
                 .iter()
-                .map(|field: &Field| SortField::new(field.data_type().clone()))
-                .collect())?
+                .map(|field: &FieldRef| SortField::new(field.data_type().clone()))
+                .collect::<_>())?
         ));
         let order_row_converter = Arc::new(SyncMutex::new(
             RowConverter::new(order_schema

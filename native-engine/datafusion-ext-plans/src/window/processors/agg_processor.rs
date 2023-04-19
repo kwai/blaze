@@ -77,7 +77,8 @@ impl WindowFunctionProcessor for AggProcessor {
                 &self.agg_buf_addrs,
                 &children_cols,
                 row_idx,
-            )?;
+            ).map_err(|err| err.context("window: agg_processor partial_update() error"))?;
+
             output.push(
                 self.agg.final_merge(
                     &mut self.agg_buf.clone(),

@@ -54,7 +54,7 @@ pub fn write_batch<W: Write>(
     // write whether arrays have null buffers (which may differ from nullables)
     let mut has_null_buffers = BitVec::<u8>::with_capacity(batch.num_columns());
     for array in batch.columns() {
-        has_null_buffers.push(array.data().null_buffer().is_some());
+        has_null_buffers.push(array.to_data().nulls().is_some());
     }
     output.write_all(&has_null_buffers.into_vec())?;
 
@@ -96,7 +96,7 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
             .iter()
             .enumerate()
             .map(|(i, data_type)| Field::new("", data_type.clone(), nullables[i]))
-            .collect(),
+            .collect::<Fields>()
     ));
 
     // read columns
@@ -204,7 +204,7 @@ fn read_array<R: Read>(
         DataType::Map(map_field, is_sorted) =>
             read_map_array(num_rows, has_null_buffer, input, &map_field, *is_sorted)?,
         DataType::Struct(fields) =>
-            read_struct_array(num_rows, has_null_buffer, input, &fields)?,
+            read_struct_array(num_rows, has_null_buffer, input, fields)?,
         other => {
             return Err(ArrowError::IoError(format!(
                 "unsupported data type: {}",
@@ -354,7 +354,7 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
             let tz_len = read_len(input)?;
             let tz_bytes = read_bytes_slice(input, tz_len)?;
             let tz = String::from_utf8_lossy(&tz_bytes).to_string();
-            DataType::Timestamp(TimeUnit::Microsecond, Some(tz))
+            DataType::Timestamp(TimeUnit::Microsecond, Some(tz.into()))
         },
         17 => {
             let prec = read_u8(input)?;
@@ -366,7 +366,7 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
         20 => {
             let child_datatype = read_data_type(input)?;
             let is_nullable = if read_u8(input)? == 1 {true} else {false};
-            DataType::List(Box::new(Field::new("item", child_datatype, is_nullable)))
+            DataType::List(Arc::new(Field::new("item", child_datatype, is_nullable)))
         }
         21 => {
             let is_sorted = if read_u8(input)? == 1 {true} else {false};
@@ -377,7 +377,9 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
                 let field_is_nullable = if read_u8(input)? == 1 {true} else {false};
                 fields.push(Field::new("", field_data_type, field_is_nullable));
             }
-            DataType::Map(Box::new(Field::new("entries", DataType::Struct(fields), is_nullable)), is_sorted)
+            let entries_field =
+                Field::new("entries", DataType::Struct(fields.into()), is_nullable);
+            DataType::Map(Arc::new(entries_field), is_sorted)
 
         }
         22 => {
@@ -388,7 +390,7 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
                 let field_is_nullable = if read_u8(input)? == 1 {true} else {false};
                 fields.push(Field::new("", field_data_type, field_is_nullable));
             }
-            DataType::Struct(fields)
+            DataType::Struct(fields.into())
         }
         other => {
             return Err(ArrowError::NotYetImplemented(format!(
@@ -406,11 +408,14 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     let item_size = PT::get_byte_width();
     let offset = array.offset();
     let len = array.len();
-    if let Some(null_buffer) = array.data().null_buffer() {
-        write_bits_buffer(null_buffer, offset, len, output)?;
+    if let Some(null_buffer) = array.to_data().nulls() {
+        write_bits_buffer(null_buffer.buffer(), offset, len, output)?;
     }
-    output.write_all(
-        &array.data().buffers()[0].as_slice()[item_size * offset..][..item_size * len])?;
+    output.write_all(&array
+        .to_data()
+        .buffers()[0]
+        .as_slice()[item_size * offset..][..item_size * len]
+    )?;
     Ok(())
 }
 
@@ -446,8 +451,8 @@ fn write_list_array<W: Write>(
     array: &ListArray,
     output: &mut W,
 ) -> ArrowResult<()> {
-    if let Some(null_buffer) = array.data().null_buffer() {
-        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
+    if let Some(null_buffer) = array.to_data().nulls() {
+        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
 
     let first_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
@@ -467,7 +472,7 @@ fn read_list_array<R: Read>(
     num_rows: usize,
     has_null_buffer: bool,
     input: &mut R,
-    list_field: &Field ,
+    list_field: &FieldRef,
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
@@ -489,7 +494,7 @@ fn read_list_array<R: Read>(
     let values = read_array(input, list_field.data_type(), values_len, has_null_buffer)?;
 
     let array_data = ArrayData::try_new(
-        DataType::List(Box::new(list_field.clone())),
+        DataType::List(list_field.clone()),
         num_rows,
         null_buffer,
         0,
@@ -503,8 +508,8 @@ fn write_map_array<W: Write>(
     array: &MapArray,
     output: &mut W,
 ) -> ArrowResult<()> {
-    if let Some(null_buffer) = array.data().null_buffer() {
-        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
+    if let Some(null_buffer) = array.to_data().nulls() {
+        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
 
     let first_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
@@ -526,7 +531,7 @@ fn read_map_array<R: Read>(
     num_rows: usize,
     has_null_buffer: bool,
     input: &mut R,
-    map_field: &Field,
+    map_field: &FieldRef,
     is_sorted: bool
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
@@ -568,7 +573,7 @@ fn read_map_array<R: Read>(
 
     // build map
     let array_data = ArrayData::try_new(
-        DataType::Map(Box::new(map_field.clone()), is_sorted),
+        DataType::Map(map_field.clone(), is_sorted),
         num_rows,
         null_buffer,
         0,
@@ -579,8 +584,8 @@ fn read_map_array<R: Read>(
 }
 
 fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> ArrowResult<()> {
-    if let Some(null_buffer) = array.data().null_buffer() {
-        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
+    if let Some(null_buffer) = array.to_data().nulls() {
+        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
     for column in array.columns() {
         write_array(&column, output)?;
@@ -592,7 +597,7 @@ fn read_struct_array<R: Read>(
     num_rows: usize,
     has_null_buffer: bool,
     input: &mut R,
-    fields: &[Field],
+    fields: &Fields,
 ) -> ArrowResult<ArrayRef> {
 
     let null_buffer: Option<Buffer> = if has_null_buffer {
@@ -607,7 +612,7 @@ fn read_struct_array<R: Read>(
         .collect::<ArrowResult<_>>()?;
 
     let array_data = ArrayData::try_new(
-        DataType::Struct(fields.to_vec()),
+        DataType::Struct(fields.clone()),
         num_rows,
         null_buffer,
         0,
@@ -621,10 +626,11 @@ fn write_boolean_array<W: Write>(
     array: &BooleanArray,
     output: &mut W,
 ) -> ArrowResult<()> {
-    if let Some(null_buffer) = array.data().null_buffer() {
-        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
+    let array_data = array.to_data();
+    if let Some(null_buffer) = array_data.nulls() {
+        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
-    write_bits_buffer(&array.data().buffers()[0], array.offset(), array.len(), output)?;
+    write_bits_buffer(&array_data.buffers()[0], array.offset(), array.len(), output)?;
     Ok(())
 }
 
@@ -659,8 +665,8 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
     array: &GenericByteArray<T>,
     output: &mut W,
 ) -> ArrowResult<()> {
-    if let Some(null_buffer) = array.data().null_buffer() {
-        write_bits_buffer(null_buffer, array.offset(), array.len(), output)?;
+    if let Some(null_buffer) = array.to_data().nulls() {
+        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
 
     let first_offset = array.value_offsets().get(0).cloned().unwrap_or_default();

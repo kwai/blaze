@@ -208,7 +208,8 @@ impl AggTables {
                                 &mut current_record.agg_buf,
                                 &mut min_record.agg_buf,
                                 addrs,
-                            )?;
+                            )
+                            .map_err(|err| err.context("agg: executing partial_merge() error"))?;
                         }
                     } else {
                         let finished = std::mem::replace(current_record, min_record);

@@ -41,7 +41,6 @@ use arrow::{
 };
 use datafusion::common::{downcast_value, Column, DFSchema, ScalarValue};
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::expr_rewriter::{ExprRewritable, ExprRewriter};
 use datafusion::logical_expr::utils::expr_to_columns;
 use datafusion::logical_expr::{
     binary_expr, cast, substring, try_cast, BinaryExpr, Cast, ColumnarValue,
@@ -54,6 +53,7 @@ use datafusion::{
     logical_expr::{Expr, Operator},
     physical_expr::PhysicalExpr,
 };
+use datafusion::common::tree_node::{Transformed, TreeNode};
 
 /// Interface to pass statistics information to [`PruningPredicate`]
 ///
@@ -630,24 +630,13 @@ fn rewrite_column_expr(
     column_old: &Column,
     column_new: &Column,
 ) -> Result<Expr> {
-    struct ColumnReplacer<'a> {
-        old: &'a Column,
-        new: &'a Column,
-    }
 
-    impl<'a> ExprRewriter for ColumnReplacer<'a> {
-        fn mutate(&mut self, expr: Expr) -> Result<Expr> {
-            match expr {
-                Expr::Column(c) if c == *self.old => Ok(Expr::Column(self.new.clone())),
-                _ => Ok(expr),
-            }
+    e.transform(&|expr| Ok(match expr {
+        Expr::Column(c) if c == *column_old => {
+            Transformed::Yes(Expr::Column(column_new.clone()))
         }
-    }
-
-    e.rewrite(&mut ColumnReplacer {
-        old: column_old,
-        new: column_new,
-    })
+        _ => Transformed::No(expr),
+    }))
 }
 
 fn reverse_operator(op: Operator) -> Operator {

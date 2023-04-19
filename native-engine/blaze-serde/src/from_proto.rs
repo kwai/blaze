@@ -17,7 +17,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use arrow::datatypes::{SchemaRef, Field};
+use arrow::datatypes::{SchemaRef, FieldRef};
 use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
@@ -702,7 +702,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let window_exprs = window.window_expr
                     .iter()
                     .map(|w| {
-                        let field: Field = w.field
+                        let field: FieldRef = Arc::new(w.field
                             .as_ref()
                             .ok_or_else(|| {
                                 proto_error(format!(
@@ -710,7 +710,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                         self
                                 ))
                             })?
-                            .try_into()?;
+                            .try_into()?
+                        );
 
                         let children = w.children
                             .iter()
@@ -838,8 +839,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let generator = create_generator(&input_schema, func, children)?;
                 let generator_output_schema = Arc::new(Schema::new(generate.generator_output
                     .iter()
-                    .map(|field| field.try_into())
-                    .collect::<Result<_, PlanSerDeError>>()?
+                    .map(|field| Ok(Arc::new(field.try_into()?)))
+                    .collect::<Result<Vec<FieldRef>, PlanSerDeError>>()?
                 ));
 
                 let required_child_output_cols = generate.required_child_output

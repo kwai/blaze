@@ -36,8 +36,8 @@ pub struct AggCollectSet {
 
 impl AggCollectSet {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType, arg_type: DataType) -> Result<Self> {
-        let field = Field::new("collect_set",arg_type.clone(), false);
-        let accums_initial = vec![ScalarValue::List(None, Box::new(field.clone()))];
+        let field = Arc::new(Field::new("collect_set",arg_type.clone(), false));
+        let accums_initial = vec![ScalarValue::List(None, field)];
         let partial_updater = get_partial_updater(&arg_type)?;
         let partial_buf_merger = get_partial_buf_merger(&arg_type)?;
         Ok(Self {
