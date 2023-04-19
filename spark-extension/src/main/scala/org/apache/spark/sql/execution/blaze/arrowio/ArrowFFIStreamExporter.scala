@@ -42,13 +42,12 @@ class ArrowFFIStreamExporter(
 
   private val stream = ArrowArrayStream.wrap(arrowFFIStreamPtr)
   private val reader: ArrowReader = new ArrowReader(allocator) {
-    val arrowWriter: ArrowWriter = ArrowWriter.create(getVectorSchemaRoot)
 
     override def loadNextBatch(): Boolean =
       mutex.synchronized {
         taskContext.killTaskIfInterrupted()
         if (batchedRows.hasNext) {
-          arrowWriter.reset()
+          val arrowWriter = ArrowWriter.create(getVectorSchemaRoot)
           batchedRows
             .next()
             .foreach(row => {
