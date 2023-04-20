@@ -87,8 +87,7 @@ impl Agg for AggCount {
         values: &[ArrayRef],
     ) -> Result<()> {
         let addr = agg_buf_addrs[0];
-        *agg_buf.fixed_value_mut::<i64>(addr) +=
-            (values[0].len() - values[0].null_count()) as i64;
+        *agg_buf.fixed_value_mut::<i64>(addr) += (values[0].len() - values[0].null_count()) as i64;
         Ok(())
     }
 
@@ -103,11 +102,7 @@ impl Agg for AggCount {
         Ok(())
     }
 
-    fn final_merge(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<ScalarValue> {
+    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         let addr = agg_buf_addrs[0];
         Ok(ScalarValue::from(*agg_buf.fixed_value::<i64>(addr)))
     }

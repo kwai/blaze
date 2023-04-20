@@ -14,10 +14,9 @@
 
 //! Defines the External shuffle repartition plan
 
-use std::any::Any;
-use std::fmt::Formatter;
-use std::io::{BufReader, Cursor, Read, Write};
-use std::sync::{Arc, Weak};
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
+use crate::common::onheap_spill::OnHeapSpill;
+use crate::common::{output_with_sender, BatchesInterleaver, WrappedRecordBatchSender};
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use arrow::row::{RowConverter, Rows, SortField};
@@ -25,21 +24,26 @@ use async_trait::async_trait;
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use futures::{StreamExt, TryStreamExt, TryFutureExt};
-use futures::lock::Mutex;
-use futures::stream::once;
-use itertools::Itertools;
-use lz4_flex::frame::FrameDecoder;
-use parking_lot::{Mutex as SyncMutex};
-use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+};
+use datafusion_ext_commons::io::{
+    read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch,
+};
 use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::{BatchesInterleaver, output_with_sender, WrappedRecordBatchSender};
-use crate::common::onheap_spill::OnHeapSpill;
+use futures::lock::Mutex;
+use futures::stream::once;
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use itertools::Itertools;
+use lz4_flex::frame::FrameDecoder;
+use parking_lot::Mutex as SyncMutex;
+use std::any::Any;
+use std::fmt::Formatter;
+use std::io::{BufReader, Cursor, Read, Write};
+use std::sync::{Arc, Weak};
 
 const NUM_LEVELS: usize = 64;
 
@@ -92,16 +96,23 @@ impl ExecutionPlan for SortExec {
         vec![self.input.clone()]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn ExecutionPlan>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(Self {
             input: children[0].clone(),
             exprs: self.exprs.clone(),
-            fetch: self.fetch.clone(),
+            fetch: self.fetch,
             metrics: ExecutionPlanMetricsSet::new(),
         }))
     }
 
-    fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
         let input_schema = self.input.schema();
         let batch_size = context.session_config().batch_size();
         let squeeze_batch_size = batch_size / batch_size.ilog2() as usize;
@@ -109,13 +120,13 @@ impl ExecutionPlan for SortExec {
         let sort_row_converter = RowConverter::new(
             self.exprs
                 .iter()
-                .map(|expr: &PhysicalSortExpr| Ok(
-                    SortField::new_with_options(
-                        expr.expr.data_type(&input_schema)?.clone(),
-                        expr.options.clone(),
-                    )
-                ))
-                .collect::<Result<Vec<SortField>>>()?
+                .map(|expr: &PhysicalSortExpr| {
+                    Ok(SortField::new_with_options(
+                        expr.expr.data_type(&input_schema)?,
+                        expr.options,
+                    ))
+                })
+                .collect::<Result<Vec<SortField>>>()?,
         )?;
 
         let external_sorter = Arc::new(ExternalSorter {
@@ -162,11 +173,15 @@ impl ExecutionPlan for SortExec {
     fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
         match t {
             DisplayFormatType::Default => {
-                write!(f, "SortExec: {}", self.exprs
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "))
+                write!(
+                    f,
+                    "SortExec: {}",
+                    self.exprs
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
         }
     }
@@ -200,7 +215,10 @@ impl MemConsumer for ExternalSorter {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        &self.mem_consumer_info.as_ref().expect("consumer info not set")
+        self
+            .mem_consumer_info
+            .as_ref()
+            .expect("consumer info not set")
     }
 
     async fn spill(&self) -> Result<()> {
@@ -208,19 +226,19 @@ impl MemConsumer for ExternalSorter {
 
         // merge all batches in levels into one in_mem_batches
         let mut in_mem_batches: Option<SortedBatches> = None;
-        for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]) {
-            if let Some(existed) = level {
-                match &mut in_mem_batches {
-                    Some(in_mem_batches) => in_mem_batches.merge(existed),
-                    None => in_mem_batches = Some(existed),
-                }
+        for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]).into_iter().flatten() {
+            if let Some(in_mem_batches) = &mut in_mem_batches {
+                in_mem_batches.merge(level);
+            } else {
+                in_mem_batches = Some(level);
             }
         }
 
         if let Some(in_mem_batches) = in_mem_batches {
-            self.spills.lock().await.extend(
-                in_mem_batches.try_into_spill(self.squeeze_batch_size)?
-            );
+            self.spills
+                .lock()
+                .await
+                .extend(in_mem_batches.try_into_spill(self.squeeze_batch_size)?);
         }
         drop(levels);
         self.update_mem_used(0).await?;
@@ -238,7 +256,6 @@ async fn external_sort(
     mut input: SendableRecordBatchStream,
     sorter: Arc<ExternalSorter>,
 ) -> Result<SendableRecordBatchStream> {
-
     // insert and sort
     while let Some(batch) = input.next().await.transpose()? {
         sorter
@@ -284,10 +301,7 @@ impl ExternalSorter {
         Ok(())
     }
 
-    async fn output(
-        self: Arc<Self>,
-        sender: WrappedRecordBatchSender,
-    ) -> Result<()> {
+    async fn output(self: Arc<Self>, sender: WrappedRecordBatchSender) -> Result<()> {
         let mut timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);
         let levels = std::mem::take(&mut *self.levels.lock().await);
@@ -301,12 +315,11 @@ impl ExternalSorter {
 
         // merge all batches in levels
         let mut in_mem_batches: Option<SortedBatches> = None;
-        for level in levels {
-            if let Some(existed) = level {
-                match &mut in_mem_batches {
-                    Some(in_mem_batches) => in_mem_batches.merge(existed),
-                    None => in_mem_batches = Some(existed),
-                }
+        for level in levels.into_iter().flatten() {
+            if let Some(in_mem_batches) = &mut in_mem_batches {
+                in_mem_batches.merge(level);
+            } else {
+                in_mem_batches = Some(level);
             }
         }
         if let Some(in_mem_batches) = &mut in_mem_batches {
@@ -318,10 +331,13 @@ impl ExternalSorter {
         if spills.is_empty() {
             if let Some(in_mem_batches) = in_mem_batches {
                 let batches = in_mem_batches.batches;
-                self.update_mem_used(batches
-                    .iter()
-                    .map(|batch| batch.get_array_memory_size())
-                    .sum()).await?;
+                self.update_mem_used(
+                    batches
+                        .iter()
+                        .map(|batch| batch.get_array_memory_size())
+                        .sum(),
+                )
+                .await?;
 
                 for batch in batches {
                     let batch_mem_size = batch.get_array_memory_size();
@@ -334,7 +350,8 @@ impl ExternalSorter {
                         .await?;
 
                     timer.restart();
-                    self.update_mem_used_with_diff(-(batch_mem_size as isize)).await?;
+                    self.update_mem_used_with_diff(-(batch_mem_size as isize))
+                        .await?;
                 }
             }
             self.update_mem_used(0).await?;
@@ -344,14 +361,13 @@ impl ExternalSorter {
         // move in-mem batches into spill, so we can free memory as soon as possible
         let mut spills = spills;
         if let Some(in_mem_batches) = in_mem_batches {
-            if let Some(in_mem_spill) =
-                in_mem_batches.try_into_spill(self.squeeze_batch_size)?
-            {
+            if let Some(in_mem_spill) = in_mem_batches.try_into_spill(self.squeeze_batch_size)? {
                 spills.push(in_mem_spill);
             }
 
             // adjust mem usage
-            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST).await?;
+            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
+                .await?;
         }
 
         // use loser tree to merge all spills
@@ -359,19 +375,17 @@ impl ExternalSorter {
             spills
                 .iter()
                 .enumerate()
-                .map(|(id, spill)| {
-                    SpillCursor::try_from_spill(id, self.clone(), spill.clone())
-                })
+                .map(|(id, spill)| SpillCursor::try_from_spill(id, self.clone(), spill.clone()))
                 .collect::<Result<_>>()?,
             |c1, c2| {
                 let key1 = (c1.finished, &c1.cur_key);
                 let key2 = (c2.finished, &c2.cur_key);
                 key1 < key2
-            });
+            },
+        );
 
         let mut num_total_output_rows = 0;
         let mut staging_cursor_ids = Vec::with_capacity(self.squeeze_batch_size);
-
 
         macro_rules! flush_staging {
             () => {{
@@ -405,7 +419,7 @@ impl ExternalSorter {
                     .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
                     .await?;
                 timer.restart();
-            }}
+            }};
         }
 
         // merge
@@ -436,7 +450,8 @@ impl ExternalSorter {
             .iter()
             .map(|spill| spill.get_disk_usage().unwrap_or(0))
             .sum::<u64>();
-        self.baseline_metrics.record_spill(spill_disk_usage as usize);
+        self.baseline_metrics
+            .record_spill(spill_disk_usage as usize);
         self.update_mem_used(0).await?;
         Ok(())
     }
@@ -498,23 +513,21 @@ impl SortedBatches {
         }
     }
 
-    fn from_batch(
-        sorter: Arc<ExternalSorter>,
-        batch: RecordBatch,
-    ) -> Result<Self> {
-
+    fn from_batch(sorter: Arc<ExternalSorter>, batch: RecordBatch) -> Result<Self> {
         let batches_num_rows = batch.num_rows();
         let batches_mem_size = batch.get_array_memory_size();
 
-        let rows: Rows = sorter.sort_row_converter
-            .lock()
-            .convert_columns(&sorter.exprs
+        let rows: Rows = sorter.sort_row_converter.lock().convert_columns(
+            &sorter
+                .exprs
                 .iter()
                 .map(|expr| {
-                    expr.expr.evaluate(&batch).map(|cv| cv.into_array(batch.num_rows()))
+                    expr.expr
+                        .evaluate(&batch)
+                        .map(|cv| cv.into_array(batch.num_rows()))
                 })
-                .collect::<Result<Vec<_>>>()?
-            )?;
+                .collect::<Result<Vec<_>>>()?,
+        )?;
 
         let mut row_mem_size = 0;
         let sorted_rows: Vec<IndexedRow> = rows
@@ -550,10 +563,7 @@ impl SortedBatches {
     }
 
     fn merge(&mut self, other: SortedBatches) {
-        let mut a = std::mem::replace(
-            self,
-            SortedBatches::new_empty(self.sorter.clone()),
-        );
+        let mut a = std::mem::replace(self, SortedBatches::new_empty(self.sorter.clone()));
         let mut b = other;
 
         let num_batches_a = a.batches.len();
@@ -607,7 +617,7 @@ impl SortedBatches {
                         cur_b += 1;
                     }
                 }
-                (None, None) => unreachable!()
+                (None, None) => unreachable!(),
             }
         }
 
@@ -631,8 +641,7 @@ impl SortedBatches {
             return Ok(());
         }
         let mut squeezed = vec![];
-        let interleaver =
-            BatchesInterleaver::new(self.batches[0].schema(), &self.batches);
+        let interleaver = BatchesInterleaver::new(self.batches[0].schema(), &self.batches);
 
         for chunk in self.sorted_rows.chunks_mut(batch_size) {
             let batch_idx = squeezed.len();
@@ -656,11 +665,7 @@ impl SortedBatches {
         Ok(())
     }
 
-    fn try_into_spill(
-        mut self,
-        squeeze_batch_size: usize,
-    ) -> Result<Option<OnHeapSpill>> {
-
+    fn try_into_spill(mut self, squeeze_batch_size: usize) -> Result<Option<OnHeapSpill>> {
         if self.batches_num_rows == 0 {
             return Ok(None);
         }
@@ -683,9 +688,9 @@ impl SortedBatches {
             cur_rows += batch.num_rows();
         }
 
-        writer.finish().map_err(|err| {
-            DataFusionError::Execution(format!("{}", err))
-        })?;
+        writer
+            .finish()
+            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
         spill.complete()?;
         Ok(Some(spill))
     }
@@ -705,11 +710,7 @@ struct SpillCursor {
 }
 
 impl SpillCursor {
-    fn try_from_spill(
-        id: usize,
-        sorter: Arc<ExternalSorter>,
-        spill: OnHeapSpill,
-    ) -> Result<Self> {
+    fn try_from_spill(id: usize, sorter: Arc<ExternalSorter>, spill: OnHeapSpill) -> Result<Self> {
         let buf_reader = spill.get_buf_reader();
         let mut iter = SpillCursor {
             id,
@@ -728,12 +729,13 @@ impl SpillCursor {
     }
 
     fn next_key(&mut self) -> Result<()> {
-        assert!(!self.finished, "calling next_key() on finished sort spill cursor");
+        assert!(
+            !self.finished,
+            "calling next_key() on finished sort spill cursor"
+        );
 
-        if self.cur_loaded_num_rows >= self.cur_batch_num_rows {
-            if !self.load_next_batch()? {
-                return Ok(());
-            }
+        if self.cur_loaded_num_rows >= self.cur_batch_num_rows && !self.load_next_batch()? {
+            return Ok(());
         }
         let sorted_row_len = read_len(&mut self.input)?;
         self.cur_key = read_bytes_slice(&mut self.input, sorted_row_len)?;
@@ -743,8 +745,10 @@ impl SpillCursor {
 
     fn load_next_batch(&mut self) -> Result<bool> {
         if let Some(batch) = read_one_batch(
-            &mut self.input, Some(self.sorter.input_schema.clone()), false)?
-        {
+            &mut self.input,
+            Some(self.sorter.input_schema.clone()),
+            false,
+        )? {
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;
             self.cur_batches.push(batch);
@@ -776,7 +780,7 @@ impl SpillCursor {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::sort_exec::SortExec;
     use arrow::array::Int32Array;
     use arrow::compute::SortOptions;
     use arrow::datatypes::{DataType, Field, Schema};
@@ -785,10 +789,10 @@ mod test {
     use datafusion::common::Result;
     use datafusion::physical_expr::expressions::Column;
     use datafusion::physical_expr::PhysicalSortExpr;
-    use datafusion::physical_plan::{common, ExecutionPlan};
     use datafusion::physical_plan::memory::MemoryExec;
+    use datafusion::physical_plan::{common, ExecutionPlan};
     use datafusion::prelude::SessionContext;
-    use crate::sort_exec::SortExec;
+    use std::sync::Arc;
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),
@@ -831,12 +835,10 @@ mod test {
             ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
             ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
         );
-        let sort_exprs = vec![
-            PhysicalSortExpr {
-                expr: Arc::new(Column::new("a", 0)),
-                options: SortOptions::default(),
-            }
-        ];
+        let sort_exprs = vec![PhysicalSortExpr {
+            expr: Arc::new(Column::new("a", 0)),
+            options: SortOptions::default(),
+        }];
 
         let sort = SortExec::new(input, sort_exprs, Some(6));
         let output = sort.execute(0, task_ctx)?;

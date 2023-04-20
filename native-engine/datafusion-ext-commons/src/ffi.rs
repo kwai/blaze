@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::mpsc::Receiver;
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
-use datafusion::common::Result;
 use blaze_commons::is_task_running;
+use datafusion::common::Result;
+use std::sync::mpsc::Receiver;
 
 /// RecordBatchReader for FFI_ArrowArrayStraem
 pub struct MpscBatchReader {
@@ -48,8 +48,6 @@ impl Iterator for MpscBatchReader {
                 );
                 None
             })
-            .map(|result| {
-                result.map_err(|err| err.into())
-            })
+            .map(|result| result.map_err(|err| err.into()))
     }
 }

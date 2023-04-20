@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::Formatter;
-use std::sync::Arc;
+use crate::common::output_with_sender;
+use crate::window::window_context::WindowContext;
+use crate::window::{WindowExpr, WindowFunctionProcessor};
 use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
@@ -22,15 +22,17 @@ use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, SendableRecordBatchStream};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use futures::{StreamExt, TryStreamExt, TryFutureExt};
-use futures::stream::once;
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, SendableRecordBatchStream,
+};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use crate::common::output_with_sender;
-use crate::window::window_context::WindowContext;
-use crate::window::{WindowExpr, WindowFunctionProcessor};
+use futures::stream::once;
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use std::any::Any;
+use std::fmt::Formatter;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct WindowExec {
@@ -46,7 +48,6 @@ impl WindowExec {
         partition_spec: Vec<Arc<dyn PhysicalExpr>>,
         order_spec: Vec<PhysicalSortExpr>,
     ) -> Result<Self> {
-
         let context = Arc::new(WindowContext::try_new(
             input.schema(),
             window_exprs,
@@ -82,7 +83,10 @@ impl ExecutionPlan for WindowExec {
         vec![self.input.clone()]
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn ExecutionPlan>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(Self::try_new(
             children[0].clone(),
             self.context.window_exprs.clone(),
@@ -91,13 +95,19 @@ impl ExecutionPlan for WindowExec {
         )?))
     }
 
-    fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
         // at this moment only supports ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         let input = self.input.execute(partition, context.clone())?;
         let coalesced = Box::pin(CoalesceStream::new(
             input,
             context.session_config().batch_size(),
-            BaselineMetrics::new(&self.metrics, partition).elapsed_compute().clone(),
+            BaselineMetrics::new(&self.metrics, partition)
+                .elapsed_compute()
+                .clone(),
         ));
 
         let stream = execute_window(
@@ -135,55 +145,56 @@ async fn execute_window(
     context: Arc<WindowContext>,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-
-    let mut processors: Vec<Box<dyn WindowFunctionProcessor>> =
-        context.window_exprs
-            .iter()
-            .map(|expr: &WindowExpr| expr.create_processor(&context))
-            .collect::<Result<_>>()?;
+    let mut processors: Vec<Box<dyn WindowFunctionProcessor>> = context
+        .window_exprs
+        .iter()
+        .map(|expr: &WindowExpr| expr.create_processor(&context))
+        .collect::<Result<_>>()?;
 
     // start processing input batches
-    output_with_sender("Window", context.output_schema.clone(), |sender| async move {
-        while let Some(batch) = input.next().await.transpose()? {
-            let window_cols: Vec<ArrayRef> = processors
-                .iter_mut()
-                .map(|processor| processor.process_batch(&context, &batch))
-                .collect::<Result<_>>()?;
+    output_with_sender(
+        "Window",
+        context.output_schema.clone(),
+        |sender| async move {
+            while let Some(batch) = input.next().await.transpose()? {
+                let window_cols: Vec<ArrayRef> = processors
+                    .iter_mut()
+                    .map(|processor| processor.process_batch(&context, &batch))
+                    .collect::<Result<_>>()?;
 
-            let output_cols = [batch.columns().to_vec(), window_cols].concat();
-            let output_batch = RecordBatch::try_new_with_options(
-                context.output_schema.clone(),
-                output_cols,
-                &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-            )?;
+                let output_cols = [batch.columns().to_vec(), window_cols].concat();
+                let output_batch = RecordBatch::try_new_with_options(
+                    context.output_schema.clone(),
+                    output_cols,
+                    &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+                )?;
 
-            metrics.record_output(output_batch.num_rows());
-            sender
-                .send(Ok(output_batch))
-                .map_err(|err| {
-                    DataFusionError::Execution(format!("{:?}", err))
-                })
-                .await?;
-        }
-        Ok(())
-    })
+                metrics.record_output(output_batch.num_rows());
+                sender
+                    .send(Ok(output_batch))
+                    .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
+                    .await?;
+            }
+            Ok(())
+        },
+    )
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::agg::AggFunction;
+    use crate::window::{WindowExpr, WindowFunction, WindowRankType};
+    use crate::window_exec::WindowExec;
     use arrow::array::*;
     use arrow::datatypes::*;
     use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_eq;
     use datafusion::physical_expr::expressions::Column;
     use datafusion::physical_expr::PhysicalSortExpr;
-    use datafusion::physical_plan::ExecutionPlan;
     use datafusion::physical_plan::memory::MemoryExec;
+    use datafusion::physical_plan::ExecutionPlan;
     use datafusion::prelude::SessionContext;
-    use crate::agg::AggFunction;
-    use crate::window::{WindowExpr, WindowFunction, WindowRankType};
-    use crate::window_exec::WindowExec;
+    use std::sync::Arc;
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),
@@ -204,7 +215,7 @@ mod test {
                 Arc::new(Int32Array::from(c.1.clone())),
             ],
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn build_table(
@@ -231,29 +242,29 @@ mod test {
                 WindowExpr::new(
                     WindowFunction::RankLike(WindowRankType::RowNumber),
                     vec![],
-                    Field::new("b1_row_number", DataType::Int32, false),
+                    Arc::new(Field::new("b1_row_number", DataType::Int32, false)),
                 ),
                 WindowExpr::new(
                     WindowFunction::RankLike(WindowRankType::Rank),
                     vec![],
-                    Field::new("b1_rank", DataType::Int32, false),
+                    Arc::new(Field::new("b1_rank", DataType::Int32, false)),
                 ),
                 WindowExpr::new(
                     WindowFunction::RankLike(WindowRankType::DenseRank),
                     vec![],
-                    Field::new("b1_dense_rank", DataType::Int32, false),
+                    Arc::new(Field::new("b1_dense_rank", DataType::Int32, false)),
                 ),
                 WindowExpr::new(
                     WindowFunction::Agg(AggFunction::Sum),
                     vec![Arc::new(Column::new("b1", 1))],
-                    Field::new("b1_sum", DataType::Int64, false),
+                    Arc::new(Field::new("b1_sum", DataType::Int64, false)),
                 ),
             ],
             vec![Arc::new(Column::new("a1", 0))],
             vec![PhysicalSortExpr {
                 expr: Arc::new(Column::new("b1", 1)),
                 options: Default::default(),
-            }]
+            }],
         )?);
 
         let session_ctx = SessionContext::new();

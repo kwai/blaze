@@ -12,16 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use crate::window::window_context::WindowContext;
+use crate::window::WindowFunctionProcessor;
 use arrow::array::{ArrayRef, Int32Builder};
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
-use crate::window::window_context::WindowContext;
-use crate::window::WindowFunctionProcessor;
+use std::sync::Arc;
 
 pub struct RowNumberProcessor {
     cur_partition: Box<[u8]>,
     cur_row_number: i32,
+}
+
+impl Default for RowNumberProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RowNumberProcessor {
@@ -34,11 +40,7 @@ impl RowNumberProcessor {
 }
 
 impl WindowFunctionProcessor for RowNumberProcessor {
-    fn process_batch(
-        &mut self,
-        context: &WindowContext,
-        batch: &RecordBatch,
-    ) -> Result<ArrayRef> {
+    fn process_batch(&mut self, context: &WindowContext, batch: &RecordBatch) -> Result<ArrayRef> {
         let partition_rows = context.get_partition_rows(batch)?;
         let mut builder = Int32Builder::with_capacity(batch.num_rows());
 

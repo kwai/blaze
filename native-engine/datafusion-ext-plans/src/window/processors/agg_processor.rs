@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggBuf};
+use crate::agg::Agg;
+use crate::window::window_context::WindowContext;
+use crate::window::WindowFunctionProcessor;
 use arrow::array::ArrayRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, ScalarValue};
-use crate::agg::Agg;
-use crate::agg::agg_buf::{AggBuf, create_agg_buf_from_scalar};
-use crate::window::window_context::WindowContext;
-use crate::window::WindowFunctionProcessor;
+use std::sync::Arc;
 
 pub struct AggProcessor {
     cur_partition: Box<[u8]>,
@@ -30,9 +30,7 @@ pub struct AggProcessor {
 }
 
 impl AggProcessor {
-    pub fn try_new(
-        agg: Arc<dyn Agg>,
-    ) -> Result<Self> {
+    pub fn try_new(agg: Arc<dyn Agg>) -> Result<Self> {
         let (agg_buf, agg_buf_addrs) = create_agg_buf_from_scalar(agg.accums_initial())?;
         Ok(Self {
             cur_partition: Box::default(),
@@ -45,15 +43,13 @@ impl AggProcessor {
 }
 
 impl WindowFunctionProcessor for AggProcessor {
-    fn process_batch(
-        &mut self,
-        context: &WindowContext,
-        batch: &RecordBatch,
-    ) -> Result<ArrayRef> {
+    fn process_batch(&mut self, context: &WindowContext, batch: &RecordBatch) -> Result<ArrayRef> {
         let partition_rows = context.get_partition_rows(batch)?;
         let mut output = vec![];
 
-        let children_cols: Vec<ArrayRef> = self.agg.exprs()
+        let children_cols: Vec<ArrayRef> = self
+            .agg
+            .exprs()
             .iter()
             .map(|expr| expr.evaluate(batch).map(|v| v.into_array(batch.num_rows())))
             .collect::<Result<_>>()?;
@@ -72,18 +68,19 @@ impl WindowFunctionProcessor for AggProcessor {
             if !same_partition {
                 self.agg_buf = self.agg_buf_init.clone();
             }
-            self.agg.partial_update(
-                &mut self.agg_buf,
-                &self.agg_buf_addrs,
-                &children_cols,
-                row_idx,
-            ).map_err(|err| err.context("window: agg_processor partial_update() error"))?;
+            self.agg
+                .partial_update(
+                    &mut self.agg_buf,
+                    &self.agg_buf_addrs,
+                    &children_cols,
+                    row_idx,
+                )
+                .map_err(|err| err.context("window: agg_processor partial_update() error"))?;
 
             output.push(
-                self.agg.final_merge(
-                    &mut self.agg_buf.clone(),
-                    &self.agg_buf_addrs,
-                )?);
+                self.agg
+                    .final_merge(&mut self.agg_buf.clone(), &self.agg_buf_addrs)?,
+            );
         }
         Ok(Arc::new(ScalarValue::iter_to_array(output.into_iter())?))
     }

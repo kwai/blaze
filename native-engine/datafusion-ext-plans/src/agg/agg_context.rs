@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggBuf};
-use crate::agg::{Agg, AGG_BUF_COLUMN_NAME, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr};
+use crate::agg::{
+    Agg, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr, AGG_BUF_COLUMN_NAME,
+};
 use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -120,8 +122,7 @@ impl AggContext {
             .flat_map(|agg: &AggExpr| agg.agg.accums_initial())
             .cloned()
             .collect();
-        let (initial_agg_buf, agg_buf_addrs) =
-            create_agg_buf_from_scalar(&initial_accums)?;
+        let (initial_agg_buf, agg_buf_addrs) = create_agg_buf_from_scalar(&initial_accums)?;
 
         // in distinct aggregrations, partial and partial-merge may happen at the same
         // time, i.e:
@@ -177,10 +178,7 @@ impl AggContext {
         })
     }
 
-    pub fn create_input_arrays(
-        &self,
-        input_batch: &RecordBatch,
-    ) -> Result<Vec<Vec<ArrayRef>>> {
+    pub fn create_input_arrays(&self, input_batch: &RecordBatch) -> Result<Vec<Vec<ArrayRef>>> {
         if !self.need_partial_update {
             return Ok(vec![]);
         }
@@ -285,12 +283,7 @@ impl AggContext {
     ) -> Result<()> {
         if self.need_partial_update {
             for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_update(
-                    agg_buf,
-                    self.agg_addrs(*idx),
-                    &input_arrays[*idx],
-                    row_idx,
-                )?;
+                agg.partial_update(agg_buf, self.agg_addrs(*idx), &input_arrays[*idx], row_idx)?;
             }
         }
         Ok(())
@@ -303,11 +296,7 @@ impl AggContext {
     ) -> Result<()> {
         if self.need_partial_update {
             for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_update_all(
-                    agg_buf,
-                    self.agg_addrs(*idx),
-                    &input_arrays[*idx],
-                )?;
+                agg.partial_update_all(agg_buf, self.agg_addrs(*idx), &input_arrays[*idx])?;
             }
         }
         Ok(())

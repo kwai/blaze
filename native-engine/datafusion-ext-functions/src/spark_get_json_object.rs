@@ -72,7 +72,7 @@ enum HiveGetJsonObjectError {
 
 struct HiveGetJsonObjectEvaluator {
     matchers: Vec<HiveGetJsonObjectMatcher>,
-    buffer: Vec<Box<serde_json::Value>>,
+    buffer: Vec<serde_json::Value>,
 }
 
 impl HiveGetJsonObjectEvaluator {
@@ -88,15 +88,11 @@ impl HiveGetJsonObjectEvaluator {
             evaluator.matchers.push(matcher);
         }
         if evaluator.matchers.first() != Some(&HiveGetJsonObjectMatcher::Root) {
-            return Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
-                "json path missing root"
-            )));
+            return Err(HiveGetJsonObjectError::InvalidJsonPath("json path missing root".to_string()));
         }
         evaluator.matchers.remove(0); // remove root matcher
         if evaluator.matchers.contains(&HiveGetJsonObjectMatcher::Root) {
-            return Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
-                "json path has more than one root"
-            )));
+            return Err(HiveGetJsonObjectError::InvalidJsonPath("json path has more than one root".to_string()));
         }
         Ok(evaluator)
     }
@@ -105,17 +101,15 @@ impl HiveGetJsonObjectEvaluator {
         &mut self,
         json_str: &str,
     ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
-        let value: serde_json::Value = serde_json::from_str(json_str).map_err(|_| {
-            HiveGetJsonObjectError::InvalidInput(format!("invalid json string"))
-        })?;
+        let value: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|_| HiveGetJsonObjectError::InvalidInput("invalid json string".to_string()))?;
         let mut current = &value;
 
         for matcher in &self.matchers {
             current = matcher.evaluate(current, unsafe {
                 // safety - bypass rust borrow checker, as items in buffer are never
                 // dropped in matcher.evaluate().
-                &mut *(&self.buffer as *const Vec<Box<serde_json::Value>>
-                    as *mut Vec<Box<serde_json::Value>>)
+                &mut *(&mut self.buffer as *mut Vec<serde_json::Value>)
             });
         }
         let ret = match current {
@@ -125,11 +119,9 @@ impl HiveGetJsonObjectEvaluator {
             serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
                 serde_json::to_string(current)
-                    .map(|string| Some(string.to_string()))
+                    .map(Some)
                     .map_err(|_| {
-                        HiveGetJsonObjectError::InvalidInput(format!(
-                            "array to json error"
-                        ))
+                        HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
                     })
             }
         };
@@ -171,9 +163,7 @@ impl HiveGetJsonObjectMatcher {
                     }
                 }
                 if child_name.is_empty() {
-                    return Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
-                        "empty child name"
-                    )));
+                    return Err(HiveGetJsonObjectError::InvalidJsonPath("empty child name".to_string()));
                 }
                 Ok(Some(Self::Child(child_name)))
             }
@@ -191,9 +181,7 @@ impl HiveGetJsonObjectMatcher {
                             chars.next();
                         }
                         None => {
-                            return Err(HiveGetJsonObjectError::InvalidJsonPath(
-                                format!("unterminated subscript"),
-                            ));
+                            return Err(HiveGetJsonObjectError::InvalidJsonPath("unterminated subscript".to_string()));
                         }
                     }
                 }
@@ -201,17 +189,15 @@ impl HiveGetJsonObjectMatcher {
                     return Ok(Some(Self::SubscriptAll));
                 }
                 let index = str::parse::<usize>(&index_str).map_err(|_| {
-                    HiveGetJsonObjectError::InvalidJsonPath(format!(
-                        "invalid subscript index"
-                    ))
+                    HiveGetJsonObjectError::InvalidJsonPath("invalid subscript index".to_string())
                 })?;
                 Ok(Some(Self::Subscript(index)))
             }
             Some(c) => {
-                return Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
+                Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
                     "unexpected char in json path: {}",
                     c
-                )));
+                )))
             }
         }
     }
@@ -219,7 +205,7 @@ impl HiveGetJsonObjectMatcher {
     fn evaluate<'a>(
         &self,
         value: &'a serde_json::Value,
-        buffer: &'a mut Vec<Box<serde_json::Value>>,
+        buffer: &'a mut Vec<serde_json::Value>,
     ) -> &'a serde_json::Value {
         match self {
             HiveGetJsonObjectMatcher::Root => {
@@ -228,18 +214,17 @@ impl HiveGetJsonObjectMatcher {
             HiveGetJsonObjectMatcher::Child(child) => {
                 if let serde_json::Value::Object(object) = &value {
                     if let Some(child) = object.get(child) {
-                        return &child;
+                        return child;
                     }
                 }
                 if let serde_json::Value::Array(array) = &value {
-                    buffer.push(Box::new(serde_json::Value::Array(
+                    buffer.push(*Box::new(serde_json::Value::Array(
                         array
                             .iter()
                             .map(|item| {
                                 if let serde_json::Value::Object(object) = item {
                                     object
-                                        .get(child)
-                                        .map(|child| child.clone())
+                                        .get(child).cloned()
                                         .unwrap_or_default()
                                 } else {
                                     serde_json::Value::Null
@@ -247,13 +232,13 @@ impl HiveGetJsonObjectMatcher {
                             })
                             .collect(),
                     )));
-                    return buffer.last().unwrap().as_ref();
+                    return buffer.last().as_ref().unwrap();
                 }
             }
             HiveGetJsonObjectMatcher::Subscript(index) => {
                 if let serde_json::Value::Array(array) = &value {
                     if let Some(child) = array.get(*index) {
-                        return &child;
+                        return child;
                     }
                 }
             }
@@ -337,9 +322,7 @@ mod test {
                 .unwrap()
                 .evaluate(input)
                 .unwrap(),
-            Some(
-                r#"[{"type":"apple","weight":8},{"type":"pear","weight":9}]"#.to_owned()
-            )
+            Some(r#"[{"type":"apple","weight":8},{"type":"pear","weight":9}]"#.to_owned())
         );
 
         let path = "$.non_exist_key";

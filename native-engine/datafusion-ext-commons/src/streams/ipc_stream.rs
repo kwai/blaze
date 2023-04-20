@@ -19,8 +19,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use blaze_commons::{
-    jni_call, jni_get_object_class, jni_get_string,
-    jni_new_direct_byte_buffer, jni_new_global_ref
+    jni_call, jni_get_object_class, jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
 use datafusion::error::Result;
 use datafusion::physical_plan::common::batch_byte_size;
@@ -30,8 +29,8 @@ use futures::Stream;
 use jni::objects::{GlobalRef, JObject};
 use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
 use std::fs::File;
-use std::io::{Error as IoError, Seek};
 use std::io::{BufReader, Read, SeekFrom};
+use std::io::{Error as IoError, Seek};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -93,15 +92,12 @@ impl IpcReaderStream {
             IpcReadMode::ChannelUncompressed => {
                 get_channel_reader(Some(schema), segment.as_obj(), false)?
             }
-            IpcReadMode::Channel => {
-                get_channel_reader(Some(schema), segment.as_obj(), true)?
-            },
+            IpcReadMode::Channel => get_channel_reader(Some(schema), segment.as_obj(), true)?,
             IpcReadMode::ChannelAndFileSegment => {
                 let segment_class = jni_get_object_class!(segment.as_obj())?;
                 let segment_classname_obj =
                     jni_call!(Class(segment_class.as_obj()).getName() -> JObject)?;
-                let segment_classname =
-                    jni_get_string!(segment_classname_obj.as_obj().into())?;
+                let segment_classname = jni_get_string!(segment_classname_obj.as_obj().into())?;
 
                 if segment_classname == "org.apache.spark.storage.FileSegment" {
                     get_file_segment_reader(Some(schema), segment.as_obj())?
@@ -152,10 +148,7 @@ pub fn get_file_segment_reader(
 impl Stream for IpcReaderStream {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
@@ -170,7 +163,7 @@ impl Stream for IpcReaderStream {
 
         // current arrow file reader reaches EOF, try next ipc
         if self.next_segment()? {
-            return self.poll_next(cx);
+            return self.poll_next(_cx);
         }
         Poll::Ready(None)
     }
@@ -208,14 +201,12 @@ impl ReadableByteChannelReader {
         let buf = jni_new_direct_byte_buffer!(buf)?;
 
         while {
-            let has_remaining =
-                jni_call!(JavaBuffer(buf.as_obj()).hasRemaining() -> jboolean)?;
+            let has_remaining = jni_call!(JavaBuffer(buf.as_obj()).hasRemaining() -> jboolean)?;
             has_remaining == JNI_TRUE
         } {
-            let read_bytes =
-                jni_call!(JavaReadableByteChannel(self.channel.as_obj())
-                    .read(buf.as_obj()) -> jint
-                )?;
+            let read_bytes = jni_call!(JavaReadableByteChannel(self.channel.as_obj())
+                .read(buf.as_obj()) -> jint
+            )?;
 
             if read_bytes < 0 {
                 self.close()?;

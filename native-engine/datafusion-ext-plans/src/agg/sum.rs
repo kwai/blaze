@@ -188,10 +188,10 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
         DataType::UInt64 => fn_fixed!(UInt64),
         DataType::Decimal128(..) => fn_fixed!(Decimal128),
         other => {
-            return Err(DataFusionError::NotImplemented(format!(
+            Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in sum(): {}",
                 other
-            )));
+            )))
         }
     }
 }
@@ -222,10 +222,10 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::UInt64 => fn_fixed!(UInt64),
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
         other => {
-            return Err(DataFusionError::NotImplemented(format!(
+            Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in sum(): {}",
                 other
-            )));
+            )))
         }
     }
 }

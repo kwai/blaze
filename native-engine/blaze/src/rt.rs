@@ -12,24 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use crate::handle_unwinded_scope;
+use crate::metrics::update_spark_metric_node;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
+use blaze_commons::is_task_running;
+use blaze_commons::jni_bridge::JavaClasses;
+use blaze_commons::{
+    jni_call, jni_call_static, jni_exception_check, jni_exception_occurred, jni_new_global_ref,
+    jni_new_object, jni_new_string,
+};
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::metrics::Time;
 use datafusion::physical_plan::{ExecutionPlan, RecordBatchStream};
-use futures::{FutureExt, StreamExt};
-use jni::objects::{GlobalRef, JObject};
-use tokio::runtime::Runtime;
-use blaze_commons::{jni_call, jni_call_static, jni_exception_check, jni_exception_occurred, jni_new_global_ref, jni_new_object, jni_new_string};
-use blaze_commons::is_task_running;
-use blaze_commons::jni_bridge::JavaClasses;
 use datafusion_ext_commons::ffi::MpscBatchReader;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use crate::handle_unwinded_scope;
-use crate::metrics::update_spark_metric_node;
+use futures::{FutureExt, StreamExt};
+use jni::objects::{GlobalRef, JObject};
+use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
+use tokio::runtime::Runtime;
 
 pub struct NativeExecutionRuntime {
     native_wrapper: GlobalRef,
@@ -46,7 +49,6 @@ impl NativeExecutionRuntime {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<Self> {
-
         let batch_size = context.session_config().batch_size();
 
         // execute plan to output stream
@@ -105,17 +107,16 @@ impl NativeExecutionRuntime {
                 .catch_unwind()
                 .await
                 .unwrap_or_else(|err| {
-                    let panic_message = panic_message::get_panic_message(&err)
-                        .unwrap_or("unknown error");
+                    let panic_message =
+                        panic_message::get_panic_message(&err).unwrap_or("unknown error");
                     Some(Err(DataFusionError::Execution(panic_message.to_owned())))
                 })
                 .transpose()
                 .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
             {
-                sender.send(Some(Ok(batch)))
-                    .map_err(|err| DataFusionError::Execution(
-                        format!("sending batch error: {}", err)
-                    ))?;
+                sender.send(Some(Ok(batch))).map_err(|err| {
+                    DataFusionError::Execution(format!("sending batch error: {}", err))
+                })?;
             }
 
             sender.send(None).unwrap_or_else(|err| {
@@ -203,11 +204,7 @@ impl NativeExecutionRuntime {
     }
 }
 
-fn set_error(
-    native_wrapper: &GlobalRef,
-    message: &str,
-    cause: Option<JObject>,
-) -> Result<()> {
+fn set_error(native_wrapper: &GlobalRef, message: &str, cause: Option<JObject>) -> Result<()> {
     let message = jni_new_string!(message.to_owned())?;
     let e = jni_new_object!(JavaRuntimeException(
         message.as_obj(),

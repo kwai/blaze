@@ -35,8 +35,12 @@ pub struct AggCollectSet {
 }
 
 impl AggCollectSet {
-    pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType, arg_type: DataType) -> Result<Self> {
-        let field = Arc::new(Field::new("collect_set",arg_type.clone(), false));
+    pub fn try_new(
+        child: Arc<dyn PhysicalExpr>,
+        data_type: DataType,
+        arg_type: DataType,
+    ) -> Result<Self> {
+        let field = Arc::new(Field::new("collect_set", arg_type.clone(), false));
         let accums_initial = vec![ScalarValue::List(None, field)];
         let partial_updater = get_partial_updater(&arg_type)?;
         let partial_buf_merger = get_partial_buf_merger(&arg_type)?;
@@ -78,14 +82,25 @@ impl Agg for AggCollectSet {
         &self.accums_initial
     }
 
-    fn partial_update(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef], row_idx: usize) -> Result<()> {
+    fn partial_update(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+        row_idx: usize,
+    ) -> Result<()> {
         let partial_updater = self.partial_updater;
         let addr = agg_buf_addrs[0];
         partial_updater(agg_buf, addr, &values[0], row_idx);
         Ok(())
     }
 
-    fn partial_update_all(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64], values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<()> {
         let addr = agg_buf_addrs[0];
 
         macro_rules! handle_fixed {
@@ -134,7 +149,7 @@ impl Agg for AggCollectSet {
             DataType::UInt64 => handle_fixed!(UInt64),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
-            DataType::Timestamp(TimeUnit::Microsecond, _) =>{
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
                 handle_fixed!(TimestampMicrosecond)
             }
             DataType::Decimal128(_, _) => handle_fixed!(Decimal128),
@@ -159,7 +174,12 @@ impl Agg for AggCollectSet {
         Ok(())
     }
 
-    fn partial_merge(&self, agg_buf: &mut AggBuf, merging_agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<()> {
+    fn partial_merge(
+        &self,
+        agg_buf: &mut AggBuf,
+        merging_agg_buf: &mut AggBuf,
+        agg_buf_addrs: &[u64],
+    ) -> Result<()> {
         let partial_buf_merger = self.partial_buf_merger;
         let addr = agg_buf_addrs[0];
         partial_buf_merger(agg_buf, merging_agg_buf, addr);
@@ -178,12 +198,13 @@ impl Agg for AggCollectSet {
                     .unwrap()
                     .values
                     .as_ref()
-                    .map(|s| s.into_iter()
-                        .map(|v| ScalarValue::$ty(Some(v.clone())))
-                        .collect::<Vec<_>>()
-                    );
+                    .map(|s| {
+                        s.into_iter()
+                            .map(|v| ScalarValue::$ty(Some(v.clone())))
+                            .collect::<Vec<_>>()
+                    });
                 ScalarValue::new_list(w, self.arg_type.clone())
-            }}
+            }};
         }
         macro_rules! handle_fixed_float {
             ($ty:ident) => {{
@@ -196,12 +217,13 @@ impl Agg for AggCollectSet {
                     .unwrap()
                     .values
                     .as_ref()
-                    .map(|s| s.into_iter()
-                        .map(|v| ScalarValue::$ty(Some(TNative::from_ne_bytes(v.clone()))))
-                        .collect::<Vec<_>>()
-                    );
+                    .map(|s| {
+                        s.into_iter()
+                            .map(|v| ScalarValue::$ty(Some(TNative::from_ne_bytes(v.clone()))))
+                            .collect::<Vec<_>>()
+                    });
                 ScalarValue::new_list(w, self.arg_type.clone())
-            }}
+            }};
         }
         Ok(match &self.arg_type {
             DataType::Int8 => handle_fixed!(Int8),
@@ -224,14 +246,13 @@ impl Agg for AggCollectSet {
                     .unwrap()
                     .values
                     .as_ref()
-                    .map(|s| s.into_iter()
-                        .map(|v| {
-                            ScalarValue::TimestampMicrosecond(Some(v.clone()), tz.clone())
-                        })
-                        .collect::<Vec<_>>()
-                    );
+                    .map(|s| {
+                        s.into_iter()
+                            .map(|v| ScalarValue::TimestampMicrosecond(Some(*v), tz.clone()))
+                            .collect::<Vec<_>>()
+                    });
                 ScalarValue::new_list(w, self.arg_type.clone())
-            },
+            }
             DataType::Decimal128(prec, scale) => {
                 let w = agg_buf
                     .dyn_value(agg_buf_addrs[0])
@@ -240,12 +261,13 @@ impl Agg for AggCollectSet {
                     .unwrap()
                     .values
                     .as_ref()
-                    .map(|s| s.into_iter()
-                        .map(|v| ScalarValue::Decimal128(Some(v.clone()), *prec, *scale))
-                        .collect::<Vec<_>>()
-                    );
+                    .map(|s| {
+                        s.into_iter()
+                            .map(|v| ScalarValue::Decimal128(Some(*v), *prec, *scale))
+                            .collect::<Vec<_>>()
+                    });
                 ScalarValue::new_list(w, self.arg_type.clone())
-            },
+            }
             DataType::Utf8 => {
                 let w = agg_buf
                     .dyn_value(agg_buf_addrs[0])
@@ -254,12 +276,13 @@ impl Agg for AggCollectSet {
                     .unwrap()
                     .strs
                     .as_ref()
-                    .map(|s| s.into_iter()
-                        .map(|v| ScalarValue::Utf8(Some(v.to_string())))
-                        .collect::<Vec<_>>()
-                    );
+                    .map(|s| {
+                        s.into_iter()
+                            .map(|v| ScalarValue::Utf8(Some(v.to_string())))
+                            .collect::<Vec<_>>()
+                    });
                 ScalarValue::new_list(w, self.arg_type.clone())
-            },
+            }
             other => {
                 return Err(DataFusionError::Execution(format!(
                     "unsupported agg data type: {:?}",
@@ -324,25 +347,23 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
         DataType::Date64 => fn_fixed!(Date64),
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
-        DataType::Utf8 => {
-            Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
-                let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-                if value.is_valid(i) {
-                    let w = agg_buf
-                        .dyn_value_mut(addr)
-                        .as_any_mut()
-                        .downcast_mut::<AggDynStrSet>()
-                        .unwrap();
-                    let v = value.value(i);
-                    w.append(v);
-                }
-            })
-        }
+        DataType::Utf8 => Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
+            let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+            if value.is_valid(i) {
+                let w = agg_buf
+                    .dyn_value_mut(addr)
+                    .as_any_mut()
+                    .downcast_mut::<AggDynStrSet>()
+                    .unwrap();
+                let v = value.value(i);
+                w.append(v);
+            }
+        }),
         other => {
-            return Err(DataFusionError::NotImplemented(format!(
+            Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in collect_set(): {}",
                 other
-            )));
+            )))
         }
     }
 }
@@ -394,10 +415,10 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
             w.merge(v);
         }),
         other => {
-            return Err(DataFusionError::NotImplemented(format!(
+            Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in collect_set(): {}",
                 other
-            )));
+            )))
         }
     }
 }

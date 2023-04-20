@@ -47,8 +47,7 @@ use datafusion::{
     physical_plan::{
         expressions::PhysicalSortExpr,
         metrics::{self, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
-        Statistics,
+        DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
     },
     scalar::ScalarValue,
 };
@@ -95,26 +94,26 @@ impl ParquetExec {
         fs_resource_id: String,
         predicate: Option<Expr>,
     ) -> Self {
-        debug!("Creating ParquetExec, files: {:?}, projection {:?}, predicate: {:?}, limit: {:?}",
-            base_config.file_group, base_config.projection, predicate, base_config.limit);
+        debug!(
+            "Creating ParquetExec, files: {:?}, projection {:?}, predicate: {:?}, limit: {:?}",
+            base_config.file_group, base_config.projection, predicate, base_config.limit
+        );
 
         let metrics = ExecutionPlanMetricsSet::new();
         let predicate_creation_errors =
             MetricBuilder::new(&metrics).global_counter("num_predicate_creation_errors");
 
-        let pruning_predicate = predicate.and_then(|predicate_expr| {
-            match PruningPredicate::try_new(
-                predicate_expr,
-                base_config.file_schema.clone(),
-            ) {
-                Ok(pruning_predicate) => Some(pruning_predicate),
-                Err(e) => {
-                    debug!("Could not create pruning predicate for: {}", e);
-                    predicate_creation_errors.add(1);
-                    None
+        let pruning_predicate =
+            predicate.and_then(|predicate_expr| {
+                match PruningPredicate::try_new(predicate_expr, base_config.file_schema.clone()) {
+                    Ok(pruning_predicate) => Some(pruning_predicate),
+                    Err(e) => {
+                        debug!("Could not create pruning predicate for: {}", e);
+                        predicate_creation_errors.add(1);
+                        None
+                    }
                 }
-            }
-        });
+            });
 
         let (projected_schema, projected_statistics) = base_config.project();
 
@@ -141,11 +140,7 @@ impl ParquetExec {
 
 impl ParquetFileMetrics {
     /// Create new metrics
-    pub fn new(
-        partition: usize,
-        filename: &str,
-        metrics: &ExecutionPlanMetricsSet,
-    ) -> Self {
+    pub fn new(partition: usize, filename: &str, metrics: &ExecutionPlanMetricsSet) -> Self {
         let predicate_evaluation_errors = MetricBuilder::new(metrics)
             .with_new_label("filename", filename.to_string())
             .counter("predicate_evaluation_errors", partition);
@@ -222,12 +217,9 @@ impl ExecutionPlan for ParquetExec {
 
         // get fs object from jni bridge resource
         let resource_id = jni_new_string!(&self.fs_resource_id)?;
-        let fs =
-            jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
+        let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
 
-        let fs_provider = Arc::new(
-            FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time)
-        );
+        let fs_provider = Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time));
 
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,
@@ -254,11 +246,7 @@ impl ExecutionPlan for ParquetExec {
         Ok(Box::pin(stream))
     }
 
-    fn fmt_as(
-        &self,
-        t: DisplayFormatType,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result {
+    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match t {
             DisplayFormatType::Default => {
                 // NOTE:
@@ -313,11 +301,8 @@ impl FormatReader for ParquetOpener {
         meta: ObjectMeta,
         range: Option<FileRange>,
     ) -> ReaderFuture {
-        let metrics = ParquetFileMetrics::new(
-            self.partition_index,
-            meta.location.as_ref(),
-            &self.metrics,
-        );
+        let metrics =
+            ParquetFileMetrics::new(self.partition_index, meta.location.as_ref(), &self.metrics);
 
         let reader = ParquetFileReader {
             fs_provider,
@@ -403,10 +388,7 @@ impl AsyncFileReader for ParquetFileReader {
                 self.get_input()?
                     .read_fully(range.start as u64, &mut bytes)
                     .map_err(|e| {
-                        ParquetError::General(format!(
-                            "parquetFileReader::get_bytes error: {}",
-                            e
-                        ))
+                        ParquetError::General(format!("parquetFileReader::get_bytes error: {}", e))
                     })?;
                 Ok(Bytes::from(bytes))
             })
@@ -420,10 +402,7 @@ impl AsyncFileReader for ParquetFileReader {
             let metadata = fetch_parquet_metadata(self.get_input()?, &self.meta)
                 .await
                 .map_err(|e| {
-                    ParquetError::General(format!(
-                        "parquetFileReader::get_metadata error: {}",
-                        e
-                    ))
+                    ParquetError::General(format!("parquetFileReader::get_metadata error: {}", e))
                 })?;
             Ok(Arc::new(metadata))
         })

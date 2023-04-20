@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::convert::TryInto;
-use std::fmt::Debug;
-use std::{any::Any, sync::Arc};
 use arrow::array::*;
 use arrow::compute::*;
 use arrow::datatypes::*;
@@ -23,9 +20,12 @@ use datafusion::common::cast::{as_list_array, as_struct_array};
 use datafusion::common::DataFusionError;
 use datafusion::common::Result;
 use datafusion::common::ScalarValue;
-use datafusion::logical_expr::ColumnarValue;
 use datafusion::logical_expr::field_util::get_indexed_field;
+use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
+use std::convert::TryInto;
+use std::fmt::Debug;
+use std::{any::Any, sync::Arc};
 
 use crate::down_cast_any_ref;
 
@@ -86,7 +86,7 @@ impl PhysicalExpr for GetIndexedFieldExpr {
 
                 if idx < 1 || as_list_array.is_empty() {
                     let scalar_null: ScalarValue = lst.data_type().try_into()?;
-                    return Ok(ColumnarValue::Scalar(scalar_null))
+                    return Ok(ColumnarValue::Scalar(scalar_null));
                 }
 
                 let list_len = as_list_array.len();
@@ -98,9 +98,7 @@ impl PhysicalExpr for GetIndexedFieldExpr {
                             let take_offset = base_offset + idx as i32 - 1;
                             take_indices_builder.append_value(take_offset);
                         }
-                        _ => {
-                            take_indices_builder.append_null()
-                        }
+                        _ => take_indices_builder.append_null(),
                     }
                 }
                 let taken = take(
@@ -113,20 +111,24 @@ impl PhysicalExpr for GetIndexedFieldExpr {
             (DataType::Struct(_), ScalarValue::Utf8(Some(k))) => {
                 let as_struct_array = as_struct_array(&array)?;
                 match as_struct_array.column_by_name(k) {
-                    None => Err(DataFusionError::Execution(
-                        format!("get indexed field {k} not found in struct"))),
-                    Some(col) => Ok(ColumnarValue::Array(col.clone()))
+                    None => Err(DataFusionError::Execution(format!(
+                        "get indexed field {k} not found in struct"
+                    ))),
+                    Some(col) => Ok(ColumnarValue::Array(col.clone())),
                 }
             }
-            (DataType::List(_), key) => Err(DataFusionError::Execution(
-                format!("get indexed field is only possible on lists with int64 indexes. \
-                         Tried with {key:?} index"))),
-            (DataType::Struct(_), key) => Err(DataFusionError::Execution(
-                format!("get indexed field is only possible on struct with utf8 indexes. \
-                         Tried with {key:?} index"))),
-            (dt, key) => Err(DataFusionError::Execution(
-                format!("get indexed field is only possible on lists with int64 indexes or struct \
-                         with utf8 indexes. Tried {dt:?} with {key:?} index"))),
+            (DataType::List(_), key) => Err(DataFusionError::Execution(format!(
+                "get indexed field is only possible on lists with int64 indexes. \
+                         Tried with {key:?} index"
+            ))),
+            (DataType::Struct(_), key) => Err(DataFusionError::Execution(format!(
+                "get indexed field is only possible on struct with utf8 indexes. \
+                         Tried with {key:?} index"
+            ))),
+            (dt, key) => Err(DataFusionError::Execution(format!(
+                "get indexed field is only possible on lists with int64 indexes or struct \
+                         with utf8 indexes. Tried {dt:?} with {key:?} index"
+            ))),
         }
     }
 
@@ -156,52 +158,41 @@ impl PartialEq<dyn Any> for GetIndexedFieldExpr {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use super::GetIndexedFieldExpr;
     use arrow::array::*;
-    use arrow::compute::*;
+    
     use arrow::datatypes::*;
-    use datafusion::physical_plan::PhysicalExpr;
-    use datafusion::physical_plan::expressions::Column;
-    use datafusion::scalar::ScalarValue;
     use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_eq;
-    use super::GetIndexedFieldExpr;
+    use datafusion::physical_plan::expressions::Column;
+    use datafusion::physical_plan::PhysicalExpr;
+    use datafusion::scalar::ScalarValue;
+    use std::sync::Arc;
 
     #[test]
     fn test_list() -> Result<(), Box<dyn std::error::Error>> {
-        let array: ArrayRef = Arc::new(
-            ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
-                Some(vec![Some(100), Some(101), Some(102)]),
-                Some(vec![Some(200), Some(201)]),
-                None,
-                Some(vec![Some(300)]),
-                Some(vec![Some(400), Some(401), None, Some(403)]),
-            ]));
-        let input_batch = RecordBatch::try_from_iter_with_nullable(vec![
-            ("c1", array, true),
-        ])?;
+        let array: ArrayRef = Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(100), Some(101), Some(102)]),
+            Some(vec![Some(200), Some(201)]),
+            None,
+            Some(vec![Some(300)]),
+            Some(vec![Some(400), Some(401), None, Some(403)]),
+        ]));
+        let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("c1", array, true)])?;
 
         let get_indexed = Arc::new(GetIndexedFieldExpr::new(
             Arc::new(Column::new("c1", 0)),
             ScalarValue::from(2_i64),
         ));
         let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
-        let output_batch = RecordBatch::try_from_iter_with_nullable(vec![
-            ("c1", output_array, true),
-        ])?;
+        let output_batch =
+            RecordBatch::try_from_iter_with_nullable(vec![("c1", output_array, true)])?;
 
         let expected = vec![
-            "+-----+",
-            "| c1  |",
-            "+-----+",
-            "| 101 |",
-            "| 201 |",
-            "|     |",
-            "|     |",
-            "| 401 |",
+            "+-----+", "| c1  |", "+-----+", "| 101 |", "| 201 |", "|     |", "|     |", "| 401 |",
             "+-----+",
         ];
-        assert_batches_eq!(expected, &vec![output_batch]);
+        assert_batches_eq!(expected, &[output_batch]);
         Ok(())
     }
 }

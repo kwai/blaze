@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Weak};
-use std::time::Duration;
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::common::Result;
 use once_cell::sync::OnceCell;
 use parking_lot::{Condvar, Mutex};
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 static MEM_MANAGER: OnceCell<Arc<MemManager>> = OnceCell::new();
 
@@ -61,11 +61,10 @@ impl MemManager {
 
         // safety:
         // get_consumer_info() is guaranteed not to be called before this operation
+        #[allow(clippy::cast_ref_to_mut)]
         unsafe {
-            let consumer_mut = &mut *(consumer.as_ref()
-                as *const dyn MemConsumer
-                as *mut dyn MemConsumer
-            );
+            let consumer_mut =
+                &mut *(consumer.as_ref() as *const dyn MemConsumer as *mut dyn MemConsumer);
             consumer_mut.set_consumer_info(Arc::downgrade(&consumer_info));
         }
 
@@ -158,9 +157,11 @@ pub trait MemConsumer: Send + Sync {
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo>;
 
     fn consumer_info(&self) -> Arc<MemConsumerInfo> {
-        self.get_consumer_info().upgrade().expect("consumer deregistered")
+        self.get_consumer_info()
+            .upgrade()
+            .expect("consumer deregistered")
     }
-    
+
     fn set_spillable(&self, spillable: bool) {
         let consumer_info = self.consumer_info();
         let mut consumer_status = consumer_info.status.lock();
@@ -179,18 +180,21 @@ pub trait MemConsumer: Send + Sync {
         consumer_status.spillable = spillable;
     }
 
-    async fn update_mem_used(&self, new_used: usize) -> Result<()> where Self: Sized {
+    async fn update_mem_used(&self, new_used: usize) -> Result<()>
+    where
+        Self: Sized,
+    {
         update_consumer_mem_used_with_custom_updater(self, |consumer_status| {
             let old_used = std::mem::replace(&mut consumer_status.mem_used, new_used);
             (old_used, new_used)
-        }).await
+        })
+        .await
     }
 
-    async fn update_mem_used_with_diff(
-        &self,
-        diff_used: isize,
-    ) -> Result<()> where Self: Sized {
-
+    async fn update_mem_used_with_diff(&self, diff_used: isize) -> Result<()>
+    where
+        Self: Sized,
+    {
         update_consumer_mem_used_with_custom_updater(self, |consumer_status| {
             let old_used = consumer_status.mem_used;
             let new_used = if diff_used > 0 {
@@ -200,7 +204,8 @@ pub trait MemConsumer: Send + Sync {
             };
             consumer_status.mem_used = new_used;
             (old_used, new_used)
-        }).await
+        })
+        .await
     }
 
     /// spills this consumer and returns used memory after spilling
@@ -213,15 +218,14 @@ async fn update_consumer_mem_used_with_custom_updater(
     consumer: &dyn MemConsumer,
     updater: impl Fn(&mut MemConsumerStatus) -> (usize, usize),
 ) -> Result<()> {
-
     let mm = MemManager::get();
     let consumer_info = consumer.consumer_info();
     let total = mm.total;
 
     #[derive(Clone, Copy, PartialEq)]
     enum Operation {
-        Spill, // spill this consumer
-        Wait, // wait other consumers to spill
+        Spill,   // spill this consumer
+        Wait,    // wait other consumers to spill
         Nothing, // do nothing
     }
 
@@ -235,14 +239,12 @@ async fn update_consumer_mem_used_with_custom_updater(
         let diff_used = new_used as isize - old_used as isize;
 
         // update mm status
-        let (total_old_used, total_used) =
-            mm_status.update_total_used_with_diff(diff_used);
+        let (total_old_used, total_used) = mm_status.update_total_used_with_diff(diff_used);
 
         // update mm spillable status
         if consumer_status.spillable {
             assert!(mm_status.mem_spillables as isize + diff_used >= 0);
-            mm_status.mem_spillables =
-                (mm_status.mem_spillables as isize + diff_used) as usize;
+            mm_status.mem_spillables = (mm_status.mem_spillables as isize + diff_used) as usize;
         }
 
         // consumer is unspillable/shrinking, no need to wait or spill
@@ -261,16 +263,15 @@ async fn update_consumer_mem_used_with_custom_updater(
 
         let total_overflowed = total_used > total;
         let consumer_overflowed = new_used > consumer_mem_max;
-        let operation =
-            if new_used > old_used && (total_overflowed || consumer_overflowed) {
-                if spillable && new_used > consumer_mem_min {
-                    Operation::Spill
-                } else {
-                    Operation::Wait
-                }
+        let operation = if new_used > old_used && (total_overflowed || consumer_overflowed) {
+            if spillable && new_used > consumer_mem_min {
+                Operation::Spill
             } else {
-                Operation::Nothing
-            };
+                Operation::Wait
+            }
+        } else {
+            Operation::Nothing
+        };
         (new_used, total_old_used, total_used, operation)
     };
     print_stats(consumer, total_old_used, total_used);
@@ -281,7 +282,8 @@ async fn update_consumer_mem_used_with_custom_updater(
         const WAIT_TIME: Duration = Duration::from_millis(10000);
 
         let mut mm_status = mm.status.lock();
-        let wait = mm.cv
+        let wait = mm
+            .cv
             .wait_while_for(&mut mm_status, |s| total < s.total_used, WAIT_TIME);
 
         if wait.timed_out() {

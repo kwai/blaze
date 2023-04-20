@@ -41,9 +41,7 @@ use arrow::{
 use async_trait::async_trait;
 use datafusion::datasource::listing::FileRange;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::{
-    ColumnStatistics, ColumnarValue, ExecutionPlan, Statistics,
-};
+use datafusion::physical_plan::{ColumnStatistics, ColumnarValue, ExecutionPlan, Statistics};
 use datafusion::{error::Result, scalar::ScalarValue};
 
 mod file_stream;
@@ -85,9 +83,9 @@ impl FileScanConfig {
 
         let proj_iter: Box<dyn Iterator<Item = usize>> = match &self.projection {
             Some(proj) => Box::new(proj.iter().copied()),
-            None => Box::new(
-                0..(self.file_schema.fields().len() + self.table_partition_cols.len()),
-            ),
+            None => {
+                Box::new(0..(self.file_schema.fields().len() + self.table_partition_cols.len()))
+            }
         };
 
         let mut table_fields = vec![];
@@ -224,11 +222,7 @@ impl SchemaAdapter {
     /// Re-order projected columns by index in record batch to match table schema column ordering. If the record
     /// batch does not contain a column for an expected field, insert a null-valued column at the
     /// required column index.
-    pub fn adapt_batch(
-        &self,
-        batch: RecordBatch,
-        projections: &[usize],
-    ) -> Result<RecordBatch> {
+    pub fn adapt_batch(&self, batch: RecordBatch, projections: &[usize]) -> Result<RecordBatch> {
         let batch_rows = batch.num_rows();
 
         let batch_schema = batch.schema();

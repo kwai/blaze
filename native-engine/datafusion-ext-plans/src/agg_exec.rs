@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 use arrow::array::ArrayRef;
 use arrow::datatypes::{FieldRef, SchemaRef};
 use arrow::error::ArrowError;
@@ -23,9 +20,7 @@ use arrow::row::{RowConverter, SortField};
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
-};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
@@ -33,6 +28,9 @@ use datafusion::physical_plan::{
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::{AggTables, InMemTable};
@@ -145,26 +143,18 @@ async fn execute_agg(
 ) -> Result<SendableRecordBatchStream> {
     match agg_ctx.exec_mode {
         _ if !agg_ctx.groupings.is_empty() => {
-            execute_agg_with_grouping_hash(
-                input, context, agg_ctx, partition_id, metrics
-            )
-            .await
-            .map_err(|err| err.context("agg: execute_agg_with_grouping_hash() error"))
+            execute_agg_with_grouping_hash(input, context, agg_ctx, partition_id, metrics)
+                .await
+                .map_err(|err| err.context("agg: execute_agg_with_grouping_hash() error"))
         }
         AggExecMode::HashAgg => {
-            execute_agg_no_grouping(
-                input, context, agg_ctx, partition_id, metrics
-            )
-            .await
-            .map_err(|err| err.context("agg: execute_agg_no_grouping() error"))
+            execute_agg_no_grouping(input, context, agg_ctx, partition_id, metrics)
+                .await
+                .map_err(|err| err.context("agg: execute_agg_no_grouping() error"))
         }
-        AggExecMode::SortAgg => {
-            execute_agg_sorted(
-                input, context, agg_ctx, partition_id, metrics
-            )
+        AggExecMode::SortAgg => execute_agg_sorted(input, context, agg_ctx, partition_id, metrics)
             .await
-            .map_err(|err| err.context("agg: execute_agg_sorted() error"))
-        }
+            .map_err(|err| err.context("agg: execute_agg_sorted() error")),
     }
 }
 
@@ -311,7 +301,8 @@ async fn execute_agg_no_grouping(
                     agg_ctx.output_schema.clone(),
                     agg_columns,
                     &RecordBatchOptions::new().with_row_count(Some(1)),
-                ).map(|batch| {
+                )
+                .map(|batch| {
                     baseline_metrics.record_output(1);
                     batch
                 })
@@ -406,9 +397,7 @@ async fn execute_agg_sorted(
                             baseline_metrics.record_output(batch.num_rows());
                             sender
                                 .send(Ok(batch))
-                                .map_err(|err| {
-                                    DataFusionError::Execution(format!("{:?}", err))
-                                })
+                                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
                                 .await?;
                             timer.restart();
                         }
@@ -429,10 +418,8 @@ async fn execute_agg_sorted(
             staging_records.push(record);
         }
         if !staging_records.is_empty() {
-            let batch = agg_ctx.convert_records_to_batch(
-                &mut grouping_row_converter,
-                &mut staging_records,
-            )?;
+            let batch = agg_ctx
+                .convert_records_to_batch(&mut grouping_row_converter, &mut staging_records)?;
             baseline_metrics.record_output(batch.num_rows());
             timer.stop();
 

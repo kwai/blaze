@@ -25,8 +25,7 @@ pub struct OnHeapSpill(Arc<RawOnHeapSpill>);
 impl OnHeapSpill {
     pub fn try_new() -> Result<Self> {
         let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
-        let spill_id =
-            jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).newSpill() -> i32)?;
+        let spill_id = jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).newSpill() -> i32)?;
 
         Ok(Self(Arc::new(RawOnHeapSpill {
             hsm: jni_new_global_ref!(hsm.as_obj())?,

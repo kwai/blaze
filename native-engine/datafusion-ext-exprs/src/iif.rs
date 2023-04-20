@@ -185,11 +185,9 @@ mod test {
             Some(1),
             None,
         ]));
-        let batch = RecordBatch::try_from_iter_with_nullable([
-            ("a", arg1, true),
-            ("b", arg2, true),
-        ])
-        .unwrap();
+        let batch =
+            RecordBatch::try_from_iter_with_nullable([("a", arg1, true), ("b", arg2, true)])
+                .unwrap();
 
         let a = Arc::new(Column::new("a", 0));
         let b = Arc::new(Column::new("b", 1));

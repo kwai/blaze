@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use crate::window::window_context::WindowContext;
+use crate::window::WindowFunctionProcessor;
 use arrow::array::{ArrayRef, Int32Builder};
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
-use crate::window::window_context::WindowContext;
-use crate::window::WindowFunctionProcessor;
+use std::sync::Arc;
 
 pub struct RankProcessor {
     cur_partition: Box<[u8]>,
@@ -40,11 +40,7 @@ impl RankProcessor {
 }
 
 impl WindowFunctionProcessor for RankProcessor {
-    fn process_batch(
-        &mut self,
-        context: &WindowContext,
-        batch: &RecordBatch,
-    ) -> Result<ArrayRef> {
+    fn process_batch(&mut self, context: &WindowContext, batch: &RecordBatch) -> Result<ArrayRef> {
         let partition_rows = context.get_partition_rows(batch)?;
         let order_rows = context.get_order_rows(batch)?;
         let mut builder = Int32Builder::with_capacity(batch.num_rows());
@@ -65,11 +61,7 @@ impl WindowFunctionProcessor for RankProcessor {
                 if order_row.as_ref() == self.cur_order.as_ref() {
                     self.cur_equals += 1;
                 } else {
-                    self.cur_rank += if !self.is_dense {
-                        self.cur_equals
-                    } else {
-                        1
-                    };
+                    self.cur_rank += if !self.is_dense { self.cur_equals } else { 1 };
                     self.cur_equals = 1;
                     self.cur_order = order_row.as_ref().into();
                 }

@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use crate::agg::{create_agg, AggFunction};
+use crate::window::processors::agg_processor::AggProcessor;
+use crate::window::processors::rank_processor::RankProcessor;
+use crate::window::processors::row_number_processor::RowNumberProcessor;
+use crate::window::window_context::WindowContext;
 use arrow::array::ArrayRef;
 use arrow::datatypes::FieldRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::physical_expr::PhysicalExpr;
-use crate::agg::{AggFunction, create_agg};
-use crate::window::processors::agg_processor::AggProcessor;
-use crate::window::processors::rank_processor::RankProcessor;
-use crate::window::processors::row_number_processor::RowNumberProcessor;
-use crate::window::window_context::WindowContext;
+use std::sync::Arc;
 
-pub mod window_context;
 pub mod processors;
+pub mod window_context;
 
 #[derive(Debug, Clone, Copy)]
 pub enum WindowFunction {
@@ -41,11 +41,7 @@ pub enum WindowRankType {
 }
 
 pub trait WindowFunctionProcessor: Send + Sync {
-    fn process_batch(
-        &mut self,
-        context: &WindowContext,
-        batch: &RecordBatch,
-    ) -> Result<ArrayRef>;
+    fn process_batch(&mut self, context: &WindowContext, batch: &RecordBatch) -> Result<ArrayRef>;
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +68,6 @@ impl WindowExpr {
         &self,
         context: &Arc<WindowContext>,
     ) -> Result<Box<dyn WindowFunctionProcessor>> {
-
         match self.func {
             WindowFunction::RankLike(WindowRankType::RowNumber) => {
                 Ok(Box::new(RowNumberProcessor::new()))
@@ -84,11 +79,7 @@ impl WindowExpr {
                 Ok(Box::new(RankProcessor::new(true)))
             }
             WindowFunction::Agg(agg_func) => {
-                let agg = create_agg(
-                    agg_func,
-                    &self.children,
-                    &context.input_schema,
-                )?;
+                let agg = create_agg(agg_func, &self.children, &context.input_schema)?;
                 Ok(Box::new(AggProcessor::try_new(agg)?))
             }
         }

@@ -18,13 +18,10 @@ use datafusion::common::Result;
 use datafusion::common::{DataFusionError, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
-};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream,
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
 };
 use futures::{Stream, StreamExt};
 use std::any::Any;
@@ -160,10 +157,7 @@ impl RecordBatchStream for ExpandStream {
 impl Stream for ExpandStream {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // continue processing current batch
         if let Some(batch) = &self.current_batch {
             let _timer = self.metrics.elapsed_compute();

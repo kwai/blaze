@@ -18,14 +18,14 @@ use std::sync::Arc;
 
 pub mod cast;
 pub mod get_indexed_field;
+pub mod get_map_value;
 pub mod iif;
-pub mod spark_udf_wrapper;
+pub mod named_struct;
 pub mod spark_logical;
+pub mod spark_udf_wrapper;
 pub mod string_contains;
 pub mod string_ends_with;
 pub mod string_starts_with;
-pub mod named_struct;
-pub mod get_map_value;
 
 fn down_cast_any_ref(any: &dyn Any) -> &dyn Any {
     if any.is::<Arc<dyn PhysicalExpr>>() {

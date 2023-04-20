@@ -16,12 +16,12 @@ pub mod agg_buf;
 pub mod agg_context;
 pub mod agg_tables;
 pub mod avg;
+pub mod collect_list;
+pub mod collect_set;
 pub mod count;
 pub mod max;
 pub mod min;
 pub mod sum;
-pub mod collect_list;
-pub mod collect_set;
 
 use crate::agg::agg_buf::{AggBuf, AggDynStr};
 use arrow::array::*;
@@ -121,11 +121,7 @@ pub trait Agg: Send + Sync + Debug {
         agg_buf_addrs: &[u64],
     ) -> Result<()>;
 
-    fn final_merge(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<ScalarValue> {
+    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         // default implementation:
         // extract the only one values from agg_buf and convert to ScalarValue
         // this works for sum/min/max
@@ -169,7 +165,7 @@ pub trait Agg: Send + Sync + Debug {
                     .unwrap()
                     .value
                     .as_ref()
-                    .map(|s| s.as_ref().to_owned())
+                    .map(|s| s.as_ref().to_owned()),
             ),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
@@ -265,12 +261,20 @@ pub fn create_agg(
         AggFunction::CollectList => {
             let arg_type = children[0].data_type(input_schema)?;
             let return_type = DataType::List(Arc::new(Field::new("item", arg_type.clone(), true)));
-            Arc::new(collect_list::AggCollectList::try_new(children[0].clone(), return_type, arg_type)?)
+            Arc::new(collect_list::AggCollectList::try_new(
+                children[0].clone(),
+                return_type,
+                arg_type,
+            )?)
         }
         AggFunction::CollectSet => {
             let arg_type = children[0].data_type(input_schema)?;
             let return_type = DataType::List(Arc::new(Field::new("item", arg_type.clone(), true)));
-            Arc::new(collect_set::AggCollectSet::try_new(children[0].clone(), return_type, arg_type)?)
+            Arc::new(collect_set::AggCollectSet::try_new(
+                children[0].clone(),
+                return_type,
+                arg_type,
+            )?)
         }
     })
 }

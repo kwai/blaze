@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_commons::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object, jni_new_string};
+use blaze_commons::{
+    jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
+    jni_new_string,
+};
 use datafusion::error::Result;
 use datafusion::physical_plan::metrics::Time;
 use jni::objects::{GlobalRef, JObject};

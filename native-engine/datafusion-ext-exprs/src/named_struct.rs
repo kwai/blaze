@@ -1,17 +1,17 @@
+use crate::down_cast_any_ref;
+use arrow::datatypes::TimeUnit;
 use datafusion::arrow::array::{Array, ArrayRef, StructArray};
+use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::{
     datatypes::{DataType, Schema},
     record_batch::RecordBatch,
 };
-use datafusion::common::Result;
 use datafusion::common::DataFusionError;
-use datafusion::logical_expr::{ColumnarValue};
+use datafusion::common::Result;
+use datafusion::logical_expr::ColumnarValue;
+use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
 use std::fmt::{Debug, Formatter};
 use std::{any::Any, sync::Arc};
-use arrow::datatypes::TimeUnit;
-use datafusion::arrow::datatypes::Field;
-use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
-use crate::down_cast_any_ref;
 
 /// expression to get a field of from NameStruct.
 #[derive(Debug)]
@@ -57,7 +57,11 @@ impl PartialEq<dyn Any> for NamedStructExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         down_cast_any_ref(other)
             .downcast_ref::<Self>()
-            .map(|x| self.names.eq(&x.names) && expr_list_eq_any_order(&self.values, &x.values) && self.return_type == x.return_type)
+            .map(|x| {
+                self.names.eq(&x.names)
+                    && expr_list_eq_any_order(&self.values, &x.values)
+                    && self.return_type == x.return_type
+            })
             .unwrap_or(false)
     }
 }
@@ -78,7 +82,7 @@ impl PhysicalExpr for NamedStructExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         fn array_struct(
             return_type: &DataType,
-            _names: &Vec<String>,
+            _names: &[String],
             args: &[ArrayRef],
         ) -> Result<ColumnarValue> {
             if args.is_empty() {
@@ -116,9 +120,9 @@ impl PhysicalExpr for NamedStructExpr {
                         | DataType::UInt64
                         | DataType::Date32
                         | DataType::Date64
-                        | DataType::Timestamp(TimeUnit::Microsecond, _)
-                        => Ok((field_store.as_ref().clone(), arg.clone(),
-                        )),
+                        | DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                            Ok((field_store.as_ref().clone(), arg.clone()))
+                        }
                         data_type => Err(DataFusionError::NotImplemented(format!(
                             "NamedStruct is not implemented for type '{:?}'.",
                             data_type
@@ -138,9 +142,7 @@ impl PhysicalExpr for NamedStructExpr {
             .iter()
             .map(|x| match x {
                 ColumnarValue::Array(array) => array.clone(),
-                ColumnarValue::Scalar(scalar) => {
-                    scalar.to_array_of_size(batch.num_rows()).clone()
-                }
+                ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(batch.num_rows()).clone(),
             })
             .collect();
 
@@ -155,13 +157,14 @@ impl PhysicalExpr for NamedStructExpr {
         self.values.clone()
     }
 
-    fn with_new_children(self: Arc<Self>, children: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(Arc::new(
-            Self::new(
-                self.names.clone(),
-                children.clone(),
-                self.return_type.clone()
-            )
-        ))
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(Arc::new(Self::new(
+            self.names.clone(),
+            children.clone(),
+            self.return_type.clone(),
+        )))
     }
 }

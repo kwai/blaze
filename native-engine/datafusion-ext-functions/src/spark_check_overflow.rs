@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::cmp::Ordering;
 use arrow::array::*;
 use datafusion::common::Result;
 use datafusion::common::ScalarValue;
@@ -49,11 +50,7 @@ pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                     to_scale,
                 ))
             }
-            _ => ColumnarValue::Scalar(ScalarValue::Decimal128(
-                None,
-                to_precision,
-                to_scale,
-            )),
+            _ => ColumnarValue::Scalar(ScalarValue::Decimal128(None, to_precision, to_scale)),
         },
         ColumnarValue::Array(array) => {
             let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
@@ -95,22 +92,26 @@ fn change_precision_round_half_up(
     if to_precision == precision && to_scale == scale {
         return Some(i128_val);
     }
-    if to_scale < scale {
-        // Easier case: we just need to divide our scale down
-        let diff = scale - to_scale;
-        let pow10diff = i128::pow(10, diff as u32);
-        // % and / always round to 0
-        let dropped_digits = i128_val % pow10diff;
-        i128_val /= pow10diff;
-        if dropped_digits.abs() * 2 >= pow10diff {
-            i128_val += if dropped_digits < 0 { -1 } else { 1 };
+    match to_scale.cmp(&scale) {
+        Ordering::Less => {
+            // Easier case: we just need to divide our scale down
+            let diff = scale - to_scale;
+            let pow10diff = i128::pow(10, diff as u32);
+            // % and / always round to 0
+            let dropped_digits = i128_val % pow10diff;
+            i128_val /= pow10diff;
+            if dropped_digits.abs() * 2 >= pow10diff {
+                i128_val += if dropped_digits < 0 { -1 } else { 1 };
+            }
         }
-    } else if to_scale > scale {
-        // We might be able to multiply i128_val by a power of 10 and not overflow, but if not,
-        // switch to using a BigDecimal
-        let diff = to_scale - scale;
-        // Multiplying i128_val by POW_10(diff) will still keep it below max_long_digits
-        i128_val *= i128::pow(10, diff as u32);
+        Ordering::Greater => {
+            // We might be able to multiply i128_val by a power of 10 and not overflow, but if not,
+            // switch to using a BigDecimal
+            let diff = to_scale - scale;
+            // Multiplying i128_val by POW_10(diff) will still keep it below max_long_digits
+            i128_val *= i128::pow(10, diff as u32);
+        }
+        _ => {}
     }
 
     // check whether the i128_val overflows s max precision supported in spark

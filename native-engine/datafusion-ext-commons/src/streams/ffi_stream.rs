@@ -59,10 +59,7 @@ impl RecordBatchStream for FFIReaderStream {
 impl Stream for FFIReaderStream {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(batch) = self.next_batch()? {
             return self
                 .baseline_metrics
@@ -91,9 +88,8 @@ impl FFIReaderStream {
         let ffi_arrow_schema_ptr = jni_new_object!(JavaLong(
             &mut ffi_arrow_schema as *mut FFI_ArrowSchema as i64
         ))?;
-        let ffi_arrow_array_ptr = jni_new_object!(JavaLong(
-            &mut ffi_arrow_array as *mut FFI_ArrowArray as i64
-        ))?;
+        let ffi_arrow_array_ptr =
+            jni_new_object!(JavaLong(&mut ffi_arrow_array as *mut FFI_ArrowArray as i64))?;
         let _unit = jni_call!(ScalaFunction2(consumer.as_obj()).apply(
             ffi_arrow_schema_ptr.as_obj(),
             ffi_arrow_array_ptr.as_obj(),

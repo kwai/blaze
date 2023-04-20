@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::array::{make_array, Array, ArrayData};
 use arrow::record_batch::RecordBatchOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
-use arrow::array::{Array, ArrayData, make_array};
 
 use arrow::datatypes::{DataType, Fields, Schema, SchemaRef};
 use arrow::error::Result as ArrowResult;
@@ -36,7 +36,7 @@ pub fn write_one_batch<W: Write + Seek>(
     output.write_all(&[0u8; 8])?;
 
     // write
-    batch_serde::write_batch(&batch, output, compress)?;
+    batch_serde::write_batch(batch, output, compress)?;
     let end_pos = output.stream_position()?;
     let ipc_length = end_pos - start_pos - 8;
 
@@ -76,10 +76,7 @@ pub fn read_one_batch<R: Read>(
     Ok(Some(nameless_batch))
 }
 
-pub fn name_batch(
-    batch: &RecordBatch,
-    name_schema: &SchemaRef,
-) -> ArrowResult<RecordBatch> {
+pub fn name_batch(batch: &RecordBatch, name_schema: &SchemaRef) -> ArrowResult<RecordBatch> {
     let row_count = batch.num_rows();
     let schema = Arc::new(Schema::new(
         batch
@@ -87,7 +84,7 @@ pub fn name_batch(
             .fields()
             .iter()
             .enumerate()
-            .map(|(i, _)|name_schema.field(i).clone())
+            .map(|(i, _)| name_schema.field(i).clone())
             .collect::<Fields>(),
     ));
     RecordBatch::try_new_with_options(
@@ -99,16 +96,14 @@ pub fn name_batch(
             .map(|(i, column)| {
                 let column_data = column.to_data();
                 Ok(match schema.field(i).data_type() {
-                    DataType::Struct(_) => {
-                        make_array(ArrayData::try_new(
-                            schema.field(i).data_type().clone(),
-                            column_data.len(),
-                            column_data.nulls().map(|nb| nb.buffer().clone()),
-                            column_data.offset(),
-                            column_data.buffers().to_vec(),
-                            column_data.child_data().to_vec(),
-                        )?)
-                    }
+                    DataType::Struct(_) => make_array(ArrayData::try_new(
+                        schema.field(i).data_type().clone(),
+                        column_data.len(),
+                        column_data.nulls().map(|nb| nb.buffer().clone()),
+                        column_data.offset(),
+                        column_data.buffers().to_vec(),
+                        column_data.child_data().to_vec(),
+                    )?),
                     DataType::Map(field, _) => {
                         let child_nameless_data = column_data.child_data().get(0).unwrap();
                         let child_data = ArrayData::try_new(
@@ -128,9 +123,7 @@ pub fn name_batch(
                             vec![child_data],
                         )?)
                     }
-                    _ => {
-                        column.clone()
-                    }
+                    _ => column.clone(),
                 })
             })
             .collect::<ArrowResult<_>>()?,

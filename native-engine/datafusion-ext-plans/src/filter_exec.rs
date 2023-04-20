@@ -93,8 +93,7 @@ impl ExecutionPlan for FilterExec {
             .next()
             .unwrap();
 
-        let coalesced =
-            Box::pin(CoalesceStream::new(filtered, batch_size, elapsed_compute));
+        let coalesced = Box::pin(CoalesceStream::new(filtered, batch_size, elapsed_compute));
         Ok(coalesced)
     }
 

@@ -13,18 +13,15 @@
 // limitations under the License.
 
 use arrow::array::*;
-use arrow::datatypes::*;
 use arrow::datatypes::DataType::Struct;
+use arrow::datatypes::*;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use paste::paste;
 use std::any::Any;
 use std::sync::Arc;
 
-pub fn new_array_builders(
-    schema: &SchemaRef,
-    batch_size: usize,
-) -> Vec<Box<dyn ArrayBuilder>> {
+pub fn new_array_builders(schema: &SchemaRef, batch_size: usize) -> Vec<Box<dyn ArrayBuilder>> {
     schema
         .fields()
         .iter()
@@ -691,7 +688,7 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                 let map_fields_name = Some(MapFieldNames {
                     entry: "entries".to_string(),
                     key: "key".to_string(),
-                    value: "value".to_string()
+                    value: "value".to_string(),
                 });
                 let key_type = fields.first().unwrap().data_type().clone();
                 let value_type = fields.last().unwrap().data_type().clone();
@@ -707,6 +704,12 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
 pub struct NullBuilder {
     len: usize,
 }
+impl Default for NullBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NullBuilder {
     pub fn new() -> Self {
         Self { len: 0 }
@@ -838,12 +841,9 @@ fn test_struct_array_from_vec() {
         None,
         Some("mark"),
     ]));
-    let ints: ArrayRef =
-        Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
+    let ints: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
 
-    let arr =
-        StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())])
-            .unwrap();
+    let arr = StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())]).unwrap();
 
-    eprintln!("ans is: {:#?}",arr.is_valid(1))
+    eprintln!("ans is: {:#?}", arr.is_valid(1))
 }

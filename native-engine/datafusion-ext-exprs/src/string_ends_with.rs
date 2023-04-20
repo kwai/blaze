@@ -77,11 +77,9 @@ impl PhysicalExpr for StringEndsWithExpr {
         match expr {
             ColumnarValue::Array(array) => {
                 let string_array = array.as_any().downcast_ref::<StringArray>().unwrap();
-                let ret_array = Arc::new(BooleanArray::from_iter(
-                    string_array.iter().map(|maybe_string| {
-                        maybe_string.map(|string| string.ends_with(&self.suffix))
-                    }),
-                ));
+                let ret_array = Arc::new(BooleanArray::from_iter(string_array.iter().map(
+                    |maybe_string| maybe_string.map(|string| string.ends_with(&self.suffix)),
+                )));
                 Ok(ColumnarValue::Array(ret_array))
             }
             ColumnarValue::Scalar(ScalarValue::Utf8(maybe_string)) => {

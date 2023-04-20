@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::datatypes::{DataType, TimeUnit};
 use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, write_len, write_u8};
+use hashbrown::HashSet;
 use std::any::Any;
 use std::hash::Hash;
 use std::io::{Cursor, Read, Write};
 use std::mem::size_of;
-use arrow::datatypes::{DataType, TimeUnit};
-use hashbrown::HashSet;
 
 #[derive(Eq, PartialEq)]
 pub struct AggBuf {
@@ -36,13 +36,16 @@ impl Clone for AggBuf {
     }
 }
 
+#[allow(clippy::borrowed_box)]
 impl AggBuf {
     pub fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.fixed.len()
-            + self.dyns.iter().map(|v| {
-                std::mem::size_of_val(v) + v.mem_size()
-            }).sum::<usize>()
+            + self
+                .dyns
+                .iter()
+                .map(|v| std::mem::size_of_val(v) + v.mem_size())
+                .sum::<usize>()
     }
 
     pub fn is_fixed_valid(&self, addr: u64) -> bool {
@@ -110,9 +113,7 @@ impl AggBuf {
     }
 }
 
-pub fn create_agg_buf_from_scalar(
-    values: &[ScalarValue],
-) -> Result<(AggBuf, Box<[u64]>)> {
+pub fn create_agg_buf_from_scalar(values: &[ScalarValue]) -> Result<(AggBuf, Box<[u64]>)> {
     let mut fixed_count = 0;
     let mut fixed_valids = vec![];
     let mut fixed: Vec<u8> = vec![];
@@ -165,27 +166,27 @@ pub fn create_agg_buf_from_scalar(
                         dyns.push(Box::new(AggDynStr::new(None)));
                     }
                 }
-            },
+            }
             ScalarValue::List(_, field) => {
                 macro_rules! handle_fixed_list {
                     ($ty:ty) => {{
                         dyns.push(match field.name().as_str() {
-                            "collect_list" => Box::new(AggDynList::<$ty>::default()),
-                            "collect_set" => Box::new(AggDynSet::<$ty>::default()),
-                            _ => unreachable!()
+                            "collect_list" => Box::<AggDynList<i128>>::default(),
+                            "collect_set" => Box::<AggDynSet<i128>>::default(),
+                            _ => unreachable!(),
                         });
-                    }}
+                    }};
                 }
                 macro_rules! handle_fixed_float_list {
                     ($ty:ty) => {{
                         dyns.push(match field.name().as_str() {
-                            "collect_list" => Box::new(AggDynList::<$ty>::default()),
+                            "collect_list" => Box::<AggDynList<f64>>::default(),
                             "collect_set" => {
-                                Box::new(AggDynSet::<[u8; size_of::<$ty>()]>::default())
+                                Box::<AggDynSet<[u8; 8]>>::default()
                             }
-                            _ => unreachable!()
+                            _ => unreachable!(),
                         });
-                    }}
+                    }};
                 }
                 addrs.push(make_dyn_addr(dyns.len()));
                 match field.data_type() {
@@ -203,20 +204,21 @@ pub fn create_agg_buf_from_scalar(
                     DataType::Date64 => handle_fixed_list!(i64),
                     DataType::Timestamp(TimeUnit::Microsecond, _) => {
                         handle_fixed_list!(i64)
-                    },
+                    }
                     DataType::Decimal128(_, _) => handle_fixed_list!(i128),
                     DataType::Utf8 => dyns.push(match field.name().as_str() {
-                        "collect_list" => Box::new(AggDynStrList::default()),
-                        "collect_set" => Box::new(AggDynStrSet::default()),
-                        _ => unreachable!()
+                        "collect_list" => Box::<AggDynStrList>::default(),
+                        "collect_set" => Box::<AggDynStrSet>::default(),
+                        _ => unreachable!(),
                     }),
                     _ => {
                         return Err(DataFusionError::Execution(format!(
-                            "AggDynList now do not support type: {:?}", field.data_type()
+                            "AggDynList now do not support type: {:?}",
+                            field.data_type()
                         )));
                     }
                 }
-            },
+            }
             other => {
                 return Err(DataFusionError::Execution(format!(
                     "unsupported agg data type: {:?}",
@@ -237,6 +239,7 @@ pub fn create_agg_buf_from_scalar(
     Ok((agg_buf, addrs.into()))
 }
 
+#[allow(clippy::borrowed_box)]
 pub trait AggDynValue: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -260,7 +263,7 @@ impl dyn AggDynValue {
                 if let Some(d) = self.as_any_mut().downcast_mut::<$ty>() {
                     return d.load(&mut r);
                 }
-            }}
+            }};
         }
 
         handle_dyn_type!(AggDynStr);
@@ -302,7 +305,7 @@ impl dyn AggDynValue {
                 if let Some(d) = self.as_any().downcast_ref::<$ty>() {
                     return d.save(&mut w);
                 }
-            }}
+            }};
         }
 
         handle_dyn_type!(AggDynStr);
@@ -344,6 +347,7 @@ pub struct AggDynStr {
     pub value: Option<Box<str>>,
 }
 
+#[allow(clippy::borrowed_box)]
 impl AggDynStr {
     pub fn new(value: Option<Box<str>>) -> Self {
         Self { value }
@@ -394,8 +398,7 @@ impl AggDynValue for AggDynStr {
     }
 
     fn mem_size(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self.value.as_ref().map(|s| s.len()).unwrap_or(0)
+        std::mem::size_of::<Self>() + self.value.as_ref().map(|s| s.len()).unwrap_or(0)
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -431,7 +434,7 @@ impl<T: PartialEq + Clone + Copy + Default + 'static> AggDynList<T> {
     pub fn merge(&mut self, other: &mut Self) {
         if let Some(values) = &mut self.values {
             if let Some(other_values) = &mut other.values {
-                values.extend(other_values.drain(..));
+                values.append(other_values);
             }
         } else {
             self.values = std::mem::take(&mut other.values);
@@ -444,9 +447,7 @@ impl<T: PartialEq + Clone + Copy + Default + 'static> AggDynList<T> {
             let bytes_length = (len - 1) * size_of::<T>();
             let bytes = read_bytes_slice(&mut r, bytes_length)?;
             let ptr = bytes.as_ptr() as *const T;
-            let num_buf = unsafe {
-                std::slice::from_raw_parts(ptr, len - 1)
-            };
+            let num_buf = unsafe { std::slice::from_raw_parts(ptr, len - 1) };
             self.values = Some(num_buf.to_vec());
         } else {
             self.values = None;
@@ -458,9 +459,7 @@ impl<T: PartialEq + Clone + Copy + Default + 'static> AggDynList<T> {
         match &self.values {
             Some(v) => {
                 let ptr = v.as_ptr() as *const u8;
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(ptr, v.len() * size_of::<T>())
-                };
+                let bytes = unsafe { std::slice::from_raw_parts(ptr, v.len() * size_of::<T>()) };
 
                 write_len(v.len() + 1, &mut w)?;
                 w.write_all(bytes)?;
@@ -484,7 +483,11 @@ impl<T: PartialEq + Copy + Clone + Default + Send + Sync + 'static> AggDynValue 
 
     fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self.values.as_ref().map(|s|s.len() * size_of::<T>()).unwrap_or(0)
+            + self
+                .values
+                .as_ref()
+                .map(|s| s.len() * size_of::<T>())
+                .unwrap_or(0)
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -495,7 +498,7 @@ impl<T: PartialEq + Copy + Clone + Default + Send + Sync + 'static> AggDynValue 
     }
 
     fn default_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(Self::default())
+        Box::<AggDynList<T>>::default()
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -523,7 +526,7 @@ impl AggDynStrList {
     pub fn merge(&mut self, other: &mut Self) {
         if let Some(strs) = &mut self.strs {
             if let Some(other_strs) = &mut other.strs {
-                self.lens.extend(other.lens.drain(..));
+                self.lens.append(&mut other.lens);
                 strs.extend(other_strs.drain(..));
             }
         } else {
@@ -549,7 +552,6 @@ impl AggDynStrList {
 
             self.strs = Some(strs);
             self.lens = lens;
-
         } else {
             self.strs = None;
             self.lens.clear();
@@ -603,7 +605,7 @@ impl AggDynValue for AggDynStrList {
     }
 
     fn default_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(AggDynStrList::default())
+        Box::<AggDynStrList>::default()
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -643,9 +645,7 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
             let num_items = prefix - 1;
             let bytes = read_bytes_slice(&mut r, num_items * size_of::<T>())?;
             let ptr = bytes.as_ptr() as *const T;
-            let items = unsafe {
-                std::slice::from_raw_parts(ptr, num_items)
-            };
+            let items = unsafe { std::slice::from_raw_parts(ptr, num_items) };
             self.values = Some(HashSet::<T>::from_iter(items.iter().cloned()));
         } else {
             self.values = None;
@@ -659,9 +659,7 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
                 write_len(v.len() + 1, &mut w)?;
                 for value in v {
                     let ptr = value as *const T as *const u8;
-                    let bytes = unsafe {
-                        std::slice::from_raw_parts(ptr, size_of::<T>())
-                    };
+                    let bytes = unsafe { std::slice::from_raw_parts(ptr, size_of::<T>()) };
                     w.write_all(bytes)?;
                 }
             }
@@ -673,7 +671,9 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
     }
 }
 
-impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> AggDynValue for AggDynSet<T> {
+impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> AggDynValue
+    for AggDynSet<T>
+{
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -684,7 +684,11 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
 
     fn mem_size(&self) -> usize {
         size_of::<Self>()
-            + self.values.as_ref().map(|s|s.len() * size_of::<T>()).unwrap_or(0)
+            + self
+                .values
+                .as_ref()
+                .map(|s| s.len() * size_of::<T>())
+                .unwrap_or(0)
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -695,7 +699,7 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
     }
 
     fn default_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(Self::default())
+        Box::<AggDynSet<T>>::default()
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -746,7 +750,6 @@ impl AggDynStrSet {
                 set.insert(String::from_utf8_lossy(&str_bytes).into());
             }
             self.strs = Some(set);
-
         } else {
             self.data_len = 0;
             self.strs = None;
@@ -797,7 +800,7 @@ impl AggDynValue for AggDynStrSet {
     }
 
     fn default_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(Self::default())
+        Box::<AggDynStrSet>::default()
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -832,11 +835,13 @@ fn make_dyn_addr(idx: usize) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
-    use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggDynStr, AggDynStrList, AggDynList, AggDynSet, AggDynStrSet};
-    use arrow::datatypes::{DataType, Field};
+    use crate::agg::agg_buf::{
+        create_agg_buf_from_scalar, AggDynList, AggDynSet, AggDynStr, AggDynStrList, AggDynStrSet,
+    };
+    use arrow::datatypes::{DataType};
     use datafusion::common::{Result, ScalarValue};
     use hashbrown::HashSet;
+    use std::io::Cursor;
 
     #[test]
     fn test_dyn_list() {
@@ -879,7 +884,10 @@ mod test {
 
         let mut dyn_set = AggDynSet::<i32>::default();
         dyn_set.load(&mut Cursor::new(&mut buf)).unwrap();
-        assert_eq!(dyn_set.values, Some(HashSet::from_iter(vec![1, 2, 3].into_iter())));
+        assert_eq!(
+            dyn_set.values,
+            Some(HashSet::from_iter(vec![1, 2, 3].into_iter()))
+        );
 
         let mut dyn_set = AggDynStrSet::default();
         dyn_set.append("Hello");
@@ -892,11 +900,14 @@ mod test {
 
         let mut dyn_set = AggDynStrSet::default();
         dyn_set.load(&mut Cursor::new(&mut buf)).unwrap();
-        assert_eq!(dyn_set.strs, Some(HashSet::from_iter(vec![
-            "Hello".to_owned().into(),
-            "World".to_owned().into(),
-            "你好".to_owned().into(),
-        ])));
+        assert_eq!(
+            dyn_set.strs,
+            Some(HashSet::from_iter(vec![
+                "Hello".to_owned().into(),
+                "World".to_owned().into(),
+                "你好".to_owned().into(),
+            ]))
+        );
     }
 
     #[test]
@@ -914,9 +925,9 @@ mod test {
             .unwrap();
 
         let (mut agg_buf, addrs) = create_agg_buf_from_scalar(&scalars).unwrap();
-        assert_eq!(agg_buf.is_fixed_valid(addrs[0]), false);
-        assert_eq!(agg_buf.is_fixed_valid(addrs[1]), false);
-        assert_eq!(agg_buf.is_fixed_valid(addrs[2]), false);
+        assert!(!agg_buf.is_fixed_valid(addrs[0]));
+        assert!(!agg_buf.is_fixed_valid(addrs[1]));
+        assert!(!agg_buf.is_fixed_valid(addrs[2]));
 
         // set values
         let mut agg_buf_valued = agg_buf.clone();
@@ -932,9 +943,9 @@ mod test {
         agg_buf.load_from_bytes(&bytes).unwrap();
 
         assert!(agg_buf_valued == agg_buf);
-        assert_eq!(agg_buf.is_fixed_valid(addrs[0]), false);
-        assert_eq!(agg_buf.is_fixed_valid(addrs[1]), true);
-        assert_eq!(agg_buf.is_fixed_valid(addrs[2]), true);
+        assert!(!agg_buf.is_fixed_valid(addrs[0]));
+        assert!(agg_buf.is_fixed_valid(addrs[1]));
+        assert!(agg_buf.is_fixed_valid(addrs[2]));
         assert_eq!(*agg_buf.fixed_value::<i32>(addrs[1]), 123456789);
         assert_eq!(*agg_buf.fixed_value::<i64>(addrs[2]), 1234567890123456789);
         assert_eq!(

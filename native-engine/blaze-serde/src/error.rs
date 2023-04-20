@@ -118,8 +118,7 @@ pub trait FromOptionalField<T> {
     ///
     /// Returns `Error::MissingRequiredField` if None, otherwise calls [`FromField::field`]
     /// on the contained data, returning any error encountered
-    fn required(self, field: impl Into<String>)
-        -> std::result::Result<T, PlanSerDeError>;
+    fn required(self, field: impl Into<String>) -> std::result::Result<T, PlanSerDeError>;
 }
 
 impl<T, U> FromOptionalField<U> for Option<T>
@@ -130,10 +129,7 @@ where
         self.map(|t| t.try_into()).transpose()
     }
 
-    fn required(
-        self,
-        field: impl Into<String>,
-    ) -> std::result::Result<U, PlanSerDeError> {
+    fn required(self, field: impl Into<String>) -> std::result::Result<U, PlanSerDeError> {
         match self {
             None => Err(PlanSerDeError::required(field)),
             Some(t) => t.try_into(),

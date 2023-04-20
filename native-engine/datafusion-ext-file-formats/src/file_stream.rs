@@ -42,8 +42,7 @@ use futures::stream::BoxStream;
 use futures::{ready, FutureExt, Stream, StreamExt};
 
 /// A fallible future that resolves to a stream of [`RecordBatch`]
-pub type ReaderFuture =
-    BoxFuture<'static, Result<BoxStream<'static, ArrowResult<RecordBatch>>>>;
+pub type ReaderFuture = BoxFuture<'static, Result<BoxStream<'static, ArrowResult<RecordBatch>>>>;
 
 pub trait FormatReader: Unpin {
     fn open(
@@ -112,10 +111,8 @@ impl<F: FormatReader> FileStream<F> {
         baseline_metrics: BaselineMetrics,
     ) -> Result<Self> {
         let (projected_schema, _) = config.project();
-        let pc_projector = PartitionColumnProjector::new(
-            projected_schema.clone(),
-            &config.table_partition_cols,
-        );
+        let pc_projector =
+            PartitionColumnProjector::new(projected_schema.clone(), &config.table_partition_cols);
 
         Ok(Self {
             file_iter: config.file_group.clone().into(),
@@ -129,10 +126,7 @@ impl<F: FormatReader> FileStream<F> {
         })
     }
 
-    fn poll_inner(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<RecordBatch>>> {
+    fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RecordBatch>>> {
         loop {
             match &mut self.state {
                 FileStreamState::Idle => {
@@ -164,7 +158,7 @@ impl<F: FormatReader> FileStream<F> {
                     }
                     Err(e) => {
                         self.state = FileStreamState::Error;
-                        return Poll::Ready(Some(Err(e.into())));
+                        return Poll::Ready(Some(Err(e)));
                     }
                 },
                 FileStreamState::Scan {
@@ -197,9 +191,7 @@ impl<F: FormatReader> FileStream<F> {
                     }
                     None => self.state = FileStreamState::Idle,
                 },
-                FileStreamState::Error | FileStreamState::Limit => {
-                    return Poll::Ready(None)
-                }
+                FileStreamState::Error | FileStreamState::Limit => return Poll::Ready(None),
             }
         }
     }
@@ -208,10 +200,7 @@ impl<F: FormatReader> FileStream<F> {
 impl<F: FormatReader> Stream for FileStream<F> {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 

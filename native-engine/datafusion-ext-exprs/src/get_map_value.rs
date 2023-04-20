@@ -14,7 +14,7 @@
 
 use crate::down_cast_any_ref;
 use arrow::array::*;
-use arrow::compute::{eq_dyn_bool_scalar, eq_dyn_scalar, eq_dyn_utf8_scalar, eq_dyn_binary_scalar};
+use arrow::compute::{eq_dyn_binary_scalar, eq_dyn_bool_scalar, eq_dyn_scalar, eq_dyn_utf8_scalar};
 use arrow::datatypes::Field;
 use arrow::{
     datatypes::{DataType, Schema},
@@ -224,17 +224,17 @@ impl PhysicalExpr for GetMapValueExpr {
                 }
 
                 match &self.key {
-                    ScalarValue::Boolean(Some(i)) => get_boolean_value!(Boolean, i.clone()),
-                    ScalarValue::Float32(Some(i)) => get_prim_value!(Float32, i.clone()),
-                    ScalarValue::Float64(Some(i)) => get_prim_value!(Float64, i.clone()),
-                    ScalarValue::Int8(Some(i)) => get_prim_value!(Int8, i.clone()),
-                    ScalarValue::Int16(Some(i)) => get_prim_value!(Int16, i.clone()),
-                    ScalarValue::Int32(Some(i)) => get_prim_value!(Int32, i.clone()),
-                    ScalarValue::Int64(Some(i)) => get_prim_value!(Int64, i.clone()),
-                    ScalarValue::UInt8(Some(i)) => get_prim_value!(UInt8, i.clone()),
-                    ScalarValue::UInt16(Some(i)) => get_prim_value!(UInt16, i.clone()),
-                    ScalarValue::UInt32(Some(i)) => get_prim_value!(UInt32, i.clone()),
-                    ScalarValue::UInt64(Some(i)) => get_prim_value!(UInt64, i.clone()),
+                    ScalarValue::Boolean(Some(i)) => get_boolean_value!(Boolean, *i),
+                    ScalarValue::Float32(Some(i)) => get_prim_value!(Float32, *i),
+                    ScalarValue::Float64(Some(i)) => get_prim_value!(Float64, *i),
+                    ScalarValue::Int8(Some(i)) => get_prim_value!(Int8, *i),
+                    ScalarValue::Int16(Some(i)) => get_prim_value!(Int16, *i),
+                    ScalarValue::Int32(Some(i)) => get_prim_value!(Int32, *i),
+                    ScalarValue::Int64(Some(i)) => get_prim_value!(Int64, *i),
+                    ScalarValue::UInt8(Some(i)) => get_prim_value!(UInt8, *i),
+                    ScalarValue::UInt16(Some(i)) => get_prim_value!(UInt16, *i),
+                    ScalarValue::UInt32(Some(i)) => get_prim_value!(UInt32, *i),
+                    ScalarValue::UInt64(Some(i)) => get_prim_value!(UInt64, *i),
                     ScalarValue::Utf8(Some(i)) => get_str_value!(String, i.as_str()),
                     ScalarValue::LargeUtf8(Some(i)) => get_str_value!(LargeString, i.as_str()),
                     ScalarValue::Binary(Some(i)) => get_binary_value!(Binary, i.as_slice()),
@@ -269,12 +269,13 @@ fn get_data_type_field(data_type: &DataType) -> Result<Field> {
             if let DataType::Struct(fields) = field.data_type() {
                 Ok(fields[1].as_ref().clone()) // values field
             } else {
-                Err(DataFusionError::NotImplemented("Map field only support Struct".to_string()))
+                Err(DataFusionError::NotImplemented(
+                    "Map field only support Struct".to_string(),
+                ))
             }
         }
         _ => Err(DataFusionError::Plan(
-            "The expression to get map value is only valid for `Map` types"
-                .to_string(),
+            "The expression to get map value is only valid for `Map` types".to_string(),
         )),
     }
 }

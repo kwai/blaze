@@ -18,12 +18,12 @@ use std::sync::Arc;
 
 mod spark_check_overflow;
 mod spark_get_json_object;
+mod spark_make_array;
 mod spark_make_decimal;
 mod spark_murmur3_hash;
 mod spark_null_if_zero;
 mod spark_round_n;
 mod spark_unscaled_value;
-mod spark_make_array;
 
 pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementation> {
     Ok(match name {

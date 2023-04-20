@@ -39,12 +39,12 @@ use arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
+use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::common::{downcast_value, Column, DFSchema, ScalarValue};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::utils::expr_to_columns;
 use datafusion::logical_expr::{
-    binary_expr, cast, substring, try_cast, BinaryExpr, Cast, ColumnarValue,
-    ExprSchemable, TryCast
+    binary_expr, cast, substring, try_cast, BinaryExpr, Cast, ColumnarValue, ExprSchemable, TryCast,
 };
 use datafusion::physical_expr::create_physical_expr;
 use datafusion::prelude::{and, lit};
@@ -53,7 +53,6 @@ use datafusion::{
     logical_expr::{Expr, Operator},
     physical_expr::PhysicalExpr,
 };
-use datafusion::common::tree_node::{Transformed, TreeNode};
 
 /// Interface to pass statistics information to [`PruningPredicate`]
 ///
@@ -180,8 +179,7 @@ impl PruningPredicate {
     pub fn prune<S: PruningStatistics>(&self, statistics: &S) -> Result<Vec<bool>> {
         // build a RecordBatch that contains the min/max values in the
         // appropriate statistics columns
-        let statistics_batch =
-            build_statistics_record_batch(statistics, &self.required_columns)?;
+        let statistics_batch = build_statistics_record_batch(statistics, &self.required_columns)?;
 
         // Evaluate the pruning predicate on that record batch.
         //
@@ -196,23 +194,20 @@ impl PruningPredicate {
                 let predicate_array = downcast_value!(array, BooleanArray);
 
                 Ok(predicate_array
-                   .into_iter()
-                   .map(|x| x.unwrap_or(true)) // None -> true per comments above
-                   .collect::<Vec<_>>())
-
-            },
+                    .into_iter()
+                    .map(|x| x.unwrap_or(true)) // None -> true per comments above
+                    .collect::<Vec<_>>())
+            }
             // result was a column
             ColumnarValue::Scalar(ScalarValue::Boolean(v)) => {
                 let v = v.unwrap_or(true); // None -> true per comments above
                 Ok(vec![v; statistics.num_containers()])
             }
-            other => {
-                Err(DataFusionError::Internal(format!(
-                    "Unexpected result of pruning predicate evaluation. Expected Boolean array \
+            other => Err(DataFusionError::Internal(format!(
+                "Unexpected result of pruning predicate evaluation. Expected Boolean array \
                      or scalar but got {:?}",
-                    other
-                )))
-            }
+                other
+            ))),
         }
     }
 
@@ -255,11 +250,7 @@ impl RequiredStatColumns {
         self.columns.iter()
     }
 
-    fn is_stat_column_missing(
-        &self,
-        column: &Column,
-        statistics_type: StatisticsType,
-    ) -> bool {
+    fn is_stat_column_missing(&self, column: &Column, statistics_type: StatisticsType) -> bool {
         !self
             .columns
             .iter()
@@ -458,19 +449,14 @@ impl<'a> PruningExpressionBuilder<'a> {
                 _ => {
                     // if more than one column used in expression - not supported
                     return Err(DataFusionError::Plan(
-                        "Multi-column expressions are not currently supported"
-                            .to_string(),
+                        "Multi-column expressions are not currently supported".to_string(),
                     ));
                 }
             };
 
         let df_schema = DFSchema::try_from(schema.clone())?;
-        let (column_expr, correct_operator, scalar_expr) = rewrite_expr_to_prunable(
-            column_expr,
-            correct_operator,
-            scalar_expr,
-            df_schema,
-        )?;
+        let (column_expr, correct_operator, scalar_expr) =
+            rewrite_expr_to_prunable(column_expr, correct_operator, scalar_expr, df_schema)?;
         let column = columns.iter().next().unwrap().clone();
         let field = match schema.column_with_name(&column.flat_name()) {
             Some((_, f)) => f,
@@ -541,16 +527,14 @@ fn rewrite_expr_to_prunable(
         Expr::Cast(Cast { expr, data_type }) => {
             let from_type = expr.get_type(&schema)?;
             verify_support_type_for_prune(&from_type, data_type)?;
-            let (left, op, right) =
-                rewrite_expr_to_prunable(expr, op, scalar_expr, schema)?;
+            let (left, op, right) = rewrite_expr_to_prunable(expr, op, scalar_expr, schema)?;
             Ok((cast(left, data_type.clone()), op, right))
         }
         // `try_cast(col) op lit()`
         Expr::TryCast(TryCast { expr, data_type }) => {
             let from_type = expr.get_type(&schema)?;
             verify_support_type_for_prune(&from_type, data_type)?;
-            let (left, op, right) =
-                rewrite_expr_to_prunable(expr, op, scalar_expr, schema)?;
+            let (left, op, right) = rewrite_expr_to_prunable(expr, op, scalar_expr, schema)?;
             Ok((try_cast(left, data_type.clone()), op, right))
         }
         // `-col > lit()`  --> `col < -lit()`
@@ -562,8 +546,7 @@ fn rewrite_expr_to_prunable(
         Expr::Not(c) => {
             if op != Operator::Eq && op != Operator::NotEq {
                 return Err(DataFusionError::Plan(
-                    "Not with operator other than Eq / NotEq is not supported"
-                        .to_string(),
+                    "Not with operator other than Eq / NotEq is not supported".to_string(),
                 ));
             }
             return match c.as_ref() {
@@ -625,18 +608,15 @@ fn verify_support_type_for_prune(from_type: &DataType, to_type: &DataType) -> Re
 }
 
 /// replaces a column with an old name with a new name in an expression
-fn rewrite_column_expr(
-    e: Expr,
-    column_old: &Column,
-    column_new: &Column,
-) -> Result<Expr> {
-
-    e.transform(&|expr| Ok(match expr {
-        Expr::Column(c) if c == *column_old => {
-            Transformed::Yes(Expr::Column(column_new.clone()))
-        }
-        _ => Transformed::No(expr),
-    }))
+fn rewrite_column_expr(e: Expr, column_old: &Column, column_new: &Column) -> Result<Expr> {
+    e.transform(&|expr| {
+        Ok(match expr {
+            Expr::Column(c) if c == *column_old => {
+                Transformed::Yes(Expr::Column(column_new.clone()))
+            }
+            _ => Transformed::No(expr),
+        })
+    })
 }
 
 fn reverse_operator(op: Operator) -> Operator {
@@ -699,13 +679,15 @@ fn build_is_null_column_expr(
 ) -> Option<Expr> {
     match expr {
         Expr::Column(ref col) => {
-            if !schema.fields
+            if !schema
+                .fields
                 .iter()
                 .filter(|e| e.data_type().is_nested())
                 .filter(|e| e.name() == &col.name)
                 .collect::<Vec<_>>()
-                .is_empty() {
-                return None
+                .is_empty()
+            {
+                return None;
             }
             let field = schema.field_with_name(&col.name).ok()?;
 
@@ -730,13 +712,15 @@ fn build_is_not_null_column_expr(
 ) -> Option<Expr> {
     match expr {
         Expr::Column(ref col) => {
-            if !schema.fields
+            if !schema
+                .fields
                 .iter()
                 .filter(|e| e.data_type().is_nested())
                 .filter(|e| e.name() == &col.name)
                 .collect::<Vec<_>>()
-                .is_empty() {
-                return None
+                .is_empty()
+            {
+                return None;
             }
 
             let field = schema.field_with_name(&col.name).ok()?;
@@ -837,18 +821,18 @@ fn build_predicate_expression(
         }
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => (left, *op, right),
         Expr::IsNull(expr) => {
-            let expr = build_is_null_column_expr(expr, schema, required_columns)
-                .unwrap_or(unhandled);
+            let expr =
+                build_is_null_column_expr(expr, schema, required_columns).unwrap_or(unhandled);
             return Ok(expr);
         }
         Expr::IsNotNull(expr) => {
-            let expr = build_is_not_null_column_expr(expr, schema, required_columns)
-                .unwrap_or(unhandled);
+            let expr =
+                build_is_not_null_column_expr(expr, schema, required_columns).unwrap_or(unhandled);
             return Ok(expr);
         }
         Expr::Column(col) => {
-            let expr = build_single_column_expr(col, schema, required_columns, false)
-                .unwrap_or(unhandled);
+            let expr =
+                build_single_column_expr(col, schema, required_columns, false).unwrap_or(unhandled);
             return Ok(expr);
         }
         // match !col (don't do so recursively)
@@ -886,8 +870,7 @@ fn build_predicate_expression(
         return Ok(binary_expr(left_expr, op, right_expr));
     }
 
-    let expr_builder =
-        PruningExpressionBuilder::try_new(left, right, op, schema, required_columns);
+    let expr_builder = PruningExpressionBuilder::try_new(left, right, op, schema, required_columns);
     let mut expr_builder = match expr_builder {
         Ok(builder) => builder,
         // allow partial failure in predicate expression generation
@@ -902,57 +885,58 @@ fn build_predicate_expression(
 }
 
 fn build_statistics_expr(expr_builder: &mut PruningExpressionBuilder) -> Result<Expr> {
-    let statistics_expr =
-        match expr_builder.op() {
-            Operator::NotEq => {
-                // column != literal => (min, max) = literal =>
-                // !(min != literal && max != literal) ==>
-                // min != literal || literal != max
-                let min_column_expr = expr_builder.min_column_expr()?;
-                let max_column_expr = expr_builder.max_column_expr()?;
-                min_column_expr
-                    .not_eq(expr_builder.scalar_expr().clone())
-                    .or(expr_builder.scalar_expr().clone().not_eq(max_column_expr))
-            }
-            Operator::Eq => {
-                // column = literal => (min, max) = literal => min <= literal && literal <= max
-                // (column / 2) = 4 => (column_min / 2) <= 4 && 4 <= (column_max / 2)
-                let min_column_expr = expr_builder.min_column_expr()?;
-                let max_column_expr = expr_builder.max_column_expr()?;
-                min_column_expr
-                    .lt_eq(expr_builder.scalar_expr().clone())
-                    .and(expr_builder.scalar_expr().clone().lt_eq(max_column_expr))
-            }
-            Operator::Gt => {
-                // column > literal => (min, max) > literal => max > literal
-                expr_builder
-                    .max_column_expr()?
-                    .gt(expr_builder.scalar_expr().clone())
-            }
-            Operator::GtEq => {
-                // column >= literal => (min, max) >= literal => max >= literal
-                expr_builder
-                    .max_column_expr()?
-                    .gt_eq(expr_builder.scalar_expr().clone())
-            }
-            Operator::Lt => {
-                // column < literal => (min, max) < literal => min < literal
-                expr_builder
-                    .min_column_expr()?
-                    .lt(expr_builder.scalar_expr().clone())
-            }
-            Operator::LtEq => {
-                // column <= literal => (min, max) <= literal => min <= literal
-                expr_builder
-                    .min_column_expr()?
-                    .lt_eq(expr_builder.scalar_expr().clone())
-            }
-            // other expressions are not supported
-            _ => return Err(DataFusionError::Plan(
+    let statistics_expr = match expr_builder.op() {
+        Operator::NotEq => {
+            // column != literal => (min, max) = literal =>
+            // !(min != literal && max != literal) ==>
+            // min != literal || literal != max
+            let min_column_expr = expr_builder.min_column_expr()?;
+            let max_column_expr = expr_builder.max_column_expr()?;
+            min_column_expr
+                .not_eq(expr_builder.scalar_expr().clone())
+                .or(expr_builder.scalar_expr().clone().not_eq(max_column_expr))
+        }
+        Operator::Eq => {
+            // column = literal => (min, max) = literal => min <= literal && literal <= max
+            // (column / 2) = 4 => (column_min / 2) <= 4 && 4 <= (column_max / 2)
+            let min_column_expr = expr_builder.min_column_expr()?;
+            let max_column_expr = expr_builder.max_column_expr()?;
+            min_column_expr
+                .lt_eq(expr_builder.scalar_expr().clone())
+                .and(expr_builder.scalar_expr().clone().lt_eq(max_column_expr))
+        }
+        Operator::Gt => {
+            // column > literal => (min, max) > literal => max > literal
+            expr_builder
+                .max_column_expr()?
+                .gt(expr_builder.scalar_expr().clone())
+        }
+        Operator::GtEq => {
+            // column >= literal => (min, max) >= literal => max >= literal
+            expr_builder
+                .max_column_expr()?
+                .gt_eq(expr_builder.scalar_expr().clone())
+        }
+        Operator::Lt => {
+            // column < literal => (min, max) < literal => min < literal
+            expr_builder
+                .min_column_expr()?
+                .lt(expr_builder.scalar_expr().clone())
+        }
+        Operator::LtEq => {
+            // column <= literal => (min, max) <= literal => min <= literal
+            expr_builder
+                .min_column_expr()?
+                .lt_eq(expr_builder.scalar_expr().clone())
+        }
+        // other expressions are not supported
+        _ => {
+            return Err(DataFusionError::Plan(
                 "expressions other than (neq, eq, gt, gteq, lt, lteq) are not supported"
                     .to_string(),
-            )),
-        };
+            ))
+        }
+    };
     Ok(statistics_expr)
 }
 

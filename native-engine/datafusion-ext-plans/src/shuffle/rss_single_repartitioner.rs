@@ -28,7 +28,7 @@ pub struct RssSingleShuffleRepartitioner {
 impl RssSingleShuffleRepartitioner {
     pub fn new(rss_partition_writer: GlobalRef) -> Self {
         Self {
-            rss_partition_writer
+            rss_partition_writer,
         }
     }
 }
@@ -39,9 +39,9 @@ impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
         let mut cursor = Cursor::new(Vec::<u8>::new());
         write_one_batch(&input, &mut cursor, true)?;
 
-        let mut rss_data = cursor.into_inner();
+        let rss_data = cursor.into_inner();
         let length = rss_data.len();
-        let rss_buffer = jni_new_direct_byte_buffer!(&mut rss_data)?;
+        let rss_buffer = jni_new_direct_byte_buffer!(&rss_data)?;
 
         if length != 0 {
             jni_call!(BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj())

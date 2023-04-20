@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use crate::error::PlanSerDeError;
 use arrow::datatypes::{DataType, Field, Fields, IntervalUnit, Schema, TimeUnit};
 use datafusion::logical_expr::Operator;
@@ -20,6 +19,7 @@ use datafusion::physical_plan::joins::utils::JoinSide;
 use datafusion::prelude::JoinType;
 use datafusion::scalar::ScalarValue;
 use datafusion_ext_plans::agg::AggFunction;
+use std::sync::Arc;
 
 // include the generated protobuf source as a submodule
 #[allow(clippy::all)]
@@ -171,9 +171,7 @@ impl protobuf::IntervalUnit {
         }
     }
 
-    pub fn from_i32_to_arrow(
-        interval_unit_i32: i32,
-    ) -> Result<IntervalUnit, PlanSerDeError> {
+    pub fn from_i32_to_arrow(interval_unit_i32: i32) -> Result<IntervalUnit, PlanSerDeError> {
         let pb_interval_unit = protobuf::IntervalUnit::from_i32(interval_unit_i32);
         match pb_interval_unit {
             Some(interval_unit) => Ok(match interval_unit {
@@ -209,9 +207,7 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
             arrow_type::ArrowTypeEnum::Utf8(_) => DataType::Utf8,
             arrow_type::ArrowTypeEnum::LargeUtf8(_) => DataType::LargeUtf8,
             arrow_type::ArrowTypeEnum::Binary(_) => DataType::Binary,
-            arrow_type::ArrowTypeEnum::FixedSizeBinary(size) => {
-                DataType::FixedSizeBinary(*size)
-            }
+            arrow_type::ArrowTypeEnum::FixedSizeBinary(size) => DataType::FixedSizeBinary(*size),
             arrow_type::ArrowTypeEnum::LargeBinary(_) => DataType::LargeBinary,
             arrow_type::ArrowTypeEnum::Date32(_) => DataType::Date32,
             arrow_type::ArrowTypeEnum::Date64(_) => DataType::Date64,
@@ -234,13 +230,12 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
             arrow_type::ArrowTypeEnum::Time64(time_unit) => {
                 DataType::Time64(protobuf::TimeUnit::from_i32_to_arrow(*time_unit)?)
             }
-            arrow_type::ArrowTypeEnum::Interval(interval_unit) => DataType::Interval(
-                protobuf::IntervalUnit::from_i32_to_arrow(*interval_unit)?,
-            ),
-            arrow_type::ArrowTypeEnum::Decimal(protobuf::Decimal {
-                whole,
-                fractional,
-            }) => DataType::Decimal128(*whole as u8, *fractional as i8),
+            arrow_type::ArrowTypeEnum::Interval(interval_unit) => {
+                DataType::Interval(protobuf::IntervalUnit::from_i32_to_arrow(*interval_unit)?)
+            }
+            arrow_type::ArrowTypeEnum::Decimal(protobuf::Decimal { whole, fractional }) => {
+                DataType::Decimal128(*whole as u8, *fractional as i8)
+            }
             arrow_type::ArrowTypeEnum::List(list) => {
                 let list_type: &protobuf::Field = list
                     .as_ref()
@@ -313,7 +308,11 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     Arc::new(key_type.try_into()?),
                     Arc::new(value_type.try_into()?),
                 ];
-                let fields = Arc::new(Field::new("entries", DataType::Struct(vec_field.into()), false));
+                let fields = Arc::new(Field::new(
+                    "entries",
+                    DataType::Struct(vec_field.into()),
+                    false,
+                ));
                 DataType::Map(fields, false)
             }
             arrow_type::ArrowTypeEnum::Dictionary(dict) => {
@@ -356,9 +355,7 @@ impl Into<arrow::datatypes::DataType> for protobuf::PrimitiveScalarType {
             protobuf::PrimitiveScalarType::TimeMicrosecond => {
                 DataType::Time64(TimeUnit::Microsecond)
             }
-            protobuf::PrimitiveScalarType::TimeNanosecond => {
-                DataType::Time64(TimeUnit::Nanosecond)
-            }
+            protobuf::PrimitiveScalarType::TimeNanosecond => DataType::Time64(TimeUnit::Nanosecond),
             protobuf::PrimitiveScalarType::Null => DataType::Null,
             protobuf::PrimitiveScalarType::Decimal128 => DataType::Decimal128(1, 0),
             protobuf::PrimitiveScalarType::Date64 => DataType::Date64,
@@ -455,41 +452,21 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
         })?;
         Ok(match value {
             protobuf::scalar_value::Value::BoolValue(v) => ScalarValue::Boolean(Some(*v)),
-            protobuf::scalar_value::Value::Utf8Value(v) => {
-                ScalarValue::Utf8(Some(v.to_owned()))
-            }
+            protobuf::scalar_value::Value::Utf8Value(v) => ScalarValue::Utf8(Some(v.to_owned())),
             protobuf::scalar_value::Value::LargeUtf8Value(v) => {
                 ScalarValue::LargeUtf8(Some(v.to_owned()))
             }
-            protobuf::scalar_value::Value::Int8Value(v) => {
-                ScalarValue::Int8(Some(*v as i8))
-            }
-            protobuf::scalar_value::Value::Int16Value(v) => {
-                ScalarValue::Int16(Some(*v as i16))
-            }
+            protobuf::scalar_value::Value::Int8Value(v) => ScalarValue::Int8(Some(*v as i8)),
+            protobuf::scalar_value::Value::Int16Value(v) => ScalarValue::Int16(Some(*v as i16)),
             protobuf::scalar_value::Value::Int32Value(v) => ScalarValue::Int32(Some(*v)),
             protobuf::scalar_value::Value::Int64Value(v) => ScalarValue::Int64(Some(*v)),
-            protobuf::scalar_value::Value::Uint8Value(v) => {
-                ScalarValue::UInt8(Some(*v as u8))
-            }
-            protobuf::scalar_value::Value::Uint16Value(v) => {
-                ScalarValue::UInt16(Some(*v as u16))
-            }
-            protobuf::scalar_value::Value::Uint32Value(v) => {
-                ScalarValue::UInt32(Some(*v))
-            }
-            protobuf::scalar_value::Value::Uint64Value(v) => {
-                ScalarValue::UInt64(Some(*v))
-            }
-            protobuf::scalar_value::Value::Float32Value(v) => {
-                ScalarValue::Float32(Some(*v))
-            }
-            protobuf::scalar_value::Value::Float64Value(v) => {
-                ScalarValue::Float64(Some(*v))
-            }
-            protobuf::scalar_value::Value::Date32Value(v) => {
-                ScalarValue::Date32(Some(*v))
-            }
+            protobuf::scalar_value::Value::Uint8Value(v) => ScalarValue::UInt8(Some(*v as u8)),
+            protobuf::scalar_value::Value::Uint16Value(v) => ScalarValue::UInt16(Some(*v as u16)),
+            protobuf::scalar_value::Value::Uint32Value(v) => ScalarValue::UInt32(Some(*v)),
+            protobuf::scalar_value::Value::Uint64Value(v) => ScalarValue::UInt64(Some(*v)),
+            protobuf::scalar_value::Value::Float32Value(v) => ScalarValue::Float32(Some(*v)),
+            protobuf::scalar_value::Value::Float64Value(v) => ScalarValue::Float64(Some(*v)),
+            protobuf::scalar_value::Value::Date32Value(v) => ScalarValue::Date32(Some(*v)),
             protobuf::scalar_value::Value::TimeMicrosecondValue(v) => {
                 ScalarValue::TimestampMicrosecond(Some(*v), None)
             }
@@ -542,9 +519,10 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
 impl TryInto<DataType> for &protobuf::ScalarType {
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<DataType, Self::Error> {
-        let pb_scalartype = self.datatype.as_ref().ok_or_else(|| {
-            proto_error("ScalarType message missing required field 'datatype'")
-        })?;
+        let pb_scalartype = self
+            .datatype
+            .as_ref()
+            .ok_or_else(|| proto_error("ScalarType message missing required field 'datatype'"))?;
         pb_scalartype.try_into()
     }
 }
@@ -572,15 +550,13 @@ impl TryInto<DataType> for &protobuf::scalar_type::Datatype {
                         "Protobuf deserialization error: found no field names in ScalarListType message which requires at least one",
                     ));
                 }
-                let pb_scalar_type = protobuf::PrimitiveScalarType::from_i32(
-                    *deepest_type,
-                )
-                .ok_or_else(|| {
-                    proto_error(format!(
-                        "Protobuf deserialization error: invalid i32 for scalar enum: {}",
-                        *deepest_type
-                    ))
-                })?;
+                let pb_scalar_type = protobuf::PrimitiveScalarType::from_i32(*deepest_type)
+                    .ok_or_else(|| {
+                        proto_error(format!(
+                            "Protobuf deserialization error: invalid i32 for scalar enum: {}",
+                            *deepest_type
+                        ))
+                    })?;
                 //Because length is checked above it is safe to unwrap .last()
                 let mut scalar_type = DataType::List(Arc::new(Field::new(
                     field_names.last().unwrap().as_str(),
@@ -589,11 +565,8 @@ impl TryInto<DataType> for &protobuf::scalar_type::Datatype {
                 )));
                 //Iterate over field names in reverse order except for the last item in the vector
                 for name in field_names.iter().rev().skip(1) {
-                    let new_datatype = DataType::List(Arc::new(Field::new(
-                        name.as_str(),
-                        scalar_type,
-                        true,
-                    )));
+                    let new_datatype =
+                        DataType::List(Arc::new(Field::new(name.as_str(), scalar_type, true)));
                     scalar_type = new_datatype;
                 }
                 scalar_type
@@ -608,41 +581,21 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
         use protobuf::PrimitiveScalarType;
         let scalar = match self {
             protobuf::scalar_value::Value::BoolValue(v) => ScalarValue::Boolean(Some(*v)),
-            protobuf::scalar_value::Value::Utf8Value(v) => {
-                ScalarValue::Utf8(Some(v.to_owned()))
-            }
+            protobuf::scalar_value::Value::Utf8Value(v) => ScalarValue::Utf8(Some(v.to_owned())),
             protobuf::scalar_value::Value::LargeUtf8Value(v) => {
                 ScalarValue::LargeUtf8(Some(v.to_owned()))
             }
-            protobuf::scalar_value::Value::Int8Value(v) => {
-                ScalarValue::Int8(Some(*v as i8))
-            }
-            protobuf::scalar_value::Value::Int16Value(v) => {
-                ScalarValue::Int16(Some(*v as i16))
-            }
+            protobuf::scalar_value::Value::Int8Value(v) => ScalarValue::Int8(Some(*v as i8)),
+            protobuf::scalar_value::Value::Int16Value(v) => ScalarValue::Int16(Some(*v as i16)),
             protobuf::scalar_value::Value::Int32Value(v) => ScalarValue::Int32(Some(*v)),
             protobuf::scalar_value::Value::Int64Value(v) => ScalarValue::Int64(Some(*v)),
-            protobuf::scalar_value::Value::Uint8Value(v) => {
-                ScalarValue::UInt8(Some(*v as u8))
-            }
-            protobuf::scalar_value::Value::Uint16Value(v) => {
-                ScalarValue::UInt16(Some(*v as u16))
-            }
-            protobuf::scalar_value::Value::Uint32Value(v) => {
-                ScalarValue::UInt32(Some(*v))
-            }
-            protobuf::scalar_value::Value::Uint64Value(v) => {
-                ScalarValue::UInt64(Some(*v))
-            }
-            protobuf::scalar_value::Value::Float32Value(v) => {
-                ScalarValue::Float32(Some(*v))
-            }
-            protobuf::scalar_value::Value::Float64Value(v) => {
-                ScalarValue::Float64(Some(*v))
-            }
-            protobuf::scalar_value::Value::Date32Value(v) => {
-                ScalarValue::Date32(Some(*v))
-            }
+            protobuf::scalar_value::Value::Uint8Value(v) => ScalarValue::UInt8(Some(*v as u8)),
+            protobuf::scalar_value::Value::Uint16Value(v) => ScalarValue::UInt16(Some(*v as u16)),
+            protobuf::scalar_value::Value::Uint32Value(v) => ScalarValue::UInt32(Some(*v)),
+            protobuf::scalar_value::Value::Uint64Value(v) => ScalarValue::UInt64(Some(*v)),
+            protobuf::scalar_value::Value::Float32Value(v) => ScalarValue::Float32(Some(*v)),
+            protobuf::scalar_value::Value::Float64Value(v) => ScalarValue::Float64(Some(*v)),
+            protobuf::scalar_value::Value::Date32Value(v) => ScalarValue::Date32(Some(*v)),
             protobuf::scalar_value::Value::TimeMicrosecondValue(v) => {
                 ScalarValue::TimestampMicrosecond(Some(*v), None)
             }
@@ -650,10 +603,9 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
                 ScalarValue::TimestampNanosecond(Some(*v), None)
             }
             protobuf::scalar_value::Value::ListValue(v) => v.try_into()?,
-            protobuf::scalar_value::Value::NullListValue(v) => ScalarValue::List(
-                None,
-                Arc::new(Field::new("items", v.try_into()?, true)),
-            ),
+            protobuf::scalar_value::Value::NullListValue(v) => {
+                ScalarValue::List(None, Arc::new(Field::new("items", v.try_into()?, true)))
+            }
             protobuf::scalar_value::Value::NullValue(null_enum) => {
                 PrimitiveScalarType::from_i32(*null_enum)
                     .ok_or_else(|| proto_error("Invalid scalar type"))?
@@ -687,11 +639,8 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
             .ok_or_else(|| proto_error("Protobuf deserialization error: ScalarListValue.Datatype messsage missing required field 'datatype'"))?;
         let scalar_values = match scalar_type {
             Datatype::Scalar(scalar_type_i32) => {
-                let leaf_scalar_type =
-                    protobuf::PrimitiveScalarType::from_i32(*scalar_type_i32)
-                        .ok_or_else(|| {
-                            proto_error("Error converting i32 to basic scalar type")
-                        })?;
+                let leaf_scalar_type = protobuf::PrimitiveScalarType::from_i32(*scalar_type_i32)
+                    .ok_or_else(|| proto_error("Error converting i32 to basic scalar type"))?;
                 let typechecked_values: Vec<datafusion::scalar::ScalarValue> = values
                     .iter()
                     .map(|protobuf::ScalarValue { value: opt_value }| {
@@ -722,15 +671,11 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
                     deepest_type,
                     field_names,
                 } = &list_type;
-                let leaf_type =
-                    PrimitiveScalarType::from_i32(*deepest_type).ok_or_else(|| {
-                        proto_error("Error converting i32 to basic scalar type")
-                    })?;
+                let leaf_type = PrimitiveScalarType::from_i32(*deepest_type)
+                    .ok_or_else(|| proto_error("Error converting i32 to basic scalar type"))?;
                 let depth = field_names.len();
 
-                let typechecked_values: Vec<datafusion::scalar::ScalarValue> = if depth
-                    == 0
-                {
+                let typechecked_values: Vec<datafusion::scalar::ScalarValue> = if depth == 0 {
                     return Err(proto_error(
                         "Protobuf deserialization error, ScalarListType had no field names, requires at least one",
                     ));
@@ -788,16 +733,13 @@ impl TryInto<DataType> for &protobuf::ScalarListType {
             //Since checked vector is not empty above this is safe to unwrap
             field_names.last().unwrap(),
             PrimitiveScalarType::from_i32(*deepest_type)
-                .ok_or_else(|| {
-                    proto_error("Could not convert to datafusion scalar type")
-                })?
+                .ok_or_else(|| proto_error("Could not convert to datafusion scalar type"))?
                 .into(),
             true,
         )));
         //Iterates over field names in reverse order except for the last item in the vector
         for name in field_names.iter().rev().skip(1) {
-            let temp_curr_type =
-                DataType::List(Arc::new(Field::new(name, curr_type, true)));
+            let temp_curr_type = DataType::List(Arc::new(Field::new(name, curr_type, true)));
             curr_type = temp_curr_type;
         }
         Ok(curr_type)
@@ -812,51 +754,27 @@ fn typechecked_scalar_value_conversion(
     use protobuf::scalar_value::Value;
     use protobuf::PrimitiveScalarType;
     Ok(match (tested_type, &required_type) {
-        (Value::BoolValue(v), PrimitiveScalarType::Bool) => {
-            ScalarValue::Boolean(Some(*v))
-        }
-        (Value::Int8Value(v), PrimitiveScalarType::Int8) => {
-            ScalarValue::Int8(Some(*v as i8))
-        }
-        (Value::Int16Value(v), PrimitiveScalarType::Int16) => {
-            ScalarValue::Int16(Some(*v as i16))
-        }
-        (Value::Int32Value(v), PrimitiveScalarType::Int32) => {
-            ScalarValue::Int32(Some(*v))
-        }
-        (Value::Int64Value(v), PrimitiveScalarType::Int64) => {
-            ScalarValue::Int64(Some(*v))
-        }
-        (Value::Uint8Value(v), PrimitiveScalarType::Uint8) => {
-            ScalarValue::UInt8(Some(*v as u8))
-        }
+        (Value::BoolValue(v), PrimitiveScalarType::Bool) => ScalarValue::Boolean(Some(*v)),
+        (Value::Int8Value(v), PrimitiveScalarType::Int8) => ScalarValue::Int8(Some(*v as i8)),
+        (Value::Int16Value(v), PrimitiveScalarType::Int16) => ScalarValue::Int16(Some(*v as i16)),
+        (Value::Int32Value(v), PrimitiveScalarType::Int32) => ScalarValue::Int32(Some(*v)),
+        (Value::Int64Value(v), PrimitiveScalarType::Int64) => ScalarValue::Int64(Some(*v)),
+        (Value::Uint8Value(v), PrimitiveScalarType::Uint8) => ScalarValue::UInt8(Some(*v as u8)),
         (Value::Uint16Value(v), PrimitiveScalarType::Uint16) => {
             ScalarValue::UInt16(Some(*v as u16))
         }
-        (Value::Uint32Value(v), PrimitiveScalarType::Uint32) => {
-            ScalarValue::UInt32(Some(*v))
-        }
-        (Value::Uint64Value(v), PrimitiveScalarType::Uint64) => {
-            ScalarValue::UInt64(Some(*v))
-        }
-        (Value::Float32Value(v), PrimitiveScalarType::Float32) => {
-            ScalarValue::Float32(Some(*v))
-        }
-        (Value::Float64Value(v), PrimitiveScalarType::Float64) => {
-            ScalarValue::Float64(Some(*v))
-        }
-        (Value::Date32Value(v), PrimitiveScalarType::Date32) => {
-            ScalarValue::Date32(Some(*v))
-        }
+        (Value::Uint32Value(v), PrimitiveScalarType::Uint32) => ScalarValue::UInt32(Some(*v)),
+        (Value::Uint64Value(v), PrimitiveScalarType::Uint64) => ScalarValue::UInt64(Some(*v)),
+        (Value::Float32Value(v), PrimitiveScalarType::Float32) => ScalarValue::Float32(Some(*v)),
+        (Value::Float64Value(v), PrimitiveScalarType::Float64) => ScalarValue::Float64(Some(*v)),
+        (Value::Date32Value(v), PrimitiveScalarType::Date32) => ScalarValue::Date32(Some(*v)),
         (Value::TimeMicrosecondValue(v), PrimitiveScalarType::TimeMicrosecond) => {
             ScalarValue::TimestampMicrosecond(Some(*v), None)
         }
         (Value::TimeNanosecondValue(v), PrimitiveScalarType::TimeMicrosecond) => {
             ScalarValue::TimestampNanosecond(Some(*v), None)
         }
-        (Value::Utf8Value(v), PrimitiveScalarType::Utf8) => {
-            ScalarValue::Utf8(Some(v.to_owned()))
-        }
+        (Value::Utf8Value(v), PrimitiveScalarType::Utf8) => ScalarValue::Utf8(Some(v.to_owned())),
         (Value::LargeUtf8Value(v), PrimitiveScalarType::LargeUtf8) => {
             ScalarValue::LargeUtf8(Some(v.to_owned()))
         }
@@ -896,22 +814,14 @@ fn typechecked_scalar_value_conversion(
                     //    ))
                     //}
                     PrimitiveScalarType::Null => ScalarValue::Null,
-                    PrimitiveScalarType::Decimal128 => {
-                        ScalarValue::Decimal128(None, 1, 0)
-                    }
+                    PrimitiveScalarType::Decimal128 => ScalarValue::Decimal128(None, 1, 0),
                     PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
-                    PrimitiveScalarType::TimeSecond => {
-                        ScalarValue::TimestampSecond(None, None)
-                    }
+                    PrimitiveScalarType::TimeSecond => ScalarValue::TimestampSecond(None, None),
                     PrimitiveScalarType::TimeMillisecond => {
                         ScalarValue::TimestampMillisecond(None, None)
                     }
-                    PrimitiveScalarType::IntervalYearmonth => {
-                        ScalarValue::IntervalYearMonth(None)
-                    }
-                    PrimitiveScalarType::IntervalDaytime => {
-                        ScalarValue::IntervalDayTime(None)
-                    }
+                    PrimitiveScalarType::IntervalYearmonth => ScalarValue::IntervalYearMonth(None),
+                    PrimitiveScalarType::IntervalDaytime => ScalarValue::IntervalDayTime(None),
                 };
                 scalar_value
             } else {
@@ -950,22 +860,16 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
             protobuf::PrimitiveScalarType::TimeNanosecond => {
                 ScalarValue::TimestampNanosecond(None, None)
             }
-            protobuf::PrimitiveScalarType::Decimal128 => {
-                ScalarValue::Decimal128(None, 1, 0)
-            }
+            protobuf::PrimitiveScalarType::Decimal128 => ScalarValue::Decimal128(None, 1, 0),
             protobuf::PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
-            protobuf::PrimitiveScalarType::TimeSecond => {
-                ScalarValue::TimestampSecond(None, None)
-            }
+            protobuf::PrimitiveScalarType::TimeSecond => ScalarValue::TimestampSecond(None, None),
             protobuf::PrimitiveScalarType::TimeMillisecond => {
                 ScalarValue::TimestampMillisecond(None, None)
             }
             protobuf::PrimitiveScalarType::IntervalYearmonth => {
                 ScalarValue::IntervalYearMonth(None)
             }
-            protobuf::PrimitiveScalarType::IntervalDaytime => {
-                ScalarValue::IntervalDayTime(None)
-            }
+            protobuf::PrimitiveScalarType::IntervalDaytime => ScalarValue::IntervalDayTime(None),
         })
     }
 }

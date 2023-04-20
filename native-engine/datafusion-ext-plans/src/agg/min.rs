@@ -206,23 +206,21 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
             fn_fixed!(TimestampMicrosecond)
         }
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
-        DataType::Utf8 => {
-            Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
-                let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-                if value.is_valid(i) {
-                    let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addr));
-                    let v = value.value(i);
-                    if w.as_ref().filter(|w| w.as_ref() <= v).is_none() {
-                        *w = Some(v.to_owned().into());
-                    }
+        DataType::Utf8 => Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
+            let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+            if value.is_valid(i) {
+                let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addr));
+                let v = value.value(i);
+                if w.as_ref().filter(|w| w.as_ref() <= v).is_none() {
+                    *w = Some(v.to_owned().into());
                 }
-            })
-        }
+            }
+        }),
         other => {
-            return Err(DataFusionError::NotImplemented(format!(
+            Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in min(): {}",
                 other
-            )));
+            )))
         }
     }
 }
@@ -275,10 +273,10 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
             }
         }),
         other => {
-            return Err(DataFusionError::NotImplemented(format!(
+            Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in min(): {}",
                 other
-            )));
+            )))
         }
     }
 }

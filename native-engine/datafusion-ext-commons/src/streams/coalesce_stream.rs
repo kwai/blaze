@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::concat_batches;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
@@ -20,7 +21,6 @@ use datafusion::physical_plan::{RecordBatchStream, SendableRecordBatchStream};
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
-use crate::concat_batches;
 
 pub struct CoalesceStream {
     input: SendableRecordBatchStream,
@@ -31,11 +31,7 @@ pub struct CoalesceStream {
 }
 
 impl CoalesceStream {
-    pub fn new(
-        input: SendableRecordBatchStream,
-        batch_size: usize,
-        elapsed_compute: Time,
-    ) -> Self {
+    pub fn new(input: SendableRecordBatchStream, batch_size: usize, elapsed_compute: Time) -> Self {
         Self {
             input,
             staging_batches: vec![],
@@ -65,10 +61,7 @@ impl RecordBatchStream for CoalesceStream {
 impl Stream for CoalesceStream {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let elapsed_time = self.elapsed_compute.clone();
         loop {
             match ready!(self.input.poll_next_unpin(cx)).transpose()? {

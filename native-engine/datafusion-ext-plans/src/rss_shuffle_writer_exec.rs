@@ -25,6 +25,7 @@ use datafusion::arrow::error::ArrowError;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 
+use crate::common::memory_manager::MemManager;
 use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
 use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
 use crate::shuffle::ShuffleRepartitioner;
@@ -40,7 +41,6 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::stream::once;
 use futures::{TryFutureExt, TryStreamExt};
-use crate::common::memory_manager::MemManager;
 
 /// The rss shuffle writer operator maps each input partition to M output partitions based on a
 /// partitioning scheme. No guarantees are made about the order of the resulting partitions.
@@ -101,13 +101,11 @@ impl ExecutionPlan for RssShuffleWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-
         let resource_id = jni_new_string!(&self.rss_partition_writer_resource_id)?;
         let rss_partition_writer_local = jni_call_static!(
             JniBridge.getResource(resource_id.as_obj()) -> JObject
         )?;
-        let rss_partition_writer =
-            jni_new_global_ref!(rss_partition_writer_local.as_obj())?;
+        let rss_partition_writer = jni_new_global_ref!(rss_partition_writer_local.as_obj())?;
 
         let input = self.input.execute(partition, context.clone())?;
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
@@ -122,12 +120,9 @@ impl ExecutionPlan for RssShuffleWriterExec {
                     self.partitioning.clone(),
                     context.clone(),
                 ));
-                MemManager::register_consumer(
-                    partitioner.clone(),
-                    true,
-                );
+                MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
-            },
+            }
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
 
@@ -149,11 +144,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(
-        &self,
-        t: DisplayFormatType,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result {
+    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match t {
             DisplayFormatType::Default => {
                 write!(

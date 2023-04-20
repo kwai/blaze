@@ -18,6 +18,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use crate::agg::AGG_BUF_COLUMN_NAME;
 use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
@@ -25,15 +26,12 @@ use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
-};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
+    Statistics,
 };
 use futures::{Stream, StreamExt};
-use crate::agg::AGG_BUF_COLUMN_NAME;
 
 #[derive(Debug, Clone)]
 pub struct RenameColumnsExec {
@@ -183,17 +181,16 @@ impl RecordBatchStream for RenameColumnsStream {
 impl Stream for RenameColumnsStream {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.input.poll_next_unpin(cx)? {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(batch)) => {
-                self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(
-                    RecordBatch::try_new(self.schema.clone(), batch.columns().to_vec())?,
-                ))))
+                self.baseline_metrics
+                    .record_poll(Poll::Ready(Some(Ok(RecordBatch::try_new(
+                        self.schema.clone(),
+                        batch.columns().to_vec(),
+                    )?))))
             }
         }
     }

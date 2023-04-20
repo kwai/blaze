@@ -36,9 +36,9 @@ pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
     Ok(match &args[0] {
         ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Int64(Some(v)) => ColumnarValue::Scalar(
-                ScalarValue::Decimal128(Some(*v as i128), precision, scale),
-            ),
+            ScalarValue::Int64(Some(v)) => {
+                ColumnarValue::Scalar(ScalarValue::Decimal128(Some(*v as i128), precision, scale))
+            }
             _ => ColumnarValue::Scalar(ScalarValue::Decimal128(None, precision, scale)),
         },
         ColumnarValue::Array(array) => {

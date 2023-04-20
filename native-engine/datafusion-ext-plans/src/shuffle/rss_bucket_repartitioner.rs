@@ -14,6 +14,7 @@
 
 //! Defines the rss bucket shuffle repartitioner
 
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
 use async_trait::async_trait;
 use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
@@ -24,16 +25,13 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::Partitioning;
-use datafusion_ext_commons::array_builder::{
-    builder_extend, make_batch, new_array_builders,
-};
+use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
 use datafusion_ext_commons::io::write_one_batch;
 use futures::lock::Mutex;
 use itertools::Itertools;
 use jni::objects::{GlobalRef, JObject};
 use std::io::Cursor;
 use std::sync::{Arc, Weak};
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 
 pub struct RssBucketShuffleRepartitioner {
     name: String,
@@ -54,34 +52,35 @@ impl RssBucketShuffleRepartitioner {
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
         let batch_size = context.session_config().batch_size();
-        let repartitioner = Self {
+        
+        Self {
             name: format!("RssBucketShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
-                    .into_iter()
-                    .map(|_| PartitionBuffer::new(
+                    .map(|_| {
+                        PartitionBuffer::new(
                             schema.clone(),
                             batch_size,
                             rss_partition_writer.clone(),
-                    ))
+                        )
+                    })
                     .collect::<Vec<_>>(),
             ),
             partitioning,
             num_output_partitions,
-        };
-        repartitioner
+        }
     }
 }
 
 #[async_trait]
 impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-
         // batch records are first shuffled and inserted into array builders, which may
         // have doubled capacity in worse case.
         let mem_increase = input.get_array_memory_size() * 2;
-        self.update_mem_used_with_diff(mem_increase as isize).await?;
+        self.update_mem_used_with_diff(mem_increase as isize)
+            .await?;
 
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
@@ -165,7 +164,7 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
 
 #[async_trait]
 impl MemConsumer for RssBucketShuffleRepartitioner {
-    fn name(&self) ->&str {
+    fn name(&self) -> &str {
         &self.name
     }
 
@@ -174,7 +173,10 @@ impl MemConsumer for RssBucketShuffleRepartitioner {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        &self.mem_consumer_info.as_ref().expect("consumer info not set")
+        self
+            .mem_consumer_info
+            .as_ref()
+            .expect("consumer info not set")
     }
 
     async fn spill(&self) -> Result<()> {
@@ -186,7 +188,6 @@ impl MemConsumer for RssBucketShuffleRepartitioner {
         self.update_mem_used(0).await?;
         Ok(())
     }
-
 }
 
 impl Drop for RssBucketShuffleRepartitioner {
@@ -204,11 +205,7 @@ struct PartitionBuffer {
 }
 
 impl PartitionBuffer {
-    fn new(
-        schema: SchemaRef,
-        batch_size: usize,
-        rss_partition_writer: GlobalRef,
-    ) -> Self {
+    fn new(schema: SchemaRef, batch_size: usize, rss_partition_writer: GlobalRef) -> Self {
         // use smaller batch size for rss to trigger more flushes
         let rss_batch_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
         Self {
@@ -286,7 +283,7 @@ fn write_batch_to_rss(
 
     write_one_batch(batch, &mut Cursor::new(&mut data), true)?;
     let data_len = data.len();
-    let buf = jni_new_direct_byte_buffer!(&mut data)?;
+    let buf = jni_new_direct_byte_buffer!(&data)?;
     jni_call!(
         BlazeRssPartitionWriterBase(rss_partition_writer)
         .write(partition_id as i32, buf.as_obj(), data_len as i32) -> ()

@@ -105,9 +105,7 @@ fn evaluate_and(
     batch: &RecordBatch,
 ) -> Result<ColumnarValue> {
     Ok(match left.evaluate(batch)? {
-        ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => {
-            right.evaluate(batch)?
-        }
+        ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => right.evaluate(batch)?,
         ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => {
             ColumnarValue::Scalar(ScalarValue::Boolean(Some(false)))
         }
@@ -136,9 +134,7 @@ fn evaluate_and(
             let right_selected = if left_prim.null_count() > 0 {
                 right.evaluate_selection(
                     batch,
-                    &compute::not(&compute::prep_null_mask_filter(&compute::not(
-                        left_prim,
-                    )?))?,
+                    &compute::not(&compute::prep_null_mask_filter(&compute::not(left_prim)?))?,
                 )?
             } else {
                 right.evaluate_selection(batch, left_prim)?
@@ -164,9 +160,7 @@ fn evaluate_or(
         ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => {
             ColumnarValue::Scalar(ScalarValue::Boolean(Some(true)))
         }
-        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => {
-            right.evaluate(batch)?
-        }
+        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))) => right.evaluate(batch)?,
 
         ColumnarValue::Scalar(s) if s.is_null() => match right.evaluate(batch)? {
             ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))) => {
@@ -243,11 +237,9 @@ mod test {
             Some(false),
             None,
         ]));
-        let batch = RecordBatch::try_from_iter_with_nullable([
-            ("a", arg1, true),
-            ("b", arg2, true),
-        ])
-        .unwrap();
+        let batch =
+            RecordBatch::try_from_iter_with_nullable([("a", arg1, true), ("b", arg2, true)])
+                .unwrap();
 
         // +---------+---------+---------+---------+
         // | AND     | TRUE    | FALSE   | UNKNOWN |

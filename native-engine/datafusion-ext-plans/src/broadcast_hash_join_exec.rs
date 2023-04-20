@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use async_trait::async_trait;
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
+use crate::common::output_with_sender;
 use arrow::datatypes::SchemaRef;
+use async_trait::async_trait;
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::logical_expr::JoinType;
@@ -21,19 +23,16 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::joins::utils::{JoinFilter, JoinOn};
 use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::metrics::{MetricsSet, Time};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning,
-    SendableRecordBatchStream,
+    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::{StreamExt, TryStreamExt, TryFutureExt};
+use futures::stream::once;
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::{Arc, Weak};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use futures::stream::once;
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::output_with_sender;
 
 // TODO:
 //  in spark broadcast hash join, the hash table is built on driver side.
@@ -64,7 +63,7 @@ impl BroadcastHashJoinExec {
             filter,
             join_type,
             partition_mode,
-            null_equals_null.clone(),
+            *null_equals_null,
         )?);
         Ok(Self { inner })
     }
@@ -113,15 +112,11 @@ impl ExecutionPlan for BroadcastHashJoinExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-
         let mem_tracker = Arc::new(MemTracker {
             name: format!("BroadcastHashSide[partition={}]", partition),
             mem_consumer_info: None,
         });
-        MemManager::register_consumer(
-            mem_tracker.clone(),
-            false,
-        );
+        MemManager::register_consumer(mem_tracker.clone(), false);
 
         // left is always the built side, wrap it with a BroadcastSideWrapperExec
         let wrapped_left = Arc::new(BroadcastSideWrapperExec {
@@ -130,7 +125,8 @@ impl ExecutionPlan for BroadcastHashJoinExec {
         });
 
         // execute with the wrapped children
-        let output = self.inner
+        let output = self
+            .inner
             .clone()
             .with_new_children(vec![wrapped_left, self.inner.children()[1].clone()])?
             .execute(partition, context)?;
@@ -233,7 +229,10 @@ impl MemConsumer for MemTracker {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        &self.mem_consumer_info.as_ref().expect("consumer info not set")
+        self
+            .mem_consumer_info
+            .as_ref()
+            .expect("consumer info not set")
     }
 }
 
@@ -247,14 +246,14 @@ async fn stream_with_mem_tracker(
     mut input: SendableRecordBatchStream,
     mem_tracker: Arc<MemTracker>,
 ) -> Result<SendableRecordBatchStream> {
-
     output_with_sender("BroadcastHashJoin", input.schema(), |sender| async move {
         let mut mem_used = 0;
         while let Some(batch) = input.next().await.transpose()? {
             mem_used += batch.get_array_memory_size() * 3 / 2;
             mem_tracker.update_mem_used(mem_used).await?;
 
-            sender.send(Ok(batch))
+            sender
+                .send(Ok(batch))
                 .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
                 .await?;
         }
@@ -266,10 +265,10 @@ async fn stream_holding_mem_tracker(
     mut input: SendableRecordBatchStream,
     mem_tracker: Arc<MemTracker>,
 ) -> Result<SendableRecordBatchStream> {
-
     output_with_sender("BroadcastHashJoin", input.schema(), |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {
-            sender.send(Ok(batch))
+            sender
+                .send(Ok(batch))
                 .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
                 .await?;
         }
@@ -277,4 +276,3 @@ async fn stream_holding_mem_tracker(
         Ok(())
     })
 }
-

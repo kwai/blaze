@@ -14,23 +14,20 @@
 
 pub mod explode;
 
-use std::fmt::Debug;
-use std::sync::Arc;
+use crate::generate::explode::{ExplodeArray, ExplodeMap};
 use arrow::array::ArrayRef;
 use arrow::datatypes::{DataType, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use datafusion::physical_plan::PhysicalExpr;
-use crate::generate::explode::{ExplodeArray, ExplodeMap};
+use std::fmt::Debug;
+use std::sync::Arc;
 
 pub trait Generator: Debug + Send + Sync {
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;
 
-    fn with_new_exprs(
-        &self,
-        exprs: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn Generator>>;
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>>;
 
     fn eval(&self, batch: &RecordBatch) -> Result<(Vec<ArrayRef>, Vec<u32>)>;
 }
@@ -47,29 +44,21 @@ pub fn create_generator(
     children: Vec<Arc<dyn PhysicalExpr>>,
 ) -> Result<Arc<dyn Generator>> {
     match func {
-        GenerateFunc::Explode => {
-            match children[0].data_type(input_schema)? {
-                DataType::List(..) =>
-                    Ok(Arc::new(ExplodeArray::new(children[0].clone(), false))),
-                DataType::Map(..) =>
-                    Ok(Arc::new(ExplodeMap::new(children[0].clone(), false))),
-                other =>
-                    Err(DataFusionError::Plan(
-                        format!("unsupported explode type: {}", other)
-                    ))
-            }
-        }
-        GenerateFunc::PosExplode => {
-            match children[0].data_type(input_schema)? {
-                DataType::List(..) =>
-                    Ok(Arc::new(ExplodeArray::new(children[0].clone(), true))),
-                DataType::Map(..) =>
-                    Ok(Arc::new(ExplodeMap::new(children[0].clone(), true))),
-                other =>
-                    Err(DataFusionError::Plan(
-                        format!("unsupported pos_explode type: {}", other)
-                    ))
-            }
-        }
+        GenerateFunc::Explode => match children[0].data_type(input_schema)? {
+            DataType::List(..) => Ok(Arc::new(ExplodeArray::new(children[0].clone(), false))),
+            DataType::Map(..) => Ok(Arc::new(ExplodeMap::new(children[0].clone(), false))),
+            other => Err(DataFusionError::Plan(format!(
+                "unsupported explode type: {}",
+                other
+            ))),
+        },
+        GenerateFunc::PosExplode => match children[0].data_type(input_schema)? {
+            DataType::List(..) => Ok(Arc::new(ExplodeArray::new(children[0].clone(), true))),
+            DataType::Map(..) => Ok(Arc::new(ExplodeMap::new(children[0].clone(), true))),
+            other => Err(DataFusionError::Plan(format!(
+                "unsupported pos_explode type: {}",
+                other
+            ))),
+        },
     }
 }

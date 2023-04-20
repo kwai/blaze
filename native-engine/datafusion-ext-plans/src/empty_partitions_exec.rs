@@ -28,8 +28,8 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
+    Statistics,
 };
 use futures::Stream;
 
@@ -122,10 +122,7 @@ impl RecordBatchStream for EmptyStream {
 impl Stream for EmptyStream {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Ready(None)
     }
 }

@@ -40,8 +40,7 @@ impl AggAvg {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         let agg_sum = AggSum::try_new(child.clone(), data_type.clone())?;
         let agg_count = AggCount::try_new(child.clone(), DataType::Int64)?;
-        let accums_initial =
-            [agg_sum.accums_initial(), agg_count.accums_initial()].concat();
+        let accums_initial = [agg_sum.accums_initial(), agg_count.accums_initial()].concat();
         let final_merger = get_final_merger(&data_type)?;
 
         Ok(Self {
@@ -98,8 +97,10 @@ impl Agg for AggAvg {
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-        self.agg_sum.partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
-        self.agg_count.partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
+        self.agg_sum
+            .partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
+        self.agg_count
+            .partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
         Ok(())
     }
 
@@ -129,11 +130,7 @@ impl Agg for AggAvg {
         Ok(())
     }
 
-    fn final_merge(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<ScalarValue> {
+    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         let sum = self.agg_sum.final_merge(agg_buf, agg_buf_addrs)?;
         let count = match self.agg_count.final_merge(agg_buf, &agg_buf_addrs[1..])? {
             ScalarValue::Int64(Some(count)) => count,
@@ -175,10 +172,10 @@ fn get_final_merger(dt: &DataType) -> Result<fn(ScalarValue, i64) -> ScalarValue
         DataType::UInt64 => get_fn!(UInt64),
         DataType::Decimal128(..) => get_fn!(Decimal128),
         other => {
-            return Err(DataFusionError::NotImplemented(format!(
+            Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type in avg(): {}",
                 other
-            )));
+            )))
         }
     }
 }

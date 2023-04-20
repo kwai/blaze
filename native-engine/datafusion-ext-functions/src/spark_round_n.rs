@@ -133,14 +133,9 @@ mod test {
     #[test]
     fn test_decimal() {
         let input: ArrayRef = Arc::new(
-            Decimal128Array::from_iter(&[
-                Some(123000000),
-                Some(123456000),
-                Some(123456789),
-                None,
-            ])
-            .with_precision_and_scale(9, 6)
-            .unwrap(),
+            Decimal128Array::from_iter(&[Some(123000000), Some(123456000), Some(123456789), None])
+                .with_precision_and_scale(9, 6)
+                .unwrap(),
         );
 
         // round with n >= 0

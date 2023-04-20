@@ -62,7 +62,8 @@ impl Drop for LocalRef<'_> {
     fn drop(&mut self) {
         if !self.0.is_null() {
             THREAD_JNIENV.with(|env| {
-                env.delete_local_ref(self.0).expect("error deleting local ref")
+                env.delete_local_ref(self.0)
+                    .expect("error deleting local ref")
             })
         }
     }
@@ -154,8 +155,7 @@ macro_rules! jni_map_error_with_env {
 #[macro_export]
 macro_rules! jni_map_error {
     ($result:expr) => {{
-        $crate::jni_bridge::THREAD_JNIENV
-            .with(|env| $crate::jni_map_error_with_env!(env, $result))
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| $crate::jni_map_error_with_env!(env, $result))
     }};
 }
 
@@ -208,8 +208,7 @@ macro_rules! jni_new_object {
 macro_rules! jni_get_string {
     ($value:expr) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
-            $crate::jni_map_error_with_env!(env, env.get_string($value))
-                .map(|s| String::from(s))
+            $crate::jni_map_error_with_env!(env, env.get_string($value)).map(|s| String::from(s))
         })
     }};
 }
@@ -292,9 +291,8 @@ macro_rules! jni_call_static {
 #[macro_export]
 macro_rules! jni_convert_byte_array {
     ($value:expr) => {{
-        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
-            $crate::jni_map_error_with_env!(env, env.convert_byte_array(*$value))
-        })
+        $crate::jni_bridge::THREAD_JNIENV
+            .with(|env| $crate::jni_map_error_with_env!(env, env.convert_byte_array(*$value)))
     }};
 }
 
@@ -454,8 +452,7 @@ impl JavaClasses<'static> {
                 cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
-                cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env)
-                    .unwrap(),
+                cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env).unwrap(),
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env).unwrap(),
@@ -534,11 +531,7 @@ impl<'a> JniBridge<'a> {
                 "()Lorg/apache/spark/sql/blaze/memory/OnHeapSpillManager;",
             )?,
             method_getTaskOnHeapSpillManager_ret: ReturnType::Object,
-            method_isTaskRunning: env.get_static_method_id(
-                class,
-                "isTaskRunning",
-                "()Z",
-            )?,
+            method_isTaskRunning: env.get_static_method_id(class, "isTaskRunning", "()Z")?,
             method_isTaskRunning_ret: ReturnType::Primitive(Primitive::Boolean),
         })
     }
@@ -562,9 +555,7 @@ impl<'a> JniUtil<'a> {
                 "readFullyFromFSDataInputStream",
                 "(Lorg/apache/hadoop/fs/FSDataInputStream;JLjava/nio/ByteBuffer;)V",
             )?,
-            method_readFullyFromFSDataInputStream_ret: ReturnType::Primitive(
-                Primitive::Void,
-            ),
+            method_readFullyFromFSDataInputStream_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -582,11 +573,7 @@ impl<'a> JavaClass<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaClass {
             class,
-            method_getName: env.get_method_id(
-                class,
-                "getName",
-                "()Ljava/lang/String;",
-            )?,
+            method_getName: env.get_method_id(class, "getName", "()Ljava/lang/String;")?,
             method_getName_ret: ReturnType::Object,
         })
     }
@@ -605,11 +592,7 @@ impl<'a> JavaThrowable<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaThrowable {
             class,
-            method_getMessage: env.get_method_id(
-                class,
-                "getMessage",
-                "()Ljava/lang/String;",
-            )?,
+            method_getMessage: env.get_method_id(class, "getMessage", "()Ljava/lang/String;")?,
             method_getMessage_ret: ReturnType::Object,
         })
     }
@@ -787,11 +770,7 @@ impl<'a> JavaFile<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaFile {
             class,
-            method_getPath: env.get_method_id(
-                class,
-                "getPath",
-                "()Ljava/lang/String;",
-            )?,
+            method_getPath: env.get_method_id(class, "getPath", "()Ljava/lang/String;")?,
             method_getPath_ret: ReturnType::Object,
         })
     }
@@ -1104,8 +1083,7 @@ pub struct SparkUDFWrapperContext<'a> {
     pub ctor: JMethodID,
 }
 impl<'a> SparkUDFWrapperContext<'a> {
-    pub const SIG_TYPE: &'static str =
-        "org/apache/spark/sql/blaze/SparkUDFWrapperContext";
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDFWrapperContext";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkUDFWrapperContext<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
@@ -1129,8 +1107,7 @@ pub struct BlazeCallNativeWrapper<'a> {
     pub method_setError_ret: ReturnType,
 }
 impl<'a> BlazeCallNativeWrapper<'a> {
-    pub const SIG_TYPE: &'static str =
-        "org/apache/spark/sql/blaze/BlazeCallNativeWrapper";
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/BlazeCallNativeWrapper";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeCallNativeWrapper<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
@@ -1140,7 +1117,9 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                 .get_method_id(class, "getRawTaskDefinition", "()[B")
                 .unwrap(),
             method_getRawTaskDefinition_ret: ReturnType::Array,
-            method_setArrowFFIStreamPtr: env.get_method_id(class, "setArrowFFIStreamPtr", "(J)V").unwrap(),
+            method_setArrowFFIStreamPtr: env
+                .get_method_id(class, "setArrowFFIStreamPtr", "(J)V")
+                .unwrap(),
             method_setArrowFFIStreamPtr_ret: ReturnType::Primitive(Primitive::Void),
             method_getMetrics: env
                 .get_method_id(
@@ -1150,7 +1129,9 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                 )
                 .unwrap(),
             method_getMetrics_ret: ReturnType::Object,
-            method_setError: env.get_method_id(class, "setError", "(Ljava/lang/Throwable;)V").unwrap(),
+            method_setError: env
+                .get_method_id(class, "setError", "(Ljava/lang/Throwable;)V")
+                .unwrap(),
             method_setError_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1173,8 +1154,7 @@ pub struct BlazeOnHeapSpillManager<'a> {
     pub method_releaseSpill_ret: ReturnType,
 }
 impl<'a> BlazeOnHeapSpillManager<'a> {
-    pub const SIG_TYPE: &'static str =
-        "org/apache/spark/sql/blaze/memory/OnHeapSpillManager";
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/memory/OnHeapSpillManager";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeOnHeapSpillManager<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
@@ -1186,9 +1166,7 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
                 .get_method_id(class, "writeSpill", "(ILjava/nio/ByteBuffer;)V")
                 .unwrap(),
             method_writeSpill_ret: ReturnType::Primitive(Primitive::Void),
-            method_completeSpill: env
-                .get_method_id(class, "completeSpill", "(I)V")
-                .unwrap(),
+            method_completeSpill: env.get_method_id(class, "completeSpill", "(I)V").unwrap(),
             method_completeSpill_ret: ReturnType::Primitive(Primitive::Void),
             method_readSpill: env
                 .get_method_id(class, "readSpill", "(ILjava/nio/ByteBuffer;)I")
@@ -1198,31 +1176,25 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
                 .get_method_id(class, "getSpillDiskUsage", "(I)J")
                 .unwrap(),
             method_getSpillDiskUsage_ret: ReturnType::Primitive(Primitive::Long),
-            method_releaseSpill: env
-                .get_method_id(class, "releaseSpill", "(I)V")
-                .unwrap(),
+            method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V").unwrap(),
             method_releaseSpill_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
 
-fn get_global_jclass<'a>(env: &JNIEnv<'a>, cls: &str) -> JniResult<JClass<'static>> {
+fn get_global_jclass(env: &JNIEnv<'_>, cls: &str) -> JniResult<JClass<'static>> {
     let local_jclass = env.find_class(cls)?;
     Ok(get_global_ref_jobject(env, local_jclass.into())?.into())
 }
 
-fn get_global_ref_jobject<'a>(
-    env: &JNIEnv<'a>,
-    obj: JObject<'a>,
-) -> JniResult<JObject<'static>> {
+fn get_global_ref_jobject<'a>(env: &JNIEnv<'a>, obj: JObject<'a>) -> JniResult<JObject<'static>> {
     let global = env.new_global_ref::<JObject>(obj)?;
 
     // safety:
     //  as all global refs to jclass in JavaClasses should never be GC'd during
     // the whole jvm lifetime, we put GlobalRef into ManuallyDrop to prevent
     // deleting these global refs.
-    let global_obj =
-        unsafe { std::mem::transmute::<_, JObject<'static>>(global.as_obj()) };
+    let global_obj = unsafe { std::mem::transmute::<_, JObject<'static>>(global.as_obj()) };
     let _ = std::mem::ManuallyDrop::new(global);
     Ok(global_obj)
 }

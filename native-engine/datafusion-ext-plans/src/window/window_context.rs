@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Mutex as SyncMutex};
+use crate::window::WindowExpr;
 use arrow::datatypes::{Field, FieldRef, Fields, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use arrow::row::{RowConverter, Rows, SortField};
 use datafusion::common::Result;
 use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use crate::window::WindowExpr;
+use std::sync::{Arc, Mutex as SyncMutex};
 
 #[derive(Debug)]
 pub struct WindowContext {
@@ -42,55 +42,60 @@ impl WindowContext {
         partition_spec: Vec<Arc<dyn PhysicalExpr>>,
         order_spec: Vec<PhysicalSortExpr>,
     ) -> Result<Self> {
+        let output_schema = Arc::new(Schema::new(
+            vec![
+                input_schema.fields().to_vec(),
+                window_exprs
+                    .iter()
+                    .map(|expr: &WindowExpr| expr.field.clone())
+                    .collect::<Vec<FieldRef>>(),
+            ]
+            .concat(),
+        ));
 
-        let output_schema = Arc::new(Schema::new(vec![
-            input_schema.fields().to_vec(),
-            window_exprs
+        let partition_schema = Arc::new(Schema::new(
+            partition_spec
                 .iter()
-                .map(|expr: &WindowExpr| expr.field.clone())
-                .collect::<Vec<FieldRef>>()
-        ].concat()));
+                .map(|expr: &Arc<dyn PhysicalExpr>| {
+                    Ok(Field::new(
+                        "__partition_col__",
+                        expr.data_type(&input_schema)?,
+                        expr.nullable(&input_schema)?,
+                    ))
+                })
+                .collect::<Result<Fields>>()?,
+        ));
 
-        let partition_schema = Arc::new(Schema::new(partition_spec
-            .iter()
-            .map(|expr: &Arc<dyn PhysicalExpr>| {
-                Ok(Field::new(
-                    "__partition_col__",
-                    expr.data_type(&input_schema)?,
-                    expr.nullable(&input_schema)?,
-                ))
-            })
-            .collect::<Result<Fields>>()?));
+        let order_schema = Arc::new(Schema::new(
+            order_spec
+                .iter()
+                .map(|expr: &PhysicalSortExpr| {
+                    Ok(Field::new(
+                        "__order_col__",
+                        expr.expr.data_type(&input_schema)?,
+                        expr.expr.nullable(&input_schema)?,
+                    ))
+                })
+                .collect::<Result<Fields>>()?,
+        ));
 
-        let order_schema = Arc::new(Schema::new(order_spec
-            .iter()
-            .map(|expr: &PhysicalSortExpr| {
-                Ok(Field::new(
-                    "__order_col__",
-                    expr.expr.data_type(&input_schema)?,
-                    expr.expr.nullable(&input_schema)?,
-                ))
-            })
-            .collect::<Result<Fields>>()?));
-
-        let partition_row_converter = Arc::new(SyncMutex::new(
-            RowConverter::new(partition_schema
+        let partition_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+            partition_schema
                 .fields()
                 .iter()
                 .map(|field: &FieldRef| SortField::new(field.data_type().clone()))
-                .collect::<_>())?
-        ));
-        let order_row_converter = Arc::new(SyncMutex::new(
-            RowConverter::new(order_schema
+                .collect::<_>(),
+        )?));
+        let order_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+            order_schema
                 .fields()
                 .iter()
                 .zip(&order_spec)
-                .map(|(field, order)| SortField::new_with_options(
-                    field.data_type().clone(),
-                    order.options
-                ))
-                .collect())?
-        ));
+                .map(|(field, order)| {
+                    SortField::new_with_options(field.data_type().clone(), order.options)
+                })
+                .collect(),
+        )?));
 
         Ok(Self {
             window_exprs,
@@ -103,7 +108,7 @@ impl WindowContext {
             order_schema,
 
             partition_row_converter,
-            order_row_converter
+            order_row_converter,
         })
     }
 
@@ -112,30 +117,32 @@ impl WindowContext {
     }
 
     pub fn get_partition_rows(&self, batch: &RecordBatch) -> Result<Rows> {
-        Ok(self.partition_row_converter
+        Ok(self
+            .partition_row_converter
             .lock()
             .unwrap()
             .convert_columns(
-                &self.partition_spec
+                &self
+                    .partition_spec
                     .iter()
-                    .map(|expr: &Arc<dyn PhysicalExpr>| expr
-                        .evaluate(batch)
-                        .map(|v| v.into_array(batch.num_rows())))
-                    .collect::<Result<Vec<_>>>()?
+                    .map(|expr: &Arc<dyn PhysicalExpr>| {
+                        expr.evaluate(batch).map(|v| v.into_array(batch.num_rows()))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
             )?)
     }
 
     pub fn get_order_rows(&self, batch: &RecordBatch) -> Result<Rows> {
-        Ok(self.order_row_converter
-            .lock()
-            .unwrap()
-            .convert_columns(
-                &self.order_spec
-                    .iter()
-                    .map(|expr: &PhysicalSortExpr| expr.expr
+        Ok(self.order_row_converter.lock().unwrap().convert_columns(
+            &self
+                .order_spec
+                .iter()
+                .map(|expr: &PhysicalSortExpr| {
+                    expr.expr
                         .evaluate(batch)
-                        .map(|v| v.into_array(batch.num_rows())))
-                    .collect::<Result<Vec<_>>>()?
-            )?)
+                        .map(|v| v.into_array(batch.num_rows()))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        )?)
     }
 }

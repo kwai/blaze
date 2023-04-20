@@ -16,10 +16,10 @@
 
 use arrow::array::*;
 use arrow::datatypes::DataType;
-use std::sync::Arc;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::ColumnarValue;
+use std::sync::Arc;
 
 macro_rules! downcast_vec {
     ($ARGS:expr, $ARRAY_TYPE:ident) => {{
@@ -50,12 +50,10 @@ macro_rules! new_builder {
 macro_rules! array {
     ($ARGS:expr, $ARRAY_TYPE:ident, $BUILDER_TYPE:ident) => {{
         // downcast all arguments to their common format
-        let args =
-            downcast_vec!($ARGS, $ARRAY_TYPE).collect::<Result<Vec<&$ARRAY_TYPE>>>()?;
+        let args = downcast_vec!($ARGS, $ARRAY_TYPE).collect::<Result<Vec<&$ARRAY_TYPE>>>()?;
 
         let builder = new_builder!($BUILDER_TYPE, args[0].len());
-        let mut builder =
-            ListBuilder::<$BUILDER_TYPE>::new(builder);
+        let mut builder = ListBuilder::<$BUILDER_TYPE>::new(builder);
         // for each entry in the array
         for index in 0..args[0].len() {
             for arg in &args {

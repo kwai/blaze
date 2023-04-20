@@ -18,6 +18,7 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use crate::common::memory_manager::MemManager;
 use crate::shuffle::bucket_repartitioner::BucketShuffleRepartitioner;
 use crate::shuffle::single_repartitioner::SingleShuffleRepartitioner;
 use crate::shuffle::sort_repartitioner::SortShuffleRepartitioner;
@@ -38,7 +39,6 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
 use futures::stream::once;
 use futures::{TryFutureExt, TryStreamExt};
-use crate::common::memory_manager::MemManager;
 
 /// The shuffle writer operator maps each input partition to M output partitions based on a
 /// partitioning scheme. No guarantees are made about the order of the resulting partitions.
@@ -103,13 +103,11 @@ impl ExecutionPlan for ShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
-            p if p.partition_count() == 1 => {
-                Arc::new(SingleShuffleRepartitioner::new(
-                    self.output_data_file.clone(),
-                    self.output_index_file.clone(),
-                    BaselineMetrics::new(&self.metrics, partition),
-                ))
-            },
+            p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
+                self.output_data_file.clone(),
+                self.output_index_file.clone(),
+                BaselineMetrics::new(&self.metrics, partition),
+            )),
             p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
                 let partitioner = Arc::new(BucketShuffleRepartitioner::new(
                     partition,
@@ -140,11 +138,13 @@ impl ExecutionPlan for ShuffleWriterExec {
         };
 
         let input = self.input.execute(partition, context.clone())?;
-        let stream = repartitioner.execute(
-            input,
-            context.session_config().batch_size(),
-            BaselineMetrics::new(&self.metrics, partition),
-        ).map_err(|e| ArrowError::ExternalError(Box::new(e)));
+        let stream = repartitioner
+            .execute(
+                input,
+                context.session_config().batch_size(),
+                BaselineMetrics::new(&self.metrics, partition),
+            )
+            .map_err(|e| ArrowError::ExternalError(Box::new(e)));
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
@@ -156,11 +156,7 @@ impl ExecutionPlan for ShuffleWriterExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(
-        &self,
-        t: DisplayFormatType,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result {
+    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match t {
             DisplayFormatType::Default => {
                 write!(f, "ShuffleWriterExec: partitioning={:?}", self.partitioning)

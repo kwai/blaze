@@ -96,21 +96,20 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
             .iter()
             .enumerate()
             .map(|(i, data_type)| Field::new("", data_type.clone(), nullables[i]))
-            .collect::<Fields>()
+            .collect::<Fields>(),
     ));
 
     // read columns
     let columns = (0..num_columns)
-        .into_iter()
         .map(|i| read_array(&mut input, &data_types[i], num_rows, has_null_buffers[i]))
         .collect::<ArrowResult<_>>()?;
 
     // create batch
-    Ok(RecordBatch::try_new_with_options(
+    RecordBatch::try_new_with_options(
         schema,
         columns,
         &RecordBatchOptions::new().with_row_count(Some(num_rows)),
-    )?)
+    )
 }
 
 pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> ArrowResult<()> {
@@ -120,7 +119,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> ArrowResult<(
                 as_primitive_array::<paste::paste! {[<$ty Type>]}>(array),
                 output,
             )?
-        }}
+        }};
     }
     match array.data_type() {
         DataType::Null => {}
@@ -140,8 +139,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> ArrowResult<(
         DataType::Binary => write_bytes_array(as_binary_array(array)?, output)?,
         DataType::Date32 => write_primitive!(Date32),
         DataType::Date64 => write_primitive!(Date64),
-        DataType::Timestamp(TimeUnit::Microsecond, _) =>
-            write_primitive!(TimestampMicrosecond),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => write_primitive!(TimestampMicrosecond),
         DataType::List(_field) => write_list_array(as_list_array(array), output)?,
         DataType::Map(_, _) => write_map_array(as_map_array(array), output)?,
         DataType::Struct(_) => write_struct_array(as_struct_array(array), output)?,
@@ -161,7 +159,6 @@ fn read_array<R: Read>(
     num_rows: usize,
     has_null_buffer: bool,
 ) -> ArrowResult<ArrayRef> {
-
     macro_rules! read_primitive {
         ($ty:ident) => {{
             read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(
@@ -169,13 +166,11 @@ fn read_array<R: Read>(
                 has_null_buffer,
                 input,
             )?
-        }}
+        }};
     }
     Ok(match data_type {
         DataType::Null => Arc::new(NullArray::new(num_rows)),
-        DataType::Boolean => {
-            read_boolean_array(num_rows, has_null_buffer, input)?
-        }
+        DataType::Boolean => read_boolean_array(num_rows, has_null_buffer, input)?,
         DataType::Int8 => read_primitive!(Int8),
         DataType::Int16 => read_primitive!(Int16),
         DataType::Int32 => read_primitive!(Int32),
@@ -186,25 +181,23 @@ fn read_array<R: Read>(
         DataType::UInt64 => read_primitive!(UInt64),
         DataType::Float32 => read_primitive!(Float32),
         DataType::Float64 => read_primitive!(Float64),
-        DataType::Decimal128(prec, scale) => {
-            Arc::new(as_decimal_array(&read_primitive!(Decimal128))
+        DataType::Decimal128(prec, scale) => Arc::new(
+            as_decimal_array(&read_primitive!(Decimal128))
                 .clone()
-                .with_precision_and_scale(*prec, *scale)?)
-        }
+                .with_precision_and_scale(*prec, *scale)?,
+        ),
         DataType::Date32 => read_primitive!(Date32),
         DataType::Date64 => read_primitive!(Date64),
-        DataType::Timestamp(TimeUnit::Microsecond, _) =>
-            read_primitive!(TimestampMicrosecond),
-        DataType::Utf8 =>
-            read_bytes_array(num_rows, has_null_buffer, input, DataType::Utf8)?,
-        DataType::Binary =>
-            read_bytes_array(num_rows, has_null_buffer, input, DataType::Binary)?,
-        DataType::List(list_field) =>
-            read_list_array(num_rows, has_null_buffer, input, &list_field)?,
-        DataType::Map(map_field, is_sorted) =>
-            read_map_array(num_rows, has_null_buffer, input, &map_field, *is_sorted)?,
-        DataType::Struct(fields) =>
-            read_struct_array(num_rows, has_null_buffer, input, fields)?,
+        DataType::Timestamp(TimeUnit::Microsecond, _) => read_primitive!(TimestampMicrosecond),
+        DataType::Utf8 => read_bytes_array(num_rows, has_null_buffer, input, DataType::Utf8)?,
+        DataType::Binary => read_bytes_array(num_rows, has_null_buffer, input, DataType::Binary)?,
+        DataType::List(list_field) => {
+            read_list_array(num_rows, has_null_buffer, input, list_field)?
+        }
+        DataType::Map(map_field, is_sorted) => {
+            read_map_array(num_rows, has_null_buffer, input, map_field, *is_sorted)?
+        }
+        DataType::Struct(fields) => read_struct_array(num_rows, has_null_buffer, input, fields)?,
         other => {
             return Err(ArrowError::IoError(format!(
                 "unsupported data type: {}",
@@ -223,15 +216,13 @@ fn write_bits_buffer<W: Write>(
     let mut out_buffer = vec![0u8; (bits_len + 7) / 8];
     let in_ptr = buffer.as_ptr();
     let out_ptr = out_buffer.as_mut_ptr();
-    let mut out_bits_offset = 0;
 
     for i in 0..bits_len {
         unsafe {
             if arrow::util::bit_util::get_bit_raw(in_ptr, bits_offset + i) {
-                arrow::util::bit_util::set_bit_raw(out_ptr, out_bits_offset);
+                arrow::util::bit_util::set_bit_raw(out_ptr, i);
             }
         }
-        out_bits_offset += 1;
     }
     output.write_all(&out_buffer)?;
     Ok(())
@@ -258,7 +249,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
         DataType::Float64 => write_u8(12, output)?,
         DataType::Date32 => write_u8(13, output)?,
         DataType::Date64 => write_u8(14, output)?,
-        DataType::Timestamp(TimeUnit::Microsecond, None)=> write_u8(15, output)?,
+        DataType::Timestamp(TimeUnit::Microsecond, None) => write_u8(15, output)?,
         DataType::Timestamp(TimeUnit::Microsecond, Some(tz)) => {
             write_u8(16, output)?;
             write_len(tz.as_bytes().len(), output)?;
@@ -279,7 +270,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
             } else {
                 write_u8(0, output)?;
             }
-        },
+        }
         DataType::Map(field, is_sorted) => {
             write_u8(21, output)?;
             if *is_sorted {
@@ -304,7 +295,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
                     }
                 }
                 other => {
-                    return  Err(ArrowError::SchemaError(format!(
+                    return Err(ArrowError::SchemaError(format!(
                         "Map field data_type must be Struct, but found {:#?}",
                         other
                     )));
@@ -355,7 +346,7 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
             let tz_bytes = read_bytes_slice(input, tz_len)?;
             let tz = String::from_utf8_lossy(&tz_bytes).to_string();
             DataType::Timestamp(TimeUnit::Microsecond, Some(tz.into()))
-        },
+        }
         17 => {
             let prec = read_u8(input)?;
             let scale = read_u8(input)? as i8;
@@ -365,29 +356,27 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
         19 => DataType::Binary,
         20 => {
             let child_datatype = read_data_type(input)?;
-            let is_nullable = if read_u8(input)? == 1 {true} else {false};
+            let is_nullable = read_u8(input)? == 1;
             DataType::List(Arc::new(Field::new("item", child_datatype, is_nullable)))
         }
         21 => {
-            let is_sorted = if read_u8(input)? == 1 {true} else {false};
-            let is_nullable = if read_u8(input)? == 1 {true} else {false};
+            let is_sorted = read_u8(input)? == 1;
+            let is_nullable = read_u8(input)? == 1;
             let mut fields = Vec::with_capacity(2);
             for _i in 0..2 {
                 let field_data_type = read_data_type(input)?;
-                let field_is_nullable = if read_u8(input)? == 1 {true} else {false};
+                let field_is_nullable = read_u8(input)? == 1;
                 fields.push(Field::new("", field_data_type, field_is_nullable));
             }
-            let entries_field =
-                Field::new("entries", DataType::Struct(fields.into()), is_nullable);
+            let entries_field = Field::new("entries", DataType::Struct(fields.into()), is_nullable);
             DataType::Map(Arc::new(entries_field), is_sorted)
-
         }
         22 => {
             let field_len = read_len(input)?;
             let mut fields = Vec::new();
             for _i in 0..field_len {
                 let field_data_type = read_data_type(input)?;
-                let field_is_nullable = if read_u8(input)? == 1 {true} else {false};
+                let field_is_nullable = read_u8(input)? == 1;
                 fields.push(Field::new("", field_data_type, field_is_nullable));
             }
             DataType::Struct(fields.into())
@@ -411,10 +400,8 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     if let Some(null_buffer) = array.to_data().nulls() {
         write_bits_buffer(null_buffer.buffer(), offset, len, output)?;
     }
-    output.write_all(&array
-        .to_data()
-        .buffers()[0]
-        .as_slice()[item_size * offset..][..item_size * len]
+    output.write_all(
+        &array.to_data().buffers()[0].as_slice()[item_size * offset..][..item_size * len],
     )?;
     Ok(())
 }
@@ -447,15 +434,12 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
     Ok(make_array(array_data))
 }
 
-fn write_list_array<W: Write>(
-    array: &ListArray,
-    output: &mut W,
-) -> ArrowResult<()> {
+fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> ArrowResult<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
 
-    let first_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
+    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
     let mut cur_offset = first_offset;
     for &offset in array.value_offsets().iter().skip(1) {
         let len = offset - cur_offset;
@@ -463,7 +447,9 @@ fn write_list_array<W: Write>(
         cur_offset = offset;
     }
     let values_len = cur_offset - first_offset;
-    let values = array.values().slice(first_offset as usize, values_len as usize);
+    let values = array
+        .values()
+        .slice(first_offset as usize, values_len as usize);
     write_array(&values, output)?;
     Ok(())
 }
@@ -504,15 +490,12 @@ fn read_list_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_map_array<W: Write>(
-    array: &MapArray,
-    output: &mut W,
-) -> ArrowResult<()> {
+fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> ArrowResult<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
 
-    let first_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
+    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
     let mut cur_offset = first_offset;
     for &offset in array.value_offsets().iter().skip(1) {
         let len = offset - cur_offset;
@@ -520,8 +503,12 @@ fn write_map_array<W: Write>(
         cur_offset = offset;
     }
     let entries_len = cur_offset - first_offset;
-    let keys = array.keys().slice(first_offset as usize, entries_len as usize);
-    let values = array.values().slice(first_offset as usize, entries_len as usize);
+    let keys = array
+        .keys()
+        .slice(first_offset as usize, entries_len as usize);
+    let values = array
+        .values()
+        .slice(first_offset as usize, entries_len as usize);
     write_array(&keys, output)?;
     write_array(&values, output)?;
     Ok(())
@@ -532,7 +519,7 @@ fn read_map_array<R: Read>(
     has_null_buffer: bool,
     input: &mut R,
     map_field: &FieldRef,
-    is_sorted: bool
+    is_sorted: bool,
 ) -> ArrowResult<ArrayRef> {
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
@@ -599,7 +586,6 @@ fn read_struct_array<R: Read>(
     input: &mut R,
     fields: &Fields,
 ) -> ArrowResult<ArrayRef> {
-
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
     } else {
@@ -622,15 +608,17 @@ fn read_struct_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_boolean_array<W: Write>(
-    array: &BooleanArray,
-    output: &mut W,
-) -> ArrowResult<()> {
+fn write_boolean_array<W: Write>(array: &BooleanArray, output: &mut W) -> ArrowResult<()> {
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
-    write_bits_buffer(&array_data.buffers()[0], array.offset(), array.len(), output)?;
+    write_bits_buffer(
+        array_data.buffers()[0],
+        array.offset(),
+        array.len(),
+        output,
+    )?;
     Ok(())
 }
 
@@ -669,14 +657,14 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
     }
 
-    let first_offset = array.value_offsets().get(0).cloned().unwrap_or_default();
+    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
     let mut cur_offset = first_offset;
     for &offset in array.value_offsets().iter().skip(1) {
         let len = offset - cur_offset;
         write_len(len as usize, output)?;
         cur_offset = offset;
     }
-    output.write_all(&array.value_data()[first_offset as usize .. cur_offset as usize])?;
+    output.write_all(&array.value_data()[first_offset as usize..cur_offset as usize])?;
     Ok(())
 }
 
@@ -719,15 +707,12 @@ fn read_bytes_array<R: Read>(
 #[cfg(test)]
 mod test {
     use crate::io::batch_serde::{read_batch, write_batch};
+    use crate::io::name_batch;
     use arrow::array::*;
+    use arrow::datatypes::*;
     use arrow::record_batch::RecordBatch;
     use std::io::Cursor;
     use std::sync::Arc;
-    use arrow::buffer::Buffer;
-    use arrow::datatypes::{DataType, Field, Int32Type, Schema, ToByteSlice};
-    use arrow::datatypes::DataType::{Int32, Int64};
-    use arrow::util::bit_util;
-    use crate::io::name_batch;
 
     #[test]
     fn test_write_and_read_batch() {
@@ -769,7 +754,10 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &sliced.schema()).unwrap(), sliced);
+        assert_eq!(
+            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            sliced
+        );
     }
 
     #[test]
@@ -801,25 +789,31 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &sliced.schema()).unwrap(), sliced);
+        assert_eq!(
+            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            sliced
+        );
     }
 
     #[test]
     fn test_write_and_read_batch_for_map() {
-        let map_array: ArrayRef = Arc::new(MapArray::new_from_strings(
-            ["00", "11", "22", "33", "44", "55", "66", "77"].into_iter(),
-            &StringArray::from(vec![
-                Some("aa"),
-                None,
-                Some("cc"),
-                Some("dd"),
-                Some("ee"),
-                Some("ff"),
-                Some("gg"),
-                Some("hh"),
-            ]),
-            &[0, 3, 6, 8], // [00,11,22], [33,44,55], [66,77]
-        ).unwrap());
+        let map_array: ArrayRef = Arc::new(
+            MapArray::new_from_strings(
+                ["00", "11", "22", "33", "44", "55", "66", "77"].into_iter(),
+                &StringArray::from(vec![
+                    Some("aa"),
+                    None,
+                    Some("cc"),
+                    Some("dd"),
+                    Some("ee"),
+                    Some("ff"),
+                    Some("gg"),
+                    Some("hh"),
+                ]),
+                &[0, 3, 6, 8], // [00,11,22], [33,44,55], [66,77]
+            )
+            .unwrap(),
+        );
 
         let batch = RecordBatch::try_from_iter_with_nullable(vec![
             ("map1", map_array.clone(), true),
@@ -840,7 +834,10 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &sliced.schema()).unwrap(), sliced);
+        assert_eq!(
+            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            sliced
+        );
     }
 
     #[test]
@@ -849,13 +846,9 @@ mod test {
         let c2: ArrayRef = Arc::new(Int32Array::from(vec![42, 28, 19, 31]));
         let c3: ArrayRef = Arc::new(BooleanArray::from(vec![None, None, None, Some(true)]));
         let c4: ArrayRef = Arc::new(Int32Array::from(vec![None, None, None, Some(31)]));
-        let struct_array: ArrayRef = Arc::new(StructArray::try_from(vec![
-            ("c1", c1),
-            ("c2", c2),
-            ("c3", c3),
-            ("c4", c4),
-        ])
-        .unwrap());
+        let struct_array: ArrayRef = Arc::new(
+            StructArray::try_from(vec![("c1", c1), ("c2", c2), ("c3", c3), ("c4", c4)]).unwrap(),
+        );
 
         let batch = RecordBatch::try_from_iter_with_nullable(vec![
             ("struct1", struct_array.clone(), true),
@@ -876,6 +869,9 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &sliced.schema()).unwrap(), sliced);
+        assert_eq!(
+            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            sliced
+        );
     }
 }

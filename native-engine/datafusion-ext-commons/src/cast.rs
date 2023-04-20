@@ -40,8 +40,7 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array =
-                        try_cast_string_array_to_integer(&scalar_array, cast_type)?;
+                    let cast_array = try_cast_string_array_to_integer(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }
@@ -55,8 +54,7 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array =
-                        try_cast_string_array_to_decimal(&scalar_array, cast_type)?;
+                    let cast_array = try_cast_string_array_to_decimal(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }
@@ -70,8 +68,7 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array =
-                        try_cast_decimal_array_to_string(&scalar_array, cast_type)?;
+                    let cast_array = try_cast_decimal_array_to_string(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }
@@ -80,12 +77,10 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
         (&DataType::Timestamp(TimeUnit::Microsecond, _), DataType::Float64) => {
             // timestamp to f64 = timestamp to i64 to f64, only used in agg.sum()
             match value {
-                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    arrow::compute::cast(
-                        &arrow::compute::cast(&array, &DataType::Int64)?,
-                        &DataType::Float64,
-                    )?
-                )),
+                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(arrow::compute::cast(
+                    &arrow::compute::cast(&array, &DataType::Int64)?,
+                    &DataType::Float64,
+                )?)),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
                     let cast_array = arrow::compute::cast(
@@ -105,8 +100,7 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
                 )),
                 ColumnarValue::Scalar(scalar) => {
                     let scalar_array = scalar.to_array();
-                    let cast_array =
-                        arrow::compute::kernels::cast::cast(&scalar_array, cast_type)?;
+                    let cast_array = arrow::compute::kernels::cast::cast(&scalar_array, cast_type)?;
                     let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
                     Ok(ColumnarValue::Scalar(cast_scalar))
                 }
@@ -115,10 +109,7 @@ pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue>
     }
 }
 
-fn try_cast_string_array_to_integer(
-    array: &ArrayRef,
-    cast_type: &DataType,
-) -> Result<ArrayRef> {
+fn try_cast_string_array_to_integer(array: &ArrayRef, cast_type: &DataType) -> Result<ArrayRef> {
     macro_rules! cast {
         ($target_type:ident) => {{
             type B = paste! {[<$target_type Builder>]};
@@ -144,10 +135,7 @@ fn try_cast_string_array_to_integer(
     })
 }
 
-fn try_cast_string_array_to_decimal(
-    array: &ArrayRef,
-    cast_type: &DataType,
-) -> Result<ArrayRef> {
+fn try_cast_string_array_to_decimal(array: &ArrayRef, cast_type: &DataType) -> Result<ArrayRef> {
     if let &DataType::Decimal128(precision, scale) = cast_type {
         let array = array.as_any().downcast_ref::<StringArray>().unwrap();
         let mut builder = Decimal128Builder::new();
@@ -170,10 +158,7 @@ fn try_cast_string_array_to_decimal(
     unreachable!("cast_type must be DataType::Decimal")
 }
 
-fn try_cast_decimal_array_to_string(
-    array: &ArrayRef,
-    cast_type: &DataType,
-) -> Result<ArrayRef> {
+fn try_cast_decimal_array_to_string(array: &ArrayRef, cast_type: &DataType) -> Result<ArrayRef> {
     if let &DataType::Utf8 = cast_type {
         let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
         let mut builder = StringBuilder::new();
@@ -190,9 +175,7 @@ fn try_cast_decimal_array_to_string(
 }
 
 // this implementation is original copied from spark UTF8String.scala
-fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(
-    input: &str,
-) -> Option<T> {
+fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str) -> Option<T> {
     let bytes = input.as_bytes();
 
     if bytes.is_empty() {
@@ -225,12 +208,11 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(
             break;
         }
 
-        let digit;
-        if (b'0'..=b'9').contains(&b) {
-            digit = b - b'0';
+        let digit = if b.is_ascii_digit() {
+            b - b'0'
         } else {
             return None;
-        }
+        };
 
         // We are going to process the new digit and accumulate the result. However, before doing
         // this, if the result is already smaller than the stopValue(Long.MIN_VALUE / radix), then
@@ -252,7 +234,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(
     // is well formed.
     while offset < bytes.len() {
         let current_byte = bytes[offset];
-        if !(b'0'..=b'9').contains(&current_byte) {
+        if !current_byte.is_ascii_digit() {
             return None;
         }
         offset += 1;

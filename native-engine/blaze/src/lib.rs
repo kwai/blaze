@@ -36,7 +36,8 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     //  * other reasons: wrap it into a RuntimeException and throw.
     //  * if another error happens during handling, kill the whole JVM instance.
     let recover = || {
-        if !is_task_running() { // only handle running task
+        if !is_task_running() {
+            // only handle running task
             return Ok(());
         }
         let panic_message = panic_message::panic_message(&err);
@@ -59,15 +60,13 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
     });
 }
 
-fn handle_unwinded_scope<T: Default, E: Debug>(
-    scope: impl FnOnce() -> Result<T, E>
-) -> T {
+fn handle_unwinded_scope<T: Default, E: Debug>(scope: impl FnOnce() -> Result<T, E>) -> T {
     match std::panic::catch_unwind(AssertUnwindSafe(|| scope().unwrap())) {
         Ok(v) => v,
         Err(err) => {
             handle_unwinded(err);
             T::default()
-        },
+        }
     }
 }
 

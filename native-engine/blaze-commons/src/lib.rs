@@ -14,7 +14,7 @@
 
 use datafusion::common::Result;
 use jni::objects::GlobalRef;
-use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean};
+use jni::sys::{jboolean, JNI_FALSE, JNI_TRUE};
 use once_cell::sync::OnceCell;
 
 pub mod jni_bridge;

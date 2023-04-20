@@ -17,23 +17,20 @@ use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use blaze_commons::{
-    jni_call, jni_call_static, jni_new_direct_byte_buffer,
-    jni_new_global_ref, jni_new_string,
+    jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
 use datafusion::error::DataFusionError;
 use datafusion::error::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::memory::MemoryStream;
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet,
-};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
-use datafusion_ext_commons::io::write_one_batch;
 use datafusion_ext_commons::concat_batches;
+use datafusion_ext_commons::io::write_one_batch;
 
 use futures::StreamExt;
 use futures::TryFutureExt;
@@ -169,7 +166,7 @@ pub async fn write_ipc(
             )?;
             drop(timer);
 
-            let buf = jni_new_direct_byte_buffer!(&mut buffer)?;
+            let buf = jni_new_direct_byte_buffer!(&buffer)?;
             let _consumed = jni_call!(
                 ScalaFunction1(ipc_consumer.as_obj()).apply(buf.as_obj()) -> JObject
             )?;

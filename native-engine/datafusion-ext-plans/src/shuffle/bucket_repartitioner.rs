@@ -14,10 +14,9 @@
 
 //! Defines the sort-based shuffle writer
 
-use crate::shuffle::{
-    evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill,
-};
+use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::OnHeapSpill;
+use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
 use arrow::array::*;
 use arrow::datatypes::*;
 use arrow::error::Result as ArrowResult;
@@ -27,17 +26,14 @@ use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::Partitioning;
-use datafusion_ext_commons::array_builder::{
-    builder_extend, make_batch, new_array_builders,
-};
+use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
+use datafusion_ext_commons::concat_batches;
 use datafusion_ext_commons::io::write_one_batch;
 use futures::lock::Mutex;
 use itertools::Itertools;
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Weak};
-use datafusion_ext_commons::concat_batches;
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 
 pub struct BucketShuffleRepartitioner {
     name: String,
@@ -64,7 +60,8 @@ impl BucketShuffleRepartitioner {
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
         let batch_size = context.session_config().batch_size();
-        let repartitioner = Self {
+        
+        Self {
             name: format!("BucketShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
             output_data_file,
@@ -78,15 +75,13 @@ impl BucketShuffleRepartitioner {
             partitioning,
             num_output_partitions,
             metrics,
-        };
-        repartitioner
+        }
     }
 }
 
 #[async_trait]
 impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
         let hashes = evaluate_hashes(&self.partitioning, &input)?;
@@ -129,8 +124,8 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             let output = &mut buffered_partitions[partition_id];
 
             if end - start < output.staging_size {
-                mem_diff += output
-                    .append_rows(input.columns(), &shuffled_partition_ids[start..end])?;
+                mem_diff +=
+                    output.append_rows(input.columns(), &shuffled_partition_ids[start..end])?;
             } else {
                 // for bigger slice, we can use column based operation
                 // to build batches and directly append to output.
@@ -159,8 +154,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
     async fn shuffle_write(&self) -> Result<()> {
         self.set_spillable(false);
         let spills = std::mem::take(&mut *self.spills.lock().await);
-        let mut buffered_partitions =
-            std::mem::take(&mut *self.buffered_partitions.lock().await);
+        let mut buffered_partitions = std::mem::take(&mut *self.buffered_partitions.lock().await);
 
         log::info!(
             "bucket partitioner start writing with {} ({} spills)",
@@ -174,10 +168,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
         }
 
-        let raw_spills: Vec<OnHeapSpill> = spills
-            .iter()
-            .map(|spill| spill.spill.clone())
-            .collect();
+        let raw_spills: Vec<OnHeapSpill> = spills.iter().map(|spill| spill.spill.clone()).collect();
 
         let mut spill_readers = spills
             .into_iter()
@@ -221,9 +212,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             Ok::<(), DataFusionError>(())
         })
         .await
-        .map_err(|e| {
-            DataFusionError::Execution(format!("shuffle write error: {:?}", e))
-        })??;
+        .map_err(|e| DataFusionError::Execution(format!("shuffle write error: {:?}", e)))??;
 
         // update disk spill size
         let spill_disk_usage = raw_spills
@@ -241,11 +230,11 @@ fn spill_buffered_partitions(
     buffered_partitions: &mut [PartitionBuffer],
     num_output_partitions: usize,
 ) -> Result<Option<ShuffleSpill>> {
-
     // no data to spill
-    if buffered_partitions.iter().all(|p| {
-        p.frozen.is_empty() && p.num_staging_rows == 0 && p.num_active_rows == 0
-    }) {
+    if buffered_partitions
+        .iter()
+        .all(|p| p.frozen.is_empty() && p.num_staging_rows == 0 && p.num_active_rows == 0)
+    {
         return Ok(None);
     }
 
@@ -270,10 +259,7 @@ fn spill_buffered_partitions(
 
     // add one extra offset at last to ease partition length computation
     offsets[num_output_partitions] = pos;
-    Ok(Some(ShuffleSpill {
-        spill,
-        offsets,
-    }))
+    Ok(Some(ShuffleSpill { spill, offsets }))
 }
 
 #[async_trait]
@@ -287,15 +273,20 @@ impl MemConsumer for BucketShuffleRepartitioner {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        &self.mem_consumer_info.as_ref().expect("consumer info not set")
+        self
+            .mem_consumer_info
+            .as_ref()
+            .expect("consumer info not set")
     }
 
     async fn spill(&self) -> Result<()> {
         let mut partitions = self.buffered_partitions.lock().await;
         let mut spills = self.spills.lock().await;
 
-        spills.extend(
-            spill_buffered_partitions(&mut *partitions, self.num_output_partitions)?);
+        spills.extend(spill_buffered_partitions(
+            &mut partitions,
+            self.num_output_partitions,
+        )?);
         drop(spills);
         drop(partitions);
 
@@ -351,16 +342,14 @@ impl PartitionBuffer {
                         .active
                         .iter()
                         .zip(self.schema.fields())
-                        .map(|(_ab, field)| {
-                            slot_size(self.staging_size, field.data_type())
-                        })
+                        .map(|(_ab, field)| slot_size(self.staging_size, field.data_type()))
                         .sum::<usize>();
                 }
                 mem_diff += self.active_slots_mem_size as isize;
             }
 
-            let extend_len = (indices.len() - start)
-                .min(self.staging_size.saturating_sub(self.num_active_rows));
+            let extend_len =
+                (indices.len() - start).min(self.staging_size.saturating_sub(self.num_active_rows));
             self.active
                 .iter_mut()
                 .zip(columns)
@@ -494,19 +483,16 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
                 len * (slot_size(16, key_type) + slot_size(16, value_type))
             }
             t => {
-                unimplemented!(
-                    "map field type: {:?}not supported in shuffle write",
-                    t
-                )
+                unimplemented!("map field type: {:?}not supported in shuffle write", t)
             }
-            },
+        },
         DataType::Struct(fields) => {
             fields
                 .iter()
                 .map(|e| slot_size(1, e.data_type()))
                 .sum::<usize>()
                 * len
-        },
+        }
         dt => unimplemented!("data type not supported in shuffle write: {:?}", dt),
     }
 }

@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
-use std::sync::mpsc::Sender;
+use crate::down_cast_any_ref;
 use arrow::array::ArrayRef;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use blaze_commons::{
+    is_task_running, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
+};
 use datafusion::common::DataFusionError;
-use blaze_commons::{is_task_running, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
 use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::utils::expr_list_eq_any_order;
@@ -30,7 +29,10 @@ use datafusion_ext_commons::ffi::MpscBatchReader;
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
-use crate::down_cast_any_ref;
+use std::any::Any;
+use std::fmt::{Debug, Display, Formatter};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 pub struct SparkUDFWrapperExpr {
     pub serialized: Vec<u8>,
@@ -117,18 +119,17 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         if !is_task_running() {
-            return Err(DataFusionError::Execution(
-                format!("SparkUDFWrapper: is_task_running=false")
-            ));
+            return Err(DataFusionError::Execution("SparkUDFWrapper: is_task_running=false".to_string()));
         }
 
-        let context = self.context.get_or_try_init(|| {
-            WrapperContext::try_new(&self.serialized, &self.params_schema)
-        })?;
+        let context = self
+            .context
+            .get_or_try_init(|| WrapperContext::try_new(&self.serialized, &self.params_schema))?;
 
         // evaluate params
         let num_rows = batch.num_rows();
-        let params: Vec<ArrayRef> = self.params
+        let params: Vec<ArrayRef> = self
+            .params
             .iter()
             .map(|param| param.evaluate(batch).map(|r| r.into_array(num_rows)))
             .collect::<Result<_>>()?;
@@ -141,10 +142,10 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         // send batch to context
         context
             .export_tx
-            .send(Some(Ok(params_batch.clone())))
-            .or_else(|err| Err(DataFusionError::Execution(
-                format!("error sending batch: {}", err)
-            )))?;
+            .send(Some(Ok(params_batch))).map_err(|err| DataFusionError::Execution(format!(
+                    "error sending batch: {}",
+                    err
+                )))?;
 
         // receive batch from context
         let return_array = context
@@ -152,9 +153,7 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             .lock()
             .next()
             .transpose()?
-            .ok_or_else(|| {
-                DataFusionError::Execution(format!("error receiving batch"))
-            })?;
+            .ok_or_else(|| DataFusionError::Execution("error receiving batch".to_string()))?;
         Ok(ColumnarValue::Array(return_array.column(0).clone()))
     }
 
@@ -187,11 +186,7 @@ unsafe impl Send for WrapperContext {}
 unsafe impl Sync for WrapperContext {}
 
 impl WrapperContext {
-    fn try_new(
-        serialized_expr_bytes: &[u8],
-        export_schema: &SchemaRef,
-    ) -> Result<Self> {
-
+    fn try_new(serialized_expr_bytes: &[u8], export_schema: &SchemaRef) -> Result<Self> {
         // create channel and ffi-reader for exporting
         let (export_tx, export_rx) = std::sync::mpsc::channel();
         let ffi_reader = Box::new(MpscBatchReader {
@@ -215,7 +210,7 @@ impl WrapperContext {
         // create import reader
         let import_reader = unsafe {
             Arc::new(Mutex::new(ArrowArrayStreamReader::from_raw(
-                &mut *import_stream as *mut FFI_ArrowArrayStream
+                &mut *import_stream as *mut FFI_ArrowArrayStream,
             )?))
         };
 

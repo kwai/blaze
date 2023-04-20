@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use crate::generate::Generator;
 use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_expr::PhysicalExpr;
-use crate::generate::Generator;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ExplodeArray {
@@ -27,10 +27,7 @@ pub struct ExplodeArray {
 
 impl ExplodeArray {
     pub fn new(child: Arc<dyn PhysicalExpr>, position: bool) -> Self {
-        Self {
-            child,
-            position,
-        }
+        Self { child, position }
     }
 }
 
@@ -39,10 +36,7 @@ impl Generator for ExplodeArray {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(
-        &self,
-        exprs: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn Generator>> {
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>> {
         Ok(Arc::new(Self {
             child: exprs[0].clone(),
             position: self.position,
@@ -50,7 +44,6 @@ impl Generator for ExplodeArray {
     }
 
     fn eval(&self, batch: &RecordBatch) -> Result<(Vec<ArrayRef>, Vec<u32>)> {
-
         let mut row_mapping = Vec::with_capacity(batch.num_rows());
         let mut arrays = Vec::with_capacity(batch.num_rows());
         let mut positions = if self.position {
@@ -78,10 +71,12 @@ impl Generator for ExplodeArray {
         }
 
         let output_array = if !arrays.is_empty() {
-            arrow::compute::concat(&arrays
-                .iter()
-                .map(|array| array.as_ref())
-                .collect::<Vec<_>>())?
+            arrow::compute::concat(
+                &arrays
+                    .iter()
+                    .map(|array| array.as_ref())
+                    .collect::<Vec<_>>(),
+            )?
         } else {
             ScalarValue::try_from(list.value_type())?.to_array_of_size(0)
         };
@@ -108,10 +103,7 @@ pub struct ExplodeMap {
 
 impl ExplodeMap {
     pub fn new(child: Arc<dyn PhysicalExpr>, position: bool) -> Self {
-        Self {
-            child,
-            position,
-        }
+        Self { child, position }
     }
 }
 
@@ -120,10 +112,7 @@ impl Generator for ExplodeMap {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(
-        &self,
-        exprs: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn Generator>> {
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>> {
         Ok(Arc::new(Self {
             child: exprs[0].clone(),
             position: self.position,
@@ -161,24 +150,32 @@ impl Generator for ExplodeMap {
             }
         }
 
-        let output_k_array = arrow::compute::concat(&k_arrays
-            .iter()
-            .map(|array| array.as_ref())
-            .collect::<Vec<_>>())?;
-        let output_v_array = arrow::compute::concat(&v_arrays
-            .iter()
-            .map(|array| array.as_ref())
-            .collect::<Vec<_>>())?;
+        let output_k_array = arrow::compute::concat(
+            &k_arrays
+                .iter()
+                .map(|array| array.as_ref())
+                .collect::<Vec<_>>(),
+        )?;
+        let output_v_array = arrow::compute::concat(
+            &v_arrays
+                .iter()
+                .map(|array| array.as_ref())
+                .collect::<Vec<_>>(),
+        )?;
         let output_positions_array = positions.map(|positions| {
             let array: ArrayRef = Arc::new(Int32Array::from(positions));
             array
         });
 
         Ok((
-            [output_positions_array, Some(output_k_array), Some(output_v_array)]
-                .into_iter()
-                .flatten()
-                .collect(),
+            [
+                output_positions_array,
+                Some(output_k_array),
+                Some(output_v_array),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
             row_mapping,
         ))
     }

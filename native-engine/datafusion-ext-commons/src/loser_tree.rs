@@ -21,6 +21,7 @@ pub struct LoserTree<T> {
     lt: fn(&T, &T) -> bool,
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl<T> LoserTree<T> {
     pub fn new_by(values: Vec<T>, lt: fn(&T, &T) -> bool) -> Self {
         let mut tree = Self {

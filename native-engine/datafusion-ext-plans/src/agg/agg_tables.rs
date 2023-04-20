@@ -59,7 +59,8 @@ impl AggTables {
         metrics: BaselineMetrics,
         context: Arc<TaskContext>,
     ) -> Self {
-        let tables = Self {
+        
+        Self {
             name: format!("AggTable[partition={}]", partition_id),
             mem_consumer_info: None,
             in_mem: Mutex::new(InMemTable {
@@ -70,8 +71,7 @@ impl AggTables {
             agg_ctx,
             context,
             metrics,
-        };
-        tables
+        }
     }
 
     pub async fn update_in_mem(
@@ -115,8 +115,7 @@ impl AggTables {
                 .collect::<Vec<_>>();
 
             while !records.is_empty() {
-                let mut chunk =
-                    records.split_off(records.len().saturating_sub(batch_size));
+                let mut chunk = records.split_off(records.len().saturating_sub(batch_size));
                 records.shrink_to_fit();
 
                 let batch = self
@@ -134,7 +133,8 @@ impl AggTables {
                 timer.restart();
 
                 // free memory of the output batch
-                self.update_mem_used_with_diff(-(batch_mem_size as isize)).await?;
+                self.update_mem_used_with_diff(-(batch_mem_size as isize))
+                    .await?;
             }
             self.update_mem_used(0).await?;
             return Ok(());
@@ -148,7 +148,8 @@ impl AggTables {
             if let Some(spill) = in_mem.try_into_spill()? {
                 spills.push(spill);
             }
-            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST).await?;
+            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
+                .await?;
         }
         for spill in &spills {
             cursors.push(SpillCursor::try_from_spill(spill.clone(), &self.agg_ctx)?);
@@ -159,10 +160,9 @@ impl AggTables {
         macro_rules! flush_staging {
             () => {{
                 let mut records = std::mem::take(&mut staging_records);
-                let batch = self.agg_ctx.convert_records_to_batch(
-                    &mut grouping_row_converter,
-                    &mut records,
-                )?;
+                let batch = self
+                    .agg_ctx
+                    .convert_records_to_batch(&mut grouping_row_converter, &mut records)?;
                 timer.stop();
 
                 baseline_metrics.record_output(batch.num_rows());
@@ -204,12 +204,15 @@ impl AggTables {
                         for (idx, agg) in self.agg_ctx.aggs.iter().enumerate() {
                             let addr_offset = self.agg_ctx.agg_buf_addr_offsets[idx];
                             let addrs = &self.agg_ctx.agg_buf_addrs[addr_offset..];
-                            agg.agg.partial_merge(
-                                &mut current_record.agg_buf,
-                                &mut min_record.agg_buf,
-                                addrs,
-                            )
-                            .map_err(|err| err.context("agg: executing partial_merge() error"))?;
+                            agg.agg
+                                .partial_merge(
+                                    &mut current_record.agg_buf,
+                                    &mut min_record.agg_buf,
+                                    addrs,
+                                )
+                                .map_err(|err| {
+                                    err.context("agg: executing partial_merge() error")
+                                })?;
                         }
                     } else {
                         let finished = std::mem::replace(current_record, min_record);
@@ -250,7 +253,10 @@ impl MemConsumer for AggTables {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        &self.mem_consumer_info.as_ref().expect("consumer info not set")
+        self
+            .mem_consumer_info
+            .as_ref()
+            .expect("consumer info not set")
     }
 
     async fn spill(&self) -> Result<()> {
@@ -287,11 +293,13 @@ impl InMemTable {
         // hash table is first transformed to sorted table
         self.data_mem_used
             + self.unsorted.len() * 2 * size_of::<AggRecord>()
-            + self.grouping_mappings.len() * (
-                1 // one-byte payload per entry according to hashbrown's doc
+            + self.grouping_mappings.len()
+                * (
+                    1 // one-byte payload per entry according to hashbrown's doc
                     + size_of::<AggRecord>() // hashmap entries
-                    + size_of::<AggRecord>() // hashmap is sorted into vec during spill
-            )
+                    + size_of::<AggRecord>()
+                    // hashmap is sorted into vec during spill
+                )
     }
 
     pub fn num_records(&self) -> usize {
@@ -371,9 +379,9 @@ impl InMemTable {
         }
         write_len(0, &mut writer)?; // EOF
 
-        writer.finish().map_err(|err| {
-            DataFusionError::Execution(format!("{}", err))
-        })?;
+        writer
+            .finish()
+            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
         spill.complete()?;
         Ok(Some(spill))
     }

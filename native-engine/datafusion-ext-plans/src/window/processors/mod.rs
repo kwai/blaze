@@ -12,6 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod agg_processor;
 pub mod rank_processor;
 pub mod row_number_processor;
-pub mod agg_processor;

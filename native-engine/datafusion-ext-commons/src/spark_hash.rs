@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use arrow::array::*;
 use arrow::datatypes::{
-    ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type,
-    Int8Type, TimeUnit,
+    ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type, Int8Type,
+    TimeUnit,
 };
 use datafusion::error::{DataFusionError, Result};
 
@@ -139,16 +139,12 @@ macro_rules! hash_array_primitive {
 
         if array.null_count() == 0 {
             for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
-                *hash =
-                    spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *hash);
+                *hash = spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *hash);
             }
         } else {
             for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
                 if !array.is_null(i) {
-                    *hash = spark_compatible_murmur3_hash(
-                        (*value as $ty).to_le_bytes(),
-                        *hash,
-                    );
+                    *hash = spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *hash);
                 }
             }
         }
@@ -160,21 +156,15 @@ macro_rules! hash_list_primitive {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         let values = array.values();
         if array.null_count() == 0 {
-            for value in values.iter(){
-                *$hash = spark_compatible_murmur3_hash(
-                    (*value as $ty).to_le_bytes(),
-                    *$hash,
-                );
+            for value in values.iter() {
+                *$hash = spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *$hash);
             }
         } else {
-           for (i,value) in values.iter().enumerate(){
-               if !array.is_null(i) {
-                   *$hash = spark_compatible_murmur3_hash(
-                       (*value as $ty).to_le_bytes(),
-                       *$hash,
-                   );
-               }
-           }
+            for (i, value) in values.iter().enumerate() {
+                if !array.is_null(i) {
+                    *$hash = spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *$hash);
+                }
+            }
         }
     };
 }
@@ -185,16 +175,12 @@ macro_rules! hash_array_decimal {
 
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash =
-                    spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *hash);
+                *hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *hash);
             }
         } else {
             for (i, hash) in $hashes.iter_mut().enumerate() {
                 if !array.is_null(i) {
-                    *hash = spark_compatible_murmur3_hash(
-                        array.value(i).to_le_bytes(),
-                        *hash,
-                    );
+                    *hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *hash);
                 }
             }
         }
@@ -207,16 +193,12 @@ macro_rules! hash_list_decimal {
 
         if array.null_count() == 0 {
             for i in 0..array.len() {
-                *$hash =
-                    spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *$hash);
+                *$hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *$hash);
             }
         } else {
             for i in 0..array.len() {
                 if !array.is_null(i) {
-                    *$hash = spark_compatible_murmur3_hash(
-                        array.value(i).to_le_bytes(),
-                        *$hash,
-                    );
+                    *$hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *$hash);
                 }
             }
         }
@@ -268,7 +250,7 @@ pub fn create_hashes<'a>(
                 if array.null_count() == 0 {
                     for (i, hash) in hashes_buffer.iter_mut().enumerate() {
                         *hash = spark_compatible_murmur3_hash(
-                            ((if array.value(i) { 1 } else { 0 }) as i32).to_le_bytes(),
+                            (if array.value(i) { 1u32 } else { 0u32 }).to_le_bytes(),
                             *hash,
                         );
                     }
@@ -276,8 +258,7 @@ pub fn create_hashes<'a>(
                     for (i, hash) in hashes_buffer.iter_mut().enumerate() {
                         if !array.is_null(i) {
                             *hash = spark_compatible_murmur3_hash(
-                                ((if array.value(i) { 1 } else { 0 }) as i32)
-                                    .to_le_bytes(),
+                                (if array.value(i) { 1u32 } else { 0u32 }).to_le_bytes(),
                                 *hash,
                             );
                         }
@@ -365,16 +346,18 @@ pub fn create_hashes<'a>(
                             if array.null_count() == 0 {
                                 for index in 0..array.len() {
                                     *hash = spark_compatible_murmur3_hash(
-                                        ((if array.value(index) { 1 } else { 0 }) as i32).to_le_bytes(),
-                                    *hash,
+                                        (if array.value(index) { 1u32 } else { 0u32 })
+                                            .to_le_bytes(),
+                                        *hash,
                                     );
                                 }
                             } else {
-                                for index in 0..array.len(){
+                                for index in 0..array.len() {
                                     if !array.is_null(index) {
                                         *hash = spark_compatible_murmur3_hash(
-                                            ((if array.value(index) { 1 } else { 0 }) as i32).to_le_bytes(),
-                                        *hash,
+                                            (if array.value(index) { 1u32 } else { 0u32 })
+                                                .to_le_bytes(),
+                                            *hash,
                                         );
                                     }
                                 }
@@ -446,7 +429,9 @@ pub fn create_hashes<'a>(
                 let value_array = map_array.values();
                 let offsets_buffer = map_array.value_offsets();
                 let mut cur_offset = 0;
-                for (&next_offset,hash) in offsets_buffer.iter().skip(1).zip(hashes_buffer.iter_mut()){
+                for (&next_offset, hash) in
+                    offsets_buffer.iter().skip(1).zip(hashes_buffer.iter_mut())
+                {
                     for idx in cur_offset..next_offset {
                         update_map_hashes(key_array, idx, hash)?;
                         update_map_hashes(value_array, idx, hash)?;
@@ -470,7 +455,6 @@ pub fn create_hashes<'a>(
     Ok(hashes_buffer)
 }
 
-
 macro_rules! hash_map_primitive {
     ($array_type:ident, $column: ident, $ty: ident, $hash: ident, $idx: ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
@@ -491,24 +475,17 @@ macro_rules! hash_map_binary {
 macro_rules! hash_map_decimal {
     ($array_type:ident, $column: ident, $hash: ident, $idx: ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        *$hash = spark_compatible_murmur3_hash(
-            array.value($idx as usize).to_le_bytes(),
-            *$hash,
-        );
+        *$hash = spark_compatible_murmur3_hash(array.value($idx as usize).to_le_bytes(), *$hash);
     };
 }
 
-fn update_map_hashes(
-    array: &ArrayRef,
-    idx: i32,
-    hash: &mut u32,
-) -> Result<()> {
+fn update_map_hashes(array: &ArrayRef, idx: i32, hash: &mut u32) -> Result<()> {
     if array.is_valid(idx as usize) {
         match array.data_type() {
             DataType::Boolean => {
                 let array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
                 *hash = spark_compatible_murmur3_hash(
-                    ((if array.value(idx as usize) { 1 } else { 0 }) as i32).to_le_bytes(),
+                    (if array.value(idx as usize) { 1u32 } else { 0u32 }).to_le_bytes(),
                     *hash,
                 );
             }
@@ -587,20 +564,19 @@ mod tests {
     use std::sync::Arc;
 
     use crate::spark_hash::{create_hashes, pmod, spark_compatible_murmur3_hash};
-    use arrow::array::{Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, ListArray, make_array, MapArray, StringArray, StructArray, UInt32Array};
+    use arrow::array::{
+        make_array, Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array,
+        MapArray, StringArray, StructArray, UInt32Array,
+    };
     use arrow::buffer::Buffer;
-    use arrow::datatypes::{BooleanType, DataType, Field, Int32Type, ToByteSlice};
-    use bitvec::macros::internal::funty::Integral;
+    use arrow::datatypes::{DataType, Field, ToByteSlice};
     use datafusion::from_slice::FromSlice;
 
     #[test]
     fn test_list() {
         let mut hashes_buffer = vec![42; 4];
         for hash in hashes_buffer.iter_mut() {
-                    *hash = spark_compatible_murmur3_hash(
-                        5_i32.to_le_bytes(),
-                        *hash,
-                    );
+            *hash = spark_compatible_murmur3_hash(5_i32.to_le_bytes(), *hash);
         }
     }
 
@@ -623,27 +599,18 @@ mod tests {
 
     #[test]
     fn test_i32() {
-        let i = Arc::new(Int32Array::from(vec![
-            Some(1),
-        ])) as ArrayRef;
+        let i = Arc::new(Int32Array::from(vec![Some(1)])) as ArrayRef;
         let mut hashes = vec![42; 1];
         create_hashes(&[i], &mut hashes).unwrap();
 
-        let j = Arc::new(Int32Array::from(vec![
-            Some(2),
-        ])) as ArrayRef;
+        let j = Arc::new(Int32Array::from(vec![Some(2)])) as ArrayRef;
         create_hashes(&[j], &mut hashes).unwrap();
 
-        let m = Arc::new(Int32Array::from(vec![
-            Some(3),
-        ])) as ArrayRef;
+        let m = Arc::new(Int32Array::from(vec![Some(3)])) as ArrayRef;
         create_hashes(&[m], &mut hashes).unwrap();
 
-        let n = Arc::new(Int32Array::from(vec![
-            Some(4),
-        ])) as ArrayRef;
+        let n = Arc::new(Int32Array::from(vec![Some(4)])) as ArrayRef;
         create_hashes(&[n], &mut hashes).unwrap();
-
     }
 
     #[test]
@@ -665,7 +632,7 @@ mod tests {
 
     #[test]
     fn test_str() {
-        let i = Arc::new(StringArray::from_slice(&["hello", "bar", "", "😁", "天地"]));
+        let i = Arc::new(StringArray::from_slice(["hello", "bar", "", "😁", "天地"]));
         let mut hashes = vec![42; 5];
         create_hashes(&[i], &mut hashes).unwrap();
 
@@ -676,8 +643,7 @@ mod tests {
 
     #[test]
     fn test_pmod() {
-        let i: Vec<u32> =
-            vec![0x99f0149d, 0x9c67b85d, 0xc8008529, 0xa05b5d7b, 0xcd1e64fb];
+        let i: Vec<u32> = vec![0x99f0149d, 0x9c67b85d, 0xc8008529, 0xa05b5d7b, 0xcd1e64fb];
         let result = i.into_iter().map(|i| pmod(i, 200)).collect::<Vec<usize>>();
 
         // expected partition from Spark with n=200
@@ -715,7 +681,7 @@ mod tests {
 
         // Construct a map array from the above two
         let map_data_type = DataType::Map(
-            Box::new(Field::new(
+            Arc::new(Field::new(
                 "entries",
                 entry_struct.data_type().clone(),
                 true,
@@ -728,9 +694,9 @@ mod tests {
             .add_child_data(entry_struct.into_data())
             .build()
             .unwrap();
-        let map_array = MapArray::from(map_data.clone());
+        let map_array = MapArray::from(map_data);
 
-        assert_eq!(&value_data, map_array.values().data());
+        assert_eq!(&value_data, &map_array.values().to_data());
         assert_eq!(&DataType::UInt32, map_array.value_type());
         assert_eq!(3, map_array.len());
         assert_eq!(0, map_array.null_count());
@@ -764,13 +730,13 @@ mod tests {
         let map_data = ArrayData::builder(map_array.data_type().clone())
             .len(2)
             .offset(1)
-            .add_buffer(map_array.data().buffers()[0].clone())
-            .add_child_data(map_array.data().child_data()[0].clone())
+            .add_buffer(map_array.to_data().buffers()[0].clone())
+            .add_child_data(map_array.to_data().child_data()[0].clone())
             .build()
             .unwrap();
         let map_array = MapArray::from(map_data);
 
-        assert_eq!(&value_data, map_array.values().data());
+        assert_eq!(&value_data, &map_array.values().to_data());
         assert_eq!(&DataType::UInt32, map_array.value_type());
         assert_eq!(2, map_array.len());
         assert_eq!(0, map_array.null_count());
@@ -778,8 +744,7 @@ mod tests {
         assert_eq!(2, map_array.value_length(1));
 
         let key_array = Arc::new(Int32Array::from(vec![3, 4, 5])) as ArrayRef;
-        let value_array =
-            Arc::new(UInt32Array::from(vec![None, Some(40), None])) as ArrayRef;
+        let value_array = Arc::new(UInt32Array::from(vec![None, Some(40), None])) as ArrayRef;
         let struct_array =
             StructArray::from(vec![(keys_field, key_array), (values_field, value_array)]);
         assert_eq!(
@@ -798,5 +763,4 @@ mod tests {
                 .unwrap()
         );
     }
-
 }

@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use crate::rt::NativeExecutionRuntime;
+use crate::{handle_unwinded_scope, SESSION};
 use blaze_commons::jni_bridge::JavaClasses;
 use blaze_commons::*;
 use blaze_serde::protobuf::TaskDefinition;
@@ -23,15 +24,14 @@ use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::physical_plan::{displayable, ExecutionPlan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_ext_plans::common::memory_manager::MemManager;
-use jni::objects::JObject;
 use jni::objects::JClass;
+use jni::objects::JObject;
 use jni::JNIEnv;
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
 use prost::Message;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
-use crate::{handle_unwinded_scope, SESSION};
-use crate::rt::NativeExecutionRuntime;
+use std::sync::Arc;
 
 fn init_logging() {
     static LOGGING_INIT: OnceCell<()> = OnceCell::new();
@@ -69,8 +69,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
         SESSION.get_or_init(|| {
             let max_memory = native_memory as usize;
             let batch_size = batch_size as usize;
-            let runtime_config = RuntimeConfig::new()
-                .with_disk_manager(DiskManagerConfig::Disabled);
+            let runtime_config =
+                RuntimeConfig::new().with_disk_manager(DiskManagerConfig::Disabled);
 
             MemManager::init((max_memory as f64 * memory_fraction) as usize);
             let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
@@ -97,23 +97,19 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
             BlazeCallNativeWrapper(native_wrapper.as_obj())
                 .getRawTaskDefinition() -> JObject)?;
         let task_definition = TaskDefinition::decode(
-            jni_convert_byte_array!(raw_task_definition.as_obj())?.as_slice()
-        ).map_err(|err| {
-            DataFusionError::Plan(format!("cannot decode execution plan: {:?}", err))
-        })?;
+            jni_convert_byte_array!(raw_task_definition.as_obj())?.as_slice(),
+        )
+        .map_err(|err| DataFusionError::Plan(format!("cannot decode execution plan: {:?}", err)))?;
 
         let task_id = &task_definition.task_id.expect("task_id is empty");
         let plan = &task_definition.plan.expect("plan is empty");
         drop(raw_task_definition);
 
         // get execution plan
-        let execution_plan: Arc<dyn ExecutionPlan> = plan
-            .try_into()
-            .map_err(|err| {
-                DataFusionError::Plan(format!("cannot create execution plan: {:?}", err))
-            })?;
-        let execution_plan_displayable =
-            displayable(execution_plan.as_ref()).indent().to_string();
+        let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into().map_err(|err| {
+            DataFusionError::Plan(format!("cannot create execution plan: {:?}", err))
+        })?;
+        let execution_plan_displayable = displayable(execution_plan.as_ref()).indent().to_string();
         log::info!("Creating native execution plan succeeded");
         log::info!("  task_id={:?}", task_id);
         log::info!("  execution plan:\n{}", execution_plan_displayable);
@@ -139,8 +135,6 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_finalizeNative(
     _: JClass,
     rtw_ptr: i64,
 ) {
-    let runtime = unsafe {
-        Box::from_raw(rtw_ptr as usize as *mut NativeExecutionRuntime)
-    };
+    let runtime = unsafe { Box::from_raw(rtw_ptr as usize as *mut NativeExecutionRuntime) };
     runtime.finalize();
 }

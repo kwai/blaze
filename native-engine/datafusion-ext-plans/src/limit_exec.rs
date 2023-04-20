@@ -5,8 +5,8 @@ use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
+    Statistics,
 };
 use futures::{Stream, StreamExt};
 use std::any::Any;
@@ -104,10 +104,7 @@ impl RecordBatchStream for LimitStream {
 impl Stream for LimitStream {
     type Item = Result<RecordBatch>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let rest = self.limit.saturating_sub(self.cur) as usize;
         if rest == 0 {
             return Poll::Ready(None);
@@ -117,13 +114,13 @@ impl Stream for LimitStream {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
-            Poll::Ready(Some(Ok(batch))) => self.baseline_metrics.record_poll(
-                Poll::Ready(Some(Ok(if batch.num_rows() <= rest {
+            Poll::Ready(Some(Ok(batch))) => self.baseline_metrics.record_poll(Poll::Ready(Some(
+                Ok(if batch.num_rows() <= rest {
                     batch
                 } else {
                     batch.slice(0, rest)
-                }))),
-            ),
+                }),
+            ))),
         }
     }
 }
