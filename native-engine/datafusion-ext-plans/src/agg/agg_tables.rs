@@ -59,7 +59,6 @@ impl AggTables {
         metrics: BaselineMetrics,
         context: Arc<TaskContext>,
     ) -> Self {
-        
         Self {
             name: format!("AggTable[partition={}]", partition_id),
             mem_consumer_info: None,
@@ -253,8 +252,7 @@ impl MemConsumer for AggTables {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        self
-            .mem_consumer_info
+        self.mem_consumer_info
             .as_ref()
             .expect("consumer info not set")
     }

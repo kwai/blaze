@@ -18,8 +18,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Fields, Schema, SchemaRef};
-use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
+use datafusion::common::Result;
 
 mod batch_serde;
 
@@ -27,7 +27,7 @@ pub fn write_one_batch<W: Write + Seek>(
     batch: &RecordBatch,
     output: &mut W,
     compress: bool,
-) -> ArrowResult<usize> {
+) -> Result<usize> {
     if batch.num_rows() == 0 {
         return Ok(0);
     }
@@ -51,7 +51,7 @@ pub fn read_one_batch<R: Read>(
     input: &mut R,
     schema: Option<SchemaRef>,
     compress: bool,
-) -> ArrowResult<Option<RecordBatch>> {
+) -> Result<Option<RecordBatch>> {
     // read ipc length
     let mut ipc_length_buf = [0u8; 8];
     if let Err(e) = input.read_exact(&mut ipc_length_buf) {
@@ -76,7 +76,7 @@ pub fn read_one_batch<R: Read>(
     Ok(Some(nameless_batch))
 }
 
-pub fn name_batch(batch: &RecordBatch, name_schema: &SchemaRef) -> ArrowResult<RecordBatch> {
+pub fn name_batch(batch: &RecordBatch, name_schema: &SchemaRef) -> Result<RecordBatch> {
     let row_count = batch.num_rows();
     let schema = Arc::new(Schema::new(
         batch
@@ -87,7 +87,7 @@ pub fn name_batch(batch: &RecordBatch, name_schema: &SchemaRef) -> ArrowResult<R
             .map(|(i, _)| name_schema.field(i).clone())
             .collect::<Fields>(),
     ));
-    RecordBatch::try_new_with_options(
+    Ok(RecordBatch::try_new_with_options(
         schema.clone(),
         batch
             .columns()
@@ -126,12 +126,12 @@ pub fn name_batch(batch: &RecordBatch, name_schema: &SchemaRef) -> ArrowResult<R
                     _ => column.clone(),
                 })
             })
-            .collect::<ArrowResult<_>>()?,
+            .collect::<Result<_>>()?,
         &RecordBatchOptions::new().with_row_count(Some(row_count)),
-    )
+    )?)
 }
 
-pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> ArrowResult<()> {
+pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> Result<()> {
     while len >= 128 {
         let v = len % 128;
         len /= 128;
@@ -141,7 +141,7 @@ pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> ArrowResult<()> {
     Ok(())
 }
 
-pub fn read_len<R: Read>(input: &mut R) -> ArrowResult<usize> {
+pub fn read_len<R: Read>(input: &mut R) -> Result<usize> {
     let mut len = 0usize;
     let mut factor = 1;
     loop {
@@ -156,18 +156,18 @@ pub fn read_len<R: Read>(input: &mut R) -> ArrowResult<usize> {
     Ok(len)
 }
 
-pub fn write_u8<W: Write>(n: u8, output: &mut W) -> ArrowResult<()> {
+pub fn write_u8<W: Write>(n: u8, output: &mut W) -> Result<()> {
     output.write_all(&[n])?;
     Ok(())
 }
 
-pub fn read_u8<R: Read>(input: &mut R) -> ArrowResult<u8> {
+pub fn read_u8<R: Read>(input: &mut R) -> Result<u8> {
     let mut buf = [0; 1];
     input.read_exact(&mut buf)?;
     Ok(buf[0])
 }
 
-pub fn read_bytes_slice<R: Read>(input: &mut R, len: usize) -> ArrowResult<Box<[u8]>> {
+pub fn read_bytes_slice<R: Read>(input: &mut R, len: usize) -> Result<Box<[u8]>> {
     // safety - assume_init() is safe for [u8]
     let mut byte_slice = unsafe { Box::new_uninit_slice(len).assume_init() };
     input.read_exact(byte_slice.as_mut())?;

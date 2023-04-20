@@ -485,7 +485,12 @@ fn update_map_hashes(array: &ArrayRef, idx: i32, hash: &mut u32) -> Result<()> {
             DataType::Boolean => {
                 let array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
                 *hash = spark_compatible_murmur3_hash(
-                    (if array.value(idx as usize) { 1u32 } else { 0u32 }).to_le_bytes(),
+                    (if array.value(idx as usize) {
+                        1u32
+                    } else {
+                        0u32
+                    })
+                    .to_le_bytes(),
                     *hash,
                 );
             }
@@ -565,8 +570,8 @@ mod tests {
 
     use crate::spark_hash::{create_hashes, pmod, spark_compatible_murmur3_hash};
     use arrow::array::{
-        make_array, Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array,
-        MapArray, StringArray, StructArray, UInt32Array,
+        make_array, Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, MapArray,
+        StringArray, StructArray, UInt32Array,
     };
     use arrow::buffer::Buffer;
     use arrow::datatypes::{DataType, Field, ToByteSlice};

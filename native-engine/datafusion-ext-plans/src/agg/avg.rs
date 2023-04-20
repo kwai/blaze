@@ -171,11 +171,9 @@ fn get_final_merger(dt: &DataType) -> Result<fn(ScalarValue, i64) -> ScalarValue
         DataType::UInt32 => get_fn!(UInt32),
         DataType::UInt64 => get_fn!(UInt64),
         DataType::Decimal128(..) => get_fn!(Decimal128),
-        other => {
-            Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type in avg(): {}",
-                other
-            )))
-        }
+        other => Err(DataFusionError::NotImplemented(format!(
+            "unsupported data type in avg(): {}",
+            other
+        ))),
     }
 }

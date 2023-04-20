@@ -215,8 +215,7 @@ impl MemConsumer for ExternalSorter {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        self
-            .mem_consumer_info
+        self.mem_consumer_info
             .as_ref()
             .expect("consumer info not set")
     }
@@ -226,7 +225,10 @@ impl MemConsumer for ExternalSorter {
 
         // merge all batches in levels into one in_mem_batches
         let mut in_mem_batches: Option<SortedBatches> = None;
-        for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS]).into_iter().flatten() {
+        for level in std::mem::replace(&mut *levels, vec![None; NUM_LEVELS])
+            .into_iter()
+            .flatten()
+        {
             if let Some(in_mem_batches) = &mut in_mem_batches {
                 in_mem_batches.merge(level);
             } else {

@@ -16,18 +16,13 @@ use crate::io::{read_bytes_slice, read_len, read_u8, write_len, write_u8};
 use arrow::array::*;
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::*;
-use arrow::error::{ArrowError, Result as ArrowResult};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use bitvec::prelude::BitVec;
-use datafusion::common::cast::as_binary_array;
+use datafusion::common::{DataFusionError, Result};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
 
-pub fn write_batch<W: Write>(
-    batch: &RecordBatch,
-    output: &mut W,
-    compress: bool,
-) -> ArrowResult<()> {
+pub fn write_batch<W: Write>(batch: &RecordBatch, output: &mut W, compress: bool) -> Result<()> {
     let mut output: Box<dyn Write> = if compress {
         Box::new(zstd::Encoder::new(output, 1)?.auto_finish())
     } else {
@@ -41,7 +36,12 @@ pub fn write_batch<W: Write>(
 
     // write column data types
     for field in schema.fields() {
-        write_data_type(field.data_type(), &mut output)?;
+        write_data_type(field.data_type(), &mut output).map_err(|err| {
+            err.context(format!(
+                "batch_serde error writing data type: {}",
+                field.data_type()
+            ))
+        })?;
     }
 
     // write column nullables
@@ -51,21 +51,19 @@ pub fn write_batch<W: Write>(
     }
     output.write_all(&nullables.into_vec())?;
 
-    // write whether arrays have null buffers (which may differ from nullables)
-    let mut has_null_buffers = BitVec::<u8>::with_capacity(batch.num_columns());
-    for array in batch.columns() {
-        has_null_buffers.push(array.to_data().nulls().is_some());
-    }
-    output.write_all(&has_null_buffers.into_vec())?;
-
     // write columns
     for column in batch.columns() {
-        write_array(column, &mut output)?;
+        write_array(column, &mut output).map_err(|err| {
+            err.context(format!(
+                "batch_serde error writing column (data_type={})",
+                column.data_type()
+            ))
+        })?;
     }
     Ok(())
 }
 
-pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordBatch> {
+pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> Result<RecordBatch> {
     let mut input: Box<dyn Read> = if compress {
         Box::new(BufReader::new(zstd::Decoder::new(input)?))
     } else {
@@ -79,16 +77,15 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
     // read column data types
     let mut data_types = Vec::with_capacity(num_columns);
     for _ in 0..num_columns {
-        data_types.push(read_data_type(&mut input)?);
+        data_types.push(
+            read_data_type(&mut input)
+                .map_err(|err| err.context("batch_serde error reading data type"))?,
+        );
     }
 
     // read nullables
     let nullables_bytes = read_bytes_slice(&mut input, (num_columns + 7) / 8)?;
     let nullables = BitVec::<u8>::from_vec(nullables_bytes.into());
-
-    // read whether arrays have null buffers (which may differ from nullables)
-    let has_null_buffers_bytes = read_bytes_slice(&mut input, (num_columns + 7) / 8)?;
-    let has_null_buffers = BitVec::<u8>::from_vec(has_null_buffers_bytes.into());
 
     // create schema
     let schema = Arc::new(Schema::new(
@@ -101,18 +98,25 @@ pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> ArrowResult<RecordB
 
     // read columns
     let columns = (0..num_columns)
-        .map(|i| read_array(&mut input, &data_types[i], num_rows, has_null_buffers[i]))
-        .collect::<ArrowResult<_>>()?;
+        .map(|i| {
+            read_array(&mut input, &data_types[i], num_rows).map_err(|err| {
+                err.context(format!(
+                    "batch_serde error reading column (data_type={}, num_rows={})",
+                    data_types[i], num_rows,
+                ))
+            })
+        })
+        .collect::<Result<_>>()?;
 
     // create batch
-    RecordBatch::try_new_with_options(
+    Ok(RecordBatch::try_new_with_options(
         schema,
         columns,
         &RecordBatchOptions::new().with_row_count(Some(num_rows)),
-    )
+    )?)
 }
 
-pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> ArrowResult<()> {
+pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
     macro_rules! write_primitive {
         ($ty:ident) => {{
             write_primitive_array(
@@ -136,7 +140,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> ArrowResult<(
         DataType::Float64 => write_primitive!(Float64),
         DataType::Decimal128(_, _) => write_primitive!(Decimal128),
         DataType::Utf8 => write_bytes_array(as_string_array(array), output)?,
-        DataType::Binary => write_bytes_array(as_binary_array(array)?, output)?,
+        DataType::Binary => write_bytes_array(as_generic_binary_array::<i32>(array), output)?,
         DataType::Date32 => write_primitive!(Date32),
         DataType::Date64 => write_primitive!(Date64),
         DataType::Timestamp(TimeUnit::Microsecond, _) => write_primitive!(TimestampMicrosecond),
@@ -144,7 +148,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> ArrowResult<(
         DataType::Map(_, _) => write_map_array(as_map_array(array), output)?,
         DataType::Struct(_) => write_struct_array(as_struct_array(array), output)?,
         other => {
-            return Err(ArrowError::IoError(format!(
+            return Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type: {}",
                 other
             )));
@@ -157,20 +161,15 @@ fn read_array<R: Read>(
     input: &mut R,
     data_type: &DataType,
     num_rows: usize,
-    has_null_buffer: bool,
-) -> ArrowResult<ArrayRef> {
+) -> Result<ArrayRef> {
     macro_rules! read_primitive {
         ($ty:ident) => {{
-            read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(
-                num_rows,
-                has_null_buffer,
-                input,
-            )?
+            read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input)?
         }};
     }
     Ok(match data_type {
         DataType::Null => Arc::new(NullArray::new(num_rows)),
-        DataType::Boolean => read_boolean_array(num_rows, has_null_buffer, input)?,
+        DataType::Boolean => read_boolean_array(num_rows, input)?,
         DataType::Int8 => read_primitive!(Int8),
         DataType::Int16 => read_primitive!(Int16),
         DataType::Int32 => read_primitive!(Int32),
@@ -189,17 +188,17 @@ fn read_array<R: Read>(
         DataType::Date32 => read_primitive!(Date32),
         DataType::Date64 => read_primitive!(Date64),
         DataType::Timestamp(TimeUnit::Microsecond, _) => read_primitive!(TimestampMicrosecond),
-        DataType::Utf8 => read_bytes_array(num_rows, has_null_buffer, input, DataType::Utf8)?,
-        DataType::Binary => read_bytes_array(num_rows, has_null_buffer, input, DataType::Binary)?,
+        DataType::Utf8 => read_bytes_array(num_rows, input, DataType::Utf8)?,
+        DataType::Binary => read_bytes_array(num_rows, input, DataType::Binary)?,
         DataType::List(list_field) => {
-            read_list_array(num_rows, has_null_buffer, input, list_field)?
+            read_list_array(num_rows, input, list_field)?
         }
         DataType::Map(map_field, is_sorted) => {
-            read_map_array(num_rows, has_null_buffer, input, map_field, *is_sorted)?
+            read_map_array(num_rows, input, map_field, *is_sorted)?
         }
-        DataType::Struct(fields) => read_struct_array(num_rows, has_null_buffer, input, fields)?,
+        DataType::Struct(fields) => read_struct_array(num_rows, input, fields)?,
         other => {
-            return Err(ArrowError::IoError(format!(
+            return Err(DataFusionError::NotImplemented(format!(
                 "unsupported data type: {}",
                 other
             )));
@@ -212,7 +211,7 @@ fn write_bits_buffer<W: Write>(
     bits_offset: usize,
     bits_len: usize,
     output: &mut W,
-) -> ArrowResult<()> {
+) -> Result<()> {
     let mut out_buffer = vec![0u8; (bits_len + 7) / 8];
     let in_ptr = buffer.as_ptr();
     let out_ptr = out_buffer.as_mut_ptr();
@@ -228,12 +227,13 @@ fn write_bits_buffer<W: Write>(
     Ok(())
 }
 
-fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> ArrowResult<Buffer> {
-    let buf = read_bytes_slice(input, (bits_len + 7) / 8)?;
+fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> Result<Buffer> {
+    let buf = read_bytes_slice(input, (bits_len + 7) / 8)
+        .map_err(|err| err.context("batch_serde: error reading bit buffer"))?;
     Ok(Buffer::from(buf))
 }
 
-fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResult<()> {
+fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> Result<()> {
     match data_type {
         DataType::Null => write_u8(1, output)?,
         DataType::Boolean => write_u8(2, output)?,
@@ -294,12 +294,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
                         }
                     }
                 }
-                other => {
-                    return Err(ArrowError::SchemaError(format!(
-                        "Map field data_type must be Struct, but found {:#?}",
-                        other
-                    )));
-                }
+                other => unreachable!("expect struct field, got {other:?}"),
             }
         }
         DataType::Struct(fields) => {
@@ -315,16 +310,15 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> ArrowResul
             }
         }
         other => {
-            return Err(ArrowError::NotYetImplemented(format!(
-                "write_data_type: unsupported data type: {:?}",
-                other
+            return Err(DataFusionError::NotImplemented(format!(
+                "write_data_type: unsupported data type: {other:?}",
             )));
         }
     }
     Ok(())
 }
 
-fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
+fn read_data_type<R: Read>(input: &mut R) -> Result<DataType> {
     Ok(match read_u8(input)? {
         1 => DataType::Null,
         2 => DataType::Boolean,
@@ -382,7 +376,7 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
             DataType::Struct(fields.into())
         }
         other => {
-            return Err(ArrowError::NotYetImplemented(format!(
+            return Err(DataFusionError::NotImplemented(format!(
                 "read_data_type: unsupported data type: {:?}",
                 other
             )));
@@ -393,24 +387,28 @@ fn read_data_type<R: Read>(input: &mut R) -> ArrowResult<DataType> {
 fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     array: &PrimitiveArray<PT>,
     output: &mut W,
-) -> ArrowResult<()> {
+) -> Result<()> {
     let item_size = PT::get_byte_width();
     let offset = array.offset();
     let len = array.len();
-    if let Some(null_buffer) = array.to_data().nulls() {
-        write_bits_buffer(null_buffer.buffer(), offset, len, output)?;
+    let array_data = array.to_data();
+    if let Some(null_buffer) = array_data.nulls() {
+        write_len(1, output)?;
+        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+    } else {
+        write_len(0, output)?;
     }
     output.write_all(
-        &array.to_data().buffers()[0].as_slice()[item_size * offset..][..item_size * len],
+        &array_data.buffers()[0].as_slice()[item_size * offset..][..item_size * len],
     )?;
     Ok(())
 }
 
 fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
     num_rows: usize,
-    has_null_buffer: bool,
     input: &mut R,
-) -> ArrowResult<ArrayRef> {
+) -> Result<ArrayRef> {
+    let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
     } else {
@@ -434,9 +432,12 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
     Ok(make_array(array_data))
 }
 
-fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> ArrowResult<()> {
+fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> Result<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
+        write_len(1, output)?;
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+    } else {
+        write_len(0, output)?;
     }
 
     let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
@@ -456,10 +457,10 @@ fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> ArrowResult<
 
 fn read_list_array<R: Read>(
     num_rows: usize,
-    has_null_buffer: bool,
     input: &mut R,
     list_field: &FieldRef,
-) -> ArrowResult<ArrayRef> {
+) -> Result<ArrayRef> {
+    let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
     } else {
@@ -477,7 +478,7 @@ fn read_list_array<R: Read>(
     }
     let offsets_buffer: Buffer = offsets_buffer.into();
     let values_len = cur_offset;
-    let values = read_array(input, list_field.data_type(), values_len, has_null_buffer)?;
+    let values = read_array(input, list_field.data_type(), values_len)?;
 
     let array_data = ArrayData::try_new(
         DataType::List(list_field.clone()),
@@ -490,9 +491,13 @@ fn read_list_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> ArrowResult<()> {
-    if let Some(null_buffer) = array.to_data().nulls() {
+fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> Result<()> {
+    let array_data = array.to_data();
+    if let Some(null_buffer) = array_data.nulls() {
+        write_len(1, output)?;
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+    } else {
+        write_len(0, output)?;
     }
 
     let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
@@ -516,11 +521,11 @@ fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> ArrowResult<()
 
 fn read_map_array<R: Read>(
     num_rows: usize,
-    has_null_buffer: bool,
     input: &mut R,
     map_field: &FieldRef,
     is_sorted: bool,
-) -> ArrowResult<ArrayRef> {
+) -> Result<ArrayRef> {
+    let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
     } else {
@@ -546,8 +551,8 @@ fn read_map_array<R: Read>(
     };
     let key_values: Vec<ArrayRef> = kv_fields
         .iter()
-        .map(|f| read_array(input, f.data_type(), values_len, f.is_nullable()))
-        .collect::<ArrowResult<_>>()?;
+        .map(|f| read_array(input, f.data_type(), values_len))
+        .collect::<Result<_>>()?;
 
     let struct_array_data = ArrayData::try_new(
         DataType::Struct(kv_fields.clone()),
@@ -570,9 +575,13 @@ fn read_map_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> ArrowResult<()> {
-    if let Some(null_buffer) = array.to_data().nulls() {
+fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> Result<()> {
+    let array_data = array.to_data();
+    if let Some(null_buffer) = array_data.nulls() {
+        write_len(1, output)?;
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+    } else {
+        write_len(0, output)?;
     }
     for column in array.columns() {
         write_array(&column, output)?;
@@ -582,10 +591,10 @@ fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> ArrowRes
 
 fn read_struct_array<R: Read>(
     num_rows: usize,
-    has_null_buffer: bool,
     input: &mut R,
     fields: &Fields,
-) -> ArrowResult<ArrayRef> {
+) -> Result<ArrayRef> {
+    let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
     } else {
@@ -594,8 +603,8 @@ fn read_struct_array<R: Read>(
 
     let child_arrays: Vec<ArrayRef> = fields
         .iter()
-        .map(|field| read_array(input, field.data_type(), num_rows, field.is_nullable()))
-        .collect::<ArrowResult<_>>()?;
+        .map(|field| read_array(input, field.data_type(), num_rows))
+        .collect::<Result<_>>()?;
 
     let array_data = ArrayData::try_new(
         DataType::Struct(fields.clone()),
@@ -608,25 +617,23 @@ fn read_struct_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_boolean_array<W: Write>(array: &BooleanArray, output: &mut W) -> ArrowResult<()> {
+fn write_boolean_array<W: Write>(array: &BooleanArray, output: &mut W) -> Result<()> {
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
+        write_len(1, output)?;
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+    } else {
+        write_len(0, output)?;
     }
-    write_bits_buffer(
-        array_data.buffers()[0],
-        array.offset(),
-        array.len(),
-        output,
-    )?;
+    write_bits_buffer(array_data.buffers()[0], array.offset(), array.len(), output)?;
     Ok(())
 }
 
 fn read_boolean_array<R: Read>(
     num_rows: usize,
-    has_null_buffer: bool,
     input: &mut R,
-) -> ArrowResult<ArrayRef> {
+) -> Result<ArrayRef> {
+    let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
     } else {
@@ -652,9 +659,12 @@ fn read_boolean_array<R: Read>(
 fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
     array: &GenericByteArray<T>,
     output: &mut W,
-) -> ArrowResult<()> {
+) -> Result<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
+        write_len(1, output)?;
         write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+    } else {
+        write_len(0, output)?;
     }
 
     let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
@@ -670,10 +680,10 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
 
 fn read_bytes_array<R: Read>(
     num_rows: usize,
-    has_null_buffer: bool,
     input: &mut R,
     data_type: DataType,
-) -> ArrowResult<ArrayRef> {
+) -> Result<ArrayRef> {
+    let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
     } else {

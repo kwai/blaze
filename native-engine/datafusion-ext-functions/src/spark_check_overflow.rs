@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cmp::Ordering;
 use arrow::array::*;
 use datafusion::common::Result;
 use datafusion::common::ScalarValue;
 use datafusion::physical_plan::ColumnarValue;
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 /// implements org.apache.spark.sql.catalyst.expressions.MakeDecimal

@@ -16,7 +16,6 @@ use std::fmt::Debug;
 
 use crate::io::read_one_batch;
 use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use blaze_commons::{
     jni_call, jni_get_object_class, jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
@@ -246,7 +245,7 @@ impl RecordBatchReader {
         }
     }
 
-    pub fn next_batch(&mut self) -> ArrowResult<Option<RecordBatch>> {
+    pub fn next_batch(&mut self) -> Result<Option<RecordBatch>> {
         read_one_batch(&mut self.input, self.schema.clone(), self.compress)
     }
 }

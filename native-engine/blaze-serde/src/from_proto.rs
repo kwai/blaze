@@ -184,9 +184,7 @@ pub fn convert_physical_expr_to_logical_expr(
     } else if let Some(expr1) = expr.downcast_ref::<StringStartsWithExpr>() {
         let args = vec![
             convert_physical_expr_to_logical_expr(expr1.expr())?,
-            Expr::Literal(ScalarValue::Utf8(Some(
-                expr1.prefix().to_string(),
-            ))),
+            Expr::Literal(ScalarValue::Utf8(Some(expr1.prefix().to_string()))),
         ];
 
         let func: ScalarFunctionImplementation = Arc::new(|_| panic!("placeholder"));

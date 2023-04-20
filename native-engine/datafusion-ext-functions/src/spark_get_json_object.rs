@@ -88,11 +88,15 @@ impl HiveGetJsonObjectEvaluator {
             evaluator.matchers.push(matcher);
         }
         if evaluator.matchers.first() != Some(&HiveGetJsonObjectMatcher::Root) {
-            return Err(HiveGetJsonObjectError::InvalidJsonPath("json path missing root".to_string()));
+            return Err(HiveGetJsonObjectError::InvalidJsonPath(
+                "json path missing root".to_string(),
+            ));
         }
         evaluator.matchers.remove(0); // remove root matcher
         if evaluator.matchers.contains(&HiveGetJsonObjectMatcher::Root) {
-            return Err(HiveGetJsonObjectError::InvalidJsonPath("json path has more than one root".to_string()));
+            return Err(HiveGetJsonObjectError::InvalidJsonPath(
+                "json path has more than one root".to_string(),
+            ));
         }
         Ok(evaluator)
     }
@@ -118,11 +122,9 @@ impl HiveGetJsonObjectEvaluator {
             serde_json::Value::Number(number) => Ok(Some(number.to_string())),
             serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                serde_json::to_string(current)
-                    .map(Some)
-                    .map_err(|_| {
-                        HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
-                    })
+                serde_json::to_string(current).map(Some).map_err(|_| {
+                    HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
+                })
             }
         };
         self.buffer.clear();
@@ -163,7 +165,9 @@ impl HiveGetJsonObjectMatcher {
                     }
                 }
                 if child_name.is_empty() {
-                    return Err(HiveGetJsonObjectError::InvalidJsonPath("empty child name".to_string()));
+                    return Err(HiveGetJsonObjectError::InvalidJsonPath(
+                        "empty child name".to_string(),
+                    ));
                 }
                 Ok(Some(Self::Child(child_name)))
             }
@@ -181,7 +185,9 @@ impl HiveGetJsonObjectMatcher {
                             chars.next();
                         }
                         None => {
-                            return Err(HiveGetJsonObjectError::InvalidJsonPath("unterminated subscript".to_string()));
+                            return Err(HiveGetJsonObjectError::InvalidJsonPath(
+                                "unterminated subscript".to_string(),
+                            ));
                         }
                     }
                 }
@@ -193,12 +199,10 @@ impl HiveGetJsonObjectMatcher {
                 })?;
                 Ok(Some(Self::Subscript(index)))
             }
-            Some(c) => {
-                Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
-                    "unexpected char in json path: {}",
-                    c
-                )))
-            }
+            Some(c) => Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
+                "unexpected char in json path: {}",
+                c
+            ))),
         }
     }
 
@@ -223,9 +227,7 @@ impl HiveGetJsonObjectMatcher {
                             .iter()
                             .map(|item| {
                                 if let serde_json::Value::Object(object) = item {
-                                    object
-                                        .get(child).cloned()
-                                        .unwrap_or_default()
+                                    object.get(child).cloned().unwrap_or_default()
                                 } else {
                                     serde_json::Value::Null
                                 }

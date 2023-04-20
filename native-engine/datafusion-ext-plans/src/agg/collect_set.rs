@@ -359,12 +359,10 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
                 w.append(v);
             }
         }),
-        other => {
-            Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type in collect_set(): {}",
-                other
-            )))
-        }
+        other => Err(DataFusionError::NotImplemented(format!(
+            "unsupported data type in collect_set(): {}",
+            other
+        ))),
     }
 }
 
@@ -414,11 +412,9 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
                 .unwrap();
             w.merge(v);
         }),
-        other => {
-            Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type in collect_set(): {}",
-                other
-            )))
-        }
+        other => Err(DataFusionError::NotImplemented(format!(
+            "unsupported data type in collect_set(): {}",
+            other
+        ))),
     }
 }

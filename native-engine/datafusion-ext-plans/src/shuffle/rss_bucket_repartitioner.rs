@@ -52,7 +52,7 @@ impl RssBucketShuffleRepartitioner {
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
         let batch_size = context.session_config().batch_size();
-        
+
         Self {
             name: format!("RssBucketShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
@@ -173,8 +173,7 @@ impl MemConsumer for RssBucketShuffleRepartitioner {
     }
 
     fn get_consumer_info(&self) -> &Weak<MemConsumerInfo> {
-        self
-            .mem_consumer_info
+        self.mem_consumer_info
             .as_ref()
             .expect("consumer info not set")
     }

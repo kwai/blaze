@@ -160,7 +160,7 @@ impl PartialEq<dyn Any> for GetIndexedFieldExpr {
 mod test {
     use super::GetIndexedFieldExpr;
     use arrow::array::*;
-    
+
     use arrow::datatypes::*;
     use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_eq;

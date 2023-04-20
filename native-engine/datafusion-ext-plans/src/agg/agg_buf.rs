@@ -181,9 +181,7 @@ pub fn create_agg_buf_from_scalar(values: &[ScalarValue]) -> Result<(AggBuf, Box
                     ($ty:ty) => {{
                         dyns.push(match field.name().as_str() {
                             "collect_list" => Box::<AggDynList<f64>>::default(),
-                            "collect_set" => {
-                                Box::<AggDynSet<[u8; 8]>>::default()
-                            }
+                            "collect_set" => Box::<AggDynSet<[u8; 8]>>::default(),
                             _ => unreachable!(),
                         });
                     }};
@@ -838,7 +836,7 @@ mod test {
     use crate::agg::agg_buf::{
         create_agg_buf_from_scalar, AggDynList, AggDynSet, AggDynStr, AggDynStrList, AggDynStrSet,
     };
-    use arrow::datatypes::{DataType};
+    use arrow::datatypes::DataType;
     use datafusion::common::{Result, ScalarValue};
     use hashbrown::HashSet;
     use std::io::Cursor;

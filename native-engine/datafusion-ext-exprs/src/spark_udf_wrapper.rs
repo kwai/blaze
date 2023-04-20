@@ -119,7 +119,9 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         if !is_task_running() {
-            return Err(DataFusionError::Execution("SparkUDFWrapper: is_task_running=false".to_string()));
+            return Err(DataFusionError::Execution(
+                "SparkUDFWrapper: is_task_running=false".to_string(),
+            ));
         }
 
         let context = self
@@ -142,10 +144,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         // send batch to context
         context
             .export_tx
-            .send(Some(Ok(params_batch))).map_err(|err| DataFusionError::Execution(format!(
-                    "error sending batch: {}",
-                    err
-                )))?;
+            .send(Some(Ok(params_batch)))
+            .map_err(|err| DataFusionError::Execution(format!("error sending batch: {}", err)))?;
 
         // receive batch from context
         let return_array = context

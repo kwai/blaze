@@ -103,8 +103,7 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
                 .unwrap_or_else(|err| {
                     panic!(
                         "output_with_sender[{}]: output() returns error: {}",
-                        desc,
-                        err,
+                        desc, err,
                     );
                 })
                 .await

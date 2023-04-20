@@ -216,12 +216,10 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
                 }
             }
         }),
-        other => {
-            Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type in min(): {}",
-                other
-            )))
-        }
+        other => Err(DataFusionError::NotImplemented(format!(
+            "unsupported data type in min(): {}",
+            other
+        ))),
     }
 }
 
@@ -272,11 +270,9 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
                 }
             }
         }),
-        other => {
-            Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type in min(): {}",
-                other
-            )))
-        }
+        other => Err(DataFusionError::NotImplemented(format!(
+            "unsupported data type in min(): {}",
+            other
+        ))),
     }
 }
