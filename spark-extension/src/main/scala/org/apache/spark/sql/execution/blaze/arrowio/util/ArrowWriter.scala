@@ -27,7 +27,7 @@ import org.apache.spark.sql.types._
 object ArrowWriter {
 
   def create(schema: StructType, timeZoneId: String): ArrowWriter = {
-    val arrowSchema = ArrowUtils.toArrowSchema(schema, timeZoneId)
+    val arrowSchema = ArrowUtils.toArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
     create(root)
   }
@@ -56,7 +56,8 @@ object ArrowWriter {
       case (StringType, vector: VarCharVector) => new StringWriter(vector)
       case (BinaryType, vector: VarBinaryVector) => new BinaryWriter(vector)
       case (DateType, vector: DateDayVector) => new DateWriter(vector)
-      case (TimestampType, vector: TimeStampMicroTZVector) => new TimestampWriter(vector)
+      case (TimestampType, vector: TimeStampMicroTZVector) => new TimestampTZWriter(vector)
+      case (TimestampType, vector: TimeStampMicroVector) => new TimestampWriter(vector)
       case (ArrayType(_, _), vector: ListVector) =>
         val elementVector = createFieldWriter(vector.getDataVector())
         new ArrayWriter(vector, elementVector)
@@ -275,7 +276,19 @@ private[sql] class DateWriter(val valueVector: DateDayVector) extends ArrowField
   }
 }
 
-private[sql] class TimestampWriter(val valueVector: TimeStampMicroTZVector)
+private[sql] class TimestampWriter(val valueVector: TimeStampMicroVector)
+    extends ArrowFieldWriter {
+
+  override def setNull(): Unit = {
+    valueVector.setNull(count)
+  }
+
+  override def setValue(input: SpecializedGetters, ordinal: Int): Unit = {
+    valueVector.setSafe(count, input.getLong(ordinal))
+  }
+}
+
+private[sql] class TimestampTZWriter(val valueVector: TimeStampMicroTZVector)
     extends ArrowFieldWriter {
 
   override def setNull(): Unit = {

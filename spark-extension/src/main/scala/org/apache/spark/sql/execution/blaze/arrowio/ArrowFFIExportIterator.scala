@@ -39,7 +39,7 @@ class ArrowFFIExportIterator(
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 
-  private val arrowSchema = ArrowUtils.toArrowSchema(schema, NativeHelper.tz)
+  private val arrowSchema = ArrowUtils.toArrowSchema(schema)
   private var allocator =
     ArrowUtils.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new MapDictionaryProvider()

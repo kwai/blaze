@@ -33,10 +33,8 @@ object ArrowUtils {
 
   val rootAllocator = new RootAllocator(Long.MaxValue)
 
-  // todo: support more types.
-
-  /** Maps data type from Spark to Arrow. NOTE: timeZoneId required for TimestampTypes */
-  def toArrowType(dt: DataType, timeZoneId: String): ArrowType =
+  /** Maps data type from Spark to Arrow. NOTE: timeZoneId is always NULL in TimestampTypes */
+  def toArrowType(dt: DataType): ArrowType =
     dt match {
       case NullType => ArrowType.Null.INSTANCE
       case BooleanType => ArrowType.Bool.INSTANCE
@@ -50,13 +48,7 @@ object ArrowUtils {
       case BinaryType => ArrowType.Binary.INSTANCE
       case DecimalType.Fixed(precision, scale) => new ArrowType.Decimal(precision, scale, 128)
       case DateType => new ArrowType.Date(DateUnit.DAY)
-      case TimestampType =>
-        if (timeZoneId == null) {
-          throw new UnsupportedOperationException(
-            s"${TimestampType.catalogString} must supply timeZoneId parameter")
-        } else {
-          new ArrowType.Timestamp(TimeUnit.MICROSECOND, timeZoneId)
-        }
+      case TimestampType => new ArrowType.Timestamp(TimeUnit.MICROSECOND, null)
       case _ =>
         throw new UnsupportedOperationException(s"Unsupported data type: ${dt.catalogString}")
     }
@@ -83,42 +75,36 @@ object ArrowUtils {
       case _ => throw new UnsupportedOperationException(s"Unsupported data type: $dt")
     }
 
-  /** Maps field from Spark to Arrow. NOTE: timeZoneId required for TimestampType */
-  def toArrowField(name: String, dt: DataType, nullable: Boolean, timeZoneId: String): Field = {
+  /** Maps field from Spark to Arrow */
+  def toArrowField(name: String, dt: DataType, nullable: Boolean): Field = {
     dt match {
       case ArrayType(elementType, containsNull) =>
         val fieldType = new FieldType(nullable, ArrowType.List.INSTANCE, null)
-        new Field(
-          name,
-          fieldType,
-          Seq(toArrowField("item", elementType, containsNull, timeZoneId)).asJava)
+        new Field(name, fieldType, Seq(toArrowField("item", elementType, containsNull)).asJava)
+
       case StructType(fields) =>
         val fieldType = new FieldType(nullable, ArrowType.Struct.INSTANCE, null)
         new Field(
           name,
           fieldType,
           fields
-            .map { field =>
-              toArrowField(field.name, field.dataType, field.nullable, timeZoneId)
-            }
+            .map(field => toArrowField(field.name, field.dataType, field.nullable))
             .toSeq
             .asJava)
+
       case MapType(keyType, valueType, valueContainsNull) =>
+        // MapType always has one field: entries: struct<key:any, value:any>
         val mapType = new FieldType(nullable, new ArrowType.Map(false), null)
-        // Note: Map Type struct can not be null, Struct Type key field can not be null
-        new Field(
-          name,
-          mapType,
-          Seq(
-            toArrowField(
-              MapVector.DATA_VECTOR_NAME,
-              new StructType()
-                .add(MapVector.KEY_NAME, keyType, nullable = false)
-                .add(MapVector.VALUE_NAME, valueType, nullable = valueContainsNull),
-              nullable = false,
-              timeZoneId)).asJava)
+        val entriesField = toArrowField(
+          MapVector.DATA_VECTOR_NAME,
+          new StructType()
+            .add(MapVector.KEY_NAME, keyType, nullable = false)
+            .add(MapVector.VALUE_NAME, valueType, nullable = valueContainsNull),
+          nullable = false)
+        new Field(name, mapType, Seq(entriesField).asJava)
+
       case dataType =>
-        val fieldType = new FieldType(nullable, toArrowType(dataType, timeZoneId), null)
+        val fieldType = new FieldType(nullable, toArrowType(dataType), null)
         new Field(name, fieldType, Seq.empty[Field].asJava)
     }
   }
@@ -147,9 +133,9 @@ object ArrowUtils {
   }
 
   /** Maps schema from Spark to Arrow. NOTE: timeZoneId required for TimestampType in StructType */
-  def toArrowSchema(schema: StructType, timeZoneId: String): Schema = {
+  def toArrowSchema(schema: StructType): Schema = {
     new Schema(schema.map { field =>
-      toArrowField(field.name, field.dataType, field.nullable, timeZoneId)
+      toArrowField(field.name, field.dataType, field.nullable)
     }.asJava)
   }
 

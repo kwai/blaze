@@ -96,14 +96,6 @@ pub fn name_batch(batch: &RecordBatch, name_schema: &SchemaRef) -> Result<Record
             .map(|(i, column)| {
                 let column_data = column.to_data();
                 Ok(match schema.field(i).data_type() {
-                    DataType::Struct(_) => make_array(ArrayData::try_new(
-                        schema.field(i).data_type().clone(),
-                        column_data.len(),
-                        column_data.nulls().map(|nb| nb.buffer().clone()),
-                        column_data.offset(),
-                        column_data.buffers().to_vec(),
-                        column_data.child_data().to_vec(),
-                    )?),
                     DataType::Map(field, _) => {
                         let child_nameless_data = column_data.child_data().get(0).unwrap();
                         let child_data = ArrayData::try_new(
@@ -123,7 +115,14 @@ pub fn name_batch(batch: &RecordBatch, name_schema: &SchemaRef) -> Result<Record
                             vec![child_data],
                         )?)
                     }
-                    _ => column.clone(),
+                    _ => make_array(ArrayData::try_new(
+                        schema.field(i).data_type().clone(),
+                        column_data.len(),
+                        column_data.nulls().map(|nb| nb.buffer().clone()),
+                        column_data.offset(),
+                        column_data.buffers().to_vec(),
+                        column_data.child_data().to_vec(),
+                    )?),
                 })
             })
             .collect::<Result<_>>()?,

@@ -64,7 +64,7 @@ class ArrowFFIStreamExporter(
 
     override def readSchema(): Schema = {
       val timeZoneId = SparkEnv.get.conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
-      ArrowUtils.toArrowSchema(schema, timeZoneId)
+      ArrowUtils.toArrowSchema(schema)
     }
   }
 
