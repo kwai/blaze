@@ -756,7 +756,7 @@ mod test {
         write_batch(&batch, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &batch.schema()).unwrap(), batch);
+        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
@@ -765,7 +765,7 @@ mod test {
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
         assert_eq!(
-            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            name_batch(decoded_batch, &sliced.schema()).unwrap(),
             sliced
         );
     }
@@ -791,7 +791,7 @@ mod test {
         write_batch(&batch, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &batch.schema()).unwrap(), batch);
+        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
@@ -800,7 +800,7 @@ mod test {
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
         assert_eq!(
-            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            name_batch(decoded_batch, &sliced.schema()).unwrap(),
             sliced
         );
     }
@@ -836,7 +836,7 @@ mod test {
         write_batch(&batch, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &batch.schema()).unwrap(), batch);
+        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
@@ -845,7 +845,7 @@ mod test {
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
         assert_eq!(
-            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            name_batch(decoded_batch, &sliced.schema()).unwrap(),
             sliced
         );
     }
@@ -871,7 +871,7 @@ mod test {
         write_batch(&batch, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(&decoded_batch, &batch.schema()).unwrap(), batch);
+        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
@@ -880,7 +880,7 @@ mod test {
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
         assert_eq!(
-            name_batch(&decoded_batch, &sliced.schema()).unwrap(),
+            name_batch(decoded_batch, &sliced.schema()).unwrap(),
             sliced
         );
     }
