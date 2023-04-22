@@ -60,7 +60,8 @@ impl Fs {
     pub fn open(&self, path: &str) -> Result<FsDataInputStream> {
         let _timer = self.io_time.timer();
         let path_str = jni_new_string!(path)?;
-        let path = jni_new_object!(HadoopPath(path_str.as_obj()))?;
+        let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
+        let path = jni_new_object!(HadoopPath(path_uri.as_obj()))?;
         let fin = jni_call!(
             HadoopFileSystem(self.fs.as_obj()).open(path.as_obj()) -> JObject
         )?;

@@ -377,6 +377,7 @@ pub struct JavaClasses<'a> {
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
     pub cJavaFile: JavaFile<'a>,
+    pub cJavaURI: JavaURI<'a>,
     pub cJavaBuffer: JavaBuffer<'a>,
 
     pub cScalaIterator: ScalaIterator<'a>,
@@ -437,6 +438,7 @@ impl JavaClasses<'static> {
                 cJavaList: JavaList::new(env).unwrap(),
                 cJavaMap: JavaMap::new(env).unwrap(),
                 cJavaFile: JavaFile::new(env).unwrap(),
+                cJavaURI: JavaURI::new(env).unwrap(),
                 cJavaBuffer: JavaBuffer::new(env).unwrap(),
 
                 cScalaIterator: ScalaIterator::new(env).unwrap(),
@@ -777,6 +779,23 @@ impl<'a> JavaFile<'a> {
 }
 
 #[allow(non_snake_case)]
+pub struct JavaURI<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID,
+}
+impl<'a> JavaURI<'a> {
+    pub const SIG_TYPE: &'static str = "java/net/URI";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaURI<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaURI {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/lang/String;)V")?,
+        })
+    }
+}
+
+#[allow(non_snake_case)]
 pub struct JavaBuffer<'a> {
     pub class: JClass<'a>,
     pub method_hasRemaining: JMethodID,
@@ -945,7 +964,7 @@ impl<'a> HadoopPath<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(HadoopPath {
             class,
-            ctor: env.get_method_id(class, "<init>", "(Ljava/lang/String;)V")?,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/net/URI;)V")?,
         })
     }
 }
