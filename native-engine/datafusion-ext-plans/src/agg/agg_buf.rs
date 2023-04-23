@@ -171,8 +171,8 @@ pub fn create_agg_buf_from_scalar(values: &[ScalarValue]) -> Result<(AggBuf, Box
                 macro_rules! handle_fixed_list {
                     ($ty:ty) => {{
                         dyns.push(match field.name().as_str() {
-                            "collect_list" => Box::<AggDynList<i128>>::default(),
-                            "collect_set" => Box::<AggDynSet<i128>>::default(),
+                            "collect_list" => Box::<AggDynList<$ty>>::default(),
+                            "collect_set" => Box::<AggDynSet<$ty>>::default(),
                             _ => unreachable!(),
                         });
                     }};
@@ -180,8 +180,8 @@ pub fn create_agg_buf_from_scalar(values: &[ScalarValue]) -> Result<(AggBuf, Box
                 macro_rules! handle_fixed_float_list {
                     ($ty:ty) => {{
                         dyns.push(match field.name().as_str() {
-                            "collect_list" => Box::<AggDynList<f64>>::default(),
-                            "collect_set" => Box::<AggDynSet<[u8; 8]>>::default(),
+                            "collect_list" => Box::<AggDynList<$ty>>::default(),
+                            "collect_set" => Box::<AggDynSet<[u8; size_of::<$ty>()]>>::default(),
                             _ => unreachable!(),
                         });
                     }};
