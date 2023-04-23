@@ -24,6 +24,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamExporter
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamImportIterator
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
@@ -43,7 +44,13 @@ case class SparkUDFWrapperContext(
       val bytes = new Array[Byte](serialized.remaining())
       serialized.get(bytes)
       bytes
-    })
+    }) match {
+      case nondeterministic: Nondeterministic =>
+        nondeterministic.initialize(TaskContext.get.partitionId())
+        nondeterministic
+      case expr =>
+        expr
+    }
 
     val importStream = new InterruptibleIterator[ColumnarBatch](
       taskContext,

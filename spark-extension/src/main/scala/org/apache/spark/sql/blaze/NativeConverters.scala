@@ -316,6 +316,8 @@ object NativeConverters extends Logging {
       extends Unevaluable
 
   def convertExpr(sparkExpr: Expression, useAttrExprId: Boolean = true): pb.PhysicalExprNode = {
+    assert(sparkExpr.deterministic, s"nondeterministic expression not supported: $sparkExpr")
+
     def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => pb.PhysicalExprNode.Builder)
         : pb.PhysicalExprNode =
       buildFn(pb.PhysicalExprNode.newBuilder()).build()
