@@ -15,7 +15,7 @@
 use crate::generate::Generator;
 use arrow::array::*;
 use arrow::record_batch::RecordBatch;
-use datafusion::common::{Result, ScalarValue};
+use datafusion::common::Result;
 use datafusion::physical_expr::PhysicalExpr;
 use std::sync::Arc;
 
@@ -78,7 +78,7 @@ impl Generator for ExplodeArray {
                     .collect::<Vec<_>>(),
             )?
         } else {
-            ScalarValue::try_from(list.value_type())?.to_array_of_size(0)
+            new_empty_array(list.data_type())
         };
         let output_positions_array = positions.map(|positions| {
             let array: ArrayRef = Arc::new(Int32Array::from(positions));
@@ -150,18 +150,27 @@ impl Generator for ExplodeMap {
             }
         }
 
-        let output_k_array = arrow::compute::concat(
-            &k_arrays
-                .iter()
-                .map(|array| array.as_ref())
-                .collect::<Vec<_>>(),
-        )?;
-        let output_v_array = arrow::compute::concat(
-            &v_arrays
-                .iter()
-                .map(|array| array.as_ref())
-                .collect::<Vec<_>>(),
-        )?;
+        let output_k_array = if !k_arrays.is_empty() {
+            arrow::compute::concat(
+                &k_arrays
+                    .iter()
+                    .map(|array| array.as_ref())
+                    .collect::<Vec<_>>(),
+            )?
+        } else {
+            new_empty_array(map.key_type())
+        };
+        let output_v_array = if v_arrays.is_empty() {
+            arrow::compute::concat(
+                &v_arrays
+                    .iter()
+                    .map(|array| array.as_ref())
+                    .collect::<Vec<_>>(),
+            )?
+        } else {
+            new_empty_array(map.value_type())
+        };
+
         let output_positions_array = positions.map(|positions| {
             let array: ArrayRef = Arc::new(Int32Array::from(positions));
             array
