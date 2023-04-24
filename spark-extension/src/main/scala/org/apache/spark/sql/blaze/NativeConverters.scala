@@ -795,20 +795,11 @@ object NativeConverters extends Logging {
       case e: CreateArray => buildExtScalarFunction("MakeArray", e.children, e.dataType)
 
       case e: CreateNamedStruct =>
-        val NameVec = new ArrayBuffer[String]()
-        val ValuesVec = new ArrayBuffer[Expression]()
-        for (Seq(name, value) <- e.children.grouped(2)) {
-          assert(name.isInstanceOf[Literal])
-          NameVec += name.toString()
-          ValuesVec += value
-        }
-
         buildExprNode {
           _.setNamedStruct(
             pb.PhysicalNamedStructExprNode
               .newBuilder()
-              .addAllNames(NameVec.toList.asJava)
-              .addAllValues(ValuesVec.map(value => convertExpr(value)).toList.asJava)
+              .addAllValues(e.valExprs.map(value => convertExpr(value, useAttrExprId)).asJava)
               .setReturnType(convertDataType(e.dataType)))
         }
 

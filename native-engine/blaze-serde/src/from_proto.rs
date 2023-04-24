@@ -1083,14 +1083,13 @@ fn try_parse_physical_expr(
 
         ExprType::NamedStruct(e) => {
             let data_type = convert_required!(e.return_type)?;
-            Arc::new(NamedStructExpr::new(
-                e.names.clone(),
+            Arc::new(NamedStructExpr::try_new(
                 e.values
                     .iter()
                     .map(|x| try_parse_physical_expr(x, input_schema))
                     .collect::<Result<Vec<_>, _>>()?,
                 data_type,
-            ))
+            )?)
         }
     };
 

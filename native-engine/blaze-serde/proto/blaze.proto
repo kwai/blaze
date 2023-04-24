@@ -289,9 +289,8 @@ message PhysicalGetMapValueExprNode {
 }
 
 message PhysicalNamedStructExprNode {
-  repeated string names = 1;
-  repeated PhysicalExprNode values = 2;
-  ArrowType return_type = 3;
+  repeated PhysicalExprNode values = 1;
+  ArrowType return_type = 2;
 }
 
 message StringStartsWithExprNode {

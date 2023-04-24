@@ -1,7 +1,21 @@
+// Copyright 2022 The Blaze Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::down_cast_any_ref;
 
-use datafusion::arrow::array::{Array, ArrayRef, StructArray};
-use datafusion::arrow::datatypes::Field;
+use datafusion::arrow::array::{StructArray};
+
 use datafusion::arrow::{
     datatypes::{DataType, Schema},
     record_batch::RecordBatch,
@@ -12,38 +26,32 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
 use std::fmt::{Debug, Formatter};
 use std::{any::Any, sync::Arc};
+use arrow::array::Array;
+use arrow::datatypes::{Field, Fields, SchemaRef};
+use arrow::record_batch::RecordBatchOptions;
+use datafusion_ext_commons::io::name_batch;
 
 /// expression to get a field of from NameStruct.
 #[derive(Debug)]
 pub struct NamedStructExpr {
-    names: Vec<String>,
     values: Vec<Arc<dyn PhysicalExpr>>,
     return_type: DataType,
+    return_schema: SchemaRef,
 }
 
 impl NamedStructExpr {
-    pub fn new(
-        names: Vec<String>,
-        values: Vec<Arc<dyn PhysicalExpr>>,
-        return_type: DataType,
-    ) -> Self {
-        Self {
-            names,
+    pub fn try_new(values: Vec<Arc<dyn PhysicalExpr>>, return_type: DataType) -> Result<Self> {
+        let return_schema = match &return_type {
+            DataType::Struct(fields) => Arc::new(Schema::new(fields.clone())),
+            other => return Err(DataFusionError::Execution(format!(
+                "NamedStruct expects returning struct type, but got {other}"
+            ))),
+        };
+        Ok(Self {
             values,
             return_type,
-        }
-    }
-
-    pub fn names(&self) -> &Vec<String> {
-        &self.names
-    }
-
-    pub fn values(&self) -> &Vec<Arc<dyn PhysicalExpr>> {
-        &self.values
-    }
-
-    pub fn return_type(&self) -> &DataType {
-        &self.return_type
+            return_schema,
+        })
     }
 }
 
@@ -58,9 +66,7 @@ impl PartialEq<dyn Any> for NamedStructExpr {
         down_cast_any_ref(other)
             .downcast_ref::<Self>()
             .map(|x| {
-                self.names.eq(&x.names)
-                    && expr_list_eq_any_order(&self.values, &x.values)
-                    && self.return_type == x.return_type
+                expr_list_eq_any_order(&self.values, &x.values) && self.return_type == x.return_type
             })
             .unwrap_or(false)
     }
@@ -80,77 +86,23 @@ impl PhysicalExpr for NamedStructExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        fn array_struct(
-            return_type: &DataType,
-            _names: &[String],
-            args: &[ArrayRef],
-        ) -> Result<ColumnarValue> {
-            if args.is_empty() {
-                return Err(DataFusionError::Internal(
-                    "NamedStruct requires at least one argument".to_string(),
-                ));
-            }
-
-            let mut field_stored = Vec::new();
-            if let DataType::Struct(fields) = return_type {
-                for i in fields.iter() {
-                    field_stored.push(i);
-                }
-            }
-
-            let vec: Vec<(Field, ArrayRef)> = args
-                .iter()
-                .enumerate()
-                .map(|(i, arg)| -> Result<(Field, ArrayRef)> {
-                    let field_store = field_stored[i].clone();
-                    match arg.data_type() {
-                        DataType::Utf8
-                        | DataType::LargeUtf8
-                        | DataType::Boolean
-                        | DataType::Float32
-                        | DataType::Float64
-                        | DataType::Int8
-                        | DataType::Int16
-                        | DataType::Int32
-                        | DataType::Int64
-                        | DataType::Null
-                        | DataType::UInt8
-                        | DataType::UInt16
-                        | DataType::UInt32
-                        | DataType::UInt64
-                        | DataType::Date32
-                        | DataType::Date64
-                        | DataType::Timestamp(_, _) => {
-                            Ok((field_store.as_ref().clone(), arg.clone()))
-                        }
-                        data_type => Err(DataFusionError::NotImplemented(format!(
-                            "NamedStruct is not implemented for type '{:?}'.",
-                            data_type
-                        ))),
-                    }
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            Ok(ColumnarValue::Array(Arc::new(StructArray::from(vec))))
-        }
-
-        let mut args = Vec::new();
-        for value in self.values() {
-            args.push(value.evaluate(batch)?);
-        }
-        let arrays: Vec<ArrayRef> = args
+        let input_arrays = self.values
             .iter()
-            .map(|x| match x {
-                ColumnarValue::Array(array) => array.clone(),
-                ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(batch.num_rows()).clone(),
-            })
-            .collect();
+            .map(|expr| expr.evaluate(batch).map(|r| r.into_array(batch.num_rows())))
+            .collect::<Result<Vec<_>>>()?;
+        let input_empty_fields = input_arrays
+            .iter()
+            .map(|array| Field::new("", array.data_type().clone(), array.null_count() > 0))
+            .collect::<Fields>();
+        let input_batch = RecordBatch::try_new_with_options(
+            Arc::new(Schema::new(input_empty_fields)),
+            input_arrays,
+            &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+        )?;
 
-        array_struct(
-            &self.return_type.clone(),
-            &self.names.clone(),
-            arrays.as_slice(),
-        )
+        let named_batch = name_batch(input_batch, &self.return_schema)?;
+        let named_struct = Arc::new(StructArray::from(named_batch));
+        Ok(ColumnarValue::Array(named_struct))
     }
 
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
@@ -161,10 +113,10 @@ impl PhysicalExpr for NamedStructExpr {
         self: Arc<Self>,
         children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(Arc::new(Self::new(
-            self.names.clone(),
+
+        Ok(Arc::new(Self::try_new(
             children.clone(),
             self.return_type.clone(),
-        )))
+        )?))
     }
 }
