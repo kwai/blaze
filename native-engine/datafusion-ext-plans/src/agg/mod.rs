@@ -136,6 +136,16 @@ pub trait Agg: Send + Sync + Debug {
                 }
             }};
         }
+        macro_rules! handle_timestamp {
+            ($ty:ident, $tz:expr) => {{
+                let v = if agg_buf.is_fixed_valid(addr) {
+                    Some(*agg_buf.fixed_value(addr))
+                } else {
+                    None
+                };
+                ScalarValue::$ty(v, $tz.clone())
+            }}
+        }
         Ok(match self.data_type() {
             DataType::Null => ScalarValue::Null,
             DataType::Boolean => handle_fixed!(Boolean),
@@ -169,14 +179,14 @@ pub trait Agg: Send + Sync + Debug {
             ),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
-            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
-                let v = if agg_buf.is_fixed_valid(addr) {
-                    Some(*agg_buf.fixed_value(addr))
-                } else {
-                    None
-                };
-                ScalarValue::TimestampMicrosecond(v, tz.clone())
-            }
+            DataType::Timestamp(TimeUnit::Second, tz) =>
+                handle_timestamp!(TimestampSecond, tz),
+            DataType::Timestamp(TimeUnit::Millisecond, tz) =>
+                handle_timestamp!(TimestampMillisecond, tz),
+            DataType::Timestamp(TimeUnit::Microsecond, tz) =>
+                handle_timestamp!(TimestampMicrosecond, tz),
+            DataType::Timestamp(TimeUnit::Nanosecond, tz) =>
+                handle_timestamp!(TimestampNanosecond, tz),
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "unsupported data type: {}",

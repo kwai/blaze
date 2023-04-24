@@ -40,7 +40,7 @@ pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
             // spark compatible decimal to string cast
             try_cast_decimal_array_to_string(array, cast_type)?
         }
-        (&DataType::Timestamp(TimeUnit::Microsecond, _), DataType::Float64) => {
+        (&DataType::Timestamp(_, _), DataType::Float64) => {
             // timestamp to f64 = timestamp to i64 to f64, only used in agg.sum()
             arrow::compute::cast(
                 &arrow::compute::cast(array, &DataType::Int64)?,

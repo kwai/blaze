@@ -1,5 +1,5 @@
 use crate::down_cast_any_ref;
-use arrow::datatypes::TimeUnit;
+
 use datafusion::arrow::array::{Array, ArrayRef, StructArray};
 use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::{
@@ -120,7 +120,7 @@ impl PhysicalExpr for NamedStructExpr {
                         | DataType::UInt64
                         | DataType::Date32
                         | DataType::Date64
-                        | DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                        | DataType::Timestamp(_, _) => {
                             Ok((field_store.as_ref().clone(), arg.clone()))
                         }
                         data_type => Err(DataFusionError::NotImplemented(format!(

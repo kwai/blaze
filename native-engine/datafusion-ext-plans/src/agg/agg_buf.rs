@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::datatypes::{DataType, TimeUnit};
+use arrow::datatypes::DataType;
 use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion_ext_commons::io::{read_bytes_slice, read_len, write_len, write_u8};
 use hashbrown::HashSet;
@@ -155,7 +155,10 @@ pub fn create_agg_buf_from_scalar(values: &[ScalarValue]) -> Result<(AggBuf, Box
             ScalarValue::UInt64(v) => handle_fixed!(v, 8),
             ScalarValue::Date32(v) => handle_fixed!(v, 4),
             ScalarValue::Date64(v) => handle_fixed!(v, 8),
+            ScalarValue::TimestampSecond(v, _) => handle_fixed!(v, 8),
+            ScalarValue::TimestampMillisecond(v, _) => handle_fixed!(v, 8),
             ScalarValue::TimestampMicrosecond(v, _) => handle_fixed!(v, 8),
+            ScalarValue::TimestampNanosecond(v, _) => handle_fixed!(v, 8),
             ScalarValue::Utf8(v) => {
                 addrs.push(make_dyn_addr(dyns.len()));
                 match v {
@@ -200,9 +203,7 @@ pub fn create_agg_buf_from_scalar(values: &[ScalarValue]) -> Result<(AggBuf, Box
                     DataType::Float64 => handle_fixed_float_list!(f64),
                     DataType::Date32 => handle_fixed_list!(i32),
                     DataType::Date64 => handle_fixed_list!(i64),
-                    DataType::Timestamp(TimeUnit::Microsecond, _) => {
-                        handle_fixed_list!(i64)
-                    }
+                    DataType::Timestamp(_, _) => handle_fixed_list!(i64),
                     DataType::Decimal128(_, _) => handle_fixed_list!(i128),
                     DataType::Utf8 => dyns.push(match field.name().as_str() {
                         "collect_list" => Box::<AggDynStrList>::default(),

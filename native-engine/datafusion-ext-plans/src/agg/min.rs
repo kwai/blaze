@@ -119,9 +119,13 @@ impl Agg for AggMin {
             DataType::UInt64 => handle_fixed!(UInt64, min),
             DataType::Date32 => handle_fixed!(Date32, min),
             DataType::Date64 => handle_fixed!(Date64, min),
-            DataType::Timestamp(TimeUnit::Microsecond, _) => {
-                handle_fixed!(TimestampMicrosecond, min)
-            }
+            DataType::Timestamp(TimeUnit::Second, _) => handle_fixed!(TimestampSecond, min),
+            DataType::Timestamp(TimeUnit::Millisecond, _) =>
+                handle_fixed!(TimestampMillisecond, min),
+            DataType::Timestamp(TimeUnit::Microsecond, _) =>
+                handle_fixed!(TimestampMicrosecond, min),
+            DataType::Timestamp(TimeUnit::Nanosecond, _) =>
+                handle_fixed!(TimestampNanosecond, min),
             DataType::Decimal128(_, _) => handle_fixed!(Decimal128, min),
             DataType::Utf8 => {
                 let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();
@@ -202,9 +206,10 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
         DataType::UInt64 => fn_fixed!(UInt64),
         DataType::Date32 => fn_fixed!(Date32),
         DataType::Date64 => fn_fixed!(Date64),
-        DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            fn_fixed!(TimestampMicrosecond)
-        }
+        DataType::Timestamp(TimeUnit::Second, _) => fn_fixed!(TimestampSecond),
+        DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
             let value = v.as_any().downcast_ref::<StringArray>().unwrap();
@@ -256,9 +261,10 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::UInt64 => fn_fixed!(UInt64),
         DataType::Date32 => fn_fixed!(Date32),
         DataType::Date64 => fn_fixed!(Date64),
-        DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            fn_fixed!(TimestampMicrosecond)
-        }
+        DataType::Timestamp(TimeUnit::Second, _) => fn_fixed!(TimestampSecond),
+        DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
+        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(|agg_buf1, agg_buf2, addr| {
             let v = AggDynStr::value(agg_buf2.dyn_value_mut(addr));

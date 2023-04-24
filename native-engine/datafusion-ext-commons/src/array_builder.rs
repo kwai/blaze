@@ -105,8 +105,17 @@ pub fn builder_extend(
                 DataType::Float64 => append_dict!(@prim: $keyarrowty, Float64),
                 DataType::Date32 => append_dict!(@prim: $keyarrowty, Date32),
                 DataType::Date64 => append_dict!(@prim: $keyarrowty, Date64),
+                DataType::Timestamp(TimeUnit::Second, _) => {
+                    append_dict!(@prim: $keyarrowty, TimestampSecond)
+                }
+                DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                    append_dict!(@prim: $keyarrowty, TimestampMillisecond)
+                }
                 DataType::Timestamp(TimeUnit::Microsecond, _) => {
                     append_dict!(@prim: $keyarrowty, TimestampMicrosecond)
+                }
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                    append_dict!(@prim: $keyarrowty, TimestampNanosecond)
                 }
                 DataType::Utf8 => append_dict!(@str: $keyarrowty, i32),
                 DataType::LargeUtf8 => append_dict!(@str: $keyarrowty, i64),
@@ -180,7 +189,14 @@ pub fn builder_extend(
                 DataType::Float64 => append_map!(@match_value: Float64, $value_type),
                 DataType::Date32 => append_map!(@match_value: Date32, $value_type),
                 DataType::Date64 => append_map!(@match_value: Date64, $value_type),
-                DataType::Timestamp(TimeUnit::Microsecond, _) => append_map!(@match_value: TimestampMicrosecond, $value_type),
+                DataType::Timestamp(TimeUnit::Second, _) =>
+                    append_map!(@match_value: TimestampSecond, $value_type),
+                DataType::Timestamp(TimeUnit::Millisecond, _) =>
+                    append_map!(@match_value: TimestampMillisecond, $value_type),
+                DataType::Timestamp(TimeUnit::Microsecond, _) =>
+                    append_map!(@match_value: TimestampMicrosecond, $value_type),
+                DataType::Timestamp(TimeUnit::Nanosecond, _) =>
+                    append_map!(@match_value: TimestampNanosecond, $value_type),
                 DataType::Utf8 => append_map!(@match_value: String, $value_type),
                 DataType::LargeUtf8 => append_map!(@match_value: LargeString, $value_type),
                 DataType::Binary => append_map!(@match_value: Binary, $value_type),
@@ -203,7 +219,10 @@ pub fn builder_extend(
                 DataType::Float64 => append_map!(@prim: $keyarrowty, Float64),
                 DataType::Date32 => append_map!(@prim: $keyarrowty, Date32),
                 DataType::Date64 => append_map!(@prim: $keyarrowty, Date64),
+                DataType::Timestamp(TimeUnit::Second, _) => append_map!(@prim: $keyarrowty, TimestampSecond),
+                DataType::Timestamp(TimeUnit::Millisecond, _) => append_map!(@prim: $keyarrowty, TimestampMillisecond),
                 DataType::Timestamp(TimeUnit::Microsecond, _) => append_map!(@prim: $keyarrowty, TimestampMicrosecond),
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => append_map!(@prim: $keyarrowty, TimestampNanosecond),
                 DataType::Utf8 => append_map!(@prim: $keyarrowty, String),
                 DataType::LargeUtf8 => append_map!(@prim: $keyarrowty, LargeString),
                 DataType::Binary => append_map!(@prim: $keyarrowty, Binary),
@@ -256,16 +275,14 @@ pub fn builder_extend(
                 DataType::Boolean => append_list!(@prim: Boolean),
                 DataType::Utf8 => append_list!(@prim: String),
                 DataType::LargeUtf8 => append_list!(@prim: LargeString),
-                DataType::Timestamp(TimeUnit::Second, _) => append_list!(@prim: TimestampSecond),
-                DataType::Timestamp(TimeUnit::Millisecond, _) => {
-                    append_list!(@prim: TimestampMillisecond)
-                }
-                DataType::Timestamp(TimeUnit::Microsecond, _) => {
-                    append_list!(@prim: TimestampMicrosecond)
-                }
-                DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-                    append_list!(@prim: TimestampNanosecond)
-                }
+                DataType::Timestamp(TimeUnit::Second, _) =>
+                    append_list!(@prim: TimestampSecond),
+                DataType::Timestamp(TimeUnit::Millisecond, _) =>
+                    append_list!(@prim: TimestampMillisecond),
+                DataType::Timestamp(TimeUnit::Microsecond, _) =>
+                    append_list!(@prim: TimestampMicrosecond),
+                DataType::Timestamp(TimeUnit::Nanosecond, _) =>
+                    append_list!(@prim: TimestampNanosecond),
                 DataType::Time32(TimeUnit::Second) => append_list!(@prim: Time32Second),
                 DataType::Time32(TimeUnit::Millisecond) => append_list!(@prim: Time32Millisecond),
                 DataType::Time64(TimeUnit::Microsecond) => append_list!(@prim: Time64Microsecond),
@@ -355,7 +372,9 @@ pub fn builder_extend(
         DataType::Float64 => append_simple!(Float64),
         DataType::Date32 => append_simple!(Date32),
         DataType::Date64 => append_simple!(Date64),
-        DataType::Timestamp(TimeUnit::Second, _) => append_simple!(TimestampSecond),
+        DataType::Timestamp(TimeUnit::Second, _) => {
+            append_simple!(TimestampSecond)
+        },
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
             append_simple!(TimestampMillisecond)
         }
@@ -421,7 +440,9 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
                 DataType::Boolean => append_null_for_list!(@prim: Boolean),
                 DataType::Utf8 => append_null_for_list!(@prim: String),
                 DataType::LargeUtf8 => append_null_for_list!(@prim: LargeString),
-                DataType::Timestamp(TimeUnit::Second, _) => append_null_for_list!(@prim: TimestampSecond),
+                DataType::Timestamp(TimeUnit::Second, _) => {
+                    append_null_for_list!(@prim: TimestampSecond)
+                }
                 DataType::Timestamp(TimeUnit::Millisecond, _) => {
                     append_null_for_list!(@prim: TimestampMillisecond)
                 }
@@ -550,8 +571,17 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                 DataType::Float64 => make_dictionary_builder!(@make: $keyarrowty, Float64),
                 DataType::Date32 => make_dictionary_builder!(@make: $keyarrowty, Date32),
                 DataType::Date64 => make_dictionary_builder!(@make: $keyarrowty, Date64),
+                DataType::Timestamp(TimeUnit::Second, _) => {
+                    make_dictionary_builder!(@make: $keyarrowty, TimestampSecond)
+                }
+                DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                    make_dictionary_builder!(@make: $keyarrowty, TimestampMillisecond)
+                }
                 DataType::Timestamp(TimeUnit::Microsecond, _) => {
                     make_dictionary_builder!(@make: $keyarrowty, TimestampMicrosecond)
+                }
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                    make_dictionary_builder!(@make: $keyarrowty, TimestampNanosecond)
                 }
                 DataType::Utf8 | DataType::LargeUtf8 => {
                     make_dictionary_builder!(@make_str: $keyarrowty)
@@ -588,7 +618,18 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                     DataType::Float64 => make_list_builder!(@make: Float64),
                     DataType::Date32 => make_list_builder!(@make: Date32),
                     DataType::Date64 => make_list_builder!(@make: Date64),
-                    DataType::Timestamp(TimeUnit::Microsecond, _) => make_list_builder!(@make: TimestampMicrosecond),
+                    DataType::Timestamp(TimeUnit::Second, _) => {
+                        make_list_builder!(@make: TimestampSecond)
+                    }
+                    DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                        make_list_builder!(@make: TimestampMillisecond)
+                    }
+                    DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                        make_list_builder!(@make: TimestampMicrosecond)
+                    }
+                    DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                        make_list_builder!(@make: TimestampNanosecond)
+                    }
                     DataType::Boolean => make_list_builder!(@make: Boolean),
                     DataType::Utf8 => make_list_builder!(@make: String),
                     DataType::LargeUtf8 => make_list_builder!(@make: LargeString),
@@ -625,7 +666,10 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                 DataType::Float64 => make_map_builder!(@match_value: Float64, $value_type, $map_fields_name),
                 DataType::Date32 => make_map_builder!(@match_value: Date32, $value_type, $map_fields_name),
                 DataType::Date64 => make_map_builder!(@match_value: Date64, $value_type, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Second, _) => make_map_builder!(@match_value: TimestampSecond, $value_type, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Millisecond, _) => make_map_builder!(@match_value: TimestampMillisecond, $value_type, $map_fields_name),
                 DataType::Timestamp(TimeUnit::Microsecond, _) => make_map_builder!(@match_value: TimestampMicrosecond, $value_type, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => make_map_builder!(@match_value: TimestampNanosecond, $value_type, $map_fields_name),
                 DataType::Utf8 => make_map_builder!(@match_value: String, $value_type, $map_fields_name),
                 DataType::LargeUtf8 => make_map_builder!(@match_value: LargeString, $value_type, $map_fields_name),
                 DataType::Binary => make_map_builder!(@match_value: Binary, $value_type, $map_fields_name),
@@ -648,7 +692,10 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                 DataType::Float64 => make_map_builder!(@make: $keyarrowty, Float64, $map_fields_name),
                 DataType::Date32 => make_map_builder!(@make: $keyarrowty, Date32, $map_fields_name),
                 DataType::Date64 => make_map_builder!(@make: $keyarrowty, Date64, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Second, _) => make_map_builder!(@make: $keyarrowty, TimestampSecond, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Millisecond, _) => make_map_builder!(@make: $keyarrowty, TimestampMillisecond, $map_fields_name),
                 DataType::Timestamp(TimeUnit::Microsecond, _) => make_map_builder!(@make: $keyarrowty, TimestampMicrosecond, $map_fields_name),
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => make_map_builder!(@make: $keyarrowty, TimestampNanosecond, $map_fields_name),
                 DataType::Utf8  => make_map_builder!(@make: $keyarrowty, String, $map_fields_name),
                 DataType::LargeUtf8 => make_map_builder!(@make: $keyarrowty, LargeString, $map_fields_name),
                 DataType::Binary => make_map_builder!(@make: $keyarrowty, Binary, $map_fields_name),

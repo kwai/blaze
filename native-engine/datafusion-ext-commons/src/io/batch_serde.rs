@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::io::{read_bytes_slice, read_len, read_u8, write_len, write_u8};
+use crate::io::{read_bytes_slice, read_len, write_len};
 use arrow::array::*;
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::*;
@@ -143,7 +143,10 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
         DataType::Binary => write_bytes_array(as_generic_binary_array::<i32>(array), output)?,
         DataType::Date32 => write_primitive!(Date32),
         DataType::Date64 => write_primitive!(Date64),
+        DataType::Timestamp(TimeUnit::Second, _) => write_primitive!(TimestampSecond),
+        DataType::Timestamp(TimeUnit::Millisecond, _) => write_primitive!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => write_primitive!(TimestampMicrosecond),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => write_primitive!(TimestampNanosecond),
         DataType::List(_field) => write_list_array(as_list_array(array), output)?,
         DataType::Map(_, _) => write_map_array(as_map_array(array), output)?,
         DataType::Struct(_) => write_struct_array(as_struct_array(array), output)?,
@@ -187,7 +190,10 @@ fn read_array<R: Read>(
         ),
         DataType::Date32 => read_primitive!(Date32),
         DataType::Date64 => read_primitive!(Date64),
+        DataType::Timestamp(TimeUnit::Second, _) => read_primitive!(TimestampSecond),
+        DataType::Timestamp(TimeUnit::Millisecond, _) => read_primitive!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => read_primitive!(TimestampMicrosecond),
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => read_primitive!(TimestampNanosecond),
         DataType::Utf8 => read_bytes_array(num_rows, input, DataType::Utf8)?,
         DataType::Binary => read_bytes_array(num_rows, input, DataType::Binary)?,
         DataType::List(list_field) => {
@@ -233,155 +239,36 @@ fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> Result<Buffer> {
     Ok(Buffer::from(buf))
 }
 
-fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> Result<()> {
+fn nameless_field(field: &Field) -> Field {
+    Field::new("", nameless_data_type(field.data_type()), field.is_nullable())
+}
+
+fn nameless_data_type(data_type: &DataType) -> DataType {
     match data_type {
-        DataType::Null => write_u8(1, output)?,
-        DataType::Boolean => write_u8(2, output)?,
-        DataType::Int8 => write_u8(3, output)?,
-        DataType::Int16 => write_u8(4, output)?,
-        DataType::Int32 => write_u8(5, output)?,
-        DataType::Int64 => write_u8(6, output)?,
-        DataType::UInt8 => write_u8(7, output)?,
-        DataType::UInt16 => write_u8(8, output)?,
-        DataType::UInt32 => write_u8(9, output)?,
-        DataType::UInt64 => write_u8(10, output)?,
-        DataType::Float32 => write_u8(11, output)?,
-        DataType::Float64 => write_u8(12, output)?,
-        DataType::Date32 => write_u8(13, output)?,
-        DataType::Date64 => write_u8(14, output)?,
-        DataType::Timestamp(TimeUnit::Microsecond, None) => write_u8(15, output)?,
-        DataType::Timestamp(TimeUnit::Microsecond, Some(tz)) => {
-            write_u8(16, output)?;
-            write_len(tz.as_bytes().len(), output)?;
-            output.write_all(tz.as_bytes())?;
-        }
-        DataType::Decimal128(prec, scale) => {
-            write_u8(17, output)?;
-            write_u8(*prec, output)?;
-            write_u8(*scale as u8, output)?;
-        }
-        DataType::Utf8 => write_u8(18, output)?,
-        DataType::Binary => write_u8(19, output)?,
-        DataType::List(field) => {
-            write_u8(20, output)?;
-            write_data_type(field.data_type(), output)?;
-            if field.is_nullable() {
-                write_u8(1, output)?;
-            } else {
-                write_u8(0, output)?;
-            }
-        }
-        DataType::Map(field, is_sorted) => {
-            write_u8(21, output)?;
-            if *is_sorted {
-                write_u8(1, output)?;
-            } else {
-                write_u8(0, output)?;
-            }
-            if field.is_nullable() {
-                write_u8(1, output)?;
-            } else {
-                write_u8(0, output)?;
-            }
-            match field.data_type() {
-                DataType::Struct(fields) => {
-                    for field in fields {
-                        write_data_type(field.data_type(), output)?;
-                        if field.is_nullable() {
-                            write_u8(1, output)?;
-                        } else {
-                            write_u8(0, output)?;
-                        }
-                    }
-                }
-                other => unreachable!("expect struct field, got {other:?}"),
-            }
-        }
-        DataType::Struct(fields) => {
-            write_u8(22, output)?;
-            write_len(fields.len(), output)?;
-            for field in fields {
-                write_data_type(field.data_type(), output)?;
-                if field.is_nullable() {
-                    write_u8(1, output)?;
-                } else {
-                    write_u8(0, output)?;
-                }
-            }
-        }
-        other => {
-            return Err(DataFusionError::NotImplemented(format!(
-                "write_data_type: unsupported data type: {other:?}",
-            )));
-        }
+        DataType::List(field) => DataType::List(Arc::new(nameless_field(field))),
+        DataType::Map(field, sorted) => DataType::Map(Arc::new(nameless_field(field)), *sorted),
+        DataType::Struct(fields) => DataType::Struct(fields
+            .iter()
+            .map(|field| nameless_field(field))
+            .collect()),
+        others => others.clone(),
     }
+}
+
+fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> Result<()> {
+    let buf = postcard::to_allocvec(&nameless_data_type(data_type))
+        .map_err(|err| DataFusionError::Execution(format!("serialize data type error: {err}")))?;
+    write_len(buf.len(), output)?;
+    output.write_all(&buf)?;
     Ok(())
 }
 
 fn read_data_type<R: Read>(input: &mut R) -> Result<DataType> {
-    Ok(match read_u8(input)? {
-        1 => DataType::Null,
-        2 => DataType::Boolean,
-        3 => DataType::Int8,
-        4 => DataType::Int16,
-        5 => DataType::Int32,
-        6 => DataType::Int64,
-        7 => DataType::UInt8,
-        8 => DataType::UInt16,
-        9 => DataType::UInt32,
-        10 => DataType::UInt64,
-        11 => DataType::Float32,
-        12 => DataType::Float64,
-        13 => DataType::Date32,
-        14 => DataType::Date64,
-        15 => DataType::Timestamp(TimeUnit::Microsecond, None),
-        16 => {
-            let tz_len = read_len(input)?;
-            let tz_bytes = read_bytes_slice(input, tz_len)?;
-            let tz = String::from_utf8_lossy(&tz_bytes).to_string();
-            DataType::Timestamp(TimeUnit::Microsecond, Some(tz.into()))
-        }
-        17 => {
-            let prec = read_u8(input)?;
-            let scale = read_u8(input)? as i8;
-            DataType::Decimal128(prec, scale)
-        }
-        18 => DataType::Utf8,
-        19 => DataType::Binary,
-        20 => {
-            let child_datatype = read_data_type(input)?;
-            let is_nullable = read_u8(input)? == 1;
-            DataType::List(Arc::new(Field::new("item", child_datatype, is_nullable)))
-        }
-        21 => {
-            let is_sorted = read_u8(input)? == 1;
-            let is_nullable = read_u8(input)? == 1;
-            let mut fields = Vec::with_capacity(2);
-            for _i in 0..2 {
-                let field_data_type = read_data_type(input)?;
-                let field_is_nullable = read_u8(input)? == 1;
-                fields.push(Field::new("", field_data_type, field_is_nullable));
-            }
-            let entries_field = Field::new("entries", DataType::Struct(fields.into()), is_nullable);
-            DataType::Map(Arc::new(entries_field), is_sorted)
-        }
-        22 => {
-            let field_len = read_len(input)?;
-            let mut fields = Vec::new();
-            for _i in 0..field_len {
-                let field_data_type = read_data_type(input)?;
-                let field_is_nullable = read_u8(input)? == 1;
-                fields.push(Field::new("", field_data_type, field_is_nullable));
-            }
-            DataType::Struct(fields.into())
-        }
-        other => {
-            return Err(DataFusionError::NotImplemented(format!(
-                "read_data_type: unsupported data type: {:?}",
-                other
-            )));
-        }
-    })
+    let buf_len = read_len(input)?;
+    let buf = read_bytes_slice(input, buf_len)?;
+    let data_type = postcard::from_bytes(&buf)
+        .map_err(|err| DataFusionError::Execution(format!("deserialize data type error: {err}")))?;
+    Ok(data_type)
 }
 
 fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(

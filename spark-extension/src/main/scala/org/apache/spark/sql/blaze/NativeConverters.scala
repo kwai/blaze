@@ -162,7 +162,7 @@ object NativeConverters extends Logging {
       case DoubleType => pb.PrimitiveScalarType.FLOAT64
       case StringType => pb.PrimitiveScalarType.UTF8
       case DateType => pb.PrimitiveScalarType.DATE32
-      case TimestampType => pb.PrimitiveScalarType.TIME_MICROSECOND
+      case TimestampType => pb.PrimitiveScalarType.TIMESTAMP_MICROSECOND
       case _: DecimalType => pb.PrimitiveScalarType.DECIMAL128
       case _: ArrayType => pb.PrimitiveScalarType.UTF8 // FIXME
       case _ => throw new NotImplementedError(s"convert $dt to DF scalar type not supported")
@@ -187,9 +187,7 @@ object NativeConverters extends Logging {
       // timezone is never used in native side
       case TimestampType =>
         arrowTypeBuilder.setTIMESTAMP(
-          pb.Timestamp
-            .newBuilder()
-            .setTimeUnit(pb.TimeUnit.Microsecond))
+          pb.Timestamp.newBuilder().setTimeUnit(pb.TimeUnit.Microsecond))
 
       // decimal
       case t: DecimalType =>
@@ -273,7 +271,7 @@ object NativeConverters extends Logging {
       case BinaryType => throw new NotImplementedError("BinaryType not yet supported")
       case DateType => scalarValueBuilder.setDate32Value(sparkValue.asInstanceOf[Int])
       case TimestampType =>
-        scalarValueBuilder.setTimeMicrosecondValue(sparkValue.asInstanceOf[Long])
+        scalarValueBuilder.setTimestampMicrosecondValue(sparkValue.asInstanceOf[Long])
       case t: DecimalType =>
         val decimalValue = sparkValue.asInstanceOf[Decimal]
         val decimalType = convertDataType(t).getDECIMAL
@@ -414,7 +412,7 @@ object NativeConverters extends Logging {
 
       // cast
       // not performing native cast for timestamps (will use UDFWrapper instead)
-      case Cast(child, dataType, _) if !dataType.isInstanceOf[TimestampType] =>
+      case Cast(child, dataType, _) if !Seq(dataType, child.dataType).contains(TimestampType) =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode
