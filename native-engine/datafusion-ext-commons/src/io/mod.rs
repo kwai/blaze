@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{make_array, Array, ArrayData, ArrayRef, StructArray};
+use arrow::array::{StructArray};
 
 use std::io::{Read, Seek, SeekFrom, Write};
 
 
 use arrow::datatypes::{DataType, SchemaRef};
 use arrow::record_batch::RecordBatch;
-use datafusion::common::cast::{as_boolean_array, as_list_array, as_map_array, as_struct_array,as_null_array};
+use datafusion::common::cast::{as_struct_array};
 use datafusion::common::Result;
-use datafusion::error::DataFusionError;
+
 
 mod batch_serde;
 
@@ -78,112 +78,11 @@ pub fn read_one_batch<R: Read>(
     Ok(Some(nameless_batch))
 }
 
-pub fn adapt_array_data_type(array: &dyn Array, to_data_type: DataType) -> Result<ArrayRef> {
-    let array_data = array.to_data();
-    let from_data_type = array_data.data_type();
-
-    if from_data_type == &to_data_type {
-        return Ok(make_array(array_data));
-    }
-    
-    macro_rules! adapt_directly {
-        ($to_data_type:expr) => {{
-            let array_data = ArrayData::try_new(
-                $to_data_type,
-                array_data.len(),
-                array_data.nulls().map(|nb| nb.buffer()).cloned(),
-                array_data.offset(),
-                array_data.buffers().to_vec(),
-                array_data.child_data().to_vec(),
-            );
-            array_data.map(make_array)
-        }}
-    }
-    match to_data_type {
-        ref to_prim_type if to_prim_type.is_primitive() => {
-            let from_prim_width = from_data_type.primitive_width();
-            let to_prim_width = to_prim_type.primitive_width();
-            if to_prim_width != from_prim_width {
-                return Err(DataFusionError::Execution(
-                    format!("cannot adapt data with type {} to {}", from_data_type, to_data_type)
-                ));
-            }
-            Ok(adapt_directly!(to_data_type)?)
-        }
-        DataType::Null => {
-            let _ = as_null_array(array)?;
-            Ok(adapt_directly!(to_data_type)?)
-        }
-        DataType::Boolean => {
-            let _ = as_boolean_array(array)?;
-            Ok(adapt_directly!(to_data_type)?)
-        }
-        DataType::Binary | DataType::Utf8 => {
-            if !matches!(from_data_type, DataType::Binary | DataType::Utf8) {
-                return Err(DataFusionError::Execution(
-                    format!("cannot adapt data with type {} to {}", from_data_type, to_data_type)
-                ));
-            }
-            Ok(adapt_directly!(to_data_type)?)
-        }
-        DataType::List(ref to_field) => {
-            let to_values = adapt_array_data_type(
-                as_list_array(array)?.values(),
-                to_field.data_type().clone(),
-            )?;
-            return Ok(make_array(ArrayData::try_new(
-                to_data_type,
-                array_data.len(),
-                array_data.nulls().map(|nb| nb.buffer()).cloned(),
-                array_data.offset(),
-                array_data.buffers().to_vec(),
-                vec![to_values.into_data()],
-            )?));
-        }
-        DataType::Map(ref entries_field, _) => {
-            let to_entries = adapt_array_data_type(
-                as_map_array(array)?.entries(),
-                entries_field.data_type().clone(),
-            )?;
-            return Ok(make_array(ArrayData::try_new(
-                to_data_type,
-                array_data.len(),
-                array_data.nulls().map(|nb| nb.buffer()).cloned(),
-                array_data.offset(),
-                array_data.buffers().to_vec(),
-                vec![to_entries.into_data()],
-            )?));
-        }
-        DataType::Struct(ref to_fields) => {
-            let to_columns = as_struct_array(array)?
-                .columns()
-                .iter()
-                .zip(to_fields.iter())
-                .map(|(array, to_field)| {
-                    adapt_array_data_type(array, to_field.data_type().clone())
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            return Ok(make_array(ArrayData::try_new(
-                to_data_type,
-                array_data.len(),
-                array_data.nulls().map(|nb| nb.buffer()).cloned(),
-                array_data.offset(),
-                array_data.buffers().to_vec(),
-                to_columns.into_iter().map(|array| array.into_data()).collect(),
-            )?));
-        }
-        other => Err(DataFusionError::Execution(
-            format!("adapt_array_data_type(): unsupported data type: {}", other)
-        )),
-    }
-}
-
 pub fn name_batch(batch: RecordBatch, name_schema: &SchemaRef) -> Result<RecordBatch> {
     Ok(RecordBatch::from(as_struct_array(
-        &adapt_array_data_type(
+        &crate::cast::cast(
             &StructArray::from(batch),
-            DataType::Struct(name_schema.fields.clone()),
+            &DataType::Struct(name_schema.fields.clone()),
         )?
     )?))
 }

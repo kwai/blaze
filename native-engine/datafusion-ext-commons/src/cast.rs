@@ -14,102 +14,95 @@
 
 use arrow::array::*;
 use arrow::datatypes::*;
-use datafusion::common::{Result, ScalarValue};
-use datafusion::physical_plan::ColumnarValue;
+use datafusion::common::{DataFusionError, Result};
 use num::{Bounded, FromPrimitive, Integer, Signed, ToPrimitive};
 use paste::paste;
 use std::str::FromStr;
 use std::sync::Arc;
 
-pub fn cast(value: ColumnarValue, cast_type: &DataType) -> Result<ColumnarValue> {
-    match (&value.data_type(), cast_type) {
-        (_, &DataType::Null) => match value {
-            ColumnarValue::Array(array) => {
-                Ok(ColumnarValue::Array(Arc::new(NullArray::new(array.len()))))
-            }
-            ColumnarValue::Scalar(_) => Ok(ColumnarValue::Scalar(ScalarValue::Null)),
+pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
+    Ok(match (&array.data_type(), cast_type) {
+        (_, &DataType::Null) => {
+            Arc::new(NullArray::new(array.len()))
         },
         (&DataType::Utf8, &DataType::Int8)
         | (&DataType::Utf8, &DataType::Int16)
         | (&DataType::Utf8, &DataType::Int32)
         | (&DataType::Utf8, &DataType::Int64) => {
             // spark compatible string to integer cast
-            match value {
-                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    try_cast_string_array_to_integer(&array, cast_type)?,
-                )),
-                ColumnarValue::Scalar(scalar) => {
-                    let scalar_array = scalar.to_array();
-                    let cast_array = try_cast_string_array_to_integer(&scalar_array, cast_type)?;
-                    let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
-                    Ok(ColumnarValue::Scalar(cast_scalar))
-                }
-            }
+            try_cast_string_array_to_integer(array, cast_type)?
         }
         (&DataType::Utf8, &DataType::Decimal128(_, _)) => {
             // spark compatible string to decimal cast
-            match value {
-                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    try_cast_string_array_to_decimal(&array, cast_type)?,
-                )),
-                ColumnarValue::Scalar(scalar) => {
-                    let scalar_array = scalar.to_array();
-                    let cast_array = try_cast_string_array_to_decimal(&scalar_array, cast_type)?;
-                    let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
-                    Ok(ColumnarValue::Scalar(cast_scalar))
-                }
-            }
+            try_cast_string_array_to_decimal(array, cast_type)?
         }
         (&DataType::Decimal128(_, _), DataType::Utf8) => {
             // spark compatible decimal to string cast
-            match value {
-                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    try_cast_decimal_array_to_string(&array, cast_type)?,
-                )),
-                ColumnarValue::Scalar(scalar) => {
-                    let scalar_array = scalar.to_array();
-                    let cast_array = try_cast_decimal_array_to_string(&scalar_array, cast_type)?;
-                    let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
-                    Ok(ColumnarValue::Scalar(cast_scalar))
-                }
-            }
+            try_cast_decimal_array_to_string(array, cast_type)?
         }
         (&DataType::Timestamp(TimeUnit::Microsecond, _), DataType::Float64) => {
             // timestamp to f64 = timestamp to i64 to f64, only used in agg.sum()
-            match value {
-                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(arrow::compute::cast(
-                    &arrow::compute::cast(&array, &DataType::Int64)?,
-                    &DataType::Float64,
-                )?)),
-                ColumnarValue::Scalar(scalar) => {
-                    let scalar_array = scalar.to_array();
-                    let cast_array = arrow::compute::cast(
-                        &arrow::compute::cast(&scalar_array, &DataType::Int64)?,
-                        &DataType::Float64,
-                    )?;
-                    let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
-                    Ok(ColumnarValue::Scalar(cast_scalar))
-                }
+            arrow::compute::cast(
+                &arrow::compute::cast(array, &DataType::Int64)?,
+                &DataType::Float64
+            )?
+        }
+        (&DataType::List(_), DataType::List(to_field)) => {
+            let list = as_list_array(array);
+            let casted_items = cast(list.values(), to_field.data_type())?;
+            make_array(ArrayData::try_new(
+                DataType::List(to_field.clone()),
+                list.len(),
+                list.nulls().map(|nb| nb.buffer().clone()),
+                list.offset(),
+                list.to_data().buffers().to_vec(),
+                vec![casted_items.into_data()],
+            )?)
+        }
+        (&DataType::Struct(_), DataType::Struct(to_fields)) => {
+            let struct_ = as_struct_array(array);
+            if to_fields.len() != struct_.num_columns() {
+                return Err(DataFusionError::Execution(
+                    "cannot cast structs with different numbers of fields".to_string()
+                ));
             }
+            let casted_arrays = struct_
+                .columns()
+                .iter()
+                .zip(to_fields)
+                .map(|(column, to_field)| cast(column, to_field.data_type()))
+                .collect::<Result<Vec<_>>>()?;
+
+            make_array(ArrayData::try_new(
+                DataType::Struct(to_fields.clone()),
+                struct_.len(),
+                struct_.nulls().map(|nb| nb.buffer().clone()),
+                struct_.offset(),
+                struct_.to_data().buffers().to_vec(),
+                casted_arrays.into_iter().map(|array| array.into_data()).collect(),
+            )?)
+        }
+        (&DataType::Map(_, _), &DataType::Map(ref to_entries_field, to_sorted)) => {
+            let map = as_map_array(array);
+            let casted_entries = cast(map.entries(), to_entries_field.data_type())?;
+
+            make_array(ArrayData::try_new(
+                DataType::Map(to_entries_field.clone(), to_sorted),
+                map.len(),
+                map.nulls().map(|nb| nb.buffer().clone()),
+                map.offset(),
+                map.to_data().buffers().to_vec(),
+                vec![casted_entries.into_data()],
+            )?)
         }
         _ => {
             // default cast
-            match value {
-                ColumnarValue::Array(array) => Ok(ColumnarValue::Array(
-                    arrow::compute::kernels::cast::cast(&array, cast_type)?,
-                )),
-                ColumnarValue::Scalar(scalar) => {
-                    let scalar_array = scalar.to_array();
-                    let cast_array = arrow::compute::kernels::cast::cast(&scalar_array, cast_type)?;
-                    let cast_scalar = ScalarValue::try_from_array(&cast_array, 0)?;
-                    Ok(ColumnarValue::Scalar(cast_scalar))
-                }
-            }
+            arrow::compute::kernels::cast::cast(array, cast_type)?
         }
-    }
+    })
 }
 
-fn try_cast_string_array_to_integer(array: &ArrayRef, cast_type: &DataType) -> Result<ArrayRef> {
+fn try_cast_string_array_to_integer(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
     macro_rules! cast {
         ($target_type:ident) => {{
             type B = paste! {[<$target_type Builder>]};
@@ -135,7 +128,7 @@ fn try_cast_string_array_to_integer(array: &ArrayRef, cast_type: &DataType) -> R
     })
 }
 
-fn try_cast_string_array_to_decimal(array: &ArrayRef, cast_type: &DataType) -> Result<ArrayRef> {
+fn try_cast_string_array_to_decimal(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
     if let &DataType::Decimal128(precision, scale) = cast_type {
         let array = array.as_any().downcast_ref::<StringArray>().unwrap();
         let mut builder = Decimal128Builder::new();
@@ -158,7 +151,7 @@ fn try_cast_string_array_to_decimal(array: &ArrayRef, cast_type: &DataType) -> R
     unreachable!("cast_type must be DataType::Decimal")
 }
 
-fn try_cast_decimal_array_to_string(array: &ArrayRef, cast_type: &DataType) -> Result<ArrayRef> {
+fn try_cast_decimal_array_to_string(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
     if let &DataType::Utf8 = cast_type {
         let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
         let mut builder = StringBuilder::new();

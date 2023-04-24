@@ -18,7 +18,7 @@ use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::error::DataFusionError;
-use datafusion::logical_expr::ColumnarValue;
+
 use datafusion::physical_expr::PhysicalExpr;
 use paste::paste;
 use std::any::Any;
@@ -79,10 +79,9 @@ impl Agg for AggSum {
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // cast arg1 to target data type
         Ok(vec![datafusion_ext_commons::cast::cast(
-            ColumnarValue::Array(partial_inputs[0].clone()),
+            &partial_inputs[0],
             &self.data_type,
-        )?
-        .into_array(0)])
+        )?])
     }
 
     fn partial_update(

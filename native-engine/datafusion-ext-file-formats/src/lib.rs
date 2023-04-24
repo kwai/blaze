@@ -30,7 +30,7 @@ use std::{
 };
 
 pub use self::parquet::ParquetExec;
-use arrow::array::{Array, new_null_array};
+use arrow::array::new_null_array;
 use arrow::record_batch::RecordBatchOptions;
 use arrow::{
     array::ArrayRef,
@@ -43,7 +43,7 @@ use datafusion::datasource::listing::FileRange;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, Statistics};
 use datafusion::{error::Result, scalar::ScalarValue};
-use datafusion_ext_commons::io::adapt_array_data_type;
+use datafusion_ext_commons::cast::cast;
 
 mod file_stream;
 mod fs;
@@ -240,12 +240,8 @@ impl SchemaAdapter {
                 .find(|&(_, c)| c.name().eq_ignore_ascii_case(table_field.name()))
             {
                 // blaze: adapt to expected table data type
-                let col = &batch_cols[batch_idx];
-                cols.push(if col.data_type() == table_field.data_type() {
-                    col.clone()
-                } else {
-                    adapt_array_data_type(&col, table_field.data_type().clone())?
-                });
+                cols.push(cast(&batch_cols[batch_idx], table_field.data_type())?);
+
             } else {
                 cols.push(new_null_array(table_field.data_type(), batch_rows))
             }

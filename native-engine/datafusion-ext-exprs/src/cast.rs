@@ -21,6 +21,7 @@ use datafusion::physical_expr::PhysicalExpr;
 use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
+use datafusion::scalar::ScalarValue;
 
 /// cast expression compatible with spark
 #[derive(Debug)]
@@ -64,8 +65,18 @@ impl PhysicalExpr for TryCastExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let value = self.expr.evaluate(batch)?;
-        datafusion_ext_commons::cast::cast(value, &self.cast_type)
+        Ok(match self.expr.evaluate(batch)? {
+            ColumnarValue::Array(array) => ColumnarValue::Array(
+                datafusion_ext_commons::cast::cast(&array, &self.cast_type)?
+            ),
+            ColumnarValue::Scalar(scalar) => {
+                let array = scalar.to_array();
+                ColumnarValue::Scalar(ScalarValue::try_from_array(
+                    &datafusion_ext_commons::cast::cast(&array, &self.cast_type)?,
+                    0,
+                )?)
+            }
+        })
     }
 
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
