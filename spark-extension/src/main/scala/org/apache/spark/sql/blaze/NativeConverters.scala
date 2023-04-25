@@ -361,6 +361,13 @@ object NativeConverters extends Logging {
             .setReturnType(convertDataType(dataType)))
       }
 
+    def castIfNecessary(expr: Expression, dataType: DataType): Expression = {
+      if (expr.dataType == dataType) {
+        return expr
+      }
+      Cast(expr, dataType)
+    }
+
     def unpackBinaryTypeCast(expr: Expression) =
       expr match {
         case Cast(inner, BinaryType, _) => inner
@@ -591,10 +598,14 @@ object NativeConverters extends Logging {
       case Or(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Or")
 
       // bitwise
-      case BitwiseAnd(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseAnd")
-      case BitwiseOr(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseOr")
-      case ShiftLeft(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseShiftLeft")
-      case ShiftRight(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "BitwiseShiftRight")
+      case BitwiseAnd(lhs, rhs) =>
+        buildBinaryExprNode(lhs, castIfNecessary(rhs, lhs.dataType), "BitwiseAnd")
+      case BitwiseOr(lhs, rhs) =>
+        buildBinaryExprNode(lhs, castIfNecessary(rhs, lhs.dataType), "BitwiseOr")
+      case ShiftLeft(lhs, rhs) =>
+        buildBinaryExprNode(lhs, castIfNecessary(rhs, lhs.dataType), "BitwiseShiftLeft")
+      case ShiftRight(lhs, rhs) =>
+        buildBinaryExprNode(lhs, castIfNecessary(rhs, lhs.dataType), "BitwiseShiftRight")
 
       // builtin scalar functions
       case e: Sqrt => buildScalarFunction(pb.ScalarFunction.Sqrt, e.children, e.dataType)
