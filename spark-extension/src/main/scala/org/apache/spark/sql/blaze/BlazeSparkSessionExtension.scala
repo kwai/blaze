@@ -19,14 +19,13 @@ package org.apache.spark.sql.blaze
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.internal.config.ConfigBuilder
-import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.internal.config.{ConfigEntry, OptionalConfigEntry}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
-import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -45,7 +44,7 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
     assert(BlazeSparkSessionExtension.blazeEnabledKey != null)
 
     extensions.injectOptimizerRule(sparkSession => {
-      BlazeFilterRules(sparkSession)
+      BlazeRuleEngine(sparkSession)
     })
 
     extensions.injectColumnar(sparkSession => {
@@ -60,10 +59,10 @@ object BlazeSparkSessionExtension {
     .booleanConf
     .createWithDefault(true)
 
-  lazy val nonConvertRule: ConfigEntry[String] = SQLConf
-    .buildConf("spark.blaze.nonConvertRule")
+  lazy val blazeMissPatterns: OptionalConfigEntry[String] = SQLConf
+    .buildConf("spark.blaze.blazeMissPatterns")
     .stringConf
-    .createWithDefault("default")
+    .createOptional
 }
 
 case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule with Logging {
@@ -110,29 +109,37 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
     }
 }
 
-case class BlazeFilterRules(sparkSession: SparkSession) extends Rule[LogicalPlan] with Logging {
+case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan] with Logging {
   import BlazeSparkSessionExtension._
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
     plan.foreachUp {
-      case l @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, _) =>
+      case p @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, _) =>
         if (!fsRelation.fileFormat.isInstanceOf[ParquetFileFormat]) {
-          l.conf.setConf(blazeEnabledKey, false)
-          l.conf.setConf(nonConvertRule, "nonParquet")
+          p.conf.setConf(blazeEnabledKey, false)
+          sparkSession.sparkContext.conf
+            .set(blazeMissPatterns, BlazeMissPatterns.NonParquetFormat)
         }
 
       case h: HiveTableRelation =>
         h.conf.setConf(blazeEnabledKey, false)
-        h.conf.setConf(nonConvertRule, "nonParquet")
+        sparkSession.sparkContext.conf
+          .set(blazeMissPatterns, BlazeMissPatterns.NonParquetFormat)
 
       case PhysicalOperation(_, _, l @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, _)) =>
         if (!fsRelation.fileFormat.isInstanceOf[ParquetFileFormat]) {
           l.conf.setConf(blazeEnabledKey, false)
-          l.conf.setConf(nonConvertRule, "nonParquet")
+          sparkSession.sparkContext.conf
+            .set(blazeMissPatterns, BlazeMissPatterns.NonParquetFormat)
         }
 
       case _ =>
     }
     plan
+  }
+
+  object BlazeMissPatterns extends Enumeration {
+    type BlazeMissPatterns = String
+    val NonParquetFormat = "NonParquetFormat"
   }
 }
