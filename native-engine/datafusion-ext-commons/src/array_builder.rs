@@ -536,7 +536,7 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
             type ValueType = paste! {[< $valuearrowty Builder >]};
             type B = MapBuilder<KeyType, ValueType>;
             let t = to.as_any_mut().downcast_mut::<B>().unwrap();
-            t.append(false);
+            t.append(false).expect("map append_null() error");
         }};
     }
 
@@ -555,9 +555,9 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
                         _capacity: usize,
                     }
                     struct XStructBuilder {
-                    _fields: Vec<Field>,
-                    field_builders: Vec<Box<dyn ArrayBuilder>>,
-                    _null_buffer_builder: XNullBufferBuilder,
+                        _fields: Vec<Field>,
+                        field_builders: Vec<Box<dyn ArrayBuilder>>,
+                        _null_buffer_builder: XNullBufferBuilder,
                     }
                     let t: &mut XStructBuilder = std::mem::transmute(&mut (*t));
                     std::slice::from_raw_parts_mut(t.field_builders.as_mut_ptr(), t.field_builders.len())
