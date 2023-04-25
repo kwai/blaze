@@ -469,7 +469,76 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
             let t = to.as_any_mut().downcast_mut::<B>().unwrap();
             t.append(false);
         }};
-}
+    }
+
+    macro_rules! append_null_for_map {
+        ($key_type:expr, $value_type:expr) => {{
+            append_null_for_map!(@match_key: $key_type, $value_type)
+        }};
+        (@match_key: $key_type:expr, $value_type:expr) => {{
+            match $key_type {
+                DataType::Boolean => append_null_for_map!(@match_value: Boolean, $value_type),
+                DataType::Int8 => append_null_for_map!(@match_value: Int8, $value_type),
+                DataType::Int16 => append_null_for_map!(@match_value: Int16, $value_type),
+                DataType::Int32 => append_null_for_map!(@match_value: Int32, $value_type),
+                DataType::Int64 => append_null_for_map!(@match_value: Int64, $value_type),
+                DataType::UInt8 => append_null_for_map!(@match_value: UInt8, $value_type),
+                DataType::UInt16=> append_null_for_map!(@match_value: UInt16, $value_type),
+                DataType::UInt32 => append_null_for_map!(@match_value: UInt32, $value_type),
+                DataType::UInt64 => append_null_for_map!(@match_value: UInt64, $value_type),
+                DataType::Float32 => append_null_for_map!(@match_value: Float32, $value_type),
+                DataType::Float64 => append_null_for_map!(@match_value: Float64, $value_type),
+                DataType::Date32 => append_null_for_map!(@match_value: Date32, $value_type),
+                DataType::Date64 => append_null_for_map!(@match_value: Date64, $value_type),
+                DataType::Timestamp(TimeUnit::Second, _) =>
+                    append_null_for_map!(@match_value: TimestampSecond, $value_type),
+                DataType::Timestamp(TimeUnit::Millisecond, _) =>
+                    append_null_for_map!(@match_value: TimestampMillisecond, $value_type),
+                DataType::Timestamp(TimeUnit::Microsecond, _) =>
+                    append_null_for_map!(@match_value: TimestampMicrosecond, $value_type),
+                DataType::Timestamp(TimeUnit::Nanosecond, _) =>
+                    append_null_for_map!(@match_value: TimestampNanosecond, $value_type),
+                DataType::Utf8 => append_null_for_map!(@match_value: String, $value_type),
+                DataType::LargeUtf8 => append_null_for_map!(@match_value: LargeString, $value_type),
+                DataType::Binary => append_null_for_map!(@match_value: Binary, $value_type),
+                DataType::LargeBinary => append_null_for_map!(@match_value: LargeBinary, $value_type),
+                _ => unimplemented!("map key type not supported: {:?}", $key_type),
+            }
+        }};
+        (@match_value: $keyarrowty:ident, $value_type:expr) => {{
+            match $value_type {
+                DataType::Boolean => append_null_for_map!(@prim: $keyarrowty, Boolean),
+                DataType::Int8 => append_null_for_map!(@prim: $keyarrowty, Int8),
+                DataType::Int16 => append_null_for_map!(@prim: $keyarrowty, Int16),
+                DataType::Int32 => append_null_for_map!(@prim: $keyarrowty, Int32),
+                DataType::Int64 => append_null_for_map!(@prim: $keyarrowty, Int64),
+                DataType::UInt8 => append_null_for_map!(@prim: $keyarrowty, UInt8),
+                DataType::UInt16 => append_null_for_map!(@prim: $keyarrowty, UInt16),
+                DataType::UInt32 => append_null_for_map!(@prim: $keyarrowty, UInt32),
+                DataType::UInt64 => append_null_for_map!(@prim: $keyarrowty, UInt64),
+                DataType::Float32 => append_null_for_map!(@prim: $keyarrowty, Float32),
+                DataType::Float64 => append_null_for_map!(@prim: $keyarrowty, Float64),
+                DataType::Date32 => append_null_for_map!(@prim: $keyarrowty, Date32),
+                DataType::Date64 => append_null_for_map!(@prim: $keyarrowty, Date64),
+                DataType::Timestamp(TimeUnit::Second, _) => append_null_for_map!(@prim: $keyarrowty, TimestampSecond),
+                DataType::Timestamp(TimeUnit::Millisecond, _) => append_null_for_map!(@prim: $keyarrowty, TimestampMillisecond),
+                DataType::Timestamp(TimeUnit::Microsecond, _) => append_null_for_map!(@prim: $keyarrowty, TimestampMicrosecond),
+                DataType::Timestamp(TimeUnit::Nanosecond, _) => append_null_for_map!(@prim: $keyarrowty, TimestampNanosecond),
+                DataType::Utf8 => append_null_for_map!(@prim: $keyarrowty, String),
+                DataType::LargeUtf8 => append_null_for_map!(@prim: $keyarrowty, LargeString),
+                DataType::Binary => append_null_for_map!(@prim: $keyarrowty, Binary),
+                DataType::LargeBinary => append_null_for_map!(@prim: $keyarrowty, LargeBinary),
+                _ => unimplemented!("map value type not supported: {:?}", $value_type),
+            }
+        }};
+        (@prim: $keyarrowty:ident, $valuearrowty:ident) => {{
+            type KeyType = paste! {[< $keyarrowty Builder >]};
+            type ValueType = paste! {[< $valuearrowty Builder >]};
+            type B = MapBuilder<KeyType, ValueType>;
+            let t = to.as_any_mut().downcast_mut::<B>().unwrap();
+            t.append(false);
+        }};
+    }
 
     macro_rules! append_null_for_struct {
         ($fields:expr) => {{
@@ -534,6 +603,15 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
         DataType::Decimal128(_, _) => append!(ConfiguredDecimal128),
         DataType::Decimal256(_, _) => append!(ConfiguredDecimal256),
         DataType::List(field) => append_null_for_list!(field.data_type()),
+        DataType::Map(field, _) => {
+            if let DataType::Struct(fields) = field.data_type() {
+                let key_type = fields.first().unwrap().data_type();
+                let value_type = fields.last().unwrap().data_type();
+                append_null_for_map!(key_type, value_type)
+            } else {
+                unimplemented!("map field not support {}", field)
+            }
+        },
         DataType::Struct(fields) => append_null_for_struct!(fields),
         dt => unimplemented!("data type not supported in builder_append_null: {:?}", dt),
     }
