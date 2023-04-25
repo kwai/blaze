@@ -22,10 +22,13 @@ use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 
+const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 24; // limit output batch size to 16MB
+
 pub struct CoalesceStream {
     input: SendableRecordBatchStream,
     staging_batches: Vec<RecordBatch>,
     staging_rows: usize,
+    staging_batches_mem_size: usize,
     batch_size: usize,
     elapsed_compute: Time,
 }
@@ -36,6 +39,7 @@ impl CoalesceStream {
             input,
             staging_batches: vec![],
             staging_rows: 0,
+            staging_batches_mem_size: 0,
             batch_size,
             elapsed_compute,
         }
@@ -48,7 +52,18 @@ impl CoalesceStream {
             self.staging_rows,
         )?;
         self.staging_rows = 0;
+        self.staging_batches_mem_size = 0;
         Ok(coalesced)
+    }
+
+    fn should_flush(&self) -> bool {
+        let (batch_size_limit, mem_size_limit) =
+            if self.staging_batches.len() > 1 {
+                (self.batch_size, STAGING_BATCHES_MEM_SIZE_LIMIT)
+            }  else {
+                (self.batch_size / 2, STAGING_BATCHES_MEM_SIZE_LIMIT / 2)
+            };
+        self.staging_rows >= batch_size_limit || self.staging_batches_mem_size > mem_size_limit
     }
 }
 
@@ -69,13 +84,10 @@ impl Stream for CoalesceStream {
                     let _timer = elapsed_time.timer();
                     let num_rows = batch.num_rows();
                     if num_rows > 0 {
-                        if self.staging_rows == 0 && num_rows > self.batch_size / 2 {
-                            // the batch is large enough, directly output it
-                            return Poll::Ready(Some(Ok(batch)));
-                        }
                         self.staging_rows += batch.num_rows();
+                        self.staging_batches_mem_size += batch.get_array_memory_size();
                         self.staging_batches.push(batch);
-                        if self.staging_rows >= self.batch_size {
+                        if self.should_flush() {
                             let coalesced = self.coalesce()?;
                             return Poll::Ready(Some(Ok(coalesced)));
                         }
