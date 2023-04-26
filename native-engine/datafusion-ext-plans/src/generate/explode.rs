@@ -43,55 +43,24 @@ impl Generator for ExplodeArray {
         }))
     }
 
-    fn eval(&self, batch: &RecordBatch) -> Result<(Vec<ArrayRef>, Vec<u32>)> {
-        let mut row_mapping = Vec::with_capacity(batch.num_rows());
-        let mut arrays = Vec::with_capacity(batch.num_rows());
-        let mut positions = if self.position {
-            Some(Vec::with_capacity(batch.num_rows()))
-        } else {
-            None
-        };
-
+    fn eval(&self, batch: &RecordBatch) -> Result<Vec<(u32, Vec<ArrayRef>)>> {
+        let mut outputs = vec![];
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
         let list = as_list_array(&input_array);
+
         for (row_id, array) in list.iter().enumerate() {
-            if let Some(array) = array {
-                if let Some(positions) = &mut positions {
-                    for i in 0..array.len() {
-                        row_mapping.push(row_id as u32);
-                        positions.push(i as i32);
-                    }
-                } else {
-                    for _ in 0..array.len() {
-                        row_mapping.push(row_id as u32);
-                    }
-                }
-                arrays.push(array);
+            if let Some(array) = array && !array.is_empty() {
+                let arrays =
+                    if self.position {
+                        let pos_array = Arc::new(Int32Array::from_iter(0..array.len() as i32));
+                        vec![pos_array, array.clone()]
+                    } else {
+                        vec![array.clone()]
+                    };
+                outputs.push((row_id as u32, arrays));
             }
         }
-
-        let output_array = if !arrays.is_empty() {
-            arrow::compute::concat(
-                &arrays
-                    .iter()
-                    .map(|array| array.as_ref())
-                    .collect::<Vec<_>>(),
-            )?
-        } else {
-            new_empty_array(list.data_type())
-        };
-        let output_positions_array = positions.map(|positions| {
-            let array: ArrayRef = Arc::new(Int32Array::from(positions));
-            array
-        });
-
-        Ok((
-            [output_positions_array, Some(output_array)]
-                .into_iter()
-                .flatten()
-                .collect(),
-            row_mapping,
-        ))
+        Ok(outputs)
     }
 }
 
@@ -119,73 +88,24 @@ impl Generator for ExplodeMap {
         }))
     }
 
-    fn eval(&self, batch: &RecordBatch) -> Result<(Vec<ArrayRef>, Vec<u32>)> {
-        let mut row_mapping = Vec::with_capacity(batch.num_rows());
-        let mut k_arrays = Vec::with_capacity(batch.num_rows());
-        let mut v_arrays = Vec::with_capacity(batch.num_rows());
-        let mut positions = if self.position {
-            Some(Vec::with_capacity(batch.num_rows()))
-        } else {
-            None
-        };
-
+    fn eval(&self, batch: &RecordBatch) -> Result<Vec<(u32, Vec<Arc<dyn Array>>)>> {
+        let mut outputs = vec![];
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
         let map = as_map_array(&input_array);
 
         for row_id in 0..map.len() {
-            if map.is_valid(row_id) {
-                let kv_struct = as_struct_array(&map.value(row_id)).clone();
-                if let Some(positions) = &mut positions {
-                    for i in 0..kv_struct.len() {
-                        row_mapping.push(row_id as u32);
-                        positions.push(i as i32);
-                    }
-                } else {
-                    for _ in 0..kv_struct.len() {
-                        row_mapping.push(row_id as u32);
-                    }
-                }
-                k_arrays.push(kv_struct.column(0).clone());
-                v_arrays.push(kv_struct.column(1).clone());
+            if map.is_valid(row_id) && !map.value(row_id).is_empty() {
+                let entries = as_struct_array(&map.value(row_id)).clone();
+                let arrays =
+                    if self.position {
+                        let pos_array = Arc::new(Int32Array::from_iter(0..entries.len() as i32));
+                        vec![pos_array, entries.column(0).clone(), entries.column(1).clone()]
+                    } else {
+                        vec![entries.column(0).clone(), entries.column(1).clone()]
+                    };
+                outputs.push((row_id as u32, arrays));
             }
         }
-
-        let output_k_array = if !k_arrays.is_empty() {
-            arrow::compute::concat(
-                &k_arrays
-                    .iter()
-                    .map(|array| array.as_ref())
-                    .collect::<Vec<_>>(),
-            )?
-        } else {
-            new_empty_array(map.key_type())
-        };
-        let output_v_array = if v_arrays.is_empty() {
-            arrow::compute::concat(
-                &v_arrays
-                    .iter()
-                    .map(|array| array.as_ref())
-                    .collect::<Vec<_>>(),
-            )?
-        } else {
-            new_empty_array(map.value_type())
-        };
-
-        let output_positions_array = positions.map(|positions| {
-            let array: ArrayRef = Arc::new(Int32Array::from(positions));
-            array
-        });
-
-        Ok((
-            [
-                output_positions_array,
-                Some(output_k_array),
-                Some(output_v_array),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
-            row_mapping,
-        ))
+        Ok(outputs)
     }
 }
