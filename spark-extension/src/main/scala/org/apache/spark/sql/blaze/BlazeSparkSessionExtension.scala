@@ -55,7 +55,7 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
 
 object BlazeSparkSessionExtension {
   lazy val blazeEnabledKey: ConfigEntry[Boolean] = SQLConf
-    .buildConf("spark.blaze.enabled")
+    .buildConf("spark.blaze.enable")
     .booleanConf
     .createWithDefault(true)
 
