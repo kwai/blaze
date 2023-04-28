@@ -160,7 +160,6 @@ impl PartialEq<dyn Any> for GetIndexedFieldExpr {
 mod test {
     use super::GetIndexedFieldExpr;
     use arrow::array::*;
-
     use arrow::datatypes::*;
     use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_eq;
@@ -178,19 +177,26 @@ mod test {
             Some(vec![Some(300)]),
             Some(vec![Some(400), Some(401), None, Some(403)]),
         ]));
-        let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("c1", array, true)])?;
+        let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", array, true)])?;
 
         let get_indexed = Arc::new(GetIndexedFieldExpr::new(
-            Arc::new(Column::new("c1", 0)),
+            Arc::new(Column::new("cccccc1", 0)),
             ScalarValue::from(2_i64),
         ));
         let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
         let output_batch =
-            RecordBatch::try_from_iter_with_nullable(vec![("c1", output_array, true)])?;
+            RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", output_array, true)])?;
 
         let expected = vec![
-            "+-----+", "| c1  |", "+-----+", "| 101 |", "| 201 |", "|     |", "|     |", "| 401 |",
-            "+-----+",
+            "+---------+",
+            "| cccccc1 |",
+            "+---------+",
+            "| 101     |",
+            "| 201     |",
+            "|         |",
+            "|         |",
+            "| 401     |",
+            "+---------+",
         ];
         assert_batches_eq!(expected, &[output_batch]);
         Ok(())

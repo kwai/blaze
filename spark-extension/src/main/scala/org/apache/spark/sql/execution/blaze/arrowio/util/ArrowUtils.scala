@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.blaze.arrowio.util2
+package org.apache.spark.sql.execution.blaze.arrowio.util
 
 import scala.collection.JavaConverters._
 
@@ -28,10 +28,12 @@ import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.FieldType
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark.sql.types._
+import org.apache.spark.util.ShutdownHookManager
 
 object ArrowUtils {
 
   val rootAllocator = new RootAllocator(Long.MaxValue)
+  ShutdownHookManager.addShutdownHook(() => rootAllocator.close())
 
   /** Maps data type from Spark to Arrow. NOTE: timeZoneId is always NULL in TimestampTypes */
   def toArrowType(dt: DataType): ArrowType =

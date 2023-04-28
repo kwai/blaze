@@ -120,3 +120,60 @@ impl PhysicalExpr for NamedStructExpr {
         )?))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use arrow::array::*;
+    use arrow::datatypes::*;
+    use arrow::record_batch::RecordBatch;
+    use datafusion::assert_batches_eq;
+    use datafusion::physical_plan::expressions::Column;
+    use datafusion::physical_plan::PhysicalExpr;
+    use std::sync::Arc;
+    use crate::named_struct::NamedStructExpr;
+
+    #[test]
+    fn test_list() -> Result<(), Box<dyn std::error::Error>> {
+        let array: ArrayRef = Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>(vec![
+            Some(vec![Some(100), Some(101), Some(102)]),
+            Some(vec![Some(200), Some(201)]),
+            None,
+            Some(vec![Some(300)]),
+            Some(vec![Some(400), Some(401), None, Some(403)]),
+        ]));
+        let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", array, true)])?;
+
+        let named_struct = Arc::new(NamedStructExpr::try_new(
+            vec![Arc::new(Column::new("cccccc1", 0)), Arc::new(Column::new("cccccc1", 0))],
+            DataType::Struct(Fields::from(vec![
+                Field::new(
+                    "field1",
+                    DataType::List(Arc::new(Field::new("item", DataType::Int32, true))),
+                    true,
+                ),
+                Field::new(
+                    "field2",
+                    DataType::List(Arc::new(Field::new("item", DataType::Int32, true))),
+                    true,
+                ),
+            ])),
+        )?);
+        let output_array = named_struct.evaluate(&input_batch)?.into_array(0);
+        let output_batch =
+            RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", output_array, true)])?;
+
+        let expected = vec![
+            "+--------------------------------------------------------+",
+            "| cccccc1                                                |",
+            "+--------------------------------------------------------+",
+            "| {field1: [100, 101, 102], field2: [100, 101, 102]}     |",
+            "| {field1: [200, 201], field2: [200, 201]}               |",
+            "| {field1: , field2: }                                   |",
+            "| {field1: [300], field2: [300]}                         |",
+            "| {field1: [400, 401, , 403], field2: [400, 401, , 403]} |",
+            "+--------------------------------------------------------+",
+        ];
+        assert_batches_eq!(expected, &[output_batch]);
+        Ok(())
+    }
+}

@@ -62,7 +62,6 @@ case class BlazeCallNativeWrapper(
         checkError()
         batch
       }, {
-        checkError()
         this.close()
       })
 
@@ -71,7 +70,6 @@ case class BlazeCallNativeWrapper(
 
   protected def setError(error: Throwable): Unit = {
     this.error.set(error)
-    this.close()
   }
 
   protected def checkError(): Unit = {

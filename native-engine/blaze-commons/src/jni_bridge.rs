@@ -1100,6 +1100,8 @@ impl<'a> BlazeRssPartitionWriterBase<'_> {
 pub struct SparkUDFWrapperContext<'a> {
     pub class: JClass<'a>,
     pub ctor: JMethodID,
+    pub method_eval: JMethodID,
+    pub method_eval_ret: ReturnType,
 }
 impl<'a> SparkUDFWrapperContext<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDFWrapperContext";
@@ -1108,7 +1110,9 @@ impl<'a> SparkUDFWrapperContext<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkUDFWrapperContext {
             class,
-            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;JJ)V")?,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
+            method_eval: env.get_method_id(class, "eval", "(JJ)V").unwrap(),
+            method_eval_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

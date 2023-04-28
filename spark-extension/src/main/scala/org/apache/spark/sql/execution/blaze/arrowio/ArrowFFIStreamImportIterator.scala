@@ -20,14 +20,13 @@ import org.apache.arrow.c.ArrowArrayStream
 import org.apache.arrow.c.Data
 import org.apache.spark.TaskContext
 
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils.rootAllocator
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 class ArrowFFIStreamImportIterator(taskContext: TaskContext, arrowFFIStreamPtr: Long)
     extends Iterator[ColumnarBatch] {
-  private var allocator = rootAllocator.newChildAllocator(this.getClass.getName, 0, Long.MaxValue)
-  private val stream = ArrowArrayStream.wrap(arrowFFIStreamPtr)
-  private val reader = Data.importArrayStream(allocator, stream)
+  private var stream = ArrowArrayStream.wrap(arrowFFIStreamPtr)
+  private var reader = Data.importArrayStream(ArrowUtils.rootAllocator, stream)
   private var currentBatchNotConsumed = false
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
@@ -54,11 +53,11 @@ class ArrowFFIStreamImportIterator(taskContext: TaskContext, arrowFFIStreamPtr: 
 
   def close(): Unit =
     synchronized {
-      if (allocator != null) {
+      if (stream != null) {
         reader.close()
+        reader = null
         stream.close()
-        allocator.close()
-        allocator = null
+        stream = null
       }
     }
 }

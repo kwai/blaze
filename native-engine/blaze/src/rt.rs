@@ -144,11 +144,6 @@ impl NativeExecutionRuntime {
                         "native execution [partition={}] task completed/interrupted before native execution done",
                         partition,
                     );
-                    set_error(
-                        &native_wrapper,
-                        "task completed/interrupted",
-                        None,
-                    )?;
                     return Ok(());
                 }
 
@@ -190,7 +185,8 @@ impl NativeExecutionRuntime {
     pub fn finalize(self) {
         log::info!("native execution [partition={}] finalizing", self.partition);
         let _ = self.update_metrics();
-        let _ = self.ffi_stream;
+        drop(self.ffi_stream);
+        drop(self.plan);
         self.rt.shutdown_background();
         log::info!("native execution [partition={}] finalized", self.partition);
     }

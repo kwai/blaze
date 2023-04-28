@@ -18,58 +18,99 @@ package org.apache.spark.sql.blaze
 
 import java.nio.ByteBuffer
 
-import org.apache.spark.InterruptibleIterator
+import org.apache.arrow.c.ArrowArray
+import org.apache.arrow.c.Data
+import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.arrow.vector.dictionary.DictionaryProvider
+import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.TaskContext
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
-import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamExporter
-import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamImportIterator
+import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.util.Utils
 
-case class SparkUDFWrapperContext(
-    serialized: ByteBuffer,
-    arrowImportFFIStreamPtr: Long,
-    arrowExportFFIStreamPtr: Long)
-    extends Logging {
+case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
 
-  private val _init: Unit = {
-    val taskContext = TaskContext.get()
-    val expr: Expression = NativeConverters.deserializeExpression({
-      val bytes = new Array[Byte](serialized.remaining())
-      serialized.get(bytes)
-      bytes
-    }) match {
-      case nondeterministic: Nondeterministic =>
-        nondeterministic.initialize(TaskContext.get.partitionId())
-        nondeterministic
-      case expr =>
-        expr
+  private val expr: Expression = NativeConverters.deserializeExpression({
+    val bytes = new Array[Byte](serialized.remaining())
+    serialized.get(bytes)
+    bytes
+  }) match {
+    case nondeterministic: Nondeterministic =>
+      nondeterministic.initialize(TaskContext.get.partitionId())
+      nondeterministic
+    case expr =>
+      expr
+  }
+
+  private val paramsProjector: UnsafeProjection = UnsafeProjection.create(expr.children)
+  paramsProjector.initialize(TaskContext.getPartitionId())
+
+  private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
+  private val outputSchema = {
+    val schema = StructType(Seq(StructField("", expr.dataType, expr.nullable)))
+    ArrowUtils.toArrowSchema(schema)
+  }
+  private val paramsSchema = {
+    val schema = StructType(expr.children.map(c => StructField("", c.dataType, c.nullable)))
+    ArrowUtils.toArrowSchema(schema)
+  }
+
+  def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
+    var outputRoot: VectorSchemaRoot = null
+    var paramsRoot: VectorSchemaRoot = null
+
+    Utils.tryWithSafeFinally {
+      outputRoot = VectorSchemaRoot.create(outputSchema, ArrowUtils.rootAllocator)
+      paramsRoot = VectorSchemaRoot.create(paramsSchema, ArrowUtils.rootAllocator)
+
+      // import into params root
+      val importArray = ArrowArray.wrap(importFFIArrayPtr)
+      Utils.tryWithSafeFinally {
+        Data.importIntoVectorSchemaRoot(
+          ArrowUtils.rootAllocator,
+          importArray,
+          paramsRoot,
+          dictionaryProvider)
+        true
+      } {
+        importArray.close()
+      }
+
+      // evaluate expression and write to output root
+      val outputWriter = ArrowWriter.create(outputRoot)
+      for (row <- ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(paramsRoot))) {
+        val unsafeParamsRow = paramsProjector(row)
+        val outputRow = InternalRow(expr.eval(unsafeParamsRow))
+        outputWriter.write(outputRow)
+      }
+      outputWriter.finish()
+
+      // export to output
+      val exportArray = ArrowArray.wrap(exportFFIArrayPtr)
+      Utils.tryWithSafeFinally {
+        Data.exportVectorSchemaRoot(
+          ArrowUtils.rootAllocator,
+          outputRoot,
+          dictionaryProvider,
+          exportArray)
+      } {
+        exportArray.close()
+      }
+    } {
+      if (outputRoot != null) {
+        outputRoot.close()
+      }
+      if (paramsRoot != null) {
+        paramsRoot.close()
+      }
     }
-
-    val importStream = new InterruptibleIterator[ColumnarBatch](
-      taskContext,
-      new ArrowFFIStreamImportIterator(taskContext, arrowImportFFIStreamPtr))
-
-    val outputRows: Iterator[Iterator[InternalRow]] = importStream.map(batch => {
-      val batchedParamRows = ColumnarHelper.batchAsRowIter(batch)
-      val batchedResultRows = batchedParamRows.map(row => InternalRow(expr.eval(row)))
-      batchedResultRows
-    })
-
-    val outputSchema: StructType = StructType(
-      StructField("", expr.dataType, expr.nullable) :: Nil)
-
-    val exporter = new ArrowFFIStreamExporter(
-      TaskContext.get(),
-      outputRows,
-      outputSchema,
-      arrowExportFFIStreamPtr)
-    exporter.exportArrayStream()
   }
 }

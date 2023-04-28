@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.blaze.arrowio.util2
+package org.apache.spark.sql.execution.blaze.arrowio.util
 
 import scala.collection.JavaConverters._
 
@@ -26,7 +26,7 @@ import org.apache.spark.sql.types._
 
 object ArrowWriter {
 
-  def create(schema: StructType, timeZoneId: String): ArrowWriter = {
+  def create(schema: StructType): ArrowWriter = {
     val arrowSchema = ArrowUtils.toArrowSchema(schema)
     val root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
     create(root)

@@ -23,8 +23,8 @@ import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowWriter
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.TaskContext
 
@@ -40,21 +40,26 @@ class ArrowFFIExportIterator(
     with Logging {
 
   private val arrowSchema = ArrowUtils.toArrowSchema(schema)
-  private var allocator =
-    ArrowUtils.rootAllocator.newChildAllocator("arrowFFIExportIterator", 0, Long.MaxValue)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
 
   private var root: VectorSchemaRoot = _
   private var arrowWriter: ArrowWriter = _
 
   taskContext.addTaskCompletionListener[Unit](_ => close())
+  taskContext.addTaskFailureListener((_, _) => close())
 
-  override def hasNext: Boolean = allocator != null && rowIter.hasNext
+  override def hasNext: Boolean = {
+    val hasNext = rowIter.hasNext
+    if (!hasNext) {
+      close()
+    }
+    hasNext
+  }
 
   override def next(): (Long, Long) => Unit =
     synchronized {
       if (root == null) {
-        root = VectorSchemaRoot.create(arrowSchema, allocator)
+        root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
         arrowWriter = ArrowWriter.create(root)
       } else {
         root.allocateNew()
@@ -70,7 +75,7 @@ class ArrowFFIExportIterator(
 
       (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) =>
         Data.exportVectorSchemaRoot(
-          allocator,
+          ArrowUtils.rootAllocator,
           root,
           emptyDictionaryProvider,
           ArrowArray.wrap(exportArrowArrayPtr),
@@ -79,12 +84,8 @@ class ArrowFFIExportIterator(
 
   private def close(): Unit =
     synchronized {
-      if (allocator != null) {
-        if (root != null) {
-          root.close()
-        }
-        allocator.close()
-        allocator = null
+      if (root != null) {
+        root.close()
       }
     }
 }

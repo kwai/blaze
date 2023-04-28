@@ -40,7 +40,6 @@ import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.MapVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.holders.NullableVarCharHolder;
-import org.apache.spark.sql.execution.blaze.arrowio.util2.ArrowUtils;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarArray;
