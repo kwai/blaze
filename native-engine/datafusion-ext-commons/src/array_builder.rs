@@ -374,7 +374,7 @@ pub fn builder_extend(
         DataType::Date64 => append_simple!(Date64),
         DataType::Timestamp(TimeUnit::Second, _) => {
             append_simple!(TimestampSecond)
-        },
+        }
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
             append_simple!(TimestampMillisecond)
         }
@@ -611,7 +611,7 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
             } else {
                 unimplemented!("map field not support {}", field)
             }
-        },
+        }
         DataType::Struct(fields) => append_null_for_struct!(fields),
         dt => unimplemented!("data type not supported in builder_append_null: {:?}", dt),
     }

@@ -120,12 +120,13 @@ impl Agg for AggMax {
             DataType::Date32 => handle_fixed!(Date32, max),
             DataType::Date64 => handle_fixed!(Date64, max),
             DataType::Timestamp(TimeUnit::Second, _) => handle_fixed!(TimestampSecond, max),
-            DataType::Timestamp(TimeUnit::Millisecond, _) =>
-                handle_fixed!(TimestampMillisecond, max),
-            DataType::Timestamp(TimeUnit::Microsecond, _) =>
-                handle_fixed!(TimestampMicrosecond, max),
-            DataType::Timestamp(TimeUnit::Nanosecond, _) =>
-                handle_fixed!(TimestampNanosecond, max),
+            DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                handle_fixed!(TimestampMillisecond, max)
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                handle_fixed!(TimestampMicrosecond, max)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => handle_fixed!(TimestampNanosecond, max),
             DataType::Decimal128(_, _) => handle_fixed!(Decimal128, max),
             DataType::Utf8 => {
                 let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();

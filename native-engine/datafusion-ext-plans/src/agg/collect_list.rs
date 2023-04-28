@@ -198,7 +198,7 @@ impl Agg for AggCollectList {
                             .collect::<Vec<_>>()
                     });
                 ScalarValue::new_list(w, self.arg_type.clone())
-            }}
+            }};
         }
         Ok(match &self.arg_type {
             DataType::Int8 => handle_fixed!(Int8),
@@ -213,14 +213,18 @@ impl Agg for AggCollectList {
             DataType::Float64 => handle_fixed!(Float64),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
-            DataType::Timestamp(TimeUnit::Second, tz) =>
-                handle_fixed_timestamp!(TimestampSecond, tz),
-            DataType::Timestamp(TimeUnit::Millisecond, tz) =>
-                handle_fixed_timestamp!(TimestampMillisecond, tz),
-            DataType::Timestamp(TimeUnit::Microsecond, tz) =>
-                handle_fixed_timestamp!(TimestampMicrosecond, tz),
-            DataType::Timestamp(TimeUnit::Nanosecond, tz) =>
-                handle_fixed_timestamp!(TimestampNanosecond, tz),
+            DataType::Timestamp(TimeUnit::Second, tz) => {
+                handle_fixed_timestamp!(TimestampSecond, tz)
+            }
+            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+                handle_fixed_timestamp!(TimestampMillisecond, tz)
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+                handle_fixed_timestamp!(TimestampMicrosecond, tz)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+                handle_fixed_timestamp!(TimestampNanosecond, tz)
+            }
             DataType::Decimal128(prec, scale) => {
                 let w = agg_buf
                     .dyn_value(agg_buf_addrs[0])

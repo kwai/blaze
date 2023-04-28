@@ -96,13 +96,16 @@ impl Generator for ExplodeMap {
         for row_id in 0..map.len() {
             if map.is_valid(row_id) && !map.value(row_id).is_empty() {
                 let entries = as_struct_array(&map.value(row_id)).clone();
-                let arrays =
-                    if self.position {
-                        let pos_array = Arc::new(Int32Array::from_iter(0..entries.len() as i32));
-                        vec![pos_array, entries.column(0).clone(), entries.column(1).clone()]
-                    } else {
-                        vec![entries.column(0).clone(), entries.column(1).clone()]
-                    };
+                let arrays = if self.position {
+                    let pos_array = Arc::new(Int32Array::from_iter(0..entries.len() as i32));
+                    vec![
+                        pos_array,
+                        entries.column(0).clone(),
+                        entries.column(1).clone(),
+                    ]
+                } else {
+                    vec![entries.column(0).clone(), entries.column(1).clone()]
+                };
                 outputs.push((row_id as u32, arrays));
             }
         }

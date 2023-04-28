@@ -57,12 +57,11 @@ impl CoalesceStream {
     }
 
     fn should_flush(&self) -> bool {
-        let (batch_size_limit, mem_size_limit) =
-            if self.staging_batches.len() > 1 {
-                (self.batch_size, STAGING_BATCHES_MEM_SIZE_LIMIT)
-            }  else {
-                (self.batch_size / 2, STAGING_BATCHES_MEM_SIZE_LIMIT / 2)
-            };
+        let (batch_size_limit, mem_size_limit) = if self.staging_batches.len() > 1 {
+            (self.batch_size, STAGING_BATCHES_MEM_SIZE_LIMIT)
+        } else {
+            (self.batch_size / 2, STAGING_BATCHES_MEM_SIZE_LIMIT / 2)
+        };
         self.staging_rows >= batch_size_limit || self.staging_batches_mem_size > mem_size_limit
     }
 }

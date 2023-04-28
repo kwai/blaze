@@ -144,7 +144,7 @@ pub trait Agg: Send + Sync + Debug {
                     None
                 };
                 ScalarValue::$ty(v, $tz.clone())
-            }}
+            }};
         }
         Ok(match self.data_type() {
             DataType::Null => ScalarValue::Null,
@@ -179,14 +179,16 @@ pub trait Agg: Send + Sync + Debug {
             ),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
-            DataType::Timestamp(TimeUnit::Second, tz) =>
-                handle_timestamp!(TimestampSecond, tz),
-            DataType::Timestamp(TimeUnit::Millisecond, tz) =>
-                handle_timestamp!(TimestampMillisecond, tz),
-            DataType::Timestamp(TimeUnit::Microsecond, tz) =>
-                handle_timestamp!(TimestampMicrosecond, tz),
-            DataType::Timestamp(TimeUnit::Nanosecond, tz) =>
-                handle_timestamp!(TimestampNanosecond, tz),
+            DataType::Timestamp(TimeUnit::Second, tz) => handle_timestamp!(TimestampSecond, tz),
+            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+                handle_timestamp!(TimestampMillisecond, tz)
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+                handle_timestamp!(TimestampMicrosecond, tz)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+                handle_timestamp!(TimestampNanosecond, tz)
+            }
             other => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "unsupported data type: {}",

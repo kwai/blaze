@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{StructArray};
+use arrow::array::StructArray;
 
 use std::io::{Read, Seek, SeekFrom, Write};
 
-
 use arrow::datatypes::{DataType, SchemaRef};
 use arrow::record_batch::RecordBatch;
-use datafusion::common::cast::{as_struct_array};
+use datafusion::common::cast::as_struct_array;
 use datafusion::common::Result;
-
 
 mod batch_serde;
 
@@ -79,12 +77,10 @@ pub fn read_one_batch<R: Read>(
 }
 
 pub fn name_batch(batch: RecordBatch, name_schema: &SchemaRef) -> Result<RecordBatch> {
-    Ok(RecordBatch::from(as_struct_array(
-        &crate::cast::cast(
-            &StructArray::from(batch),
-            &DataType::Struct(name_schema.fields.clone()),
-        )?
-    )?))
+    Ok(RecordBatch::from(as_struct_array(&crate::cast::cast(
+        &StructArray::from(batch),
+        &DataType::Struct(name_schema.fields.clone()),
+    )?)?))
 }
 
 pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> Result<()> {

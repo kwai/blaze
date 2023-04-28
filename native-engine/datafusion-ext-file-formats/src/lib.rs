@@ -241,7 +241,6 @@ impl SchemaAdapter {
             {
                 // blaze: adapt to expected table data type
                 cols.push(cast(&batch_cols[batch_idx], table_field.data_type())?);
-
             } else {
                 cols.push(new_null_array(table_field.data_type(), batch_rows))
             }

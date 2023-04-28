@@ -22,9 +22,7 @@ use std::sync::Arc;
 
 pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
     Ok(match (&array.data_type(), cast_type) {
-        (_, &DataType::Null) => {
-            Arc::new(NullArray::new(array.len()))
-        },
+        (_, &DataType::Null) => Arc::new(NullArray::new(array.len())),
         (&DataType::Utf8, &DataType::Int8)
         | (&DataType::Utf8, &DataType::Int16)
         | (&DataType::Utf8, &DataType::Int32)
@@ -44,7 +42,7 @@ pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
             // timestamp to f64 = timestamp to i64 to f64, only used in agg.sum()
             arrow::compute::cast(
                 &arrow::compute::cast(array, &DataType::Int64)?,
-                &DataType::Float64
+                &DataType::Float64,
             )?
         }
         (&DataType::List(_), DataType::List(to_field)) => {
@@ -63,7 +61,7 @@ pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
             let struct_ = as_struct_array(array);
             if to_fields.len() != struct_.num_columns() {
                 return Err(DataFusionError::Execution(
-                    "cannot cast structs with different numbers of fields".to_string()
+                    "cannot cast structs with different numbers of fields".to_string(),
                 ));
             }
             let casted_arrays = struct_
@@ -79,7 +77,10 @@ pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
                 struct_.nulls().map(|nb| nb.buffer().clone()),
                 struct_.offset(),
                 struct_.to_data().buffers().to_vec(),
-                casted_arrays.into_iter().map(|array| array.into_data()).collect(),
+                casted_arrays
+                    .into_iter()
+                    .map(|array| array.into_data())
+                    .collect(),
             )?)
         }
         (&DataType::Map(_, _), &DataType::Map(ref to_entries_field, to_sorted)) => {

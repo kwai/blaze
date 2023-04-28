@@ -160,11 +160,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
     Ok(())
 }
 
-fn read_array<R: Read>(
-    input: &mut R,
-    data_type: &DataType,
-    num_rows: usize,
-) -> Result<ArrayRef> {
+fn read_array<R: Read>(input: &mut R, data_type: &DataType, num_rows: usize) -> Result<ArrayRef> {
     macro_rules! read_primitive {
         ($ty:ident) => {{
             read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input)?
@@ -196,9 +192,7 @@ fn read_array<R: Read>(
         DataType::Timestamp(TimeUnit::Nanosecond, _) => read_primitive!(TimestampNanosecond),
         DataType::Utf8 => read_bytes_array(num_rows, input, DataType::Utf8)?,
         DataType::Binary => read_bytes_array(num_rows, input, DataType::Binary)?,
-        DataType::List(list_field) => {
-            read_list_array(num_rows, input, list_field)?
-        }
+        DataType::List(list_field) => read_list_array(num_rows, input, list_field)?,
         DataType::Map(map_field, is_sorted) => {
             read_map_array(num_rows, input, map_field, *is_sorted)?
         }
@@ -240,17 +234,20 @@ fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> Result<Buffer> {
 }
 
 fn nameless_field(field: &Field) -> Field {
-    Field::new("", nameless_data_type(field.data_type()), field.is_nullable())
+    Field::new(
+        "",
+        nameless_data_type(field.data_type()),
+        field.is_nullable(),
+    )
 }
 
 fn nameless_data_type(data_type: &DataType) -> DataType {
     match data_type {
         DataType::List(field) => DataType::List(Arc::new(nameless_field(field))),
         DataType::Map(field, sorted) => DataType::Map(Arc::new(nameless_field(field)), *sorted),
-        DataType::Struct(fields) => DataType::Struct(fields
-            .iter()
-            .map(|field| nameless_field(field))
-            .collect()),
+        DataType::Struct(fields) => {
+            DataType::Struct(fields.iter().map(|field| nameless_field(field)).collect())
+        }
         others => others.clone(),
     }
 }
@@ -285,9 +282,8 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     } else {
         write_len(0, output)?;
     }
-    output.write_all(
-        &array_data.buffers()[0].as_slice()[item_size * offset..][..item_size * len],
-    )?;
+    output
+        .write_all(&array_data.buffers()[0].as_slice()[item_size * offset..][..item_size * len])?;
     Ok(())
 }
 
@@ -476,11 +472,7 @@ fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> Result<(
     Ok(())
 }
 
-fn read_struct_array<R: Read>(
-    num_rows: usize,
-    input: &mut R,
-    fields: &Fields,
-) -> Result<ArrayRef> {
+fn read_struct_array<R: Read>(num_rows: usize, input: &mut R, fields: &Fields) -> Result<ArrayRef> {
     let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
@@ -516,10 +508,7 @@ fn write_boolean_array<W: Write>(array: &BooleanArray, output: &mut W) -> Result
     Ok(())
 }
 
-fn read_boolean_array<R: Read>(
-    num_rows: usize,
-    input: &mut R,
-) -> Result<ArrayRef> {
+fn read_boolean_array<R: Read>(num_rows: usize, input: &mut R) -> Result<ArrayRef> {
     let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
@@ -651,10 +640,7 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(
-            name_batch(decoded_batch, &sliced.schema()).unwrap(),
-            sliced
-        );
+        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
     }
 
     #[test]
@@ -686,10 +672,7 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(
-            name_batch(decoded_batch, &sliced.schema()).unwrap(),
-            sliced
-        );
+        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
     }
 
     #[test]
@@ -731,10 +714,7 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(
-            name_batch(decoded_batch, &sliced.schema()).unwrap(),
-            sliced
-        );
+        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
     }
 
     #[test]
@@ -766,9 +746,6 @@ mod test {
         write_batch(&sliced, &mut buf, true).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(
-            name_batch(decoded_batch, &sliced.schema()).unwrap(),
-            sliced
-        );
+        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
     }
 }

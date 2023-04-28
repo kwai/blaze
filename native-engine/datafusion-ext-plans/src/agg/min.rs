@@ -120,12 +120,13 @@ impl Agg for AggMin {
             DataType::Date32 => handle_fixed!(Date32, min),
             DataType::Date64 => handle_fixed!(Date64, min),
             DataType::Timestamp(TimeUnit::Second, _) => handle_fixed!(TimestampSecond, min),
-            DataType::Timestamp(TimeUnit::Millisecond, _) =>
-                handle_fixed!(TimestampMillisecond, min),
-            DataType::Timestamp(TimeUnit::Microsecond, _) =>
-                handle_fixed!(TimestampMicrosecond, min),
-            DataType::Timestamp(TimeUnit::Nanosecond, _) =>
-                handle_fixed!(TimestampNanosecond, min),
+            DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                handle_fixed!(TimestampMillisecond, min)
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                handle_fixed!(TimestampMicrosecond, min)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => handle_fixed!(TimestampNanosecond, min),
             DataType::Decimal128(_, _) => handle_fixed!(Decimal128, min),
             DataType::Utf8 => {
                 let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();

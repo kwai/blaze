@@ -18,7 +18,7 @@ use arrow::array::{Array, UInt32Array};
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::error::ArrowError;
-use arrow::record_batch::{RecordBatch};
+use arrow::record_batch::RecordBatch;
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
 
@@ -29,13 +29,13 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use std::any::Any;
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 
 #[derive(Debug)]
 pub struct GenerateExec {
@@ -159,8 +159,9 @@ impl ExecutionPlan for GenerateExec {
                     child_output_cols,
                     metrics,
                 )
-                .map_err(ArrowError::from)
-            ).try_flatten(),
+                .map_err(ArrowError::from),
+            )
+            .try_flatten(),
         ));
 
         let metrics = BaselineMetrics::new(&self.metrics, partition);
@@ -237,7 +238,7 @@ async fn execute_generate(
                             .await
                             .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))?;
                         timer.restart();
-                    }}
+                    }};
                 }
 
                 while generated_output_id < generated_outputs.len() || row_id < batch.num_rows() {
@@ -256,11 +257,13 @@ async fn execute_generate(
                                     .collect::<Result<Vec<_>>>()?;
                                 let cur_child_output_arrays = child_output_arrays
                                     .iter()
-                                    .map(|array| Ok(arrow::compute::take(
-                                        &array,
-                                        &UInt32Array::from_value(row_id as u32, 1),
-                                        None,
-                                    )?))
+                                    .map(|array| {
+                                        Ok(arrow::compute::take(
+                                            &array,
+                                            &UInt32Array::from_value(row_id as u32, 1),
+                                            None,
+                                        )?)
+                                    })
                                     .collect::<Result<Vec<_>>>()?;
 
                                 output_batch!(RecordBatch::try_new(
@@ -276,11 +279,13 @@ async fn execute_generate(
                             let num_rows = cur_generated_output_arrays[0].len();
                             let cur_child_output_arrays = child_output_arrays
                                 .iter()
-                                .map(|array| Ok(arrow::compute::take(
-                                    &array,
-                                    &UInt32Array::from_value(row_id as u32, num_rows),
-                                    None,
-                                )?))
+                                .map(|array| {
+                                    Ok(arrow::compute::take(
+                                        &array,
+                                        &UInt32Array::from_value(row_id as u32, num_rows),
+                                        None,
+                                    )?)
+                                })
                                 .collect::<Result<Vec<_>>>()?;
 
                             output_batch!(RecordBatch::try_new(

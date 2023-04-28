@@ -832,7 +832,7 @@ fn typechecked_scalar_value_conversion(
                     PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
                     PrimitiveScalarType::TimestampSecond => {
                         ScalarValue::TimestampSecond(None, None)
-                    },
+                    }
                     PrimitiveScalarType::TimestampMillisecond => {
                         ScalarValue::TimestampMillisecond(None, None)
                     }
@@ -880,7 +880,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
             protobuf::PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
             protobuf::PrimitiveScalarType::TimestampSecond => {
                 ScalarValue::TimestampSecond(None, None)
-            },
+            }
             protobuf::PrimitiveScalarType::TimestampMillisecond => {
                 ScalarValue::TimestampMillisecond(None, None)
             }
@@ -893,9 +893,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType 
             protobuf::PrimitiveScalarType::IntervalYearmonth => {
                 ScalarValue::IntervalYearMonth(None)
             }
-            protobuf::PrimitiveScalarType::IntervalDaytime => {
-                ScalarValue::IntervalDayTime(None)
-            },
+            protobuf::PrimitiveScalarType::IntervalDaytime => ScalarValue::IntervalDayTime(None),
         })
     }
 }

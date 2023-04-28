@@ -14,8 +14,11 @@
 
 use crate::down_cast_any_ref;
 
-use datafusion::arrow::array::{StructArray};
+use datafusion::arrow::array::StructArray;
 
+use arrow::array::Array;
+use arrow::datatypes::{Field, Fields, SchemaRef};
+use arrow::record_batch::RecordBatchOptions;
 use datafusion::arrow::{
     datatypes::{DataType, Schema},
     record_batch::RecordBatch,
@@ -24,12 +27,9 @@ use datafusion::common::DataFusionError;
 use datafusion::common::Result;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
+use datafusion_ext_commons::io::name_batch;
 use std::fmt::{Debug, Formatter};
 use std::{any::Any, sync::Arc};
-use arrow::array::Array;
-use arrow::datatypes::{Field, Fields, SchemaRef};
-use arrow::record_batch::RecordBatchOptions;
-use datafusion_ext_commons::io::name_batch;
 
 /// expression to get a field of from NameStruct.
 #[derive(Debug)]
@@ -43,9 +43,11 @@ impl NamedStructExpr {
     pub fn try_new(values: Vec<Arc<dyn PhysicalExpr>>, return_type: DataType) -> Result<Self> {
         let return_schema = match &return_type {
             DataType::Struct(fields) => Arc::new(Schema::new(fields.clone())),
-            other => return Err(DataFusionError::Execution(format!(
-                "NamedStruct expects returning struct type, but got {other}"
-            ))),
+            other => {
+                return Err(DataFusionError::Execution(format!(
+                    "NamedStruct expects returning struct type, but got {other}"
+                )))
+            }
         };
         Ok(Self {
             values,
@@ -86,7 +88,8 @@ impl PhysicalExpr for NamedStructExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let input_arrays = self.values
+        let input_arrays = self
+            .values
             .iter()
             .map(|expr| expr.evaluate(batch).map(|r| r.into_array(batch.num_rows())))
             .collect::<Result<Vec<_>>>()?;
@@ -113,7 +116,6 @@ impl PhysicalExpr for NamedStructExpr {
         self: Arc<Self>,
         children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-
         Ok(Arc::new(Self::try_new(
             children.clone(),
             self.return_type.clone(),
@@ -123,6 +125,7 @@ impl PhysicalExpr for NamedStructExpr {
 
 #[cfg(test)]
 mod test {
+    use crate::named_struct::NamedStructExpr;
     use arrow::array::*;
     use arrow::datatypes::*;
     use arrow::record_batch::RecordBatch;
@@ -130,7 +133,6 @@ mod test {
     use datafusion::physical_plan::expressions::Column;
     use datafusion::physical_plan::PhysicalExpr;
     use std::sync::Arc;
-    use crate::named_struct::NamedStructExpr;
 
     #[test]
     fn test_list() -> Result<(), Box<dyn std::error::Error>> {
@@ -144,7 +146,10 @@ mod test {
         let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", array, true)])?;
 
         let named_struct = Arc::new(NamedStructExpr::try_new(
-            vec![Arc::new(Column::new("cccccc1", 0)), Arc::new(Column::new("cccccc1", 0))],
+            vec![
+                Arc::new(Column::new("cccccc1", 0)),
+                Arc::new(Column::new("cccccc1", 0)),
+            ],
             DataType::Struct(Fields::from(vec![
                 Field::new(
                     "field1",

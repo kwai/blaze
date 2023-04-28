@@ -18,13 +18,13 @@ use crate::generate::explode::{ExplodeArray, ExplodeMap};
 
 use arrow::datatypes::{DataType, SchemaRef};
 
+use arrow::array::ArrayRef;
+use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use datafusion::physical_plan::PhysicalExpr;
 use std::fmt::Debug;
 use std::sync::Arc;
-use arrow::array::ArrayRef;
-use arrow::record_batch::RecordBatch;
 
 pub trait Generator: Debug + Send + Sync {
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;

@@ -13,11 +13,13 @@
 // limitations under the License.
 
 use crate::down_cast_any_ref;
-use arrow::array::{Array, ArrayRef, as_struct_array, make_array, StructArray};
-use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
+use arrow::array::{as_struct_array, make_array, Array, ArrayRef, StructArray};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use blaze_commons::{is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object};
+use blaze_commons::{
+    is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
+};
 use datafusion::common::DataFusionError;
 use datafusion::error::Result;
 use datafusion::logical_expr::ColumnarValue;
@@ -30,10 +32,8 @@ use once_cell::sync::OnceCell;
 use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
 
-use std::sync::Arc;
 use arrow::ffi::{ArrowArray, ArrowArrayRef, FFI_ArrowArray, FFI_ArrowSchema};
-use arrow::util::pretty::pretty_format_batches;
-use datafusion_ext_commons::io::name_batch;
+use std::sync::Arc;
 
 pub struct SparkUDFWrapperExpr {
     pub serialized: Vec<u8>,
@@ -78,9 +78,7 @@ impl SparkUDFWrapperExpr {
             ));
         }
         let params_schema = Arc::new(Schema::new(param_fields));
-        let import_schema = Arc::new(Schema::new(vec![
-            Field::new("", return_type.clone(), true)
-        ]));
+        let import_schema = Arc::new(Schema::new(vec![Field::new("", return_type.clone(), true)]));
 
         Ok(Self {
             serialized,
@@ -128,15 +126,11 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         }
 
         // init jvm side context
-        let jcontext = self
-            .jcontext
-            .get_or_try_init(|| {
-                let serialized_buf = jni_new_direct_byte_buffer!(&self.serialized)?;
-                let jcontext_local = jni_new_object!(SparkUDFWrapperContext(
-                    serialized_buf.as_obj(),
-                ))?;
-                jni_new_global_ref!(jcontext_local.as_obj())
-            })?;
+        let jcontext = self.jcontext.get_or_try_init(|| {
+            let serialized_buf = jni_new_direct_byte_buffer!(&self.serialized)?;
+            let jcontext_local = jni_new_object!(SparkUDFWrapperContext(serialized_buf.as_obj(),))?;
+            jni_new_global_ref!(jcontext_local.as_obj())
+        })?;
 
         // evalute params
         let num_rows = batch.num_rows();
@@ -162,9 +156,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
 
         // import output from context
         let import_ffi_schema = FFI_ArrowSchema::try_from(self.import_schema.as_ref())?;
-        let import_struct_array = make_array(
-            ArrowArray::new(import_ffi_array, import_ffi_schema).to_data()?
-        );
+        let import_struct_array =
+            make_array(ArrowArray::new(import_ffi_array, import_ffi_schema).to_data()?);
         let import_array = as_struct_array(&import_struct_array).column(0).clone();
         Ok(ColumnarValue::Array(import_array))
     }
