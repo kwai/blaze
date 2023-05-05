@@ -29,7 +29,7 @@ use datafusion::physical_plan::joins::utils::{build_join_schema, check_join_is_v
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time,
 };
-use datafusion::physical_plan::stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
@@ -45,7 +45,7 @@ use std::fmt::Formatter;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc::Sender;
+use crate::common::{output_with_sender, WrappedRecordBatchSender};
 
 #[derive(Debug)]
 pub struct SortMergeJoinExec {
@@ -266,44 +266,33 @@ async fn execute_join(
     )
     .await?;
 
-    let (sender, receiver) = tokio::sync::mpsc::channel(2);
-    let join_params_clone = join_params.clone();
-    let join_handle = tokio::task::spawn(async move {
-        let result = match join_params.join_type {
-            JoinType::Inner | JoinType::Left | JoinType::Right | JoinType::Full => join_combined(
-                &mut left_cursor,
-                &mut right_cursor,
-                join_params_clone,
-                metrics.clone(),
-                &sender,
-            )
-            .await
-            .map_err(ArrowError::from),
-
-            JoinType::LeftSemi | JoinType::LeftAnti => join_semi(
-                &mut left_cursor,
-                &mut right_cursor,
-                join_params_clone,
-                metrics.clone(),
-                &sender,
-            )
-            .await
-            .map_err(ArrowError::from),
-
-            j @ (JoinType::RightSemi | JoinType::RightAnti) => {
-                panic!("join type not supported: {:?}", j);
+    let output_schema = join_params.output_schema.clone();
+    output_with_sender("SortMergeJoin", output_schema, move |sender| async move {
+        match join_params.join_type {
+            JoinType::Inner | JoinType::Left | JoinType::Right | JoinType::Full => {
+                join_combined(
+                    &mut left_cursor,
+                    &mut right_cursor,
+                    join_params,
+                    metrics,
+                    sender,
+                ).await?;
             }
-        };
-
-        if let Err(e) = result {
-            sender.send(Err(DataFusionError::ArrowError(e))).await.ok();
+            JoinType::LeftSemi | JoinType::LeftAnti => {
+                join_semi(
+                    &mut left_cursor,
+                    &mut right_cursor,
+                    join_params,
+                    metrics,
+                    sender,
+                ).await?;
+            }
+            other @ (JoinType::RightSemi | JoinType::RightAnti) => {
+                panic!("join type not supported: {other}");
+            }
         }
-    });
-    Ok(RecordBatchReceiverStream::create(
-        &join_params.output_schema,
-        receiver,
-        join_handle,
-    ))
+        Ok(())
+    })
 }
 
 async fn join_combined(
@@ -311,7 +300,7 @@ async fn join_combined(
     right_cursor: &mut StreamCursor,
     join_params: JoinParams,
     metrics: Arc<BaselineMetrics>,
-    sender: &Sender<Result<RecordBatch>>,
+    sender: WrappedRecordBatchSender,
 ) -> Result<()> {
     let total_time = Time::new();
     let io_time = Time::new();
@@ -689,7 +678,7 @@ async fn join_semi(
     right_cursor: &mut StreamCursor,
     join_params: JoinParams,
     metrics: Arc<BaselineMetrics>,
-    sender: &Sender<Result<RecordBatch>>,
+    sender: WrappedRecordBatchSender,
 ) -> Result<()> {
     let total_time = Time::new();
     let io_time = Time::new();
@@ -1265,6 +1254,7 @@ mod tests {
                 };
                 2
             ],
+            // null_equals_null=false
         )
         .await?;
         let expected = vec![
@@ -1274,7 +1264,6 @@ mod tests {
             "| 2  | 2  | 9  | 2  | 2  | 80 |",
             "| 2  | 2  | 8  | 2  | 2  | 80 |",
             "| 1  | 1  |    | 1  | 1  | 70 |",
-            "| 1  |    | 1  | 1  |    | 10 |",
             "+----+----+----+----+----+----+",
         ];
         // The output order is important as SMJ preserves sortedness
@@ -1568,16 +1557,16 @@ mod tests {
         )];
 
         let (_, batches) = join_collect(left, right, on, JoinType::Inner).await?;
-
         let expected = vec![
-            "+------------+------------+------------+------------+------------+------------+",
-            "| a1         | b1         | c1         | a2         | b1         | c2         |",
-            "+------------+------------+------------+------------+------------+------------+",
-            "| 1970-01-01 | 2022-04-23 | 1970-01-01 | 1970-01-01 | 2022-04-23 | 1970-01-01 |",
-            "| 1970-01-01 | 2022-04-25 | 1970-01-01 | 1970-01-01 | 2022-04-25 | 1970-01-01 |",
-            "| 1970-01-01 | 2022-04-25 | 1970-01-01 | 1970-01-01 | 2022-04-25 | 1970-01-01 |",
-            "+------------+------------+------------+------------+------------+------------+",
+            "+-------------------------+---------------------+-------------------------+-------------------------+---------------------+-------------------------+",
+            "| a1                      | b1                  | c1                      | a2                      | b1                  | c2                      |",
+            "+-------------------------+---------------------+-------------------------+-------------------------+---------------------+-------------------------+",
+            "| 1970-01-01T00:00:00.001 | 2022-04-23T08:44:01 | 1970-01-01T00:00:00.007 | 1970-01-01T00:00:00.010 | 2022-04-23T08:44:01 | 1970-01-01T00:00:00.070 |",
+            "| 1970-01-01T00:00:00.002 | 2022-04-25T16:17:21 | 1970-01-01T00:00:00.008 | 1970-01-01T00:00:00.030 | 2022-04-25T16:17:21 | 1970-01-01T00:00:00.090 |",
+            "| 1970-01-01T00:00:00.003 | 2022-04-25T16:17:21 | 1970-01-01T00:00:00.009 | 1970-01-01T00:00:00.030 | 2022-04-25T16:17:21 | 1970-01-01T00:00:00.090 |",
+            "+-------------------------+---------------------+-------------------------+-------------------------+---------------------+-------------------------+",
         ];
+
         // The output order is important as SMJ preserves sortedness
         assert_batches_sorted_eq!(expected, &batches);
         Ok(())
