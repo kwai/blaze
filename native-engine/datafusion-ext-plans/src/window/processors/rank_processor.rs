@@ -74,4 +74,27 @@ impl WindowFunctionProcessor for RankProcessor {
         }
         Ok(Arc::new(builder.finish()))
     }
+
+    fn process_batch_without_partitions(
+        &mut self,
+        context: &WindowContext,
+        batch: &RecordBatch,
+    ) -> Result<ArrayRef> {
+        let order_rows = context.get_order_rows(batch)?;
+        let mut builder = Int32Builder::with_capacity(batch.num_rows());
+
+        for row_idx in 0..batch.num_rows() {
+            let order_row = order_rows.row(row_idx);
+
+            if order_row.as_ref() == self.cur_order.as_ref() {
+                self.cur_equals += 1;
+            } else {
+                self.cur_rank += if !self.is_dense { self.cur_equals } else { 1 };
+                self.cur_equals = 1;
+                self.cur_order = order_row.as_ref().into();
+            }
+            builder.append_value(self.cur_rank);
+        }
+        Ok(Arc::new(builder.finish()))
+    }
 }

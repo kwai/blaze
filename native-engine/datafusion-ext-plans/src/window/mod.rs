@@ -42,6 +42,10 @@ pub enum WindowRankType {
 
 pub trait WindowFunctionProcessor: Send + Sync {
     fn process_batch(&mut self, context: &WindowContext, batch: &RecordBatch) -> Result<ArrayRef>;
+    fn process_batch_without_partitions(
+        &mut self,
+        context: &WindowContext,
+        batch: &RecordBatch) -> Result<ArrayRef>;
 }
 
 #[derive(Debug, Clone)]

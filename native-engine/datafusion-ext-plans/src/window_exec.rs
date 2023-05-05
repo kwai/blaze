@@ -159,7 +159,11 @@ async fn execute_window(
             while let Some(batch) = input.next().await.transpose()? {
                 let window_cols: Vec<ArrayRef> = processors
                     .iter_mut()
-                    .map(|processor| processor.process_batch(&context, &batch))
+                    .map(|processor| if context.partition_spec.is_empty() {
+                        processor.process_batch_without_partitions(&context, &batch)
+                    } else {
+                        processor.process_batch(&context, &batch)
+                    })
                     .collect::<Result<_>>()?;
 
                 let output_cols = [batch.columns().to_vec(), window_cols].concat();

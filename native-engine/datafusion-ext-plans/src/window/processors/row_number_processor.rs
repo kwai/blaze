@@ -64,4 +64,17 @@ impl WindowFunctionProcessor for RowNumberProcessor {
         }
         Ok(Arc::new(builder.finish()))
     }
+
+    fn process_batch_without_partitions(
+        &mut self,
+        _: &WindowContext,
+        batch: &RecordBatch,
+    ) -> Result<ArrayRef> {
+        let mut builder = Int32Builder::with_capacity(batch.num_rows());
+        for _ in 0..batch.num_rows() {
+            self.cur_row_number += 1;
+            builder.append_value(self.cur_row_number);
+        }
+        Ok(Arc::new(builder.finish()))
+    }
 }
