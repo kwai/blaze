@@ -620,9 +620,6 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
 fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> {
     macro_rules! make_dictionary_builder {
         ($key_type:expr, $value_type:expr) => {{
-            make_dictionary_builder!(@match_key: $key_type, $value_type)
-        }};
-        (@match_key: $key_type:expr, $value_type:expr) => {{
             match $key_type.as_ref() {
                 DataType::Int8 => make_dictionary_builder!(@match_value: Int8, $value_type),
                 DataType::Int16 => make_dictionary_builder!(@match_value: Int16, $value_type),
@@ -680,9 +677,6 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
 
     macro_rules! make_list_builder {
             ($data_type:expr) => {{
-                make_list_builder!(@match_type: $data_type)
-            }};
-            (@match_type: $data_type:expr) => {{
                 match $data_type {
                     DataType::Int8 => make_list_builder!(@make: Int8),
                     DataType::Int16 => make_list_builder!(@make: Int16),
@@ -709,6 +703,12 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                         make_list_builder!(@make: TimestampNanosecond)
                     }
                     DataType::Boolean => make_list_builder!(@make: Boolean),
+                    DataType::Decimal128(prec, scale) => {
+                        make_list_builder!(@make_decimal: Decimal128(prec, scale))
+                    }
+                    DataType::Decimal256(prec, scale) => {
+                        make_list_builder!(@make_decimal: Decimal256(prec, scale))
+                    }
                     DataType::Utf8 => make_list_builder!(@make: String),
                     DataType::LargeUtf8 => make_list_builder!(@make: LargeString),
                     DataType::Binary => make_list_builder!(@make: Binary),
@@ -723,13 +723,17 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                     batch_size,
                 ))
             }};
+            (@make_decimal: $arrowty:ident($prec:expr, $scale:expr)) => {{
+                type TypeBuilder = paste! {[<Configured $arrowty Builder >]};
+                Box::new(ListBuilder::with_capacity(
+                    TypeBuilder::with_capacity(0, $prec, $scale),
+                    batch_size,
+                ))
+            }};
         }
 
     macro_rules! make_map_builder {
         ($key_type:expr, $value_type:expr, $map_fields_name:expr) => {{
-            make_map_builder!(@match_key: $key_type, $value_type, $map_fields_name)
-        }};
-        (@match_key: $key_type:expr, $value_type:expr, $map_fields_name:expr) => {{
             match $key_type {
                 DataType::Boolean => make_map_builder!(@match_value: Boolean, $value_type, $map_fields_name),
                 DataType::Int8 => make_map_builder!(@match_value: Int8, $value_type, $map_fields_name),
