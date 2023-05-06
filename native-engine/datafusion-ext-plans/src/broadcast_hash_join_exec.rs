@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::output_with_sender;
+use crate::common::output::output_with_sender;
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
-use datafusion::common::{DataFusionError, Result, Statistics};
+use datafusion::common::{Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::logical_expr::JoinType;
 use datafusion::physical_expr::PhysicalSortExpr;
@@ -29,7 +29,7 @@ use datafusion::physical_plan::{
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
-use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::{Arc, Weak};
@@ -250,11 +250,7 @@ async fn stream_with_mem_tracker(
         while let Some(batch) = input.next().await.transpose()? {
             mem_used += batch.get_array_memory_size() * 3 / 2;
             mem_tracker.update_mem_used(mem_used).await?;
-
-            sender
-                .send(Ok(batch))
-                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                .await?;
+            sender.send(Ok(batch), None).await;
         }
         Ok(())
     })
@@ -266,10 +262,7 @@ async fn stream_holding_mem_tracker(
 ) -> Result<SendableRecordBatchStream> {
     output_with_sender("BroadcastHashJoin", input.schema(), |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {
-            sender
-                .send(Ok(batch))
-                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                .await?;
+            sender.send(Ok(batch), None).await;
         }
         mem_tracker.update_mem_used(0).await?;
         Ok(())

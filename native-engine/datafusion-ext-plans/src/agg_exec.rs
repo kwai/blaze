@@ -17,7 +17,7 @@ use arrow::datatypes::{FieldRef, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::{RowConverter, SortField};
-use datafusion::common::{DataFusionError, Result, Statistics};
+use datafusion::common::{Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
@@ -36,7 +36,7 @@ use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::{AggTables, InMemTable};
 use crate::agg::{AggExecMode, AggExpr, AggRecord, GroupingExpr};
 use crate::common::memory_manager::MemManager;
-use crate::common::output_with_sender;
+use crate::common::output::output_with_sender;
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -260,7 +260,6 @@ async fn execute_agg_no_grouping(
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
-    let elapsed_compute = baseline_metrics.elapsed_compute().clone();
     let mut agg_buf = agg_ctx.initial_agg_buf.clone();
 
     // start processing input batches
@@ -270,7 +269,9 @@ async fn execute_agg_no_grouping(
         context.session_config().batch_size(),
         baseline_metrics.elapsed_compute().clone(),
     ));
+
     while let Some(input_batch) = coalesced.next().await.transpose()? {
+        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
         let input_arrays = agg_ctx
@@ -291,7 +292,10 @@ async fn execute_agg_no_grouping(
     // output
     // in no-grouping mode, we always output only one record, so it is not
     // necessary to record elapsed computed time.
-    output_with_sender("Agg", agg_ctx.output_schema.clone(), |sender| async move {
+    output_with_sender("Agg", agg_ctx.output_schema.clone(), move |sender| async move {
+        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
+        let mut timer = elapsed_compute.timer();
+
         let record: AggRecord = AggRecord::new(Box::default(), agg_buf);
         let batch_result = agg_ctx
             .build_agg_columns(&mut [record])
@@ -307,10 +311,7 @@ async fn execute_agg_no_grouping(
                     batch
                 })
             });
-        sender
-            .send(Ok(batch_result?))
-            .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-            .await?;
+        sender.send(Ok(batch_result?), Some(&mut timer)).await;
         log::info!("aggregate exec (no grouping) outputting one record");
         Ok(())
     })
@@ -356,18 +357,13 @@ async fn execute_agg_sorted(
                     &mut grouping_row_converter,
                     &mut std::mem::take(&mut staging_records),
                 )?;
-                timer.stop();
 
                 log::info!(
                     "aggregate exec (sorted) outputting one batch: num_rows={}",
                     batch.num_rows(),
                 );
                 baseline_metrics.record_output(batch.num_rows());
-                sender
-                    .send(Ok(batch))
-                    .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                    .await?;
-                timer.restart();
+                sender.send(Ok(batch), Some(&mut timer)).await;
             }}
         }
 

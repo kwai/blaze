@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::output_with_sender;
+use crate::common::output::output_with_sender;
 use crate::generate::Generator;
 use arrow::array::{Array, UInt32Array};
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use datafusion::common::{DataFusionError, Result, Statistics};
+use datafusion::common::{Result, Statistics};
 use datafusion::execution::context::TaskContext;
 
 use datafusion::physical_expr::expressions::Column;
@@ -232,12 +232,7 @@ async fn execute_generate(
                     ($batch:expr) => {{
                         let batch = $batch;
                         metrics.record_output(batch.num_rows());
-                        timer.stop();
-                        sender
-                            .send(Ok(batch))
-                            .await
-                            .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))?;
-                        timer.restart();
+                        sender.send(Ok(batch), Some(&mut timer)).await;
                     }};
                 }
 

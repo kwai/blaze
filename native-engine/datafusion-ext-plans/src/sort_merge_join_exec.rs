@@ -26,9 +26,7 @@ use datafusion::logical_expr::JoinType;
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::joins::utils::{build_join_schema, check_join_is_valid, JoinOn};
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time,
-};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, ScopedTimerGuard};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
@@ -44,8 +42,7 @@ use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::ops::Range;
 use std::sync::Arc;
-use std::time::Duration;
-use crate::common::{output_with_sender, WrappedRecordBatchSender};
+use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
 
 #[derive(Debug)]
 pub struct SortMergeJoinExec {
@@ -302,9 +299,8 @@ async fn join_combined(
     metrics: Arc<BaselineMetrics>,
     sender: WrappedRecordBatchSender,
 ) -> Result<()> {
-    let total_time = Time::new();
-    let io_time = Time::new();
-    let total_timer = total_time.timer();
+    let elapsed_time = metrics.elapsed_compute().clone();
+    let mut timer = elapsed_time.timer();
 
     let left_dts = join_params
         .left_schema
@@ -336,8 +332,7 @@ async fn join_combined(
             let _ = staging_len; // suppress value unused warnings
 
             metrics.record_output(batch.num_rows());
-            let _ = io_time.timer();
-            sender.send(Ok(batch)).await.ok();
+            sender.send(Ok(batch), Some(&mut timer)).await;
         }};
     }
     macro_rules! cartesian_join_lr {
@@ -413,8 +408,7 @@ async fn join_combined(
                         flush_staging!();
                     }
                     metrics.record_output(batch.num_rows());
-                    let _ = io_time.timer();
-                    sender.send(Ok(batch)).await.ok();
+                    sender.send(Ok(batch), Some(&mut timer)).await;
                 }
             }
         }};
@@ -450,8 +444,7 @@ async fn join_combined(
                         flush_staging!();
                     }
                     metrics.record_output(batch.num_rows());
-                    let _ = io_time.timer();
-                    sender.send(Ok(batch)).await.ok();
+                    sender.send(Ok(batch), Some(&mut timer)).await;
                 }
             }
         }};
@@ -493,7 +486,7 @@ async fn join_combined(
                         flush_staging!();
                     }
                 }
-                left_cursor.forward().await?;
+                left_cursor.forward(&mut timer).await?;
                 continue;
             }
             Ordering::Greater => {
@@ -515,7 +508,7 @@ async fn join_combined(
                         flush_staging!();
                     }
                 }
-                right_cursor.forward().await?;
+                right_cursor.forward(&mut timer).await?;
                 continue;
             }
             Ordering::Equal => {}
@@ -608,7 +601,7 @@ async fn join_combined(
                 num_rows[i] += 1;
                 cur_indices[i] = 0;
             }
-            cursors[i].forward().await?;
+            cursors[i].forward(&mut timer).await?;
         }
 
         // read rest equal rows
@@ -645,7 +638,7 @@ async fn join_combined(
                     cur_indices[i] = 0;
                     flush_buffers!();
                 }
-                cursors[i].forward().await?;
+                cursors[i].forward(&mut timer).await?;
             } else {
                 // unequal -- if current batch is forwarded, append to buffer, then exit
                 if idx > cur_indices[i] {
@@ -662,14 +655,6 @@ async fn join_combined(
     if staging_len > 0 {
         flush_staging!();
     }
-
-    drop(total_timer);
-    metrics.elapsed_compute().add_duration(Duration::from_nanos(
-        (total_time.value()
-            - io_time.value()
-            - left_cursor.io_time.value()
-            - right_cursor.io_time.value()) as u64,
-    ));
     Ok(())
 }
 
@@ -680,9 +665,8 @@ async fn join_semi(
     metrics: Arc<BaselineMetrics>,
     sender: WrappedRecordBatchSender,
 ) -> Result<()> {
-    let total_time = Time::new();
-    let io_time = Time::new();
-    let total_timer = total_time.timer();
+    let elapsed_time = metrics.elapsed_compute().clone();
+    let mut timer = elapsed_time.timer();
 
     let join_type = join_params.join_type;
     let mut staging_len = 0;
@@ -700,8 +684,7 @@ async fn join_semi(
             let _ = staging_len; // suppress value unused warnings
 
             metrics.record_output(batch.num_rows());
-            let _ = io_time.timer();
-            sender.send(Ok(batch)).await.ok();
+            sender.send(Ok(batch), Some(&mut timer)).await;
         }};
     }
     macro_rules! output_left_current_record {
@@ -729,18 +712,18 @@ async fn join_semi(
                 if join_type == JoinType::LeftAnti {
                     output_left_current_record!();
                 }
-                left_cursor.forward().await?;
+                left_cursor.forward(&mut timer).await?;
                 continue;
             }
             Ordering::Equal => {
                 if join_type == JoinType::LeftSemi {
                     output_left_current_record!();
                 }
-                left_cursor.forward().await?;
+                left_cursor.forward(&mut timer).await?;
                 continue;
             }
             Ordering::Greater => {
-                right_cursor.forward().await?;
+                right_cursor.forward(&mut timer).await?;
                 continue;
             }
         }
@@ -748,20 +731,11 @@ async fn join_semi(
     if staging_len > 0 {
         flush_staging!();
     }
-
-    drop(total_timer);
-    metrics.elapsed_compute().add_duration(Duration::from_nanos(
-        (total_time.value()
-            - io_time.value()
-            - left_cursor.io_time.value()
-            - right_cursor.io_time.value()) as u64,
-    ));
     Ok(())
 }
 
 struct StreamCursor {
     stream: SendableRecordBatchStream,
-    io_time: Time,
     on_row_converter: Arc<SyncMutex<RowConverter>>,
     on_columns: Vec<usize>,
     batch: Option<RecordBatch>,
@@ -779,7 +753,6 @@ impl StreamCursor {
         if let Some(batch) = stream.next().await.transpose()? {
             let mut cursor = Self {
                 stream,
-                io_time: Time::new(),
                 on_row_converter,
                 on_columns,
                 on_rows: None,
@@ -793,7 +766,6 @@ impl StreamCursor {
 
         Ok(Self {
             stream,
-            io_time: Time::new(),
             on_row_converter,
             on_columns,
             on_rows: None,
@@ -818,19 +790,19 @@ impl StreamCursor {
         Ok(())
     }
 
-    async fn forward(&mut self) -> Result<()> {
+    async fn forward(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<()> {
         if let Some(batch) = &self.batch {
             if self.idx + 1 < batch.num_rows() {
                 self.idx += 1;
                 return Ok(());
             }
             loop {
-                match {
-                    let _ = self.io_time.timer();
-                    self.stream.next().await
-                } {
+                stop_timer.stop();
+                let maybe_next = self.stream.next().await.transpose()?;
+                stop_timer.restart();
+
+                match maybe_next {
                     Some(batch) => {
-                        let batch = batch?;
                         if batch.num_rows() == 0 {
                             continue;
                         }

@@ -23,7 +23,6 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use futures::lock::Mutex;
-use futures::TryFutureExt;
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use lz4_flex::frame::FrameDecoder;
@@ -36,7 +35,7 @@ use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::OnHeapSpill;
-use crate::common::WrappedRecordBatchSender;
+use crate::common::output::WrappedRecordBatchSender;
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
@@ -122,18 +121,11 @@ impl AggTables {
                     .convert_records_to_batch(&mut grouping_row_converter, &mut chunk)?;
                 let batch_mem_size = batch.get_array_memory_size();
 
-                timer.stop();
                 baseline_metrics.record_output(batch.num_rows());
-                sender
-                    .send(Ok(batch))
-                    .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                    .await?;
-
-                timer.restart();
+                sender.send(Ok(batch), Some(&mut timer)).await;
 
                 // free memory of the output batch
-                self.update_mem_used_with_diff(-(batch_mem_size as isize))
-                    .await?;
+                self.update_mem_used_with_diff(-(batch_mem_size as isize)).await?;
             }
             self.update_mem_used(0).await?;
             return Ok(());
@@ -162,14 +154,8 @@ impl AggTables {
                 let batch = self
                     .agg_ctx
                     .convert_records_to_batch(&mut grouping_row_converter, &mut records)?;
-                timer.stop();
-
                 baseline_metrics.record_output(batch.num_rows());
-                sender
-                    .send(Ok(batch))
-                    .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                    .await?;
-                timer.restart();
+                sender.send(Ok(batch), Some(&mut timer)).await;
             }};
         }
 

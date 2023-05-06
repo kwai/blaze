@@ -43,6 +43,7 @@ import org.blaze.protobuf.SortExecNode
 
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning
 
 case class NativeTakeOrderedExec(
     limit: Long,
@@ -113,7 +114,8 @@ case class NativeTakeOrderedExec(
 
   override def doExecuteNative(): NativeRDD = {
     val partial = NativePartialTakeOrderedExec(sortOrder, child)
-    if (partial.outputPartitioning.numPartitions <= 1) {
+    if (!partial.outputPartitioning.isInstanceOf[UnknownPartitioning]
+      && partial.outputPartitioning.numPartitions <= 1) {
       return NativeHelper.executeNative(partial)
     }
 

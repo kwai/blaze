@@ -16,7 +16,7 @@
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::OnHeapSpill;
-use crate::common::{output_with_sender, BatchesInterleaver, WrappedRecordBatchSender};
+use crate::common::BatchesInterleaver;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use arrow::row::{RowConverter, Rows, SortField};
@@ -36,7 +36,7 @@ use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::lock::Mutex;
 use futures::stream::once;
-use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use itertools::Itertools;
 use lz4_flex::frame::FrameDecoder;
 use parking_lot::Mutex as SyncMutex;
@@ -44,6 +44,7 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::io::{BufReader, Cursor, Read, Write};
 use std::sync::{Arc, Weak};
+use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
 
 const NUM_LEVELS: usize = 64;
 
@@ -267,10 +268,7 @@ async fn external_sort(
     }
 
     output_with_sender("Sort", input.schema(), |sender| async move {
-        sorter
-            .output(sender)
-            .await
-            .map_err(|err| err.context("sort: executing output() error"))?;
+        sorter.output(sender).await?;
         Ok(())
     })
 }
@@ -341,19 +339,20 @@ impl ExternalSorter {
                 )
                 .await?;
 
-                for batch in batches {
+                let mut num_total_output_rows = 0;
+                for mut batch in batches {
+                    if num_total_output_rows >= self.limit {
+                        break;
+                    }
                     let batch_mem_size = batch.get_array_memory_size();
+                    if num_total_output_rows + batch.num_rows() > self.limit {
+                        batch = batch.slice(0, self.limit - num_total_output_rows);
+                    };
+                    num_total_output_rows += batch.num_rows();
 
-                    timer.stop();
                     self.baseline_metrics.record_output(batch.num_rows());
-                    sender
-                        .send(Ok(batch))
-                        .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                        .await?;
-
-                    timer.restart();
-                    self.update_mem_used_with_diff(-(batch_mem_size as isize))
-                        .await?;
+                    sender.send(Ok(batch), Some(&mut timer)).await;
+                    self.update_mem_used_with_diff(-(batch_mem_size as isize)).await?;
                 }
             }
             self.update_mem_used(0).await?;
@@ -391,6 +390,11 @@ impl ExternalSorter {
 
         macro_rules! flush_staging {
             () => {{
+                if num_total_output_rows < self.limit {
+                    flush_staging!(@do_flush);
+                }
+            }};
+            (@do_flush) => {{
                 let mut batches_base_idx = vec![];
                 let mut base_idx = 0;
                 for cursor in cursors.values() {
@@ -411,16 +415,17 @@ impl ExternalSorter {
                 for cursor in cursors.values() {
                     batches.extend(cursor.cur_batches.clone());
                 }
-                let batch = BatchesInterleaver::new(self.input_schema.clone(), &batches)
+
+                let mut batch = BatchesInterleaver::new(self.input_schema.clone(), &batches)
                     .interleave(&staging_indices)?;
-                timer.stop();
+                if num_total_output_rows + batch.num_rows() > self.limit {
+                    batch = batch.slice(0, self.limit - num_total_output_rows);
+                };
+                num_total_output_rows += batch.num_rows();
+                let _ = num_total_output_rows;
 
                 self.baseline_metrics.record_output(batch.num_rows());
-                sender
-                    .send(Ok(batch))
-                    .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                    .await?;
-                timer.restart();
+                sender.send(Ok(batch), Some(&mut timer)).await;
             }};
         }
 
@@ -433,7 +438,6 @@ impl ExternalSorter {
             staging_cursor_ids.push(min_cursor.id);
             min_cursor.next_key()?;
             drop(min_cursor);
-            num_total_output_rows += 1;
 
             if staging_cursor_ids.len() >= self.squeeze_batch_size {
                 flush_staging!();

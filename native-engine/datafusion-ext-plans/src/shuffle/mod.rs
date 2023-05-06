@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::common::onheap_spill::OnHeapSpill;
-use crate::common::output_with_sender;
+use crate::common::output::output_with_sender;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;

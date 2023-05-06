@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::output_with_sender;
+use crate::common::output::output_with_sender;
 use crate::window::window_context::WindowContext;
 use crate::window::{WindowExpr, WindowFunctionProcessor};
 use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use datafusion::common::{DataFusionError, Result, Statistics};
+use datafusion::common::{Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
@@ -157,6 +157,9 @@ async fn execute_window(
         context.output_schema.clone(),
         |sender| async move {
             while let Some(batch) = input.next().await.transpose()? {
+                let elapsed_time = metrics.elapsed_compute().clone();
+                let mut timer = elapsed_time.timer();
+
                 let window_cols: Vec<ArrayRef> = processors
                     .iter_mut()
                     .map(|processor| if context.partition_spec.is_empty() {
@@ -174,10 +177,7 @@ async fn execute_window(
                 )?;
 
                 metrics.record_output(output_batch.num_rows());
-                sender
-                    .send(Ok(output_batch))
-                    .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                    .await?;
+                sender.send(Ok(output_batch), Some(&mut timer)).await;
             }
             Ok(())
         },
