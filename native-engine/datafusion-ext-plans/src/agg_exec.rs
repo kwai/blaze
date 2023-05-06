@@ -347,9 +347,32 @@ async fn execute_agg_sorted(
         let batch_size = context.session_config().batch_size();
         let mut staging_records = vec![];
         let mut current_record: Option<AggRecord> = None;
+        let mut timer = elapsed_compute.timer();
+        timer.stop();
+
+        macro_rules! flush_staging {
+            () => {{
+                let batch = agg_ctx.convert_records_to_batch(
+                    &mut grouping_row_converter,
+                    &mut std::mem::take(&mut staging_records),
+                )?;
+                timer.stop();
+
+                log::info!(
+                    "aggregate exec (sorted) outputting one batch: num_rows={}",
+                    batch.num_rows(),
+                );
+                baseline_metrics.record_output(batch.num_rows());
+                sender
+                    .send(Ok(batch))
+                    .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
+                    .await?;
+                timer.restart();
+            }}
+        }
 
         while let Some(input_batch) = coalesced.next().await.transpose()? {
-            let mut timer = elapsed_compute.timer();
+            timer.restart();
 
             // compute grouping rows
             let grouping_arrays: Vec<ArrayRef> = agg_ctx
@@ -384,22 +407,7 @@ async fn execute_agg_sorted(
                     if let Some(record) = finished_record {
                         staging_records.push(record);
                         if staging_records.len() >= batch_size {
-                            let batch = agg_ctx.convert_records_to_batch(
-                                &mut grouping_row_converter,
-                                &mut std::mem::take(&mut staging_records),
-                            )?;
-                            timer.stop();
-
-                            log::info!(
-                                "aggregate exec (sorted) outputting one batch: num_rows={}",
-                                batch.num_rows(),
-                            );
-                            baseline_metrics.record_output(batch.num_rows());
-                            sender
-                                .send(Ok(batch))
-                                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                                .await?;
-                            timer.restart();
+                            flush_staging!();
                         }
                     }
                 }
@@ -411,26 +419,14 @@ async fn execute_agg_sorted(
                     .partial_merge_input(agg_buf, agg_buf_array, row_idx)
                     .map_err(|err| err.context("agg: executing partial_merge_input() error"))?;
             }
+            timer.stop();
         }
 
-        let mut timer = elapsed_compute.timer();
         if let Some(record) = current_record {
             staging_records.push(record);
         }
         if !staging_records.is_empty() {
-            let batch = agg_ctx
-                .convert_records_to_batch(&mut grouping_row_converter, &mut staging_records)?;
-            baseline_metrics.record_output(batch.num_rows());
-            timer.stop();
-
-            log::info!(
-                "aggregate exec (sorted) outputting one batch: num_rows={}",
-                batch.num_rows(),
-            );
-            sender
-                .send(Ok(batch))
-                .map_err(|err| DataFusionError::Execution(format!("{:?}", err)))
-                .await?;
+            flush_staging!();
         }
         Ok(())
     })
