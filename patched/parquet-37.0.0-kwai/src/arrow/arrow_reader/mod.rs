@@ -955,21 +955,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_int96_single_column_reader_test() {
-        let encodings = &[Encoding::PLAIN, Encoding::RLE_DICTIONARY];
-        run_single_column_reader_tests::<Int96Type, _, Int96Type>(
-            2,
-            ConvertedType::NONE,
-            None,
-            |vals| {
-                Arc::new(TimestampNanosecondArray::from_iter(
-                    vals.iter().map(|x| x.map(|x| x.to_nanos())),
-                )) as _
-            },
-            encodings,
-        );
-    }
+    // blaze:
+    // from Spark 1.5 Timestamps are now stored at a precision of 1us, rather than 1ns
+    //
+    // #[test]
+    // fn test_int96_single_column_reader_test() {
+    //     let encodings = &[Encoding::PLAIN, Encoding::RLE_DICTIONARY];
+    //     run_single_column_reader_tests::<Int96Type, _, Int96Type>(
+    //         2,
+    //         ConvertedType::NONE,
+    //         None,
+    //         |vals| {
+    //             Arc::new(TimestampNanosecondArray::from_iter(
+    //                 vals.iter().map(|x| x.map(|x| x.to_nanos())),
+    //             )) as _
+    //         },
+    //         encodings,
+    //     );
+    // }
 
     struct RandUtf8Gen {}
 

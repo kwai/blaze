@@ -91,7 +91,11 @@ fn from_parquet(parquet_type: &Type) -> Result<DataType> {
             PhysicalType::BOOLEAN => Ok(DataType::Boolean),
             PhysicalType::INT32 => from_int32(basic_info, *scale, *precision),
             PhysicalType::INT64 => from_int64(basic_info, *scale, *precision),
-            PhysicalType::INT96 => Ok(DataType::Timestamp(TimeUnit::Nanosecond, None)),
+            // blaze:
+            // from Spark 1.5 Timestamps are now stored at a precision of 1us, rather than 1ns
+            //
+            // PhysicalType::INT96 => Ok(DataType::Timestamp(TimeUnit::Nanosecond, None)),
+            PhysicalType::INT96 => Ok(DataType::Timestamp(TimeUnit::Microsecond, None)),
             PhysicalType::FLOAT => Ok(DataType::Float32),
             PhysicalType::DOUBLE => Ok(DataType::Float64),
             PhysicalType::BYTE_ARRAY => from_byte_array(basic_info, *precision, *scale),
