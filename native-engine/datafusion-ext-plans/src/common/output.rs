@@ -77,12 +77,15 @@ pub fn output_with_sender<Fut: Future<Output = common::Result<()>> + Send>(
             let _ = err_sender.send(Err(err)).await;
 
             // panic current spawn
-            panic!(
-                "output_with_sender[{}] error (task_running={}: {}",
-                desc,
-                is_task_running(),
-                err_message,
-            );
+            let task_running = is_task_running();
+            if task_running {
+                panic!(
+                    "output_with_sender[{}] error (task_running={}: {}",
+                    desc,
+                    task_running,
+                    err_message,
+                );
+            }
         }
     });
 

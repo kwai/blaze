@@ -142,19 +142,21 @@ async fn execute_agg(
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     match agg_ctx.exec_mode {
-        _ if !agg_ctx.groupings.is_empty() => {
-            execute_agg_with_grouping_hash(input, context, agg_ctx, partition_id, metrics)
-                .await
-                .map_err(|err| err.context("agg: execute_agg_with_grouping_hash() error"))
-        }
-        AggExecMode::HashAgg => {
+        _ if agg_ctx.groupings.is_empty() => {
             execute_agg_no_grouping(input, context, agg_ctx, partition_id, metrics)
                 .await
                 .map_err(|err| err.context("agg: execute_agg_no_grouping() error"))
         }
-        AggExecMode::SortAgg => execute_agg_sorted(input, context, agg_ctx, partition_id, metrics)
-            .await
-            .map_err(|err| err.context("agg: execute_agg_sorted() error")),
+        AggExecMode::HashAgg => {
+            execute_agg_with_grouping_hash(input, context, agg_ctx, partition_id, metrics)
+                .await
+                .map_err(|err| err.context("agg: execute_agg_with_grouping_hash() error"))
+        }
+        AggExecMode::SortAgg => {
+            execute_agg_sorted(input, context, agg_ctx, partition_id, metrics)
+                .await
+                .map_err(|err| err.context("agg: execute_agg_sorted() error"))
+        }
     }
 }
 
@@ -366,7 +368,6 @@ async fn execute_agg_sorted(
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }}
         }
-
         while let Some(input_batch) = coalesced.next().await.transpose()? {
             timer.restart();
 
