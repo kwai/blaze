@@ -38,16 +38,16 @@ import org.apache.spark.util.Utils
 
 case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
 
-  private val expr: Expression = NativeConverters.deserializeExpression({
+  private val (expr, javaParamsSchema) = NativeConverters.deserializeExpression({
     val bytes = new Array[Byte](serialized.remaining())
     serialized.get(bytes)
     bytes
   }) match {
-    case nondeterministic: Nondeterministic =>
+    case (nondeterministic: Nondeterministic, paramsSchema) =>
       nondeterministic.initialize(TaskContext.get.partitionId())
-      nondeterministic
-    case expr =>
-      expr
+      (nondeterministic, paramsSchema)
+    case (expr, paramsSchema) =>
+      (expr, paramsSchema)
   }
 
   private val paramsProjector: UnsafeProjection = UnsafeProjection.create(expr.children)
@@ -58,10 +58,7 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
     val schema = StructType(Seq(StructField("", expr.dataType, expr.nullable)))
     ArrowUtils.toArrowSchema(schema)
   }
-  private val paramsSchema = {
-    val schema = StructType(expr.children.map(c => StructField("", c.dataType, c.nullable)))
-    ArrowUtils.toArrowSchema(schema)
-  }
+  private val paramsSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
 
   def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
     var outputRoot: VectorSchemaRoot = null

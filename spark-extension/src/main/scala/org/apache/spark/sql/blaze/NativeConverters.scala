@@ -637,11 +637,10 @@ object NativeConverters extends Logging {
               .setArrowType(convertDataType(e.dataType))
               .build())
         }
-      case e @ Round(_1, Literal(0, _)) if _1.dataType.isInstanceOf[FractionalType] =>
-        buildScalarFunction(pb.ScalarFunction.Round, Seq(_1), e.dataType)
-      case e @ Round(_1, Literal(n: Int, _))
-          if _1.dataType.isInstanceOf[FractionalType] && n >= 0 =>
-        buildExtScalarFunction("RoundN", Seq(_1, Literal(n, IntegerType)), e.dataType)
+
+      // TODO: datafusion's round() has different behavior from spark
+      // case e @ Round(_1, Literal(n: Int, _)) if _1.dataType.isInstanceOf[FractionalType] =>
+      //   buildScalarFunction(pb.ScalarFunction.Round, Seq(_1, Literal(n.toLong)), e.dataType)
 
       case e: Signum => buildScalarFunction(pb.ScalarFunction.Signum, e.children, e.dataType)
       case e: Abs if e.dataType.isInstanceOf[FloatType] || e.dataType.isInstanceOf[DoubleType] =>
@@ -651,8 +650,11 @@ object NativeConverters extends Logging {
       case Length(arg) if arg.dataType == StringType =>
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
       case e: Concat => buildScalarFunction(pb.ScalarFunction.Concat, e.children, e.dataType)
-      case e: Lower => buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
-      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
+
+      // TODO: datafusion's upper/lower() has different behavior from spark
+      // case e: Lower => buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
+      // case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
+
       case e: StringTrim =>
         buildScalarFunction(pb.ScalarFunction.Trim, e.srcStr +: e.trimStr.toSeq, e.dataType)
       case e: StringTrimLeft =>
@@ -858,11 +860,26 @@ object NativeConverters extends Logging {
 
       // hive UDF and other unsupported expressions
       case e =>
-        val bounded = e.withNewChildren(e.children.zipWithIndex.map {
-          case (param, index) => BoundReference(index, param.dataType, param.nullable)
-        })
-        val serialized = serializeExpression(bounded.asInstanceOf[Expression with Serializable])
         logWarning(s"expression is not supported in blaze and fallbacks to spark: $e")
+        val boundedReferences = ArrayBuffer[BoundReference]()
+        val convertedParams = ArrayBuffer[pb.PhysicalExprNode]()
+        val bounded = e.mapChildren(_.transformDown {
+          case param: Literal => param
+          case param =>
+            val converted = convertExpr(param, useAttrExprId)
+            if (!converted.hasSparkUdfWrapperExpr) {
+              val boundedReference =
+                BoundReference(boundedReferences.length, param.dataType, param.nullable)
+              convertedParams.append(converted)
+              boundedReferences.append(boundedReference)
+              boundedReference
+            } else {
+              param
+            }
+        })
+        val serialized = serializeExpression(
+          bounded.asInstanceOf[Expression with Serializable],
+          StructType(boundedReferences.map(ref => StructField("", ref.dataType, ref.nullable))))
 
         pb.PhysicalExprNode
           .newBuilder()
@@ -872,7 +889,7 @@ object NativeConverters extends Logging {
               .setSerialized(ByteString.copyFrom(serialized))
               .setReturnType(convertDataType(bounded.dataType))
               .setReturnNullable(bounded.nullable)
-              .addAllParams(e.children.map(expr => convertExpr(expr, useAttrExprId)).asJava))
+              .addAllParams(convertedParams.asJava))
           .build()
     }
   }
@@ -889,20 +906,26 @@ object NativeConverters extends Logging {
     }
   }
 
-  def serializeExpression(udf: Expression with Serializable): Array[Byte] = {
+  def serializeExpression(
+      expr: Expression with Serializable,
+      paramsSchema: StructType): Array[Byte] = {
     Utils.tryWithResource(new ByteArrayOutputStream()) { bos =>
       Utils.tryWithResource(new ObjectOutputStream(bos)) { oos =>
-        oos.writeObject(udf)
+        oos.writeObject(expr)
+        oos.writeObject(paramsSchema)
         null
       }
       bos.toByteArray
     }
   }
 
-  def deserializeExpression(serialized: Array[Byte]): Expression with Serializable = {
+  def deserializeExpression(
+      serialized: Array[Byte]): (Expression with Serializable, StructType) = {
     Utils.tryWithResource(new ByteArrayInputStream(serialized)) { bis =>
       Utils.tryWithResource(new ObjectInputStream(bis)) { ois =>
-        ois.readObject().asInstanceOf[Expression with Serializable]
+        val expr = ois.readObject().asInstanceOf[Expression with Serializable]
+        val paramsSchema = ois.readObject().asInstanceOf[StructType]
+        (expr, paramsSchema)
       }
     }
   }
