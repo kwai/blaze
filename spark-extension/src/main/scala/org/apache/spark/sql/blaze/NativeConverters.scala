@@ -649,7 +649,8 @@ object NativeConverters extends Logging {
         buildScalarFunction(pb.ScalarFunction.OctetLength, e.children, e.dataType)
       case Length(arg) if arg.dataType == StringType =>
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
-      case e: Concat => buildScalarFunction(pb.ScalarFunction.Concat, e.children, e.dataType)
+      case e: Concat =>
+        buildExtScalarFunction("Concat", e.children, e.dataType)
 
       // TODO: datafusion's upper/lower() has different behavior from spark
       // case e: Lower => buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
