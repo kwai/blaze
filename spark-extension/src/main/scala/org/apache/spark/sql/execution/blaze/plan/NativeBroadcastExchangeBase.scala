@@ -17,6 +17,7 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import java.util.UUID
@@ -25,6 +26,7 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters._
 import scala.concurrent.Promise
 
 import org.apache.spark.OneToOneDependency
@@ -32,31 +34,31 @@ import org.apache.spark.Partition
 import org.apache.spark.SparkException
 import org.apache.spark.TaskContext
 import org.apache.spark.broadcast
-import org.blaze.protobuf.IpcReaderExecNode
-import org.blaze.protobuf.IpcReadMode
-import org.blaze.protobuf.IpcWriterExecNode
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.Schema
+import org.blaze.{protobuf => pb}
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
+import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase.buildBroadcastData
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 
@@ -124,7 +126,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val broadcast = doExecuteBroadcastNative[Array[Array[Byte]]]()
+    val broadcast = doExecuteBroadcastNative[Array[Byte]]()
     val nativeMetrics = MetricNode(metrics, Nil)
     val partitions = Array(new Partition() {
       override def index: Int = 0
@@ -139,30 +141,27 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       (_, _) => {
         val resourceId = s"ArrowBroadcastExchangeExec:${UUID.randomUUID()}"
         val provideIpcIterator = () => {
-          broadcast.value.iterator.map { ipc =>
-            val inputStream = new ByteArrayInputStream(ipc)
-            Channels.newChannel(inputStream)
-          }
+          Iterator.single(Channels.newChannel(new ByteArrayInputStream(broadcast.value)))
         }
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
-        PhysicalPlanNode
+        pb.PhysicalPlanNode
           .newBuilder()
           .setIpcReader(
-            IpcReaderExecNode
+            pb.IpcReaderExecNode
               .newBuilder()
               .setSchema(nativeSchema)
               .setNumPartitions(1)
               .setIpcProviderResourceId(resourceId)
-              .setMode(IpcReadMode.CHANNEL)
+              .setMode(pb.IpcReadMode.CHANNEL)
               .build())
           .build()
       },
       friendlyName = "NativeRDD.BroadcastRead")
   }
 
-  val nativeSchema: Schema = Util.getNativeSchema(output)
+  val nativeSchema: pb.Schema = Util.getNativeSchema(output)
 
-  def collectNative(): Array[Array[Byte]] = {
+  def collectNative(): Array[Byte] = {
     val inputRDD = NativeHelper.executeNative(child match {
       case child if NativeHelper.isNative(child) => child
       case child => ConvertToNativeExec(child)
@@ -191,10 +190,10 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
             })
 
           val input = inputRDD.nativePlan(inputRDD.partitions(split.index), context)
-          val nativeIpcWriterExec = PhysicalPlanNode
+          val nativeIpcWriterExec = pb.PhysicalPlanNode
             .newBuilder()
             .setIpcWriter(
-              IpcWriterExecNode
+              pb.IpcWriterExecNode
                 .newBuilder()
                 .setInput(input)
                 .setIpcConsumerResourceId(resourceId)
@@ -214,7 +213,13 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
           ipcs.iterator
         }
       }
-    ipcRDD.collect()
+
+    // build broadcast data
+    val collectedData = ipcRDD.collect()
+    val keys = mode match {
+      case HashedRelationBroadcastMode(keys) => keys
+    }
+    buildBroadcastData(collectedData, keys, nativeSchema)
   }
 
   @transient
@@ -232,8 +237,8 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   }
 
   @transient
-  lazy val nativeRelationFuture: Future[Broadcast[Array[Array[Byte]]]] = {
-    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Array[Byte]]]](
+  lazy val nativeRelationFuture: Future[Broadcast[Array[Byte]]] = {
+    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Byte]]](
       sqlContext.sparkSession,
       BroadcastExchangeExec.executionContext) {
       try {
@@ -242,7 +247,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
           s"native broadcast exchange (runId $getRunId)",
           interruptOnCancel = true)
         val broadcasted = sparkContext.broadcast(collectNative())
-        Promise[Broadcast[Array[Array[Byte]]]].trySuccess(broadcasted)
+        Promise[Broadcast[Array[Byte]]].trySuccess(broadcasted)
         broadcasted
       } catch {
         case e: Throwable =>
@@ -254,5 +259,76 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
 }
 
 object NativeBroadcastExchangeBase {
+
   def nativeExecutionTag: TreeNodeTag[Boolean] = TreeNodeTag("arrowBroadcastNativeExecution")
+
+  def buildBroadcastData(
+      collectedData: Array[Array[Byte]],
+      keys: Seq[Expression],
+      nativeSchema: pb.Schema): Array[Byte] = {
+
+    val readerIpcProviderResourceId = s"BuildBroadcastDataReader:${UUID.randomUUID()}"
+    val readerExec = pb.IpcReaderExecNode
+      .newBuilder()
+      .setSchema(nativeSchema)
+      .setIpcProviderResourceId(readerIpcProviderResourceId)
+      .setMode(pb.IpcReadMode.CHANNEL)
+
+    val sortExec = pb.SortExecNode
+      .newBuilder()
+      .setInput(pb.PhysicalPlanNode.newBuilder().setIpcReader(readerExec))
+      .addAllExpr(
+        keys
+          .map(key => {
+            pb.PhysicalExprNode
+              .newBuilder()
+              .setSort(
+                pb.PhysicalSortExprNode
+                  .newBuilder()
+                  .setExpr(NativeConverters.convertExpr(key))
+                  .setAsc(true)
+                  .setNullsFirst(true)
+                  .build())
+              .build()
+          })
+          .asJava)
+
+    val writerIpcProviderResourceId = s"BuildBroadcastDataWriter:${UUID.randomUUID()}"
+    val writerExec = pb.IpcWriterExecNode
+      .newBuilder()
+      .setInput(pb.PhysicalPlanNode.newBuilder().setSort(sortExec))
+      .setIpcConsumerResourceId(writerIpcProviderResourceId)
+
+    // build native sorter
+    val exec = pb.PhysicalPlanNode
+      .newBuilder()
+      .setIpcWriter(writerExec)
+      .build()
+
+    // input
+    val provideIpcIterator = () => {
+      collectedData.iterator.map { ipc =>
+        val inputStream = new ByteArrayInputStream(ipc)
+        Channels.newChannel(inputStream)
+      }
+    }
+    JniBridge.resourcesMap.put(readerIpcProviderResourceId, () => provideIpcIterator())
+
+    // output
+    val bos = new ByteArrayOutputStream()
+    val consumeIpc = (byteBuffer: ByteBuffer) => {
+      val byteArray = new Array[Byte](byteBuffer.capacity())
+      byteBuffer.get(byteArray)
+      bos.write(byteArray)
+    }
+    JniBridge.resourcesMap.put(writerIpcProviderResourceId, consumeIpc)
+
+    // execute
+    val metric = MetricNode(Map(), Nil, None)
+    val singlePartition = new Partition {
+      override def index: Int = 0
+    }
+    assert(NativeHelper.executeNativePlan(exec, metric, singlePartition, None).isEmpty)
+    bos.toByteArray
+  }
 }
