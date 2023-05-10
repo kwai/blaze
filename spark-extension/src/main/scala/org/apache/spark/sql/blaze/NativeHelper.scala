@@ -68,7 +68,7 @@ object NativeHelper extends Logging {
       nativePlan: PhysicalPlanNode,
       metrics: MetricNode,
       partition: Partition,
-      context: TaskContext): Iterator[InternalRow] = {
+      context: Option[TaskContext]): Iterator[InternalRow] = {
 
     executeNativePlanColumnar(nativePlan, metrics, partition, context)
       .flatMap(ColumnarHelper.batchAsRowIter)
@@ -78,7 +78,7 @@ object NativeHelper extends Logging {
       nativePlan: PhysicalPlanNode,
       metrics: MetricNode,
       partition: Partition,
-      context: TaskContext): Iterator[ColumnarBatch] = {
+      context: Option[TaskContext]): Iterator[ColumnarBatch] = {
 
     BlazeCallNativeWrapper(nativePlan, partition, context, metrics).getBatchIterator
   }

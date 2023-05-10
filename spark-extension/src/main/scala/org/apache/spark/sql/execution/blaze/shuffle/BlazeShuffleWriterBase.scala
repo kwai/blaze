@@ -76,7 +76,7 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
       nativeShuffleWriterExec,
       nativeShuffleRDD.metrics,
       partition,
-      context)
+      Some(context))
     assert(iterator.toArray.isEmpty)
 
     // get partition lengths from shuffle write output index file

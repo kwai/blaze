@@ -23,13 +23,13 @@ import org.apache.spark.TaskContext
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
-class ArrowFFIStreamImportIterator(taskContext: TaskContext, arrowFFIStreamPtr: Long)
+class ArrowFFIStreamImportIterator(taskContext: Option[TaskContext], arrowFFIStreamPtr: Long)
     extends Iterator[ColumnarBatch] {
   private var stream = ArrowArrayStream.wrap(arrowFFIStreamPtr)
   private var reader = Data.importArrayStream(ArrowUtils.rootAllocator, stream)
   private var currentBatchNotConsumed = false
 
-  taskContext.addTaskCompletionListener[Unit](_ => close())
+  taskContext.foreach(_.addTaskCompletionListener[Unit](_ => close()))
 
   override def hasNext: Boolean =
     synchronized {
@@ -40,7 +40,7 @@ class ArrowFFIStreamImportIterator(taskContext: TaskContext, arrowFFIStreamPtr: 
       try {
         currentBatchNotConsumed = reader.loadNextBatch()
       } catch {
-        case _ if taskContext.isCompleted() || taskContext.isInterrupted() =>
+        case _ if taskContext.exists(tc => tc.isCompleted() || tc.isInterrupted()) =>
           currentBatchNotConsumed = false
       }
       currentBatchNotConsumed

@@ -203,7 +203,11 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
 
           // execute ipc writer and fill output channels
           val iter =
-            NativeHelper.executeNativePlan(nativeIpcWriterExec, nativeMetrics, split, context)
+            NativeHelper.executeNativePlan(
+              nativeIpcWriterExec,
+              nativeMetrics,
+              split,
+              Some(context))
           assert(iter.isEmpty)
 
           // return ipcs as iterator

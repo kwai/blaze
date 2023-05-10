@@ -63,6 +63,9 @@ public class JniBridge {
 
   public static boolean isTaskRunning() {
     TaskContext tc = getTaskContext();
+    if (tc == null) { // driver is always running
+      return true;
+    }
     return !tc.isCompleted() && !tc.isInterrupted();
   }
 

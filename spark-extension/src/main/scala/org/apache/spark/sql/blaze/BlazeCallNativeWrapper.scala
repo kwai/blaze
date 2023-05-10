@@ -38,7 +38,7 @@ import org.apache.spark.util.CompletionIterator
 case class BlazeCallNativeWrapper(
     nativePlan: PhysicalPlanNode,
     partition: Partition,
-    context: TaskContext,
+    context: Option[TaskContext],
     metrics: MetricNode)
     extends Logging {
 
@@ -49,12 +49,16 @@ case class BlazeCallNativeWrapper(
 
   logInfo(s"Start executing native plan")
   private var nativeRuntimePtr = JniBridge.callNative(this)
-  private var batchIterator = new InterruptibleIterator[ColumnarBatch](
-    context,
-    new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr))
+  private var batchIterator = {
+    val iter = new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr)
+    context match {
+      case Some(tc) => new InterruptibleIterator[ColumnarBatch](tc, iter)
+      case None => iter
+    }
+  }
 
-  context.addTaskCompletionListener(_ => close())
-  context.addTaskFailureListener((_, err) => close())
+  context.foreach(_.addTaskCompletionListener(_ => close()))
+  context.foreach(_.addTaskFailureListener((_, _) => close()))
 
   def getBatchIterator: Iterator[ColumnarBatch] =
     CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
@@ -87,7 +91,7 @@ case class BlazeCallNativeWrapper(
     val partitionId: PartitionId = PartitionId
       .newBuilder()
       .setPartitionId(partition.index)
-      .setStageId(context.stageId())
+      .setStageId(context.map(_.stageId()).getOrElse(0))
       .setJobId(partition.index.toString)
       .build()
 
@@ -102,7 +106,12 @@ case class BlazeCallNativeWrapper(
   private def close(): Unit = {
     synchronized {
       if (batchIterator != null) {
-        batchIterator.delegate.asInstanceOf[ArrowFFIStreamImportIterator].close()
+        batchIterator match {
+          case iter: InterruptibleIterator[_] =>
+            iter.delegate.asInstanceOf[ArrowFFIStreamImportIterator].close()
+          case iter: ArrowFFIStreamImportIterator =>
+            iter.close()
+        }
         batchIterator = null
       }
       if (nativeRuntimePtr != 0) {
