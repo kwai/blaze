@@ -766,16 +766,14 @@ message ScalarValue {
     int64  timestamp_microsecond_value = 17;
     int64  timestamp_nanosecond_value = 18;
     ScalarListValue list_value = 19;
-    ScalarType null_list_value = 20;
-    PrimitiveScalarType null_value = 21;
-    ScalarDecimalValue decimal_value = 22;
+    ScalarDecimalValue decimal_value = 20;
+    ScalarType null_value = 1000;
   }
 }
 
 // Contains all valid datafusion scalar type except for
 // List
 enum PrimitiveScalarType {
-
   BOOL = 0;     // arrow::Type::BOOL
   UINT8 = 1;    // arrow::Type::UINT8
   INT8 = 2;     // arrow::Type::INT8
@@ -801,16 +799,15 @@ enum PrimitiveScalarType {
   INTERVAL_DAYTIME = 22;
 }
 
+message ScalarListType {
+  ScalarType element_type = 1;
+}
+
 message ScalarType {
   oneof datatype {
     PrimitiveScalarType scalar = 1;
     ScalarListType list = 2;
   }
-}
-
-message ScalarListType {
-  repeated string field_names = 3;
-  PrimitiveScalarType deepest_type = 2;
 }
 
 // Broke out into multiple message types so that type

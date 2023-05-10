@@ -26,6 +26,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
+import org.blaze.{protobuf => pb}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.Abs
@@ -61,7 +62,6 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.expressions.Log
 import org.apache.spark.sql.catalyst.expressions.Log10
 import org.apache.spark.sql.catalyst.expressions.Log2
-import org.apache.spark.sql.catalyst.expressions.Lower
 import org.apache.spark.sql.catalyst.expressions.Md5
 import org.apache.spark.sql.catalyst.expressions.Multiply
 import org.apache.spark.sql.catalyst.expressions.Not
@@ -69,7 +69,6 @@ import org.apache.spark.sql.catalyst.expressions.NullIf
 import org.apache.spark.sql.catalyst.expressions.OctetLength
 import org.apache.spark.sql.catalyst.expressions.Or
 import org.apache.spark.sql.catalyst.expressions.Remainder
-import org.apache.spark.sql.catalyst.expressions.Round
 import org.apache.spark.sql.catalyst.expressions.Sha2
 import org.apache.spark.sql.catalyst.expressions.Signum
 import org.apache.spark.sql.catalyst.expressions.Sin
@@ -82,7 +81,6 @@ import org.apache.spark.sql.catalyst.expressions.Substring
 import org.apache.spark.sql.catalyst.expressions.Subtract
 import org.apache.spark.sql.catalyst.expressions.Tan
 import org.apache.spark.sql.catalyst.expressions.TruncDate
-import org.apache.spark.sql.catalyst.expressions.Upper
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.catalyst.expressions.aggregate.CollectList
@@ -118,6 +116,7 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
@@ -135,7 +134,6 @@ import org.apache.spark.sql.types.Decimal
 import org.apache.spark.sql.types.DecimalType
 import org.apache.spark.sql.types.DoubleType
 import org.apache.spark.sql.types.FloatType
-import org.apache.spark.sql.types.FractionalType
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.LongType
 import org.apache.spark.sql.types.MapType
@@ -147,26 +145,36 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
-import org.blaze.{protobuf => pb}
 
 object NativeConverters extends Logging {
-  def convertToScalarType(dt: DataType): pb.PrimitiveScalarType = {
-    dt match {
-      case NullType => pb.PrimitiveScalarType.NULL
-      case BooleanType => pb.PrimitiveScalarType.BOOL
-      case ByteType => pb.PrimitiveScalarType.INT8
-      case ShortType => pb.PrimitiveScalarType.INT16
-      case IntegerType => pb.PrimitiveScalarType.INT32
-      case LongType => pb.PrimitiveScalarType.INT64
-      case FloatType => pb.PrimitiveScalarType.FLOAT32
-      case DoubleType => pb.PrimitiveScalarType.FLOAT64
-      case StringType => pb.PrimitiveScalarType.UTF8
-      case DateType => pb.PrimitiveScalarType.DATE32
-      case TimestampType => pb.PrimitiveScalarType.TIMESTAMP_MICROSECOND
-      case _: DecimalType => pb.PrimitiveScalarType.DECIMAL128
-      case _: ArrayType => pb.PrimitiveScalarType.UTF8 // FIXME
-      case _ => throw new NotImplementedError(s"convert $dt to DF scalar type not supported")
+
+  def convertScalarType(dataType: DataType): pb.ScalarType = {
+    val scalarTypeBuilder = dataType match {
+      case NullType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.NULL)
+      case BooleanType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.BOOL)
+      case ByteType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT8)
+      case ShortType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT16)
+      case IntegerType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT32)
+      case LongType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT64)
+      case FloatType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.FLOAT32)
+      case DoubleType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.FLOAT64)
+      case StringType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.UTF8)
+      case DateType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.DATE32)
+      case TimestampType =>
+        pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.TIMESTAMP_MICROSECOND)
+      case _: DecimalType =>
+        pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.DECIMAL128)
+      case at: ArrayType =>
+        pb.ScalarType
+          .newBuilder()
+          .setList(
+            pb.ScalarListType
+              .newBuilder()
+              .setElementType(convertScalarType(at.elementType)))
+
+      case _ => throw new NotImplementedError(s"Value conversion not implemented ${dataType}")
     }
+    scalarTypeBuilder.build()
   }
 
   def convertDataType(sparkDataType: DataType): pb.ArrowType = {
@@ -259,7 +267,7 @@ object NativeConverters extends Logging {
   def convertValue(sparkValue: Any, dataType: DataType): pb.ScalarValue = {
     val scalarValueBuilder = pb.ScalarValue.newBuilder()
     dataType match {
-      case NullType => scalarValueBuilder.setNullValue(pb.PrimitiveScalarType.NULL)
+      case NullType => scalarValueBuilder.setNullValue(convertScalarType(NullType))
       case BooleanType => scalarValueBuilder.setBoolValue(sparkValue.asInstanceOf[Boolean])
       case ByteType => scalarValueBuilder.setInt8Value(sparkValue.asInstanceOf[Byte])
       case ShortType => scalarValueBuilder.setInt16Value(sparkValue.asInstanceOf[Short])
@@ -268,7 +276,6 @@ object NativeConverters extends Logging {
       case FloatType => scalarValueBuilder.setFloat32Value(sparkValue.asInstanceOf[Float])
       case DoubleType => scalarValueBuilder.setFloat64Value(sparkValue.asInstanceOf[Double])
       case StringType => scalarValueBuilder.setUtf8Value(sparkValue.toString)
-      case BinaryType => throw new NotImplementedError("BinaryType not yet supported")
       case DateType => scalarValueBuilder.setDate32Value(sparkValue.asInstanceOf[Int])
       case TimestampType =>
         scalarValueBuilder.setTimestampMicrosecondValue(sparkValue.asInstanceOf[Long])
@@ -281,13 +288,21 @@ object NativeConverters extends Logging {
             .setDecimal(decimalType)
             .setLongValue(decimalValue.toUnscaledLong))
 
-      // TODO: support complex data types
-      case _: ArrayType | _: StructType | _: MapType if sparkValue == null =>
-        pb.PrimitiveScalarType.NULL
-      case _ => throw new NotImplementedError(s"Value conversion not implemented ${dataType}")
-    }
+      case t @ (_: ArrayType | _: StructType | _: MapType) if sparkValue == null =>
+        scalarValueBuilder.setNullValue(convertScalarType(t))
 
-    // TODO: support complex data types
+      case at: ArrayType =>
+        val values =
+          pb.ScalarListValue.newBuilder().setDatatype(convertScalarType(at.elementType))
+        sparkValue
+          .asInstanceOf[ArrayData]
+          .foreach(
+            at.elementType,
+            (_, value) => {
+              values.addValues(convertValue(value, at.elementType))
+            })
+        scalarValueBuilder.setListValue(values)
+    }
     scalarValueBuilder.build()
   }
 
@@ -388,11 +403,11 @@ object NativeConverters extends Logging {
                     .setArrowType(convertDataType(at))
                     .setExpr(buildExprNode {
                       _.setLiteral(
-                        pb.ScalarValue.newBuilder().setNullValue(convertToScalarType(NullType)))
+                        pb.ScalarValue.newBuilder().setNullValue(convertScalarType(NullType)))
                     }))
               case _ =>
                 b.setLiteral(
-                  pb.ScalarValue.newBuilder().setNullValue(convertToScalarType(dataType)))
+                  pb.ScalarValue.newBuilder().setNullValue(convertScalarType(dataType)))
             }
           } else {
             b.setLiteral(convertValue(value, dataType))

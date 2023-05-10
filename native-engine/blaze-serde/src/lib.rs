@@ -507,18 +507,27 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                     Arc::new(Field::new("items", scalar_type, true)),
                 )
             }
-            protobuf::scalar_value::Value::NullListValue(v) => {
-                let pb_datatype = v
-                    .datatype
-                    .as_ref()
-                    .ok_or_else(|| proto_error("Protobuf deserialization error: NullListValue message missing required field 'datatyp'"))?;
-                let scalar_type = pb_datatype.try_into()?;
-                ScalarValue::List(None, Arc::new(Field::new("items", scalar_type, true)))
-            }
             protobuf::scalar_value::Value::NullValue(v) => {
-                let null_type_enum = protobuf::PrimitiveScalarType::from_i32(*v)
-                    .ok_or_else(|| proto_error("Protobuf deserialization error found invalid enum variant for DatafusionScalar"))?;
-                null_type_enum.try_into()?
+                let datatype = v.datatype
+                    .as_ref()
+                    .ok_or_else(|| proto_error("missing ScalarType.datatype"))?;
+                match datatype {
+                    protobuf::scalar_type::Datatype::Scalar(scalar) => {
+                        let null_type_enum = protobuf::PrimitiveScalarType::from_i32(*scalar)
+                            .ok_or_else(|| proto_error("Protobuf deserialization error found invalid enum variant for DatafusionScalar"))?;
+                        null_type_enum.try_into()?
+                    }
+                    protobuf::scalar_type::Datatype::List(list) => {
+                        let pb_scalar_type = list.element_type
+                            .as_ref()
+                            .ok_or_else(|| proto_error("missing list.element_type"))?;
+                        let scalar_type: DataType = pb_scalar_type.as_ref().try_into()?;
+                        ScalarValue::List(
+                            None,
+                            Arc::new(Field::new("items", scalar_type, true)),
+                        )
+                    }
+                }
             }
         })
     }
@@ -549,35 +558,13 @@ impl TryInto<DataType> for &protobuf::scalar_type::Datatype {
                 })?;
                 pb_scalar_enum.into()
             }
-            Datatype::List(protobuf::ScalarListType {
-                deepest_type,
-                field_names,
-            }) => {
-                if field_names.is_empty() {
-                    return Err(proto_error(
-                        "Protobuf deserialization error: found no field names in ScalarListType message which requires at least one",
-                    ));
-                }
-                let pb_scalar_type = protobuf::PrimitiveScalarType::from_i32(*deepest_type)
-                    .ok_or_else(|| {
-                        proto_error(format!(
-                            "Protobuf deserialization error: invalid i32 for scalar enum: {}",
-                            *deepest_type
-                        ))
-                    })?;
-                //Because length is checked above it is safe to unwrap .last()
-                let mut scalar_type = DataType::List(Arc::new(Field::new(
-                    field_names.last().unwrap().as_str(),
-                    pb_scalar_type.into(),
-                    true,
-                )));
-                //Iterate over field names in reverse order except for the last item in the vector
-                for name in field_names.iter().rev().skip(1) {
-                    let new_datatype =
-                        DataType::List(Arc::new(Field::new(name.as_str(), scalar_type, true)));
-                    scalar_type = new_datatype;
-                }
-                scalar_type
+            Datatype::List(list_type) => {
+                let element_scalar_type: DataType = list_type.element_type
+                    .as_ref()
+                    .ok_or_else(|| proto_error("missing element type"))?
+                    .as_ref()
+                    .try_into()?;
+                DataType::List(Arc::new(Field::new("items", element_scalar_type, true)))
             }
         })
     }
@@ -617,13 +604,25 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
                 ScalarValue::TimestampNanosecond(Some(*v), None)
             }
             protobuf::scalar_value::Value::ListValue(v) => v.try_into()?,
-            protobuf::scalar_value::Value::NullListValue(v) => {
-                ScalarValue::List(None, Arc::new(Field::new("items", v.try_into()?, true)))
-            }
-            protobuf::scalar_value::Value::NullValue(null_enum) => {
-                PrimitiveScalarType::from_i32(*null_enum)
-                    .ok_or_else(|| proto_error("Invalid scalar type"))?
-                    .try_into()?
+            protobuf::scalar_value::Value::NullValue(v) => {
+                match v.datatype.as_ref().ok_or_else(|| proto_error("missing null value type"))? {
+                    protobuf::scalar_type::Datatype::Scalar(scalar) => {
+                        PrimitiveScalarType::from_i32(*scalar)
+                            .ok_or_else(|| proto_error("Invalid scalar type"))?
+                            .try_into()?
+                    }
+                    protobuf::scalar_type::Datatype::List(list) => {
+                        let element_scalar_type: DataType = list.element_type
+                            .as_ref()
+                            .ok_or_else(|| proto_error("missing list element type"))?
+                            .as_ref()
+                            .try_into()?;
+                        ScalarValue::List(
+                            None,
+                            Arc::new(Field::new("items", element_scalar_type, true)),
+                        )
+                    }
+                }
             }
             protobuf::scalar_value::Value::DecimalValue(v) => {
                 let decimal = v.decimal.as_ref().unwrap();
@@ -638,220 +637,34 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
     }
 }
 
-impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarListValue {
+impl TryInto<ScalarValue> for &protobuf::ScalarListValue {
     type Error = PlanSerDeError;
-    fn try_into(self) -> Result<datafusion::scalar::ScalarValue, Self::Error> {
-        use protobuf::scalar_type::Datatype;
-        use protobuf::PrimitiveScalarType;
-        let protobuf::ScalarListValue { datatype, values } = self;
-        let pb_scalar_type = datatype
+    fn try_into(self) -> Result<ScalarValue, Self::Error> {
+        let element_scalar_type: DataType = self.datatype
             .as_ref()
-            .ok_or_else(|| proto_error("Protobuf deserialization error: ScalarListValue messsage missing required field 'datatype'"))?;
-        let scalar_type = pb_scalar_type
-            .datatype
-            .as_ref()
-            .ok_or_else(|| proto_error("Protobuf deserialization error: ScalarListValue.Datatype messsage missing required field 'datatype'"))?;
-        let scalar_values = match scalar_type {
-            Datatype::Scalar(scalar_type_i32) => {
-                let leaf_scalar_type = protobuf::PrimitiveScalarType::from_i32(*scalar_type_i32)
-                    .ok_or_else(|| proto_error("Error converting i32 to basic scalar type"))?;
-                let typechecked_values: Vec<datafusion::scalar::ScalarValue> = values
-                    .iter()
-                    .map(|protobuf::ScalarValue { value: opt_value }| {
-                        let value = opt_value.as_ref().ok_or_else(|| {
-                            proto_error(
-                                "Protobuf deserialization error: missing required field 'value'",
-                            )
-                        })?;
-                        typechecked_scalar_value_conversion(value, leaf_scalar_type)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                datafusion::scalar::ScalarValue::List(
-                    Some(typechecked_values),
-                    Arc::new(Field::new(
-                        "items",
-                        leaf_scalar_type.try_into().map_err(|err| {
-                            PlanSerDeError::General(format!(
-                                "Error converting scalar list value: {:?}",
-                                err
-                            ))
-                        })?,
-                        true,
-                    )),
-                )
-            }
-            Datatype::List(list_type) => {
-                let protobuf::ScalarListType {
-                    deepest_type,
-                    field_names,
-                } = &list_type;
-                let leaf_type = PrimitiveScalarType::from_i32(*deepest_type)
-                    .ok_or_else(|| proto_error("Error converting i32 to basic scalar type"))?;
-                let depth = field_names.len();
-
-                let typechecked_values: Vec<datafusion::scalar::ScalarValue> = if depth == 0 {
-                    return Err(proto_error(
-                        "Protobuf deserialization error, ScalarListType had no field names, requires at least one",
-                    ));
-                } else if depth == 1 {
-                    values
-                        .iter()
-                        .map(|protobuf::ScalarValue { value: opt_value }| {
-                            let value = opt_value
-                                .as_ref()
-                                .ok_or_else(|| proto_error("Protobuf deserialization error: missing required field 'value'"))?;
-                            typechecked_scalar_value_conversion(value, leaf_type)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
-                } else {
-                    values
-                        .iter()
-                        .map(|protobuf::ScalarValue { value: opt_value }| {
-                            let value = opt_value
-                                .as_ref()
-                                .ok_or_else(|| proto_error("Protobuf deserialization error: missing required field 'value'"))?;
-                            value.try_into()
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
-                };
-                datafusion::scalar::ScalarValue::List(
-                    match typechecked_values.len() {
-                        0 => None,
-                        _ => Some(typechecked_values),
-                    },
-                    Arc::new(Field::new("items", list_type.try_into()?, true)),
-                )
-            }
-        };
-        Ok(scalar_values)
+            .ok_or_else(|| proto_error("missing list element type"))?
+            .try_into()?;
+        let values: Vec<ScalarValue> = self.values
+            .iter()
+            .map(|value| Ok(value.try_into()?))
+            .collect::<Result<_, Self::Error>>()?;
+        Ok(ScalarValue::List(
+            Some(values),
+            Arc::new(Field::new("items", element_scalar_type, true))
+        ))
     }
 }
 
 impl TryInto<DataType> for &protobuf::ScalarListType {
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<DataType, Self::Error> {
-        use protobuf::PrimitiveScalarType;
-        let protobuf::ScalarListType {
-            deepest_type,
-            field_names,
-        } = self;
-
-        let depth = field_names.len();
-        if depth == 0 {
-            return Err(proto_error(
-                "Protobuf deserialization error: Found a ScalarListType message with no field names, at least one is required",
-            ));
-        }
-
-        let mut curr_type = DataType::List(Arc::new(Field::new(
-            //Since checked vector is not empty above this is safe to unwrap
-            field_names.last().unwrap(),
-            PrimitiveScalarType::from_i32(*deepest_type)
-                .ok_or_else(|| proto_error("Could not convert to datafusion scalar type"))?
-                .into(),
-            true,
-        )));
-        //Iterates over field names in reverse order except for the last item in the vector
-        for name in field_names.iter().rev().skip(1) {
-            let temp_curr_type = DataType::List(Arc::new(Field::new(name, curr_type, true)));
-            curr_type = temp_curr_type;
-        }
-        Ok(curr_type)
+        let element_scalar_type: DataType = self.element_type
+            .as_ref()
+            .ok_or_else(|| proto_error("missing list element type"))?
+            .as_ref()
+            .try_into()?;
+        Ok(DataType::List(Arc::new(Field::new("items", element_scalar_type, true))))
     }
-}
-
-//Does not typecheck lists
-fn typechecked_scalar_value_conversion(
-    tested_type: &protobuf::scalar_value::Value,
-    required_type: protobuf::PrimitiveScalarType,
-) -> Result<datafusion::scalar::ScalarValue, PlanSerDeError> {
-    use protobuf::scalar_value::Value;
-    use protobuf::PrimitiveScalarType;
-    Ok(match (tested_type, &required_type) {
-        (Value::BoolValue(v), PrimitiveScalarType::Bool) => ScalarValue::Boolean(Some(*v)),
-        (Value::Int8Value(v), PrimitiveScalarType::Int8) => ScalarValue::Int8(Some(*v as i8)),
-        (Value::Int16Value(v), PrimitiveScalarType::Int16) => ScalarValue::Int16(Some(*v as i16)),
-        (Value::Int32Value(v), PrimitiveScalarType::Int32) => ScalarValue::Int32(Some(*v)),
-        (Value::Int64Value(v), PrimitiveScalarType::Int64) => ScalarValue::Int64(Some(*v)),
-        (Value::Uint8Value(v), PrimitiveScalarType::Uint8) => ScalarValue::UInt8(Some(*v as u8)),
-        (Value::Uint16Value(v), PrimitiveScalarType::Uint16) => {
-            ScalarValue::UInt16(Some(*v as u16))
-        }
-        (Value::Uint32Value(v), PrimitiveScalarType::Uint32) => ScalarValue::UInt32(Some(*v)),
-        (Value::Uint64Value(v), PrimitiveScalarType::Uint64) => ScalarValue::UInt64(Some(*v)),
-        (Value::Float32Value(v), PrimitiveScalarType::Float32) => ScalarValue::Float32(Some(*v)),
-        (Value::Float64Value(v), PrimitiveScalarType::Float64) => ScalarValue::Float64(Some(*v)),
-        (Value::Date32Value(v), PrimitiveScalarType::Date32) => ScalarValue::Date32(Some(*v)),
-        (Value::TimestampSecondValue(v), PrimitiveScalarType::TimestampSecond) => {
-            ScalarValue::TimestampSecond(Some(*v), None)
-        }
-        (Value::TimestampMillisecondValue(v), PrimitiveScalarType::TimestampMillisecond) => {
-            ScalarValue::TimestampMillisecond(Some(*v), None)
-        }
-        (Value::TimestampMicrosecondValue(v), PrimitiveScalarType::TimestampMicrosecond) => {
-            ScalarValue::TimestampMicrosecond(Some(*v), None)
-        }
-        (Value::TimestampNanosecondValue(v), PrimitiveScalarType::TimestampNanosecond) => {
-            ScalarValue::TimestampNanosecond(Some(*v), None)
-        }
-        (Value::Utf8Value(v), PrimitiveScalarType::Utf8) => ScalarValue::Utf8(Some(v.to_owned())),
-        (Value::LargeUtf8Value(v), PrimitiveScalarType::LargeUtf8) => {
-            ScalarValue::LargeUtf8(Some(v.to_owned()))
-        }
-
-        (Value::NullValue(i32_enum), required_scalar_type) => {
-            if *i32_enum == *required_scalar_type as i32 {
-                let pb_scalar_type = PrimitiveScalarType::from_i32(*i32_enum).ok_or_else(|| {
-                    PlanSerDeError::General(format!(
-                        "Invalid i32_enum={} when converting with PrimitiveScalarType::from_i32()",
-                        *i32_enum
-                    ))
-                })?;
-                let scalar_value: ScalarValue = match pb_scalar_type {
-                    PrimitiveScalarType::Bool => ScalarValue::Boolean(None),
-                    PrimitiveScalarType::Uint8 => ScalarValue::UInt8(None),
-                    PrimitiveScalarType::Int8 => ScalarValue::Int8(None),
-                    PrimitiveScalarType::Uint16 => ScalarValue::UInt16(None),
-                    PrimitiveScalarType::Int16 => ScalarValue::Int16(None),
-                    PrimitiveScalarType::Uint32 => ScalarValue::UInt32(None),
-                    PrimitiveScalarType::Int32 => ScalarValue::Int32(None),
-                    PrimitiveScalarType::Uint64 => ScalarValue::UInt64(None),
-                    PrimitiveScalarType::Int64 => ScalarValue::Int64(None),
-                    PrimitiveScalarType::Float32 => ScalarValue::Float32(None),
-                    PrimitiveScalarType::Float64 => ScalarValue::Float64(None),
-                    PrimitiveScalarType::Utf8 => ScalarValue::Utf8(None),
-                    PrimitiveScalarType::LargeUtf8 => ScalarValue::LargeUtf8(None),
-                    PrimitiveScalarType::Date32 => ScalarValue::Date32(None),
-                    //PrimitiveScalarType::Null => {
-                    //    return Err(proto_error(
-                    //        "Untyped scalar null is not a valid scalar value",
-                    //    ))
-                    //}
-                    PrimitiveScalarType::Null => ScalarValue::Null,
-                    PrimitiveScalarType::Decimal128 => ScalarValue::Decimal128(None, 1, 0),
-                    PrimitiveScalarType::Date64 => ScalarValue::Date64(None),
-                    PrimitiveScalarType::TimestampSecond => {
-                        ScalarValue::TimestampSecond(None, None)
-                    }
-                    PrimitiveScalarType::TimestampMillisecond => {
-                        ScalarValue::TimestampMillisecond(None, None)
-                    }
-                    PrimitiveScalarType::TimestampMicrosecond => {
-                        ScalarValue::TimestampMicrosecond(None, None)
-                    }
-                    PrimitiveScalarType::TimestampNanosecond => {
-                        ScalarValue::TimestampNanosecond(None, None)
-                    }
-                    PrimitiveScalarType::IntervalYearmonth => ScalarValue::IntervalYearMonth(None),
-                    PrimitiveScalarType::IntervalDaytime => ScalarValue::IntervalDayTime(None),
-                };
-                scalar_value
-            } else {
-                return Err(proto_error("Could not convert to the proper type"));
-            }
-        }
-        _ => return Err(proto_error("Could not convert to the proper type")),
-    })
 }
 
 impl TryInto<datafusion::scalar::ScalarValue> for protobuf::PrimitiveScalarType {
