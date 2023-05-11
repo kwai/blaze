@@ -126,13 +126,6 @@ case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan]
         sparkSession.sparkContext.conf
           .set(blazeMissPatterns, BlazeMissPatterns.NonParquetFormat)
 
-      case PhysicalOperation(_, _, l @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, _)) =>
-        if (!fsRelation.fileFormat.isInstanceOf[ParquetFileFormat]) {
-          l.conf.setConf(blazeEnabledKey, false)
-          sparkSession.sparkContext.conf
-            .set(blazeMissPatterns, BlazeMissPatterns.NonParquetFormat)
-        }
-
       case _ =>
     }
     plan
