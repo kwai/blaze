@@ -242,10 +242,13 @@ object NativeAggExec {
 
     aggr.mode match {
       case Partial =>
-        NativeAggrInfo(aggr.mode, NativeConverters.convertExpr(aggr) :: Nil, outputAttr)
+        NativeAggrInfo(aggr.mode, NativeConverters.convertAggregateExpr(aggr) :: Nil, outputAttr)
 
       case PartialMerge | Final =>
-        NativeAggrInfo(aggr.mode, NativeConverters.convertExpr(reducedAggr) :: Nil, outputAttr)
+        NativeAggrInfo(
+          aggr.mode,
+          NativeConverters.convertAggregateExpr(reducedAggr) :: Nil,
+          outputAttr)
 
       case Complete =>
         throw new NotImplementedError("aggrMode = Complete not yet supported")

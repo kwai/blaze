@@ -25,7 +25,6 @@ import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
@@ -49,9 +48,6 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
     case (expr, paramsSchema) =>
       (expr, paramsSchema)
   }
-
-  private val paramsProjector: UnsafeProjection = UnsafeProjection.create(expr.children)
-  paramsProjector.initialize(TaskContext.getPartitionId())
 
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
   private val outputSchema = {
@@ -83,9 +79,8 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
 
       // evaluate expression and write to output root
       val outputWriter = ArrowWriter.create(outputRoot)
-      for (row <- ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(paramsRoot))) {
-        val unsafeParamsRow = paramsProjector(row)
-        val outputRow = InternalRow(expr.eval(unsafeParamsRow))
+      for (paramsRow <- ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(paramsRoot))) {
+        val outputRow = InternalRow(expr.eval(paramsRow))
         outputWriter.write(outputRow)
       }
       outputWriter.finish()
