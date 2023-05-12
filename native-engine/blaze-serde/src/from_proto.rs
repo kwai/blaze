@@ -29,8 +29,6 @@ use datafusion::logical_expr::{
 use datafusion::logical_expr::{Operator, TryCast};
 use datafusion::physical_expr::expressions::LikeExpr;
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
-use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
-use datafusion::physical_plan::joins::PartitionMode;
 use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
@@ -49,7 +47,7 @@ use datafusion_ext_plans::agg::{
     create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
 };
 use datafusion_ext_plans::agg_exec::AggExec;
-use datafusion_ext_plans::broadcast_hash_join_exec::BroadcastHashJoinExec;
+use datafusion_ext_plans::broadcast_join_exec::BroadcastJoinExec;
 use datafusion_ext_plans::debug_exec::DebugExec;
 use datafusion_ext_plans::empty_partitions_exec::EmptyPartitionsExec;
 use datafusion_ext_plans::expand_exec::ExpandExec;
@@ -92,10 +90,14 @@ fn bind(
     let expr = expr_in.as_any();
 
     if let Some(expr) = expr.downcast_ref::<Column>() {
-        Ok(Arc::new(Column::new_with_schema(
-            expr.name(),
-            input_schema,
-        )?))
+        if expr.name() == "__bound_reference__" {
+            Ok(Arc::new(expr.clone()))
+        } else {
+            Ok(Arc::new(Column::new_with_schema(
+                expr.name(),
+                input_schema,
+            )?))
+        }
     } else {
         let new_children = expr_in
             .children()
@@ -433,10 +435,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     sort.fetch_limit.map(|limit| limit as usize),
                 )))
             }
-            PhysicalPlanType::HashJoin(hashjoin) => {
-                let left: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.left)?;
-                let right: Arc<dyn ExecutionPlan> = convert_box_required!(hashjoin.right)?;
-                let on: Vec<(Column, Column)> = hashjoin
+            PhysicalPlanType::BroadcastJoin(broadcast_join) => {
+                let left: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.left)?;
+                let right: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.right)?;
+                let on: Vec<(Column, Column)> = broadcast_join
                     .on
                     .iter()
                     .map(|col| {
@@ -451,64 +453,18 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .collect::<Result<_, Self::Error>>()?;
 
                 let join_type =
-                    protobuf::JoinType::from_i32(hashjoin.join_type).ok_or_else(|| {
+                    protobuf::JoinType::from_i32(broadcast_join.join_type).ok_or_else(|| {
                         proto_error(format!(
-                            "Received a HashJoinNode message with unknown JoinType {}",
-                            hashjoin.join_type
+                            "Received a BroadcastJoinNode message with unknown JoinType {}",
+                            broadcast_join.join_type
                         ))
                     })?;
-                let filter = hashjoin
-                    .filter
-                    .as_ref()
-                    .map(|f| {
-                        let schema = Arc::new(convert_required!(f.schema)?);
-                        let expression = try_parse_physical_expr_required(
-                            &f.expression,
-                            &schema,
-                        )?;
-                        let column_indices = f.column_indices
-                            .iter()
-                            .map(|i| {
-                                let side = protobuf::JoinSide::from_i32(i.side)
-                                    .ok_or_else(|| proto_error(format!(
-                                        "Received a HashJoinNode message with JoinSide in Filter {}",
-                                        i.side))
-                                    )?;
 
-                                Ok(ColumnIndex {
-                                    index: i.index as usize,
-                                    side: side.into(),
-                                })
-                            })
-                            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
-
-                        Ok(JoinFilter::new(
-                            bind(expression, &schema)?,
-                            column_indices,
-                            schema.as_ref().clone()
-                        ))
-                    })
-                    .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
-
-                let partition_mode = protobuf::PartitionMode::from_i32(hashjoin.partition_mode)
-                    .ok_or_else(|| {
-                        proto_error(format!(
-                            "Received a HashJoinNode message with unknown PartitionMode {}",
-                            hashjoin.partition_mode
-                        ))
-                    })?;
-                let partition_mode = match partition_mode {
-                    protobuf::PartitionMode::CollectLeft => PartitionMode::CollectLeft,
-                    protobuf::PartitionMode::Partitioned => PartitionMode::Partitioned,
-                };
-                Ok(Arc::new(BroadcastHashJoinExec::try_new(
+                Ok(Arc::new(BroadcastJoinExec::try_new(
                     left,
                     right,
                     on,
-                    filter,
-                    &join_type.into(),
-                    partition_mode,
-                    &hashjoin.null_equals_null,
+                    join_type.into(),
                 )?))
             }
             PhysicalPlanType::Union(union) => {
@@ -842,6 +798,12 @@ impl From<&protobuf::PhysicalColumn> for Column {
     }
 }
 
+impl From<&protobuf::BoundReference> for Column {
+    fn from(c: &protobuf::BoundReference) -> Column {
+        Column::new("__bound_reference__", c.index as usize)
+    }
+}
+
 impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
     fn from(f: &protobuf::ScalarFunction) -> BuiltinScalarFunction {
         use protobuf::ScalarFunction;
@@ -932,6 +894,10 @@ fn try_parse_physical_expr(
             Arc::new(pcol)
         }
         ExprType::Literal(scalar) => Arc::new(Literal::new(convert_required!(scalar.value)?)),
+        ExprType::BoundReference(bound_reference) => {
+            let pcol: Column = bound_reference.into();
+            Arc::new(pcol)
+        }
         ExprType::BinaryExpr(binary_expr) => Arc::new(BinaryExpr::new(
             try_parse_physical_expr_box_required(&binary_expr.l.clone(), input_schema)?,
             from_proto_binary_op(&binary_expr.op)?,

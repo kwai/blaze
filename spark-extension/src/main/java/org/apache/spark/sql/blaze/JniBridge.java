@@ -69,6 +69,11 @@ public class JniBridge {
     return !tc.isCompleted() && !tc.isInterrupted();
   }
 
+  public static boolean isDriverSide() {
+    TaskContext tc = getTaskContext();
+    return tc == null;
+  }
+
   public static native void mergeIpcs(
       Iterator<ReadableByteChannel> ipcBytesIter,
       Function1<ByteBuffer, Unit> mergedIpcBytesHandler);

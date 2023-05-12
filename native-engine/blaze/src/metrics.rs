@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use blaze_commons::{jni_call, jni_new_string};
+use datafusion::common::Result;
 use datafusion::physical_plan::ExecutionPlan;
 use jni::objects::JObject;
 use std::sync::Arc;
@@ -20,7 +21,12 @@ use std::sync::Arc;
 pub fn update_spark_metric_node(
     metric_node: JObject,
     execution_plan: Arc<dyn ExecutionPlan>,
-) -> datafusion::error::Result<()> {
+) -> Result<()> {
+
+    if metric_node.is_null() {
+        return Ok(())
+    }
+
     // update current node
     update_metrics(
         metric_node,
@@ -46,7 +52,7 @@ pub fn update_spark_metric_node(
 fn update_metrics(
     metric_node: JObject,
     metric_values: &[(&str, i64)],
-) -> datafusion::error::Result<()> {
+) -> Result<()> {
     for &(name, value) in metric_values {
         let jname = jni_new_string!(&name)?;
         jni_call!(SparkMetricNode(metric_node).add(jname.as_obj(), value) -> ())?;

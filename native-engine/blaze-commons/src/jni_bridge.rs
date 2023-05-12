@@ -489,6 +489,8 @@ pub struct JniBridge<'a> {
     pub method_getTaskOnHeapSpillManager_ret: ReturnType,
     pub method_isTaskRunning: JStaticMethodID,
     pub method_isTaskRunning_ret: ReturnType,
+    pub method_isDriverSide: JStaticMethodID,
+    pub method_isDriverSide_ret: ReturnType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -535,6 +537,8 @@ impl<'a> JniBridge<'a> {
             method_getTaskOnHeapSpillManager_ret: ReturnType::Object,
             method_isTaskRunning: env.get_static_method_id(class, "isTaskRunning", "()Z")?,
             method_isTaskRunning_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_isDriverSide: env.get_static_method_id(class, "isDriverSide", "()Z")?,
+            method_isDriverSide_ret: ReturnType::Primitive(Primitive::Boolean),
         })
     }
 }

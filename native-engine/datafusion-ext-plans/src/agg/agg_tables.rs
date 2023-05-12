@@ -34,7 +34,7 @@ use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::OnHeapSpill;
+use crate::common::onheap_spill::{Spill, try_new_spill};
 use crate::common::output::WrappedRecordBatchSender;
 
 // reserve memory for each spill
@@ -45,7 +45,7 @@ pub struct AggTables {
     name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     in_mem: Mutex<InMemTable>,
-    spills: Mutex<Vec<OnHeapSpill>>,
+    spills: Mutex<Vec<Box<dyn Spill>>>,
     agg_ctx: Arc<AggContext>,
     context: Arc<TaskContext>,
     metrics: BaselineMetrics,
@@ -143,7 +143,7 @@ impl AggTables {
                 .await?;
         }
         for spill in &spills {
-            cursors.push(SpillCursor::try_from_spill(spill.clone(), &self.agg_ctx)?);
+            cursors.push(SpillCursor::try_from_spill(&spill, &self.agg_ctx)?);
         }
         let mut staging_records = Vec::with_capacity(batch_size);
         let mut current_record: Option<AggRecord> = None;
@@ -339,12 +339,12 @@ impl InMemTable {
         vec
     }
 
-    fn try_into_spill(self) -> Result<Option<OnHeapSpill>> {
+    fn try_into_spill(self) -> Result<Option<Box<dyn Spill>>> {
         if self.grouping_mappings.is_empty() && self.unsorted.is_empty() {
             return Ok(None);
         }
 
-        let spill = OnHeapSpill::try_new()?;
+        let spill = try_new_spill()?;
         let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
         let mut sorted = self.into_rev_sorted_vec();
 
@@ -377,7 +377,7 @@ struct SpillCursor {
     current: Option<AggRecord>,
 }
 impl SpillCursor {
-    fn try_from_spill(spill: OnHeapSpill, agg_ctx: &Arc<AggContext>) -> Result<Self> {
+    fn try_from_spill(spill: &Box<dyn Spill>, agg_ctx: &Arc<AggContext>) -> Result<Self> {
         let buf_reader = spill.get_buf_reader();
         let mut iter = SpillCursor {
             agg_ctx: agg_ctx.clone(),

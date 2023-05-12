@@ -53,7 +53,7 @@ import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToUnsafeRowExec
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastHashJoinExec
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
@@ -353,6 +353,7 @@ object BlazeConverters extends Logging {
         exec.right)
       logDebug(
         s"Converting BroadcastHashJoinExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+      assert(condition.isEmpty, "BroadcastJoin with post filter not yet supported")
       var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
@@ -402,13 +403,24 @@ object BlazeConverters extends Logging {
           }
       }
 
-      val bhj = NativeBroadcastHashJoinExec(
-        addRenameColumnsExec(hashed),
-        addRenameColumnsExec(nativeProbed),
+      val bhjOrig = BroadcastHashJoinExec(
         modifiedHashedKeys,
         modifiedProbedKeys,
-        condition,
-        modifiedJoinType)
+        modifiedJoinType,
+        BuildLeft,
+        None,
+        addRenameColumnsExec(hashed),
+        addRenameColumnsExec(nativeProbed))
+
+      val bhj = NativeBroadcastJoinExec(
+        bhjOrig.left,
+        bhjOrig.right,
+        bhjOrig.leftKeys,
+        bhjOrig.rightKeys,
+        bhjOrig.output,
+        bhjOrig.outputPartitioning,
+        bhjOrig.outputOrdering,
+        bhjOrig.joinType)
 
       if (needPostProject) {
         buildPostJoinProject(bhj, exec.output)

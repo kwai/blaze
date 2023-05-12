@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::OnHeapSpill;
+use crate::common::onheap_spill::{Spill, try_new_spill};
 use crate::common::BatchesInterleaver;
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
 use arrow::datatypes::SchemaRef;
@@ -160,7 +160,7 @@ impl SortShuffleRepartitioner {
         let pi_vec = self.build_sorted_pi_vec(buffered_batches)?;
 
         // write to in-mem spill
-        let spill = OnHeapSpill::try_new()?;
+        let spill = try_new_spill()?;
         let offsets =
             self.write_buffered_batches(buffered_batches, pi_vec, &mut spill.get_buf_writer())?;
         spill.complete()?;
@@ -225,7 +225,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
     async fn shuffle_write(&self) -> Result<()> {
         self.set_spillable(false);
-        let spills = std::mem::take(&mut *self.spills.lock().await);
+        let mut spills = std::mem::take(&mut *self.spills.lock().await);
         let batches = std::mem::take(&mut *self.buffered_batches.lock().await);
 
         log::info!(
@@ -264,8 +264,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             }
         }
 
-        let raw_spills: Vec<OnHeapSpill> = spills.iter().map(|spill| spill.spill.clone()).collect();
-
         // write current buffered batches into a cursor
         let pi_vec = self.build_sorted_pi_vec(&batches)?;
         let mut in_mem_data = vec![];
@@ -275,11 +273,11 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         // use loser tree to select partitions from spills
         let mut cursors: LoserTree<SpillCursor> = LoserTree::new_by(
             spills
-                .into_iter()
+                .iter_mut()
                 .map(|spill| SpillCursor {
                     cur: 0,
                     reader: spill.spill.get_buf_reader(),
-                    offsets: spill.offsets,
+                    offsets: std::mem::take(&mut spill.offsets),
                 })
                 .chain(std::iter::once(SpillCursor {
                     // chain in_mem data
@@ -299,6 +297,10 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 (c1, c2) => c1 < c2,
             },
         );
+        let raw_spills: Vec<Box<dyn Spill>> = spills
+            .into_iter()
+            .map(|spill| spill.spill)
+            .collect();
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();

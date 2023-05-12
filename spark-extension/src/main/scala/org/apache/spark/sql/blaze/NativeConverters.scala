@@ -330,7 +330,7 @@ object NativeConverters extends Logging {
 
   def convertExpr(sparkExpr: Expression, useAttrExprId: Boolean = true): pb.PhysicalExprNode = {
     def fallbackToError: (Expression, Boolean) => pb.PhysicalExprNode = { (e, _) =>
-      throw new NotImplementedError(s"unsupported expression: $e")
+      throw new NotImplementedError(s"unsupported expression: (${e.getClass}) $e")
     }
 
     try {
@@ -478,7 +478,7 @@ object NativeConverters extends Logging {
     sparkExpr match {
       case NativeExprWrapper(wrapped, _, _, _) =>
         wrapped
-      case l @ Literal(value, dataType) =>
+      case Literal(value, dataType) =>
         buildExprNode { b =>
           if (value == null) {
             dataType match {
@@ -498,6 +498,15 @@ object NativeConverters extends Logging {
           } else {
             b.setLiteral(convertValue(value, dataType))
           }
+        }
+      case bound: BoundReference =>
+        buildExprNode {
+          _.setBoundReference(
+            pb.BoundReference
+              .newBuilder()
+              .setIndex(bound.ordinal)
+              .setDataType(convertDataType(bound.dataType))
+              .setNullable(bound.nullable))
         }
       case ar: AttributeReference =>
         buildExprNode {

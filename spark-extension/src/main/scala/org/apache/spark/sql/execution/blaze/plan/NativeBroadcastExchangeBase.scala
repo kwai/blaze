@@ -324,11 +324,10 @@ object NativeBroadcastExchangeBase {
     JniBridge.resourcesMap.put(writerIpcProviderResourceId, consumeIpc)
 
     // execute
-    val metric = MetricNode(Map(), Nil, None)
     val singlePartition = new Partition {
       override def index: Int = 0
     }
-    assert(NativeHelper.executeNativePlan(exec, metric, singlePartition, None).isEmpty)
+    assert(NativeHelper.executeNativePlan(exec, null, singlePartition, None).isEmpty)
     bos.toByteArray
   }
 }

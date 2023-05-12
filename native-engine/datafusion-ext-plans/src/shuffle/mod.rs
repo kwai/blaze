@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::onheap_spill::OnHeapSpill;
 use crate::common::output::output_with_sender;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
@@ -25,6 +24,7 @@ use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::StreamExt;
 use std::sync::Arc;
+use crate::common::onheap_spill::Spill;
 
 pub mod bucket_repartitioner;
 pub mod rss_bucket_repartitioner;
@@ -73,7 +73,7 @@ impl dyn ShuffleRepartitioner {
 }
 
 struct ShuffleSpill {
-    spill: OnHeapSpill,
+    spill: Box<dyn Spill>,
     offsets: Vec<u64>,
 }
 

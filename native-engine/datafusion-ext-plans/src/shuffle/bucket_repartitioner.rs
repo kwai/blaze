@@ -15,7 +15,7 @@
 //! Defines the sort-based shuffle writer
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::OnHeapSpill;
+use crate::common::onheap_spill::{Spill, try_new_spill};
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -153,7 +153,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
 
     async fn shuffle_write(&self) -> Result<()> {
         self.set_spillable(false);
-        let spills = std::mem::take(&mut *self.spills.lock().await);
+        let mut spills = std::mem::take(&mut *self.spills.lock().await);
         let mut buffered_partitions = std::mem::take(&mut *self.buffered_partitions.lock().await);
 
         log::info!(
@@ -168,12 +168,15 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             output_batches[i] = std::mem::take(&mut buffered_partitions[i].frozen);
         }
 
-        let raw_spills: Vec<OnHeapSpill> = spills.iter().map(|spill| spill.spill.clone()).collect();
-
         let mut spill_readers = spills
-            .into_iter()
-            .map(|spill| (spill.spill.get_buf_reader(), spill.offsets))
+            .iter_mut()
+            .map(|spill| (spill.spill.get_buf_reader(), std::mem::take(&mut spill.offsets)))
             .collect::<Vec<_>>();
+
+        let raw_spills: Vec<Box<dyn Spill>> = spills
+            .into_iter()
+            .map(|spill| spill.spill)
+            .collect();
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
@@ -239,7 +242,7 @@ fn spill_buffered_partitions(
     }
 
     let mut output_batches: Vec<Vec<u8>> = vec![vec![]; num_output_partitions];
-    let spill = OnHeapSpill::try_new()?;
+    let spill = try_new_spill()?;
     let mut spill_writer = spill.get_buf_writer();
 
     for i in 0..num_output_partitions {

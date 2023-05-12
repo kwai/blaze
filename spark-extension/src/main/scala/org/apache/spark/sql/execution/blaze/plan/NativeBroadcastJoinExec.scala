@@ -17,17 +17,10 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
-import org.blaze.protobuf.ColumnIndex
-import org.blaze.protobuf.HashJoinExecNode
-import org.blaze.protobuf.JoinFilter
-import org.blaze.protobuf.JoinOn
-import org.blaze.protobuf.JoinSide
-import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.{protobuf => pb}
 
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -39,60 +32,29 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.catalyst.plans.ExistenceJoin
-import org.apache.spark.sql.catalyst.plans.InnerLike
-import org.apache.spark.sql.catalyst.plans.LeftExistence
-import org.apache.spark.sql.catalyst.plans.LeftOuter
-import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.BinaryExecNode
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.metric.SQLMetrics
 
-case class NativeBroadcastHashJoinExec(
+case class NativeBroadcastJoinExec(
     override val left: SparkPlan,
     override val right: SparkPlan,
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
-    joinFilter: Option[Expression],
+    override val output: Seq[Attribute],
+    override val outputPartitioning: Partitioning,
+    override val outputOrdering: Seq[SortOrder],
     joinType: JoinType)
     extends BinaryExecNode
     with NativeSupports {
 
-  override def outputPartitioning: Partitioning = {
-    right.outputPartitioning // right side is always the streamed plan
-  }
-
-  override def outputOrdering: Seq[SortOrder] = Nil
-
-  override def output: Seq[Attribute] = {
-    joinType match {
-      case _: InnerLike =>
-        left.output ++ right.output
-      case LeftOuter =>
-        left.output ++ right.output.map(_.withNullability(true))
-      case RightOuter =>
-        left.output.map(_.withNullability(true)) ++ right.output
-      case j: ExistenceJoin =>
-        left.output :+ j.exists
-      case LeftExistence(_) =>
-        left.output
-      case x =>
-        throw new IllegalArgumentException(s"HashJoin should not take $x as the JoinType")
-    }
-  }
-
-  override lazy val metrics: Map[String, SQLMetric] = mutable
-    .LinkedHashMap(
-      NativeHelper
-        .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(Set("output_rows", "output_batches", "input_rows", "input_batches"))
-        .toSeq :+
-        ("build_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.build_time")) :+
-        ("probe_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.probe_time")): _*)
-    .toMap
+  override lazy val metrics: Map[String, SQLMetric] = Map(
+    NativeHelper
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq: _*)
 
   private val nativeJoinOn = leftKeys.zip(rightKeys).map {
     case (leftKey, rightKey) =>
@@ -106,40 +68,11 @@ case class NativeBroadcastHashJoinExec(
           throw new NotImplementedError(s"BHJ leftKey is not column: ${rightKey}")
         case column => column
       }
-      JoinOn
+      pb.JoinOn
         .newBuilder()
         .setLeft(leftColumn)
         .setRight(rightColumn)
         .build()
-  }
-
-  private val nativeJoinFilter = joinFilter.map { filterExpr =>
-    val schema = filterExpr.references.toSeq
-    val columnIndices = ArrayBuffer[ColumnIndex]()
-    for (attr <- schema) {
-      attr.exprId match {
-        case exprId if left.output.exists(_.exprId == exprId) =>
-          columnIndices += ColumnIndex
-            .newBuilder()
-            .setSide(JoinSide.LEFT_SIDE)
-            .setIndex(left.output.indexWhere(_.exprId == attr.exprId))
-            .build()
-        case exprId if right.output.exists(_.exprId == exprId) =>
-          columnIndices += ColumnIndex
-            .newBuilder()
-            .setSide(JoinSide.RIGHT_SIDE)
-            .setIndex(right.output.indexWhere(_.exprId == attr.exprId))
-            .build()
-        case _ =>
-          throw new NotImplementedError(s"unsupported join filter: $filterExpr")
-      }
-    }
-    JoinFilter
-      .newBuilder()
-      .setExpression(NativeConverters.convertExpr(filterExpr))
-      .setSchema(Util.getNativeSchema(schema))
-      .addAllColumnIndices(columnIndices.asJava)
-      .build()
   }
 
   private val nativeJoinType = NativeConverters.convertJoinType(joinType)
@@ -160,21 +93,17 @@ case class NativeBroadcastHashJoinExec(
         val partition0 = new Partition() {
           override def index: Int = 0
         }
-        val rightPartition = rightRDD.partitions(partition.index)
         val leftChild = leftRDD.nativePlan(partition0, context)
-        val rightChild = rightRDD.nativePlan(rightPartition, context)
-        val hashJoinExec = HashJoinExecNode
+        val rightChild = rightRDD.nativePlan(rightRDD.partitions(partition.index), context)
+        val broadcastJoinExec = pb.BroadcastJoinExecNode
           .newBuilder()
           .setLeft(leftChild)
           .setRight(rightChild)
           .setJoinType(nativeJoinType)
           .addAllOn(nativeJoinOn.asJava)
-          .setNullEqualsNull(false)
-
-        nativeJoinFilter.foreach(joinFilter => hashJoinExec.setFilter(joinFilter))
-        PhysicalPlanNode.newBuilder().setHashJoin(hashJoinExec).build()
+        pb.PhysicalPlanNode.newBuilder().setBroadcastJoin(broadcastJoinExec).build()
       },
-      friendlyName = "NativeRDD.BroadcastHashJoin")
+      friendlyName = "NativeRDD.BroadcastJoin")
   }
 
   override def doCanonicalize(): SparkPlan =

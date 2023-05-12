@@ -35,7 +35,7 @@ message PhysicalPlanNode {
     FilterExecNode filter = 8;
     UnionExecNode union = 9;
     SortMergeJoinExecNode sort_merge_join = 10;
-    HashJoinExecNode hash_join = 11;
+    BroadcastJoinExecNode broadcast_join = 11;
     RenameColumnsExecNode rename_columns = 12;
     EmptyPartitionsExecNode empty_partitions = 13;
     AggExecNode agg = 14;
@@ -62,24 +62,26 @@ message PhysicalExprNode {
 
     ScalarValue literal = 2;
 
+    BoundReference bound_reference = 3;
+
     // binary expressions
-    PhysicalBinaryExprNode binary_expr = 3;
+    PhysicalBinaryExprNode binary_expr = 4;
 
     // aggregate expressions
-    PhysicalAggExprNode agg_expr = 4;
+    PhysicalAggExprNode agg_expr = 5;
 
     // null checks
-    PhysicalIsNull is_null_expr = 5;
-    PhysicalIsNotNull is_not_null_expr = 6;
-    PhysicalNot not_expr = 7;
+    PhysicalIsNull is_null_expr = 6;
+    PhysicalIsNotNull is_not_null_expr = 7;
+    PhysicalNot not_expr = 8;
 
-    PhysicalCaseNode case_ = 8;
-    PhysicalCastNode cast = 9;
-    PhysicalSortExprNode sort = 10;
-    PhysicalNegativeNode negative = 11;
-    PhysicalInListNode in_list = 12;
-    PhysicalScalarFunctionNode scalar_function = 13;
-    PhysicalTryCastNode try_cast = 14;
+    PhysicalCaseNode case_ = 9;
+    PhysicalCastNode cast = 10;
+    PhysicalSortExprNode sort = 11;
+    PhysicalNegativeNode negative = 12;
+    PhysicalInListNode in_list = 13;
+    PhysicalScalarFunctionNode scalar_function = 14;
+    PhysicalTryCastNode try_cast = 15;
 
     // like/not like
     PhysicalLikeExprNode like_expr = 20;
@@ -386,14 +388,11 @@ message SortMergeJoinExecNode {
   JoinType join_type = 5;
 }
 
-message HashJoinExecNode {
+message BroadcastJoinExecNode {
   PhysicalPlanNode left = 1;
   PhysicalPlanNode right = 2;
   repeated JoinOn on = 3;
   JoinType join_type = 4;
-  PartitionMode partition_mode = 6;
-  bool null_equals_null = 7;
-  JoinFilter filter = 8;
 }
 
 message RenameColumnsExecNode {
@@ -422,6 +421,12 @@ message SortOptions {
 message PhysicalColumn {
   string name = 1;
   uint32 index = 2;
+}
+
+message BoundReference {
+  uint64 index = 1;
+  ArrowType data_type = 2;
+  bool nullable = 3;
 }
 
 message JoinOn {

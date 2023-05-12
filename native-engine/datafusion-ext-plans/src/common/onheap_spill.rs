@@ -12,18 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fs::File;
 use blaze_commons::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref};
 use datafusion::common::Result;
 use jni::objects::GlobalRef;
-use jni::sys::jlong;
-use std::io::{BufReader, BufWriter, Read, Write};
+use jni::sys::{jboolean, jlong, JNI_TRUE};
+use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::sync::Arc;
+use datafusion::parquet::file::reader::Length;
+
+pub trait Spill: Send + Sync {
+    fn complete(&self) -> Result<()>;
+    fn get_disk_usage(&self) -> Result<u64>;
+    fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>>;
+    fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>>;
+}
+
+pub fn try_new_spill() -> Result<Box<dyn Spill>> {
+    if jni_call_static!(JniBridge.isDriverSide() -> jboolean)? == JNI_TRUE {
+        Ok(Box::new(FileSpill::try_new()?))
+    } else {
+        Ok(Box::new(OnHeapSpill::try_new()?))
+    }
+}
+
+/// A spill structure which write data to temporary files
+/// used in driver side
+struct FileSpill(File);
+impl FileSpill {
+    fn try_new() -> Result<Self> {
+        let file = tempfile::tempfile()?;
+        Ok(Self(file))
+    }
+}
+
+impl Spill for FileSpill {
+    fn complete(&self) -> Result<()> {
+        let mut file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
+        file_cloned.sync_data()?;
+        file_cloned.rewind()?;
+        Ok(())
+    }
+
+    fn get_disk_usage(&self) -> Result<u64> {
+        Ok(self.0.len())
+    }
+
+    fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>> {
+        let file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
+        BufReader::with_capacity(65536, Box::new(file_cloned))
+    }
+
+    fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>> {
+        let file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
+        BufWriter::with_capacity(65536, Box::new(file_cloned))
+    }
+}
 
 /// A spill structure which cooperates with BlazeOnHeapSpillManager
-#[derive(Clone)]
-pub struct OnHeapSpill(Arc<RawOnHeapSpill>);
+/// used in executor side
+struct OnHeapSpill(Arc<RawOnHeapSpill>);
 impl OnHeapSpill {
-    pub fn try_new() -> Result<Self> {
+    fn try_new() -> Result<Self> {
         let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
         let spill_id = jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).newSpill() -> i32)?;
 
@@ -32,25 +82,29 @@ impl OnHeapSpill {
             spill_id,
         })))
     }
+}
 
-    pub fn complete(&self) -> Result<()> {
+impl Spill for OnHeapSpill {
+    fn complete(&self) -> Result<()> {
         jni_call!(BlazeOnHeapSpillManager(self.0.hsm.as_obj())
             .completeSpill(self.0.spill_id) -> ())?;
         Ok(())
     }
 
-    pub fn get_disk_usage(&self) -> Result<u64> {
+    fn get_disk_usage(&self) -> Result<u64> {
         let usage = jni_call!(BlazeOnHeapSpillManager(self.0.hsm.as_obj())
             .getSpillDiskUsage(self.0.spill_id) -> jlong)? as u64;
         Ok(usage)
     }
 
-    pub fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>> {
-        BufReader::with_capacity(65536, Box::new(self.clone()))
+    fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>> {
+        let cloned = Self(self.0.clone());
+        BufReader::with_capacity(65536, Box::new(cloned))
     }
 
-    pub fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>> {
-        BufWriter::with_capacity(65536, Box::new(self.clone()))
+    fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>> {
+        let cloned = Self(self.0.clone());
+        BufWriter::with_capacity(65536, Box::new(cloned))
     }
 }
 

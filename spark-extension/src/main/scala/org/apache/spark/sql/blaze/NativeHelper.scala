@@ -36,7 +36,6 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.storage.DiskBlockManager
 
 object NativeHelper extends Logging {
   val currentUser: UserGroupInformation = UserGroupInformation.getCurrentUser
@@ -46,11 +45,22 @@ object NativeHelper extends Logging {
   val nativeMemory: Long = {
     val MEMORY_OVERHEAD_FACTOR = 0.10
     val MEMORY_OVERHEAD_MIN = 384L
-    val executorMemory = conf.get(config.EXECUTOR_MEMORY)
-    val executorMemoryOverheadMiB = conf
-      .get(config.EXECUTOR_MEMORY_OVERHEAD)
-      .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * executorMemory).toLong, MEMORY_OVERHEAD_MIN))
-    executorMemoryOverheadMiB * 1024L * 1024L
+    if (TaskContext.get() != null) {
+      // executor side
+      val executorMemory = conf.get(config.EXECUTOR_MEMORY)
+      val executorMemoryOverheadMiB = conf
+        .get(config.EXECUTOR_MEMORY_OVERHEAD)
+        .getOrElse(
+          math.max((MEMORY_OVERHEAD_FACTOR * executorMemory).toLong, MEMORY_OVERHEAD_MIN))
+      executorMemoryOverheadMiB * 1024L * 1024L
+    } else {
+      // driver side
+      val driverMemory = conf.get(config.DRIVER_MEMORY)
+      val driverMemoryOverheadMiB = conf
+        .get(config.DRIVER_MEMORY_OVERHEAD)
+        .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * driverMemory).toLong, MEMORY_OVERHEAD_MIN))
+      driverMemoryOverheadMiB * 1024L * 1024L
+    }
   }
   val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.4);
   val tz: String = conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)

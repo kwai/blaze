@@ -15,7 +15,7 @@
 //! Defines the External shuffle repartition plan
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::OnHeapSpill;
+use crate::common::onheap_spill::{Spill, try_new_spill};
 use crate::common::BatchesInterleaver;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
@@ -201,7 +201,7 @@ struct ExternalSorter {
     limit: usize,
     sort_row_converter: SyncMutex<RowConverter>,
     levels: Mutex<Vec<Option<SortedBatches>>>,
-    spills: Mutex<Vec<OnHeapSpill>>,
+    spills: Mutex<Vec<Box<dyn Spill>>>,
     baseline_metrics: BaselineMetrics,
 }
 
@@ -376,7 +376,7 @@ impl ExternalSorter {
             spills
                 .iter()
                 .enumerate()
-                .map(|(id, spill)| SpillCursor::try_from_spill(id, self.clone(), spill.clone()))
+                .map(|(id, spill)| SpillCursor::try_from_spill(id, self.clone(), &spill))
                 .collect::<Result<_>>()?,
             |c1, c2| {
                 let key1 = (c1.finished, &c1.cur_key);
@@ -671,13 +671,13 @@ impl SortedBatches {
         Ok(())
     }
 
-    fn try_into_spill(mut self, squeeze_batch_size: usize) -> Result<Option<OnHeapSpill>> {
+    fn try_into_spill(mut self, squeeze_batch_size: usize) -> Result<Option<Box<dyn Spill>>> {
         if self.batches_num_rows == 0 {
             return Ok(None);
         }
         self.squeeze(squeeze_batch_size)?;
 
-        let spill = OnHeapSpill::try_new()?;
+        let spill = try_new_spill()?;
         let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
         let mut cur_rows = 0;
 
@@ -716,7 +716,11 @@ struct SpillCursor {
 }
 
 impl SpillCursor {
-    fn try_from_spill(id: usize, sorter: Arc<ExternalSorter>, spill: OnHeapSpill) -> Result<Self> {
+    fn try_from_spill(
+        id: usize,
+        sorter: Arc<ExternalSorter>,
+        spill: &Box<dyn Spill>,
+    ) -> Result<Self> {
         let buf_reader = spill.get_buf_reader();
         let mut iter = SpillCursor {
             id,
