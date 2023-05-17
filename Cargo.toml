@@ -44,5 +44,5 @@ codegen-units = 16
 strip = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "6e819d6c2b9280198c67fa16df3e54c79ce46ca2" }
+datafusion = { git = "https://github.com/lihao712/arrow-datafusion.git", branch = "lh-null-mask-fix2" }
 parquet = { path = "patched/parquet-37.0.0-kwai" }
