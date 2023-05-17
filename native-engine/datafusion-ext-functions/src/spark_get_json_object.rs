@@ -343,7 +343,7 @@ mod test {
             {
                 "ID": 121,
                 "message": {
-                    "name": "Asher",
+                    "name": "Asher\非法转义",
                     "location": [
                         {
                             "county": "浦东",
@@ -363,7 +363,7 @@ mod test {
                 .unwrap()
                 .evaluate(input)
                 .unwrap(),
-            Some("Asher".to_owned())
+            Some("Asher\\非法转义".to_owned())
         );
 
         let path = "$.message.location.city";

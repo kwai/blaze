@@ -216,7 +216,7 @@ dependencies = [
  "lexical-core",
  "num",
  "serde",
- "serde_json",
+ "serde_json 1.0.96 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -943,7 +943,7 @@ dependencies = [
  "log",
  "num",
  "paste",
- "serde_json",
+ "serde_json 1.0.96 (git+https://github.com/richox/json?branch=v1.0.96-blaze)",
 ]
 
 [[package]]
@@ -2229,6 +2229,16 @@ name = "serde_json"
 version = "1.0.96"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "057d394a50403bcac12672b2b18fb387ab6d289d957dab67dd201875391e52f1"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.96"
+source = "git+https://github.com/richox/json?branch=v1.0.96-blaze#11ac9a213d7e8dedfe7e94af30d93dfa823b3217"
 dependencies = [
  "itoa",
  "ryu",
