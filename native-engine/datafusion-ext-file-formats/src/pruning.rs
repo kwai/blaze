@@ -760,12 +760,12 @@ fn build_starts_with_predicate_expression_expr(
     let min_prefix = substring(
         min,
         Expr::Literal(ScalarValue::Int64(Some(1))),
-        Expr::Literal(ScalarValue::Int64(Some(prefix.len() as i64 + 1))),
+        Expr::Literal(ScalarValue::Int64(Some(prefix.len() as i64))),
     );
     let max_prefix = substring(
         max,
         Expr::Literal(ScalarValue::Int64(Some(1))),
-        Expr::Literal(ScalarValue::Int64(Some(prefix.len() as i64 + 1))),
+        Expr::Literal(ScalarValue::Int64(Some(prefix.len() as i64))),
     );
     Ok(and(
         min_prefix.lt_eq(Expr::Literal(prefix.into())),
