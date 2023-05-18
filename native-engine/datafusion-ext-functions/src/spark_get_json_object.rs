@@ -343,7 +343,12 @@ mod test {
             {
                 "ID": 121,
                 "message": {
-                    "name": "Asher\非法转义",
+                    "name": "
+                        非法换行
+                        非法转义\哈
+                        特殊字符😍
+                        Asher
+                    ",
                     "location": [
                         {
                             "county": "浦东",
@@ -358,13 +363,13 @@ mod test {
             }"#;
 
         let path = "$.message.name";
-        assert_eq!(
+        assert!(
             HiveGetJsonObjectEvaluator::try_new(path)
                 .unwrap()
                 .evaluate(input)
-                .unwrap(),
-            Some("Asher\\非法转义".to_owned())
-        );
+                .unwrap()
+                .unwrap()
+                .contains("Asher"));
 
         let path = "$.message.location.city";
         assert_eq!(

@@ -2238,7 +2238,7 @@ dependencies = [
 [[package]]
 name = "serde_json"
 version = "1.0.96"
-source = "git+https://github.com/richox/json?branch=v1.0.96-blaze#11ac9a213d7e8dedfe7e94af30d93dfa823b3217"
+source = "git+https://github.com/richox/json?branch=v1.0.96-blaze#95fa6cbac6b7146a8883f5ce761316d11282399b"
 dependencies = [
  "itoa",
  "ryu",
