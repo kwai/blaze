@@ -781,7 +781,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "ahash",
  "arrow",
@@ -830,7 +830,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -844,7 +844,7 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "dashmap",
  "datafusion-common",
@@ -861,7 +861,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "ahash",
  "arrow",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "arrow",
  "async-trait",
@@ -995,7 +995,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "ahash",
  "arrow",
@@ -1026,7 +1026,7 @@ dependencies = [
 [[package]]
 name = "datafusion-row"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -1037,7 +1037,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=lh-null-mask-fix2#b0385c1873735d9317e591d900f75c8ffc6409e4"
+source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
 dependencies = [
  "arrow",
  "arrow-schema",
