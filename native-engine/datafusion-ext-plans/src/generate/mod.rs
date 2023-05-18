@@ -18,7 +18,7 @@ use crate::generate::explode::{ExplodeArray, ExplodeMap};
 
 use arrow::datatypes::{DataType, SchemaRef};
 
-use arrow::array::ArrayRef;
+use arrow::array::{ArrayRef, UInt32Array};
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
@@ -31,7 +31,13 @@ pub trait Generator: Debug + Send + Sync {
 
     fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>>;
 
-    fn eval(&self, batch: &RecordBatch) -> Result<Vec<(u32, Vec<ArrayRef>)>>;
+    fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows>;
+}
+
+#[derive(Clone)]
+pub struct GeneratedRows {
+    pub orig_row_ids: UInt32Array,
+    pub cols: Vec<ArrayRef>,
 }
 
 #[derive(Debug, Clone, Copy)]

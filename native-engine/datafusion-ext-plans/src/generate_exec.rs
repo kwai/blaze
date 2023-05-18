@@ -14,14 +14,12 @@
 
 use crate::common::output::output_with_sender;
 use crate::generate::Generator;
-use arrow::array::{Array, UInt32Array};
-
+use arrow::array::{Array, UInt32Builder};
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, Statistics};
 use datafusion::execution::context::TaskContext;
-
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
@@ -33,7 +31,6 @@ use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use std::any::Any;
-use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
@@ -140,7 +137,6 @@ impl ExecutionPlan for GenerateExec {
     ) -> Result<SendableRecordBatchStream> {
         let batch_size = context.session_config().batch_size();
         let output_schema = self.output_schema.clone();
-        let generator_output_schema = self.generator_output_schema.clone();
         let generator = self.generator.clone();
         let outer = self.outer;
         let child_output_cols = self.required_child_output_cols.clone();
@@ -153,10 +149,10 @@ impl ExecutionPlan for GenerateExec {
                 execute_generate(
                     input_stream,
                     output_schema,
-                    generator_output_schema,
                     generator,
                     outer,
                     child_output_cols,
+                    batch_size,
                     metrics,
                 )
                 .map_err(ArrowError::from),
@@ -189,19 +185,16 @@ impl ExecutionPlan for GenerateExec {
 async fn execute_generate(
     mut input_stream: SendableRecordBatchStream,
     output_schema: SchemaRef,
-    generator_output_schema: SchemaRef,
     generator: Arc<dyn Generator>,
     outer: bool,
     child_output_cols: Vec<Column>,
+    batch_size: usize,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     output_with_sender(
         "Generate",
         output_schema.clone(),
         move |sender| async move {
-            let generator_output_empty_batch = RecordBatch::new_empty(generator_output_schema);
-            let null_offset = UInt32Array::from(vec![None]);
-
             while let Some(batch) = input_stream
                 .next()
                 .await
@@ -211,7 +204,7 @@ async fn execute_generate(
                 let mut timer = metrics.elapsed_compute().timer();
 
                 // evaluate child output
-                let child_output_arrays = child_output_cols
+                let child_outputs = child_output_cols
                     .iter()
                     .map(|column| {
                         column
@@ -220,80 +213,65 @@ async fn execute_generate(
                     })
                     .collect::<Result<Vec<_>>>()
                     .map_err(|err| err.context("generate: evaluating child output arrays error"))?;
+                let child_output_mem_size = child_outputs
+                    .iter()
+                    .map(|col| col.get_array_memory_size())
+                    .sum::<usize>();
 
                 // evaluate generated output
                 let generated_outputs = generator
                     .eval(&batch)
                     .map_err(|err| err.context("generate: evaluating generator error"))?;
-                let mut generated_output_id = 0;
-                let mut row_id = 0;
+                let capacity = generated_outputs.orig_row_ids.len();
+                let mut child_output_row_ids = UInt32Builder::with_capacity(capacity);
+                let mut generated_ids = UInt32Builder::with_capacity(capacity);
+                let mut cur_row_id = 0;
 
-                macro_rules! output_batch {
-                    ($batch:expr) => {{
-                        let batch = $batch;
-                        metrics.record_output(batch.num_rows());
-                        sender.send(Ok(batch), Some(&mut timer)).await;
-                    }};
+                // build ids for joining
+                for (i, &row_id) in generated_outputs.orig_row_ids.values().iter().enumerate() {
+                    while cur_row_id < row_id {
+                        if outer {
+                            child_output_row_ids.append_value(cur_row_id);
+                            generated_ids.append_null();
+                        }
+                        cur_row_id += 1;
+                    }
+                    child_output_row_ids.append_value(row_id);
+                    generated_ids.append_value(i as u32);
+                    cur_row_id = row_id + 1;
+                }
+                while cur_row_id < batch.num_rows() as u32 {
+                    if outer {
+                        child_output_row_ids.append_value(cur_row_id);
+                        generated_ids.append_null();
+                    }
+                    cur_row_id += 1;
                 }
 
-                while generated_output_id < generated_outputs.len() || row_id < batch.num_rows() {
-                    let generated_joined_row_id = generated_outputs
-                        .get(generated_output_id)
-                        .map(|(joined_row_id, _)| *joined_row_id as usize)
-                        .unwrap_or(usize::MAX);
+                let child_output_row_ids = child_output_row_ids.finish();
+                let generated_ids = generated_ids.finish();
+                let batch_size = batch_size.min(i32::MAX as usize / child_output_mem_size);
+                let mut start = 0;
+                while start < child_output_row_ids.len() {
+                    let end = (start + batch_size).min(child_output_row_ids.len());
 
-                    match row_id.cmp(&generated_joined_row_id) {
-                        Ordering::Less => {
-                            if outer {
-                                let cur_generated_output_arrays = generator_output_empty_batch
-                                    .columns()
-                                    .iter()
-                                    .map(|c| Ok(arrow::compute::take(c, &null_offset, None)?))
-                                    .collect::<Result<Vec<_>>>()?;
-                                let cur_child_output_arrays = child_output_arrays
-                                    .iter()
-                                    .map(|array| {
-                                        Ok(arrow::compute::take(
-                                            &array,
-                                            &UInt32Array::from_value(row_id as u32, 1),
-                                            None,
-                                        )?)
-                                    })
-                                    .collect::<Result<Vec<_>>>()?;
+                    let child_output_row_ids = child_output_row_ids.slice(start, end - start);
+                    let generated_ids = generated_ids.slice(start, end - start);
 
-                                output_batch!(RecordBatch::try_new(
-                                    output_schema.clone(),
-                                    [cur_child_output_arrays, cur_generated_output_arrays].concat(),
-                                )?);
-                            }
-                            row_id += 1;
-                        }
-                        Ordering::Equal => {
-                            let cur_generated_output_arrays =
-                                generated_outputs[generated_output_id].1.to_vec();
-                            let num_rows = cur_generated_output_arrays[0].len();
-                            let cur_child_output_arrays = child_output_arrays
-                                .iter()
-                                .map(|array| {
-                                    Ok(arrow::compute::take(
-                                        &array,
-                                        &UInt32Array::from_value(row_id as u32, num_rows),
-                                        None,
-                                    )?)
-                                })
-                                .collect::<Result<Vec<_>>>()?;
+                    let child_outputs = child_outputs
+                        .iter()
+                        .map(|col| Ok(arrow::compute::take(col, &child_output_row_ids, None)?))
+                        .collect::<Result<Vec<_>>>()?;
+                    let generated_outputs = generated_outputs.cols
+                        .iter()
+                        .map(|col| Ok(arrow::compute::take(col, &generated_ids, None)?))
+                        .collect::<Result<Vec<_>>>()?;
+                    let outputs = [child_outputs, generated_outputs].concat();
+                    let output_batch = RecordBatch::try_new(output_schema.clone(), outputs)?;
+                    start = end;
 
-                            output_batch!(RecordBatch::try_new(
-                                output_schema.clone(),
-                                [cur_child_output_arrays, cur_generated_output_arrays].concat(),
-                            )?);
-                            row_id += 1;
-                            generated_output_id += 1;
-                        }
-                        Ordering::Greater => {
-                            generated_output_id += 1;
-                        }
-                    }
+                    metrics.record_output(output_batch.num_rows());
+                    sender.send(Ok(output_batch), Some(&mut timer)).await;
                 }
             }
             Ok(())

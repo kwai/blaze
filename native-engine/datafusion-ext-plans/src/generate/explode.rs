@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::generate::Generator;
+use crate::generate::{GeneratedRows, Generator};
 use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::physical_expr::PhysicalExpr;
 use std::sync::Arc;
+use itertools::Itertools;
 
 #[derive(Debug)]
 pub struct ExplodeArray {
@@ -43,24 +44,35 @@ impl Generator for ExplodeArray {
         }))
     }
 
-    fn eval(&self, batch: &RecordBatch) -> Result<Vec<(u32, Vec<ArrayRef>)>> {
-        let mut outputs = vec![];
+    fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
         let list = as_list_array(&input_array);
+        let mut orig_row_id_builder = UInt32Builder::new();
+        let mut pos_builder = Int32Builder::new();
 
-        for (row_id, array) in list.iter().enumerate() {
-            if let Some(array) = array && !array.is_empty() {
-                let arrays =
-                    if self.position {
-                        let pos_array = Arc::new(Int32Array::from_iter(0..array.len() as i32));
-                        vec![pos_array, array.clone()]
-                    } else {
-                        vec![array.clone()]
-                    };
-                outputs.push((row_id as u32, arrays));
+        // build row_id and pos arrays
+        for (orig_row_id, (&start, &end)) in list
+            .value_offsets()
+            .into_iter()
+            .tuple_windows()
+            .enumerate()
+        {
+            if list.is_valid(orig_row_id) && start < end {
+                for i in start..end {
+                    orig_row_id_builder.append_value(orig_row_id as u32);
+                    pos_builder.append_value((i - start) as i32);
+                }
             }
         }
-        Ok(outputs)
+
+        let orig_row_ids = orig_row_id_builder.finish();
+        let values = list.values().clone();
+        let cols = if self.position {
+            vec![Arc::new(pos_builder.finish()), values]
+        } else {
+            vec![values]
+        };
+        Ok(GeneratedRows {orig_row_ids, cols})
     }
 }
 
@@ -88,27 +100,35 @@ impl Generator for ExplodeMap {
         }))
     }
 
-    fn eval(&self, batch: &RecordBatch) -> Result<Vec<(u32, Vec<Arc<dyn Array>>)>> {
-        let mut outputs = vec![];
+    fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
         let map = as_map_array(&input_array);
+        let mut orig_row_id_builder = UInt32Builder::new();
+        let mut pos_builder = Int32Builder::new();
 
-        for row_id in 0..map.len() {
-            if map.is_valid(row_id) && !map.value(row_id).is_empty() {
-                let entries = as_struct_array(&map.value(row_id)).clone();
-                let arrays = if self.position {
-                    let pos_array = Arc::new(Int32Array::from_iter(0..entries.len() as i32));
-                    vec![
-                        pos_array,
-                        entries.column(0).clone(),
-                        entries.column(1).clone(),
-                    ]
-                } else {
-                    vec![entries.column(0).clone(), entries.column(1).clone()]
-                };
-                outputs.push((row_id as u32, arrays));
+        // build row_id and pos arrays
+        for (orig_row_id, (&start, &end)) in map
+            .value_offsets()
+            .iter()
+            .tuple_windows()
+            .enumerate()
+        {
+            if map.is_valid(orig_row_id) && start < end {
+                for i in start..end {
+                    orig_row_id_builder.append_value(orig_row_id as u32);
+                    pos_builder.append_value((i - start) as i32);
+                }
             }
         }
-        Ok(outputs)
+
+        let orig_row_ids = orig_row_id_builder.finish();
+        let keys = map.keys().clone();
+        let values = map.values().clone();
+        let cols = if self.position {
+            vec![Arc::new(pos_builder.finish()), keys, values]
+        } else {
+            vec![keys, values]
+        };
+        Ok(GeneratedRows {orig_row_ids, cols})
     }
 }
