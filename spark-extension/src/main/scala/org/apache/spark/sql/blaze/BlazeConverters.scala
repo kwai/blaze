@@ -139,7 +139,7 @@ object BlazeConverters extends Logging {
               _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
               _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec |
               _: DataWritingCommandExec | _: TakeOrderedAndProjectExec | _: ShuffleExchangeExec |
-              _: CartesianProductExec
+              _: CartesianProductExec | _: SortAggregateExec
             ) =>
           exec.mapChildren(child => convertToUnsafeRow(child))
         case exec => exec

@@ -265,6 +265,6 @@ object NativeAggExec {
           .setName("Placeholder")
           .setReturnType(NativeConverters.convertDataType(e.dataType)))
       .build()
-    NativeExprWrapper(placeholder, e.dataType, e.nullable, e.children)
+    NativeExprWrapper(placeholder, e.dataType, e.nullable)
   }
 }
