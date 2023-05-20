@@ -19,8 +19,8 @@ RUN chmod +x /rustup-init
 RUN /rustup-init -y --default-toolchain nightly-x86_64-unknown-linux-gnu
 
 # install java/gradle
-RUN yum install -y java-11-openjdk-devel
-RUN echo 'export JAVA_HOME="/usr/lib/jvm/java-11-openjdk"' >> ~/.bashrc
+RUN yum install -y java-1.8.0-openjdk
+RUN echo 'export JAVA_HOME="$(echo /usr/lib/jvm/java-1.8.0-openjdk*)"' >> ~/.bashrc
 
 # install gradle
 RUN wget -O /gradle-7.4.2-bin.zip https://mirrors.huaweicloud.com/gradle/gradle-7.4.2-bin.zip
