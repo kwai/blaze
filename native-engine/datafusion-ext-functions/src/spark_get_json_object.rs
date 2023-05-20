@@ -152,6 +152,10 @@ impl HiveGetJsonObjectMatcher {
             }
             Some('.') => {
                 chars.next();
+
+                if chars.peek().cloned() == Some('[') {
+                    return Self::parse(chars); // handle special case like $.aaa.[0].xxx
+                }
                 let mut child_name = String::new();
                 loop {
                     match chars.peek() {
@@ -325,6 +329,15 @@ mod test {
                 .evaluate(input)
                 .unwrap(),
             Some(r#"[{"type":"apple","weight":8},{"type":"pear","weight":9}]"#.to_owned())
+        );
+
+        let path = "$.store.fruit.[1].type";
+        assert_eq!(
+            HiveGetJsonObjectEvaluator::try_new(path)
+                .unwrap()
+                .evaluate(input)
+                .unwrap(),
+            Some("pear".to_owned())
         );
 
         let path = "$.non_exist_key";
