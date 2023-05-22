@@ -467,7 +467,10 @@ object BlazeConverters extends Logging {
     logDebug(
       s"Converting TakeOrderedAndProjectExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
     val nativeTakeOrdered =
-      NativeTakeOrderedExec(exec.limit, exec.sortOrder, convertToNative(exec.child))
+      NativeTakeOrderedExec(
+        exec.limit,
+        exec.sortOrder,
+        addRenameColumnsExec(convertToNative(exec.child)))
 
     if (exec.projectList != exec.child.output) {
       val project = ProjectExec(exec.projectList, nativeTakeOrdered)
