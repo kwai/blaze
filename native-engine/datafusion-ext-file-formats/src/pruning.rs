@@ -849,7 +849,7 @@ fn build_predicate_expression(
             expr,
             list,
             negated,
-        } if !list.is_empty() && list.len() < 20 => {
+        } if !list.is_empty() && list.len() < 500 => {
             let eq_fun = if *negated { Expr::not_eq } else { Expr::eq };
             let re_fun = if *negated { Expr::and } else { Expr::or };
             let change_expr = list

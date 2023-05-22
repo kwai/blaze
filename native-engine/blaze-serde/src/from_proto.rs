@@ -22,7 +22,7 @@ use datafusion::datasource::listing::FileRange;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::TypeSignature::VariadicEqual;
-use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
+use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast, TypeSignature};
 use datafusion::logical_expr::{
     Expr, ReturnTypeFunction, ScalarFunctionImplementation, ScalarUDF, Signature, Volatility,
 };
@@ -183,10 +183,10 @@ pub fn convert_physical_expr_to_logical_expr(
             expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr)?),
             data_type: expr.cast_type.clone(),
         }))
-    } else if let Some(expr1) = expr.downcast_ref::<StringStartsWithExpr>() {
+    } else if let Some(expr) = expr.downcast_ref::<StringStartsWithExpr>() {
         let args = vec![
-            convert_physical_expr_to_logical_expr(expr1.expr())?,
-            Expr::Literal(ScalarValue::Utf8(Some(expr1.prefix().to_string()))),
+            convert_physical_expr_to_logical_expr(expr.expr())?,
+            Expr::Literal(ScalarValue::Utf8(Some(expr.prefix().to_string()))),
         ];
 
         let func: ScalarFunctionImplementation = Arc::new(|_| panic!("placeholder"));
@@ -200,22 +200,30 @@ pub fn convert_physical_expr_to_logical_expr(
             )),
             args,
         })
-    } else if expr.downcast_ref::<ScalarFunctionExpr>().is_some() {
-        Err(DataFusionError::Plan(
-            "converting physical ScalarFunctionExpr to logical is not supported".to_string(),
-        ))
-    } else if expr.downcast_ref::<SparkUDFWrapperExpr>().is_some() {
-        Err(DataFusionError::Plan(
-            "converting physical SparkUDFWrapperExpr to logical is not supported".to_string(),
-        ))
-    } else if expr.downcast_ref::<GetIndexedFieldExpr>().is_some() {
-        Err(DataFusionError::Plan(
-            "converting physical GetIndexedFieldExpr to logical is not supported".to_string(),
-        ))
+    } else if let Some(expr) = expr.downcast_ref::<SparkLogicalExpr>() {
+        let children = expr.children();
+        Ok(Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr::new(
+            Box::new(convert_physical_expr_to_logical_expr(&children[0])?),
+            match expr.op() {
+                SparkLogicalOp::And => Operator::And,
+                SparkLogicalOp::Or => Operator::Or,
+            },
+            Box::new(convert_physical_expr_to_logical_expr(&children[1])?),
+        )))
     } else {
-        Err(DataFusionError::Plan(
-            "Expression binding not implemented yet".to_string(),
-        ))
+        // returns a dummy expr to avoid failing the whole conversion
+        Ok(Expr::ScalarUDF {
+            fun: Arc::new(ScalarUDF {
+                name: format!("converting physical expr to logical not supported: {:?}", expr),
+                signature: Signature {
+                    type_signature: VariadicEqual,
+                    volatility: Volatility::Immutable,
+                },
+                return_type: Arc::new(|_| unimplemented!()),
+                fun: Arc::new(|_| unimplemented!())
+            }),
+            args: vec![]
+        })
     }
 }
 

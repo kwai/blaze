@@ -55,6 +55,10 @@ impl SparkLogicalExpr {
     ) -> Self {
         Self { left, right, op }
     }
+
+    pub fn op(&self) -> SparkLogicalOp {
+        self.op
+    }
 }
 
 impl Display for SparkLogicalExpr {
