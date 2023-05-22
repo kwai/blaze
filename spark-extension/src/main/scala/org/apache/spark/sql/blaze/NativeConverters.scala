@@ -94,6 +94,7 @@ import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
 import org.apache.spark.sql.catalyst.expressions.BitwiseOr
 import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.CheckOverflow
+import org.apache.spark.sql.catalyst.expressions.ConcatWs
 import org.apache.spark.sql.catalyst.expressions.CreateArray
 import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
 import org.apache.spark.sql.catalyst.expressions.GetArrayItem
@@ -107,6 +108,9 @@ import org.apache.spark.sql.catalyst.expressions.Pmod
 import org.apache.spark.sql.catalyst.expressions.PromotePrecision
 import org.apache.spark.sql.catalyst.expressions.ShiftLeft
 import org.apache.spark.sql.catalyst.expressions.ShiftRight
+import org.apache.spark.sql.catalyst.expressions.StringRepeat
+import org.apache.spark.sql.catalyst.expressions.StringSpace
+import org.apache.spark.sql.catalyst.expressions.StringSplit
 import org.apache.spark.sql.catalyst.expressions.Unevaluable
 import org.apache.spark.sql.catalyst.expressions.UnscaledValue
 import org.apache.spark.sql.catalyst.plans.FullOuter
@@ -775,8 +779,6 @@ object NativeConverters extends Logging {
         buildScalarFunction(pb.ScalarFunction.OctetLength, e.children, e.dataType)
       case Length(arg) if arg.dataType == StringType =>
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
-      case e: Concat =>
-        buildExtScalarFunction("Concat", e.children, e.dataType)
 
       // TODO: datafusion's upper/lower() has different behavior from spark
       // case e: Lower => buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
@@ -837,6 +839,34 @@ object NativeConverters extends Logging {
           pb.ScalarFunction.Substr,
           str :: Literal(pos.asInstanceOf[Long]) :: Literal(len.asInstanceOf[Long]) :: Nil,
           StringType)
+
+      case StringSpace(n) =>
+        buildExtScalarFunction("StringSpace", n :: Nil, StringType)
+
+      case StringRepeat(str, n @ Literal(_, IntegerType)) =>
+        buildExtScalarFunction("StringRepeat", str :: n :: Nil, StringType)
+
+      case StringSplit(str, pat @ Literal(_, StringType))
+          // native StringSplit implementation does not support regex, so only most frequently
+          // used cases without regex are supported
+          if Seq(",", ", ", ":", ";", "#", "@", "_", "-", "\\|", "\\.").contains(pat.value) =>
+        val nativePat = pat.value match {
+          case "\\|" => "|"
+          case "\\." => "."
+          case other => other
+        }
+        buildExtScalarFunction(
+          "StringSplit",
+          str :: Literal(nativePat) :: Nil,
+          ArrayType(StringType))
+
+      case e: Concat if e.children.forall(_.dataType == StringType) =>
+        buildExtScalarFunction("StringConcat", e.children, e.dataType)
+
+      case e: ConcatWs
+          if e.children.forall(
+            c => c.dataType == StringType || c.dataType == ArrayType(StringType)) =>
+        buildExtScalarFunction("StringConcatWs", e.children, e.dataType)
 
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
 
