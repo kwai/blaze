@@ -41,8 +41,8 @@ pub struct SparkUDFWrapperExpr {
     pub return_nullable: bool,
     pub params: Vec<Arc<dyn PhysicalExpr>>,
     pub input_schema: SchemaRef,
-    pub params_schema: SchemaRef,
     pub import_schema: SchemaRef,
+    pub params_schema: OnceCell<SchemaRef>,
     jcontext: OnceCell<GlobalRef>,
 }
 
@@ -69,25 +69,14 @@ impl SparkUDFWrapperExpr {
         params: Vec<Arc<dyn PhysicalExpr>>,
         input_schema: SchemaRef,
     ) -> Result<Self> {
-        let mut param_fields = Vec::with_capacity(params.len());
-        for param in &params {
-            param_fields.push(Field::new(
-                "",
-                param.data_type(&input_schema)?,
-                param.nullable(&input_schema)?,
-            ));
-        }
-        let params_schema = Arc::new(Schema::new(param_fields));
-        let import_schema = Arc::new(Schema::new(vec![Field::new("", return_type.clone(), true)]));
-
         Ok(Self {
             serialized,
-            return_type,
+            return_type: return_type.clone(),
             return_nullable,
             params,
             input_schema,
-            params_schema,
-            import_schema,
+            import_schema: Arc::new(Schema::new(vec![Field::new("", return_type, true)])),
+            params_schema: OnceCell::new(),
             jcontext: OnceCell::new(),
         })
     }
@@ -125,6 +114,19 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             ));
         }
 
+        // init params schema
+        let params_schema = self.params_schema.get_or_try_init(|| -> Result<SchemaRef> {
+            let mut param_fields = Vec::with_capacity(self.params.len());
+            for param in &self.params {
+                param_fields.push(Field::new(
+                    "",
+                    param.data_type(&self.input_schema)?,
+                    param.nullable(&self.input_schema)?,
+                ));
+            }
+            Ok(Arc::new(Schema::new(param_fields)))
+        })?;
+
         // init jvm side context
         let jcontext = self.jcontext.get_or_try_init(|| {
             let serialized_buf = jni_new_direct_byte_buffer!(&self.serialized)?;
@@ -140,7 +142,7 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             .map(|param| param.evaluate(batch).map(|r| r.into_array(num_rows)))
             .collect::<Result<_>>()?;
         let params_batch = RecordBatch::try_new_with_options(
-            self.params_schema.clone(),
+            params_schema.clone(),
             params,
             &RecordBatchOptions::new().with_row_count(Some(num_rows)),
         )?;
