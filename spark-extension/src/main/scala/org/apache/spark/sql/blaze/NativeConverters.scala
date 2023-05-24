@@ -684,13 +684,15 @@ object NativeConverters extends Logging {
           case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
             buildBinaryExprNode(lhs, rhs, "Modulo")
           case rhs =>
-            val l = convertExprWithFallback(Cast(lhs, resultType), useAttrExprId, fallback)
-            val r =
-              buildExtScalarFunction("NullIfZero", Cast(rhs, resultType) :: Nil, rhs.dataType)
-
+            val lhsCasted = castIfNecessary(lhs, resultType)
+            val rhsCasted = castIfNecessary(rhs, resultType)
             buildExprNode {
               _.setBinaryExpr(
-                pb.PhysicalBinaryExprNode.newBuilder().setL(l).setR(r).setOp("Modulo"))
+                pb.PhysicalBinaryExprNode
+                  .newBuilder()
+                  .setL(convertExprWithFallback(lhsCasted, useAttrExprId, fallback))
+                  .setR(buildExtScalarFunction("NullIfZero", rhsCasted :: Nil, rhs.dataType))
+                  .setOp("Modulo"))
             }
         }
       case e: Like =>

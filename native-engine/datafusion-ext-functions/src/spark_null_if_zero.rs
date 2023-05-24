@@ -15,7 +15,7 @@
 use arrow::array::*;
 use arrow::compute::*;
 use arrow::datatypes::*;
-use datafusion::common::DataFusionError;
+use datafusion::common::{DataFusionError, ScalarValue};
 use datafusion::common::Result;
 use datafusion::physical_plan::ColumnarValue;
 use std::sync::Arc;
@@ -24,7 +24,13 @@ use std::sync::Arc;
 pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     Ok(match &args[0] {
         ColumnarValue::Scalar(scalar) => {
-            spark_null_if_zero(&[ColumnarValue::Array(scalar.to_array())])?
+            let data_type = scalar.get_datatype();
+            let zero = ScalarValue::new_zero(&data_type)?;
+            if scalar.eq(&zero) {
+                ColumnarValue::Scalar(ScalarValue::try_from(data_type)?)
+            } else {
+                ColumnarValue::Scalar(scalar.clone())
+            }
         }
         ColumnarValue::Array(array) => {
             macro_rules! handle {
