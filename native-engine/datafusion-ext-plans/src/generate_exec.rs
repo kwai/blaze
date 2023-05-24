@@ -250,7 +250,8 @@ async fn execute_generate(
 
                 let child_output_row_ids = child_output_row_ids.finish();
                 let generated_ids = generated_ids.finish();
-                let batch_size = batch_size.min(i32::MAX as usize / child_output_mem_size);
+                let batch_size = batch_size
+                    .min(i32::MAX as usize / child_output_mem_size.max(batch_size * 8));
                 let mut start = 0;
                 while start < child_output_row_ids.len() {
                     let end = (start + batch_size).min(child_output_row_ids.len());
