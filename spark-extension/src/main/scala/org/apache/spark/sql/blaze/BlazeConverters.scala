@@ -634,10 +634,13 @@ object BlazeConverters extends Logging {
   }
 
   def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
-    if (!NativeHelper.isNative(exec)) {
-      return exec
+    exec match {
+      case _ if NativeHelper.isNative(exec) => ConvertToUnsafeRowExec(exec)
+      case _: ProjectExec | _: FilterExec | _: UnionExec | _: ExpandExec | _: LocalLimitExec |
+          _: GlobalLimitExec =>
+        exec.mapChildren(child => convertToUnsafeRow(child))
+      case _ => exec
     }
-    ConvertToUnsafeRowExec(exec)
   }
 
   def convertToNative(exec: SparkPlan): SparkPlan = {

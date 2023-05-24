@@ -17,11 +17,9 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.blaze.{BlazeConverters, Shims}
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.BoundReference
