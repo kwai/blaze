@@ -751,7 +751,7 @@ object NativeConverters extends Logging {
       case e: Log => buildScalarFunction(pb.ScalarFunction.Ln, e.children, e.dataType)
       case e: Log2 => buildScalarFunction(pb.ScalarFunction.Log2, e.children, e.dataType)
       case e: Log10 => buildScalarFunction(pb.ScalarFunction.Log10, e.children, e.dataType)
-      case e: Floor =>
+      case e: Floor if !e.dataType.isInstanceOf[DecimalType] =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode
@@ -760,7 +760,7 @@ object NativeConverters extends Logging {
               .setArrowType(convertDataType(e.dataType))
               .build())
         }
-      case e: Ceil =>
+      case e: Ceil if !e.dataType.isInstanceOf[DecimalType] =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode
