@@ -115,24 +115,35 @@ case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan]
   override def apply(plan: LogicalPlan): LogicalPlan = {
     plan.foreachUp {
       case p @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, _) =>
+        // non parquet table rule
         if (!fsRelation.fileFormat.isInstanceOf[ParquetFileFormat]) {
-          p.conf.setConf(blazeEnabledKey, false)
-          sparkSession.sparkContext.conf
-            .set(blazeMissPatterns, BlazeMissPatterns.NonParquetFormat)
+          turnOffBlazeWithReason(p.conf, BlazeMissPatterns.NonParquetFormat)
+        }
+
+        // read encrypted table rule
+        val readEncryptedTableEnable = sparkSession.sparkContext.conf
+          .getBoolean("spark.hive.exist.read.encrypted.table", defaultValue = false)
+        if (readEncryptedTableEnable) {
+          turnOffBlazeWithReason(p.conf, BlazeMissPatterns.ReadEncryptedTable)
         }
 
       case h: HiveTableRelation =>
-        h.conf.setConf(blazeEnabledKey, false)
-        sparkSession.sparkContext.conf
-          .set(blazeMissPatterns, BlazeMissPatterns.NonParquetFormat)
+        turnOffBlazeWithReason(h.conf, BlazeMissPatterns.NonParquetFormat)
 
       case _ =>
     }
     plan
   }
 
+  private def turnOffBlazeWithReason(planConf: SQLConf, blazeMissPattern: String): Unit = {
+    planConf.setConf(blazeEnabledKey, false)
+    sparkSession.sparkContext.conf
+      .set(blazeMissPatterns, blazeMissPattern)
+  }
+
   object BlazeMissPatterns extends Enumeration {
     type BlazeMissPatterns = String
     val NonParquetFormat = "NonParquetFormat"
+    val ReadEncryptedTable = "ReadEncryptedTable"
   }
 }
