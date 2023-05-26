@@ -105,7 +105,7 @@ impl Stream for LimitStream {
     type Item = Result<RecordBatch>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let rest = self.limit.saturating_sub(self.cur) as usize;
+        let rest = self.limit.saturating_sub(self.cur);
         if rest == 0 {
             return Poll::Ready(None);
         }
@@ -114,13 +114,16 @@ impl Stream for LimitStream {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
-            Poll::Ready(Some(Ok(batch))) => self.baseline_metrics.record_poll(Poll::Ready(Some(
-                Ok(if batch.num_rows() <= rest {
+            Poll::Ready(Some(Ok(batch))) => {
+                let batch = if batch.num_rows() <= rest as usize {
+                    self.cur += batch.num_rows() as u64;
                     batch
                 } else {
-                    batch.slice(0, rest)
-                }),
-            ))),
+                    self.cur += rest;
+                    batch.slice(0, rest as usize)
+                };
+                self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(batch))))
+            }
         }
     }
 }
