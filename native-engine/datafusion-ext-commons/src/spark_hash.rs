@@ -245,6 +245,7 @@ pub fn create_hashes<'a>(
 ) -> Result<&'a mut Vec<u32>> {
     for col in arrays {
         match col.data_type() {
+            DataType::Null => {}
             DataType::Boolean => {
                 let array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
                 if array.null_count() == 0 {
