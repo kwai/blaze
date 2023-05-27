@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_commons::{jni_call, jni_new_string};
+use blaze_jni_bridge::{jni_call, jni_new_string};
 use datafusion::common::Result;
 use datafusion::physical_plan::ExecutionPlan;
 use jni::objects::JObject;

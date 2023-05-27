@@ -17,7 +17,7 @@ use arrow::array::{as_struct_array, make_array, Array, ArrayRef, StructArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use blaze_commons::{
+use blaze_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
 use datafusion::common::DataFusionError;

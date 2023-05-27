@@ -29,7 +29,7 @@ use crate::common::memory_manager::MemManager;
 use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
 use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
 use crate::shuffle::ShuffleRepartitioner;
-use blaze_commons::{jni_call_static, jni_new_global_ref, jni_new_string};
+use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};

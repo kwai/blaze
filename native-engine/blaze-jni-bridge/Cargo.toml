@@ -1,5 +1,5 @@
 [package]
-name = "blaze-commons"
+name = "blaze-jni-bridge"
 version = "0.1.0"
 edition = "2021"
 resolver = "1"

@@ -360,12 +360,12 @@ message Statistics {
 
 message FileScanExecConf {
   int64 num_partitions = 1;
-  FileGroup file_group = 2;
-  Schema schema = 3;
-  repeated uint32 projection = 5;
-  ScanLimit limit = 6;
-  Statistics statistics = 7;
-  repeated string table_partition_cols = 8;
+  int64 partition_index = 2;
+  FileGroup file_group = 3;
+  Schema schema = 4;
+  repeated uint32 projection = 6;
+  ScanLimit limit = 7;
+  Statistics statistics = 8;
   Schema partition_schema = 9;
 }
 

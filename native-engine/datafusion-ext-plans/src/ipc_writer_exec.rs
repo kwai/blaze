@@ -16,7 +16,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use blaze_commons::{
+use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
 use datafusion::error::DataFusionError;

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::fs::File;
-use blaze_commons::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref};
+use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref};
 use datafusion::common::Result;
 use jni::objects::GlobalRef;
 use jni::sys::{jboolean, jlong, JNI_TRUE};

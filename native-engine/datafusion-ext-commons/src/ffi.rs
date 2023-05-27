@@ -15,7 +15,7 @@
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
-use blaze_commons::is_task_running;
+use blaze_jni_bridge::is_task_running;
 use datafusion::common::Result;
 use std::sync::mpsc::Receiver;
 

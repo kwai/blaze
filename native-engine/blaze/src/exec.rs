@@ -14,8 +14,8 @@
 
 use crate::rt::NativeExecutionRuntime;
 use crate::{handle_unwinded_scope, SESSION};
-use blaze_commons::jni_bridge::JavaClasses;
-use blaze_commons::*;
+use blaze_jni_bridge::jni_bridge::JavaClasses;
+use blaze_jni_bridge::*;
 use blaze_serde::protobuf::TaskDefinition;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;

@@ -348,9 +348,9 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.21.0"
+version = "0.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4a4ddaa51a5bc52a6948f74c06d20aaaddb71924eab79b8c97a8c556e942d6a"
+checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
 
 [[package]]
 name = "bigdecimal"
@@ -415,7 +415,7 @@ name = "blaze"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "blaze-commons",
+ "blaze-jni-bridge",
  "blaze-serde",
  "datafusion",
  "datafusion-ext-commons",
@@ -433,7 +433,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "blaze-commons"
+name = "blaze-jni-bridge"
 version = "0.1.0"
 dependencies = [
  "datafusion",
@@ -448,13 +448,15 @@ name = "blaze-serde"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "base64",
+ "chrono",
  "datafusion",
  "datafusion-ext-commons",
  "datafusion-ext-exprs",
- "datafusion-ext-file-formats",
  "datafusion-ext-functions",
  "datafusion-ext-plans",
  "log",
+ "object_store",
  "prost",
  "tonic-build",
 ]
@@ -562,8 +564,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e3c5919066adf22df73762e50cffcde3a758f2a848b113b586d1f86728b673b"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-integer",
  "num-traits",
+ "time 0.1.45",
+ "wasm-bindgen",
  "winapi",
 ]
 
@@ -781,7 +786,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "ahash",
  "arrow",
@@ -830,7 +835,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -844,7 +849,7 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "dashmap",
  "datafusion-common",
@@ -861,7 +866,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "ahash",
  "arrow",
@@ -878,7 +883,7 @@ dependencies = [
  "async-trait",
  "bigdecimal",
  "bitvec",
- "blaze-commons",
+ "blaze-jni-bridge",
  "bytes",
  "datafusion",
  "futures",
@@ -902,7 +907,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "bigdecimal",
- "blaze-commons",
+ "blaze-jni-bridge",
  "datafusion",
  "datafusion-ext-commons",
  "jni",
@@ -914,30 +919,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "datafusion-ext-file-formats"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "async-trait",
- "blaze-commons",
- "bytes",
- "bytesize",
- "datafusion",
- "datafusion-ext-commons",
- "futures",
- "jni",
- "log",
- "once_cell",
-]
-
-[[package]]
 name = "datafusion-ext-functions"
 version = "0.1.0"
 dependencies = [
  "arrow",
  "async-trait",
  "bigdecimal",
- "blaze-commons",
+ "blaze-jni-bridge",
  "datafusion",
  "datafusion-ext-commons",
  "log",
@@ -952,8 +940,10 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "async-trait",
+ "base64",
  "bitvec",
- "blaze-commons",
+ "blaze-jni-bridge",
+ "bytes",
  "bytesize",
  "datafusion",
  "datafusion-ext-commons",
@@ -966,6 +956,7 @@ dependencies = [
  "log",
  "lz4_flex",
  "num",
+ "object_store",
  "once_cell",
  "panic-message",
  "parking_lot",
@@ -978,7 +969,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "arrow",
  "async-trait",
@@ -995,7 +986,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "ahash",
  "arrow",
@@ -1026,7 +1017,7 @@ dependencies = [
 [[package]]
 name = "datafusion-row"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -1037,7 +1028,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "22.0.0"
-source = "git+https://github.com/lihao712/arrow-datafusion.git?branch=test-optimize-case#9a9da4a41c370fce9d7090cba88e974e324150f4"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=9704302a2#9704302a22d32da23ae1cd78e467f1d5127adbe2"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -1259,7 +1250,7 @@ checksum = "c05aeb6a22b8f62540c194aac980f2115af067bfe15a0734d7277a768d396b31"
 dependencies = [
  "cfg-if",
  "libc",
- "wasi",
+ "wasi 0.11.0+wasi-snapshot-preview1",
 ]
 
 [[package]]
@@ -1779,9 +1770,9 @@ dependencies = [
 
 [[package]]
 name = "object_store"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1ea8f683b4f89a64181393742c041520a1a87e9775e6b4c0dd5a3281af05fc6"
+checksum = "ec9cd6ca25e796a49fa242876d1c4de36a24a6da5258e9f0bc062dbf5e81c53b"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2264,7 +2255,7 @@ checksum = "acee08041c5de3d5048c8b3f6f13fafb3026b24ba43c6a695a0c76179b844369"
 dependencies = [
  "log",
  "termcolor",
- "time",
+ "time 0.3.20",
 ]
 
 [[package]]
@@ -2473,6 +2464,17 @@ dependencies = [
  "log",
  "ordered-float",
  "threadpool",
+]
+
+[[package]]
+name = "time"
+version = "0.1.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
+dependencies = [
+ "libc",
+ "wasi 0.10.0+wasi-snapshot-preview1",
+ "winapi",
 ]
 
 [[package]]
@@ -2708,6 +2710,12 @@ dependencies = [
  "same-file",
  "winapi-util",
 ]
+
+[[package]]
+name = "wasi"
+version = "0.10.0+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
 
 [[package]]
 name = "wasi"

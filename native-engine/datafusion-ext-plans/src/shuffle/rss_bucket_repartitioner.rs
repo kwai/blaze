@@ -17,7 +17,7 @@
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
 use async_trait::async_trait;
-use blaze_commons::{jni_call, jni_new_direct_byte_buffer};
+use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
 use datafusion::arrow::error::Result as ArrowResult;

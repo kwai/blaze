@@ -23,6 +23,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicReference
 
+import com.google.protobuf.CodedOutputStream
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext

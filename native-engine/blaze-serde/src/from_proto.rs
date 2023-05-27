@@ -18,11 +18,15 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use arrow::datatypes::{FieldRef, SchemaRef};
-use datafusion::datasource::listing::FileRange;
+use base64::Engine;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use chrono::DateTime;
+use datafusion::datasource::listing::{FileRange, PartitionedFile};
+use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::TypeSignature::VariadicEqual;
-use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast, TypeSignature};
+use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
 use datafusion::logical_expr::{
     Expr, ReturnTypeFunction, ScalarFunctionImplementation, ScalarUDF, Signature, Volatility,
 };
@@ -32,6 +36,7 @@ use datafusion::physical_expr::{functions, ScalarFunctionExpr};
 use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
+    expressions as phys_expr,
     expressions::{
         BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal,
         NegativeExpr, NotExpr, PhysicalSortExpr, DEFAULT_DATAFUSION_CAST_OPTIONS,
@@ -40,9 +45,11 @@ use datafusion::physical_plan::{
     Partitioning,
 };
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics};
+use datafusion::physical_plan::file_format::FileScanConfig;
 use datafusion::scalar::ScalarValue;
+use object_store::ObjectMeta;
+use object_store::path::Path;
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
-use datafusion_ext_file_formats::{FileScanConfig, ObjectMeta, ParquetExec, PartitionedFile};
 use datafusion_ext_plans::agg::{
     create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
 };
@@ -56,6 +63,7 @@ use datafusion_ext_plans::filter_exec::FilterExec;
 use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext_plans::limit_exec::LimitExec;
+use datafusion_ext_plans::parquet_exec::ParquetExec;
 use datafusion_ext_plans::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext_plans::rss_shuffle_writer_exec::RssShuffleWriterExec;
 use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
@@ -270,25 +278,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .pruning_predicates
                     .iter()
                     .filter_map(|predicate| {
-                        try_parse_physical_expr(predicate, &conf.file_schema)
-                            .and_then(|expr| {
-                                convert_physical_expr_to_logical_expr(&expr).map_err(|err| {
-                                    log::warn!(
-                                        "ignore unsupported predicate pruning expr: {:?}: {}",
-                                        expr,
-                                        err.to_string(),
-                                    );
-                                    PlanSerDeError::DataFusionError(err)
-                                })
-                            })
-                            .ok()
+                        try_parse_physical_expr(predicate, &conf.file_schema).ok()
                     })
-                    .fold(Expr::Literal(ScalarValue::from(true)), |a, b| {
-                        Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr {
-                            op: Operator::And,
-                            left: Box::new(a),
-                            right: Box::new(b),
-                        })
+                    .fold(phys_expr::lit(true), |a, b| {
+                        Arc::new(BinaryExpr::new(a, Operator::And, b))
                     });
                 Ok(Arc::new(ParquetExec::new(
                     conf,
@@ -1120,10 +1113,12 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
     type Error = PlanSerDeError;
 
     fn try_from(val: &protobuf::PartitionedFile) -> Result<Self, Self::Error> {
+
         Ok(PartitionedFile {
             object_meta: ObjectMeta {
-                location: val.path.clone(),
+                location: Path::from(format!("/{}", BASE64_URL_SAFE_NO_PAD.encode(&val.path))),
                 size: val.size as usize,
+                last_modified: DateTime::default(),
             },
             partition_values: val
                 .partition_values
@@ -1196,7 +1191,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
     type Error = PlanSerDeError;
 
     fn try_into(self) -> Result<FileScanConfig, Self::Error> {
-        let schema = Arc::new(convert_required!(self.schema)?);
+        let schema: SchemaRef = Arc::new(convert_required!(self.schema)?);
         let projection = self
             .projection
             .iter()
@@ -1208,20 +1203,34 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             Some(projection)
         };
         let statistics = convert_required!(self.statistics)?;
-        let partition_schema = Arc::new(convert_required!(self.partition_schema)?);
+        let partition_schema: SchemaRef = Arc::new(convert_required!(self.partition_schema)?);
+
+        let file_groups = (0..self.num_partitions)
+            .map(|i| if i == self.partition_index {
+                Ok(self
+                    .file_group
+                    .as_ref()
+                    .expect("missing FileScanConfig.file_group")
+                    .try_into()?)
+            } else {
+                Ok(vec![])
+            })
+            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
+
         Ok(FileScanConfig {
-            num_partitions: self.num_partitions as usize,
+            object_store_url: ObjectStoreUrl::local_filesystem(), // not used
             file_schema: schema,
-            file_group: self
-                .file_group
-                .as_ref()
-                .expect("missing FileScanConfig.file_group")
-                .try_into()?,
+            file_groups,
             statistics,
             projection,
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
-            table_partition_cols: self.table_partition_cols.clone(),
-            partition_schema,
+            table_partition_cols: partition_schema
+                .fields()
+                .iter()
+                .map(|field| (field.name().clone(), field.data_type().clone()))
+                .collect(),
+            output_ordering: None,
+            infinite_source: false
         })
     }
 }

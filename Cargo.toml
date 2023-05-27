@@ -17,11 +17,10 @@
 members = [
     "native-engine/datafusion-ext-commons",
     "native-engine/datafusion-ext-exprs",
-    "native-engine/datafusion-ext-file-formats",
     "native-engine/datafusion-ext-functions",
     "native-engine/datafusion-ext-plans",
     "native-engine/blaze",
-    "native-engine/blaze-commons",
+    "native-engine/blaze-jni-bridge",
     "native-engine/blaze-serde",
 ]
 
@@ -44,5 +43,5 @@ codegen-units = 16
 strip = false
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/lihao712/arrow-datafusion.git", branch = "test-optimize-case" }
+datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "9704302a2" }
 parquet = { path = "patched/parquet-37.0.0-kwai" }

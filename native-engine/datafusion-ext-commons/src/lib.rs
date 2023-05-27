@@ -27,6 +27,7 @@ pub mod io;
 pub mod loser_tree;
 pub mod spark_hash;
 pub mod streams;
+pub mod hadoop_fs;
 
 /// Concatenates an array of `RecordBatch` into one batch
 pub fn concat_batches(

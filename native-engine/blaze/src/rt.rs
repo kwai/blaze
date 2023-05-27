@@ -15,9 +15,9 @@
 use crate::handle_unwinded_scope;
 use crate::metrics::update_spark_metric_node;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use blaze_commons::is_task_running;
-use blaze_commons::jni_bridge::JavaClasses;
-use blaze_commons::{
+use blaze_jni_bridge::is_task_running;
+use blaze_jni_bridge::jni_bridge::JavaClasses;
+use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_exception_check, jni_exception_occurred, jni_new_global_ref,
     jni_new_object, jni_new_string,
 };

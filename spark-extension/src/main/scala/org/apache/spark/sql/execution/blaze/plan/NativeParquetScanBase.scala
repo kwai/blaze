@@ -27,7 +27,6 @@ import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
 import org.blaze.{protobuf => pb}
-import org.blaze.protobuf.FileGroup
 
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.JniBridge
@@ -84,7 +83,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
   private val partitionSchema = basedFileScan.relation.partitionSchema
 
   private val nativePruningPredicateFilters = basedFileScan.dataFilters
-    .map(expr => NativeConverters.convertExpr(expr, useAttrExprId = false))
+    .map(expr => NativeConverters.convertScanPruningExpr(expr))
 
   private val nativeFileSchema =
     NativeConverters.convertSchema(StructType(basedFileScan.relation.dataSchema.map {
@@ -147,7 +146,6 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         case _ =>
       }))
     val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
-    val partCols = partitionSchema.map(_.name)
 
     val sparkSession = basedFileScan.relation.sparkSession
     val hadoopConf =
@@ -162,7 +160,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
       partitions.asInstanceOf[Array[Partition]],
       Nil,
       rddShuffleReadFull = true,
-      (partition, _) => {
+      (partition, context) => {
         val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
         val sharedConf = broadcastedHadoopConf.value.value
         JniBridge.resourcesMap.put(
@@ -176,6 +174,8 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
               }
             })
             getfsTimeMetric.add((System.currentTimeMillis() - currentTimeMillis) * 1000000)
+            context.addTaskCompletionListener(_ => fs.close())
+            context.addTaskFailureListener((_, _) => fs.close())
             fs
           })
 
@@ -183,11 +183,11 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         val nativeParquetScanConf = pb.FileScanExecConf
           .newBuilder()
           .setNumPartitions(numPartitions)
+          .setPartitionIndex(partition.index)
           .setStatistics(pb.Statistics.getDefaultInstance)
           .setSchema(nativeFileSchema)
           .setFileGroup(nativeFileGroup)
           .addAllProjection(projection.map(Integer.valueOf).asJava)
-          .addAllTablePartitionCols(partCols.asJava)
           .setPartitionSchema(nativePartitionSchema)
           .build()
 

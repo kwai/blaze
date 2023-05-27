@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_commons::*;
+use blaze_jni_bridge::*;
 use datafusion::prelude::SessionContext;
 use jni::objects::{JObject, JThrowable};
 use once_cell::sync::OnceCell;

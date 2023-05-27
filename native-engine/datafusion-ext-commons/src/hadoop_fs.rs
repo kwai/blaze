@@ -12,37 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_commons::{
+use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
     jni_new_string,
 };
 use datafusion::error::Result;
 use datafusion::physical_plan::metrics::Time;
 use jni::objects::{GlobalRef, JObject};
-
-pub struct FsProvider {
-    fs_provider: GlobalRef,
-    io_time: Time,
-}
-
-impl FsProvider {
-    pub fn new(fs_provider: GlobalRef, io_time_metric: &Time) -> Self {
-        Self {
-            fs_provider,
-            io_time: io_time_metric.clone(),
-        }
-    }
-
-    pub fn provide(&self, path: &str) -> Result<Fs> {
-        let _timer = self.io_time.timer();
-        let fs = jni_call!(
-            ScalaFunction1(self.fs_provider.as_obj()).apply(
-                jni_new_string!(path)?.as_obj()
-            ) -> JObject
-        )?;
-        Ok(Fs::new(jni_new_global_ref!(fs.as_obj())?, &self.io_time))
-    }
-}
 
 pub struct Fs {
     fs: GlobalRef,
@@ -93,10 +69,32 @@ impl FsDataInputStream {
 impl Drop for FsDataInputStream {
     fn drop(&mut self) {
         let _timer = self.io_time.timer();
-        if let Err(e) = jni_call!(
-            HadoopFSDataInputStream(self.stream.as_obj()).close() -> ()
-        ) {
+        if let Err(e) = jni_call!(HadoopFSDataInputStream(self.stream.as_obj()).close() -> ()) {
             log::warn!("error closing hadoop FSDatainputStream: {:?}", e);
         }
+    }
+}
+
+pub struct FsProvider {
+    fs_provider: GlobalRef,
+    io_time: Time,
+}
+
+impl FsProvider {
+    pub fn new(fs_provider: GlobalRef, io_time_metric: &Time) -> Self {
+        Self {
+            fs_provider,
+            io_time: io_time_metric.clone(),
+        }
+    }
+
+    pub fn provide(&self, path: &str) -> Result<Fs> {
+        let _timer = self.io_time.timer();
+        let fs = jni_call!(
+            ScalaFunction1(self.fs_provider.as_obj()).apply(
+                jni_new_string!(path)?.as_obj()
+            ) -> JObject
+        )?;
+        Ok(Fs::new(jni_new_global_ref!(fs.as_obj())?, &self.io_time))
     }
 }

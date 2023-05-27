@@ -17,7 +17,7 @@ use std::fmt::Debug;
 use crate::io::read_one_batch;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
-use blaze_commons::{
+use blaze_jni_bridge::{
     jni_call, jni_get_object_class, jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
 use datafusion::error::Result;

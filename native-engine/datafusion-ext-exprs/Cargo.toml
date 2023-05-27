@@ -10,7 +10,7 @@ default = ["arrow/ffi", "datafusion/simd"]
 [dependencies]
 arrow = "37.0.0"
 async-trait = "0.1.56"
-blaze-commons = { path = "../blaze-commons" }
+blaze-jni-bridge = { path = "../blaze-jni-bridge" }
 bigdecimal = "0.3.0"
 datafusion = "22.0.0"
 datafusion-ext-commons = { path = "../datafusion-ext-commons" }

@@ -12,7 +12,7 @@ arrow = "37.0.0"
 arrow-schema = { version = "37.0.0", features = ["serde"]}
 async-trait = "0.1.56"
 bitvec = "1.0.1"
-blaze-commons = { path = "../blaze-commons" }
+blaze-jni-bridge = { path = "../blaze-jni-bridge" }
 bigdecimal = "0.3.0"
 bytes = "1.1.0"
 datafusion = "22.0.0"

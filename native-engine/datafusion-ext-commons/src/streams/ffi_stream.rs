@@ -16,7 +16,7 @@ use arrow::array::{ArrayData, StructArray};
 use arrow::datatypes::SchemaRef;
 use arrow::ffi::{ArrowArray, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use blaze_commons::{jni_call, jni_new_object};
+use blaze_jni_bridge::{jni_call, jni_new_object};
 use datafusion::error::Result;
 use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
