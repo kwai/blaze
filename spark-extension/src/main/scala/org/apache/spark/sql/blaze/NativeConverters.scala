@@ -333,7 +333,7 @@ object NativeConverters extends Logging {
       extends Unevaluable
 
   def convertExpr(sparkExpr: Expression): pb.PhysicalExprNode = {
-    def fallbackToError: (Expression) => pb.PhysicalExprNode = { e =>
+    def fallbackToError: Expression => pb.PhysicalExprNode = { e =>
       throw new NotImplementedError(s"unsupported expression: (${e.getClass}) $e")
     }
 
@@ -342,7 +342,7 @@ object NativeConverters extends Logging {
       var numInconvertibleChildren = 0
       sparkExpr.children.foreach { child =>
         try {
-          convertExprWithFallback(child, fallbackToError)
+          convertExprWithFallback(child, isPruningExpr = false, fallbackToError)
         } catch {
           case _: NotImplementedError =>
             numInconvertibleChildren += 1
@@ -354,11 +354,12 @@ object NativeConverters extends Logging {
       //  1 - fallback the only inconvertible children
       //  N - fallback the whole expression
       numInconvertibleChildren match {
-        case 0 => convertExprWithFallback(sparkExpr, fallbackToError)
+        case 0 => convertExprWithFallback(sparkExpr, isPruningExpr = false, fallbackToError)
         case 1 =>
           val childrenConverted = sparkExpr.mapChildren { child =>
             try {
-              val converted = convertExprWithFallback(child, fallbackToError)
+              val converted =
+                convertExprWithFallback(child, isPruningExpr = false, fallbackToError)
               NativeExprWrapper(converted, child.dataType, child.nullable)
             } catch {
               case _: NotImplementedError =>
@@ -366,7 +367,7 @@ object NativeConverters extends Logging {
                 NativeExprWrapper(fallbacked, child.dataType, child.nullable)
             }
           }
-          convertExprWithFallback(childrenConverted, fallbackToError)
+          convertExprWithFallback(childrenConverted, isPruningExpr = false, fallbackToError)
         case _ =>
           fallbackToError(sparkExpr)
       }
@@ -381,7 +382,8 @@ object NativeConverters extends Logging {
           case p: Literal => p
           case p =>
             try {
-              val convertedChild = convertExprWithFallback(p, fallbackToError)
+              val convertedChild =
+                convertExprWithFallback(p, isPruningExpr = false, fallbackToError)
               val nextBindIndex = convertedChildren.size
               convertedChildren.getOrElseUpdate(
                 convertedChild,
@@ -413,14 +415,30 @@ object NativeConverters extends Logging {
     }
   }
 
+  def convertScanPruningExpr(sparkExpr: Expression): pb.PhysicalExprNode = {
+    convertExprWithFallback(
+      sparkExpr,
+      isPruningExpr = true,
+      { _ =>
+        buildExprNode(
+          _.setColumn(
+            pb.PhysicalColumn
+              .newBuilder()
+              .setName("!__unsupported_pruning_expr__")
+              .setIndex(Int.MaxValue)))
+      })
+  }
+
+  private def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => pb.PhysicalExprNode.Builder)
+      : pb.PhysicalExprNode = {
+    buildFn(pb.PhysicalExprNode.newBuilder()).build()
+  }
+
   private def convertExprWithFallback(
       sparkExpr: Expression,
-      fallback: (Expression) => pb.PhysicalExprNode): pb.PhysicalExprNode = {
+      isPruningExpr: Boolean = false,
+      fallback: Expression => pb.PhysicalExprNode): pb.PhysicalExprNode = {
     assert(sparkExpr.deterministic, s"nondeterministic expression not supported: $sparkExpr")
-
-    def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => pb.PhysicalExprNode.Builder)
-        : pb.PhysicalExprNode =
-      buildFn(pb.PhysicalExprNode.newBuilder()).build()
 
     def buildBinaryExprNode(
         left: Expression,
@@ -430,8 +448,8 @@ object NativeConverters extends Logging {
         _.setBinaryExpr(
           pb.PhysicalBinaryExprNode
             .newBuilder()
-            .setL(convertExprWithFallback(left, fallback))
-            .setR(convertExprWithFallback(right, fallback))
+            .setL(convertExprWithFallback(left, isPruningExpr, fallback))
+            .setR(convertExprWithFallback(right, isPruningExpr, fallback))
             .setOp(op))
       }
 
@@ -445,7 +463,8 @@ object NativeConverters extends Logging {
             .newBuilder()
             .setName(fn.name())
             .setFun(fn)
-            .addAllArgs(args.map(expr => convertExprWithFallback(expr, fallback)).asJava)
+            .addAllArgs(
+              args.map(expr => convertExprWithFallback(expr, isPruningExpr, fallback)).asJava)
             .setReturnType(convertDataType(dataType)))
       }
 
@@ -459,7 +478,8 @@ object NativeConverters extends Logging {
             .newBuilder()
             .setName(name)
             .setFun(pb.ScalarFunction.SparkExtFunctions)
-            .addAllArgs(args.map(expr => convertExprWithFallback(expr, fallback)).asJava)
+            .addAllArgs(
+              args.map(expr => convertExprWithFallback(expr, isPruningExpr, fallback)).asJava)
             .setReturnType(convertDataType(dataType)))
       }
 
@@ -500,6 +520,7 @@ object NativeConverters extends Logging {
             b.setLiteral(convertValue(value, dataType))
           }
         }
+
       case bound: BoundReference =>
         buildExprNode {
           _.setBoundReference(
@@ -509,6 +530,10 @@ object NativeConverters extends Logging {
               .setDataType(convertDataType(bound.dataType))
               .setNullable(bound.nullable))
         }
+
+      // use column name is pruning-expr mode and column expr id in normal mode
+      case ar: AttributeReference if isPruningExpr =>
+        buildExprNode(_.setColumn(pb.PhysicalColumn.newBuilder().setName(ar.name)))
       case ar: AttributeReference =>
         buildExprNode {
           _.setColumn(
@@ -519,13 +544,13 @@ object NativeConverters extends Logging {
         }
 
       case alias: Alias =>
-        convertExprWithFallback(alias.child, fallback)
+        convertExprWithFallback(alias.child, isPruningExpr, fallback)
 
       // ScalarSubquery
       case subquery: ScalarSubquery =>
         subquery.updateResult()
         val value = Literal.create(subquery.eval(null), subquery.dataType)
-        convertExprWithFallback(value, fallback)
+        convertExprWithFallback(value, isPruningExpr, fallback)
 
       // cast
       // not performing native cast for timestamps (will use UDFWrapper instead)
@@ -534,7 +559,7 @@ object NativeConverters extends Logging {
           _.setTryCast(
             pb.PhysicalTryCastNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, fallback))
+              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
               .setArrowType(convertDataType(dataType))
               .build())
         }
@@ -545,8 +570,9 @@ object NativeConverters extends Logging {
           _.setInList(
             pb.PhysicalInListNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(value, fallback))
-              .addAllList(list.map(expr => convertExprWithFallback(expr, fallback)).asJava))
+              .setExpr(convertExprWithFallback(value, isPruningExpr, fallback))
+              .addAllList(
+                list.map(expr => convertExprWithFallback(expr, isPruningExpr, fallback)).asJava))
         }
 
       // in
@@ -555,11 +581,14 @@ object NativeConverters extends Logging {
           _.setInList(
             pb.PhysicalInListNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(value, fallback))
+              .setExpr(convertExprWithFallback(value, isPruningExpr, fallback))
               .addAllList(set.map {
                 case utf8string: UTF8String =>
-                  convertExprWithFallback(Literal(utf8string, StringType), fallback)
-                case v => convertExprWithFallback(Literal.apply(v), fallback)
+                  convertExprWithFallback(
+                    Literal(utf8string, StringType),
+                    isPruningExpr,
+                    fallback)
+                case v => convertExprWithFallback(Literal.apply(v), isPruningExpr, fallback)
               }.asJava))
         }
 
@@ -569,7 +598,7 @@ object NativeConverters extends Logging {
           _.setIsNullExpr(
             pb.PhysicalIsNull
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, fallback))
+              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
               .build())
         }
       case IsNotNull(child) =>
@@ -577,7 +606,7 @@ object NativeConverters extends Logging {
           _.setIsNotNullExpr(
             pb.PhysicalIsNotNull
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, fallback))
+              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
               .build())
         }
       case Not(EqualTo(lhs, rhs)) => buildBinaryExprNode(lhs, rhs, "NotEq")
@@ -586,7 +615,7 @@ object NativeConverters extends Logging {
           _.setNotExpr(
             pb.PhysicalNot
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, fallback))
+              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
               .build())
         }
 
@@ -606,7 +635,7 @@ object NativeConverters extends Logging {
             _.setTryCast(
               pb.PhysicalTryCastNode
                 .newBuilder()
-                .setExpr(convertExprWithFallback(Add.apply(left, right), fallback))
+                .setExpr(convertExprWithFallback(Add.apply(left, right), isPruningExpr, fallback))
                 .setArrowType(convertDataType(resultType))
                 .build())
           }
@@ -623,7 +652,8 @@ object NativeConverters extends Logging {
             _.setTryCast(
               pb.PhysicalTryCastNode
                 .newBuilder()
-                .setExpr(convertExprWithFallback(Subtract.apply(left, right), fallback))
+                .setExpr(
+                  convertExprWithFallback(Subtract.apply(left, right), isPruningExpr, fallback))
                 .setArrowType(convertDataType(resultType))
                 .build())
           }
@@ -640,7 +670,8 @@ object NativeConverters extends Logging {
             _.setTryCast(
               pb.PhysicalTryCastNode
                 .newBuilder()
-                .setExpr(convertExprWithFallback(Multiply.apply(left, right), fallback))
+                .setExpr(
+                  convertExprWithFallback(Multiply.apply(left, right), isPruningExpr, fallback))
                 .setArrowType(convertDataType(resultType))
                 .build())
           }
@@ -657,7 +688,8 @@ object NativeConverters extends Logging {
             _.setTryCast(
               pb.PhysicalTryCastNode
                 .newBuilder()
-                .setExpr(convertExprWithFallback(Divide.apply(left, right), fallback))
+                .setExpr(
+                  convertExprWithFallback(Divide.apply(left, right), isPruningExpr, fallback))
                 .setArrowType(convertDataType(resultType))
                 .build())
           }
@@ -679,7 +711,7 @@ object NativeConverters extends Logging {
               _.setBinaryExpr(
                 pb.PhysicalBinaryExprNode
                   .newBuilder()
-                  .setL(convertExprWithFallback(lhsCasted, fallback))
+                  .setL(convertExprWithFallback(lhsCasted, isPruningExpr, fallback))
                   .setR(buildExtScalarFunction("NullIfZero", rhsCasted :: Nil, rhs.dataType))
                   .setOp("Modulo"))
             }
@@ -692,8 +724,8 @@ object NativeConverters extends Logging {
               .newBuilder()
               .setNegated(false)
               .setCaseInsensitive(false)
-              .setExpr(convertExprWithFallback(e.left, fallback))
-              .setPattern(convertExprWithFallback(e.right, fallback)))
+              .setExpr(convertExprWithFallback(e.left, isPruningExpr, fallback))
+              .setPattern(convertExprWithFallback(e.right, isPruningExpr, fallback)))
         }
 
       // if rhs is complex in and/or operators, use short-circuiting implementation
@@ -702,8 +734,8 @@ object NativeConverters extends Logging {
           _.setSparkLogicalExpr(
             pb.SparkLogicalExprNode
               .newBuilder()
-              .setArg1(convertExprWithFallback(lhs, fallback))
-              .setArg2(convertExprWithFallback(rhs, fallback))
+              .setArg1(convertExprWithFallback(lhs, isPruningExpr, fallback))
+              .setArg2(convertExprWithFallback(rhs, isPruningExpr, fallback))
               .setOp("And"))
         }
       case e @ Or(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
@@ -711,8 +743,8 @@ object NativeConverters extends Logging {
           _.setSparkLogicalExpr(
             pb.SparkLogicalExprNode
               .newBuilder()
-              .setArg1(convertExprWithFallback(lhs, fallback))
-              .setArg2(convertExprWithFallback(rhs, fallback))
+              .setArg1(convertExprWithFallback(lhs, isPruningExpr, fallback))
+              .setArg2(convertExprWithFallback(rhs, isPruningExpr, fallback))
               .setOp("Or"))
         }
       case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
@@ -800,12 +832,24 @@ object NativeConverters extends Logging {
       case Murmur3Hash(children, 42) =>
         buildExtScalarFunction("Murmur3Hash", children, IntegerType)
 
+      // startswith is converted to scalar function in pruning-expr mode
+      case StartsWith(expr, Literal(prefix, StringType)) if isPruningExpr =>
+        buildExprNode(
+          _.setScalarFunction(
+            pb.PhysicalScalarFunctionNode
+              .newBuilder()
+              .setName("starts_with")
+              .setFun(pb.ScalarFunction.StartsWith)
+              .addArgs(convertExprWithFallback(expr, isPruningExpr, fallback))
+              .addArgs(
+                convertExprWithFallback(Literal(prefix, StringType), isPruningExpr, fallback))
+              .setReturnType(convertDataType(BooleanType))))
       case StartsWith(expr, Literal(prefix, StringType)) =>
         buildExprNode(
           _.setStringStartsWithExpr(
             pb.StringStartsWithExprNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(expr, fallback))
+              .setExpr(convertExprWithFallback(expr, isPruningExpr, fallback))
               .setPrefix(prefix.toString)))
 
       case EndsWith(expr, Literal(suffix, StringType)) =>
@@ -813,7 +857,7 @@ object NativeConverters extends Logging {
           _.setStringEndsWithExpr(
             pb.StringEndsWithExprNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(expr, fallback))
+              .setExpr(convertExprWithFallback(expr, isPruningExpr, fallback))
               .setSuffix(suffix.toString)))
 
       case Contains(expr, Literal(infix, StringType)) =>
@@ -821,7 +865,7 @@ object NativeConverters extends Logging {
           _.setStringContainsExpr(
             pb.StringContainsExprNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(expr, fallback))
+              .setExpr(convertExprWithFallback(expr, isPruningExpr, fallback))
               .setInfix(infix.toString)))
 
       case Substring(str, Literal(pos, IntegerType), Literal(len, IntegerType))
@@ -866,9 +910,9 @@ object NativeConverters extends Logging {
           _.setIifExpr(
             pb.IIfExprNode
               .newBuilder()
-              .setCondition(convertExprWithFallback(predicate, fallback))
-              .setTruthy(convertExprWithFallback(trueValue, fallback))
-              .setFalsy(convertExprWithFallback(falseValue, fallback))
+              .setCondition(convertExprWithFallback(predicate, isPruningExpr, fallback))
+              .setTruthy(convertExprWithFallback(trueValue, isPruningExpr, fallback))
+              .setFalsy(convertExprWithFallback(falseValue, isPruningExpr, fallback))
               .setDataType(convertDataType(e.dataType)))
         }
       case CaseWhen(branches, elseValue) =>
@@ -876,12 +920,13 @@ object NativeConverters extends Logging {
         val whenThens = branches.map {
           case (w, t) =>
             val whenThen = pb.PhysicalWhenThen.newBuilder()
-            whenThen.setWhenExpr(convertExprWithFallback(w, fallback))
-            whenThen.setThenExpr(convertExprWithFallback(t, fallback))
+            whenThen.setWhenExpr(convertExprWithFallback(w, isPruningExpr, fallback))
+            whenThen.setThenExpr(convertExprWithFallback(t, isPruningExpr, fallback))
             whenThen.build()
         }
         caseExpr.addAllWhenThenExpr(whenThens.asJava)
-        elseValue.foreach(el => caseExpr.setElseExpr(convertExprWithFallback(el, fallback)))
+        elseValue.foreach(el =>
+          caseExpr.setElseExpr(convertExprWithFallback(el, isPruningExpr, fallback)))
         pb.PhysicalExprNode.newBuilder().setCase(caseExpr).build()
 
       // expressions for DecimalPrecision rule
@@ -902,9 +947,9 @@ object NativeConverters extends Logging {
       case PromotePrecision(_1) =>
         _1 match {
           case Cast(_, dt, _) if dt == _1.dataType =>
-            convertExprWithFallback(_1, fallback)
+            convertExprWithFallback(_1, isPruningExpr, fallback)
           case _ =>
-            convertExprWithFallback(Cast(_1, _1.dataType), fallback)
+            convertExprWithFallback(Cast(_1, _1.dataType), isPruningExpr, fallback)
         }
       case e: CheckOverflow =>
         // case CheckOverflow(_1, DecimalType(precision, scale)) =>
@@ -923,7 +968,7 @@ object NativeConverters extends Logging {
             pb.PhysicalNamedStructExprNode
               .newBuilder()
               .addAllValues(e.valExprs
-                .map(value => convertExprWithFallback(value, fallback))
+                .map(value => convertExprWithFallback(value, isPruningExpr, fallback))
                 .asJava)
               .setReturnType(convertDataType(e.dataType)))
         }
@@ -933,7 +978,7 @@ object NativeConverters extends Logging {
           _.setGetIndexedFieldExpr(
             pb.PhysicalGetIndexedFieldExprNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, fallback))
+              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
               .setKey(convertValue(
                 ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
                 LongType)))
@@ -944,7 +989,7 @@ object NativeConverters extends Logging {
           _.setGetMapValueExpr(
             pb.PhysicalGetMapValueExprNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, fallback))
+              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
               .setKey(convertValue(value, dataType)))
         }
 
@@ -953,7 +998,7 @@ object NativeConverters extends Logging {
           _.setGetIndexedFieldExpr(
             pb.PhysicalGetIndexedFieldExprNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, fallback))
+              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
               .setKey(convertValue(ordinal, IntegerType)))
         }
 
@@ -1009,106 +1054,6 @@ object NativeConverters extends Logging {
       .newBuilder()
       .setAggExpr(aggBuilder)
       .build()
-  }
-
-  def convertScanPruningExpr(sparkExpr: Expression): pb.PhysicalExprNode = {
-    def buildExprNode(buildFn: pb.PhysicalExprNode.Builder => Unit): pb.PhysicalExprNode = {
-      val builder = pb.PhysicalExprNode.newBuilder()
-      buildFn(builder)
-      builder.build()
-    }
-
-    def buildBinaryExprNode(lhs: Expression, rhs: Expression, op: String): pb.PhysicalExprNode = {
-      buildExprNode(
-        _.setBinaryExpr(
-          pb.PhysicalBinaryExprNode
-            .newBuilder()
-            .setL(convertScanPruningExpr(lhs))
-            .setR(convertScanPruningExpr(rhs))
-            .setOp(op)))
-    }
-
-    def buildInListExprNode(child: Expression, values: Seq[Any]): pb.PhysicalExprNode = {
-      buildExprNode {
-        _.setInList(
-          pb.PhysicalInListNode
-            .newBuilder()
-            .setExpr(convertScanPruningExpr(child))
-            .addAllList(values.map {
-              case utf8string: UTF8String =>
-                convertScanPruningExpr(Literal(utf8string, StringType))
-              case v =>
-                convertScanPruningExpr(Literal(v))
-            }.asJava))
-      }
-    }
-
-    sparkExpr match {
-      case ar: AttributeReference =>
-        buildExprNode(_.setColumn(pb.PhysicalColumn.newBuilder().setName(ar.name)))
-
-      case Literal(value, dataType) =>
-        buildExprNode(_.setLiteral(if (value != null) {
-          convertValue(value, dataType)
-        } else {
-          convertValue(null, NullType)
-        }))
-
-      case Cast(child, dataType, _) =>
-        buildExprNode(
-          _.setCast(
-            pb.PhysicalCastNode
-              .newBuilder()
-              .setExpr(convertScanPruningExpr(child))
-              .setArrowType(convertDataType(dataType))))
-
-      case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
-      case Or(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Op")
-      case Not(child) =>
-        buildExprNode(
-          _.setNotExpr(
-            pb.PhysicalNot
-              .newBuilder()
-              .setExpr(convertScanPruningExpr(child))))
-
-      case In(child, set) if set.forall(_.isInstanceOf[Literal]) =>
-        buildInListExprNode(child, set)
-      case InSet(child, set) if set.forall(_.isInstanceOf[Literal]) =>
-        buildInListExprNode(child, set.toSeq)
-
-      case IsNull(child) =>
-        buildExprNode(
-          _.setIsNullExpr(
-            pb.PhysicalIsNull
-              .newBuilder()
-              .setExpr(convertScanPruningExpr(child))))
-
-      case IsNotNull(child) =>
-        buildExprNode(
-          _.setIsNotNullExpr(
-            pb.PhysicalIsNotNull
-              .newBuilder()
-              .setExpr(convertScanPruningExpr(child))))
-
-      case StartsWith(expr, Literal(prefix, StringType)) =>
-        buildExprNode(
-          _.setScalarFunction(
-            pb.PhysicalScalarFunctionNode
-              .newBuilder()
-              .setName("starts_with")
-              .setFun(pb.ScalarFunction.StartsWith)
-              .addArgs(convertScanPruningExpr(expr))
-              .addArgs(convertScanPruningExpr(Literal(prefix, StringType)))
-              .setReturnType(convertDataType(BooleanType))))
-
-      case _ =>
-        buildExprNode(
-          _.setColumn(
-            pb.PhysicalColumn
-              .newBuilder()
-              .setName("!__unsupported_pruning_expr__")
-              .setIndex(Int.MaxValue)))
-    }
   }
 
   def convertJoinType(joinType: JoinType): pb.JoinType = {

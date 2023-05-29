@@ -31,6 +31,7 @@ use datafusion::logical_expr::{
     Expr, ReturnTypeFunction, ScalarFunctionImplementation, ScalarUDF, Signature, Volatility,
 };
 use datafusion::logical_expr::{Operator, TryCast};
+use datafusion::logical_expr::expr::InList;
 use datafusion::physical_expr::expressions::LikeExpr;
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
 use datafusion::physical_plan::sorts::sort::SortOptions;
@@ -166,7 +167,7 @@ pub fn convert_physical_expr_to_logical_expr(
             convert_physical_expr_to_logical_expr(expr.arg())?,
         )))
     } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
-        Ok(Expr::InList {
+        Ok(Expr::InList(InList {
             expr: Box::new(convert_physical_expr_to_logical_expr(expr.expr())?),
             list: expr
                 .list()
@@ -174,7 +175,7 @@ pub fn convert_physical_expr_to_logical_expr(
                 .map(convert_physical_expr_to_logical_expr)
                 .collect::<Result<Vec<_>, DataFusionError>>()?,
             negated: expr.negated(),
-        })
+        }))
     } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
         Ok(Expr::Negative(Box::new(
             convert_physical_expr_to_logical_expr(expr.arg())?,
@@ -199,15 +200,15 @@ pub fn convert_physical_expr_to_logical_expr(
 
         let func: ScalarFunctionImplementation = Arc::new(|_| panic!("placeholder"));
         let return_type: ReturnTypeFunction = Arc::new(|_| Ok(Arc::new(DataType::Boolean)));
-        Ok(Expr::ScalarUDF {
-            fun: Arc::from(ScalarUDF::new(
+        Ok(Expr::ScalarUDF(datafusion::logical_expr::expr::ScalarUDF {
+            fun: Arc::new(ScalarUDF::new(
                 "string_starts_with",
                 &Signature::new(VariadicEqual, Volatility::Immutable),
                 &return_type,
                 &func,
             )),
             args,
-        })
+        }))
     } else if let Some(expr) = expr.downcast_ref::<SparkLogicalExpr>() {
         let children = expr.children();
         Ok(Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr::new(
@@ -220,18 +221,17 @@ pub fn convert_physical_expr_to_logical_expr(
         )))
     } else {
         // returns a dummy expr to avoid failing the whole conversion
-        Ok(Expr::ScalarUDF {
-            fun: Arc::new(ScalarUDF {
-                name: format!("converting physical expr to logical not supported: {:?}", expr),
-                signature: Signature {
-                    type_signature: VariadicEqual,
-                    volatility: Volatility::Immutable,
-                },
-                return_type: Arc::new(|_| Ok(Arc::new(DataType::Null))),
-                fun: Arc::new(|_| unimplemented!())
-            }),
+        let func: ScalarFunctionImplementation = Arc::new(|_| unimplemented!());
+        let return_type: ReturnTypeFunction =  Arc::new(|_| Ok(Arc::new(DataType::Null)));
+        Ok(Expr::ScalarUDF(datafusion::logical_expr::expr::ScalarUDF {
+            fun: Arc::new(ScalarUDF::new(
+                &format!("converting physical expr to logical not supported: {:?}", expr),
+                &Signature::new(VariadicEqual, Volatility::Immutable),
+                &return_type,
+                &func,
+            )),
             args: vec![]
-        })
+        }))
     }
 }
 
@@ -936,7 +936,7 @@ fn try_parse_physical_expr(
                 .map(|x| try_parse_physical_expr(x, input_schema))
                 .collect::<Result<Vec<_>, _>>()?,
             e.negated,
-            input_schema,
+            None,
         )),
         ExprType::Case(e) => Arc::new(CaseExpr::try_new(
             e.expr

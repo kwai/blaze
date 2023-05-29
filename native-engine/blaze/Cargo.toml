@@ -8,7 +8,7 @@ resolver = "1"
 crate-type = ["cdylib"]
 
 [features]
-default = ["arrow/ffi", "datafusion/simd", "tokio/rt-multi-thread"]
+default = ["tokio/rt-multi-thread"]
 
 [dependencies]
 backtrace = "0.3.66"

@@ -4,16 +4,13 @@ version = "0.1.0"
 edition = "2021"
 resolver = "1"
 
-[features]
-default = ["arrow/ffi", "datafusion/simd"]
-
 [dependencies]
-arrow = "37.0.0"
+arrow = { workspace = true }
 async-trait = "0.1.56"
-blaze-jni-bridge = { path = "../blaze-jni-bridge" }
+blaze-jni-bridge = { workspace = true }
 bigdecimal = "0.3.0"
-datafusion = "22.0.0"
-datafusion-ext-commons = { path = "../datafusion-ext-commons" }
+datafusion = { workspace = true }
+datafusion-ext-commons = { workspace = true }
 jni = "0.20.0"
 log = "0.4.14"
 num = "0.4.0"

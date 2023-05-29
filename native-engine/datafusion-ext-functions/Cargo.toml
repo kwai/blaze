@@ -4,11 +4,8 @@ version = "0.1.0"
 edition = "2021"
 resolver = "1"
 
-[features]
-default = ["arrow/ffi", "datafusion/simd"]
-
 [dependencies]
-arrow = "37.0.0"
+arrow = { workspace = true }
 async-trait = "0.1.56"
 base64 = "0.13.0"
 bytes = "1.2.0"

@@ -4,17 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["datafusion/simd", "prost/no-recursion-limit"]
+default = ["prost/no-recursion-limit"]
 
 [dependencies]
-arrow = "37.0.0"
+arrow = { workspace = true }
 base64 = "*"
 chrono = "*"
-datafusion = "22.0.0"
-datafusion-ext-commons = { path = "../datafusion-ext-commons" }
-datafusion-ext-exprs = { path = "../datafusion-ext-exprs" }
-datafusion-ext-functions = { path = "../datafusion-ext-functions" }
-datafusion-ext-plans = { path = "../datafusion-ext-plans" }
+datafusion = { workspace = true }
+datafusion-ext-commons = { workspace = true }
+datafusion-ext-exprs = { workspace = true }
+datafusion-ext-functions = { workspace = true }
+datafusion-ext-plans = { workspace = true }
 log = "0.4.14"
 object_store = "0.5.6"
 prost = "0.11.0"

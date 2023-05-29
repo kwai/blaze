@@ -42,6 +42,48 @@ lto = false
 codegen-units = 16
 strip = false
 
+[workspace.dependencies]
+blaze = { path = "./native-engine/blaze" }
+blaze-jni-bridge = { path = "./native-engine/blaze-jni-bridge" }
+blaze-serde = { path = "./native-engine/blaze-serde" }
+datafusion-ext-commons = { path = "./native-engine/datafusion-ext-commons" }
+datafusion-ext-exprs = { path = "./native-engine/datafusion-ext-exprs" }
+datafusion-ext-functions = { path = "./native-engine/datafusion-ext-functions" }
+datafusion-ext-plans = { path = "./native-engine/datafusion-ext-plans" }
+
+# datafusion: branch=v25-blaze
+datafusion = { version = "25.0.0", features = ["simd"] }
+
+# arrow: branch=v39-blaze
+arrow = { version = "39.0.0", features = ["ffi", "simd"]}
+arrow-schema = { version = "39.0.0", features = ["serde"] }
+parquet = { version = "39.0.0", features = ["simd"] }
+
+# serde_json: branch=v1.0.96-blaze
+serde_json = { version = "1.0.96" }
+
 [patch.crates-io]
-datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "9704302a2" }
-parquet = { path = "patched/parquet-37.0.0-kwai" }
+# datafusion: branch=v25-blaze
+datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "a77f83903334b97eb5e13ebe5dc8996a4a8f740a"}
+datafusion-common = { git = "https://github.com/richox/arrow-datafusion.git", rev = "a77f83903334b97eb5e13ebe5dc8996a4a8f740a"}
+datafusion-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "a77f83903334b97eb5e13ebe5dc8996a4a8f740a"}
+datafusion-execution = { git = "https://github.com/richox/arrow-datafusion.git", rev = "a77f83903334b97eb5e13ebe5dc8996a4a8f740a"}
+datafusion-optimizer = { git = "https://github.com/richox/arrow-datafusion.git", rev = "a77f83903334b97eb5e13ebe5dc8996a4a8f740a"}
+datafusion-physical-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "a77f83903334b97eb5e13ebe5dc8996a4a8f740a"}
+
+# arrow: branch=v39-blaze
+arrow = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-arith = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-array = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-buffer = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-cast = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-data = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-ord = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-row = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-schema = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-select = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+arrow-string = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+parquet = { git = "https://github.com/richox/arrow-rs.git", rev = "db83ffdedfadab5a64b0b4b65710cb3862fb9957"}
+
+# serde_json: branch=v1.0.96-blaze
+serde_json = { git = "https://github.com/richox/json", branch = "v1.0.96-blaze" }

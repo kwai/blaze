@@ -70,6 +70,7 @@ pub struct ParquetExec {
     base_config: FileScanConfig,
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
+    projected_output_ordering: Option<Vec<PhysicalSortExpr>>,
     metrics: ExecutionPlanMetricsSet,
     predicate: Option<Arc<dyn PhysicalExpr>>,
     pruning_predicate: Option<Arc<PruningPredicate>>,
@@ -95,7 +96,7 @@ impl ParquetExec {
                 match PruningPredicate::try_new(predicate_expr, file_schema.clone()) {
                     Ok(pruning_predicate) => Some(Arc::new(pruning_predicate)),
                     Err(e) => {
-                        warn!("Could not create pruning predicate: {e}");
+                        log::warn!("Could not create pruning predicate: {e}");
                         predicate_creation_errors.add(1);
                         None
                     }
@@ -107,20 +108,23 @@ impl ParquetExec {
             match PagePruningPredicate::try_new(predicate_expr, file_schema.clone()) {
                 Ok(pruning_predicate) => Some(Arc::new(pruning_predicate)),
                 Err(e) => {
-                    warn!("Could not create page pruning predicate: {}", e);
+                    log::warn!("Could not create page pruning predicate: {}", e);
                     predicate_creation_errors.add(1);
                     None
                 }
             }
         });
 
-        let (projected_schema, projected_statistics) = base_config.project();
+        let (projected_schema, projected_statistics, projected_output_ordering) =
+            base_config.project();
+
 
         Self {
             fs_resource_id,
             base_config,
             projected_schema,
             projected_statistics,
+            projected_output_ordering,
             metrics,
             predicate,
             pruning_predicate,
@@ -147,7 +151,7 @@ impl ExecutionPlan for ParquetExec {
     }
 
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
+        self.projected_output_ordering.as_deref()
     }
 
     // in datafusion 20.0.0 ExecutionPlan trait not include relies_on_input_order
