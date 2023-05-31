@@ -206,9 +206,9 @@ impl ExecutionPlan for ParquetExec {
             metadata_size_hint: None,
             metrics: self.metrics.clone(),
             parquet_file_reader_factory: Arc::new(FsReaderFactory::new(fs_provider)),
-            pushdown_filters: true,
-            reorder_filters: true,
-            enable_page_index: false, // still buggy
+            pushdown_filters: false, // still buggy
+            reorder_filters: false,
+            enable_page_index: false,
         };
         drop(timer);
 
