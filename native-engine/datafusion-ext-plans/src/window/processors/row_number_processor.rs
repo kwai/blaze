@@ -34,7 +34,7 @@ impl RowNumberProcessor {
     pub fn new() -> Self {
         Self {
             cur_partition: Box::default(),
-            cur_row_number: 1,
+            cur_row_number: 0,
         }
     }
 }

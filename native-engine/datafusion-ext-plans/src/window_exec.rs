@@ -234,12 +234,15 @@ mod test {
 
     #[tokio::test]
     async fn test_window() -> Result<(), Box<dyn std::error::Error>> {
+        let session_ctx = SessionContext::new();
+        let task_ctx = session_ctx.task_ctx();
+
+        // test window
         let input = build_table(
             ("a1", &vec![1, 1, 1, 1, 2, 3, 3]),
             ("b1", &vec![1, 2, 2, 3, 4, 1, 1]),
             ("c1", &vec![0, 0, 0, 0, 0, 0, 0]),
         );
-
         let window = Arc::new(WindowExec::try_new(
             input,
             vec![
@@ -270,13 +273,8 @@ mod test {
                 options: Default::default(),
             }],
         )?);
-
-        let session_ctx = SessionContext::new();
-        let task_ctx = session_ctx.task_ctx();
-
-        let stream = window.execute(0, task_ctx)?;
+        let stream = window.execute(0, task_ctx.clone())?;
         let batches = datafusion::physical_plan::common::collect(stream).await?;
-
         let expected = vec![
             "+----+----+----+---------------+---------+---------------+--------+",
             "| a1 | b1 | c1 | b1_row_number | b1_rank | b1_dense_rank | b1_sum |",
@@ -288,6 +286,59 @@ mod test {
             "| 2  | 4  | 0  | 1             | 1       | 1             | 4      |",
             "| 3  | 1  | 0  | 1             | 1       | 1             | 1      |",
             "| 3  | 1  | 0  | 2             | 1       | 1             | 2      |",
+            "+----+----+----+---------------+---------+---------------+--------+",
+        ];
+        assert_batches_eq!(expected, &batches);
+
+        // test window without partition by clause
+        let input = build_table(
+            ("a1", &vec![1, 3, 3, 1, 1, 1, 2]),
+            ("b1", &vec![1, 1, 1, 2, 2, 3, 4]),
+            ("c1", &vec![0, 0, 0, 0, 0, 0, 0]),
+        );
+        let window = Arc::new(WindowExec::try_new(
+            input,
+            vec![
+                WindowExpr::new(
+                    WindowFunction::RankLike(WindowRankType::RowNumber),
+                    vec![],
+                    Arc::new(Field::new("b1_row_number", DataType::Int32, false)),
+                ),
+                WindowExpr::new(
+                    WindowFunction::RankLike(WindowRankType::Rank),
+                    vec![],
+                    Arc::new(Field::new("b1_rank", DataType::Int32, false)),
+                ),
+                WindowExpr::new(
+                    WindowFunction::RankLike(WindowRankType::DenseRank),
+                    vec![],
+                    Arc::new(Field::new("b1_dense_rank", DataType::Int32, false)),
+                ),
+                WindowExpr::new(
+                    WindowFunction::Agg(AggFunction::Sum),
+                    vec![Arc::new(Column::new("b1", 1))],
+                    Arc::new(Field::new("b1_sum", DataType::Int64, false)),
+                ),
+            ],
+            vec![],
+            vec![PhysicalSortExpr {
+                expr: Arc::new(Column::new("b1", 1)),
+                options: Default::default(),
+            }],
+        )?);
+        let stream = window.execute(0, task_ctx.clone())?;
+        let batches = datafusion::physical_plan::common::collect(stream).await?;
+        let expected = vec![
+            "+----+----+----+---------------+---------+---------------+--------+",
+            "| a1 | b1 | c1 | b1_row_number | b1_rank | b1_dense_rank | b1_sum |",
+            "+----+----+----+---------------+---------+---------------+--------+",
+            "| 1  | 1  | 0  | 1             | 1       | 1             | 1      |",
+            "| 3  | 1  | 0  | 2             | 1       | 1             | 2      |",
+            "| 3  | 1  | 0  | 3             | 1       | 1             | 3      |",
+            "| 1  | 2  | 0  | 4             | 4       | 2             | 5      |",
+            "| 1  | 2  | 0  | 5             | 4       | 2             | 7      |",
+            "| 1  | 3  | 0  | 6             | 6       | 3             | 10     |",
+            "| 2  | 4  | 0  | 7             | 7       | 4             | 14     |",
             "+----+----+----+---------------+---------+---------------+--------+",
         ];
         assert_batches_eq!(expected, &batches);

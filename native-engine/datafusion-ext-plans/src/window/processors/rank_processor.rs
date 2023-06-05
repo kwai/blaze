@@ -32,8 +32,8 @@ impl RankProcessor {
         Self {
             cur_partition: Box::default(),
             cur_order: Box::default(),
-            cur_rank: 1,
-            cur_equals: 0,
+            cur_rank: 0,
+            cur_equals: 1,
             is_dense,
         }
     }
