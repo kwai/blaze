@@ -219,7 +219,7 @@ pub fn convert_physical_expr_to_logical_expr(
                     type_signature: VariadicEqual,
                     volatility: Volatility::Immutable,
                 },
-                return_type: Arc::new(|_| unimplemented!()),
+                return_type: Arc::new(|_| Ok(Arc::new(DataType::Null))),
                 fun: Arc::new(|_| unimplemented!())
             }),
             args: vec![]

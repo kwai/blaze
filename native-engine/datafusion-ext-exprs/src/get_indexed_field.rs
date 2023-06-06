@@ -20,7 +20,6 @@ use datafusion::common::cast::{as_list_array, as_struct_array};
 use datafusion::common::DataFusionError;
 use datafusion::common::Result;
 use datafusion::common::ScalarValue;
-use datafusion::logical_expr::field_util::get_indexed_field;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
 use std::convert::TryInto;
@@ -108,21 +107,16 @@ impl PhysicalExpr for GetIndexedFieldExpr {
                 )?;
                 Ok(ColumnarValue::Array(taken))
             }
-            (DataType::Struct(_), ScalarValue::Utf8(Some(k))) => {
+            (DataType::Struct(_), ScalarValue::Int32(Some(k))) => {
                 let as_struct_array = as_struct_array(&array)?;
-                match as_struct_array.column_by_name(k) {
-                    None => Err(DataFusionError::Execution(format!(
-                        "get indexed field {k} not found in struct"
-                    ))),
-                    Some(col) => Ok(ColumnarValue::Array(col.clone())),
-                }
+                Ok(ColumnarValue::Array(as_struct_array.column(*k as usize).clone()))
             }
             (DataType::List(_), key) => Err(DataFusionError::Execution(format!(
                 "get indexed field is only possible on lists with int64 indexes. \
                          Tried with {key:?} index"
             ))),
             (DataType::Struct(_), key) => Err(DataFusionError::Execution(format!(
-                "get indexed field is only possible on struct with utf8 indexes. \
+                "get indexed field is only possible on struct with int32 indexes. \
                          Tried with {key:?} index"
             ))),
             (dt, key) => Err(DataFusionError::Execution(format!(
@@ -153,6 +147,33 @@ impl PartialEq<dyn Any> for GetIndexedFieldExpr {
             .downcast_ref::<Self>()
             .map(|x| self.arg.eq(&x.arg) && self.key == x.key)
             .unwrap_or(false)
+    }
+}
+
+fn get_indexed_field(data_type: &DataType, key: &ScalarValue) -> Result<Field> {
+    match (data_type, key) {
+        (DataType::List(lt), ScalarValue::Int64(Some(i))) => {
+            Ok(Field::new(i.to_string(), lt.data_type().clone(), true))
+        }
+        (DataType::Struct(fields), ScalarValue::Int32(Some(k))) => {
+            let field = fields.get(*k as usize);
+            match field {
+                None => Err(DataFusionError::Plan(format!(
+                    "Field {k} not found in struct"
+                ))),
+                Some(f) => Ok(f.as_ref().clone()),
+            }
+        }
+        (DataType::Struct(_), _) => Err(DataFusionError::Plan(
+            "Only ints are valid as an indexed field in a struct".to_string(),
+        )),
+        (DataType::List(_), _) => Err(DataFusionError::Plan(
+            "Only ints are valid as an indexed field in a list".to_string(),
+        )),
+        _ => Err(DataFusionError::Plan(
+            "The expression to get an indexed field is only valid for List or Struct types"
+                .to_string(),
+        )),
     }
 }
 

@@ -17,26 +17,21 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeHelper
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Expression, SortOrder}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
-
 import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning
 import org.apache.spark.sql.execution.ExpandExec
 import org.blaze.protobuf.ExpandExecNode
 import org.blaze.protobuf.ExpandProjection
 import org.blaze.protobuf.PhysicalPlanNode
-
 import org.apache.spark.sql.blaze.NativeSupports
 
 case class NativeExpandExec(
@@ -57,7 +52,9 @@ case class NativeExpandExec(
 
   private val nativeSchema = Util.getNativeSchema(output)
   private val nativeProjections = projections.map { projection =>
-    projection.map(expr => NativeConverters.convertExpr(expr))
+    projection
+      .zip(Util.getSchema(output).fields.map(_.dataType))
+      .map(e => NativeConverters.convertExpr(Cast(e._1, e._2)))
   }
 
   override def doExecuteNative(): NativeRDD = {

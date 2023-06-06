@@ -960,13 +960,13 @@ object NativeConverters extends Logging {
               .setKey(convertValue(value, dataType)))
         }
 
-      case GetStructField(child, _, name) =>
+      case GetStructField(child, ordinal, _) =>
         buildExprNode {
           _.setGetIndexedFieldExpr(
             pb.PhysicalGetIndexedFieldExprNode
               .newBuilder()
               .setExpr(convertExprWithFallback(child, useAttrExprId, fallback))
-              .setKey(convertValue(name.get, StringType)))
+              .setKey(convertValue(ordinal, IntegerType)))
         }
 
       // hive UDFJson

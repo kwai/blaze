@@ -107,7 +107,6 @@ impl MemManager {
 
                 drop(mm_status);
                 drop(mm_consumers);
-                print_stats(consumer, total_old_used, total_used);
                 return;
             }
         }
@@ -274,7 +273,6 @@ async fn update_consumer_mem_used_with_custom_updater(
         };
         (new_used, total_old_used, total_used, operation)
     };
-    print_stats(consumer, total_old_used, total_used);
     let mut operation = operation;
 
     // trigger waiting for resources
