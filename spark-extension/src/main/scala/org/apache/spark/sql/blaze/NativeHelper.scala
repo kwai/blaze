@@ -62,7 +62,7 @@ object NativeHelper extends Logging {
       driverMemoryOverheadMiB * 1024L * 1024L
     }
   }
-  val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.4);
+  val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.6);
   val tz: String = conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
 
   def isNative(exec: SparkPlan): Boolean =

@@ -22,7 +22,7 @@ use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 
-const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 24; // limit output batch size to 16MB
+const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 26; // limit output batch size to 64MB
 
 pub struct CoalesceStream {
     input: SendableRecordBatchStream,
