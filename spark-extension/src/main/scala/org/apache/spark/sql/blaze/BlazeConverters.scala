@@ -52,7 +52,6 @@ import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
-import org.apache.spark.sql.execution.blaze.plan.ConvertToUnsafeRowExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
@@ -72,7 +71,6 @@ import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.execution.joins.BuildLeft
 import org.apache.spark.sql.execution.joins.BuildRight
-import org.apache.spark.sql.execution.joins.CartesianProductExec
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.ExpandExec
@@ -83,6 +81,7 @@ import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
+import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.types.AtomicType
 
 object BlazeConverters extends Logging {
@@ -115,6 +114,8 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.window", defaultValue = true)
   val enableGenerate: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.generate", defaultValue = true)
+  val enableLocalTableScan: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.table.scan", defaultValue = true)
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
 
@@ -130,20 +131,7 @@ object BlazeConverters extends Logging {
       }
       danglingConverted = newDanglingConverted :+ newExec
     }
-    val converted = danglingConverted.head
-
-    // insert necessary ConvertToUnsafeRowExec
-    converted
-      .transformUp {
-        case exec @ (
-              _: SortExec | _: CollectLimitExec | _: BroadcastExchangeExec |
-              _: SortMergeJoinExec | _: WindowExec | _: ObjectHashAggregateExec |
-              _: DataWritingCommandExec | _: TakeOrderedAndProjectExec | _: ShuffleExchangeExec |
-              _: CartesianProductExec | _: SortAggregateExec
-            ) =>
-          exec.mapChildren(child => convertToUnsafeRow(child))
-        case exec => exec
-      }
+    danglingConverted.head
   }
 
   def convertSparkPlan(exec: SparkPlan): SparkPlan = {
@@ -183,6 +171,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertWindowExec)
       case e: GenerateExec if enableGenerate => // generate
         tryConvert(e, convertGenerateExec)
+      case e: LocalTableScanExec if enableLocalTableScan => // local table scan
+        tryConvert(e, convertLocalTableScanExec)
 
       case e if sparkPlanShims.isShuffleQueryStageInput(e) && sparkPlanShims.isNative(e) =>
         ForceNativeExecutionWrapper(e)
@@ -633,14 +623,8 @@ object BlazeConverters extends Logging {
       addRenameColumnsExec(convertToNative(exec.child)))
   }
 
-  def convertToUnsafeRow(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case _ if NativeHelper.isNative(exec) => ConvertToUnsafeRowExec(exec)
-      case _: ProjectExec | _: FilterExec | _: UnionExec | _: ExpandExec | _: LocalLimitExec |
-          _: GlobalLimitExec =>
-        exec.mapChildren(child => convertToUnsafeRow(child))
-      case _ => exec
-    }
+  def convertLocalTableScanExec(exec: LocalTableScanExec): SparkPlan = {
+    convertToNative(exec)
   }
 
   def convertToNative(exec: SparkPlan): SparkPlan = {

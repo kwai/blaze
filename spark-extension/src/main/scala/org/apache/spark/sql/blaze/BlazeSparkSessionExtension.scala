@@ -90,18 +90,6 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
         }
         var sparkPlanTransformed = BlazeConverters.convertSparkPlanRecursively(sparkPlan)
 
-        // wrap with ConvertUnsafeRowExec if top exec is native
-        if (NativeHelper.isNative(sparkPlanTransformed)) {
-          val topNative = NativeHelper.getUnderlyingNativePlan(sparkPlanTransformed)
-          val topNeededConvertToUnsafeRow = topNative match {
-            case _: Exchange | _: NativeTakeOrderedExec => false
-            case _ => true
-          }
-          if (topNeededConvertToUnsafeRow) {
-            sparkPlanTransformed = BlazeConverters.convertToUnsafeRow(sparkPlanTransformed)
-          }
-        }
-
         logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
           .treeString(verbose = true, addSuffix = true)}")
         sparkPlanTransformed

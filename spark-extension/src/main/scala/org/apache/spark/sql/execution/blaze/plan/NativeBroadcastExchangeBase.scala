@@ -233,7 +233,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
 
   @transient
   lazy val nonNativeBroadcastExec: BroadcastExchangeExec = {
-    BroadcastExchangeExec(mode, ConvertToUnsafeRowExec(child))
+    BroadcastExchangeExec(mode, child)
   }
 
   @transient

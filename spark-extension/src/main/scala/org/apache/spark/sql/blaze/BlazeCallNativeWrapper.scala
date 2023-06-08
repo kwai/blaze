@@ -32,6 +32,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamImportIterator
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.CompletionIterator
@@ -50,10 +51,10 @@ case class BlazeCallNativeWrapper(
 
   logInfo(s"Start executing native plan")
   private var nativeRuntimePtr = JniBridge.callNative(this)
-  private var batchIterator = {
-    val iter = new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr)
+  private var rowIterator = {
+    val iter = new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr, _ => checkError())
     context match {
-      case Some(tc) => new InterruptibleIterator[ColumnarBatch](tc, iter)
+      case Some(tc) => new InterruptibleIterator[InternalRow](tc, iter)
       case None => iter
     }
   }
@@ -61,14 +62,9 @@ case class BlazeCallNativeWrapper(
   context.foreach(_.addTaskCompletionListener(_ => close()))
   context.foreach(_.addTaskFailureListener((_, _) => close()))
 
-  def getBatchIterator: Iterator[ColumnarBatch] =
-    CompletionIterator[ColumnarBatch, Iterator[ColumnarBatch]](
-      batchIterator.map { batch =>
-        checkError()
-        batch
-      }, {
-        this.close()
-      })
+  def getRowIterator: Iterator[InternalRow] = {
+    CompletionIterator[InternalRow, Iterator[InternalRow]](rowIterator, this.close())
+  }
 
   protected def getMetrics: MetricNode =
     metrics
@@ -106,14 +102,14 @@ case class BlazeCallNativeWrapper(
 
   private def close(): Unit = {
     synchronized {
-      if (batchIterator != null) {
-        batchIterator match {
+      if (rowIterator != null) {
+        rowIterator match {
           case iter: InterruptibleIterator[_] =>
             iter.delegate.asInstanceOf[ArrowFFIStreamImportIterator].close()
           case iter: ArrowFFIStreamImportIterator =>
             iter.close()
         }
-        batchIterator = null
+        rowIterator = null
       }
       if (nativeRuntimePtr != 0) {
         JniBridge.finalizeNative(nativeRuntimePtr)

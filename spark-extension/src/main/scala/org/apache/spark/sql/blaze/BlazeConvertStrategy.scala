@@ -38,6 +38,7 @@ import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.GenerateExec
+import org.apache.spark.sql.execution.LocalTableScanExec
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -132,6 +133,8 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: ObjectHashAggregateExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: LocalTableScanExec =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
 
       case e =>
         // not marked -- default to NeverConvert
@@ -182,7 +185,7 @@ object BlazeConvertStrategy extends Logging {
         }
 
         // NativeExpand -> NonNative
-        // don't use NativeExpand because it requires ConvertToUnsafeRow with a lot of records
+        // don't use NativeExpand because it requires C2R with a lot of records
         if (isNeverConvert(e)) {
           e.children.find(_.isInstanceOf[ExpandExec]) match {
             case Some(expand) => dontConvertIf(expand, !isNeverConvert(expand))
@@ -191,7 +194,7 @@ object BlazeConvertStrategy extends Logging {
         }
 
         // NativeParquetScan -> NonNative
-        // don't use NativeParquetScan because it requires ConvertToUnsafeRow with a lot of records
+        // don't use NativeParquetScan because it requires C2R with a lot of records
         if (isNeverConvert(e)) {
           e.children.find(_.isInstanceOf[FileSourceScanExec]) match {
             case Some(scan) => dontConvertIf(scan, !isNeverConvert(scan))

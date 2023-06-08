@@ -79,18 +79,7 @@ object NativeHelper extends Logging {
       metrics: MetricNode,
       partition: Partition,
       context: Option[TaskContext]): Iterator[InternalRow] = {
-
-    executeNativePlanColumnar(nativePlan, metrics, partition, context)
-      .flatMap(ColumnarHelper.batchAsRowIter)
-  }
-
-  def executeNativePlanColumnar(
-      nativePlan: PhysicalPlanNode,
-      metrics: MetricNode,
-      partition: Partition,
-      context: Option[TaskContext]): Iterator[ColumnarBatch] = {
-
-    BlazeCallNativeWrapper(nativePlan, partition, context, metrics).getBatchIterator
+    BlazeCallNativeWrapper(nativePlan, partition, context, metrics).getRowIterator
   }
 
   def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =

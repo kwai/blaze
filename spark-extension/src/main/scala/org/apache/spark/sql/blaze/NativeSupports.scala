@@ -19,14 +19,11 @@ package org.apache.spark.sql.blaze
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.vectorized.ColumnarBatch
 
 trait NativeSupports extends SparkPlan {
   def doExecuteNative(): NativeRDD
 
   protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
-
-  protected override def doExecuteColumnar(): RDD[ColumnarBatch] = doExecuteNative().toColumnar
 
   def shuffleReadFull: Boolean = Shims.get.rddShims.getShuffleReadFull(this.doExecuteNative())
 }

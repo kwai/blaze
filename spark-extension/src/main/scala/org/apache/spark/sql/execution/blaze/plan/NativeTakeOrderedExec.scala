@@ -76,7 +76,7 @@ case class NativeTakeOrderedExec(
   }
 
   override def executeCollect(): Array[InternalRow] = {
-    val partial = ConvertToUnsafeRowExec(NativePartialTakeOrderedExec(sortOrder, child, metrics))
+    val partial = NativePartialTakeOrderedExec(sortOrder, child, metrics)
     val ord = new LazilyGeneratedOrdering(sortOrder, output)
 
     // all partitions are sorted, so perform a sorted-merge to achieve the result
