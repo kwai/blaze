@@ -22,6 +22,9 @@ use std::time::Duration;
 
 static MEM_MANAGER: OnceCell<Arc<MemManager>> = OnceCell::new();
 
+// never triggers waiting/spilling for consumers which use very little memory
+const MIN_TRIGGER_SIZE: usize = 1 << 24; // 16MB
+
 pub struct MemManager {
     total: usize,
     consumers: Mutex<Vec<Arc<MemConsumerInfo>>>,
@@ -89,8 +92,7 @@ impl MemManager {
         // update mm status
         assert!(mm_status.total_used >= consumer_status.mem_used);
         mm_status.num_consumers -= 1;
-        let (total_old_used, total_used) =
-            mm_status.update_total_used_with_diff(-(consumer_status.mem_used as isize));
+        mm_status.update_total_used_with_diff(-(consumer_status.mem_used as isize));
 
         // update mm spillable status
         if consumer_status.spillable {
@@ -123,7 +125,7 @@ struct MemManagerStatus {
 }
 
 impl MemManagerStatus {
-    fn update_total_used_with_diff(&mut self, diff_used: isize) -> (usize, usize) {
+    fn update_total_used_with_diff(&mut self, diff_used: isize) -> usize {
         assert!(self.total_used as isize + diff_used >= 0);
 
         let new_used = (self.total_used as isize + diff_used) as usize;
@@ -133,8 +135,7 @@ impl MemManagerStatus {
         if new_used < old_used {
             MemManager::get().cv.notify_all();
         }
-
-        (old_used, new_used)
+        new_used
     }
 }
 
@@ -228,7 +229,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         Nothing, // do nothing
     }
 
-    let (mem_used, total_old_used, total_used, operation) = {
+    let (mem_used, total_used, operation) = {
         let mut mm_status = mm.status.lock();
         let mut consumer_status = consumer_info.status.lock();
 
@@ -238,7 +239,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         let diff_used = new_used as isize - old_used as isize;
 
         // update mm status
-        let (total_old_used, total_used) = mm_status.update_total_used_with_diff(diff_used);
+        let total_used = mm_status.update_total_used_with_diff(diff_used);
 
         // update mm spillable status
         if consumer_status.spillable {
@@ -262,7 +263,10 @@ async fn update_consumer_mem_used_with_custom_updater(
 
         let total_overflowed = total_used > total;
         let consumer_overflowed = new_used > consumer_mem_max;
-        let operation = if new_used > old_used && (total_overflowed || consumer_overflowed) {
+        let operation = if (total_overflowed || consumer_overflowed)
+            && new_used > MIN_TRIGGER_SIZE
+            && new_used > old_used
+        {
             if spillable && new_used > consumer_mem_min {
                 Operation::Spill
             } else {
@@ -271,7 +275,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         } else {
             Operation::Nothing
         };
-        (new_used, total_old_used, total_used, operation)
+        (new_used, total_used, operation)
     };
     let mut operation = operation;
 
@@ -308,6 +312,7 @@ async fn update_consumer_mem_used_with_custom_updater(
     Ok(())
 }
 
+#[allow(unused)]
 fn print_stats(by: &dyn MemConsumer, old_used: usize, new_used: usize) {
     // print log per every 100MBs
     if new_used / 104857600 != old_used / 104857600 {
