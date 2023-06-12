@@ -86,6 +86,10 @@ message PhysicalExprNode {
     // like/not like
     PhysicalLikeExprNode like_expr = 20;
 
+    // sc_and/or
+    PhysicalSCAndExprNode sc_and_expr = 3000;
+    PhysicalSCOrExprNode sc_or_expr = 3001;
+
     // spark udf wrapper
     PhysicalSparkUDFWrapperExprNode spark_udf_wrapper_expr = 10000;
 
@@ -103,8 +107,6 @@ message PhysicalExprNode {
     StringEndsWithExprNode string_ends_with_expr = 20001;
     StringContainsExprNode string_contains_expr = 20002;
 
-    // spark logical ops
-    SparkLogicalExprNode spark_logical_expr = 20010;
     IIfExprNode iif_expr = 20011;
   }
 }
@@ -272,6 +274,15 @@ message PhysicalLikeExprNode {
   PhysicalExprNode pattern = 4;
 }
 
+message PhysicalSCAndExprNode {
+  PhysicalExprNode left = 1;
+  PhysicalExprNode right = 2;
+}
+
+message PhysicalSCOrExprNode {
+  PhysicalExprNode left = 1;
+  PhysicalExprNode right = 2;
+}
 
 message PhysicalSparkUDFWrapperExprNode {
   bytes serialized = 1;
@@ -308,12 +319,6 @@ message StringEndsWithExprNode {
 message StringContainsExprNode {
   PhysicalExprNode expr = 1;
   string infix = 2;
-}
-
-message SparkLogicalExprNode {
-  PhysicalExprNode arg1 = 1;
-  PhysicalExprNode arg2 = 2;
-  string op = 3; // "And" | "Or"
 }
 
 message IIfExprNode {

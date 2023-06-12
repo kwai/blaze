@@ -731,21 +731,19 @@ object NativeConverters extends Logging {
       // if rhs is complex in and/or operators, use short-circuiting implementation
       case e @ And(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
         buildExprNode {
-          _.setSparkLogicalExpr(
-            pb.SparkLogicalExprNode
+          _.setScAndExpr(
+            pb.PhysicalSCAndExprNode
               .newBuilder()
-              .setArg1(convertExprWithFallback(lhs, isPruningExpr, fallback))
-              .setArg2(convertExprWithFallback(rhs, isPruningExpr, fallback))
-              .setOp("And"))
+              .setLeft(convertExprWithFallback(lhs, isPruningExpr, fallback))
+              .setRight(convertExprWithFallback(rhs, isPruningExpr, fallback)))
         }
       case e @ Or(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
         buildExprNode {
-          _.setSparkLogicalExpr(
-            pb.SparkLogicalExprNode
+          _.setScOrExpr(
+            pb.PhysicalSCOrExprNode
               .newBuilder()
-              .setArg1(convertExprWithFallback(lhs, isPruningExpr, fallback))
-              .setArg2(convertExprWithFallback(rhs, isPruningExpr, fallback))
-              .setOp("Or"))
+              .setLeft(convertExprWithFallback(lhs, isPruningExpr, fallback))
+              .setRight(convertExprWithFallback(rhs, isPruningExpr, fallback)))
         }
       case And(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "And")
       case Or(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "Or")

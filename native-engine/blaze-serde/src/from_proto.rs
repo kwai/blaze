@@ -25,14 +25,8 @@ use datafusion::datasource::listing::{FileRange, PartitionedFile};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::TypeSignature::VariadicEqual;
-use datafusion::logical_expr::{BuiltinScalarFunction, Case, Cast};
-use datafusion::logical_expr::{
-    Expr, ReturnTypeFunction, ScalarFunctionImplementation, ScalarUDF, Signature, Volatility,
-};
-use datafusion::logical_expr::{Operator, TryCast};
-use datafusion::logical_expr::expr::InList;
-use datafusion::physical_expr::expressions::LikeExpr;
+use datafusion::logical_expr::{BuiltinScalarFunction, Operator};
+use datafusion::physical_expr::expressions::{LikeExpr, SCAndExpr, SCOrExpr};
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
 use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::union::UnionExec;
@@ -47,7 +41,6 @@ use datafusion::physical_plan::{
 };
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics};
 use datafusion::physical_plan::file_format::FileScanConfig;
-use datafusion::scalar::ScalarValue;
 use object_store::ObjectMeta;
 use object_store::path::Path;
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
@@ -75,14 +68,13 @@ use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
 use crate::protobuf::physical_plan_node::PhysicalPlanType;
 use crate::protobuf::GenerateFunction;
-use crate::{convert_box_required, convert_required, into_required, protobuf, DataType, Schema};
+use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
 use crate::{from_proto_binary_op, proto_error};
 use datafusion_ext_exprs::cast::TryCastExpr;
 use datafusion_ext_exprs::get_indexed_field::GetIndexedFieldExpr;
 use datafusion_ext_exprs::get_map_value::GetMapValueExpr;
 use datafusion_ext_exprs::iif::IIfExpr;
 use datafusion_ext_exprs::named_struct::NamedStructExpr;
-use datafusion_ext_exprs::spark_logical::{SparkLogicalExpr, SparkLogicalOp};
 use datafusion_ext_exprs::spark_udf_wrapper::SparkUDFWrapperExpr;
 use datafusion_ext_exprs::string_contains::StringContainsExpr;
 use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
@@ -114,124 +106,6 @@ fn bind(
             .map(|child_expr| bind(child_expr.clone(), input_schema))
             .collect::<Result<Vec<_>, DataFusionError>>()?;
         Ok(expr_in.with_new_children(new_children)?)
-    }
-}
-
-pub fn convert_physical_expr_to_logical_expr(
-    expr: &Arc<dyn PhysicalExpr>,
-) -> Result<Expr, DataFusionError> {
-    let expr = expr.as_any();
-
-    if let Some(expr) = expr.downcast_ref::<Column>() {
-        Ok(Expr::Column(datafusion::common::Column::from_name(
-            expr.name(),
-        )))
-    } else if let Some(expr) = expr.downcast_ref::<BinaryExpr>() {
-        Ok(Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr {
-            left: Box::new(convert_physical_expr_to_logical_expr(expr.left())?),
-            op: *expr.op(),
-            right: Box::new(convert_physical_expr_to_logical_expr(expr.right())?),
-        }))
-    } else if let Some(expr) = expr.downcast_ref::<CaseExpr>() {
-        Ok(Expr::Case(Case {
-            expr: expr
-                .expr()
-                .as_ref()
-                .map(|expr| convert_physical_expr_to_logical_expr(expr).map(Box::new))
-                .transpose()?,
-            when_then_expr: expr
-                .when_then_expr()
-                .iter()
-                .map(|wt| -> Result<_, DataFusionError> {
-                    Ok((
-                        Box::new(convert_physical_expr_to_logical_expr(&wt.0)?),
-                        Box::new(convert_physical_expr_to_logical_expr(&wt.1)?),
-                    ))
-                })
-                .collect::<Result<Vec<_>, DataFusionError>>()?,
-            else_expr: expr
-                .else_expr()
-                .map(|else_expr| convert_physical_expr_to_logical_expr(else_expr).map(Box::new))
-                .transpose()?,
-        }))
-    } else if let Some(expr) = expr.downcast_ref::<NotExpr>() {
-        Ok(Expr::Not(Box::new(convert_physical_expr_to_logical_expr(
-            expr.arg(),
-        )?)))
-    } else if let Some(expr) = expr.downcast_ref::<IsNullExpr>() {
-        Ok(Expr::IsNull(Box::new(
-            convert_physical_expr_to_logical_expr(expr.arg())?,
-        )))
-    } else if let Some(expr) = expr.downcast_ref::<IsNotNullExpr>() {
-        Ok(Expr::IsNotNull(Box::new(
-            convert_physical_expr_to_logical_expr(expr.arg())?,
-        )))
-    } else if let Some(expr) = expr.downcast_ref::<InListExpr>() {
-        Ok(Expr::InList(InList {
-            expr: Box::new(convert_physical_expr_to_logical_expr(expr.expr())?),
-            list: expr
-                .list()
-                .iter()
-                .map(convert_physical_expr_to_logical_expr)
-                .collect::<Result<Vec<_>, DataFusionError>>()?,
-            negated: expr.negated(),
-        }))
-    } else if let Some(expr) = expr.downcast_ref::<NegativeExpr>() {
-        Ok(Expr::Negative(Box::new(
-            convert_physical_expr_to_logical_expr(expr.arg())?,
-        )))
-    } else if let Some(expr) = expr.downcast_ref::<Literal>() {
-        Ok(Expr::Literal(expr.value().clone()))
-    } else if let Some(expr) = expr.downcast_ref::<CastExpr>() {
-        Ok(Expr::Cast(Cast {
-            expr: Box::new(convert_physical_expr_to_logical_expr(expr.expr())?),
-            data_type: expr.cast_type().clone(),
-        }))
-    } else if let Some(expr) = expr.downcast_ref::<TryCastExpr>() {
-        Ok(Expr::TryCast(TryCast {
-            expr: Box::new(convert_physical_expr_to_logical_expr(&expr.expr)?),
-            data_type: expr.cast_type.clone(),
-        }))
-    } else if let Some(expr) = expr.downcast_ref::<StringStartsWithExpr>() {
-        let args = vec![
-            convert_physical_expr_to_logical_expr(expr.expr())?,
-            Expr::Literal(ScalarValue::Utf8(Some(expr.prefix().to_string()))),
-        ];
-
-        let func: ScalarFunctionImplementation = Arc::new(|_| panic!("placeholder"));
-        let return_type: ReturnTypeFunction = Arc::new(|_| Ok(Arc::new(DataType::Boolean)));
-        Ok(Expr::ScalarUDF(datafusion::logical_expr::expr::ScalarUDF {
-            fun: Arc::new(ScalarUDF::new(
-                "string_starts_with",
-                &Signature::new(VariadicEqual, Volatility::Immutable),
-                &return_type,
-                &func,
-            )),
-            args,
-        }))
-    } else if let Some(expr) = expr.downcast_ref::<SparkLogicalExpr>() {
-        let children = expr.children();
-        Ok(Expr::BinaryExpr(datafusion::logical_expr::BinaryExpr::new(
-            Box::new(convert_physical_expr_to_logical_expr(&children[0])?),
-            match expr.op() {
-                SparkLogicalOp::And => Operator::And,
-                SparkLogicalOp::Or => Operator::Or,
-            },
-            Box::new(convert_physical_expr_to_logical_expr(&children[1])?),
-        )))
-    } else {
-        // returns a dummy expr to avoid failing the whole conversion
-        let func: ScalarFunctionImplementation = Arc::new(|_| unimplemented!());
-        let return_type: ReturnTypeFunction =  Arc::new(|_| Ok(Arc::new(DataType::Null)));
-        Ok(Expr::ScalarUDF(datafusion::logical_expr::expr::ScalarUDF {
-            fun: Arc::new(ScalarUDF::new(
-                &format!("converting physical expr to logical not supported: {:?}", expr),
-                &Signature::new(VariadicEqual, Volatility::Immutable),
-                &return_type,
-                &func,
-            )),
-            args: vec![]
-        }))
     }
 }
 
@@ -1024,15 +898,15 @@ fn try_parse_physical_expr(
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             Arc::new(StringContainsExpr::new(expr, e.infix.clone()))
         }
-        ExprType::SparkLogicalExpr(e) => {
-            let arg1 = try_parse_physical_expr_box_required(&e.arg1, input_schema)?;
-            let arg2 = try_parse_physical_expr_box_required(&e.arg2, input_schema)?;
-            let op = match e.op.as_str() {
-                "And" => SparkLogicalOp::And,
-                "Or" => SparkLogicalOp::Or,
-                _ => panic!("SparkLogicalExpr.op must be one of [And, Or]"),
-            };
-            Arc::new(SparkLogicalExpr::new(arg1, arg2, op))
+        ExprType::ScAndExpr(e) => {
+            let l = try_parse_physical_expr_box_required(&e.left, input_schema)?;
+            let r = try_parse_physical_expr_box_required(&e.right, input_schema)?;
+            Arc::new(SCAndExpr::new(l, r))
+        }
+        ExprType::ScOrExpr(e) => {
+            let l = try_parse_physical_expr_box_required(&e.left, input_schema)?;
+            let r = try_parse_physical_expr_box_required(&e.right, input_schema)?;
+            Arc::new(SCOrExpr::new(l, r))
         }
         ExprType::IifExpr(e) => {
             let condition = try_parse_physical_expr_box_required(&e.condition, input_schema)?;
