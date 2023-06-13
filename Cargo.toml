@@ -64,12 +64,12 @@ serde_json = { version = "1.0.96" }
 
 [patch.crates-io]
 # datafusion: branch=v25-blaze
-datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "59b4e00e6"}
-datafusion-common = { git = "https://github.com/richox/arrow-datafusion.git", rev = "59b4e00e6"}
-datafusion-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "59b4e00e6"}
-datafusion-execution = { git = "https://github.com/richox/arrow-datafusion.git", rev = "59b4e00e6"}
-datafusion-optimizer = { git = "https://github.com/richox/arrow-datafusion.git", rev = "59b4e00e6"}
-datafusion-physical-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "59b4e00e6"}
+datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "f8f54f6b5"}
+datafusion-common = { git = "https://github.com/richox/arrow-datafusion.git", rev = "f8f54f6b5"}
+datafusion-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "f8f54f6b5"}
+datafusion-execution = { git = "https://github.com/richox/arrow-datafusion.git", rev = "f8f54f6b5"}
+datafusion-optimizer = { git = "https://github.com/richox/arrow-datafusion.git", rev = "f8f54f6b5"}
+datafusion-physical-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "f8f54f6b5"}
 
 # arrow: branch=v39-blaze
 arrow = { git = "https://github.com/richox/arrow-rs.git", rev = "33ca2e5a"}
