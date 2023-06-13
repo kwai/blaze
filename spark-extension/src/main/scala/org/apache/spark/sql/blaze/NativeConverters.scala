@@ -271,7 +271,7 @@ object NativeConverters extends Logging {
   def convertValue(sparkValue: Any, dataType: DataType): pb.ScalarValue = {
     val scalarValueBuilder = pb.ScalarValue.newBuilder()
     dataType match {
-      case NullType => scalarValueBuilder.setNullValue(convertScalarType(NullType))
+      case _ if sparkValue == null => scalarValueBuilder.setNullValue(convertScalarType(dataType))
       case BooleanType => scalarValueBuilder.setBoolValue(sparkValue.asInstanceOf[Boolean])
       case ByteType => scalarValueBuilder.setInt8Value(sparkValue.asInstanceOf[Byte])
       case ShortType => scalarValueBuilder.setInt16Value(sparkValue.asInstanceOf[Short])
@@ -291,9 +291,6 @@ object NativeConverters extends Logging {
             .newBuilder()
             .setDecimal(decimalType)
             .setLongValue(decimalValue.toUnscaledLong))
-
-      case t @ (_: ArrayType | _: StructType | _: MapType) if sparkValue == null =>
-        scalarValueBuilder.setNullValue(convertScalarType(t))
 
       case at: ArrayType =>
         val values =
