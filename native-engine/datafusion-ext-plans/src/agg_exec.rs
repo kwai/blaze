@@ -245,7 +245,7 @@ async fn execute_agg_with_grouping_hash(
     }
 
     // merge all tables and output
-    output_with_sender("Agg", agg_ctx.output_schema.clone(), |sender| async move {
+    output_with_sender("Agg", context, agg_ctx.output_schema.clone(), |sender| async move {
         tables
             .output(grouping_row_converter, baseline_metrics, sender)
             .await
@@ -294,7 +294,7 @@ async fn execute_agg_no_grouping(
     // output
     // in no-grouping mode, we always output only one record, so it is not
     // necessary to record elapsed computed time.
-    output_with_sender("Agg", agg_ctx.output_schema.clone(), move |sender| async move {
+    output_with_sender("Agg", context, agg_ctx.output_schema.clone(), move |sender| async move {
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let mut timer = elapsed_compute.timer();
 
@@ -346,7 +346,7 @@ async fn execute_agg_sorted(
         context.session_config().batch_size(),
         baseline_metrics.elapsed_compute().clone(),
     ));
-    output_with_sender("Agg", agg_ctx.output_schema.clone(), |sender| async move {
+    output_with_sender("Agg", context.clone(), agg_ctx.output_schema.clone(), |sender| async move {
         let batch_size = context.session_config().batch_size();
         let mut staging_records = vec![];
         let mut current_record: Option<AggRecord> = None;

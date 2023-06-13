@@ -24,6 +24,7 @@ use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::StreamExt;
 use std::sync::Arc;
+use datafusion::execution::context::TaskContext;
 use crate::common::onheap_spill::Spill;
 
 pub mod bucket_repartitioner;
@@ -41,6 +42,7 @@ pub trait ShuffleRepartitioner: Send + Sync {
 impl dyn ShuffleRepartitioner {
     pub async fn execute(
         self: Arc<Self>,
+        context: Arc<TaskContext>,
         input: SendableRecordBatchStream,
         batch_size: usize,
         metrics: BaselineMetrics,
@@ -55,7 +57,7 @@ impl dyn ShuffleRepartitioner {
         ));
 
         // process all input batches
-        output_with_sender("Shuffle", input_schema, |_| async move {
+        output_with_sender("Shuffle", context, input_schema, |_| async move {
             while let Some(batch) = coalesced.next().await.transpose()? {
                 let _timer = metrics.elapsed_compute().timer();
                 metrics.record_output(batch.num_rows());

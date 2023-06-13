@@ -144,7 +144,7 @@ impl ExecutionPlan for SortExec {
         });
         MemManager::register_consumer(external_sorter.clone(), true);
 
-        let input = self.input.execute(partition, context)?;
+        let input = self.input.execute(partition, context.clone())?;
         let coalesced = Box::pin(CoalesceStream::new(
             input,
             batch_size,
@@ -155,7 +155,7 @@ impl ExecutionPlan for SortExec {
 
         let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(external_sort(coalesced, external_sorter)).try_flatten(),
+            once(external_sort(coalesced, context, external_sorter)).try_flatten(),
         ));
         let coalesced = Box::pin(CoalesceStream::new(
             output,
@@ -257,6 +257,7 @@ impl Drop for ExternalSorter {
 
 async fn external_sort(
     mut input: SendableRecordBatchStream,
+    context: Arc<TaskContext>,
     sorter: Arc<ExternalSorter>,
 ) -> Result<SendableRecordBatchStream> {
     // insert and sort
@@ -267,7 +268,7 @@ async fn external_sort(
             .map_err(|err| err.context("sort: executing insert_batch() error"))?;
     }
 
-    output_with_sender("Sort", input.schema(), |sender| async move {
+    output_with_sender("Sort", context, input.schema(), |sender| async move {
         sorter.output(sender).await?;
         Ok(())
     })
@@ -301,7 +302,7 @@ impl ExternalSorter {
         Ok(())
     }
 
-    async fn output(self: Arc<Self>, sender: WrappedRecordBatchSender) -> Result<()> {
+    async fn output(self: Arc<Self>, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
         let mut timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);
         let levels = std::mem::take(&mut *self.levels.lock().await);
@@ -563,9 +564,12 @@ impl SortedBatches {
     }
 
     fn mem_size(&self) -> usize {
-        self.batches_mem_size * 2 + // batches are duplicated during squeezing
-            self.sorted_rows.len() * 2 * std::mem::size_of::<IndexedRow>() +
-            self.row_mem_size
+        // batches are duplicated during squeezing
+        2 * (
+            self.batches_mem_size +
+            self.row_mem_size +
+            self.sorted_rows.len() * std::mem::size_of::<IndexedRow>()
+        )
     }
 
     fn merge(&mut self, other: SortedBatches) {
@@ -626,6 +630,7 @@ impl SortedBatches {
                 (None, None) => unreachable!(),
             }
         }
+        sorted_rows.shrink_to_fit();
 
         let batches_num_rows = a.batches_num_rows + b.batches_num_rows;
         let batches = [a.batches, b.batches].concat();

@@ -89,7 +89,7 @@ impl AggTables {
         &self,
         mut grouping_row_converter: RowConverter,
         baseline_metrics: BaselineMetrics,
-        sender: WrappedRecordBatchSender,
+        sender: Arc<WrappedRecordBatchSender>,
     ) -> Result<()> {
         self.set_spillable(false);
         let mut timer = baseline_metrics.elapsed_compute().timer();

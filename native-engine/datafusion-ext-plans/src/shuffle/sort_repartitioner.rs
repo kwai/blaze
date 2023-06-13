@@ -99,6 +99,7 @@ impl SortShuffleRepartitioner {
                     }),
             );
         }
+        pi_vec.shrink_to_fit();
         pi_vec.sort_unstable();
         Ok(pi_vec)
     }
@@ -213,26 +214,47 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // we are likely to spill more frequently because the cost of spilling a shuffle
         // repartition is lower than other consumers.
-        let mem_increase = (
+        let mem_increase = 2 * (
             input.get_array_memory_size() + input.num_rows() * std::mem::size_of::<PI>()
-            // for sorting
-        ) * 3
-            / 2;
-        self.update_mem_used_with_diff(mem_increase as isize)
-            .await?;
+        );
+        self.update_mem_used_with_diff(mem_increase as isize).await?;
         Ok(())
     }
 
     async fn shuffle_write(&self) -> Result<()> {
         self.set_spillable(false);
         let mut spills = std::mem::take(&mut *self.spills.lock().await);
-        let batches = std::mem::take(&mut *self.buffered_batches.lock().await);
+        let mut batches = std::mem::take(&mut *self.buffered_batches.lock().await);
 
         log::info!(
             "sort repartitioner starts outputting with {} ({} spills)",
             self.name(),
             spills.len(),
         );
+
+        // no spills - directly write current batches into final file
+        if spills.is_empty() {
+            let mut output_data = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&self.output_data_file)?;
+
+            let pi_vec = self.build_sorted_pi_vec(&batches)?;
+            let offsets = self.write_buffered_batches(&batches, pi_vec, &mut output_data)?;
+            batches.clear();
+            output_data.sync_data()?;
+            output_data.flush()?;
+
+            let mut output_index = File::create(&self.output_index_file)?;
+            for offset in offsets {
+                output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+            }
+            output_index.sync_data()?;
+            output_index.flush()?;
+            self.update_mem_used(0).await?;
+            return Ok(());
+        }
 
         // define spill cursor. partial-ord is reversed because we
         // need to find mininum using a binary heap
@@ -264,11 +286,9 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             }
         }
 
-        // write current buffered batches into a cursor
-        let pi_vec = self.build_sorted_pi_vec(&batches)?;
-        let mut in_mem_data = vec![];
-        let in_mem_offsets = self.write_buffered_batches(&batches, pi_vec, &mut in_mem_data)?;
-        drop(batches);
+        // write current buffered batches into a spill
+        spills.push(self.spill_buffered_batches(&batches)?);
+        batches.clear();
 
         // use loser tree to select partitions from spills
         let mut cursors: LoserTree<SpillCursor> = LoserTree::new_by(
@@ -279,12 +299,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     reader: spill.spill.get_buf_reader(),
                     offsets: std::mem::take(&mut spill.offsets),
                 })
-                .chain(std::iter::once(SpillCursor {
-                    // chain in_mem data
-                    cur: 0,
-                    reader: BufReader::new(Box::new(Cursor::new(in_mem_data))),
-                    offsets: in_mem_offsets,
-                }))
                 .map(|mut spill| {
                     spill.skip_empty_partitions();
                     spill

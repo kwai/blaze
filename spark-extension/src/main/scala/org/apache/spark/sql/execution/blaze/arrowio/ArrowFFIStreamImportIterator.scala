@@ -61,23 +61,27 @@ class ArrowFFIStreamImportIterator(
       close()
       return false
     }
+
     val currentBatch = ColumnarHelper.rootAsBatch(reader.getVectorSchemaRoot)
-    onNextBatch(currentBatch)
+    try {
+      onNextBatch(currentBatch)
 
-    // convert batch to persisted row iterator
-    val toUnsafe = this.toUnsafe
-    val rowIterator = currentBatch.rowIterator()
-    val currentRowsArray = new Array[UnsafeRow](currentBatch.numRows())
-    var i = 0
-    while (rowIterator.hasNext) {
-      currentRowsArray(i) = toUnsafe(rowIterator.next()).copy()
-      i += 1
+      // convert batch to persisted row iterator
+      val toUnsafe = this.toUnsafe
+      val rowIterator = currentBatch.rowIterator()
+      val currentRowsArray = new Array[UnsafeRow](currentBatch.numRows())
+      var i = 0
+      while (rowIterator.hasNext) {
+        currentRowsArray(i) = toUnsafe(rowIterator.next()).copy()
+        i += 1
+      }
+      currentRows = currentRowsArray.iterator
+
+    } finally {
+      // current batch can be closed after all rows converted to UnsafeRow
+      currentBatch.close()
+      reader.getVectorSchemaRoot.clear()
     }
-    currentRows = currentRowsArray.iterator
-
-    // current batch can be closed after all rows converted to UnsafeRow
-    currentBatch.close()
-    reader.getVectorSchemaRoot.clear()
     hasNext
   }
 

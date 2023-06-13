@@ -128,6 +128,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
 
         let stream = repartitioner
             .execute(
+                context.clone(),
                 input,
                 context.session_config().batch_size(),
                 BaselineMetrics::new(&self.metrics, partition),

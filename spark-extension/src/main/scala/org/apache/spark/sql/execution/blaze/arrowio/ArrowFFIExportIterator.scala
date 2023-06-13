@@ -73,13 +73,15 @@ class ArrowFFIExportIterator(
       }
       arrowWriter.finish()
 
-      (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) =>
+      (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) => {
         Data.exportVectorSchemaRoot(
           ArrowUtils.rootAllocator,
           root,
           emptyDictionaryProvider,
           ArrowArray.wrap(exportArrowArrayPtr),
           ArrowSchema.wrap(exportArrowSchemaPtr))
+        root.close()
+      }
     }
 
   private def close(): Unit =

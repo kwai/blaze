@@ -33,10 +33,12 @@ use jni::objects::{GlobalRef, JObject};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use datafusion_ext_plans::common::output::WrappedRecordBatchSender;
 
 pub struct NativeExecutionRuntime {
     native_wrapper: GlobalRef,
     plan: Arc<dyn ExecutionPlan>,
+    task_context: Arc<TaskContext>,
     partition: usize,
     rt: Runtime,
     ffi_stream: Box<FFI_ArrowArrayStream>,
@@ -52,7 +54,7 @@ impl NativeExecutionRuntime {
         let batch_size = context.session_config().batch_size();
 
         // execute plan to output stream
-        let stream = plan.execute(partition, context)?;
+        let stream = plan.execute(partition, context.clone())?;
 
         // coalesce
         let coalesce_compute_time = Time::new();
@@ -79,8 +81,8 @@ impl NativeExecutionRuntime {
 
         // create tokio runtime
         // propagate classloader and task context to spawned children threads
-        let task_context = jni_call_static!(JniBridge.getTaskContext() -> JObject)?;
-        let task_context_global = jni_new_global_ref!(task_context.as_obj())?;
+        let spark_task_context = jni_call_static!(JniBridge.getTaskContext() -> JObject)?;
+        let spark_task_context_global = jni_new_global_ref!(spark_task_context.as_obj())?;
         let rt = tokio::runtime::Builder::new_multi_thread()
             .on_thread_start(move || {
                 let classloader = JavaClasses::get().classloader;
@@ -88,7 +90,7 @@ impl NativeExecutionRuntime {
                     JniBridge.setContextClassLoader(classloader) -> ()
                 );
                 let _ = jni_call_static!(
-                    JniBridge.setTaskContext(task_context_global.as_obj()) -> ()
+                    JniBridge.setTaskContext(spark_task_context_global.as_obj()) -> ()
                 );
             })
             .build()?;
@@ -99,6 +101,7 @@ impl NativeExecutionRuntime {
             partition,
             rt,
             ffi_stream,
+            task_context: context,
         };
 
         // spawn batch producer
@@ -187,6 +190,7 @@ impl NativeExecutionRuntime {
         let _ = self.update_metrics();
         drop(self.ffi_stream);
         drop(self.plan);
+        WrappedRecordBatchSender::cancel_task(&self.task_context); // cancel all pending streams
         self.rt.shutdown_background();
         log::info!("native execution [partition={}] finalized", self.partition);
     }

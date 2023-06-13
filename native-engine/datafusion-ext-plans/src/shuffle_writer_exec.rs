@@ -140,6 +140,7 @@ impl ExecutionPlan for ShuffleWriterExec {
         let input = self.input.execute(partition, context.clone())?;
         let stream = repartitioner
             .execute(
+                context.clone(),
                 input,
                 context.session_config().batch_size(),
                 BaselineMetrics::new(&self.metrics, partition),

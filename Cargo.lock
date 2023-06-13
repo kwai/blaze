@@ -724,7 +724,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "ahash",
  "arrow",
@@ -773,7 +773,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -787,7 +787,7 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "dashmap",
  "datafusion-common",
@@ -804,7 +804,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "ahash",
  "arrow",
@@ -879,7 +879,6 @@ dependencies = [
  "arrow",
  "async-trait",
  "base64",
- "bitvec",
  "blaze-jni-bridge",
  "bytes",
  "bytesize",
@@ -907,7 +906,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "arrow",
  "async-trait",
@@ -924,7 +923,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "ahash",
  "arrow",
@@ -956,7 +955,7 @@ dependencies = [
 [[package]]
 name = "datafusion-row"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -967,7 +966,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "25.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=59b4e00e6#59b4e00e6633cff5dc75e6c76d28f4aa36759f8e"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=f8f54f6b5#f8f54f6b56b08c09077cbe028ff09cac931d07de"
 dependencies = [
  "arrow",
  "arrow-schema",
