@@ -1032,12 +1032,27 @@ object NativeConverters extends Logging {
       case e @ Average(child) if e.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.AVG)
         aggBuilder.addChildren(convertExpr(child))
-      case Count(Seq(child1)) =>
-        aggBuilder.setAggFunction(pb.AggFunction.COUNT)
-        aggBuilder.addChildren(convertExpr(child1))
       case Count(children) if !children.exists(_.nullable) =>
         aggBuilder.setAggFunction(pb.AggFunction.COUNT)
         aggBuilder.addChildren(convertExpr(Literal.apply(1)))
+      case Count(children) if children.exists(_.nullable) =>
+        aggBuilder.setAggFunction(pb.AggFunction.COUNT)
+        if (children.length == 1) {
+          aggBuilder.addChildren(convertExpr(children.head))
+        } else {
+          val leftExpression = children
+            .map(IsNotNull)
+            .asInstanceOf[Seq[Expression]]
+            .reduce((a, b) => And(a, b))
+          val rightExpression = Literal.apply(false)
+          val childExpression = If(
+            EqualTo(leftExpression, rightExpression),
+            Literal.create(null, BooleanType),
+            leftExpression)
+          val countExpr = NullIf(leftExpression, rightExpression, childExpression)
+          aggBuilder.addChildren(convertExpr(countExpr))
+        }
+
       case CollectList(child, _, _) =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_LIST)
         aggBuilder.addChildren(convertExpr(child))
