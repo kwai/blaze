@@ -20,67 +20,92 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.expressions.Abs
-import org.apache.spark.sql.catalyst.expressions.Acos
-import org.apache.spark.sql.catalyst.expressions.Add
-import org.apache.spark.sql.catalyst.expressions.And
-import org.apache.spark.sql.catalyst.expressions.Asin
-import org.apache.spark.sql.catalyst.expressions.Atan
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
-import org.apache.spark.sql.catalyst.expressions.CaseWhen
-import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.catalyst.expressions.Ceil
-import org.apache.spark.sql.catalyst.expressions.Coalesce
-import org.apache.spark.sql.catalyst.expressions.Concat
-import org.apache.spark.sql.catalyst.expressions.Contains
-import org.apache.spark.sql.catalyst.expressions.Cos
-import org.apache.spark.sql.catalyst.expressions.Divide
-import org.apache.spark.sql.catalyst.expressions.EndsWith
-import org.apache.spark.sql.catalyst.expressions.EqualTo
-import org.apache.spark.sql.catalyst.expressions.Exp
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.Floor
-import org.apache.spark.sql.catalyst.expressions.GreaterThan
-import org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual
-import org.apache.spark.sql.catalyst.expressions.In
-import org.apache.spark.sql.catalyst.expressions.InSet
-import org.apache.spark.sql.catalyst.expressions.IsNotNull
-import org.apache.spark.sql.catalyst.expressions.IsNull
-import org.apache.spark.sql.catalyst.expressions.LessThan
-import org.apache.spark.sql.catalyst.expressions.LessThanOrEqual
-import org.apache.spark.sql.catalyst.expressions.Like
-import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.catalyst.expressions.Log
-import org.apache.spark.sql.catalyst.expressions.Log10
-import org.apache.spark.sql.catalyst.expressions.Log2
-import org.apache.spark.sql.catalyst.expressions.Md5
-import org.apache.spark.sql.catalyst.expressions.Multiply
-import org.apache.spark.sql.catalyst.expressions.Not
-import org.apache.spark.sql.catalyst.expressions.NullIf
-import org.apache.spark.sql.catalyst.expressions.OctetLength
-import org.apache.spark.sql.catalyst.expressions.Or
-import org.apache.spark.sql.catalyst.expressions.Remainder
-import org.apache.spark.sql.catalyst.expressions.Sha2
-import org.apache.spark.sql.catalyst.expressions.Signum
-import org.apache.spark.sql.catalyst.expressions.Sin
-import org.apache.spark.sql.catalyst.expressions.Sqrt
-import org.apache.spark.sql.catalyst.expressions.StartsWith
-import org.apache.spark.sql.catalyst.expressions.StringTrim
-import org.apache.spark.sql.catalyst.expressions.StringTrimLeft
-import org.apache.spark.sql.catalyst.expressions.StringTrimRight
-import org.apache.spark.sql.catalyst.expressions.Substring
-import org.apache.spark.sql.catalyst.expressions.Subtract
-import org.apache.spark.sql.catalyst.expressions.Tan
-import org.apache.spark.sql.catalyst.expressions.TruncDate
+import org.apache.spark.sql.catalyst.expressions.{
+  Abs,
+  Acos,
+  Add,
+  Alias,
+  And,
+  Asin,
+  Atan,
+  AttributeReference,
+  BitwiseAnd,
+  BitwiseOr,
+  BoundReference,
+  CaseWhen,
+  Cast,
+  Ceil,
+  CheckOverflow,
+  Coalesce,
+  Concat,
+  ConcatWs,
+  Contains,
+  Cos,
+  CreateArray,
+  CreateNamedStruct,
+  Divide,
+  EndsWith,
+  EqualTo,
+  Exp,
+  Expression,
+  Floor,
+  GetArrayItem,
+  GetMapValue,
+  GetStructField,
+  GreaterThan,
+  GreaterThanOrEqual,
+  If,
+  In,
+  InSet,
+  IsNotNull,
+  IsNull,
+  Length,
+  LessThan,
+  LessThanOrEqual,
+  Like,
+  Literal,
+  Log,
+  Log10,
+  Log2,
+  Lower,
+  MakeDecimal,
+  Md5,
+  Multiply,
+  Murmur3Hash,
+  Not,
+  NullIf,
+  OctetLength,
+  Or,
+  Pmod,
+  PromotePrecision,
+  Remainder,
+  Sha2,
+  ShiftLeft,
+  ShiftRight,
+  Signum,
+  Sin,
+  Sqrt,
+  StartsWith,
+  StringRepeat,
+  StringSpace,
+  StringSplit,
+  StringTrim,
+  StringTrimLeft,
+  StringTrimRight,
+  Substring,
+  Subtract,
+  Tan,
+  TruncDate,
+  Unevaluable,
+  UnscaledValue,
+  Upper
+}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.catalyst.expressions.aggregate.CollectList
@@ -89,30 +114,6 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
-import org.apache.spark.sql.catalyst.expressions.Alias
-import org.apache.spark.sql.catalyst.expressions.BitwiseAnd
-import org.apache.spark.sql.catalyst.expressions.BitwiseOr
-import org.apache.spark.sql.catalyst.expressions.BoundReference
-import org.apache.spark.sql.catalyst.expressions.CheckOverflow
-import org.apache.spark.sql.catalyst.expressions.ConcatWs
-import org.apache.spark.sql.catalyst.expressions.CreateArray
-import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
-import org.apache.spark.sql.catalyst.expressions.GetArrayItem
-import org.apache.spark.sql.catalyst.expressions.GetMapValue
-import org.apache.spark.sql.catalyst.expressions.GetStructField
-import org.apache.spark.sql.catalyst.expressions.If
-import org.apache.spark.sql.catalyst.expressions.Length
-import org.apache.spark.sql.catalyst.expressions.MakeDecimal
-import org.apache.spark.sql.catalyst.expressions.Murmur3Hash
-import org.apache.spark.sql.catalyst.expressions.Pmod
-import org.apache.spark.sql.catalyst.expressions.PromotePrecision
-import org.apache.spark.sql.catalyst.expressions.ShiftLeft
-import org.apache.spark.sql.catalyst.expressions.ShiftRight
-import org.apache.spark.sql.catalyst.expressions.StringRepeat
-import org.apache.spark.sql.catalyst.expressions.StringSpace
-import org.apache.spark.sql.catalyst.expressions.StringSplit
-import org.apache.spark.sql.catalyst.expressions.Unevaluable
-import org.apache.spark.sql.catalyst.expressions.UnscaledValue
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -799,8 +800,10 @@ object NativeConverters extends Logging {
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
 
       // TODO: datafusion's upper/lower() has different behavior from spark
-      // case e: Lower => buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
-      // case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
+      case e: Lower =>
+        logInfo(s"lower children is: ${e.children} and type is: ${e.dataType}")
+        buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
+      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
 
       case e: StringTrim =>
         buildScalarFunction(pb.ScalarFunction.Trim, e.srcStr +: e.trimStr.toSeq, e.dataType)
@@ -1042,11 +1045,10 @@ object NativeConverters extends Logging {
         } else {
           aggBuilder.addChildren(
             convertExpr(
-              Count(
-                If(
-                  children.filter(_.nullable).map(IsNull).reduce(Or),
-                  Literal(null, IntegerType),
-                  Literal(1)))))
+              If(
+                children.filter(_.nullable).map(IsNull).reduce(Or),
+                Literal(null, IntegerType),
+                Literal(1))))
         }
 
       case CollectList(child, _, _) =>
