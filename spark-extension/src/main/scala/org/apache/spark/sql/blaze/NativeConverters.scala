@@ -1035,22 +1035,18 @@ object NativeConverters extends Logging {
       case Count(children) if !children.exists(_.nullable) =>
         aggBuilder.setAggFunction(pb.AggFunction.COUNT)
         aggBuilder.addChildren(convertExpr(Literal.apply(1)))
-      case Count(children) if children.exists(_.nullable) =>
+      case Count(children) =>
         aggBuilder.setAggFunction(pb.AggFunction.COUNT)
         if (children.length == 1) {
           aggBuilder.addChildren(convertExpr(children.head))
         } else {
-          val leftExpression = children
-            .map(IsNull)
-            .asInstanceOf[Seq[Expression]]
-            .reduce((a, b) => Or(a, b))
-          val rightExpression = Literal.apply(true)
-          val childExpression = If(
-            EqualTo(leftExpression, rightExpression),
-            Literal.create(null, BooleanType),
-            leftExpression)
-          val countExpr = NullIf(leftExpression, rightExpression, childExpression)
-          aggBuilder.addChildren(convertExpr(countExpr))
+          aggBuilder.addChildren(
+            convertExpr(
+              Count(
+                If(
+                  children.filter(_.nullable).map(IsNull).reduce(Or),
+                  Literal(null, IntegerType),
+                  Literal(1)))))
         }
 
       case CollectList(child, _, _) =>
