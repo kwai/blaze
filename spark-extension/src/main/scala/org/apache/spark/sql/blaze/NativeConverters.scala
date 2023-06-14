@@ -1041,10 +1041,10 @@ object NativeConverters extends Logging {
           aggBuilder.addChildren(convertExpr(children.head))
         } else {
           val leftExpression = children
-            .map(IsNotNull)
+            .map(IsNull)
             .asInstanceOf[Seq[Expression]]
-            .reduce((a, b) => And(a, b))
-          val rightExpression = Literal.apply(false)
+            .reduce((a, b) => Or(a, b))
+          val rightExpression = Literal.apply(true)
           val childExpression = If(
             EqualTo(leftExpression, rightExpression),
             Literal.create(null, BooleanType),
