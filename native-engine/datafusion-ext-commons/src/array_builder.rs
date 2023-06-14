@@ -324,22 +324,37 @@ pub fn builder_extend(
             for &i in indices {
                 if f.is_valid(i) {
                     for j in 0..$fields.len() {
-                        let field_builders = unsafe {
-                             struct XNullBufferBuilder {
-                                _bitmap_builder: Option<BooleanBufferBuilder>,
-                                _len: usize,
-                                _capacity: usize,
-                            }
-                            struct XStructBuilder {
-                            _fields: Vec<Field>,
-                            field_builders: Vec<Box<dyn ArrayBuilder>>,
-                            _null_buffer_builder: XNullBufferBuilder,
-                            }
-                            let t: &mut XStructBuilder = std::mem::transmute(&mut (*t));
-                            std::slice::from_raw_parts_mut(t.field_builders.as_mut_ptr(), t.field_builders.len())
+                        let field_buidler: &mut dyn ArrayBuilder = match $fields[j].data_type() {
+                            DataType::Int8 => t.field_builder::<Int8Builder>(j).unwrap(),
+                            DataType::Int16 => t.field_builder::<Int16Builder>(j).unwrap(),
+                            DataType::Int32 => t.field_builder::<Int32Builder>(j).unwrap(),
+                            DataType::Int64 => t.field_builder::<Int64Builder>(j).unwrap(),
+                            DataType::UInt8 => t.field_builder::<UInt8Builder>(j).unwrap(),
+                            DataType::UInt16 => t.field_builder::<UInt16Builder>(j).unwrap(),
+                            DataType::UInt32 => t.field_builder::<UInt32Builder>(j).unwrap(),
+                            DataType::UInt64 => t.field_builder::<UInt64Builder>(j).unwrap(),
+                            DataType::Float32 => t.field_builder::<Float32Builder>(j).unwrap(),
+                            DataType::Float64 => t.field_builder::<Float64Builder>(j).unwrap(),
+                            DataType::Date32 => t.field_builder::<Date32Builder>(j).unwrap(),
+                            DataType::Date64 => t.field_builder::<Date64Builder>(j).unwrap(),
+                            DataType::Boolean => t.field_builder::<BooleanBuilder>(j).unwrap(),
+                            DataType::Utf8 => t.field_builder::<StringBuilder>(j).unwrap(),
+                            DataType::LargeUtf8 => t.field_builder::<LargeStringBuilder>(j).unwrap(),
+                            DataType::Timestamp(TimeUnit::Second, _) => t.field_builder::<TimestampSecondBuilder>(j).unwrap(),
+                            DataType::Timestamp(TimeUnit::Millisecond, _) => t.field_builder::<TimestampMillisecondBuilder>(j).unwrap(),
+                            DataType::Timestamp(TimeUnit::Microsecond, _) => t.field_builder::<TimestampMicrosecondBuilder>(j).unwrap(),
+                            DataType::Timestamp(TimeUnit::Nanosecond, _) => t.field_builder::<TimestampNanosecondBuilder>(j).unwrap(),
+                            DataType::Time32(TimeUnit::Second) => t.field_builder::<Time32SecondBuilder>(j).unwrap(),
+                            DataType::Time32(TimeUnit::Millisecond) => t.field_builder::<Time32MillisecondBuilder>(j).unwrap(),
+                            DataType::Time64(TimeUnit::Microsecond) => t.field_builder::<Time64MicrosecondBuilder>(j).unwrap(),
+                            DataType::Time64(TimeUnit::Nanosecond) => t.field_builder::<Time64NanosecondBuilder>(j).unwrap(),
+                            DataType::Binary => t.field_builder::<BinaryBuilder>(j).unwrap(),
+                            DataType::LargeBinary => t.field_builder::<LargeBinaryBuilder>(j).unwrap(),
+                            DataType::Decimal128(_, _) => t.field_builder::<ConfiguredDecimal128Builder>(j).unwrap(),
+                            DataType::Decimal256(_, _) => t.field_builder::<ConfiguredDecimal256Builder>(j).unwrap(),
+                            _ => unimplemented!("struct child data_type not supported: {:?}", $fields[j].data_type()),
                         };
-
-                        builder_extend(field_builders[j].as_mut(), &f.column(j), &[i], $fields[j].data_type());
+                        builder_extend(field_buidler, &f.column(j), &[i], $fields[j].data_type());
                     }
                     t.append(true);
                 }
