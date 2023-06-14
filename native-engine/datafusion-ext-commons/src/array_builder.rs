@@ -58,21 +58,6 @@ pub fn builder_extend(
             }
         }};
     }
-    macro_rules! append_decimal {
-        ($builderty:ident, $arrowty:ident) => {{
-            type B = paste::paste! {[< $builderty Builder >]};
-            type A = paste::paste! {[< $arrowty Array >]};
-            let t = builder.as_any_mut().downcast_mut::<B>().unwrap();
-            let f = array.as_any().downcast_ref::<A>().unwrap();
-            for &i in indices {
-                if f.is_valid(i) {
-                    let _ = t.append_value(f.value(i));
-                } else {
-                    t.append_null();
-                }
-            }
-        }};
-    }
 
     macro_rules! append_dict {
         ($key_type:expr, $value_type:expr) => {{
@@ -289,8 +274,7 @@ pub fn builder_extend(
                 DataType::Time64(TimeUnit::Nanosecond) => append_list!(@prim: Time64Nanosecond),
                 DataType::Binary => append_list!(@prim: Binary),
                 DataType::LargeBinary => append_list!(@prim: LargeBinary),
-                DataType::Decimal128(_, _) => append_list!(@prim: ConfiguredDecimal128),
-                DataType::Decimal256(_, _) => append_list!(@prim: ConfiguredDecimal256),
+                DataType::Decimal128(_, _) => append_list!(@prim: Decimal128),
                 _ => unimplemented!("list type not supported: {:?}", $data_type),
             }
         }};
@@ -350,8 +334,7 @@ pub fn builder_extend(
                             DataType::Time64(TimeUnit::Nanosecond) => t.field_builder::<Time64NanosecondBuilder>(j).unwrap(),
                             DataType::Binary => t.field_builder::<BinaryBuilder>(j).unwrap(),
                             DataType::LargeBinary => t.field_builder::<LargeBinaryBuilder>(j).unwrap(),
-                            DataType::Decimal128(_, _) => t.field_builder::<ConfiguredDecimal128Builder>(j).unwrap(),
-                            DataType::Decimal256(_, _) => t.field_builder::<ConfiguredDecimal256Builder>(j).unwrap(),
+                            DataType::Decimal128(_, _) => t.field_builder::<Decimal128Builder>(j).unwrap(),
                             _ => unimplemented!("struct child data_type not supported: {:?}", $fields[j].data_type()),
                         };
                         builder_extend(field_buidler, &f.column(j), &[i], $fields[j].data_type());
@@ -407,8 +390,7 @@ pub fn builder_extend(
         DataType::LargeBinary => append_simple!(LargeBinary),
         DataType::Utf8 => append_simple!(String),
         DataType::LargeUtf8 => append_simple!(LargeString),
-        DataType::Decimal128(_, _) => append_decimal!(ConfiguredDecimal128, Decimal128),
-        DataType::Decimal256(_, _) => append_decimal!(ConfiguredDecimal256, Decimal256),
+        DataType::Decimal128(_, _) => append_simple!(Decimal128),
         DataType::Dictionary(key_type, value_type) => append_dict!(key_type, value_type),
         DataType::List(fields) => append_list!(fields.data_type()),
         DataType::Map(field, _) => {
@@ -473,8 +455,7 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
                 DataType::Time64(TimeUnit::Nanosecond) => append_null_for_list!(@prim: Time64Nanosecond),
                 DataType::Binary => append_null_for_list!(@prim: Binary),
                 DataType::LargeBinary => append_null_for_list!(@prim: LargeBinary),
-                DataType::Decimal128(_, _) => append_null_for_list!(@prim: ConfiguredDecimal128),
-                DataType::Decimal256(_, _) => append_null_for_list!(@prim: ConfiguredDecimal256),
+                DataType::Decimal128(_, _) => append_null_for_list!(@prim: Decimal128),
                 _ => unimplemented!("list type not supported: {:?}", $data_type),
             }
         }};
@@ -563,21 +544,36 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
             type B = StructBuilder;
             let t = to.as_any_mut().downcast_mut::<B>().unwrap();
             for j in 0..$fields.len() {
-                let field_builders = unsafe {
-                     struct XNullBufferBuilder {
-                        _bitmap_builder: Option<BooleanBufferBuilder>,
-                        _len: usize,
-                        _capacity: usize,
-                    }
-                    struct XStructBuilder {
-                        _fields: Vec<Field>,
-                        field_builders: Vec<Box<dyn ArrayBuilder>>,
-                        _null_buffer_builder: XNullBufferBuilder,
-                    }
-                    let t: &mut XStructBuilder = std::mem::transmute(&mut (*t));
-                    std::slice::from_raw_parts_mut(t.field_builders.as_mut_ptr(), t.field_builders.len())
+                let field_buidler: &mut dyn ArrayBuilder = match $fields[j].data_type() {
+                    DataType::Int8 => t.field_builder::<Int8Builder>(j).unwrap(),
+                    DataType::Int16 => t.field_builder::<Int16Builder>(j).unwrap(),
+                    DataType::Int32 => t.field_builder::<Int32Builder>(j).unwrap(),
+                    DataType::Int64 => t.field_builder::<Int64Builder>(j).unwrap(),
+                    DataType::UInt8 => t.field_builder::<UInt8Builder>(j).unwrap(),
+                    DataType::UInt16 => t.field_builder::<UInt16Builder>(j).unwrap(),
+                    DataType::UInt32 => t.field_builder::<UInt32Builder>(j).unwrap(),
+                    DataType::UInt64 => t.field_builder::<UInt64Builder>(j).unwrap(),
+                    DataType::Float32 => t.field_builder::<Float32Builder>(j).unwrap(),
+                    DataType::Float64 => t.field_builder::<Float64Builder>(j).unwrap(),
+                    DataType::Date32 => t.field_builder::<Date32Builder>(j).unwrap(),
+                    DataType::Date64 => t.field_builder::<Date64Builder>(j).unwrap(),
+                    DataType::Boolean => t.field_builder::<BooleanBuilder>(j).unwrap(),
+                    DataType::Utf8 => t.field_builder::<StringBuilder>(j).unwrap(),
+                    DataType::LargeUtf8 => t.field_builder::<LargeStringBuilder>(j).unwrap(),
+                    DataType::Timestamp(TimeUnit::Second, _) => t.field_builder::<TimestampSecondBuilder>(j).unwrap(),
+                    DataType::Timestamp(TimeUnit::Millisecond, _) => t.field_builder::<TimestampMillisecondBuilder>(j).unwrap(),
+                    DataType::Timestamp(TimeUnit::Microsecond, _) => t.field_builder::<TimestampMicrosecondBuilder>(j).unwrap(),
+                    DataType::Timestamp(TimeUnit::Nanosecond, _) => t.field_builder::<TimestampNanosecondBuilder>(j).unwrap(),
+                    DataType::Time32(TimeUnit::Second) => t.field_builder::<Time32SecondBuilder>(j).unwrap(),
+                    DataType::Time32(TimeUnit::Millisecond) => t.field_builder::<Time32MillisecondBuilder>(j).unwrap(),
+                    DataType::Time64(TimeUnit::Microsecond) => t.field_builder::<Time64MicrosecondBuilder>(j).unwrap(),
+                    DataType::Time64(TimeUnit::Nanosecond) => t.field_builder::<Time64NanosecondBuilder>(j).unwrap(),
+                    DataType::Binary => t.field_builder::<BinaryBuilder>(j).unwrap(),
+                    DataType::LargeBinary => t.field_builder::<LargeBinaryBuilder>(j).unwrap(),
+                    DataType::Decimal128(_, _) => t.field_builder::<Decimal128Builder>(j).unwrap(),
+                    _ => unimplemented!("struct child data_type not supported: {:?}", $fields[j].data_type()),
                 };
-                builder_append_null(field_builders[j].as_mut(), $fields[j].data_type());
+                builder_append_null(field_buidler, $fields[j].data_type());
             }
             t.append_null();
         }};
@@ -615,8 +611,7 @@ pub fn builder_append_null(to: &mut (impl ArrayBuilder + ?Sized), data_type: &Da
         DataType::LargeBinary => append!(LargeBinary),
         DataType::Utf8 => append!(String),
         DataType::LargeUtf8 => append!(LargeString),
-        DataType::Decimal128(_, _) => append!(ConfiguredDecimal128),
-        DataType::Decimal256(_, _) => append!(ConfiguredDecimal256),
+        DataType::Decimal128(_, _) => append!(Decimal128),
         DataType::List(field) => append_null_for_list!(field.data_type()),
         DataType::Map(field, _) => {
             if let DataType::Struct(fields) = field.data_type() {
@@ -721,9 +716,6 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                     DataType::Decimal128(prec, scale) => {
                         make_list_builder!(@make_decimal: Decimal128(prec, scale))
                     }
-                    DataType::Decimal256(prec, scale) => {
-                        make_list_builder!(@make_decimal: Decimal256(prec, scale))
-                    }
                     DataType::Utf8 => make_list_builder!(@make: String),
                     DataType::LargeUtf8 => make_list_builder!(@make: LargeString),
                     DataType::Binary => make_list_builder!(@make: Binary),
@@ -739,9 +731,9 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
                 ))
             }};
             (@make_decimal: $arrowty:ident($prec:expr, $scale:expr)) => {{
-                type TypeBuilder = paste! {[<Configured $arrowty Builder >]};
+                type TypeBuilder = paste! {[< $arrowty Builder >]};
                 Box::new(ListBuilder::with_capacity(
-                    TypeBuilder::with_capacity(0, $prec, $scale),
+                    TypeBuilder::new().with_data_type(DataType::Decimal128($prec, $scale)),
                     batch_size,
                 ))
             }};
@@ -815,12 +807,6 @@ fn new_array_builder(dt: &DataType, batch_size: usize) -> Box<dyn ArrayBuilder> 
 
     match dt {
         DataType::Null => Box::new(NullBuilder::new()),
-        DataType::Decimal128(precision, scale) => Box::new(
-            ConfiguredDecimal128Builder::with_capacity(0, *precision, *scale),
-        ),
-        DataType::Decimal256(precision, scale) => Box::new(
-            ConfiguredDecimal256Builder::with_capacity(0, *precision, *scale),
-        ),
         DataType::Dictionary(key_type, value_type) => {
             make_dictionary_builder!(key_type, value_type)
         }
@@ -897,85 +883,6 @@ impl ArrayBuilder for NullBuilder {
         self
     }
 }
-
-pub struct ConfiguredDecimalBuilder<T: DecimalType> {
-    inner: PrimitiveBuilder<T>,
-    precision: u8,
-    scale: i8,
-}
-
-#[allow(unused)]
-impl<T: DecimalType> ConfiguredDecimalBuilder<T> {
-    pub fn with_capacity(capacity: usize, precision: u8, scale: i8) -> Self {
-        Self {
-            inner: PrimitiveBuilder::with_capacity(capacity),
-            precision,
-            scale,
-        }
-    }
-
-    pub fn append_value(&mut self, v: T::Native) {
-        self.inner.append_value(v)
-    }
-
-    pub fn append_option(&mut self, v: Option<T::Native>) {
-        self.inner.append_option(v)
-    }
-
-    pub fn append_null(&mut self) {
-        self.inner.append_null()
-    }
-
-    pub fn precision(&self) -> u8 {
-        self.precision
-    }
-
-    pub fn scale(&self) -> i8 {
-        self.scale
-    }
-}
-
-impl<T: DecimalType> ArrayBuilder for ConfiguredDecimalBuilder<T> {
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    fn finish(&mut self) -> ArrayRef {
-        Arc::new(
-            self.inner
-                .finish()
-                .with_precision_and_scale(self.precision, self.scale)
-                .unwrap(),
-        )
-    }
-
-    fn finish_cloned(&self) -> ArrayRef {
-        Arc::new(
-            self.inner
-                .finish_cloned()
-                .with_precision_and_scale(self.precision, self.scale)
-                .unwrap(),
-        )
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_box_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-}
-pub type ConfiguredDecimal128Builder = ConfiguredDecimalBuilder<Decimal128Type>;
-pub type ConfiguredDecimal256Builder = ConfiguredDecimalBuilder<Decimal256Type>;
 
 #[test]
 fn test_struct_array_from_vec() {
