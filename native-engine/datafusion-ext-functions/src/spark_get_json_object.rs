@@ -72,14 +72,12 @@ enum HiveGetJsonObjectError {
 
 struct HiveGetJsonObjectEvaluator {
     matchers: Vec<HiveGetJsonObjectMatcher>,
-    buffer: Vec<serde_json::Value>,
 }
 
 impl HiveGetJsonObjectEvaluator {
     fn try_new(json_path: &str) -> std::result::Result<Self, HiveGetJsonObjectError> {
         let mut evaluator = Self {
             matchers: vec![],
-            buffer: vec![],
         };
         let chars = json_path.chars();
         let mut peekable = chars.peekable();
@@ -105,29 +103,25 @@ impl HiveGetJsonObjectEvaluator {
         &mut self,
         json_str: &str,
     ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
-        let value: serde_json::Value = serde_json::from_str(json_str)
+        let mut value: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|_| HiveGetJsonObjectError::InvalidInput("invalid json string".to_string()))?;
-        let mut current = &value;
 
         for matcher in &self.matchers {
-            current = matcher.evaluate(current, unsafe {
-                // safety - bypass rust borrow checker, as items in buffer are never
-                // dropped in matcher.evaluate().
-                &mut *(&mut self.buffer as *mut Vec<serde_json::Value>)
-            });
+            if !value.is_null() {
+                value = matcher.evaluate(value);
+            }
         }
-        let ret = match current {
+        let ret = match value {
             serde_json::Value::Null => Ok(None),
-            serde_json::Value::String(string) => Ok(Some(string.to_string())),
+            serde_json::Value::String(string) => Ok(Some(string)),
             serde_json::Value::Number(number) => Ok(Some(number.to_string())),
             serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                serde_json::to_string(current).map(Some).map_err(|_| {
+                serde_json::to_string(&value).map(Some).map_err(|_| {
                     HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
                 })
             }
         };
-        self.buffer.clear();
         ret
     }
 }
@@ -210,51 +204,40 @@ impl HiveGetJsonObjectMatcher {
         }
     }
 
-    fn evaluate<'a>(
-        &self,
-        value: &'a serde_json::Value,
-        buffer: &'a mut Vec<serde_json::Value>,
-    ) -> &'a serde_json::Value {
+    fn evaluate(&self, value: serde_json::Value) -> serde_json::Value {
         match self {
             HiveGetJsonObjectMatcher::Root => {
                 return value;
             }
             HiveGetJsonObjectMatcher::Child(child) => {
-                if let serde_json::Value::Object(object) = &value {
-                    if let Some(child) = object.get(child) {
-                        return child;
-                    }
-                }
-                if let serde_json::Value::Array(array) = &value {
-                    buffer.push(*Box::new(serde_json::Value::Array(
-                        array
-                            .iter()
-                            .map(|item| {
-                                if let serde_json::Value::Object(object) = item {
-                                    object.get(child).cloned().unwrap_or_default()
-                                } else {
-                                    serde_json::Value::Null
-                                }
-                            })
-                            .collect(),
-                    )));
-                    return buffer.last().as_ref().unwrap();
+                if let serde_json::Value::Object(mut object) = value {
+                    return object.remove(child).unwrap_or_default();
+
+                } else if let serde_json::Value::Array(array) = value {
+                    return serde_json::Value::Array(array
+                        .into_iter()
+                        .map(|item| {
+                            if let serde_json::Value::Object(mut object) = item {
+                                object.remove(child).unwrap_or_default()
+                            } else {
+                                serde_json::Value::Null
+                            }
+                        })
+                        .collect());
                 }
             }
             HiveGetJsonObjectMatcher::Subscript(index) => {
-                if let serde_json::Value::Array(array) = &value {
-                    if let Some(child) = array.get(*index) {
-                        return child;
-                    }
+                if let serde_json::Value::Array(array) = value {
+                    return array.into_iter().skip(*index).next().unwrap_or_default();
                 }
             }
             HiveGetJsonObjectMatcher::SubscriptAll => {
-                if let serde_json::Value::Array(_) = &value {
+                if let serde_json::Value::Array(_) = value {
                     return value;
                 }
             }
         }
-        &serde_json::Value::Null
+        serde_json::Value::Null
     }
 }
 
