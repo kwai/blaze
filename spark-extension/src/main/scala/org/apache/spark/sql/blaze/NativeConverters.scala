@@ -800,10 +800,10 @@ object NativeConverters extends Logging {
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
 
       // TODO: datafusion's upper/lower() has different behavior from spark
-      case e: Lower =>
-        logInfo(s"lower children is: ${e.children} and type is: ${e.dataType}")
-        buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
-      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
+//      case e: Lower =>
+//        logInfo(s"lower children is: ${e.children} and type is: ${e.dataType}")
+//        buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
+//      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
 
       case e: StringTrim =>
         buildScalarFunction(pb.ScalarFunction.Trim, e.srcStr +: e.trimStr.toSeq, e.dataType)
