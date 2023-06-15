@@ -1051,10 +1051,10 @@ object NativeConverters extends Logging {
                 Literal(1))))
         }
 
-      case CollectList(child, _, _) =>
+      case CollectList(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_LIST)
         aggBuilder.addChildren(convertExpr(child))
-      case CollectSet(child, _, _) =>
+      case CollectSet(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_SET)
         aggBuilder.addChildren(convertExpr(child))
     }
