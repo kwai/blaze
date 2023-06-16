@@ -66,7 +66,7 @@ object BlazeConvertStrategy extends Logging {
 
       val converted = convertSparkPlan(exec.withNewChildren(children))
       converted match {
-        case e if NativeHelper.isNative(e) =>
+        case e if NativeHelper.isNative(e) || e.getTagValue(convertibleTag).contains(true) =>
           exec.setTagValue(convertibleTag, true)
 
         case _ =>

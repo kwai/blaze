@@ -504,7 +504,9 @@ object BlazeConverters extends Logging {
           logWarning(
             s"Error projecting resultExpressions, failback to non-native projection: " +
               s"${e.getMessage}")
-          return ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
+          val proj = ProjectExec(exec.resultExpressions, nativeAggr)
+          proj.setTagValue(convertibleTag, true)
+          return proj
       }
     }
     nativeAggr
@@ -543,7 +545,9 @@ object BlazeConverters extends Logging {
           logWarning(
             s"Error projecting resultExpressions, failback to non-native projection: " +
               s"${e.getMessage}")
-          return ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
+          val proj = ProjectExec(exec.resultExpressions, nativeAggr)
+          proj.setTagValue(convertibleTag, true)
+          return proj
       }
     }
     nativeAggr
@@ -582,7 +586,9 @@ object BlazeConverters extends Logging {
           logWarning(
             s"Error projecting resultExpressions, failback to non-native projection: " +
               s"${e.getMessage}")
-          return ConvertToNativeExec(ProjectExec(exec.resultExpressions, nativeAggr))
+          val proj = ProjectExec(exec.resultExpressions, nativeAggr)
+          proj.setTagValue(convertibleTag, true)
+          return proj
       }
     }
     nativeAggr
