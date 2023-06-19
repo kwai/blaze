@@ -40,6 +40,11 @@ import org.blaze.protobuf.SortMergeJoinExecNode
 import org.blaze.protobuf.SortOptions
 
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.plans.ExistenceJoin
+import org.apache.spark.sql.catalyst.plans.FullOuter
+import org.apache.spark.sql.catalyst.plans.InnerLike
+import org.apache.spark.sql.catalyst.plans.LeftAnti
+import org.apache.spark.sql.catalyst.plans.LeftSemi
 
 case class NativeSortMergeJoinExec(
     override val left: SparkPlan,
@@ -99,13 +104,25 @@ case class NativeSortMergeJoinExec(
       rightRDD.partitions
     }
     val dependencies = Seq(new OneToOneDependency(leftRDD), new OneToOneDependency(rightRDD))
+    val isShuffleReadFull = joinType match {
+      case _: InnerLike =>
+        logInfo ("SortMergeJoin Inner mark shuffleReadFull = false")
+        false
+      case LeftAnti | LeftSemi =>
+        logInfo ("SortMergeJoin LeftAnti|LeftSemi mark shuffleReadFull = false")
+        false
+      case _: ExistenceJoin =>
+        logInfo ("SortMergeJoin ExistenceJoin mark shuffleReadFull = false")
+        false
+      case _ => leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull
+    }
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       partitions,
       dependencies,
-      leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull,
+      isShuffleReadFull,
       (partition, taskContext) => {
         val leftPartition = leftRDD.partitions(partition.index)
         val leftChild = leftRDD.nativePlan(leftPartition, taskContext)
