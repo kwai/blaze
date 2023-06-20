@@ -73,7 +73,6 @@ use crate::{from_proto_binary_op, proto_error};
 use datafusion_ext_exprs::cast::TryCastExpr;
 use datafusion_ext_exprs::get_indexed_field::GetIndexedFieldExpr;
 use datafusion_ext_exprs::get_map_value::GetMapValueExpr;
-use datafusion_ext_exprs::iif::IIfExpr;
 use datafusion_ext_exprs::named_struct::NamedStructExpr;
 use datafusion_ext_exprs::spark_udf_wrapper::SparkUDFWrapperExpr;
 use datafusion_ext_exprs::string_contains::StringContainsExpr;
@@ -907,13 +906,6 @@ fn try_parse_physical_expr(
             let l = try_parse_physical_expr_box_required(&e.left, input_schema)?;
             let r = try_parse_physical_expr_box_required(&e.right, input_schema)?;
             Arc::new(SCOrExpr::new(l, r))
-        }
-        ExprType::IifExpr(e) => {
-            let condition = try_parse_physical_expr_box_required(&e.condition, input_schema)?;
-            let truthy = try_parse_physical_expr_box_required(&e.truthy, input_schema)?;
-            let falsy = try_parse_physical_expr_box_required(&e.falsy, input_schema)?;
-            let data_type = convert_required!(e.data_type)?;
-            Arc::new(IIfExpr::new(condition, truthy, falsy, data_type))
         }
         ExprType::LikeExpr(e) => Arc::new(LikeExpr::new(
             e.negated,

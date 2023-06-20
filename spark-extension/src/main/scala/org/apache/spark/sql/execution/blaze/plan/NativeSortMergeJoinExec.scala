@@ -106,13 +106,13 @@ case class NativeSortMergeJoinExec(
     val dependencies = Seq(new OneToOneDependency(leftRDD), new OneToOneDependency(rightRDD))
     val isShuffleReadFull = joinType match {
       case _: InnerLike =>
-        logInfo ("SortMergeJoin Inner mark shuffleReadFull = false")
+        logInfo("SortMergeJoin Inner mark shuffleReadFull = false")
         false
       case LeftAnti | LeftSemi =>
-        logInfo ("SortMergeJoin LeftAnti|LeftSemi mark shuffleReadFull = false")
+        logInfo("SortMergeJoin LeftAnti|LeftSemi mark shuffleReadFull = false")
         false
       case _: ExistenceJoin =>
-        logInfo ("SortMergeJoin ExistenceJoin mark shuffleReadFull = false")
+        logInfo("SortMergeJoin ExistenceJoin mark shuffleReadFull = false")
         false
       case _ => leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull
     }

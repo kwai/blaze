@@ -903,16 +903,10 @@ object NativeConverters extends Logging {
 
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
 
-      case e @ If(predicate, trueValue, falseValue) =>
-        buildExprNode {
-          _.setIifExpr(
-            pb.IIfExprNode
-              .newBuilder()
-              .setCondition(convertExprWithFallback(predicate, isPruningExpr, fallback))
-              .setTruthy(convertExprWithFallback(trueValue, isPruningExpr, fallback))
-              .setFalsy(convertExprWithFallback(falseValue, isPruningExpr, fallback))
-              .setDataType(convertDataType(e.dataType)))
-        }
+      case If(predicate, trueValue, falseValue) =>
+        val caseWhen = CaseWhen(Seq((predicate, trueValue)), falseValue)
+        convertExprWithFallback(caseWhen, isPruningExpr, fallback)
+
       case CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()
         val whenThens = branches.map {
