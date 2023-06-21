@@ -551,8 +551,10 @@ object NativeConverters extends Logging {
         convertExprWithFallback(value, isPruningExpr, fallback)
 
       // cast
-      // not performing native cast for timestamps (will use UDFWrapper instead)
-      case Cast(child, dataType, _) if !Seq(dataType, child.dataType).contains(TimestampType) =>
+      // not performing native cast for timestamp/dates (will use UDFWrapper instead)
+      case Cast(child, dataType, _)
+          if !Seq(dataType, child.dataType).contains(TimestampType) &&
+            !Seq(dataType, child.dataType).contains(DateType) =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode
