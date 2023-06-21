@@ -119,6 +119,11 @@ case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan]
           turnOffBlazeWithReason(p.conf, BlazeMissPatterns.ReadEncryptedTable)
         }
 
+        // skip scan dp_dd.*** table because parquet statics don't get min/max info
+        if (p.catalogTable.map(_.identifier.unquotedString).getOrElse("").contains("dp_dd")) {
+          turnOffBlazeWithReason(p.conf, BlazeMissPatterns.ReadHbaseTable)
+        }
+
       case h: HiveTableRelation =>
         turnOffBlazeWithReason(h.conf, BlazeMissPatterns.NonParquetFormat)
 
@@ -137,5 +142,6 @@ case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan]
     type BlazeMissPatterns = String
     val NonParquetFormat = "NonParquetFormat"
     val ReadEncryptedTable = "ReadEncryptedTable"
+    val ReadHbaseTable = "ReadHbaseTable"
   }
 }
