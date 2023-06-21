@@ -45,6 +45,10 @@ pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
                 &DataType::Float64,
             )?
         }
+        (&DataType::Boolean, DataType::Utf8) => {
+            // spark compatible boolean to string cast
+            try_cast_boolean_array_to_string(array, cast_type)?
+        }
         (&DataType::List(_), DataType::List(to_field)) => {
             let list = as_list_array(array);
             let casted_items = cast(list.values(), to_field.data_type())?;
@@ -164,6 +168,19 @@ fn try_cast_decimal_array_to_string(array: &dyn Array, cast_type: &DataType) -> 
             }
         }
         return Ok(Arc::new(builder.finish()));
+    }
+    unreachable!("cast_type must be DataType::Utf8")
+}
+
+fn try_cast_boolean_array_to_string(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
+    if let &DataType::Utf8 = cast_type {
+        let array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+        return Ok(Arc::new(
+            array
+                .iter()
+                .map(|value| value.map(|value| if value { "true" } else { "false" }))
+                .collect::<StringArray>(),
+        ));
     }
     unreachable!("cast_type must be DataType::Utf8")
 }
