@@ -464,6 +464,10 @@ impl JavaClasses<'static> {
         });
     }
 
+    pub fn inited() -> bool {
+        JNI_JAVA_CLASSES.get().is_some()
+    }
+
     pub fn get() -> &'static JavaClasses<'static> {
         unsafe {
             // safety: JNI_JAVA_CLASSES must be initialized frist

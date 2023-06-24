@@ -19,6 +19,10 @@ use once_cell::sync::OnceCell;
 
 pub mod jni_bridge;
 
+pub fn is_jni_bridge_inited() -> bool {
+    jni_bridge::JavaClasses::inited()
+}
+
 pub fn is_task_running() -> bool {
     fn is_task_running_impl() -> Result<bool> {
         if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE {
