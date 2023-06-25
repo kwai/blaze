@@ -65,6 +65,7 @@ impl MemManager {
         // safety:
         // get_consumer_info() is guaranteed not to be called before this operation
         #[allow(clippy::cast_ref_to_mut)]
+        #[allow(cast_ref_to_mut)]
         unsafe {
             let consumer_mut =
                 &mut *(consumer.as_ref() as *const dyn MemConsumer as *mut dyn MemConsumer);
