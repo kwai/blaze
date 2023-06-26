@@ -160,7 +160,7 @@ object BlazeConverters extends Logging {
 
       case e: HashAggregateExec if enableAggr => // hash aggregate
         val convertedAgg = tryConvert(e, convertHashAggregateExec)
-        if (!convertedAgg.getTagValue(convertibleTag).contains(true)) {
+        if (!e.getTagValue(convertibleTag).contains(true)) {
           if (e.requiredChildDistributionExpressions.isDefined) {
             assert(
               NativeAggExec.findPreviousNativeAggrExec(e).isEmpty,
