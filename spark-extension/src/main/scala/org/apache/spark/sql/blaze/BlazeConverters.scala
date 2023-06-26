@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.apache.spark.sql.execution.CollectLimitExec
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.GlobalLimitExec
@@ -52,10 +51,10 @@ import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
-import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
@@ -82,7 +81,6 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
-import org.apache.spark.sql.types.AtomicType
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -159,12 +157,40 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertGlobalLimitExec)
       case e: TakeOrderedAndProjectExec if enableTakeOrderedAndProject =>
         tryConvert(e, convertTakeOrderedAndProjectExec)
+
       case e: HashAggregateExec if enableAggr => // hash aggregate
-        tryConvert(e, convertHashAggregateExec)
+        val convertedAgg = tryConvert(e, convertHashAggregateExec)
+        if (!convertedAgg.getTagValue(convertibleTag).contains(true)) {
+          if (e.requiredChildDistributionExpressions.isDefined) {
+            assert(
+              NativeAggExec.findPreviousNativeAggrExec(e).isEmpty,
+              "native agg followed by non-native agg is forbidden")
+          }
+        }
+        convertedAgg
+
       case e: ObjectHashAggregateExec if enableAggr => // object hash aggregate
-        tryConvert(e, convertObjectHashAggregateExec)
+        val convertedAgg = tryConvert(e, convertObjectHashAggregateExec)
+        if (!e.getTagValue(convertibleTag).contains(true)) {
+          if (e.requiredChildDistributionExpressions.isDefined) {
+            assert(
+              NativeAggExec.findPreviousNativeAggrExec(e).isEmpty,
+              "native agg followed by non-native agg is forbidden")
+          }
+        }
+        convertedAgg
+
       case e: SortAggregateExec if enableAggr => // sort aggregate
-        tryConvert(e, convertSortAggregateExec)
+        val convertedAgg = tryConvert(e, convertSortAggregateExec)
+        if (!e.getTagValue(convertibleTag).contains(true)) {
+          if (e.requiredChildDistributionExpressions.isDefined) {
+            assert(
+              NativeAggExec.findPreviousNativeAggrExec(e).isEmpty,
+              "native agg followed by non-native agg is forbidden")
+          }
+        }
+        convertedAgg
+
       case e: ExpandExec if enableExpand => // expand
         tryConvert(e, convertExpandExec)
       case e: WindowExec if enableWindow => // window
@@ -474,6 +500,10 @@ object BlazeConverters extends Logging {
     logDebug(
       s"Converting HashAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
 
+    // ensure native partial agg exists
+    if (exec.requiredChildDistributionExpressions.isDefined) {
+      assert(NativeAggExec.findPreviousNativeAggrExec(exec).isDefined)
+    }
     val nativeAggr = NativeAggExec(
       NativeAggExec.HashAgg,
       exec.requiredChildDistributionExpressions,
@@ -515,6 +545,11 @@ object BlazeConverters extends Logging {
   def convertObjectHashAggregateExec(exec: ObjectHashAggregateExec): SparkPlan = {
     logDebug(
       s"Converting ObjectHashAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+
+    // ensure native partial agg exists
+    if (exec.requiredChildDistributionExpressions.isDefined) {
+      assert(NativeAggExec.findPreviousNativeAggrExec(exec).isDefined)
+    }
     val nativeAggr = NativeAggExec(
       NativeAggExec.HashAgg,
       exec.requiredChildDistributionExpressions,
@@ -556,6 +591,11 @@ object BlazeConverters extends Logging {
   def convertSortAggregateExec(exec: SortAggregateExec): SparkPlan = {
     logDebug(
       s"Converting SortAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+
+    // ensure native partial agg exists
+    if (exec.requiredChildDistributionExpressions.isDefined) {
+      assert(NativeAggExec.findPreviousNativeAggrExec(exec).isDefined)
+    }
     val nativeAggr = NativeAggExec(
       NativeAggExec.SortAgg,
       exec.requiredChildDistributionExpressions,

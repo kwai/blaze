@@ -50,6 +50,7 @@ import org.apache.spark.sql.types.DataType
 import org.blaze.{protobuf => pb}
 
 import org.apache.spark.sql.catalyst.expressions.ExprId
+import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeAggExec._
 import org.apache.spark.sql.types.BinaryType
 
@@ -78,28 +79,6 @@ case class NativeAggExec(
       case Some(exprs) if exprs.isEmpty => AllTuples :: Nil
       case Some(exprs) => ClusteredDistribution(exprs) :: Nil
       case None => UnspecifiedDistribution :: Nil
-    }
-  }
-
-  private val _ensurePreviousNativeAggrExecExists: Unit = {
-    @tailrec
-    def findPreviousNativeAggrExec(exec: SparkPlan = this.child): NativeAggExec = {
-      findPreviousNativeAggrExec(exec match {
-        case e: NativeAggExec => return e
-        case e: ReusedExchangeExec => e.child
-        case e: NativeShuffleExchangeBase => e.child
-        case e: NativeSortExec if execMode == SortAgg => e.child
-        case e: UnaryExecNode if e.nodeName.contains("QueryStage") => e.child
-        case e: UnaryExecNode if e.nodeName.contains("InputAdapter") => e.child
-        case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
-          Shims.get.sparkPlanShims.getChildStage(stageInput)
-        case e =>
-          throw new RuntimeException(
-            s"cannot find previous native aggregate, matching: ${e.getClass}")
-      })
-    }
-    if (requiredChildDistributionExpressions.isDefined) {
-      assert(findPreviousNativeAggrExec() != null)
     }
   }
 
@@ -199,6 +178,7 @@ case class NativeAggExec(
 }
 
 object NativeAggExec {
+
   val AGG_BUF_COLUMN_EXPR_ID = 9223372036854775807L
   val AGG_BUF_COLUMN_NAME = s"#$AGG_BUF_COLUMN_EXPR_ID"
 
@@ -266,5 +246,31 @@ object NativeAggExec {
           .setReturnType(NativeConverters.convertDataType(e.dataType)))
       .build()
     NativeExprWrapper(placeholder, e.dataType, e.nullable)
+  }
+
+  def findPreviousNativeAggrExec(exec: SparkPlan): Option[NativeAggExec] = {
+    val isSortExec = exec.isInstanceOf[SortAggregateExec]
+
+    @tailrec
+    def findRecursive(exec: SparkPlan): Option[NativeAggExec] = {
+      exec match {
+        case e: NativeAggExec => Some(e)
+        case e: ReusedExchangeExec => findRecursive(e.child)
+        case e: NativeShuffleExchangeBase => findRecursive(e.child)
+        case e: NativeSortExec if isSortExec => findRecursive(e.child)
+        case e: UnaryExecNode if e.nodeName.contains("QueryStage") => findRecursive(e.child)
+        case e: UnaryExecNode if e.nodeName.contains("InputAdapter") => findRecursive(e.child)
+        case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
+          findRecursive(Shims.get.sparkPlanShims.getChildStage(stageInput))
+        case _ =>
+          None
+      }
+    }
+
+    // cannot find from a partial agg
+    if (exec.requiredChildDistribution.isEmpty) {
+      return None
+    }
+    findRecursive(exec.children.head)
   }
 }
