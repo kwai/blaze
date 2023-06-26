@@ -19,8 +19,8 @@ RUN chmod +x /rustup-init
 RUN /rustup-init -y --default-toolchain nightly-x86_64-unknown-linux-gnu
 
 # install java/gradle
-RUN yum install -y java-1.8.0-openjdk
-RUN echo 'export JAVA_HOME="$(echo /usr/lib/jvm/java-1.8.0-openjdk*)"' >> ~/.bashrc
+RUN yum install -y java-1.8.0-openjdk java-1.8.0-openjdk-devel
+RUN echo 'export JAVA_HOME="/usr/lib/jvm/java-1.8.0-openjdk"' >> ~/.bashrc
 
 # install gradle
 RUN wget -O /gradle-7.4.2-bin.zip https://mirrors.huaweicloud.com/gradle/gradle-7.4.2-bin.zip
@@ -41,4 +41,3 @@ RUN cd /mold-1.9.0 && source ~/.bashrc && cmake3 -DCMAKE_BUILD_TYPE=Release -DCM
 RUN ln -s /usr/local/bin/ld.mold /usr/bin/ld.lld
 RUN echo '[target.x86_64-unknown-linux-gnu]' >> ~/.cargo/config
 RUN echo 'rustflags = ["-C", "link-arg=-fuse-ld=lld"]' >> ~/.cargo/config
-
