@@ -17,13 +17,11 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-import java.io.FileNotFoundException
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicReference
 
-import com.google.protobuf.CodedOutputStream
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
@@ -34,8 +32,8 @@ import org.blaze.protobuf.TaskDefinition
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamImportIterator
-import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.CompletionIterator
+import org.apache.spark.util.Utils
 
 case class BlazeCallNativeWrapper(
     nativePlan: PhysicalPlanNode,
@@ -132,30 +130,26 @@ object BlazeCallNativeWrapper extends Logging {
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
         s"memoryFraction=${NativeHelper.memoryFraction}")
 
-    BlazeCallNativeWrapper.load("blaze")
+    BlazeCallNativeWrapper.loadLibBlaze()
     JniBridge.initNative(
       NativeHelper.batchSize,
       NativeHelper.nativeMemory,
       NativeHelper.memoryFraction)
   }
 
-  private def load(name: String): Unit = {
-    val libraryToLoad = System.mapLibraryName(name)
+  private def loadLibBlaze(): Unit = {
+    val libName = System.mapLibraryName("blaze")
     try {
-      val temp =
-        File.createTempFile("jnilib-", ".tmp", new File(System.getProperty("java.io.tmpdir")))
-      val is = classOf[NativeSupports].getClassLoader.getResourceAsStream(libraryToLoad)
-      try {
-        if (is == null) {
-          throw new FileNotFoundException(libraryToLoad)
-        }
-        Files.copy(is, temp.toPath, StandardCopyOption.REPLACE_EXISTING)
-        System.load(temp.getAbsolutePath)
-      } finally {
-        if (is != null) {
-          is.close()
-        }
+      val classLoader = classOf[NativeSupports].getClassLoader
+      val tempFile = File.createTempFile("libblaze-", ".tmp")
+      tempFile.deleteOnExit()
+
+      Utils.tryWithResource(classLoader.getResourceAsStream(libName)) { is =>
+        assert(is != null, s"cannot load $libName")
+        Files.copy(is, tempFile.toPath, StandardCopyOption.REPLACE_EXISTING)
       }
+      System.load(tempFile.getAbsolutePath)
+
     } catch {
       case e: IOException =>
         throw new IllegalStateException("error loading native libraries: " + e)
