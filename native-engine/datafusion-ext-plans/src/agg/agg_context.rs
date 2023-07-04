@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggBuf};
+use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AggBuf, AccumInitialValue};
 use crate::agg::{
     Agg, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr, AGG_BUF_COLUMN_NAME,
 };
@@ -117,12 +117,12 @@ impl AggContext {
             .concat(),
         ));
 
-        let initial_accums: Box<[ScalarValue]> = aggs
+        let initial_accums: Box<[AccumInitialValue]> = aggs
             .iter()
             .flat_map(|agg: &AggExpr| agg.agg.accums_initial())
             .cloned()
             .collect();
-        let (initial_agg_buf, agg_buf_addrs) = create_agg_buf_from_scalar(&initial_accums)?;
+        let (initial_agg_buf, agg_buf_addrs) = create_agg_buf_from_initial_value(&initial_accums)?;
 
         // in distinct aggregrations, partial and partial-merge may happen at the same
         // time, i.e:
@@ -139,13 +139,13 @@ impl AggContext {
         // need to maintain a standalone agg_buf for the input.
         // the addrs is not used because the extra fields are always in the last. the
         // processing addrs can be reused.
-        let initial_input_accums: Box<[ScalarValue]> = need_partial_merge_aggs
+        let initial_input_accums: Box<[AccumInitialValue]> = need_partial_merge_aggs
             .iter()
             .flat_map(|(_, agg)| agg.accums_initial())
             .cloned()
             .collect();
         let (initial_input_agg_buf, _input_agg_buf_addrs) =
-            create_agg_buf_from_scalar(&initial_input_accums)?;
+            create_agg_buf_from_initial_value(&initial_input_accums)?;
 
         let mut agg_buf_addr_offsets = Vec::with_capacity(aggs.len());
         let mut agg_buf_addr_counts = Vec::with_capacity(aggs.len());
@@ -240,7 +240,7 @@ impl AggContext {
         } else {
             // output agg_buf as a binary column
             let mut binary_array = BinaryBuilder::with_capacity(records.len(), 0);
-            for record in records.iter() {
+            for record in records.iter_mut() {
                 let agg_buf_bytes = record.agg_buf.save_to_bytes()?;
                 binary_array.append_value(agg_buf_bytes);
             }

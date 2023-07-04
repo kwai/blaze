@@ -893,8 +893,5 @@ fn test_struct_array_from_vec() {
         Some("mark"),
     ]));
     let ints: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
-
     let arr = StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())]).unwrap();
-
-    eprintln!("ans is: {:#?}", arr.is_valid(1))
 }

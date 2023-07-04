@@ -50,6 +50,7 @@ import org.apache.spark.sql.types.DataType
 import org.blaze.{protobuf => pb}
 
 import org.apache.spark.sql.catalyst.expressions.ExprId
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeAggExec._
 import org.apache.spark.sql.types.BinaryType
@@ -236,16 +237,20 @@ object NativeAggExec {
   }
 
   private def createPlaceholder(e: Expression): Expression = {
-    val placeholder = pb.PhysicalExprNode
-      .newBuilder()
-      .setScalarFunction(
-        pb.PhysicalScalarFunctionNode
+    e match {
+      case _: Literal => e // no need to create placeholder
+      case _ =>
+        val placeholder = pb.PhysicalExprNode
           .newBuilder()
-          .setFun(pb.ScalarFunction.SparkExtFunctions)
-          .setName("Placeholder")
-          .setReturnType(NativeConverters.convertDataType(e.dataType)))
-      .build()
-    NativeExprWrapper(placeholder, e.dataType, e.nullable)
+          .setScalarFunction(
+            pb.PhysicalScalarFunctionNode
+              .newBuilder()
+              .setFun(pb.ScalarFunction.SparkExtFunctions)
+              .setName("Placeholder")
+              .setReturnType(NativeConverters.convertDataType(e.dataType)))
+          .build()
+        NativeExprWrapper(placeholder, e.dataType, e.nullable)
+    }
   }
 
   def findPreviousNativeAggrExec(exec: SparkPlan): Option[NativeAggExec] = {

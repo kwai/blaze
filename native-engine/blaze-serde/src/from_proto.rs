@@ -551,6 +551,12 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 protobuf::AggFunction::CollectSet => {
                                     WindowFunction::Agg(AggFunction::CollectSet)
                                 }
+                                protobuf::AggFunction::First => {
+                                    WindowFunction::Agg(AggFunction::First)
+                                }
+                                protobuf::AggFunction::FirstIgnoresNull => {
+                                    WindowFunction::Agg(AggFunction::FirstIgnoresNull)
+                                }
                             },
                         };
                         Ok::<_, Self::Error>(WindowExpr::new(window_func, children, field))

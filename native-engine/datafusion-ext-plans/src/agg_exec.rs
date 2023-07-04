@@ -446,7 +446,7 @@ mod test {
     use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
-    use datafusion::{assert_batches_sorted_eq};
+    use datafusion::{assert_batches_eq, assert_batches_sorted_eq};
     use datafusion::physical_expr::expressions::Column;
     use crate::agg::AggExecMode::{HashAgg};
     use crate::agg::{AggExpr, AggFunction, create_agg, GroupingExpr};
@@ -512,7 +512,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_agg_exec_sum() -> Result<()>  {
+    async fn test_agg() -> Result<()>  {
         MemManager::init(10000);
         let input = build_table(
             ("a", &vec![2, 9, 3, 1, 0, 4, 6]),
@@ -572,6 +572,12 @@ mod test {
             &input.schema(),
         ).unwrap();
 
+        let agg_agg_expr_firstign = create_agg(
+            AggFunction::FirstIgnoresNull,
+            &[phys_expr::col("h",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
         let aggs_agg_expr = vec![
             AggExpr {
                 field_name: "agg_agg_expr".to_string(),
@@ -607,6 +613,11 @@ mod test {
                 field_name: "agg_agg_expr".to_string(),
                 mode: Partial,
                 agg: agg_agg_expr_collectset,
+            },
+            AggExpr {
+                field_name: "agg_agg_firstign".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_firstign,
             },
         ];
 
@@ -676,6 +687,12 @@ mod test {
             &input_1.schema(),
         ).unwrap();
 
+        let agg_agg_expr_8 = create_agg(
+            AggFunction::FirstIgnoresNull,
+            &[phys_expr::col("h",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
         let aggs_agg_expr_1 = vec![
             AggExpr {
                 field_name: "Sum(a)".to_string(),
@@ -712,6 +729,11 @@ mod test {
                 mode: Final,
                 agg: agg_agg_expr_7
             },
+            AggExpr {
+                field_name: "FirstIgn(h)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_8,
+            },
         ];
 
         let agg_exec_final = AggExec::try_new(
@@ -727,17 +749,16 @@ mod test {
         let output_final = agg_exec_final.execute(0, task_ctx)?;
         let batches = common::collect(output_final).await?;
         let expected = vec![
-            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+",
-            "| grouping_column(c) | Sum(a) | Avg(b) | Max(d) | Min(e) | Count(f) | CollectList(g) | CollectSet(h) |",
-            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+",
-            "| 2                  | 4      | 6.0    | -2     | -2     | 1        | [5]            | [5]           |",
-            "| 5                  | 6      | 3.0    | 5      | 5      | 1        | [4]            | [4]           |",
-            "| 7                  | 5      | 0.5    | 71     | -7     | 2        | [6, 6]         | [6]           |",
-            "| 8                  | 10     | 1.5    | 86     | 83     | 2        | [3, 3]         | [3]           |",
-            "| 9                  | 0      | 5.0    | 90     | 90     | 1        | [1]            | [1]           |",
-            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+",
+            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+-------------+",
+            "| grouping_column(c) | Sum(a) | Avg(b) | Max(d) | Min(e) | Count(f) | CollectList(g) | CollectSet(h) | FirstIgn(h) |",
+            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+-------------+",
+            "| 2                  | 4      | 6.0    | -2     | -2     | 1        | [5]            | [5]           | 5           |",
+            "| 5                  | 6      | 3.0    | 5      | 5      | 1        | [4]            | [4]           | 4           |",
+            "| 7                  | 5      | 0.5    | 71     | -7     | 2        | [6, 6]         | [6]           | 6           |",
+            "| 8                  | 10     | 1.5    | 86     | 83     | 2        | [3, 3]         | [3]           | 3           |",
+            "| 9                  | 0      | 5.0    | 90     | 90     | 1        | [1]            | [1]           | 1           |",
+            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+-------------+",
         ];
-
         assert_batches_sorted_eq!(expected, &batches);
 
         Ok(())

@@ -19,6 +19,4 @@ package org.apache.spark.sql.execution.blaze.shuffle
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 
 class BlazeShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
-  extends BlazeShuffleWriterBase[K, V](metrics) {
-
-}
+    extends BlazeShuffleWriterBase[K, V](metrics) {}

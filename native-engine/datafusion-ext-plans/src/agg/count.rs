@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::AggBuf;
+use crate::agg::agg_buf::{AccumInitialValue, AggBuf};
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -25,19 +25,12 @@ use std::sync::Arc;
 pub struct AggCount {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
-    accums_initial: Vec<ScalarValue>,
 }
 
 impl AggCount {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         assert_eq!(data_type, DataType::Int64);
-
-        let accums_initial = vec![ScalarValue::Int64(Some(0))];
-        Ok(Self {
-            child,
-            data_type,
-            accums_initial,
-        })
+        Ok(Self {child, data_type})
     }
 }
 
@@ -64,8 +57,8 @@ impl Agg for AggCount {
         false
     }
 
-    fn accums_initial(&self) -> &[ScalarValue] {
-        &self.accums_initial
+    fn accums_initial(&self) -> &[AccumInitialValue] {
+        &[AccumInitialValue::Scalar(ScalarValue::Int64(Some(0)))]
     }
 
     fn partial_update(
@@ -76,7 +69,9 @@ impl Agg for AggCount {
         row_idx: usize,
     ) -> Result<()> {
         let addr = agg_buf_addrs[0];
-        *agg_buf.fixed_value_mut::<i64>(addr) += values[0].is_valid(row_idx) as i64;
+        if values[0].is_valid(row_idx) {
+            agg_buf.update_fixed_value::<i64>(addr, |v| v + 1);
+        }
         Ok(())
     }
 
@@ -87,7 +82,8 @@ impl Agg for AggCount {
         values: &[ArrayRef],
     ) -> Result<()> {
         let addr = agg_buf_addrs[0];
-        *agg_buf.fixed_value_mut::<i64>(addr) += (values[0].len() - values[0].null_count()) as i64;
+        let num_valids = values[0].len() - values[0].null_count();
+        agg_buf.update_fixed_value::<i64>(addr, |v| v + num_valids as i64);
         Ok(())
     }
 
@@ -98,12 +94,13 @@ impl Agg for AggCount {
         agg_buf_addrs: &[u64],
     ) -> Result<()> {
         let addr = agg_buf_addrs[0];
-        *agg_buf1.fixed_value_mut::<i64>(addr) += agg_buf2.fixed_value::<i64>(addr);
+        let num_valids2 = agg_buf2.fixed_value::<i64>(addr);
+        agg_buf1.update_fixed_value::<i64>(addr, |v| v + num_valids2);
         Ok(())
     }
 
     fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         let addr = agg_buf_addrs[0];
-        Ok(ScalarValue::from(*agg_buf.fixed_value::<i64>(addr)))
+        Ok(ScalarValue::from(agg_buf.fixed_value::<i64>(addr)))
     }
 }

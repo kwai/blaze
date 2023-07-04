@@ -24,7 +24,11 @@ import org.apache.spark._
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.{ShuffleWriteMetricsReporter, ShuffleWriteProcessor, ShuffleWriter}
+import org.apache.spark.shuffle.{
+  ShuffleWriteMetricsReporter,
+  ShuffleWriteProcessor,
+  ShuffleWriter
+}
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -47,25 +51,22 @@ case class NativeShuffleExchangeExec(
 
   // NOTE: coordinator can be null after serialization/deserialization,
   //       e.g. it can be null on the Executor side
-  lazy val writeMetrics: Map[String, SQLMetric] = (
-    mutable.LinkedHashMap[String, SQLMetric]() ++
-      SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext) ++
-      mutable.LinkedHashMap(
-        NativeHelper
-          .getDefaultNativeMetrics(sparkContext)
-          .filterKeys(Set("spilled_bytes"))
-          .toSeq: _*))
-    .toMap
+  lazy val writeMetrics: Map[String, SQLMetric] = (mutable.LinkedHashMap[String, SQLMetric]() ++
+    SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext) ++
+    mutable.LinkedHashMap(
+      NativeHelper
+        .getDefaultNativeMetrics(sparkContext)
+        .filterKeys(Set("spilled_bytes"))
+        .toSeq: _*)).toMap
 
   lazy val readMetrics: Map[String, SQLMetric] =
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
 
-  override lazy val metrics: Map[String, SQLMetric] = (
-    mutable.LinkedHashMap[String, SQLMetric]() ++
+  override lazy val metrics: Map[String, SQLMetric] =
+    (mutable.LinkedHashMap[String, SQLMetric]() ++
       readMetrics ++
       writeMetrics ++
-      Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size")))
-    .toMap
+      Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))).toMap
 
   private val estimatedIpcCount: Int =
     Math.max(child.outputPartitioning.numPartitions * outputPartitioning.numPartitions, 1)

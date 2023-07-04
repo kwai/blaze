@@ -160,7 +160,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
     Ok(())
 }
 
-fn read_array<R: Read>(input: &mut R, data_type: &DataType, num_rows: usize) -> Result<ArrayRef> {
+pub fn read_array<R: Read>(input: &mut R, data_type: &DataType, num_rows: usize) -> Result<ArrayRef> {
     macro_rules! read_primitive {
         ($ty:ident) => {{
             read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input)?
@@ -252,7 +252,7 @@ fn nameless_data_type(data_type: &DataType) -> DataType {
     }
 }
 
-fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> Result<()> {
+pub fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> Result<()> {
     let buf = postcard::to_allocvec(&nameless_data_type(data_type))
         .map_err(|err| DataFusionError::Execution(format!("serialize data type error: {err}")))?;
     write_len(buf.len(), output)?;
@@ -260,7 +260,7 @@ fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> Result<()>
     Ok(())
 }
 
-fn read_data_type<R: Read>(input: &mut R) -> Result<DataType> {
+pub fn read_data_type<R: Read>(input: &mut R) -> Result<DataType> {
     let buf_len = read_len(input)?;
     let buf = read_bytes_slice(input, buf_len)?;
     let data_type = postcard::from_bytes(&buf)

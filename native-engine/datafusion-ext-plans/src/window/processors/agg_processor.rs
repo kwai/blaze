@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{create_agg_buf_from_scalar, AggBuf};
+use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AggBuf};
 use crate::agg::Agg;
 use crate::window::window_context::WindowContext;
 use crate::window::WindowFunctionProcessor;
@@ -31,7 +31,7 @@ pub struct AggProcessor {
 
 impl AggProcessor {
     pub fn try_new(agg: Arc<dyn Agg>) -> Result<Self> {
-        let (agg_buf, agg_buf_addrs) = create_agg_buf_from_scalar(agg.accums_initial())?;
+        let (agg_buf, agg_buf_addrs) = create_agg_buf_from_initial_value(agg.accums_initial())?;
         Ok(Self {
             cur_partition: Box::default(),
             agg,

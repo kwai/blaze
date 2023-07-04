@@ -19,11 +19,13 @@ pub mod avg;
 pub mod collect_list;
 pub mod collect_set;
 pub mod count;
+pub mod first;
+pub mod first_ignores_null;
 pub mod max;
 pub mod min;
 pub mod sum;
 
-use crate::agg::agg_buf::{AggBuf, AggDynStr};
+use crate::agg::agg_buf::{AggBuf, AggDynScalar, AggDynStr, AccumInitialValue, AggDynBinary};
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{DataFusionError, Result, ScalarValue};
@@ -70,6 +72,8 @@ pub enum AggFunction {
     Avg,
     Max,
     Min,
+    First,
+    FirstIgnoresNull,
     CollectList,
     CollectSet,
 }
@@ -92,7 +96,7 @@ pub trait Agg: Send + Sync + Debug {
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;
     fn data_type(&self) -> &DataType;
     fn nullable(&self) -> bool;
-    fn accums_initial(&self) -> &[ScalarValue];
+    fn accums_initial(&self) -> &[AccumInitialValue];
 
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // default implementation: directly return the inputs
@@ -124,13 +128,13 @@ pub trait Agg: Send + Sync + Debug {
     fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         // default implementation:
         // extract the only one values from agg_buf and convert to ScalarValue
-        // this works for sum/min/max
+        // this works for sum/min/max/first
         let addr = agg_buf_addrs[0];
 
         macro_rules! handle_fixed {
             ($ty:ident) => {{
                 if agg_buf.is_fixed_valid(addr) {
-                    ScalarValue::$ty(Some(*agg_buf.fixed_value(addr)))
+                    ScalarValue::$ty(Some(agg_buf.fixed_value(addr)))
                 } else {
                     ScalarValue::$ty(None)
                 }
@@ -139,7 +143,7 @@ pub trait Agg: Send + Sync + Debug {
         macro_rules! handle_timestamp {
             ($ty:ident, $tz:expr) => {{
                 let v = if agg_buf.is_fixed_valid(addr) {
-                    Some(*agg_buf.fixed_value(addr))
+                    Some(agg_buf.fixed_value(addr))
                 } else {
                     None
                 };
@@ -161,22 +165,12 @@ pub trait Agg: Send + Sync + Debug {
             DataType::UInt64 => handle_fixed!(UInt64),
             DataType::Decimal128(prec, scale) => {
                 let v = if agg_buf.is_fixed_valid(addr) {
-                    Some(*agg_buf.fixed_value(addr))
+                    Some(agg_buf.fixed_value(addr))
                 } else {
                     None
                 };
                 ScalarValue::Decimal128(v, *prec, *scale)
             }
-            DataType::Utf8 => ScalarValue::Utf8(
-                agg_buf
-                    .dyn_value(addr)
-                    .as_any()
-                    .downcast_ref::<AggDynStr>()
-                    .unwrap()
-                    .value
-                    .as_ref()
-                    .map(|s| s.as_ref().to_owned()),
-            ),
             DataType::Date32 => handle_fixed!(Date32),
             DataType::Date64 => handle_fixed!(Date64),
             DataType::Timestamp(TimeUnit::Second, tz) => handle_timestamp!(TimestampSecond, tz),
@@ -189,11 +183,34 @@ pub trait Agg: Send + Sync + Debug {
             DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
                 handle_timestamp!(TimestampNanosecond, tz)
             }
+            DataType::Utf8 => ScalarValue::Utf8(
+                agg_buf
+                    .dyn_value(addr)
+                    .as_any()
+                    .downcast_ref::<AggDynStr>()
+                    .unwrap()
+                    .value
+                    .as_ref()
+                    .map(|s| s.as_ref().to_owned()),
+            ),
+            DataType::Binary => ScalarValue::Binary(
+                agg_buf
+                    .dyn_value(addr)
+                    .as_any()
+                    .downcast_ref::<AggDynBinary>()
+                    .unwrap()
+                    .value
+                    .as_ref()
+                    .map(|s| s.as_ref().to_owned()),
+            ),
             other => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type: {}",
-                    other
-                )));
+                if let Some(s) = agg_buf.dyn_value(addr).as_any().downcast_ref::<AggDynScalar>() {
+                    s.value.clone()
+                } else {
+                    return Err(DataFusionError::NotImplemented(
+                        format!("unsupported data type: {other}")
+                    ));
+                }
             }
         })
     }
@@ -249,26 +266,20 @@ pub fn create_agg(
             )?)
         }
         AggFunction::Max => {
-            let arg_type = children[0].data_type(input_schema)?;
-            let return_type = aggregate_function::return_type(
-                &aggregate_function::AggregateFunction::Max,
-                &[arg_type],
-            )?;
-            Arc::new(max::AggMax::try_new(
-                Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
-                return_type,
-            )?)
+            let dt = children[0].data_type(input_schema)?;
+            Arc::new(max::AggMax::try_new(children[0].clone(), dt)?)
         }
         AggFunction::Min => {
-            let arg_type = children[0].data_type(input_schema)?;
-            let return_type = aggregate_function::return_type(
-                &aggregate_function::AggregateFunction::Min,
-                &[arg_type],
-            )?;
-            Arc::new(min::AggMin::try_new(
-                Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
-                return_type,
-            )?)
+            let dt = children[0].data_type(input_schema)?;
+            Arc::new(min::AggMin::try_new(children[0].clone(), dt)?)
+        }
+        AggFunction::First => {
+            let dt = children[0].data_type(input_schema)?;
+            Arc::new(first::AggFirst::try_new(children[0].clone(), dt)?)
+        }
+        AggFunction::FirstIgnoresNull => {
+            let dt = children[0].data_type(input_schema)?;
+            Arc::new(first_ignores_null::AggFirstIgnoresNull::try_new(children[0].clone(), dt)?)
         }
         AggFunction::CollectList => {
             let arg_type = children[0].data_type(input_schema)?;

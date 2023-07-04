@@ -352,7 +352,7 @@ impl InMemTable {
         let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
         let mut sorted = self.into_rev_sorted_vec();
 
-        while let Some(record) = sorted.pop() {
+        while let Some(mut record) = sorted.pop() {
             // write grouping row
             write_len(record.grouping.as_ref().len() + 1, &mut writer)?;
             writer.write_all(record.grouping.as_ref())?;

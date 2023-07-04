@@ -20,11 +20,14 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.{
   Abs,
@@ -111,6 +114,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.catalyst.expressions.aggregate.CollectList
 import org.apache.spark.sql.catalyst.expressions.aggregate.CollectSet
 import org.apache.spark.sql.catalyst.expressions.aggregate.Count
+import org.apache.spark.sql.catalyst.expressions.aggregate.First
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
@@ -1046,6 +1050,14 @@ object NativeConverters extends Logging {
                 Literal(null, IntegerType),
                 Literal(1))))
         }
+
+      case First(child, ignoresNullExpr) =>
+        aggBuilder.setAggFunction(if (ignoresNullExpr.eval().asInstanceOf[Boolean]) {
+          pb.AggFunction.FIRST_IGNORES_NULL
+        } else {
+          pb.AggFunction.FIRST
+        })
+        aggBuilder.addChildren(convertExpr(child))
 
       case CollectList(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_LIST)

@@ -124,6 +124,8 @@ enum AggFunction {
   COUNT = 4;
   COLLECT_LIST = 5;
   COLLECT_SET = 6;
+  FIRST = 7;
+  FIRST_IGNORES_NULL = 8;
 }
 
 message PhysicalAggExprNode {

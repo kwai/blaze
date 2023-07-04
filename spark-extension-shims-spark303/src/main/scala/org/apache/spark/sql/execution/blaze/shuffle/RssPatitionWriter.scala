@@ -20,10 +20,7 @@ import org.apache.spark.shuffle.ShuffleHandle
 
 import java.nio.ByteBuffer
 
-class RssPatitionWriter(
-                         handle: ShuffleHandle,
-                         mapId: Int
-                       ) extends RssPartitionWriterBase {
+class RssPatitionWriter(handle: ShuffleHandle, mapId: Int) extends RssPartitionWriterBase {
 
   override def write(partitionId: Int, buffer: ByteBuffer): Unit = {}
 

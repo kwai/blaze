@@ -133,6 +133,8 @@ impl From<protobuf::AggFunction> for AggFunction {
             protobuf::AggFunction::Count => AggFunction::Count,
             protobuf::AggFunction::CollectList => AggFunction::CollectList,
             protobuf::AggFunction::CollectSet => AggFunction::CollectSet,
+            protobuf::AggFunction::First => AggFunction::First,
+            protobuf::AggFunction::FirstIgnoresNull => AggFunction::FirstIgnoresNull,
         }
     }
 }

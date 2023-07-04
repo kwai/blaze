@@ -225,7 +225,6 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                             }
                         }
                     }
-                    println!("BB")
                 }
             }
             Err(DataFusionError::Execution(

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{AggBuf, AggDynStr};
+use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynStr};
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -27,14 +27,14 @@ use std::sync::Arc;
 pub struct AggMax {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
-    accums_initial: Vec<ScalarValue>,
+    accums_initial: Vec<AccumInitialValue>,
     partial_updater: fn(&mut AggBuf, u64, &ArrayRef, usize),
     partial_buf_merger: fn(&mut AggBuf, &mut AggBuf, u64),
 }
 
 impl AggMax {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accums_initial = vec![ScalarValue::try_from(&data_type)?];
+        let accums_initial = vec![AccumInitialValue::Scalar(ScalarValue::try_from(&data_type)?)];
         let partial_updater = get_partial_updater(&data_type)?;
         let partial_buf_merger = get_partial_buf_merger(&data_type)?;
         Ok(Self {
@@ -70,7 +70,7 @@ impl Agg for AggMax {
         true
     }
 
-    fn accums_initial(&self) -> &[ScalarValue] {
+    fn accums_initial(&self) -> &[AccumInitialValue] {
         &self.accums_initial
     }
 
@@ -169,14 +169,10 @@ impl Agg for AggMax {
 
 fn partial_update_prim<T: Copy + PartialEq + PartialOrd>(agg_buf: &mut AggBuf, addr: u64, v: T) {
     if agg_buf.is_fixed_valid(addr) {
-        let w = agg_buf.fixed_value_mut::<T>(addr);
-        if *w < v {
-            *w = v;
-        }
+        agg_buf.update_fixed_value::<T>(addr, |w| if v > w {v} else {w});
     } else {
+        agg_buf.set_fixed_value::<T>(addr, v);
         agg_buf.set_fixed_valid(addr, true);
-        let w = agg_buf.fixed_value_mut::<T>(addr);
-        *w = v;
     }
 }
 
@@ -237,7 +233,7 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
                 type TNative = <TType as ArrowPrimitiveType>::Native;
                 if agg_buf2.is_fixed_valid(addr) {
                     let v = agg_buf2.fixed_value::<TNative>(addr);
-                    partial_update_prim(agg_buf1, addr, *v);
+                    partial_update_prim(agg_buf1, addr, v);
                 }
             })
         }};
@@ -247,7 +243,7 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::Boolean => Ok(|agg_buf1, agg_buf2, addr| {
             if agg_buf2.is_fixed_valid(addr) {
                 let v = agg_buf2.fixed_value::<bool>(addr);
-                partial_update_prim(agg_buf1, addr, *v);
+                partial_update_prim(agg_buf1, addr, v);
             }
         }),
         DataType::Float32 => fn_fixed!(Float32),

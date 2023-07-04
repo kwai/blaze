@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::AggBuf;
+use crate::agg::agg_buf::{AccumInitialValue, AggBuf};
 use crate::agg::count::AggCount;
 use crate::agg::sum::AggSum;
 use crate::agg::Agg;
@@ -32,7 +32,7 @@ pub struct AggAvg {
     data_type: DataType,
     agg_sum: AggSum,
     agg_count: AggCount,
-    accums_initial: Vec<ScalarValue>,
+    accums_initial: Vec<AccumInitialValue>,
     final_merger: fn(ScalarValue, i64) -> ScalarValue,
 }
 
@@ -77,7 +77,7 @@ impl Agg for AggAvg {
         true
     }
 
-    fn accums_initial(&self) -> &[ScalarValue] {
+    fn accums_initial(&self) -> &[AccumInitialValue] {
         &self.accums_initial
     }
 
