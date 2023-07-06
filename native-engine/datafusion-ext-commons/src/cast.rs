@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::ops::Deref;
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{DataFusionError, Result};
@@ -21,6 +22,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
+    return cast_impl(array, cast_type, false);
+}
+
+pub fn cast_scan_input_array(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
+    return cast_impl(array, cast_type, true);
+}
+
+pub fn cast_impl(array: &dyn Array, cast_type: &DataType, match_struct_fields: bool) -> Result<ArrayRef> {
     Ok(match (&array.data_type(), cast_type) {
         (_, &DataType::Null) => Arc::new(NullArray::new(array.len())),
         (&DataType::Utf8, &DataType::Int8)
@@ -51,7 +60,7 @@ pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
         }
         (&DataType::List(_), DataType::List(to_field)) => {
             let list = as_list_array(array);
-            let casted_items = cast(list.values(), to_field.data_type())?;
+            let casted_items = cast_impl(list.values(), to_field.data_type(), match_struct_fields)?;
             make_array(ArrayData::try_new(
                 DataType::List(to_field.clone()),
                 list.len(),
@@ -63,33 +72,75 @@ pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
         }
         (&DataType::Struct(_), DataType::Struct(to_fields)) => {
             let struct_ = as_struct_array(array);
-            if to_fields.len() != struct_.num_columns() {
-                return Err(DataFusionError::Execution(
-                    "cannot cast structs with different numbers of fields".to_string(),
-                ));
-            }
-            let casted_arrays = struct_
-                .columns()
-                .iter()
-                .zip(to_fields)
-                .map(|(column, to_field)| cast(column, to_field.data_type()))
-                .collect::<Result<Vec<_>>>()?;
 
-            make_array(ArrayData::try_new(
-                DataType::Struct(to_fields.clone()),
-                struct_.len(),
-                struct_.nulls().map(|nb| nb.buffer().clone()),
-                struct_.offset(),
-                struct_.to_data().buffers().to_vec(),
-                casted_arrays
-                    .into_iter()
-                    .map(|array| array.into_data())
-                    .collect(),
-            )?)
+            if !match_struct_fields {
+                if to_fields.len() != struct_.num_columns() {
+                    return Err(DataFusionError::Execution(
+                        "cannot cast structs with different numbers of fields".to_string(),
+                    ));
+                }
+
+                let casted_arrays = struct_
+                    .columns()
+                    .iter()
+                    .zip(to_fields)
+                    .map(|(column, to_field)| cast_impl(column, to_field.data_type(), match_struct_fields))
+                    .collect::<Result<Vec<_>>>()?;
+
+                make_array(ArrayData::try_new(
+                    DataType::Struct(to_fields.clone()),
+                    struct_.len(),
+                    struct_.nulls().map(|nb| nb.buffer().clone()),
+                    struct_.offset(),
+                    struct_.to_data().buffers().to_vec(),
+                    casted_arrays
+                        .into_iter()
+                        .map(|array| array.into_data())
+                        .collect(),
+                )?)
+            } else {
+                let mut null_column_name = vec![];
+                let casted_array = to_fields
+                    .iter()
+                    .map(|field: &FieldRef| {
+                        let col = struct_.column_by_name(field.name().as_str());
+                        if col.is_some() {
+                            cast_impl(col.unwrap(), field.data_type(), match_struct_fields)
+                        } else {
+                            null_column_name.push(field.name().clone());
+                            Ok(new_null_array(field.data_type(), struct_.len()))
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                let casted_fields = to_fields
+                    .iter()
+                    .map(|field: &FieldRef| {
+                        if null_column_name.contains(field.name()) {
+                            Arc::new(Field::new(field.name(), field.data_type().clone(), true))
+                        } else {
+                            field.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                make_array(ArrayData::try_new(
+                    DataType::Struct(Fields::from(casted_fields)),
+                    struct_.len(),
+                    struct_.nulls().map(|nb| nb.buffer().clone()),
+                    struct_.offset(),
+                    struct_.to_data().buffers().to_vec(),
+                    casted_array
+                        .into_iter()
+                        .map(|array| array.into_data())
+                        .collect(),
+                )?)
+            }
+
         }
         (&DataType::Map(_, _), &DataType::Map(ref to_entries_field, to_sorted)) => {
             let map = as_map_array(array);
-            let casted_entries = cast(map.entries(), to_entries_field.data_type())?;
+            let casted_entries = cast_impl(map.entries(), to_entries_field.data_type(), match_struct_fields)?;
 
             make_array(ArrayData::try_new(
                 DataType::Map(to_entries_field.clone(), to_sorted),

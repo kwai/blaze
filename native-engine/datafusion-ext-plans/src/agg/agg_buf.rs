@@ -418,26 +418,16 @@ impl AggDynValue for AggDynStr {
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynList<T: PartialEq + Clone + Copy + Default> {
-    pub values: Option<Vec<T>>,
+    pub values: Vec<T>,
 }
 
 impl<T: PartialEq + Clone + Copy + Default + 'static> AggDynList<T> {
     pub fn append(&mut self, value: T) {
-        if let Some(values) = &mut self.values {
-            values.push(value);
-        } else {
-            self.values = Some(vec![value]);
-        }
+        self.values.push(value);
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        if let Some(values) = &mut self.values {
-            if let Some(other_values) = &mut other.values {
-                values.append(other_values);
-            }
-        } else {
-            self.values = std::mem::take(&mut other.values);
-        }
+        self.values.append(other.values.as_mut());
     }
 
     pub fn load(&mut self, mut r: impl Read) -> Result<()> {
@@ -447,24 +437,24 @@ impl<T: PartialEq + Clone + Copy + Default + 'static> AggDynList<T> {
             let bytes = read_bytes_slice(&mut r, bytes_length)?;
             let ptr = bytes.as_ptr() as *const T;
             let num_buf = unsafe { std::slice::from_raw_parts(ptr, len - 1) };
-            self.values = Some(num_buf.to_vec());
+            self.values = num_buf.to_vec();
         } else {
-            self.values = None;
+            self.values = Vec::<T>::new();
         }
         Ok(())
     }
 
     pub fn save(&self, mut w: impl Write) -> Result<()> {
-        match &self.values {
-            Some(v) => {
-                let ptr = v.as_ptr() as *const u8;
-                let bytes = unsafe { std::slice::from_raw_parts(ptr, v.len() * size_of::<T>()) };
-
-                write_len(v.len() + 1, &mut w)?;
-                w.write_all(bytes)?;
+        match &self.values.len() {
+            0 => {
+                write_u8(0, &mut w)?;
             }
             _ => {
-                write_u8(0, &mut w)?;
+                let ptr = self.values.as_ptr() as *const u8;
+                let bytes = unsafe { std::slice::from_raw_parts(ptr, self.values.len() * size_of::<T>()) };
+
+                write_len(self.values.len() + 1, &mut w)?;
+                w.write_all(bytes)?;
             }
         }
         Ok(())
@@ -482,11 +472,7 @@ impl<T: PartialEq + Copy + Clone + Default + Send + Sync + 'static> AggDynValue 
 
     fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self
-                .values
-                .as_ref()
-                .map(|s| s.len() * size_of::<T>())
-                .unwrap_or(0)
+            + self.values.len() * size_of::<T>()
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -507,31 +493,19 @@ impl<T: PartialEq + Copy + Clone + Default + Send + Sync + 'static> AggDynValue 
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynStrList {
-    pub strs: Option<String>,
+    pub strs: String,
     pub lens: Vec<u32>,
 }
 
 impl AggDynStrList {
     pub fn append(&mut self, value: &str) {
-        if let Some(strs) = &mut self.strs {
-            self.lens.push(value.len() as u32);
-            strs.push_str(value);
-        } else {
-            self.lens.push(value.len() as u32);
-            self.strs = Some(value.to_owned());
-        }
+        self.lens.push(value.len() as u32);
+        self.strs.push_str(value);
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        if let Some(strs) = &mut self.strs {
-            if let Some(other_strs) = &mut other.strs {
-                self.lens.append(&mut other.lens);
-                strs.extend(other_strs.drain(..));
-            }
-        } else {
-            self.strs = std::mem::take(&mut other.strs);
-            self.lens = std::mem::take(&mut other.lens);
-        }
+        self.lens.append(&mut other.lens);
+        self.strs.extend(other.strs.drain(..));
     }
 
     pub fn load(&mut self, mut r: impl Read) -> Result<()> {
@@ -549,29 +523,29 @@ impl AggDynStrList {
             }
             lens.push(strs.len() as u32 - lens.iter().sum::<u32>());
 
-            self.strs = Some(strs);
+            self.strs = strs;
             self.lens = lens;
         } else {
-            self.strs = None;
+            self.strs = String::new();
             self.lens.clear();
         }
         Ok(())
     }
 
     pub fn save(&self, mut w: impl Write) -> Result<()> {
-        match &self.strs {
-            Some(strs) => {
-                write_len(strs.as_bytes().len() + 1, &mut w)?;
-                w.write_all(strs.as_bytes())?;
+        match &self.lens.len() {
+            0 => {
+                write_len(0, &mut w)?;
+            }
+            _ => {
+                write_len(self.strs.as_bytes().len() + 1, &mut w)?;
+                w.write_all(self.strs.as_bytes())?;
 
                 // last len is not saved because it can be calculated from strs.len()
                 write_len(self.lens.len(), &mut w)?;
                 for &len in &self.lens[..self.lens.len() - 1] {
                     write_len(len as usize, &mut w)?;
                 }
-            }
-            None => {
-                write_len(0, &mut w)?;
             }
         }
         Ok(())
@@ -589,10 +563,7 @@ impl AggDynValue for AggDynStrList {
 
     fn mem_size(&self) -> usize {
         let mut len = size_of::<Self>();
-
-        if let Some(strs) = &self.strs {
-            len += strs.as_bytes().len() + self.lens.len() * 4;
-        }
+        len += self.strs.as_bytes().len() + self.lens.len() * 4;
         len
     }
 
@@ -614,28 +585,16 @@ impl AggDynValue for AggDynStrList {
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynSet<T: PartialEq + Eq + Clone + Copy + Default + Hash + Send + Sync> {
-    pub values: Option<HashSet<T>>,
+    pub values: HashSet<T>,
 }
 
 impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> AggDynSet<T> {
     pub fn append(&mut self, value: T) {
-        if let Some(values) = &mut self.values {
-            values.insert(value);
-        } else {
-            let mut set = HashSet::with_capacity(1);
-            set.insert(value);
-            self.values = Some(set);
-        }
+        self.values.insert(value);
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        if let Some(values) = &mut self.values {
-            if let Some(other_values) = &mut other.values {
-                values.extend(std::mem::take(other_values).into_iter());
-            }
-        } else {
-            self.values = std::mem::take(&mut other.values);
-        }
+        self.values.extend(std::mem::take(other).values.into_iter());
     }
 
     pub fn load(&mut self, mut r: impl Read) -> Result<()> {
@@ -645,25 +604,25 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
             let bytes = read_bytes_slice(&mut r, num_items * size_of::<T>())?;
             let ptr = bytes.as_ptr() as *const T;
             let items = unsafe { std::slice::from_raw_parts(ptr, num_items) };
-            self.values = Some(HashSet::<T>::from_iter(items.iter().cloned()));
+            self.values = HashSet::<T>::from_iter(items.iter().cloned());
         } else {
-            self.values = None;
+            self.values = HashSet::<T>::new();
         }
         Ok(())
     }
 
     pub fn save(&self, mut w: impl Write) -> Result<()> {
-        match &self.values {
-            Some(v) => {
-                write_len(v.len() + 1, &mut w)?;
-                for value in v {
+        match &self.values.len() {
+            0 => {
+                write_len(0, &mut w)?;
+            }
+            _ => {
+                write_len(self.values.len() + 1, &mut w)?;
+                for value in &self.values {
                     let ptr = value as *const T as *const u8;
                     let bytes = unsafe { std::slice::from_raw_parts(ptr, size_of::<T>()) };
                     w.write_all(bytes)?;
                 }
-            }
-            _ => {
-                write_len(0, &mut w)?;
             }
         }
         Ok(())
@@ -684,10 +643,7 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
     fn mem_size(&self) -> usize {
         size_of::<Self>()
             + self
-                .values
-                .as_ref()
-                .map(|s| s.len() * size_of::<T>())
-                .unwrap_or(0)
+                .values.len() * size_of::<T>()
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -708,33 +664,19 @@ impl<T: PartialEq + Eq + Copy + Clone + Default + Hash + Send + Sync + 'static> 
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynStrSet {
-    pub strs: Option<HashSet<Box<str>>>,
+    pub strs: HashSet<Box<str>>,
     pub data_len: usize,
 }
 
 impl AggDynStrSet {
     pub fn append(&mut self, value: &str) {
-        if let Some(strs) = &mut self.strs {
-            self.data_len += value.as_bytes().len();
-            strs.insert(value.into());
-        } else {
-            self.data_len = value.as_bytes().len();
-            let mut sets = HashSet::with_capacity(1);
-            sets.insert(value.into());
-            self.strs = Some(sets);
-        }
+        self.data_len += value.as_bytes().len();
+        self.strs.insert(value.into());
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        if let Some(strs) = &mut self.strs {
-            if let Some(other_strs) = &mut other.strs {
-                self.data_len += other.data_len;
-                strs.extend(std::mem::take(other_strs).into_iter());
-            }
-        } else {
-            self.data_len = other.data_len;
-            self.strs = std::mem::take(&mut other.strs);
-        }
+        self.data_len += other.data_len;
+        self.strs.extend(std::mem::take(&mut other.strs).into_iter());
     }
 
     pub fn load(&mut self, mut r: impl Read) -> Result<()> {
@@ -748,25 +690,25 @@ impl AggDynStrSet {
                 let str_bytes = read_bytes_slice(&mut r, num_bytes)?;
                 set.insert(String::from_utf8_lossy(&str_bytes).into());
             }
-            self.strs = Some(set);
+            self.strs = set;
         } else {
             self.data_len = 0;
-            self.strs = None;
+            self.strs = HashSet::new();
         }
         Ok(())
     }
 
     pub fn save(&self, mut w: impl Write) -> Result<()> {
-        match &self.strs {
-            Some(strs) => {
-                write_len(strs.len() + 1, &mut w)?;
-                for str in strs {
+        match &self.strs.len() {
+            0 => {
+                write_len(0, &mut w)?;
+            }
+            _ => {
+                write_len(self.strs.len() + 1, &mut w)?;
+                for str in &self.strs {
                     write_len(str.len(), &mut w)?;
                     w.write_all(str.as_bytes())?;
                 }
-            }
-            None => {
-                write_len(0, &mut w)?;
             }
         }
         Ok(())
@@ -784,10 +726,8 @@ impl AggDynValue for AggDynStrSet {
 
     fn mem_size(&self) -> usize {
         let mut len = size_of::<Self>();
-        if let Some(strs) = &self.strs {
-            len += strs.capacity() * (size_of::<Box<str>>() + 1);
-            len += self.data_len;
-        }
+        len += self.strs.capacity() * (size_of::<Box<str>>() + 1);
+        len += self.data_len;
         len
     }
 

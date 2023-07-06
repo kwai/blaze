@@ -60,7 +60,7 @@ fn schema_adapter_cast_column(
     col: &ArrayRef,
     data_type: &DataType,
 ) -> Result<ArrayRef, DataFusionError> {
-    datafusion_ext_commons::cast::cast(col.as_ref(), data_type)
+    datafusion_ext_commons::cast::cast_scan_input_array(col.as_ref(), data_type)
 }
 
 /// Execution plan for scanning one or more Parquet partitions

@@ -198,13 +198,10 @@ impl Agg for AggCollectSet {
                     .downcast_ref::<AggDynSet<TNative>>()
                     .unwrap()
                     .values
-                    .as_ref()
-                    .map(|s| {
-                        s.into_iter()
-                            .map(|v| ScalarValue::$ty(Some(v.clone())))
-                            .collect::<Vec<_>>()
-                    });
-                ScalarValue::new_list(w, self.arg_type.clone())
+                    .iter()
+                    .map(|v| ScalarValue::$ty(Some(v.clone())))
+                    .collect::<Vec<_>>();
+                ScalarValue::new_list(Some(w), self.arg_type.clone())
             }};
         }
         macro_rules! handle_fixed_float {
@@ -217,13 +214,10 @@ impl Agg for AggCollectSet {
                     .downcast_ref::<AggDynSet<[u8; size_of::<TNative>()]>>()
                     .unwrap()
                     .values
-                    .as_ref()
-                    .map(|s| {
-                        s.into_iter()
-                            .map(|v| ScalarValue::$ty(Some(TNative::from_ne_bytes(v.clone()))))
-                            .collect::<Vec<_>>()
-                    });
-                ScalarValue::new_list(w, self.arg_type.clone())
+                    .iter()
+                    .map(|v| ScalarValue::$ty(Some(TNative::from_ne_bytes(v.clone()))))
+                    .collect::<Vec<_>>();
+                ScalarValue::new_list(Some(w), self.arg_type.clone())
             }};
         }
         macro_rules! handle_fixed_timestamp {
@@ -234,13 +228,10 @@ impl Agg for AggCollectSet {
                     .downcast_ref::<AggDynSet<i64>>()
                     .unwrap()
                     .values
-                    .as_ref()
-                    .map(|s| {
-                        s.into_iter()
-                            .map(|v| ScalarValue::$ty(Some(*v), $tz.clone()))
-                            .collect::<Vec<_>>()
-                    });
-                ScalarValue::new_list(w, self.arg_type.clone())
+                    .iter()
+                    .map(|v| ScalarValue::$ty(Some(*v), $tz.clone()))
+                    .collect::<Vec<_>>();
+                ScalarValue::new_list(Some(w), self.arg_type.clone())
             }};
         }
         Ok(match &self.arg_type {
@@ -275,13 +266,10 @@ impl Agg for AggCollectSet {
                     .downcast_ref::<AggDynSet<i128>>()
                     .unwrap()
                     .values
-                    .as_ref()
-                    .map(|s| {
-                        s.into_iter()
-                            .map(|v| ScalarValue::Decimal128(Some(*v), *prec, *scale))
-                            .collect::<Vec<_>>()
-                    });
-                ScalarValue::new_list(w, self.arg_type.clone())
+                    .iter()
+                    .map(|v| ScalarValue::Decimal128(Some(*v), *prec, *scale))
+                    .collect::<Vec<_>>();
+                ScalarValue::new_list(Some(w), self.arg_type.clone())
             }
             DataType::Utf8 => {
                 let w = agg_buf
@@ -290,13 +278,10 @@ impl Agg for AggCollectSet {
                     .downcast_ref::<AggDynStrSet>()
                     .unwrap()
                     .strs
-                    .as_ref()
-                    .map(|s| {
-                        s.into_iter()
-                            .map(|v| ScalarValue::Utf8(Some(v.to_string())))
-                            .collect::<Vec<_>>()
-                    });
-                ScalarValue::new_list(w, self.arg_type.clone())
+                    .iter()
+                    .map(|v| ScalarValue::Utf8(Some(v.to_string())))
+                    .collect::<Vec<_>>();
+                ScalarValue::new_list(Some(w), self.arg_type.clone())
             }
             other => {
                 return Err(DataFusionError::Execution(format!(
