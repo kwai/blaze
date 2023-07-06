@@ -21,9 +21,10 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_plan::PhysicalExpr;
 use std::any::Any;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct StringEndsWithExpr {
     expr: Arc<dyn PhysicalExpr>,
     suffix: String,
@@ -105,5 +106,10 @@ impl PhysicalExpr for StringEndsWithExpr {
             children[0].clone(),
             self.suffix.clone(),
         )))
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
     }
 }

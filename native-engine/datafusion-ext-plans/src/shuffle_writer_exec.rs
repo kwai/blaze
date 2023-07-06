@@ -157,12 +157,8 @@ impl ExecutionPlan for ShuffleWriterExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match t {
-            DisplayFormatType::Default => {
-                write!(f, "ShuffleWriterExec: partitioning={:?}", self.partitioning)
-            }
-        }
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "ShuffleWriterExec: partitioning={:?}", self.partitioning)
     }
 
     fn statistics(&self) -> Statistics {

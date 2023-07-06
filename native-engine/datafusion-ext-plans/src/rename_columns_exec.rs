@@ -139,12 +139,8 @@ impl ExecutionPlan for RenameColumnsExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        match t {
-            DisplayFormatType::Default => {
-                write!(f, "RenameColumnsExec: {:?}", &self.renamed_column_names)
-            }
-        }
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "RenameColumnsExec: {:?}", &self.renamed_column_names)
     }
 
     fn statistics(&self) -> Statistics {

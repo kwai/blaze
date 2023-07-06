@@ -27,9 +27,10 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
 use std::fmt::Debug;
 use std::{any::Any, sync::Arc};
+use std::hash::{Hash, Hasher};
 
 /// expression to get value of a key in map array.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct GetMapValueExpr {
     arg: Arc<dyn PhysicalExpr>,
     key: ScalarValue,
@@ -260,6 +261,11 @@ impl PhysicalExpr for GetMapValueExpr {
         children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
         Ok(Arc::new(Self::new(children[0].clone(), self.key.clone())))
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
     }
 }
 

@@ -109,7 +109,9 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into().map_err(|err| {
             DataFusionError::Plan(format!("cannot create execution plan: {:?}", err))
         })?;
-        let execution_plan_displayable = displayable(execution_plan.as_ref()).indent().to_string();
+        let execution_plan_displayable = displayable(execution_plan.as_ref())
+            .indent(true)
+            .to_string();
         log::info!("Creating native execution plan succeeded");
         log::info!("  task_id={:?}", task_id);
         log::info!("  execution plan:\n{}", execution_plan_displayable);

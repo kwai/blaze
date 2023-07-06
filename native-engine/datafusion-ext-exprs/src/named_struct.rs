@@ -30,9 +30,10 @@ use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
 use datafusion_ext_commons::io::name_batch;
 use std::fmt::{Debug, Formatter};
 use std::{any::Any, sync::Arc};
+use std::hash::{Hash, Hasher};
 
 /// expression to get a field of from NameStruct.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct NamedStructExpr {
     values: Vec<Arc<dyn PhysicalExpr>>,
     return_type: DataType,
@@ -120,6 +121,11 @@ impl PhysicalExpr for NamedStructExpr {
             children.clone(),
             self.return_type.clone(),
         )?))
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
     }
 }
 

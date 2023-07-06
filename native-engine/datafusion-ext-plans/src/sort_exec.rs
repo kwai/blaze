@@ -173,20 +173,13 @@ impl ExecutionPlan for SortExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        match t {
-            DisplayFormatType::Default => {
-                write!(
-                    f,
-                    "SortExec: {}",
-                    self.exprs
-                        .iter()
-                        .map(|e| e.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-        }
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        let exprs = self.exprs
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "SortExec: {}", exprs)
     }
 
     fn statistics(&self) -> Statistics {

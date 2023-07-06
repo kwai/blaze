@@ -91,10 +91,11 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
     output_schema: SchemaRef,
     output: impl FnOnce(Arc<WrappedRecordBatchSender>) -> Fut + Send + 'static,
 ) -> Result<SendableRecordBatchStream> {
-    let (sender, receiver) = tokio::sync::mpsc::channel(2);
+    let mut stream_builder = RecordBatchReceiverStream::builder(output_schema.clone(), 1);
+    let sender =stream_builder.tx().clone();
     let err_sender = sender.clone();
 
-    let join_handle = tokio::task::spawn(async move {
+    stream_builder.spawn(async move {
         let wrapped = WrappedRecordBatchSender::new(task_context, sender);
         let result = AssertUnwindSafe(async move {
             output(wrapped)
@@ -127,10 +128,5 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
             }
         }
     });
-
-    Ok(RecordBatchReceiverStream::create(
-        &output_schema,
-        receiver,
-        join_handle,
-    ))
+    Ok(stream_builder.build())
 }

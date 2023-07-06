@@ -21,10 +21,11 @@ use datafusion::physical_expr::PhysicalExpr;
 use datafusion::scalar::ScalarValue;
 use std::any::Any;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 /// cast expression compatible with spark
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct TryCastExpr {
     pub expr: Arc<dyn PhysicalExpr>,
     pub cast_type: DataType,
@@ -91,5 +92,10 @@ impl PhysicalExpr for TryCastExpr {
             children[0].clone(),
             self.cast_type.clone(),
         )))
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
     }
 }

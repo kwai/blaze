@@ -21,9 +21,10 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_plan::PhysicalExpr;
 use std::any::Any;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct StringContainsExpr {
     expr: Arc<dyn PhysicalExpr>,
     infix: String,
@@ -103,5 +104,10 @@ impl PhysicalExpr for StringContainsExpr {
         children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
         Ok(Arc::new(Self::new(children[0].clone(), self.infix.clone())))
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
     }
 }

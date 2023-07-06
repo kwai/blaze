@@ -112,12 +112,8 @@ impl ExecutionPlan for DebugExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        match t {
-            DisplayFormatType::Default => {
-                write!(f, "DebugExec")
-            }
-        }
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "DebugExec")
     }
 
     fn statistics(&self) -> Statistics {

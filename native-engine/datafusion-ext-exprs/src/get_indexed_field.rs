@@ -25,11 +25,12 @@ use datafusion::physical_expr::PhysicalExpr;
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::{any::Any, sync::Arc};
+use std::hash::{Hash, Hasher};
 
 use crate::down_cast_any_ref;
 
 /// expression to get a field of a list array.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct GetIndexedFieldExpr {
     arg: Arc<dyn PhysicalExpr>,
     key: ScalarValue,
@@ -138,6 +139,11 @@ impl PhysicalExpr for GetIndexedFieldExpr {
             children[0].clone(),
             self.key.clone(),
         )))
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
     }
 }
 

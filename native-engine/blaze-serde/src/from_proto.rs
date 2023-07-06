@@ -23,6 +23,7 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use chrono::DateTime;
 use datafusion::datasource::listing::{FileRange, PartitionedFile};
 use datafusion::datasource::object_store::ObjectStoreUrl;
+use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::{BuiltinScalarFunction, Operator};
@@ -34,13 +35,12 @@ use datafusion::physical_plan::{
     expressions as phys_expr,
     expressions::{
         BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal,
-        NegativeExpr, NotExpr, PhysicalSortExpr, DEFAULT_DATAFUSION_CAST_OPTIONS,
+        NegativeExpr, NotExpr, PhysicalSortExpr,
     },
     projection::ProjectionExec,
     Partitioning,
 };
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics};
-use datafusion::physical_plan::file_format::FileScanConfig;
 use object_store::ObjectMeta;
 use object_store::path::Path;
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
@@ -833,7 +833,7 @@ fn try_parse_physical_expr(
         ExprType::Cast(e) => Arc::new(CastExpr::new(
             try_parse_physical_expr_box_required(&e.expr, input_schema)?,
             convert_required!(e.arrow_type)?,
-            DEFAULT_DATAFUSION_CAST_OPTIONS,
+            None,
         )),
         ExprType::TryCast(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
@@ -985,6 +985,7 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
                 location: Path::from(format!("/{}", BASE64_URL_SAFE_NO_PAD.encode(&val.path))),
                 size: val.size as usize,
                 last_modified: DateTime::default(),
+                e_tag: None,
             },
             partition_values: val
                 .partition_values
@@ -1095,7 +1096,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
                 .iter()
                 .map(|field| (field.name().clone(), field.data_type().clone()))
                 .collect(),
-            output_ordering: None,
+            output_ordering: vec![],
             infinite_source: false
         })
     }

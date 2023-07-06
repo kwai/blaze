@@ -31,6 +31,7 @@ use once_cell::sync::OnceCell;
 
 use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hasher;
 
 use arrow::ffi::{ArrowArray, ArrowArrayRef, FFI_ArrowArray, FFI_ArrowSchema};
 use std::sync::Arc;
@@ -179,5 +180,9 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             children,
             self.input_schema.clone(),
         )?))
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        state.write(&self.serialized);
     }
 }

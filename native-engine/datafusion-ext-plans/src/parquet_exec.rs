@@ -28,6 +28,10 @@ use arrow::datatypes::{DataType, SchemaRef};
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use bytes::Bytes;
+use datafusion::common::DataFusionError;
+use datafusion::datasource::physical_plan::{FileMeta, FileScanConfig, FileStream, ParquetFileMetrics, ParquetFileReaderFactory};
+use datafusion::datasource::physical_plan::parquet::page_filter::PagePruningPredicate;
+use datafusion::datasource::physical_plan::parquet::ParquetOpener;
 use datafusion::parquet::arrow::async_reader::{AsyncFileReader, fetch_parquet_metadata};
 use datafusion::parquet::file::metadata::ParquetMetaData;
 use datafusion::physical_plan::metrics::{BaselineMetrics, MetricValue, Time};
@@ -42,11 +46,8 @@ use datafusion::{
         DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion::common::DataFusionError;
 use datafusion::parquet::errors::ParquetError;
-use datafusion::physical_plan::file_format::{FileMeta, FileScanConfig, FileStream, ParquetFileMetrics, ParquetFileReaderFactory};
-use datafusion::physical_plan::file_format::parquet::page_filter::PagePruningPredicate;
-use datafusion::physical_plan::file_format::parquet::ParquetOpener;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::future::BoxFuture;
 use futures::{FutureExt, TryFutureExt};
 use object_store::ObjectMeta;
@@ -70,7 +71,7 @@ pub struct ParquetExec {
     base_config: FileScanConfig,
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
-    projected_output_ordering: Option<Vec<PhysicalSortExpr>>,
+    projected_output_ordering: Vec<Vec<PhysicalSortExpr>>,
     metrics: ExecutionPlanMetricsSet,
     predicate: Option<Arc<dyn PhysicalExpr>>,
     pruning_predicate: Option<Arc<PruningPredicate>>,
@@ -151,7 +152,9 @@ impl ExecutionPlan for ParquetExec {
     }
 
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.projected_output_ordering.as_deref()
+        self.projected_output_ordering
+            .first()
+            .map(|ordering| ordering.as_slice())
     }
 
     // in datafusion 20.0.0 ExecutionPlan trait not include relies_on_input_order

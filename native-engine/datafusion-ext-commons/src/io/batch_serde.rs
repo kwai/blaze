@@ -180,7 +180,7 @@ fn read_array<R: Read>(input: &mut R, data_type: &DataType, num_rows: usize) -> 
         DataType::Float32 => read_primitive!(Float32),
         DataType::Float64 => read_primitive!(Float64),
         DataType::Decimal128(prec, scale) => Arc::new(
-            as_decimal_array(&read_primitive!(Decimal128))
+            as_primitive_array::<Decimal128Type>(&read_primitive!(Decimal128))
                 .clone()
                 .with_precision_and_scale(*prec, *scale)?,
         ),

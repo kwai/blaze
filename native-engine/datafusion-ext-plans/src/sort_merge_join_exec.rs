@@ -179,16 +179,14 @@ impl ExecutionPlan for SortMergeJoinExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        match t {
-            DisplayFormatType::Default => {
-                write!(
-                    f,
-                    "SortMergeJoin: join_type={:?}, on={:?}, schema={:?}",
-                    self.join_type, self.on, &self.schema
-                )
-            }
-        }
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "SortMergeJoin: join_type={:?}, on={:?}, schema={:?}",
+            self.join_type,
+            self.on,
+            self.schema,
+        )
     }
 
     fn statistics(&self) -> Statistics {
