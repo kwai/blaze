@@ -794,7 +794,7 @@ mod test {
 
         let mut dyn_list = AggDynList::<i32>::default();
         dyn_list.load(&mut Cursor::new(&mut buf)).unwrap();
-        assert_eq!(dyn_list.values, Some(vec![1, 2, 3]));
+        assert_eq!(dyn_list.values, vec![1, 2, 3]);
 
         let mut dyn_list = AggDynStrList::default();
         dyn_list.append("Hello");
@@ -806,7 +806,7 @@ mod test {
 
         let mut dyn_list = AggDynStrList::default();
         dyn_list.load(&mut Cursor::new(&mut buf)).unwrap();
-        assert_eq!(dyn_list.strs, Some("HelloWorld你好".to_owned()));
+        assert_eq!(dyn_list.strs, "HelloWorld你好".to_owned());
         assert_eq!(dyn_list.lens, vec![5, 5, 6]);
     }
 
@@ -825,7 +825,7 @@ mod test {
         dyn_set.load(&mut Cursor::new(&mut buf)).unwrap();
         assert_eq!(
             dyn_set.values,
-            Some(HashSet::from_iter(vec![1, 2, 3].into_iter()))
+            HashSet::from_iter(vec![1, 2, 3].into_iter())
         );
 
         let mut dyn_set = AggDynStrSet::default();
@@ -841,11 +841,11 @@ mod test {
         dyn_set.load(&mut Cursor::new(&mut buf)).unwrap();
         assert_eq!(
             dyn_set.strs,
-            Some(HashSet::from_iter(vec![
+            HashSet::from_iter(vec![
                 "Hello".to_owned().into(),
                 "World".to_owned().into(),
                 "你好".to_owned().into(),
-            ]))
+            ])
         );
     }
 
