@@ -80,6 +80,7 @@ use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
 use datafusion_ext_exprs::string_starts_with::StringStartsWithExpr;
 use datafusion_ext_plans::generate::create_generator;
 use datafusion_ext_plans::generate_exec::GenerateExec;
+use datafusion_ext_plans::parquet_sink_exec::ParquetSinkExec;
 use datafusion_ext_plans::window::{WindowExpr, WindowFunction, WindowRankType};
 use datafusion_ext_plans::window_exec::WindowExec;
 
@@ -661,6 +662,18 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     generator_output_schema,
                     generate.outer,
                 )?))
+            }
+            PhysicalPlanType::ParquetSink(parquet_sink) => {
+                let mut props: Vec<(String, String)> = vec![];
+                for prop in &parquet_sink.prop {
+                    props.push((prop.key.clone(), prop.value.clone()));
+                }
+                Ok(Arc::new(ParquetSinkExec::new(
+                    convert_box_required!(parquet_sink.input)?,
+                    parquet_sink.fs_resource_id.clone(),
+                    parquet_sink.path.clone(),
+                    props,
+                )))
             }
         }
     }

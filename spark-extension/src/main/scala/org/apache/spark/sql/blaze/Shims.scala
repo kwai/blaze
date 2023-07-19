@@ -17,8 +17,10 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
+
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.{
@@ -39,6 +41,8 @@ import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.storage.{BlockManagerId, FileSegment}
 import org.blaze.protobuf.{PhysicalHashRepartition, PhysicalPlanNode}
 
+import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
+
 abstract class Shims {
   def rddShims: RDDShims
   def sparkPlanShims: SparkPlanShims
@@ -46,6 +50,8 @@ abstract class Shims {
   def broadcastShims: BroadcastShims
   def exprShims: ExprShims
   def parquetScanShims: ParquetScanShims
+
+  def createBasicWriteTaskStats(params: Map[String, Any]): BasicWriteTaskStats
 }
 object Shims {
   lazy val get: Shims = {

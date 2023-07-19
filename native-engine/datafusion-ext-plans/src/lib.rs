@@ -30,6 +30,7 @@ pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod limit_exec;
 pub mod parquet_exec;
+pub mod parquet_sink_exec;
 pub mod rename_columns_exec;
 pub mod rss_shuffle_writer_exec;
 pub mod shuffle_writer_exec;

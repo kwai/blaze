@@ -18,43 +18,47 @@
 //! Execution plan for reading Parquet files
 
 use fmt::Debug;
+use std::any::Any;
 use std::fmt;
+use std::fmt::Formatter;
 use std::ops::Range;
 use std::sync::Arc;
-use std::any::Any;
-use std::fmt::Formatter;
+
 use arrow::array::ArrayRef;
 use arrow::datatypes::{DataType, SchemaRef};
-use base64::Engine;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
-use bytes::Bytes;
+use datafusion::{
+    error::Result,
+    execution::context::TaskContext,
+    physical_plan::{
+        DisplayFormatType,
+        ExecutionPlan,
+        expressions::PhysicalSortExpr, metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet}, Partitioning, SendableRecordBatchStream, Statistics,
+    },
+};
 use datafusion::common::DataFusionError;
 use datafusion::datasource::physical_plan::{FileMeta, FileScanConfig, FileStream, ParquetFileMetrics, ParquetFileReaderFactory};
 use datafusion::datasource::physical_plan::parquet::page_filter::PagePruningPredicate;
 use datafusion::datasource::physical_plan::parquet::ParquetOpener;
 use datafusion::parquet::arrow::async_reader::{AsyncFileReader, fetch_parquet_metadata};
-use datafusion::parquet::file::metadata::ParquetMetaData;
-use datafusion::physical_plan::metrics::{BaselineMetrics, MetricValue, Time};
-use datafusion::physical_plan::{Metric, PhysicalExpr};
-use datafusion::physical_optimizer::pruning::{PruningPredicate};
-use datafusion::{
-    error::Result,
-    execution::context::TaskContext,
-    physical_plan::{
-        expressions::PhysicalSortExpr,
-        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
-    },
-};
 use datafusion::parquet::errors::ParquetError;
+use datafusion::parquet::file::metadata::ParquetMetaData;
+use datafusion::physical_optimizer::pruning::PruningPredicate;
+use datafusion::physical_plan::{Metric, PhysicalExpr, RecordBatchStream};
+use datafusion::physical_plan::metrics::{BaselineMetrics, MetricValue, Time};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use futures::future::BoxFuture;
-use futures::{FutureExt, TryFutureExt};
+use futures::stream::once;
 use object_store::ObjectMeta;
+
+use base64::Engine;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
+use bytes::Bytes;
+use datafusion_ext_commons::hadoop_fs::{FsDataInputStream, FsProvider};
 use once_cell::sync::OnceCell;
 
-use datafusion_ext_commons::hadoop_fs::{FsDataInputStream, FsProvider};
-use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
+use crate::common::output::output_with_sender;
 
 #[no_mangle]
 fn schema_adapter_cast_column(
@@ -215,8 +219,20 @@ impl ExecutionPlan for ParquetExec {
         };
         drop(timer);
 
-        let stream = FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?;
-        Ok(Box::pin(stream))
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
+        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
+        let mut stream = Box::pin(
+            FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?);
+
+        Ok(Box::pin(RecordBatchStreamAdapter::new(self.schema(), once(async move {
+            output_with_sender("ParquetScan", context, stream.schema(), move |sender| async move {
+                let mut timer = elapsed_compute.timer();
+                while let Some(batch) = stream.next().await.transpose()? {
+                    sender.send(Ok(batch), Some(&mut timer)).await;
+                }
+                Ok(())
+            })
+        }).try_flatten())))
     }
 
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -276,16 +292,19 @@ impl ParquetFileReaderFactory for FsReaderFactory {
         metrics: &ExecutionPlanMetricsSet,
     ) -> Result<Box<dyn AsyncFileReader + Send>> {
 
-        Ok(Box::new(ParquetFileReader {
-            fs_provider: self.fs_provider.clone(),
-            input: OnceCell::new(),
-            metrics: ParquetFileMetrics::new(
-                partition_index,
-                file_meta.object_meta.location.filename().unwrap_or("__default_filename__"),
-                metrics,
-            ),
-            meta: file_meta.object_meta,
-        }))
+        let reader = ParquetFileReaderRef(Arc::new(
+            ParquetFileReader {
+                fs_provider: self.fs_provider.clone(),
+                input: OnceCell::new(),
+                metrics: ParquetFileMetrics::new(
+                    partition_index,
+                    file_meta.object_meta.location.filename().unwrap_or("__default_filename__"),
+                    metrics,
+                ),
+                meta: file_meta.object_meta,
+            }
+        ));
+        Ok(Box::new(reader))
     }
 }
 
@@ -296,11 +315,14 @@ struct ParquetFileReader {
     metrics: ParquetFileMetrics,
 }
 
+#[derive(Clone)]
+struct ParquetFileReaderRef(Arc<ParquetFileReader>);
+
 impl ParquetFileReader {
     fn get_input(&self) -> datafusion::parquet::errors::Result<Arc<FsDataInputStream>> {
         let input = self
             .input
-            .get_or_try_init(|| -> Result<Arc<FsDataInputStream>> {
+            .get_or_try_init(|| {
                 let path = BASE64_URL_SAFE_NO_PAD
                     .decode(self.meta.location.filename().expect("missing filename"))
                     .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
@@ -312,12 +334,7 @@ impl ParquetFileReader {
                 let fs = self.fs_provider.provide(&path)?;
                 Ok(Arc::new(fs.open(&path)?))
             })
-            .map_err(|e| {
-                ParquetError::General(format!(
-                    "ParquetFileReader: get FSDataInputStream error: {}",
-                    e
-                ))
-            })?;
+            .map_err(|e| ParquetError::External(e))?;
         Ok(input.clone())
     }
 
@@ -328,30 +345,33 @@ impl ParquetFileReader {
     }
 }
 
-impl AsyncFileReader for ParquetFileReader {
+impl AsyncFileReader for ParquetFileReaderRef {
     fn get_bytes(
         &mut self,
         range: Range<usize>,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Bytes>> {
-        self.metrics.bytes_scanned.add(range.end - range.start);
-        async {
-            self.read_fully(range).map_err(|e| ParquetError::General(
-                format!("parquetFileReader::get_bytes error: {}", e)
-            ))
+        let inner = self.0.clone();
+        inner.metrics.bytes_scanned.add(range.end - range.start);
+        async move {
+            inner.read_fully(range).map_err(|e| ParquetError::External(Box::new(e)))
         }.boxed()
     }
 
     fn get_metadata(
         &mut self,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
+        let inner = self.0.clone();
+        let meta_size = inner.meta.size;
         let size_hint = Some(2097152);
         fetch_parquet_metadata(
-            |range| async {
-                self.read_fully(range).map_err(|e| ParquetError::General(
-                    format!("parquetFileReader::get_metadata error: {}", e)
-                ))
+            move |range| {
+                let inner = inner.clone();
+                inner.metrics.bytes_scanned.add(range.end - range.start);
+                async move {
+                    inner.read_fully(range).map_err(|e| ParquetError::External(Box::new(e)))
+                }
             },
-            self.meta.size,
+            meta_size,
             size_hint,
         ).and_then(|metadata| futures::future::ok(Arc::new(metadata))).boxed()
     }

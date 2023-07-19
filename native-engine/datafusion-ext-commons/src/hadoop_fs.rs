@@ -47,6 +47,21 @@ impl Fs {
             io_time: self.io_time.clone(),
         })
     }
+
+    pub fn create(&self, path: &str) -> Result<FsDataOutputStream> {
+        let _timer = self.io_time.timer();
+        let path_str = jni_new_string!(path)?;
+        let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
+        let path = jni_new_object!(HadoopPath(path_uri.as_obj()))?;
+        let fin = jni_call!(
+            HadoopFileSystem(self.fs.as_obj()).create(path.as_obj()) -> JObject
+        )?;
+
+        Ok(FsDataOutputStream {
+            stream: jni_new_global_ref!(fin.as_obj())?,
+            io_time: self.io_time.clone(),
+        })
+    }
 }
 
 pub struct FsDataInputStream {
@@ -69,8 +84,34 @@ impl FsDataInputStream {
 impl Drop for FsDataInputStream {
     fn drop(&mut self) {
         let _timer = self.io_time.timer();
-        if let Err(e) = jni_call!(HadoopFSDataInputStream(self.stream.as_obj()).close() -> ()) {
-            log::warn!("error closing hadoop FSDatainputStream: {:?}", e);
+        if let Err(e) = jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ()) {
+            log::warn!("error closing hadoop FSDataInputStream: {:?}", e);
+        }
+    }
+}
+
+pub struct FsDataOutputStream {
+    stream: GlobalRef,
+    io_time: Time,
+}
+
+impl FsDataOutputStream {
+    pub fn write_fully(&self, buf: &[u8]) -> Result<()> {
+        let _timer = self.io_time.timer();
+        let buf = jni_new_direct_byte_buffer!(buf)?;
+
+        jni_call_static!(JniUtil.writeFullyToFSDataOutputStream(
+            self.stream.as_obj(), buf.as_obj()) -> ()
+        )?;
+        Ok(())
+    }
+}
+
+impl Drop for FsDataOutputStream {
+    fn drop(&mut self) {
+        let _timer = self.io_time.timer();
+        if let Err(e) = jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ()) {
+            log::warn!("error closing hadoop FSDataOutputStream: {:?}", e);
         }
     }
 }

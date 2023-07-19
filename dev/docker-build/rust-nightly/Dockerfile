@@ -41,3 +41,6 @@ RUN cd /mold-1.9.0 && source ~/.bashrc && cmake3 -DCMAKE_BUILD_TYPE=Release -DCM
 RUN ln -s /usr/local/bin/ld.mold /usr/bin/ld.lld
 RUN echo '[target.x86_64-unknown-linux-gnu]' >> ~/.cargo/config
 RUN echo 'rustflags = ["-C", "link-arg=-fuse-ld=lld"]' >> ~/.cargo/config
+
+# install git
+RUN yum install -y git

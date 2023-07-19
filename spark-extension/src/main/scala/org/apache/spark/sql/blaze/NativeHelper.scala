@@ -77,6 +77,9 @@ object NativeHelper extends Logging {
       metrics: MetricNode,
       partition: Partition,
       context: Option[TaskContext]): Iterator[InternalRow] = {
+    if (nativePlan == null) {
+      return Iterator.empty
+    }
     BlazeCallNativeWrapper(nativePlan, partition, context, metrics).getRowIterator
   }
 

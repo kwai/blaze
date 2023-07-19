@@ -21,6 +21,7 @@ import java.util.UUID
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
 
 import org.apache.spark.internal.Logging
@@ -81,6 +82,8 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableExec
+import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -114,6 +117,8 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.generate", defaultValue = true)
   val enableLocalTableScan: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.table.scan", defaultValue = true)
+  val enableDataWriting: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.data.writing", defaultValue = false)
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
 
@@ -199,6 +204,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertGenerateExec)
       case e: LocalTableScanExec if enableLocalTableScan => // local table scan
         tryConvert(e, convertLocalTableScanExec)
+      case e: DataWritingCommandExec if enableDataWriting => // data writing
+        tryConvert(e, convertDataWritingCommandExec)
 
       case e if sparkPlanShims.isShuffleQueryStageInput(e) && sparkPlanShims.isNative(e) =>
         ForceNativeExecutionWrapper(e)
@@ -671,6 +678,19 @@ object BlazeConverters extends Logging {
 
   def convertLocalTableScanExec(exec: LocalTableScanExec): SparkPlan = {
     convertToNative(exec)
+  }
+
+  def convertDataWritingCommandExec(exec: DataWritingCommandExec): SparkPlan = {
+    logDebug(
+      s"Converting DataWritingCommandExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
+    exec match {
+      case DataWritingCommandExec(cmd: InsertIntoHiveTable, child)
+          if cmd.table.storage.outputFormat.contains(
+            classOf[MapredParquetOutputFormat].getName) =>
+        NativeParquetInsertIntoHiveTableExec(cmd, child)
+      case _ =>
+        throw new NotImplementedError("unsupported DataWritingCommandExec")
+    }
   }
 
   def convertToNative(exec: SparkPlan): SparkPlan = {

@@ -39,6 +39,7 @@ import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
+import org.apache.spark.sql.execution.command.DataWritingCommandExec
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -134,6 +135,8 @@ object BlazeConvertStrategy extends Logging {
       case e: ObjectHashAggregateExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: LocalTableScanExec =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: DataWritingCommandExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 
       case e =>

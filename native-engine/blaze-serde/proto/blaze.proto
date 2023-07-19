@@ -46,6 +46,7 @@ message PhysicalPlanNode {
     RssShuffleWriterExecNode rss_shuffle_writer= 19;
     WindowExecNode window = 20;
     GenerateExecNode generate = 21;
+    ParquetSinkExecNode parquet_sink = 22;
   }
 }
 
@@ -489,6 +490,18 @@ message Generator {
 enum GenerateFunction {
   Explode = 0;
   PosExplode = 1;
+}
+
+message ParquetSinkExecNode {
+  PhysicalPlanNode input = 1;
+  string fs_resource_id = 2;
+  string path = 3;
+  repeated ParquetProp prop = 4;
+}
+
+message ParquetProp {
+  string key = 1;
+  string value = 2;
 }
 
 message IpcWriterExecNode {

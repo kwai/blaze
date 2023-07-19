@@ -373,6 +373,7 @@ pub struct JavaClasses<'a> {
     pub cJavaChannels: JavaChannels<'a>,
     pub cJavaReadableByteChannel: JavaReadableByteChannel<'a>,
     pub cJavaBoolean: JavaBoolean<'a>,
+    pub cJavaAutoCloseable: JavaAutoCloseable<'a>,
     pub cJavaLong: JavaLong<'a>,
     pub cJavaList: JavaList<'a>,
     pub cJavaMap: JavaMap<'a>,
@@ -435,6 +436,7 @@ impl JavaClasses<'static> {
                 cJavaReadableByteChannel: JavaReadableByteChannel::new(env).unwrap(),
                 cJavaBoolean: JavaBoolean::new(env).unwrap(),
                 cJavaLong: JavaLong::new(env).unwrap(),
+                cJavaAutoCloseable: JavaAutoCloseable::new(env).unwrap(),
                 cJavaList: JavaList::new(env).unwrap(),
                 cJavaMap: JavaMap::new(env).unwrap(),
                 cJavaFile: JavaFile::new(env).unwrap(),
@@ -552,6 +554,8 @@ pub struct JniUtil<'a> {
     pub class: JClass<'a>,
     pub method_readFullyFromFSDataInputStream: JStaticMethodID,
     pub method_readFullyFromFSDataInputStream_ret: ReturnType,
+    pub method_writeFullyToFSDataOutputStream: JStaticMethodID,
+    pub method_writeFullyToFSDataOutputStream_ret: ReturnType,
 }
 impl<'a> JniUtil<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniUtil";
@@ -566,6 +570,12 @@ impl<'a> JniUtil<'a> {
                 "(Lorg/apache/hadoop/fs/FSDataInputStream;JLjava/nio/ByteBuffer;)V",
             )?,
             method_readFullyFromFSDataInputStream_ret: ReturnType::Primitive(Primitive::Void),
+            method_writeFullyToFSDataOutputStream: env.get_static_method_id(
+                class,
+                "writeFullyToFSDataOutputStream",
+                "(Lorg/apache/hadoop/fs/FSDataOutputStream;Ljava/nio/ByteBuffer;)V",
+            )?,
+            method_writeFullyToFSDataOutputStream_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -709,6 +719,25 @@ impl<'a> JavaLong<'a> {
             ctor: env.get_method_id(class, "<init>", "(J)V")?,
             method_longValue: env.get_method_id(class, "longValue", "()J")?,
             method_longValue_ret: ReturnType::Primitive(Primitive::Long),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct JavaAutoCloseable<'a> {
+    pub class: JClass<'a>,
+    pub method_close: JMethodID,
+    pub method_close_ret: ReturnType,
+}
+impl<'a> JavaAutoCloseable<'a> {
+    pub const SIG_TYPE: &'static str = "java/lang/AutoCloseable";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaAutoCloseable<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(JavaAutoCloseable {
+            class,
+            method_close: env.get_method_id(class, "close", "()V")?,
+            method_close_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -942,6 +971,8 @@ pub struct HadoopFileSystem<'a> {
     pub class: JClass<'a>,
     pub method_open: JMethodID,
     pub method_open_ret: ReturnType,
+    pub method_create: JMethodID,
+    pub method_create_ret: ReturnType,
 }
 impl<'a> HadoopFileSystem<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FileSystem";
@@ -956,6 +987,12 @@ impl<'a> HadoopFileSystem<'a> {
                 "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataInputStream;",
             )?,
             method_open_ret: ReturnType::Object,
+            method_create: env.get_method_id(
+                class,
+                "create",
+                "(Lorg/apache/hadoop/fs/Path;)Lorg/apache/hadoop/fs/FSDataOutputStream;",
+            )?,
+            method_create_ret: ReturnType::Object,
         })
     }
 }
@@ -982,8 +1019,6 @@ pub struct HadoopFSDataInputStream<'a> {
     pub class: JClass<'a>,
     pub method_seek: JMethodID,
     pub method_seek_ret: ReturnType,
-    pub method_close: JMethodID,
-    pub method_close_ret: ReturnType,
 }
 impl<'a> HadoopFSDataInputStream<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/hadoop/fs/FSDataInputStream";
@@ -994,8 +1029,6 @@ impl<'a> HadoopFSDataInputStream<'a> {
             class,
             method_seek: env.get_method_id(class, "seek", "(J)V")?,
             method_seek_ret: ReturnType::Primitive(Primitive::Void),
-            method_close: env.get_method_id(class, "close", "()V")?,
-            method_close_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
