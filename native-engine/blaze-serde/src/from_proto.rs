@@ -37,7 +37,6 @@ use datafusion::physical_plan::{
         BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal,
         NegativeExpr, NotExpr, PhysicalSortExpr,
     },
-    projection::ProjectionExec,
     Partitioning,
 };
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics};
@@ -56,6 +55,7 @@ use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
 use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
 use datafusion_ext_plans::limit_exec::LimitExec;
 use datafusion_ext_plans::parquet_exec::ParquetExec;
+use datafusion_ext_plans::project_exec::ProjectExec;
 use datafusion_ext_plans::rename_columns_exec::RenameColumnsExec;
 use datafusion_ext_plans::rss_shuffle_writer_exec::RssShuffleWriterExec;
 use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
@@ -136,15 +136,21 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         ))
                     })
                     .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>()?;
-                Ok(Arc::new(ProjectionExec::try_new(exprs, input)?))
+                Ok(Arc::new(ProjectExec::try_new(exprs, input)?))
             }
             PhysicalPlanType::Filter(filter) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(filter.input)?;
-                let predicate = try_parse_physical_expr_required(&filter.expr, &input.schema())?;
-                Ok(Arc::new(FilterExec::try_new(
-                    bind(predicate, &input.schema())?,
-                    input,
-                )?))
+                let predicates = filter
+                    .expr
+                    .iter()
+                    .map(|expr| {
+                        Ok(bind(
+                            try_parse_physical_expr(expr, &input.schema())?,
+                            &input.schema(),
+                        )?)
+                    })
+                    .collect::<Result<_, Self::Error>>()?;
+                Ok(Arc::new(FilterExec::try_new(predicates, input)?))
             }
             PhysicalPlanType::ParquetScan(scan) => {
                 let conf: FileScanConfig = scan.base_conf.as_ref().unwrap().try_into()?;
@@ -892,7 +898,6 @@ fn try_parse_physical_expr(
                 .iter()
                 .map(|x| try_parse_physical_expr(x, input_schema))
                 .collect::<Result<Vec<_>, _>>()?,
-            input_schema.clone(),
         )?),
         ExprType::GetIndexedFieldExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;

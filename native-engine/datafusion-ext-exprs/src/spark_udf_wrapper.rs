@@ -41,7 +41,6 @@ pub struct SparkUDFWrapperExpr {
     pub return_type: DataType,
     pub return_nullable: bool,
     pub params: Vec<Arc<dyn PhysicalExpr>>,
-    pub input_schema: SchemaRef,
     pub import_schema: SchemaRef,
     pub params_schema: OnceCell<SchemaRef>,
     jcontext: OnceCell<GlobalRef>,
@@ -56,7 +55,6 @@ impl PartialEq<dyn Any> for SparkUDFWrapperExpr {
                     && self.serialized == x.serialized
                     && self.return_type == x.return_type
                     && self.return_nullable == x.return_nullable
-                    && self.input_schema == x.input_schema
             })
             .unwrap_or(false)
     }
@@ -68,14 +66,12 @@ impl SparkUDFWrapperExpr {
         return_type: DataType,
         return_nullable: bool,
         params: Vec<Arc<dyn PhysicalExpr>>,
-        input_schema: SchemaRef,
     ) -> Result<Self> {
         Ok(Self {
             serialized,
             return_type: return_type.clone(),
             return_nullable,
             params,
-            input_schema,
             import_schema: Arc::new(Schema::new(vec![Field::new("", return_type, true)])),
             params_schema: OnceCell::new(),
             jcontext: OnceCell::new(),
@@ -115,6 +111,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             ));
         }
 
+        let batch_schema = batch.schema();
+
         // init params schema
         let params_schema = self
             .params_schema
@@ -123,8 +121,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
                 for param in &self.params {
                     param_fields.push(Field::new(
                         "",
-                        param.data_type(&self.input_schema)?,
-                        param.nullable(&self.input_schema)?,
+                        param.data_type(batch_schema.as_ref())?,
+                        param.nullable(batch_schema.as_ref())?,
                     ));
                 }
                 Ok(Arc::new(Schema::new(param_fields)))
@@ -178,9 +176,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         Ok(Arc::new(Self::try_new(
             self.serialized.clone(),
             self.return_type.clone(),
-            self.return_nullable,
+            self.return_nullable.clone(),
             children,
-            self.input_schema.clone(),
         )?))
     }
 

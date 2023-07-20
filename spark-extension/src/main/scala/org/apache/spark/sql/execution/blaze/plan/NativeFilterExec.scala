@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
+import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
@@ -30,9 +33,11 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.FilterExecNode
+import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.And
 
 case class NativeFilterExec(condition: Expression, override val child: SparkPlan)
     extends UnaryExecNode
@@ -47,7 +52,20 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
   override def output: Seq[Attribute] = child.output
   override def outputPartitioning: Partitioning = child.outputPartitioning
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
-  private val nativeFilterExpr = NativeConverters.convertExpr(condition)
+
+  private val nativeFilterExprs = {
+    val splittedExprs = ArrayBuffer[PhysicalExprNode]()
+    def split(expr: Expression): Unit = {
+      expr match {
+        case And(lhs, rhs) =>
+          split(lhs)
+          split(rhs)
+        case expr => splittedExprs.append(NativeConverters.convertExpr(expr))
+      }
+    }
+    split(condition)
+    splittedExprs
+  }
 
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeHelper.executeNative(child)
@@ -64,7 +82,7 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
         val nativeFilterExec = FilterExecNode
           .newBuilder()
           .setInput(inputRDD.nativePlan(inputPartition, taskContext))
-          .setExpr(nativeFilterExpr)
+          .addAllExpr(nativeFilterExprs.asJava)
           .build()
         PhysicalPlanNode.newBuilder().setFilter(nativeFilterExec).build()
       },

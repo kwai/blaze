@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(let_chains)]
-#![feature(trait_upcasting)]
-
 pub mod agg;
 pub mod agg_exec;
 pub mod broadcast_join_exec;
@@ -31,6 +28,7 @@ pub mod ipc_writer_exec;
 pub mod limit_exec;
 pub mod parquet_exec;
 pub mod parquet_sink_exec;
+pub mod project_exec;
 pub mod rename_columns_exec;
 pub mod rss_shuffle_writer_exec;
 mod shuffle;

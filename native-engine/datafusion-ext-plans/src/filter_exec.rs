@@ -12,34 +12,62 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::datatypes::SchemaRef;
-use datafusion::common::Result;
+use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
+use crate::common::output::output_with_sender;
+use arrow::datatypes::{DataType, SchemaRef};
 use datafusion::common::Statistics;
+use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use datafusion::physical_plan::metrics::{MetricValue, MetricsSet};
+use datafusion::physical_expr::{PhysicalExprRef, PhysicalSortExpr};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
+use futures::stream::once;
+use futures::{StreamExt, TryStreamExt};
+use itertools::Itertools;
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct FilterExec {
-    inner: Arc<datafusion::physical_plan::filter::FilterExec>,
+    input: Arc<dyn ExecutionPlan>,
+    predicates: Vec<PhysicalExprRef>,
+    metrics: ExecutionPlanMetricsSet,
 }
 
 impl FilterExec {
     pub fn try_new(
-        predicate: Arc<dyn PhysicalExpr>,
+        predicates: Vec<PhysicalExprRef>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Result<Self> {
-        let inner = Arc::new(datafusion::physical_plan::filter::FilterExec::try_new(
-            predicate, input,
-        )?);
-        Ok(Self { inner })
+        let schema = input.schema();
+
+        if predicates.is_empty() {
+            return Err(DataFusionError::Plan(format!(
+                "Filter requires at least one predicate"
+            )));
+        }
+        if !predicates
+            .iter()
+            .all(|pred| matches!(pred.data_type(&schema), Ok(DataType::Boolean)))
+        {
+            return Err(DataFusionError::Plan(format!(
+                "Filter predicate must return boolean values"
+            )));
+        }
+        Ok(Self {
+            input,
+            predicates,
+            metrics: ExecutionPlanMetricsSet::new(),
+        })
+    }
+
+    pub fn predicates(&self) -> &[PhysicalExprRef] {
+        &self.predicates
     }
 }
 
@@ -49,19 +77,19 @@ impl ExecutionPlan for FilterExec {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.inner.schema()
+        self.input.schema()
     }
 
     fn output_partitioning(&self) -> Partitioning {
-        self.inner.output_partitioning()
+        self.input.output_partitioning()
     }
 
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.inner.output_ordering()
+        self.input.output_ordering()
     }
 
     fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        self.inner.children()
+        vec![self.input.clone()]
     }
 
     fn with_new_children(
@@ -69,7 +97,7 @@ impl ExecutionPlan for FilterExec {
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(Self::try_new(
-            self.inner.predicate().clone(),
+            self.predicates.clone(),
             children[0].clone(),
         )?))
     }
@@ -80,32 +108,56 @@ impl ExecutionPlan for FilterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let batch_size = context.session_config().batch_size();
-        let filtered = self.inner.execute(partition, context)?;
-        let elapsed_compute = self
-            .inner
-            .metrics()
-            .unwrap()
-            .iter()
-            .filter_map(|m| match m.value() {
-                MetricValue::ElapsedCompute(timer) => Some(timer.clone()),
-                _ => None,
-            })
-            .next()
-            .unwrap();
+        let predicates = self.predicates.clone();
+        let metrics = BaselineMetrics::new(&self.metrics, partition);
+        let elapsed_compute = metrics.elapsed_compute().clone();
 
+        let input = self.input.execute(partition, context.clone())?;
+        let filtered = Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            once(execute_filter(input, context, predicates, metrics)).try_flatten(),
+        ));
         let coalesced = Box::pin(CoalesceStream::new(filtered, batch_size, elapsed_compute));
         Ok(coalesced)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
-        self.inner.metrics()
+        Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        self.inner.fmt_as(t, f)
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "FilterExec [{}]",
+            self.predicates.iter().map(|e| format!("{e}")).join(", ")
+        )
     }
 
     fn statistics(&self) -> Statistics {
         todo!()
     }
+}
+
+async fn execute_filter(
+    mut input: SendableRecordBatchStream,
+    context: Arc<TaskContext>,
+    predicates: Vec<PhysicalExprRef>,
+    metrics: BaselineMetrics,
+) -> Result<SendableRecordBatchStream> {
+    let cached_exprs_evaluator = CachedExprsEvaluator::try_new(predicates, vec![])?;
+
+    output_with_sender(
+        "Filter",
+        context,
+        input.schema(),
+        move |sender| async move {
+            while let Some(batch) = input.next().await.transpose()? {
+                let mut timer = metrics.elapsed_compute().timer();
+                let filtered_batch = cached_exprs_evaluator.filter(&batch)?;
+                metrics.record_output(filtered_batch.num_rows());
+                sender.send(Ok(filtered_batch), Some(&mut timer)).await;
+            }
+            Ok(())
+        },
+    )
 }

@@ -324,7 +324,7 @@ message StringContainsExprNode {
 
 message FilterExecNode {
   PhysicalPlanNode input = 1;
-  PhysicalExprNode expr = 2;
+  repeated PhysicalExprNode expr = 2;
 }
 
 message FileRange {
