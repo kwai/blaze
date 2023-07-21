@@ -285,3 +285,119 @@ fn get_data_type_field(data_type: &DataType) -> Result<Field> {
         )),
     }
 }
+
+#[cfg(test)]
+mod test{
+    use std::sync::Arc;
+    use arrow::array::*;
+    use arrow::buffer::Buffer;
+    use arrow::datatypes::{DataType, Field, ToByteSlice};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::assert_batches_eq;
+    use datafusion::common::ScalarValue;
+    use datafusion::physical_plan::PhysicalExpr;
+    use datafusion::physical_plan::expressions::Column;
+    use super::GetMapValueExpr;
+
+    #[test]
+    fn test_map_1() -> Result<(), Box<dyn std::error::Error>> {
+        //Construct key and values
+        let key_data = ArrayData::builder(DataType::Int32)
+            .len(8)
+            .add_buffer(Buffer::from(&[0,1,2,3,4,5,6,7].to_byte_slice()))
+            .build()
+            .unwrap();
+        let value_data = ArrayData::builder(DataType::UInt32)
+            .len(8)
+            .add_buffer(Buffer::from(
+                &[0u32, 10, 20, 0, 40, 0, 60, 70].to_byte_slice(),
+            ))
+            .null_bit_buffer(Some(Buffer::from(&[0b11010110])))
+            .build()
+            .unwrap();
+
+        let entry_offsets = Buffer::from(&[0, 3, 6, 8].to_byte_slice());
+
+        let keys_field = Arc::new(Field::new("keys", DataType::Int32, false));
+        let values_field = Arc::new(Field::new("values", DataType::UInt32, true));
+        let entry_struct = StructArray::from(vec![
+            (keys_field.clone(), make_array(key_data)),
+            (values_field.clone(), make_array(value_data.clone())),
+        ]);
+
+        // Construct a map array from the above two
+        let map_data_type = DataType::Map(
+            Arc::new(Field::new(
+                "entries",
+                entry_struct.data_type().clone(),
+                true,
+            )),
+            false,
+        );
+
+        let map_data = ArrayData::builder(map_data_type)
+            .len(3)
+            .add_buffer(entry_offsets)
+            .add_child_data(entry_struct.into_data())
+            .build()
+            .unwrap();
+        let map_array: ArrayRef = Arc::new(MapArray::from(map_data));
+        let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("col", map_array, true)])?;
+        let get_indexed = Arc::new(GetMapValueExpr::new(
+            Arc::new(Column::new("col",0)),
+            ScalarValue::from(7_i32),
+        ));
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
+        let output_batch =
+            RecordBatch::try_from_iter_with_nullable(vec![("col", output_array, true)])?;
+
+        let expected = vec![
+            "+-----+",
+            "| col |",
+            "+-----+",
+            "|     |",
+            "|     |",
+            "| 70  |",
+            "+-----+",
+        ];
+        assert_batches_eq!(expected, &[output_batch]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_map_2() -> Result<(), Box<dyn std::error::Error>> {
+        let keys = vec!["a", "b", "c", "d", "e", "f", "g", "h"];
+        let values_data = UInt32Array::from(vec![0u32, 10, 20, 30, 40, 50, 60, 70]);
+
+        // Construct a buffer for value offsets, for the nested array:
+        //  [[a, b, c], [d, e, f], [g, h]]
+        let entry_offsets = [0, 3, 6, 8];
+
+        let map_array: ArrayRef = Arc::new(MapArray::new_from_strings(
+            keys.clone().into_iter(),
+            &values_data,
+            &entry_offsets,
+        ).unwrap());
+        let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("col", map_array, true)])?;
+        let get_indexed = Arc::new(GetMapValueExpr::new(
+            Arc::new(Column::new("col",0)),
+            ScalarValue::from("e"),
+        ));
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
+        let output_batch =
+            RecordBatch::try_from_iter_with_nullable(vec![("col", output_array, true)])?;
+
+        let expected = vec![
+            "+-----+",
+            "| col |",
+            "+-----+",
+            "|     |",
+            "| 40  |",
+            "|     |",
+            "+-----+",
+        ];
+        assert_batches_eq!(expected, &[output_batch]);
+        Ok(())
+    }
+
+}

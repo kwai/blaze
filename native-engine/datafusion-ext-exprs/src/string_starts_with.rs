@@ -78,7 +78,8 @@ impl PhysicalExpr for StringStartsWithExpr {
         match expr {
             ColumnarValue::Array(array) => {
                 let string_array = array.as_any().downcast_ref::<StringArray>().unwrap();
-                let ret_array = Arc::new(BooleanArray::from_iter(string_array.iter().map(
+                let ret_array =
+                    Arc::new(BooleanArray::from_iter(string_array.iter().map(
                     |maybe_string| maybe_string.map(|string| string.starts_with(&self.prefix)),
                 )));
                 Ok(ColumnarValue::Array(ret_array))
@@ -111,5 +112,89 @@ impl PhysicalExpr for StringStartsWithExpr {
     fn dyn_hash(&self, state: &mut dyn Hasher) {
         let mut s = state;
         self.hash(&mut s);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use arrow::array::{StringArray, ArrayRef, BooleanArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
+
+
+    use crate::string_starts_with::StringStartsWithExpr;
+
+    #[test]
+    fn test_ok() {
+
+        let string_array: ArrayRef = Arc::new(StringArray::from(vec![
+            None,
+            Some("rabaok".to_string()),
+            Some("rraara".to_string()),
+            Some("s_skdo[]ra.,?';,{}\ra".to_string()),
+            Some(" raefuwidn".to_string()),
+        ]));
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("col3", DataType::Utf8, true),
+        ]));
+
+        let batch = RecordBatch::try_new(schema, vec![string_array])
+            .expect("Error creating RecordBatch");
+
+        let pattern = "ra".to_string();
+        let expr = Arc::new(StringStartsWithExpr::new(
+            phys_expr::col("col3", &batch.schema()).unwrap(),
+            pattern,
+        ));
+        let ret = expr.evaluate(&batch)
+            .expect("Error evaluating expr")
+            .into_array(batch.num_rows());
+
+        let expected: ArrayRef = Arc::new(BooleanArray::from(vec![
+            None,
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            // None
+        ]));
+        assert_eq!(&ret, &expected);
+    }
+
+    #[test]
+    fn test_scalar_string() {
+        let string_array: ArrayRef = Arc::new(StringArray::from(vec![
+            Some("Hello, Rust".to_string()),
+            Some("Hello, He".to_string()),
+            None,
+            Some("RustHe".to_string()),
+            Some("HellHe".to_string()),
+        ]));
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("col4", DataType::Utf8, true),
+        ]));
+
+        let batch = RecordBatch::try_new(schema, vec![string_array])
+            .expect("Error creating RecordBatch");
+
+        let pattern = "ra".to_string();
+        let expr = Arc::new(StringStartsWithExpr::new(
+            phys_expr::lit("rarrr"),
+            pattern,
+        ));
+        let ret = expr.evaluate(&batch)
+            .expect("Error evaluating expr")
+            .into_array(batch.num_rows());
+
+        let expected: ArrayRef = Arc::new(BooleanArray::from(vec![
+            Some(true),
+            Some(true),
+            Some(true),
+            Some(true),
+            Some(true),
+        ]));
+        assert_eq!(&ret, &expected);
     }
 }

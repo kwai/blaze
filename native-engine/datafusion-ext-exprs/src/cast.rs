@@ -99,3 +99,137 @@ impl PhysicalExpr for TryCastExpr {
         self.hash(&mut s);
     }
 }
+#[cfg(test)]
+mod test{
+    use std::sync::Arc;
+    use arrow::array::{ArrayRef, Int32Array, StringArray, Float32Array};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::datatypes::DataType::Float32;
+    use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
+    use arrow::record_batch::RecordBatch;
+    use crate::cast::TryCastExpr;
+
+    #[test]
+    fn test_ok_1() {
+        //input: Array
+        //cast Float32 into Int32
+        let float_arr: ArrayRef = Arc::new(Float32Array::from(vec![
+            Some(7.6),
+            Some(9.0),
+            Some(3.4),
+            Some(-0.0),
+            Some(-99.9),
+            None
+        ]));
+
+        let schema= Arc::new(Schema::new(vec![
+            Field::new("col", DataType::Float32,true),
+        ]));
+
+        let batch = RecordBatch::try_new(schema, vec![float_arr])
+            .expect("Error creating RecordBatch");
+
+        let cast_type = DataType::Int32;
+
+        let expr = Arc::new(TryCastExpr::new(
+            phys_expr::col("col", &batch.schema()).unwrap(),
+            cast_type,
+        ));
+
+        let ret = expr.evaluate(&batch)
+            .expect("Error evaluating expr")
+            .into_array(batch.num_rows());
+
+        let expected: ArrayRef = Arc::new(Int32Array::from(vec![
+            Some(7),
+            Some(9),
+            Some(3),
+            Some(0),
+            Some(-99),
+            None
+        ]));
+        assert_eq!(&ret, &expected);
+    }
+
+
+    #[test]
+    fn test_ok_2() {
+        //input: Array
+        //cast Utf8 into Float32
+        let string_arr: ArrayRef = Arc::new(StringArray::from(vec![
+            Some("123"),
+            Some("321.9"),
+            Some("-098"),
+            Some("sda"),
+            None, // null
+        ]));
+
+        let schema= Arc::new(Schema::new(vec![
+            Field::new("col", DataType::Utf8,true),
+        ]));
+
+        let batch = RecordBatch::try_new(schema, vec![string_arr])
+            .expect("Error creating RecordBatch");
+
+        let cast_type = DataType::Float32;
+
+        let expr = Arc::new(TryCastExpr::new(
+            phys_expr::col("col", &batch.schema()).unwrap(),
+            cast_type,
+        ));
+
+        let ret = expr.evaluate(&batch)
+            .expect("Error evaluating expr")
+            .into_array(batch.num_rows());
+
+        let expected: ArrayRef = Arc::new(Float32Array::from(vec![
+            Some(123.0),
+            Some(321.9),
+            Some(-98.0),
+            None,
+            None,
+        ]));
+        assert_eq!(&ret, &expected);
+    }
+
+    #[test]
+    fn test_ok_3() {
+        //input: Scalar
+        //cast Utf8 into Float32
+        let string_arr: ArrayRef = Arc::new(StringArray::from(vec![
+            Some("123"),
+            Some("321.9"),
+            Some("-098"),
+            Some("sda"),
+            None, // null
+        ]));
+
+        let schema= Arc::new(Schema::new(vec![
+            Field::new("col", DataType::Utf8,true),
+        ]));
+
+        let batch = RecordBatch::try_new(schema, vec![string_arr])
+            .expect("Error creating RecordBatch");
+
+        let cast_type = DataType::Float32;
+
+        let expr = Arc::new(TryCastExpr::new(
+            phys_expr::lit("123.4"),
+            cast_type,
+        ));
+
+        let ret = expr.evaluate(&batch)
+            .expect("Error evaluating expr")
+            .into_array(batch.num_rows());
+
+        let expected: ArrayRef = Arc::new(Float32Array::from(vec![
+            Some(123.4),
+            Some(123.4),
+            Some(123.4),
+            Some(123.4),
+            Some(123.4),
+
+        ]));
+        assert_eq!(&ret, &expected);
+    }
+}
