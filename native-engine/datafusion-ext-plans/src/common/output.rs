@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::future::Future;
+use std::io::{Cursor, Write};
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Weak};
 
@@ -24,10 +25,13 @@ use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::metrics::ScopedTimerGuard;
 use datafusion::physical_plan::stream::RecordBatchReceiverStream;
-use futures::{FutureExt, TryFutureExt};
+use futures::{FutureExt, StreamExt, TryFutureExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
+use datafusion_ext_commons::io::{read_one_batch, write_one_batch};
+use crate::common::memory_manager::{MemConsumer, MemManager};
+use crate::common::onheap_spill::try_new_spill;
 
 fn working_senders() -> &'static Mutex<Vec<Weak<WrappedRecordBatchSender>>> {
     static WORKING_SENDERS: OnceCell<Mutex<Vec<Weak<WrappedRecordBatchSender>>>> = OnceCell::new();
@@ -129,4 +133,51 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
         }
     });
     Ok(stream_builder.build())
+}
+
+pub fn output_bufferable_with_spill(
+    mem_consumer: Arc<dyn MemConsumer>,
+    task_context: Arc<TaskContext>,
+    mut stream: SendableRecordBatchStream,
+) -> Result<SendableRecordBatchStream> {
+
+    let output_schema = stream.schema();
+
+    output_with_sender(
+        "OutputBufferableWithSpill",
+        task_context,
+        output_schema.clone(),
+        move |sender| async move {
+            while let Some(batch) = {
+                // if consumer is holding too much memory, we will create a spill
+                // to receive all of its outputs and release all memory.
+                // outputs can be read from spill later.
+                if MemManager::get().num_consumers() > 1 && mem_consumer.mem_used_percent() > 0.8 {
+                    let spill = try_new_spill()?;
+                    let mut spill_writer = spill.get_buf_writer();
+
+                    // write all batches to spill
+                    while let Some(batch) = stream.next().await.transpose()? {
+                        let mut buf = vec![];
+                        write_one_batch(&batch, &mut Cursor::new(&mut buf), true)?;
+                        spill_writer.write_all(&buf)?;
+                    }
+                    spill_writer.flush()?;
+                    spill.complete()?;
+
+                    // read all batches from spill and output
+                    let mut spill_reader = spill.get_buf_reader();
+                    while let Some(batch) =
+                        read_one_batch(&mut spill_reader, Some(output_schema.clone()), true)?
+                    {
+                        sender.send(Ok(batch), None).await;
+                    }
+                    return Ok(());
+                }
+                stream.next().await.transpose()
+            }? {
+                sender.send(Ok(batch), None).await;
+            }
+            Ok(())
+        })
 }

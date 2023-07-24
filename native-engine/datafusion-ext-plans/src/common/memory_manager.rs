@@ -53,6 +53,10 @@ impl MemManager {
         MEM_MANAGER.get().expect("mem manager not initialized")
     }
 
+    pub fn num_consumers(&self) -> usize {
+        self.consumers.lock().len()
+    }
+
     pub fn register_consumer(consumer: Arc<dyn MemConsumer>, spillable: bool) {
         let consumer_info = Arc::new(MemConsumerInfo {
             status: Mutex::new(MemConsumerStatus {
@@ -161,6 +165,15 @@ pub trait MemConsumer: Send + Sync {
         self.get_consumer_info()
             .upgrade()
             .expect("consumer deregistered")
+    }
+
+    fn mem_used_percent(&self) -> f64 {
+        let mm = MemManager::get();
+        let total = mm.total;
+        let num_consumers = mm.consumers.lock().len();
+        let mem_used = self.consumer_info().status.lock().mem_used;
+
+        mem_used as f64 / (total as f64 / num_consumers as f64)
     }
 
     fn set_spillable(&self, spillable: bool) {

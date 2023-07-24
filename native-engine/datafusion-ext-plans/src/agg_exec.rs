@@ -36,7 +36,7 @@ use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::{AggTables, InMemTable};
 use crate::agg::{AggExecMode, AggExpr, AggRecord, GroupingExpr};
 use crate::common::memory_manager::MemManager;
-use crate::common::output::output_with_sender;
+use crate::common::output::{output_bufferable_with_spill, output_with_sender};
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -243,15 +243,27 @@ async fn execute_agg_with_grouping_hash(
             })
             .await?;
     }
+    let has_spill = tables.has_spill().await;
+    let tables_cloned = tables.clone();
 
     // merge all tables and output
-    output_with_sender("Agg", context, agg_ctx.output_schema.clone(), |sender| async move {
-        tables
-            .output(grouping_row_converter, baseline_metrics, sender)
-            .await
-            .map_err(|err| err.context("agg: executing output error"))?;
-        Ok(())
-    })
+    let output = output_with_sender(
+        "Agg",
+        context.clone(),
+        agg_ctx.output_schema.clone(),
+        |sender| async move {
+            tables
+                .output(grouping_row_converter, baseline_metrics, sender)
+                .await
+                .map_err(|err| err.context("agg: executing output error"))?;
+            Ok(())
+        })?;
+
+    // if running in-memory, buffer output when memory usage is high
+    if !has_spill {
+        return output_bufferable_with_spill(tables_cloned, context, output);
+    }
+    Ok(output)
 }
 
 async fn execute_agg_no_grouping(

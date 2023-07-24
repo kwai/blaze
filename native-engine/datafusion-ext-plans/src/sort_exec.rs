@@ -29,9 +29,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
-use datafusion_ext_commons::io::{
-    read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch,
-};
+use datafusion_ext_commons::io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch};
 use datafusion_ext_commons::loser_tree::LoserTree;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::lock::Mutex;
@@ -46,7 +44,7 @@ use std::fmt::Formatter;
 use std::io::{BufReader, Cursor, Read, Write};
 use std::sync::{Arc, Weak};
 use arrow::array::{ArrayRef, UInt32Array};
-use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
+use crate::common::output::{output_bufferable_with_spill, output_with_sender, WrappedRecordBatchSender};
 
 const NUM_LEVELS: usize = 64;
 
@@ -256,11 +254,19 @@ async fn external_sort(
             .await
             .map_err(|err| err.context("sort: executing insert_batch() error"))?;
     }
+    let has_spill = sorter.spills.lock().await.is_empty();
+    let sorter_cloned = sorter.clone();
 
-    output_with_sender("Sort", context, input.schema(), |sender| async move {
+    let output = output_with_sender("Sort", context.clone(), input.schema(), |sender| async move {
         sorter.output(sender).await?;
         Ok(())
-    })
+    })?;
+
+    // if running in-memory, buffer output when memory usage is high
+    if !has_spill {
+        return output_bufferable_with_spill(sorter_cloned, context, output);
+    }
+    Ok(output)
 }
 
 impl ExternalSorter {
@@ -692,7 +698,7 @@ impl SortedBatches {
         // write batch1 + keys1, batch2 + keys2, ...
         for batch in self.batches {
             let mut buf = vec![];
-            write_one_batch(&batch, &mut Cursor::new(&mut buf), false)?;
+            write_one_batch(&batch, &mut Cursor::new(&mut buf), true)?;
             writer.write_all(&buf)?;
 
             for _ in 0..batch.num_rows() {
@@ -759,11 +765,9 @@ impl SpillCursor {
     }
 
     fn load_next_batch(&mut self) -> Result<bool> {
-        if let Some(batch) = read_one_batch(
-            &mut self.input,
-            Some(self.sorter.input_schema.clone()),
-            false,
-        )? {
+        if let Some(batch) =
+            read_one_batch(&mut self.input, Some(self.sorter.input_schema.clone()), true)?
+        {
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;
             self.cur_batches.push(batch);

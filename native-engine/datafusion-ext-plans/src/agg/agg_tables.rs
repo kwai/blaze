@@ -72,6 +72,10 @@ impl AggTables {
         }
     }
 
+    pub async fn has_spill(&self) -> bool {
+        !self.spills.lock().await.is_empty()
+    }
+
     pub async fn update_in_mem(
         &self,
         process: impl FnOnce(&mut InMemTable) -> Result<()>,
