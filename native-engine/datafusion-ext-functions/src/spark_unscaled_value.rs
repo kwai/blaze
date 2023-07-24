@@ -38,3 +38,47 @@ pub fn spark_unscaled_value(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         }
     })
 }
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use arrow::array::{ArrayRef, Decimal128Array, Int64Array};
+    use datafusion::common::ScalarValue;
+    use datafusion::logical_expr::ColumnarValue;
+    use crate::spark_unscaled_value::spark_unscaled_value;
+
+    #[test]
+    fn test_unscaled_value_array() {
+        let result = spark_unscaled_value(&vec![
+            ColumnarValue::Array(Arc::new(Decimal128Array::from(vec![
+                Some(1234567890987654321),
+                Some(9876543210),
+                Some(135792468109),
+                None,
+                Some(67898),
+            ]).with_precision_and_scale(10,8).unwrap()))
+        ]).unwrap().into_array(5);
+        let expected =
+            Int64Array::from(vec![
+                Some(1234567890987654321),
+                Some(9876543210),
+                Some(135792468109),
+                None,
+                Some(67898),
+            ]);
+        let expected: ArrayRef = Arc::new(expected);
+        assert_eq!(&result, &expected);
+    }
+
+    #[test]
+    fn test_unscaled_value_scalar() {
+        let result = spark_unscaled_value(&vec![
+            ColumnarValue::Scalar(ScalarValue::Decimal128(Some(123),3,2))
+        ]).unwrap().into_array(1);
+        let expected =
+            Int64Array::from(vec![
+                Some(123),
+            ]);
+        let expected: ArrayRef = Arc::new(expected);
+        assert_eq!(&result, &expected);
+    }
+}

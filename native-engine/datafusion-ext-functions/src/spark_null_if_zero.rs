@@ -80,3 +80,63 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         }
     })
 }
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use arrow::array::{ArrayRef, Decimal128Array, Float32Array, Int32Array};
+    use datafusion::common::ScalarValue;
+    use datafusion::logical_expr::ColumnarValue;
+    use crate::spark_null_if_zero::spark_null_if_zero;
+
+    #[test]
+    fn test_null_if_zero_int() {
+        let result = spark_null_if_zero(&vec![
+            ColumnarValue::Array(Arc::new(Int32Array::from(vec![
+                Some(1),
+                None,
+                Some(-1),
+                Some(0),
+            ])))
+        ]).unwrap().into_array(4);
+
+        let expected = Int32Array::from(vec![
+            Some(1),
+            None,
+            Some(-1),
+            None,
+        ]);
+        let expected:ArrayRef = Arc::new(expected);
+
+        assert_eq!(&result, &expected);
+    }
+
+    #[test]
+    fn test_null_if_zero_decimal() {
+        let result = spark_null_if_zero(&vec![
+            ColumnarValue::Scalar(ScalarValue::Decimal128(Some(1230427389124691),20,2)),
+
+        ]).unwrap().into_array(1);
+
+        let expected = Decimal128Array::from(vec![
+            Some(1230427389124691),
+        ]).with_precision_and_scale(20,2).unwrap();
+        let expected:ArrayRef = Arc::new(expected);
+
+        assert_eq!(&result, &expected);
+    }
+
+    #[test]
+    fn test_null_if_zero_float() {
+        let result = spark_null_if_zero(&vec![
+            ColumnarValue::Scalar(ScalarValue::Float32(Some(0.0))),
+        ]).unwrap().into_array(1);
+
+        let expected = Float32Array::from(vec![
+            None,
+        ]);
+        let expected:ArrayRef = Arc::new(expected);
+
+        assert_eq!(&result, &expected);
+    }
+}
