@@ -440,3 +440,306 @@ async fn execute_agg_sorted(
         Ok(())
     })
 }
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use arrow::array::Int32Array;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::{assert_batches_sorted_eq};
+    use datafusion::physical_expr::expressions::Column;
+    use crate::agg::AggExecMode::{HashAgg};
+    use crate::agg::{AggExpr, AggFunction, create_agg, GroupingExpr};
+    use crate::agg_exec::AggExec;
+    use datafusion::physical_plan::{common, ExecutionPlan};
+    use datafusion::physical_plan::memory::MemoryExec;
+    use datafusion::prelude::{SessionContext};
+    use crate::agg::AggMode::{Final, Partial};
+    use datafusion::physical_expr::{expressions as phys_expr};
+    use crate::common::memory_manager::MemManager;
+    use datafusion::common::Result;
+
+    fn build_table_i32(
+        a: (&str, &Vec<i32>),
+        b: (&str, &Vec<i32>),
+        c: (&str, &Vec<i32>),
+        d: (&str, &Vec<i32>),
+        e: (&str, &Vec<i32>),
+        f: (&str, &Vec<i32>),
+        g: (&str, &Vec<i32>),
+        h: (&str, &Vec<i32>),
+    ) -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new(a.0, DataType::Int32, false),
+            Field::new(b.0, DataType::Int32, false),
+            Field::new(c.0, DataType::Int32, false),
+            Field::new(d.0, DataType::Int32, false),
+            Field::new(e.0, DataType::Int32, false),
+            Field::new(f.0, DataType::Int32, false),
+            Field::new(g.0, DataType::Int32, false),
+            Field::new(h.0, DataType::Int32, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Int32Array::from(a.1.clone())),
+                Arc::new(Int32Array::from(b.1.clone())),
+                Arc::new(Int32Array::from(c.1.clone())),
+                Arc::new(Int32Array::from(d.1.clone())),
+                Arc::new(Int32Array::from(e.1.clone())),
+                Arc::new(Int32Array::from(f.1.clone())),
+                Arc::new(Int32Array::from(g.1.clone())),
+                Arc::new(Int32Array::from(h.1.clone())),
+            ],
+        )
+            .unwrap()
+    }
+
+    fn build_table(
+        a: (&str, &Vec<i32>),
+        b: (&str, &Vec<i32>),
+        c: (&str, &Vec<i32>),
+        d: (&str, &Vec<i32>),
+        e: (&str, &Vec<i32>),
+        f: (&str, &Vec<i32>),
+        g: (&str, &Vec<i32>),
+        h: (&str, &Vec<i32>),
+    ) -> Arc<dyn ExecutionPlan> {
+        let batch = build_table_i32(a, b, c, d, e, f, g, h);
+        let schema = batch.schema();
+        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_agg_exec_sum() -> Result<()>  {
+        MemManager::init(10000);
+        let input = build_table(
+            ("a", &vec![2, 9, 3, 1, 0, 4, 6]),
+            ("b", &vec![1, 0, 0, 3, 5, 6, 3]),
+            ("c", &vec![7, 8, 7, 8, 9, 2, 5]),
+            ("d", &vec![-7, 86, 71, 83, 90, -2, 5]),
+            ("e", &vec![-7, 86, 71, 83, 90, -2, 5]),
+            ("f", &vec![0, 1, 2, 3, 4, 5, 6]),
+            ("g", &vec![6, 3, 6, 3, 1, 5, 4]),
+            ("h", &vec![6, 3, 6, 3, 1, 5, 4]),
+        );
+        //create AggExec
+        let groupings_agg_expr = vec![GroupingExpr {
+            field_name: "grouping_column".to_string(),
+            expr: Arc::new(Column::new("c", 2)),
+        }];
+
+        let agg_agg_expr_sum = create_agg(
+            AggFunction::Sum,
+            &[phys_expr::col("a",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_avg = create_agg(
+            AggFunction::Avg,
+            &[phys_expr::col("b",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_max = create_agg(
+            AggFunction::Max,
+            &[phys_expr::col("d",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_min = create_agg(
+            AggFunction::Min,
+            &[phys_expr::col("e",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_count = create_agg(
+            AggFunction::Count,
+            &[phys_expr::col("f",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_collectlist = create_agg(
+            AggFunction::CollectList,
+            &[phys_expr::col("g",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_collectset = create_agg(
+            AggFunction::CollectSet,
+            &[phys_expr::col("h",&input.schema()).unwrap()],
+            &input.schema(),
+        ).unwrap();
+
+        let aggs_agg_expr = vec![
+            AggExpr {
+                field_name: "agg_agg_expr".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_sum,
+            },
+            AggExpr {
+                field_name: "agg_agg_expr".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_avg,
+            },
+            AggExpr {
+                field_name: "agg_agg_expr".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_max,
+            },
+            AggExpr {
+                field_name: "agg_agg_expr".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_min,
+            },
+            AggExpr {
+                field_name: "agg_agg_expr".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_count,
+            },
+            AggExpr {
+                field_name: "agg_agg_expr".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_collectlist,
+            },
+            AggExpr {
+                field_name: "agg_agg_expr".to_string(),
+                mode: Partial,
+                agg: agg_agg_expr_collectset,
+            },
+        ];
+
+        let agg_exec_partial = AggExec::try_new(
+            HashAgg,
+            groupings_agg_expr,
+            aggs_agg_expr,
+            0,
+            input,
+        ).unwrap();
+
+        let input_1 = build_table(
+            ("a", &vec![2, 9, 3, 1, 0, 4, 6]),
+            ("b", &vec![1, 0, 0, 3, 5, 6, 3]),
+            ("c", &vec![7, 8, 7, 8, 9, 2, 5]),
+            ("d", &vec![-7, 86, 71, 83, 90, -2, 5]),
+            ("e", &vec![-7, 86, 71, 83, 90, -2, 5]),
+            ("f", &vec![0, 1, 2, 3, 4, 5, 6]),
+            ("g", &vec![6, 3, 0, 3, 1, 5, 4]),
+            ("h", &vec![6, 3, 0, 3, 1, 5, 4]),
+        );
+
+        let groupings_agg_expr_1 = vec![GroupingExpr {
+            field_name: "grouping_column(c)".to_string(),
+            expr: Arc::new(Column::new("c", 0)),
+        }];
+
+        let agg_agg_expr_1 = create_agg(
+            AggFunction::Sum,
+            &[phys_expr::col("a",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_2 = create_agg(
+            AggFunction::Avg,
+            &[phys_expr::col("b",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_3 = create_agg(
+            AggFunction::Max,
+            &[phys_expr::col("d",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_4 = create_agg(
+            AggFunction::Min,
+            &[phys_expr::col("e",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_5 = create_agg(
+            AggFunction::Count,
+            &[phys_expr::col("f",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_6 = create_agg(
+            AggFunction::CollectList,
+            &[phys_expr::col("g",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
+        let agg_agg_expr_7 = create_agg(
+            AggFunction::CollectSet,
+            &[phys_expr::col("h",&input_1.schema()).unwrap()],
+            &input_1.schema(),
+        ).unwrap();
+
+        let aggs_agg_expr_1 = vec![
+            AggExpr {
+                field_name: "Sum(a)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_1
+            },
+            AggExpr {
+                field_name: "Avg(b)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_2
+            },
+            AggExpr {
+                field_name: "Max(d)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_3
+            },
+            AggExpr {
+                field_name: "Min(e)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_4
+            },
+            AggExpr {
+                field_name: "Count(f)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_5
+            },
+            AggExpr {
+                field_name: "CollectList(g)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_6
+            },
+            AggExpr {
+                field_name: "CollectSet(h)".to_string(),
+                mode: Final,
+                agg: agg_agg_expr_7
+            },
+        ];
+
+        let agg_exec_final = AggExec::try_new(
+            HashAgg,
+            groupings_agg_expr_1,
+            aggs_agg_expr_1,
+            0,
+            Arc::new(agg_exec_partial),
+        ).unwrap();
+
+        let session_ctx = SessionContext::new();
+        let task_ctx = session_ctx.task_ctx();
+        let output_final = agg_exec_final.execute(0, task_ctx)?;
+        let batches = common::collect(output_final).await?;
+        let expected = vec![
+            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+",
+            "| grouping_column(c) | Sum(a) | Avg(b) | Max(d) | Min(e) | Count(f) | CollectList(g) | CollectSet(h) |",
+            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+",
+            "| 2                  | 4      | 6.0    | -2     | -2     | 1        | [5]            | [5]           |",
+            "| 5                  | 6      | 3.0    | 5      | 5      | 1        | [4]            | [4]           |",
+            "| 7                  | 5      | 0.5    | 71     | -7     | 2        | [6, 6]         | [6]           |",
+            "| 8                  | 10     | 1.5    | 86     | 83     | 2        | [3, 3]         | [3]           |",
+            "| 9                  | 0      | 5.0    | 90     | 90     | 1        | [1]            | [1]           |",
+            "+--------------------+--------+--------+--------+--------+----------+----------------+---------------+",
+        ];
+
+        assert_batches_sorted_eq!(expected, &batches);
+
+        Ok(())
+    }
+}
