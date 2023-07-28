@@ -127,3 +127,79 @@ impl Stream for LimitStream {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use arrow::array::Int32Array;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::assert_batches_eq;
+    use datafusion::physical_plan::{common, ExecutionPlan};
+    use datafusion::physical_plan::memory::MemoryExec;
+    use datafusion::prelude::SessionContext;
+    use crate::limit_exec::LimitExec;
+    use datafusion::common::Result;
+    use crate::common::memory_manager::MemManager;
+
+    fn build_table_i32(
+        a: (&str, &Vec<i32>),
+        b: (&str, &Vec<i32>),
+        c: (&str, &Vec<i32>),
+    ) -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new(a.0, DataType::Int32, false),
+            Field::new(b.0, DataType::Int32, false),
+            Field::new(c.0, DataType::Int32, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Int32Array::from(a.1.clone())),
+                Arc::new(Int32Array::from(b.1.clone())),
+                Arc::new(Int32Array::from(c.1.clone())),
+            ],
+        )
+            .unwrap()
+    }
+
+    fn build_table(
+        a: (&str, &Vec<i32>),
+        b: (&str, &Vec<i32>),
+        c: (&str, &Vec<i32>),
+    ) -> Arc<dyn ExecutionPlan> {
+        let batch = build_table_i32(a, b, c);
+        let schema = batch.schema();
+        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_limit_exec() -> Result<()> {
+        MemManager::init(10000);
+        let input = build_table(
+            ("a", &vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 0]),
+            ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
+        );
+        let limit_exec = LimitExec::new(
+            input,
+            2_u64,
+        );
+        let session_ctx = SessionContext::new();
+        let task_ctx= session_ctx.task_ctx();
+        let output = limit_exec.execute(0, task_ctx).unwrap();
+        let batches = common::collect(output).await?;
+
+        let expected = vec![
+            "+---+---+---+",
+            "| a | b | c |",
+            "+---+---+---+",
+            "| 9 | 0 | 5 |",
+            "| 8 | 1 | 6 |",
+            "+---+---+---+",
+        ];
+        assert_batches_eq!(expected, &batches);
+        Ok(())
+    }
+}
