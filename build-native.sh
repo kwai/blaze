@@ -2,6 +2,9 @@
 
 profile="$1"
 
+echo "Running cargo fmt..."
+cargo fmt --all -q --
+
 echo "Building native with [$profile] profile..."
 cargo +nightly build --profile="$profile" --verbose
 
