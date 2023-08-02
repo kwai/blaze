@@ -19,6 +19,7 @@ package org.apache.spark.sql.blaze
 import java.util.UUID
 
 import scala.annotation.tailrec
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
@@ -34,6 +35,10 @@ import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.Final
+import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
@@ -504,6 +509,18 @@ object BlazeConverters extends Logging {
   }
 
   def convertHashAggregateExec(exec: HashAggregateExec): SparkPlan = {
+    // split non-trivial children exprs in partial-agg to a ProjectExec
+    // for enabling filter-project optimization in native side
+    getPartialAggProjection(exec.aggregateExpressions, exec.groupingExpressions) match {
+      case Some((transformedAggregateExprs, transformedGroupingExprs, projections)) =>
+        return convertHashAggregateExec(
+          exec.copy(
+            aggregateExpressions = transformedAggregateExprs,
+            groupingExpressions = transformedGroupingExprs,
+            child = convertProjectExec(ProjectExec(projections, exec.child))))
+      case None => // passthrough
+    }
+
     logDebug(
       s"Converting HashAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
 
@@ -550,6 +567,18 @@ object BlazeConverters extends Logging {
   }
 
   def convertObjectHashAggregateExec(exec: ObjectHashAggregateExec): SparkPlan = {
+    // split non-trivial children exprs in partial-agg to a ProjectExec
+    // for enabling filter-project optimization in native side
+    getPartialAggProjection(exec.aggregateExpressions, exec.groupingExpressions) match {
+      case Some((transformedAggregateExprs, transformedGroupingExprs, projections)) =>
+        return convertObjectHashAggregateExec(
+          exec.copy(
+            aggregateExpressions = transformedAggregateExprs,
+            groupingExpressions = transformedGroupingExprs,
+            child = convertProjectExec(ProjectExec(projections, exec.child))))
+      case None => // passthrough
+    }
+
     logDebug(
       s"Converting ObjectHashAggregateExec: ${Shims.get.sparkPlanShims.simpleStringWithNodeId(exec)}")
 
@@ -754,4 +783,50 @@ object BlazeConverters extends Logging {
     }
   }
 
+  private def getPartialAggProjection(
+      aggregateExprs: Seq[AggregateExpression],
+      groupingExprs: Seq[NamedExpression])
+      : Option[(Seq[AggregateExpression], Seq[NamedExpression], Seq[Alias])] = {
+
+    if (!aggregateExprs.forall(_.mode == Partial)) {
+      return None
+    }
+    val aggExprChildren = aggregateExprs.flatMap(_.aggregateFunction.children)
+    val containsNonTrivial = (aggExprChildren ++ groupingExprs).exists {
+      case _: AttributeReference | _: Literal => false
+      case e: Alias if e.child.isInstanceOf[Literal] => false
+      case e => true
+    }
+    if (!containsNonTrivial) {
+      return None
+    }
+
+    val projections = mutable.LinkedHashMap[Expression, AttributeReference]()
+    val transformedGroupingExprs = groupingExprs.map {
+      case e: Alias if e.child.isInstanceOf[Literal] => e
+      case e: Alias =>
+        projections.getOrElseUpdate(
+          e.child,
+          AttributeReference(e.name, e.dataType, e.nullable, e.metadata)(e.exprId, e.qualifier))
+      case e =>
+        projections.getOrElseUpdate(
+          e,
+          AttributeReference(e.name, e.dataType, e.nullable, e.metadata)(e.exprId, e.qualifier))
+    }
+    val transformedAggExprs = aggregateExprs.map { expr =>
+      expr.copy(aggregateFunction = expr.aggregateFunction
+        .mapChildren {
+          case e: Literal => e
+          case e =>
+            val nextCol = s"_c${projections.size}"
+            projections.getOrElseUpdate(e, AttributeReference(nextCol, e.dataType, e.nullable)())
+        }
+        .asInstanceOf[AggregateFunction])
+    }
+    Some(
+      (
+        transformedAggExprs,
+        transformedGroupingExprs,
+        projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toSeq))
+  }
 }

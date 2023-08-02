@@ -19,7 +19,9 @@ use arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::common::{Result, ScalarValue};
-use datafusion::physical_expr::expressions::{CaseExpr, Column, Literal, SCAndExpr, SCOrExpr};
+use datafusion::physical_expr::expressions::{
+    CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr,
+};
 use datafusion::physical_expr::{scatter, PhysicalExpr, PhysicalExprRef};
 use datafusion::physical_plan::ColumnarValue;
 use itertools::Itertools;
@@ -156,10 +158,10 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
         dups: &mut HashSet<ExprKey>,
     ) {
         // ignore trivial leaf exprs
-        if expr.as_any().downcast_ref::<Column>().is_some() {
-            return;
-        }
-        if expr.as_any().downcast_ref::<Literal>().is_some() {
+        if expr.as_any().downcast_ref::<NoOp>().is_some()
+            || expr.as_any().downcast_ref::<Column>().is_some()
+            || expr.as_any().downcast_ref::<Literal>().is_some()
+        {
             return;
         }
 
@@ -202,10 +204,10 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
         cache: &Cache,
     ) -> Result<PhysicalExprRef> {
         // ignore trivial leaf exprs
-        if expr.as_any().downcast_ref::<Column>().is_some() {
-            return Ok(expr);
-        }
-        if expr.as_any().downcast_ref::<Literal>().is_some() {
+        if expr.as_any().downcast_ref::<NoOp>().is_some()
+            || expr.as_any().downcast_ref::<Column>().is_some()
+            || expr.as_any().downcast_ref::<Literal>().is_some()
+        {
             return Ok(expr);
         }
 
