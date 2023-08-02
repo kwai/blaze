@@ -116,14 +116,14 @@ impl PhysicalExpr for StringEndsWithExpr {
 
 #[cfg(test)]
 mod test {
-    use crate::string_contains::StringContainsExpr;
+
     use crate::string_ends_with::StringEndsWithExpr;
-    use arrow::array::{Array, ArrayRef, BooleanArray, StringArray};
-    use arrow::datatypes::DataType::{UInt8, Utf8};
+    use arrow::array::{ArrayRef, BooleanArray, StringArray};
+
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
-    use datafusion::scalar::ScalarValue;
+
     use std::sync::Arc;
 
     #[test]

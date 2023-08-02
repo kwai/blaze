@@ -103,7 +103,7 @@ impl PhysicalExpr for TryCastExpr {
 mod test {
     use crate::cast::TryCastExpr;
     use arrow::array::{ArrayRef, Float32Array, Int32Array, StringArray};
-    use arrow::datatypes::DataType::Float32;
+
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};

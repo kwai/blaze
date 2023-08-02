@@ -884,14 +884,36 @@ impl ArrayBuilder for NullBuilder {
     }
 }
 
-#[test]
-fn test_struct_array_from_vec() {
-    let strings: ArrayRef = Arc::new(StringArray::from(vec![
-        Some("joe"),
-        None,
-        None,
-        Some("mark"),
-    ]));
-    let ints: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
-    let arr = StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())]).unwrap();
+#[cfg(test)]
+mod test {
+    use arrow::array::{ArrayRef, Int32Array, StringArray, StructArray};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::assert_batches_eq;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_struct_array_from_vec() {
+        let strings: ArrayRef = Arc::new(StringArray::from(vec![
+            Some("joe"),
+            None,
+            None,
+            Some("mark"),
+        ]));
+        let ints: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
+        let arr =
+            StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())]).unwrap();
+
+        let arr_into_batch = RecordBatch::try_from(arr).unwrap();
+        let expected = vec![
+            "+------+----+",
+            "| f1   | f2 |",
+            "+------+----+",
+            "| joe  | 1  |",
+            "|      | 2  |",
+            "|      |    |",
+            "| mark | 4  |",
+            "+------+----+",
+        ];
+        assert_batches_eq!(expected, &[arr_into_batch]);
+    }
 }

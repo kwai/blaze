@@ -461,13 +461,13 @@ mod test {
     use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
+    use datafusion::assert_batches_sorted_eq;
     use datafusion::common::Result;
     use datafusion::physical_expr::expressions as phys_expr;
     use datafusion::physical_expr::expressions::Column;
     use datafusion::physical_plan::memory::MemoryExec;
     use datafusion::physical_plan::{common, ExecutionPlan};
     use datafusion::prelude::SessionContext;
-    use datafusion::{assert_batches_eq, assert_batches_sorted_eq};
     use std::sync::Arc;
 
     fn build_table_i32(

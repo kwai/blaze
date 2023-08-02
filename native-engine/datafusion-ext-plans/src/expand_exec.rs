@@ -199,7 +199,7 @@ mod test {
     use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_eq;
     use datafusion::common::{Result, ScalarValue};
-    use datafusion::logical_expr::{Operator, UserDefinedLogicalNode};
+    use datafusion::logical_expr::Operator;
     use datafusion::physical_expr::expressions::{binary, col, lit};
     use datafusion::physical_plan::memory::MemoryExec;
     use datafusion::physical_plan::{common, ExecutionPlan};
@@ -279,10 +279,7 @@ mod test {
         MemManager::init(10000);
 
         let input = build_table_int(("a", &vec![-1, -2, 0, 3]));
-
         let schema = Schema::new(vec![Field::new("test_i32", DataType::Int32, false)]);
-
-        let test_i32 = vec![4, 3, 2, 1];
 
         let projections = vec![
             vec![binary(
@@ -343,10 +340,8 @@ mod test {
         MemManager::init(10000);
 
         let input = build_table_float(("a", &vec![-1.2, -2.3, 0.0, 3.4]));
-
         let schema = Schema::new(vec![Field::new("test_f32", DataType::Float32, false)]);
 
-        let test_i32: Vec<f32> = vec![4.3, 3.2, 2.1, 1.0];
         let projections = vec![
             vec![binary(
                 col("test_f32", &schema).unwrap(),
@@ -419,10 +414,7 @@ mod test {
             "a",
             &vec!["hello".to_string(), ",".to_string(), "rust".to_string(), "!".to_string()],
         ));
-
         let schema = Schema::new(vec![Field::new("test_str", DataType::Utf8, false)]);
-
-        let test_str = vec!["test".to_string()];
 
         let projections = vec![vec![binary(
             col("test_str", &schema).unwrap(),
@@ -458,10 +450,7 @@ mod test {
         MemManager::init(10000);
 
         let input = build_table_boolean(("a", &vec![true, false, true, false]));
-
         let schema = Schema::new(vec![Field::new("test_bool", DataType::Boolean, false)]);
-
-        let test_bool = vec![true];
 
         let projections = vec![
             vec![binary(

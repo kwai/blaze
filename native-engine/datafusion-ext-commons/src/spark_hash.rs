@@ -574,7 +574,6 @@ mod tests {
     };
     use arrow::buffer::Buffer;
     use arrow::datatypes::{DataType, Field, ToByteSlice};
-    use datafusion::from_slice::FromSlice;
 
     #[test]
     fn test_list() {
@@ -636,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_str() {
-        let i = Arc::new(StringArray::from_slice(["hello", "bar", "", "😁", "天地"]));
+        let i = Arc::new(StringArray::from(vec!["hello", "bar", "", "😁", "天地"]));
         let mut hashes = vec![42; 5];
         create_hashes(&[i], &mut hashes).unwrap();
 
@@ -676,8 +675,8 @@ mod tests {
         //  [[0, 1, 2], [3, 4, 5], [6, 7]]
         let entry_offsets = Buffer::from(&[0, 3, 6, 8].to_byte_slice());
 
-        let keys_field = Field::new("keys", DataType::Int32, false);
-        let values_field = Field::new("values", DataType::UInt32, true);
+        let keys_field = Arc::new(Field::new("keys", DataType::Int32, false));
+        let values_field = Arc::new(Field::new("values", DataType::UInt32, true));
         let entry_struct = StructArray::from(vec![
             (keys_field.clone(), make_array(key_data)),
             (values_field.clone(), make_array(value_data.clone())),

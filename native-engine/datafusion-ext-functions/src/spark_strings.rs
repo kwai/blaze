@@ -303,7 +303,7 @@ mod test {
     use crate::spark_strings::{
         string_concat, string_concat_ws, string_repeat, string_space, string_split,
     };
-    use arrow::array::{Int32Array, ListArray, ListBuilder, StringArray, StringBuilder};
+    use arrow::array::{Int32Array, ListBuilder, StringArray, StringBuilder};
     use datafusion::common::cast::{as_list_array, as_string_array};
     use datafusion::common::{Result, ScalarValue};
     use datafusion::physical_plan::ColumnarValue;
