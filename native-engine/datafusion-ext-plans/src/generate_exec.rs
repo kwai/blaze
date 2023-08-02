@@ -14,7 +14,7 @@
 
 use crate::common::output::output_with_sender;
 use crate::generate::Generator;
-use arrow::array::{Array, UInt32Builder};
+use arrow::array::UInt32Builder;
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
@@ -30,6 +30,7 @@ use datafusion::physical_plan::{
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use num::integer::Roots;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -216,67 +217,72 @@ async fn execute_generate(
                     })
                     .collect::<Result<Vec<_>>>()
                     .map_err(|err| err.context("generate: evaluating child output arrays error"))?;
-                let child_output_mem_size = child_outputs
-                    .iter()
-                    .map(|col| col.get_array_memory_size())
-                    .sum::<usize>();
 
-                // evaluate generated output
-                let generated_outputs = generator
-                    .eval(&batch)
-                    .map_err(|err| err.context("generate: evaluating generator error"))?;
-                let capacity = generated_outputs.orig_row_ids.len();
-                let mut child_output_row_ids = UInt32Builder::with_capacity(capacity);
-                let mut generated_ids = UInt32Builder::with_capacity(capacity);
-                let mut cur_row_id = 0;
+                // split batch into smaller slice to avoid too much memory usage
+                let slice_step = batch_size.sqrt().max(1);
+                for slice_start in (0..batch.num_rows()).step_by(slice_step) {
+                    let slice_len = slice_step.min(batch.num_rows().saturating_sub(slice_start));
+                    let slice = batch.slice(slice_start, slice_len);
 
-                // build ids for joining
-                for (i, &row_id) in generated_outputs.orig_row_ids.values().iter().enumerate() {
-                    while cur_row_id < row_id {
+                    // evaluate generated output
+                    let generated_outputs = generator
+                        .eval(&slice)
+                        .map_err(|err| err.context("generate: evaluating generator error"))?;
+                    let capacity = generated_outputs.orig_row_ids.len();
+                    let mut child_output_row_ids = UInt32Builder::with_capacity(capacity);
+                    let mut generated_ids = UInt32Builder::with_capacity(capacity);
+                    let mut cur_row_id = 0;
+
+                    // build ids for joining
+                    for (i, &row_id) in generated_outputs.orig_row_ids.values().iter().enumerate() {
+                        while cur_row_id < row_id {
+                            if outer {
+                                child_output_row_ids.append_value(cur_row_id);
+                                generated_ids.append_null();
+                            }
+                            cur_row_id += 1;
+                        }
+                        child_output_row_ids.append_value(row_id);
+                        generated_ids.append_value(i as u32);
+                        cur_row_id = row_id + 1;
+                    }
+                    while cur_row_id < slice.num_rows() as u32 {
                         if outer {
                             child_output_row_ids.append_value(cur_row_id);
                             generated_ids.append_null();
                         }
                         cur_row_id += 1;
                     }
-                    child_output_row_ids.append_value(row_id);
-                    generated_ids.append_value(i as u32);
-                    cur_row_id = row_id + 1;
-                }
-                while cur_row_id < batch.num_rows() as u32 {
-                    if outer {
-                        child_output_row_ids.append_value(cur_row_id);
-                        generated_ids.append_null();
+
+                    let child_output_row_ids = arrow::compute::add_scalar(
+                        &child_output_row_ids.finish(),
+                        slice_start as u32,
+                    )?;
+                    let generated_ids = generated_ids.finish();
+
+                    let mut start = 0;
+                    while start < child_output_row_ids.len() {
+                        let end = (start + batch_size).min(child_output_row_ids.len());
+
+                        let child_output_row_ids = child_output_row_ids.slice(start, end - start);
+                        let generated_ids = generated_ids.slice(start, end - start);
+
+                        let child_outputs = child_outputs
+                            .iter()
+                            .map(|col| Ok(arrow::compute::take(col, &child_output_row_ids, None)?))
+                            .collect::<Result<Vec<_>>>()?;
+                        let generated_outputs = generated_outputs
+                            .cols
+                            .iter()
+                            .map(|col| Ok(arrow::compute::take(col, &generated_ids, None)?))
+                            .collect::<Result<Vec<_>>>()?;
+                        let outputs = [child_outputs, generated_outputs].concat();
+                        let output_batch = RecordBatch::try_new(output_schema.clone(), outputs)?;
+                        start = end;
+
+                        metrics.record_output(output_batch.num_rows());
+                        sender.send(Ok(output_batch), Some(&mut timer)).await;
                     }
-                    cur_row_id += 1;
-                }
-
-                let child_output_row_ids = child_output_row_ids.finish();
-                let generated_ids = generated_ids.finish();
-                let batch_size =
-                    batch_size.min(i32::MAX as usize / child_output_mem_size.max(batch_size * 8));
-                let mut start = 0;
-                while start < child_output_row_ids.len() {
-                    let end = (start + batch_size).min(child_output_row_ids.len());
-
-                    let child_output_row_ids = child_output_row_ids.slice(start, end - start);
-                    let generated_ids = generated_ids.slice(start, end - start);
-
-                    let child_outputs = child_outputs
-                        .iter()
-                        .map(|col| Ok(arrow::compute::take(col, &child_output_row_ids, None)?))
-                        .collect::<Result<Vec<_>>>()?;
-                    let generated_outputs = generated_outputs
-                        .cols
-                        .iter()
-                        .map(|col| Ok(arrow::compute::take(col, &generated_ids, None)?))
-                        .collect::<Result<Vec<_>>>()?;
-                    let outputs = [child_outputs, generated_outputs].concat();
-                    let output_batch = RecordBatch::try_new(output_schema.clone(), outputs)?;
-                    start = end;
-
-                    metrics.record_output(output_batch.num_rows());
-                    sender.send(Ok(output_batch), Some(&mut timer)).await;
                 }
             }
             Ok(())
