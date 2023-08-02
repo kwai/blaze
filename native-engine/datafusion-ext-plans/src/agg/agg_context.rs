@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AggBuf, AccumInitialValue};
+use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AccumInitialValue, AggBuf};
 use crate::agg::{
     Agg, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr, AGG_BUF_COLUMN_NAME,
 };
@@ -110,11 +110,7 @@ impl AggContext {
         }
         let agg_schema = Arc::new(Schema::new(agg_fields));
         let output_schema = Arc::new(Schema::new(
-            [
-                grouping_schema.fields().to_vec(),
-                agg_schema.fields().to_vec(),
-            ]
-            .concat(),
+            [grouping_schema.fields().to_vec(), agg_schema.fields().to_vec()].concat(),
         ));
 
         let initial_accums: Box<[AccumInitialValue]> = aggs

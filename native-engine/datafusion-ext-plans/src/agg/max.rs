@@ -169,7 +169,7 @@ impl Agg for AggMax {
 
 fn partial_update_prim<T: Copy + PartialEq + PartialOrd>(agg_buf: &mut AggBuf, addr: u64, v: T) {
     if agg_buf.is_fixed_valid(addr) {
-        agg_buf.update_fixed_value::<T>(addr, |w| if v > w {v} else {w});
+        agg_buf.update_fixed_value::<T>(addr, |w| if v > w { v } else { w });
     } else {
         agg_buf.set_fixed_value::<T>(addr, v);
         agg_buf.set_fixed_valid(addr, true);

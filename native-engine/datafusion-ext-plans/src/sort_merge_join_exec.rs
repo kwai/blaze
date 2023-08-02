@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
 use arrow::array::*;
+use arrow::buffer::NullBuffer;
 use arrow::compute::kernels::take::take;
 use arrow::compute::SortOptions;
 use arrow::datatypes::{DataType, SchemaRef};
@@ -25,12 +27,17 @@ use datafusion::logical_expr::JoinType;
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::joins::utils::{build_join_schema, check_join_is_valid, JoinOn};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, ScopedTimerGuard};
+use datafusion::physical_plan::metrics::{
+    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, ScopedTimerGuard,
+};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
-use datafusion_ext_commons::array_builder::{builder_append_null, builder_extend, make_batch, new_array_builders};
+use datafusion_ext_commons::array_builder::{
+    builder_append_null, builder_extend, make_batch, new_array_builders,
+};
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use parking_lot::Mutex as SyncMutex;
 use std::any::Any;
@@ -39,9 +46,6 @@ use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::ops::Range;
 use std::sync::Arc;
-use arrow::buffer::NullBuffer;
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
 
 #[derive(Debug)]
 pub struct SortMergeJoinExec {
@@ -183,9 +187,7 @@ impl ExecutionPlan for SortMergeJoinExec {
         write!(
             f,
             "SortMergeJoin: join_type={:?}, on={:?}, schema={:?}",
-            self.join_type,
-            self.on,
-            self.schema,
+            self.join_type, self.on, self.schema,
         )
     }
 
@@ -277,7 +279,8 @@ async fn execute_join(
                         join_params,
                         metrics_cloned,
                         sender,
-                    ).await?;
+                    )
+                    .await?;
                 }
                 JoinType::LeftSemi | JoinType::LeftAnti => {
                     join_semi(
@@ -286,14 +289,16 @@ async fn execute_join(
                         join_params,
                         metrics_cloned,
                         sender,
-                    ).await?;
+                    )
+                    .await?;
                 }
                 other @ (JoinType::RightSemi | JoinType::RightAnti) => {
                     panic!("join type not supported: {other}");
                 }
             }
             Ok(())
-        })?;
+        },
+    )?;
     let output_coalesced = Box::pin(CoalesceStream::new(
         output_stream,
         batch_size,
@@ -401,7 +406,8 @@ async fn join_combined(
                 }
 
                 if lindices.len() >= join_params.batch_size || l + 1 == $range1.end {
-                    if staging_len > 0 { // for keeping input order
+                    if staging_len > 0 {
+                        // for keeping input order
                         flush_staging!();
                     }
                     let larray = lindices.finish();
@@ -436,7 +442,8 @@ async fn join_combined(
                 }
 
                 if rindices.len() >= join_params.batch_size || r + 1 == $range2.end {
-                    if staging_len > 0 { // for keeping input order
+                    if staging_len > 0 {
+                        // for keeping input order
                         flush_staging!();
                     }
                     let larray = lindices.finish();
@@ -848,13 +855,9 @@ fn compare_cursor(left_cursor: &StreamCursor, right_cursor: &StreamCursor) -> Or
                 Ordering::Greater => Ordering::Greater,
                 Ordering::Less => Ordering::Less,
                 _ => match &left_cursor.on_row_null_buffer {
-                    Some(nb) if nb.is_null(left_cursor.idx) => {
-                        Ordering::Less
-                    }
-                    _ => {
-                        Ordering::Equal
-                    }
-                }
+                    Some(nb) if nb.is_null(left_cursor.idx) => Ordering::Less,
+                    _ => Ordering::Equal,
+                },
             }
         }
     }

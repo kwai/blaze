@@ -28,7 +28,11 @@ pub fn cast_scan_input_array(array: &dyn Array, cast_type: &DataType) -> Result<
     return cast_impl(array, cast_type, true);
 }
 
-pub fn cast_impl(array: &dyn Array, cast_type: &DataType, match_struct_fields: bool) -> Result<ArrayRef> {
+pub fn cast_impl(
+    array: &dyn Array,
+    cast_type: &DataType,
+    match_struct_fields: bool,
+) -> Result<ArrayRef> {
     Ok(match (&array.data_type(), cast_type) {
         (_, &DataType::Null) => Arc::new(NullArray::new(array.len())),
         (&DataType::Utf8, &DataType::Int8)
@@ -83,7 +87,9 @@ pub fn cast_impl(array: &dyn Array, cast_type: &DataType, match_struct_fields: b
                     .columns()
                     .iter()
                     .zip(to_fields)
-                    .map(|(column, to_field)| cast_impl(column, to_field.data_type(), match_struct_fields))
+                    .map(|(column, to_field)| {
+                        cast_impl(column, to_field.data_type(), match_struct_fields)
+                    })
                     .collect::<Result<Vec<_>>>()?;
 
                 make_array(ArrayData::try_new(
@@ -135,11 +141,14 @@ pub fn cast_impl(array: &dyn Array, cast_type: &DataType, match_struct_fields: b
                         .collect(),
                 )?)
             }
-
         }
         (&DataType::Map(_, _), &DataType::Map(ref to_entries_field, to_sorted)) => {
             let map = as_map_array(array);
-            let casted_entries = cast_impl(map.entries(), to_entries_field.data_type(), match_struct_fields)?;
+            let casted_entries = cast_impl(
+                map.entries(),
+                to_entries_field.data_type(),
+                match_struct_fields,
+            )?;
 
             make_array(ArrayData::try_new(
                 DataType::Map(to_entries_field.clone(), to_sorted),

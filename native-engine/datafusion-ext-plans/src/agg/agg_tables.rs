@@ -34,7 +34,7 @@ use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
 use crate::agg::AggRecord;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{Spill, try_new_spill};
+use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::output::WrappedRecordBatchSender;
 
 // reserve memory for each spill
@@ -129,7 +129,8 @@ impl AggTables {
                 sender.send(Ok(batch), Some(&mut timer)).await;
 
                 // free memory of the output batch
-                self.update_mem_used_with_diff(-(batch_mem_size as isize)).await?;
+                self.update_mem_used_with_diff(-(batch_mem_size as isize))
+                    .await?;
             }
             self.update_mem_used(0).await?;
             return Ok(());

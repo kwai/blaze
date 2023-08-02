@@ -18,12 +18,11 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use arrow::datatypes::{DataType, SchemaRef};
 use arrow::record_batch::RecordBatch;
+pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
 use datafusion::common::cast::as_struct_array;
 use datafusion::common::Result;
-pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
 
 mod batch_serde;
-
 
 pub fn write_one_batch<W: Write + Seek>(
     batch: &RecordBatch,

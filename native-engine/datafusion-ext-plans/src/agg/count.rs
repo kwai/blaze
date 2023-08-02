@@ -30,7 +30,7 @@ pub struct AggCount {
 impl AggCount {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         assert_eq!(data_type, DataType::Int64);
-        Ok(Self {child, data_type})
+        Ok(Self { child, data_type })
     }
 }
 

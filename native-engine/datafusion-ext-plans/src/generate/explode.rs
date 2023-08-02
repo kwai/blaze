@@ -17,8 +17,8 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::physical_expr::PhysicalExpr;
-use std::sync::Arc;
 use itertools::Itertools;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ExplodeArray {
@@ -51,11 +51,8 @@ impl Generator for ExplodeArray {
         let mut pos_builder = Int32Builder::new();
 
         // build row_id and pos arrays
-        for (orig_row_id, (&start, &end)) in list
-            .value_offsets()
-            .into_iter()
-            .tuple_windows()
-            .enumerate()
+        for (orig_row_id, (&start, &end)) in
+            list.value_offsets().into_iter().tuple_windows().enumerate()
         {
             if list.is_valid(orig_row_id) && start < end {
                 for i in start..end {
@@ -72,7 +69,7 @@ impl Generator for ExplodeArray {
         } else {
             vec![values]
         };
-        Ok(GeneratedRows {orig_row_ids, cols})
+        Ok(GeneratedRows { orig_row_ids, cols })
     }
 }
 
@@ -107,11 +104,7 @@ impl Generator for ExplodeMap {
         let mut pos_builder = Int32Builder::new();
 
         // build row_id and pos arrays
-        for (orig_row_id, (&start, &end)) in map
-            .value_offsets()
-            .iter()
-            .tuple_windows()
-            .enumerate()
+        for (orig_row_id, (&start, &end)) in map.value_offsets().iter().tuple_windows().enumerate()
         {
             if map.is_valid(orig_row_id) && start < end {
                 for i in start..end {
@@ -129,6 +122,6 @@ impl Generator for ExplodeMap {
         } else {
             vec![keys, values]
         };
-        Ok(GeneratedRows {orig_row_ids, cols})
+        Ok(GeneratedRows { orig_row_ids, cols })
     }
 }

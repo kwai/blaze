@@ -12,13 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow::array::Array;
 use datafusion::common::{Result, ScalarValue};
-use datafusion_ext_commons::io::{read_array, read_bytes_slice, read_data_type, read_len, write_array, write_data_type, write_len, write_u8};
+use datafusion_ext_commons::io::{
+    read_array, read_bytes_slice, read_data_type, read_len, write_array, write_data_type,
+    write_len, write_u8,
+};
 use std::any::Any;
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Write};
 use std::mem::{size_of, size_of_val};
-use arrow::array::Array;
 
 #[derive(Eq, PartialEq)]
 pub struct AggBuf {
@@ -40,7 +43,11 @@ impl AggBuf {
     pub fn mem_size(&self) -> usize {
         size_of::<Self>()
             + self.fixed.len()
-            + self.dyns.iter().map(|v| size_of_val(v) + v.mem_size()).sum::<usize>()
+            + self
+                .dyns
+                .iter()
+                .map(|v| size_of_val(v) + v.mem_size())
+                .sum::<usize>()
     }
 
     pub fn is_fixed_valid(&self, addr: u64) -> bool {
@@ -56,9 +63,7 @@ impl AggBuf {
     pub fn fixed_value<T: Sized + Copy>(&self, addr: u64) -> T {
         let offset = get_fixed_addr_offset(addr);
         let tptr = self.fixed[offset..][..size_of::<T>()].as_ptr() as *const T;
-        unsafe {
-            std::ptr::read_unaligned(tptr)
-        }
+        unsafe { std::ptr::read_unaligned(tptr) }
     }
 
     pub fn set_fixed_value<T: Sized + Copy>(&mut self, addr: u64, v: T) {
@@ -72,9 +77,7 @@ impl AggBuf {
     pub fn update_fixed_value<T: Sized + Copy>(&mut self, addr: u64, updater: impl Fn(T) -> T) {
         let offset = get_fixed_addr_offset(addr);
         let tptr = self.fixed[offset..][..size_of::<T>()].as_ptr() as *mut T;
-        unsafe {
-            std::ptr::write_unaligned(tptr, updater(std::ptr::read_unaligned(tptr)))
-        }
+        unsafe { std::ptr::write_unaligned(tptr, updater(std::ptr::read_unaligned(tptr))) }
     }
 
     pub fn dyn_value(&mut self, addr: u64) -> &Box<dyn AggDynValue> {
@@ -127,7 +130,9 @@ pub enum AccumInitialValue {
     DynSet,
 }
 
-pub fn create_agg_buf_from_initial_value(values: &[AccumInitialValue]) -> Result<(AggBuf, Box<[u64]>)> {
+pub fn create_agg_buf_from_initial_value(
+    values: &[AccumInitialValue],
+) -> Result<(AggBuf, Box<[u64]>)> {
     let mut fixed_count = 0;
     let mut fixed_valids = vec![];
     let mut fixed: Vec<u8> = vec![];
@@ -186,7 +191,7 @@ pub fn create_agg_buf_from_initial_value(values: &[AccumInitialValue]) -> Result
                     addrs.push(make_dyn_addr(dyns.len()));
                     dyns.push(Box::new(AggDynScalar::new(other.clone())));
                 }
-            }
+            },
             AccumInitialValue::DynList => {
                 addrs.push(make_dyn_addr(dyns.len()));
                 dyns.push(Box::new(AggDynList::default()));
@@ -313,7 +318,9 @@ impl AggDynValue for AggDynScalar {
     }
 
     fn default_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(Self { value: ScalarValue::Null })
+        Box::new(Self {
+            value: ScalarValue::Null,
+        })
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -636,11 +643,13 @@ fn make_dyn_addr(idx: usize) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashSet;
-    use std::io::Cursor;
+    use crate::agg::agg_buf::{
+        create_agg_buf_from_initial_value, AccumInitialValue, AggDynList, AggDynSet, AggDynStr,
+    };
     use arrow::datatypes::DataType;
     use datafusion::common::{Result, ScalarValue};
-    use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AggDynList, AggDynSet, AggDynStr, AccumInitialValue};
+    use std::collections::HashSet;
+    use std::io::Cursor;
 
     #[test]
     fn test_dyn_list() {
@@ -654,11 +663,10 @@ mod test {
 
         let mut dyn_list = AggDynList::default();
         dyn_list.load(&mut Cursor::new(&mut buf)).unwrap();
-        assert_eq!(dyn_list.values, vec![
-            ScalarValue::from(1i32),
-            ScalarValue::from(2i32),
-            ScalarValue::from(3i32),
-        ]);
+        assert_eq!(
+            dyn_list.values,
+            vec![ScalarValue::from(1i32), ScalarValue::from(2i32), ScalarValue::from(3i32),]
+        );
     }
 
     #[test]
@@ -675,21 +683,18 @@ mod test {
         let mut dyn_set = AggDynSet::default();
         dyn_set.load(&mut Cursor::new(&mut buf)).unwrap();
 
-        assert_eq!(dyn_set.values, HashSet::from_iter(vec![
-            ScalarValue::from(1i32),
-            ScalarValue::from(2i32),
-            ScalarValue::from(3i32),
-        ].into_iter()));
+        assert_eq!(
+            dyn_set.values,
+            HashSet::from_iter(
+                vec![ScalarValue::from(1i32), ScalarValue::from(2i32), ScalarValue::from(3i32),]
+                    .into_iter()
+            )
+        );
     }
 
     #[test]
     fn test_agg_buf() {
-        let data_types = vec![
-            DataType::Null,
-            DataType::Int32,
-            DataType::Int64,
-            DataType::Utf8,
-        ];
+        let data_types = vec![DataType::Null, DataType::Int32, DataType::Int64, DataType::Utf8];
         let scalars = data_types
             .iter()
             .map(|dt: &DataType| Ok(AccumInitialValue::Scalar(dt.clone().try_into()?)))
@@ -719,7 +724,10 @@ mod test {
         assert!(agg_buf.is_fixed_valid(addrs[1]));
         assert!(agg_buf.is_fixed_valid(addrs[2]));
         assert_eq!(agg_buf.fixed_value::<i32>(addrs[1]), 123456789_i32);
-        assert_eq!(agg_buf.fixed_value::<i64>(addrs[2]), 1234567890123456789_i64);
+        assert_eq!(
+            agg_buf.fixed_value::<i64>(addrs[2]),
+            1234567890123456789_i64
+        );
         assert_eq!(
             *AggDynStr::value(agg_buf.dyn_value(addrs[3])),
             Some("test".to_string().into()),

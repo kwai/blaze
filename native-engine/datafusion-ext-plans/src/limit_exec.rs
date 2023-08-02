@@ -122,7 +122,8 @@ impl Stream for LimitStream {
                     self.cur += rest;
                     batch.slice(0, rest as usize)
                 };
-                self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(batch))))
+                self.baseline_metrics
+                    .record_poll(Poll::Ready(Some(Ok(batch))))
             }
         }
     }
@@ -130,17 +131,17 @@ impl Stream for LimitStream {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::common::memory_manager::MemManager;
+    use crate::limit_exec::LimitExec;
     use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_eq;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::prelude::SessionContext;
-    use crate::limit_exec::LimitExec;
     use datafusion::common::Result;
-    use crate::common::memory_manager::MemManager;
+    use datafusion::physical_plan::memory::MemoryExec;
+    use datafusion::physical_plan::{common, ExecutionPlan};
+    use datafusion::prelude::SessionContext;
+    use std::sync::Arc;
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),
@@ -161,7 +162,7 @@ mod test {
                 Arc::new(Int32Array::from(c.1.clone())),
             ],
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn build_table(
@@ -182,12 +183,9 @@ mod test {
             ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
             ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
         );
-        let limit_exec = LimitExec::new(
-            input,
-            2_u64,
-        );
+        let limit_exec = LimitExec::new(input, 2_u64);
         let session_ctx = SessionContext::new();
-        let task_ctx= session_ctx.task_ctx();
+        let task_ctx = session_ctx.task_ctx();
         let output = limit_exec.execute(0, task_ctx).unwrap();
         let batches = common::collect(output).await?;
 

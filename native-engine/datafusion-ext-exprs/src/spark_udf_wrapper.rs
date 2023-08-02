@@ -116,17 +116,19 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         }
 
         // init params schema
-        let params_schema = self.params_schema.get_or_try_init(|| -> Result<SchemaRef> {
-            let mut param_fields = Vec::with_capacity(self.params.len());
-            for param in &self.params {
-                param_fields.push(Field::new(
-                    "",
-                    param.data_type(&self.input_schema)?,
-                    param.nullable(&self.input_schema)?,
-                ));
-            }
-            Ok(Arc::new(Schema::new(param_fields)))
-        })?;
+        let params_schema = self
+            .params_schema
+            .get_or_try_init(|| -> Result<SchemaRef> {
+                let mut param_fields = Vec::with_capacity(self.params.len());
+                for param in &self.params {
+                    param_fields.push(Field::new(
+                        "",
+                        param.data_type(&self.input_schema)?,
+                        param.nullable(&self.input_schema)?,
+                    ));
+                }
+                Ok(Arc::new(Schema::new(param_fields)))
+            })?;
 
         // init jvm side context
         let jcontext = self.jcontext.get_or_try_init(|| {

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{Spill, try_new_spill};
+use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::BatchesInterleaver;
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
 use arrow::datatypes::SchemaRef;
@@ -214,10 +214,10 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // we are likely to spill more frequently because the cost of spilling a shuffle
         // repartition is lower than other consumers.
-        let mem_increase = 2 * (
-            input.get_array_memory_size() + input.num_rows() * std::mem::size_of::<PI>()
-        );
-        self.update_mem_used_with_diff(mem_increase as isize).await?;
+        let mem_increase =
+            2 * (input.get_array_memory_size() + input.num_rows() * std::mem::size_of::<PI>());
+        self.update_mem_used_with_diff(mem_increase as isize)
+            .await?;
         Ok(())
     }
 
@@ -311,10 +311,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 (c1, c2) => c1 < c2,
             },
         );
-        let raw_spills: Vec<Box<dyn Spill>> = spills
-            .into_iter()
-            .map(|spill| spill.spill)
-            .collect();
+        let raw_spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();

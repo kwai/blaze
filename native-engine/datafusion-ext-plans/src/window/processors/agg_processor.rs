@@ -68,9 +68,18 @@ impl WindowFunctionProcessor for AggProcessor {
             if !same_partition {
                 self.agg_buf = self.agg_buf_init.clone();
             }
-            self.agg.partial_update(&mut self.agg_buf, &self.agg_buf_addrs, &children_cols, row_idx)
+            self.agg
+                .partial_update(
+                    &mut self.agg_buf,
+                    &self.agg_buf_addrs,
+                    &children_cols,
+                    row_idx,
+                )
                 .map_err(|err| err.context("window: agg_processor partial_update() error"))?;
-            output.push(self.agg.final_merge(&mut self.agg_buf.clone(), &self.agg_buf_addrs)?);
+            output.push(
+                self.agg
+                    .final_merge(&mut self.agg_buf.clone(), &self.agg_buf_addrs)?,
+            );
         }
         Ok(Arc::new(ScalarValue::iter_to_array(output.into_iter())?))
     }
@@ -90,9 +99,18 @@ impl WindowFunctionProcessor for AggProcessor {
             .collect::<Result<_>>()?;
 
         for row_idx in 0..batch.num_rows() {
-            self.agg.partial_update(&mut self.agg_buf, &self.agg_buf_addrs, &children_cols, row_idx)
+            self.agg
+                .partial_update(
+                    &mut self.agg_buf,
+                    &self.agg_buf_addrs,
+                    &children_cols,
+                    row_idx,
+                )
                 .map_err(|err| err.context("window: agg_processor partial_update() error"))?;
-            output.push(self.agg.final_merge(&mut self.agg_buf.clone(), &self.agg_buf_addrs)?);
+            output.push(
+                self.agg
+                    .final_merge(&mut self.agg_buf.clone(), &self.agg_buf_addrs)?,
+            );
         }
         Ok(Arc::new(ScalarValue::iter_to_array(output.into_iter())?))
     }

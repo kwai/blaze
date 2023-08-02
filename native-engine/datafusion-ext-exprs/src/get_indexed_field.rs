@@ -24,8 +24,8 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
 use std::convert::TryInto;
 use std::fmt::Debug;
-use std::{any::Any, sync::Arc};
 use std::hash::{Hash, Hasher};
+use std::{any::Any, sync::Arc};
 
 use crate::down_cast_any_ref;
 
@@ -110,7 +110,9 @@ impl PhysicalExpr for GetIndexedFieldExpr {
             }
             (DataType::Struct(_), ScalarValue::Int32(Some(k))) => {
                 let as_struct_array = as_struct_array(&array)?;
-                Ok(ColumnarValue::Array(as_struct_array.column(*k as usize).clone()))
+                Ok(ColumnarValue::Array(
+                    as_struct_array.column(*k as usize).clone(),
+                ))
             }
             (DataType::List(_), key) => Err(DataFusionError::Execution(format!(
                 "get indexed field is only possible on lists with int64 indexes. \

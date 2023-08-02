@@ -92,9 +92,7 @@ fn test_murmur3() {
         .into_iter()
         .map(|s| spark_compatible_murmur3_hash(s.as_bytes(), 42) as i32)
         .collect::<Vec<_>>();
-    let _expected = vec![
-        142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928,
-    ];
+    let _expected = vec![142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928];
     assert_eq!(_hashes, _expected)
 }
 

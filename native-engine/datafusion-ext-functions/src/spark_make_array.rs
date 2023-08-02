@@ -113,24 +113,20 @@ pub fn array(values: &[ColumnarValue]) -> Result<ColumnarValue> {
 }
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::spark_make_array::array;
     use arrow::array::{ArrayRef, Int32Array, ListArray};
     use arrow::datatypes::{Float32Type, Int32Type};
     use datafusion::common::ScalarValue;
     use datafusion::physical_plan::ColumnarValue;
-    use crate::spark_make_array::array;
+    use std::sync::Arc;
 
     #[test]
     fn test_make_array_int() {
-        let result = array(&vec![
-            ColumnarValue::Array(Arc::new(Int32Array::from(vec![
-                Some(12),
-                Some(-123),
-                Some(0),
-                Some(9),
-                None,
-            ]))),
-        ]).unwrap().into_array(5);
+        let result = array(&vec![ColumnarValue::Array(Arc::new(Int32Array::from(
+            vec![Some(12), Some(-123), Some(0), Some(9), None],
+        )))])
+        .unwrap()
+        .into_array(5);
 
         let expected = vec![
             Some(vec![Some(12)]),
@@ -140,25 +136,23 @@ mod test {
             Some(vec![None]),
         ];
         let expected = ListArray::from_iter_primitive::<Int32Type, _, _>(expected);
-        let expected:ArrayRef = Arc::new(expected);
+        let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
-
     }
     #[test]
     fn test_make_array_float() {
         let result = array(&vec![
             ColumnarValue::Scalar(ScalarValue::Float32(Some(2.2))),
             ColumnarValue::Scalar(ScalarValue::Float32(Some(-2.3))),
-        ]).unwrap().into_array(2);
+        ])
+        .unwrap()
+        .into_array(2);
 
-        let expected = vec![
-            Some(vec![Some(2.2), Some(-2.3)]),
-        ];
+        let expected = vec![Some(vec![Some(2.2), Some(-2.3)])];
         let expected = ListArray::from_iter_primitive::<Float32Type, _, _>(expected);
-        let expected:ArrayRef = Arc::new(expected);
+        let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
-
     }
 }

@@ -76,9 +76,7 @@ struct HiveGetJsonObjectEvaluator {
 
 impl HiveGetJsonObjectEvaluator {
     fn try_new(json_path: &str) -> std::result::Result<Self, HiveGetJsonObjectError> {
-        let mut evaluator = Self {
-            matchers: vec![],
-        };
+        let mut evaluator = Self { matchers: vec![] };
         let chars = json_path.chars();
         let mut peekable = chars.peekable();
 
@@ -212,18 +210,19 @@ impl HiveGetJsonObjectMatcher {
             HiveGetJsonObjectMatcher::Child(child) => {
                 if let serde_json::Value::Object(mut object) = value {
                     return object.remove(child).unwrap_or_default();
-
                 } else if let serde_json::Value::Array(array) = value {
-                    return serde_json::Value::Array(array
-                        .into_iter()
-                        .map(|item| {
-                            if let serde_json::Value::Object(mut object) = item {
-                                object.remove(child).unwrap_or_default()
-                            } else {
-                                serde_json::Value::Null
-                            }
-                        })
-                        .collect());
+                    return serde_json::Value::Array(
+                        array
+                            .into_iter()
+                            .map(|item| {
+                                if let serde_json::Value::Object(mut object) = item {
+                                    object.remove(child).unwrap_or_default()
+                                } else {
+                                    serde_json::Value::Null
+                                }
+                            })
+                            .collect(),
+                    );
                 }
             }
             HiveGetJsonObjectMatcher::Subscript(index) => {
@@ -359,13 +358,12 @@ mod test {
             }"#;
 
         let path = "$.message.name";
-        assert!(
-            HiveGetJsonObjectEvaluator::try_new(path)
-                .unwrap()
-                .evaluate(input)
-                .unwrap()
-                .unwrap()
-                .contains("Asher"));
+        assert!(HiveGetJsonObjectEvaluator::try_new(path)
+            .unwrap()
+            .evaluate(input)
+            .unwrap()
+            .unwrap()
+            .contains("Asher"));
 
         let path = "$.message.location.city";
         assert_eq!(

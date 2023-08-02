@@ -83,7 +83,6 @@ impl Agg for AggFirst {
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-
         if !is_touched(agg_buf, agg_buf_addrs) {
             let partial_updater = self.partial_updater;
             partial_updater(agg_buf, agg_buf_addrs, &values[0], row_idx);
@@ -97,7 +96,6 @@ impl Agg for AggFirst {
         agg_buf_addrs: &[u64],
         values: &[ArrayRef],
     ) -> Result<()> {
-
         if !is_touched(agg_buf, agg_buf_addrs) {
             let value = &values[0];
             if !value.is_empty() {
@@ -114,7 +112,6 @@ impl Agg for AggFirst {
         agg_buf2: &mut AggBuf,
         agg_buf_addrs: &[u64],
     ) -> Result<()> {
-
         let partial_buf_merger = self.partial_buf_merger;
         partial_buf_merger(agg_buf1, agg_buf2, agg_buf_addrs);
         Ok(())
@@ -165,28 +162,34 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, &[u64], &ArrayRe
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
         DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
-        DataType::Utf8 => Ok(|agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
-            let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addrs[0]));
-            if v.is_valid(i) {
-                let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-                *w = Some(value.value(i).to_owned().into());
-            }
-            set_touched(agg_buf, addrs);
-        }),
-        DataType::Binary => Ok(|agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
-            let w = AggDynBinary::value_mut(agg_buf.dyn_value_mut(addrs[0]));
-            if v.is_valid(i) {
-                let value = v.as_any().downcast_ref::<BinaryArray>().unwrap();
-                *w = Some(value.value(i).to_owned().into());
-            }
-            set_touched(agg_buf, addrs);
-        }),
-        _other => Ok(|agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
-            let w = AggDynScalar::value_mut(agg_buf.dyn_value_mut(addrs[0]));
-            *w = ScalarValue::try_from_array(v, i)
-                .expect("First::partial_update error creating ScalarValue");
-            set_touched(agg_buf, addrs);
-        }),
+        DataType::Utf8 => Ok(
+            |agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
+                let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addrs[0]));
+                if v.is_valid(i) {
+                    let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+                    *w = Some(value.value(i).to_owned().into());
+                }
+                set_touched(agg_buf, addrs);
+            },
+        ),
+        DataType::Binary => Ok(
+            |agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
+                let w = AggDynBinary::value_mut(agg_buf.dyn_value_mut(addrs[0]));
+                if v.is_valid(i) {
+                    let value = v.as_any().downcast_ref::<BinaryArray>().unwrap();
+                    *w = Some(value.value(i).to_owned().into());
+                }
+                set_touched(agg_buf, addrs);
+            },
+        ),
+        _other => Ok(
+            |agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
+                let w = AggDynScalar::value_mut(agg_buf.dyn_value_mut(addrs[0]));
+                *w = ScalarValue::try_from_array(v, i)
+                    .expect("First::partial_update error creating ScalarValue");
+                set_touched(agg_buf, addrs);
+            },
+        ),
     }
 }
 

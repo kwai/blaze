@@ -25,7 +25,7 @@ pub mod max;
 pub mod min;
 pub mod sum;
 
-use crate::agg::agg_buf::{AggBuf, AggDynScalar, AggDynStr, AccumInitialValue, AggDynBinary};
+use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr};
 use arrow::array::*;
 use arrow::datatypes::*;
 use datafusion::common::{DataFusionError, Result, ScalarValue};
@@ -204,12 +204,16 @@ pub trait Agg: Send + Sync + Debug {
                     .map(|s| s.as_ref().to_owned()),
             ),
             other => {
-                if let Some(s) = agg_buf.dyn_value(addr).as_any().downcast_ref::<AggDynScalar>() {
+                if let Some(s) = agg_buf
+                    .dyn_value(addr)
+                    .as_any()
+                    .downcast_ref::<AggDynScalar>()
+                {
                     s.value.clone()
                 } else {
-                    return Err(DataFusionError::NotImplemented(
-                        format!("unsupported data type: {other}")
-                    ));
+                    return Err(DataFusionError::NotImplemented(format!(
+                        "unsupported data type: {other}"
+                    )));
                 }
             }
         })
@@ -279,7 +283,10 @@ pub fn create_agg(
         }
         AggFunction::FirstIgnoresNull => {
             let dt = children[0].data_type(input_schema)?;
-            Arc::new(first_ignores_null::AggFirstIgnoresNull::try_new(children[0].clone(), dt)?)
+            Arc::new(first_ignores_null::AggFirstIgnoresNull::try_new(
+                children[0].clone(),
+                dt,
+            )?)
         }
         AggFunction::CollectList => {
             let arg_type = children[0].data_type(input_schema)?;

@@ -160,7 +160,11 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
     Ok(())
 }
 
-pub fn read_array<R: Read>(input: &mut R, data_type: &DataType, num_rows: usize) -> Result<ArrayRef> {
+pub fn read_array<R: Read>(
+    input: &mut R,
+    data_type: &DataType,
+    num_rows: usize,
+) -> Result<ArrayRef> {
     macro_rules! read_primitive {
         ($ty:ident) => {{
             read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input)?

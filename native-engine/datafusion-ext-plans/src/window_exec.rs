@@ -150,32 +150,39 @@ async fn execute_window(
         .collect::<Result<_>>()?;
 
     // start processing input batches
-    output_with_sender("Window", task_context, context.output_schema.clone(), |sender| async move {
-        while let Some(batch) = input.next().await.transpose()? {
-            let elapsed_time = metrics.elapsed_compute().clone();
-            let mut timer = elapsed_time.timer();
+    output_with_sender(
+        "Window",
+        task_context,
+        context.output_schema.clone(),
+        |sender| async move {
+            while let Some(batch) = input.next().await.transpose()? {
+                let elapsed_time = metrics.elapsed_compute().clone();
+                let mut timer = elapsed_time.timer();
 
-            let window_cols: Vec<ArrayRef> = processors
-                .iter_mut()
-                .map(|processor| if context.partition_spec.is_empty() {
-                    processor.process_batch_without_partitions(&context, &batch)
-                } else {
-                    processor.process_batch(&context, &batch)
-                })
-                .collect::<Result<_>>()?;
+                let window_cols: Vec<ArrayRef> = processors
+                    .iter_mut()
+                    .map(|processor| {
+                        if context.partition_spec.is_empty() {
+                            processor.process_batch_without_partitions(&context, &batch)
+                        } else {
+                            processor.process_batch(&context, &batch)
+                        }
+                    })
+                    .collect::<Result<_>>()?;
 
-            let output_cols = [batch.columns().to_vec(), window_cols].concat();
-            let output_batch = RecordBatch::try_new_with_options(
-                context.output_schema.clone(),
-                output_cols,
-                &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-            )?;
+                let output_cols = [batch.columns().to_vec(), window_cols].concat();
+                let output_batch = RecordBatch::try_new_with_options(
+                    context.output_schema.clone(),
+                    output_cols,
+                    &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+                )?;
 
-            metrics.record_output(output_batch.num_rows());
-            sender.send(Ok(output_batch), Some(&mut timer)).await;
-        }
-        Ok(())
-    })
+                metrics.record_output(output_batch.num_rows());
+                sender.send(Ok(output_batch), Some(&mut timer)).await;
+            }
+            Ok(())
+        },
+    )
 }
 
 #[cfg(test)]

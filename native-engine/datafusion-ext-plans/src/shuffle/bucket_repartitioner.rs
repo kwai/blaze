@@ -15,7 +15,7 @@
 //! Defines the sort-based shuffle writer
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{Spill, try_new_spill};
+use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -170,13 +170,15 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
 
         let mut spill_readers = spills
             .iter_mut()
-            .map(|spill| (spill.spill.get_buf_reader(), std::mem::take(&mut spill.offsets)))
+            .map(|spill| {
+                (
+                    spill.spill.get_buf_reader(),
+                    std::mem::take(&mut spill.offsets),
+                )
+            })
             .collect::<Vec<_>>();
 
-        let raw_spills: Vec<Box<dyn Spill>> = spills
-            .into_iter()
-            .map(|spill| spill.spill)
-            .collect();
+        let raw_spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
 
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();

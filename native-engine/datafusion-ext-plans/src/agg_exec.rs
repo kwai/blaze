@@ -152,11 +152,9 @@ async fn execute_agg(
                 .await
                 .map_err(|err| err.context("agg: execute_agg_with_grouping_hash() error"))
         }
-        AggExecMode::SortAgg => {
-            execute_agg_sorted(input, context, agg_ctx, partition_id, metrics)
-                .await
-                .map_err(|err| err.context("agg: execute_agg_sorted() error"))
-        }
+        AggExecMode::SortAgg => execute_agg_sorted(input, context, agg_ctx, partition_id, metrics)
+            .await
+            .map_err(|err| err.context("agg: execute_agg_sorted() error")),
     }
 }
 
@@ -257,7 +255,8 @@ async fn execute_agg_with_grouping_hash(
                 .await
                 .map_err(|err| err.context("agg: executing output error"))?;
             Ok(())
-        })?;
+        },
+    )?;
 
     // if running in-memory, buffer output when memory usage is high
     if !has_spill {
@@ -306,29 +305,34 @@ async fn execute_agg_no_grouping(
     // output
     // in no-grouping mode, we always output only one record, so it is not
     // necessary to record elapsed computed time.
-    output_with_sender("Agg", context, agg_ctx.output_schema.clone(), move |sender| async move {
-        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-        let mut timer = elapsed_compute.timer();
+    output_with_sender(
+        "Agg",
+        context,
+        agg_ctx.output_schema.clone(),
+        move |sender| async move {
+            let elapsed_compute = baseline_metrics.elapsed_compute().clone();
+            let mut timer = elapsed_compute.timer();
 
-        let record: AggRecord = AggRecord::new(Box::default(), agg_buf);
-        let batch_result = agg_ctx
-            .build_agg_columns(&mut [record])
-            .map_err(|e| ArrowError::ExternalError(Box::new(e)))
-            .and_then(|agg_columns| {
-                RecordBatch::try_new_with_options(
-                    agg_ctx.output_schema.clone(),
-                    agg_columns,
-                    &RecordBatchOptions::new().with_row_count(Some(1)),
-                )
-                .map(|batch| {
-                    baseline_metrics.record_output(1);
-                    batch
-                })
-            });
-        sender.send(Ok(batch_result?), Some(&mut timer)).await;
-        log::info!("aggregate exec (no grouping) outputting one record");
-        Ok(())
-    })
+            let record: AggRecord = AggRecord::new(Box::default(), agg_buf);
+            let batch_result = agg_ctx
+                .build_agg_columns(&mut [record])
+                .map_err(|e| ArrowError::ExternalError(Box::new(e)))
+                .and_then(|agg_columns| {
+                    RecordBatch::try_new_with_options(
+                        agg_ctx.output_schema.clone(),
+                        agg_columns,
+                        &RecordBatchOptions::new().with_row_count(Some(1)),
+                    )
+                    .map(|batch| {
+                        baseline_metrics.record_output(1);
+                        batch
+                    })
+                });
+            sender.send(Ok(batch_result?), Some(&mut timer)).await;
+            log::info!("aggregate exec (no grouping) outputting one record");
+            Ok(())
+        },
+    )
 }
 
 async fn execute_agg_sorted(
@@ -358,106 +362,113 @@ async fn execute_agg_sorted(
         context.session_config().batch_size(),
         baseline_metrics.elapsed_compute().clone(),
     ));
-    output_with_sender("Agg", context.clone(), agg_ctx.output_schema.clone(), |sender| async move {
-        let batch_size = context.session_config().batch_size();
-        let mut staging_records = vec![];
-        let mut current_record: Option<AggRecord> = None;
-        let mut timer = elapsed_compute.timer();
-        timer.stop();
+    output_with_sender(
+        "Agg",
+        context.clone(),
+        agg_ctx.output_schema.clone(),
+        |sender| async move {
+            let batch_size = context.session_config().batch_size();
+            let mut staging_records = vec![];
+            let mut current_record: Option<AggRecord> = None;
+            let mut timer = elapsed_compute.timer();
+            timer.stop();
 
-        macro_rules! flush_staging {
-            () => {{
-                let batch = agg_ctx.convert_records_to_batch(
-                    &mut grouping_row_converter,
-                    &mut std::mem::take(&mut staging_records),
-                )?;
+            macro_rules! flush_staging {
+                () => {{
+                    let batch = agg_ctx.convert_records_to_batch(
+                        &mut grouping_row_converter,
+                        &mut std::mem::take(&mut staging_records),
+                    )?;
 
-                log::info!(
-                    "aggregate exec (sorted) outputting one batch: num_rows={}",
-                    batch.num_rows(),
-                );
-                baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch), Some(&mut timer)).await;
-            }}
-        }
-        while let Some(input_batch) = coalesced.next().await.transpose()? {
-            timer.restart();
+                    log::info!(
+                        "aggregate exec (sorted) outputting one batch: num_rows={}",
+                        batch.num_rows(),
+                    );
+                    baseline_metrics.record_output(batch.num_rows());
+                    sender.send(Ok(batch), Some(&mut timer)).await;
+                }};
+            }
+            while let Some(input_batch) = coalesced.next().await.transpose()? {
+                timer.restart();
 
-            // compute grouping rows
-            let grouping_arrays: Vec<ArrayRef> = agg_ctx
-                .groupings
-                .iter()
-                .map(|grouping: &GroupingExpr| grouping.expr.evaluate(&input_batch))
-                .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
-                .collect::<Result<_>>()
-                .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
-            let grouping_rows: Vec<Box<[u8]>> = grouping_row_converter
-                .convert_columns(&grouping_arrays)?
-                .into_iter()
-                .map(|row| row.as_ref().into())
-                .collect();
+                // compute grouping rows
+                let grouping_arrays: Vec<ArrayRef> = agg_ctx
+                    .groupings
+                    .iter()
+                    .map(|grouping: &GroupingExpr| grouping.expr.evaluate(&input_batch))
+                    .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
+                    .collect::<Result<_>>()
+                    .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
+                let grouping_rows: Vec<Box<[u8]>> = grouping_row_converter
+                    .convert_columns(&grouping_arrays)?
+                    .into_iter()
+                    .map(|row| row.as_ref().into())
+                    .collect();
 
-            // compute input arrays
-            let input_arrays = agg_ctx
-                .create_input_arrays(&input_batch)
-                .map_err(|err| err.context("agg: evaluating input arrays error"))?;
-            let agg_buf_array = agg_ctx
-                .get_input_agg_buf_array(&input_batch)
-                .map_err(|err| err.context("agg: evaluating input agg-buf arrays error"))?;
+                // compute input arrays
+                let input_arrays = agg_ctx
+                    .create_input_arrays(&input_batch)
+                    .map_err(|err| err.context("agg: evaluating input arrays error"))?;
+                let agg_buf_array = agg_ctx
+                    .get_input_agg_buf_array(&input_batch)
+                    .map_err(|err| err.context("agg: evaluating input agg-buf arrays error"))?;
 
-            // update to current record
-            for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
-                // if group key differs, renew one and move the old record to staging
-                if Some(&grouping_row) != current_record.as_ref().map(|r| &r.grouping) {
-                    let finished_record = current_record.replace(AggRecord::new(
-                        grouping_row,
-                        agg_ctx.initial_agg_buf.clone(),
-                    ));
-                    if let Some(record) = finished_record {
-                        staging_records.push(record);
-                        if staging_records.len() >= batch_size {
-                            flush_staging!();
+                // update to current record
+                for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
+                    // if group key differs, renew one and move the old record to staging
+                    if Some(&grouping_row) != current_record.as_ref().map(|r| &r.grouping) {
+                        let finished_record = current_record.replace(AggRecord::new(
+                            grouping_row,
+                            agg_ctx.initial_agg_buf.clone(),
+                        ));
+                        if let Some(record) = finished_record {
+                            staging_records.push(record);
+                            if staging_records.len() >= batch_size {
+                                flush_staging!();
+                            }
                         }
                     }
+                    let agg_buf = &mut current_record.as_mut().unwrap().agg_buf;
+                    agg_ctx
+                        .partial_update_input(agg_buf, &input_arrays, row_idx)
+                        .map_err(|err| {
+                            err.context("agg: executing partial_update_input() error")
+                        })?;
+                    agg_ctx
+                        .partial_merge_input(agg_buf, agg_buf_array, row_idx)
+                        .map_err(|err| err.context("agg: executing partial_merge_input() error"))?;
                 }
-                let agg_buf = &mut current_record.as_mut().unwrap().agg_buf;
-                agg_ctx
-                    .partial_update_input(agg_buf, &input_arrays, row_idx)
-                    .map_err(|err| err.context("agg: executing partial_update_input() error"))?;
-                agg_ctx
-                    .partial_merge_input(agg_buf, agg_buf_array, row_idx)
-                    .map_err(|err| err.context("agg: executing partial_merge_input() error"))?;
+                timer.stop();
             }
-            timer.stop();
-        }
 
-        if let Some(record) = current_record {
-            staging_records.push(record);
-        }
-        if !staging_records.is_empty() {
-            flush_staging!();
-        }
-        Ok(())
-    })
+            if let Some(record) = current_record {
+                staging_records.push(record);
+            }
+            if !staging_records.is_empty() {
+                flush_staging!();
+            }
+            Ok(())
+        },
+    )
 }
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::agg::AggExecMode::HashAgg;
+    use crate::agg::AggMode::{Final, Partial};
+    use crate::agg::{create_agg, AggExpr, AggFunction, GroupingExpr};
+    use crate::agg_exec::AggExec;
+    use crate::common::memory_manager::MemManager;
     use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
-    use datafusion::{assert_batches_eq, assert_batches_sorted_eq};
-    use datafusion::physical_expr::expressions::Column;
-    use crate::agg::AggExecMode::{HashAgg};
-    use crate::agg::{AggExpr, AggFunction, create_agg, GroupingExpr};
-    use crate::agg_exec::AggExec;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::prelude::{SessionContext};
-    use crate::agg::AggMode::{Final, Partial};
-    use datafusion::physical_expr::{expressions as phys_expr};
-    use crate::common::memory_manager::MemManager;
     use datafusion::common::Result;
+    use datafusion::physical_expr::expressions as phys_expr;
+    use datafusion::physical_expr::expressions::Column;
+    use datafusion::physical_plan::memory::MemoryExec;
+    use datafusion::physical_plan::{common, ExecutionPlan};
+    use datafusion::prelude::SessionContext;
+    use datafusion::{assert_batches_eq, assert_batches_sorted_eq};
+    use std::sync::Arc;
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),
@@ -493,7 +504,7 @@ mod test {
                 Arc::new(Int32Array::from(h.1.clone())),
             ],
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn build_table(
@@ -512,7 +523,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_agg() -> Result<()>  {
+    async fn test_agg() -> Result<()> {
         MemManager::init(10000);
         let input = build_table(
             ("a", &vec![2, 9, 3, 1, 0, 4, 6]),
@@ -532,51 +543,59 @@ mod test {
 
         let agg_agg_expr_sum = create_agg(
             AggFunction::Sum,
-            &[phys_expr::col("a",&input.schema()).unwrap()],
+            &[phys_expr::col("a", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_avg = create_agg(
             AggFunction::Avg,
-            &[phys_expr::col("b",&input.schema()).unwrap()],
+            &[phys_expr::col("b", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_max = create_agg(
             AggFunction::Max,
-            &[phys_expr::col("d",&input.schema()).unwrap()],
+            &[phys_expr::col("d", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_min = create_agg(
             AggFunction::Min,
-            &[phys_expr::col("e",&input.schema()).unwrap()],
+            &[phys_expr::col("e", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_count = create_agg(
             AggFunction::Count,
-            &[phys_expr::col("f",&input.schema()).unwrap()],
+            &[phys_expr::col("f", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_collectlist = create_agg(
             AggFunction::CollectList,
-            &[phys_expr::col("g",&input.schema()).unwrap()],
+            &[phys_expr::col("g", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_collectset = create_agg(
             AggFunction::CollectSet,
-            &[phys_expr::col("h",&input.schema()).unwrap()],
+            &[phys_expr::col("h", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_firstign = create_agg(
             AggFunction::FirstIgnoresNull,
-            &[phys_expr::col("h",&input.schema()).unwrap()],
+            &[phys_expr::col("h", &input.schema()).unwrap()],
             &input.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let aggs_agg_expr = vec![
             AggExpr {
@@ -621,13 +640,8 @@ mod test {
             },
         ];
 
-        let agg_exec_partial = AggExec::try_new(
-            HashAgg,
-            groupings_agg_expr,
-            aggs_agg_expr,
-            0,
-            input,
-        ).unwrap();
+        let agg_exec_partial =
+            AggExec::try_new(HashAgg, groupings_agg_expr, aggs_agg_expr, 0, input).unwrap();
 
         let input_1 = build_table(
             ("a", &vec![2, 9, 3, 1, 0, 4, 6]),
@@ -647,87 +661,95 @@ mod test {
 
         let agg_agg_expr_1 = create_agg(
             AggFunction::Sum,
-            &[phys_expr::col("a",&input_1.schema()).unwrap()],
+            &[phys_expr::col("a", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_2 = create_agg(
             AggFunction::Avg,
-            &[phys_expr::col("b",&input_1.schema()).unwrap()],
+            &[phys_expr::col("b", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_3 = create_agg(
             AggFunction::Max,
-            &[phys_expr::col("d",&input_1.schema()).unwrap()],
+            &[phys_expr::col("d", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_4 = create_agg(
             AggFunction::Min,
-            &[phys_expr::col("e",&input_1.schema()).unwrap()],
+            &[phys_expr::col("e", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_5 = create_agg(
             AggFunction::Count,
-            &[phys_expr::col("f",&input_1.schema()).unwrap()],
+            &[phys_expr::col("f", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_6 = create_agg(
             AggFunction::CollectList,
-            &[phys_expr::col("g",&input_1.schema()).unwrap()],
+            &[phys_expr::col("g", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_7 = create_agg(
             AggFunction::CollectSet,
-            &[phys_expr::col("h",&input_1.schema()).unwrap()],
+            &[phys_expr::col("h", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let agg_agg_expr_8 = create_agg(
             AggFunction::FirstIgnoresNull,
-            &[phys_expr::col("h",&input_1.schema()).unwrap()],
+            &[phys_expr::col("h", &input_1.schema()).unwrap()],
             &input_1.schema(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let aggs_agg_expr_1 = vec![
             AggExpr {
                 field_name: "Sum(a)".to_string(),
                 mode: Final,
-                agg: agg_agg_expr_1
+                agg: agg_agg_expr_1,
             },
             AggExpr {
                 field_name: "Avg(b)".to_string(),
                 mode: Final,
-                agg: agg_agg_expr_2
+                agg: agg_agg_expr_2,
             },
             AggExpr {
                 field_name: "Max(d)".to_string(),
                 mode: Final,
-                agg: agg_agg_expr_3
+                agg: agg_agg_expr_3,
             },
             AggExpr {
                 field_name: "Min(e)".to_string(),
                 mode: Final,
-                agg: agg_agg_expr_4
+                agg: agg_agg_expr_4,
             },
             AggExpr {
                 field_name: "Count(f)".to_string(),
                 mode: Final,
-                agg: agg_agg_expr_5
+                agg: agg_agg_expr_5,
             },
             AggExpr {
                 field_name: "CollectList(g)".to_string(),
                 mode: Final,
-                agg: agg_agg_expr_6
+                agg: agg_agg_expr_6,
             },
             AggExpr {
                 field_name: "CollectSet(h)".to_string(),
                 mode: Final,
-                agg: agg_agg_expr_7
+                agg: agg_agg_expr_7,
             },
             AggExpr {
                 field_name: "FirstIgn(h)".to_string(),
@@ -742,7 +764,8 @@ mod test {
             aggs_agg_expr_1,
             0,
             Arc::new(agg_exec_partial),
-        ).unwrap();
+        )
+        .unwrap();
 
         let session_ctx = SessionContext::new();
         let task_ctx = session_ctx.task_ctx();

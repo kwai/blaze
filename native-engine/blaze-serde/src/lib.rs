@@ -306,10 +306,8 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     .ok_or_else(|| proto_error("Protobuf deserialization error: Map message missing required field 'value_type'"))?
                     .as_ref();
 
-                let vec_field = vec![
-                    Arc::new(key_type.try_into()?),
-                    Arc::new(value_type.try_into()?),
-                ];
+                let vec_field =
+                    vec![Arc::new(key_type.try_into()?), Arc::new(value_type.try_into()?)];
                 let fields = Arc::new(Field::new(
                     "entries",
                     DataType::Struct(vec_field.into()),
@@ -510,7 +508,8 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                 )
             }
             protobuf::scalar_value::Value::NullValue(v) => {
-                let datatype = v.datatype
+                let datatype = v
+                    .datatype
                     .as_ref()
                     .ok_or_else(|| proto_error("missing ScalarType.datatype"))?;
                 match datatype {
@@ -520,14 +519,12 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                         null_type_enum.try_into()?
                     }
                     protobuf::scalar_type::Datatype::List(list) => {
-                        let pb_scalar_type = list.element_type
+                        let pb_scalar_type = list
+                            .element_type
                             .as_ref()
                             .ok_or_else(|| proto_error("missing list.element_type"))?;
                         let scalar_type: DataType = pb_scalar_type.as_ref().try_into()?;
-                        ScalarValue::List(
-                            None,
-                            Arc::new(Field::new("items", scalar_type, true)),
-                        )
+                        ScalarValue::List(None, Arc::new(Field::new("items", scalar_type, true)))
                     }
                 }
             }
@@ -561,7 +558,8 @@ impl TryInto<DataType> for &protobuf::scalar_type::Datatype {
                 pb_scalar_enum.into()
             }
             Datatype::List(list_type) => {
-                let element_scalar_type: DataType = list_type.element_type
+                let element_scalar_type: DataType = list_type
+                    .element_type
                     .as_ref()
                     .ok_or_else(|| proto_error("missing element type"))?
                     .as_ref()
@@ -607,14 +605,19 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
             }
             protobuf::scalar_value::Value::ListValue(v) => v.try_into()?,
             protobuf::scalar_value::Value::NullValue(v) => {
-                match v.datatype.as_ref().ok_or_else(|| proto_error("missing null value type"))? {
+                match v
+                    .datatype
+                    .as_ref()
+                    .ok_or_else(|| proto_error("missing null value type"))?
+                {
                     protobuf::scalar_type::Datatype::Scalar(scalar) => {
                         PrimitiveScalarType::from_i32(*scalar)
                             .ok_or_else(|| proto_error("Invalid scalar type"))?
                             .try_into()?
                     }
                     protobuf::scalar_type::Datatype::List(list) => {
-                        let element_scalar_type: DataType = list.element_type
+                        let element_scalar_type: DataType = list
+                            .element_type
                             .as_ref()
                             .ok_or_else(|| proto_error("missing list element type"))?
                             .as_ref()
@@ -642,17 +645,19 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
 impl TryInto<ScalarValue> for &protobuf::ScalarListValue {
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<ScalarValue, Self::Error> {
-        let element_scalar_type: DataType = self.datatype
+        let element_scalar_type: DataType = self
+            .datatype
             .as_ref()
             .ok_or_else(|| proto_error("missing list element type"))?
             .try_into()?;
-        let values: Vec<ScalarValue> = self.values
+        let values: Vec<ScalarValue> = self
+            .values
             .iter()
             .map(|value| Ok(value.try_into()?))
             .collect::<Result<_, Self::Error>>()?;
         Ok(ScalarValue::List(
             Some(values),
-            Arc::new(Field::new("items", element_scalar_type, true))
+            Arc::new(Field::new("items", element_scalar_type, true)),
         ))
     }
 }
@@ -660,12 +665,17 @@ impl TryInto<ScalarValue> for &protobuf::ScalarListValue {
 impl TryInto<DataType> for &protobuf::ScalarListType {
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<DataType, Self::Error> {
-        let element_scalar_type: DataType = self.element_type
+        let element_scalar_type: DataType = self
+            .element_type
             .as_ref()
             .ok_or_else(|| proto_error("missing list element type"))?
             .as_ref()
             .try_into()?;
-        Ok(DataType::List(Arc::new(Field::new("items", element_scalar_type, true))))
+        Ok(DataType::List(Arc::new(Field::new(
+            "items",
+            element_scalar_type,
+            true,
+        ))))
     }
 }
 

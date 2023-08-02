@@ -45,7 +45,8 @@ pub trait WindowFunctionProcessor: Send + Sync {
     fn process_batch_without_partitions(
         &mut self,
         context: &WindowContext,
-        batch: &RecordBatch) -> Result<ArrayRef>;
+        batch: &RecordBatch,
+    ) -> Result<ArrayRef>;
 }
 
 #[derive(Debug, Clone)]

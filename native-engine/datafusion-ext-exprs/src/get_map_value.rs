@@ -26,8 +26,8 @@ use datafusion::common::ScalarValue;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::PhysicalExpr;
 use std::fmt::Debug;
-use std::{any::Any, sync::Arc};
 use std::hash::{Hash, Hasher};
+use std::{any::Any, sync::Arc};
 
 /// expression to get value of a key in map array.
 #[derive(Debug, Hash)]
@@ -287,24 +287,24 @@ fn get_data_type_field(data_type: &DataType) -> Result<Field> {
 }
 
 #[cfg(test)]
-mod test{
-    use std::sync::Arc;
+mod test {
+    use super::GetMapValueExpr;
     use arrow::array::*;
     use arrow::buffer::Buffer;
     use arrow::datatypes::{DataType, Field, ToByteSlice};
     use arrow::record_batch::RecordBatch;
     use datafusion::assert_batches_eq;
     use datafusion::common::ScalarValue;
-    use datafusion::physical_plan::PhysicalExpr;
     use datafusion::physical_plan::expressions::Column;
-    use super::GetMapValueExpr;
+    use datafusion::physical_plan::PhysicalExpr;
+    use std::sync::Arc;
 
     #[test]
     fn test_map_1() -> Result<(), Box<dyn std::error::Error>> {
         //Construct key and values
         let key_data = ArrayData::builder(DataType::Int32)
             .len(8)
-            .add_buffer(Buffer::from(&[0,1,2,3,4,5,6,7].to_byte_slice()))
+            .add_buffer(Buffer::from(&[0, 1, 2, 3, 4, 5, 6, 7].to_byte_slice()))
             .build()
             .unwrap();
         let value_data = ArrayData::builder(DataType::UInt32)
@@ -344,22 +344,15 @@ mod test{
         let map_array: ArrayRef = Arc::new(MapArray::from(map_data));
         let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("col", map_array, true)])?;
         let get_indexed = Arc::new(GetMapValueExpr::new(
-            Arc::new(Column::new("col",0)),
+            Arc::new(Column::new("col", 0)),
             ScalarValue::from(7_i32),
         ));
         let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
         let output_batch =
             RecordBatch::try_from_iter_with_nullable(vec![("col", output_array, true)])?;
 
-        let expected = vec![
-            "+-----+",
-            "| col |",
-            "+-----+",
-            "|     |",
-            "|     |",
-            "| 70  |",
-            "+-----+",
-        ];
+        let expected =
+            vec!["+-----+", "| col |", "+-----+", "|     |", "|     |", "| 70  |", "+-----+"];
         assert_batches_eq!(expected, &[output_batch]);
         Ok(())
     }
@@ -373,31 +366,22 @@ mod test{
         //  [[a, b, c], [d, e, f], [g, h]]
         let entry_offsets = [0, 3, 6, 8];
 
-        let map_array: ArrayRef = Arc::new(MapArray::new_from_strings(
-            keys.clone().into_iter(),
-            &values_data,
-            &entry_offsets,
-        ).unwrap());
+        let map_array: ArrayRef = Arc::new(
+            MapArray::new_from_strings(keys.clone().into_iter(), &values_data, &entry_offsets)
+                .unwrap(),
+        );
         let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("col", map_array, true)])?;
         let get_indexed = Arc::new(GetMapValueExpr::new(
-            Arc::new(Column::new("col",0)),
+            Arc::new(Column::new("col", 0)),
             ScalarValue::from("e"),
         ));
         let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
         let output_batch =
             RecordBatch::try_from_iter_with_nullable(vec![("col", output_array, true)])?;
 
-        let expected = vec![
-            "+-----+",
-            "| col |",
-            "+-----+",
-            "|     |",
-            "| 40  |",
-            "|     |",
-            "+-----+",
-        ];
+        let expected =
+            vec!["+-----+", "| col |", "+-----+", "|     |", "| 40  |", "|     |", "+-----+"];
         assert_batches_eq!(expected, &[output_batch]);
         Ok(())
     }
-
 }

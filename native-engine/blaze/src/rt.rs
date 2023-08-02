@@ -28,12 +28,12 @@ use datafusion::physical_plan::metrics::Time;
 use datafusion::physical_plan::{ExecutionPlan, RecordBatchStream};
 use datafusion_ext_commons::ffi::MpscBatchReader;
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
+use datafusion_ext_plans::common::output::WrappedRecordBatchSender;
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use datafusion_ext_plans::common::output::WrappedRecordBatchSender;
 
 pub struct NativeExecutionRuntime {
     native_wrapper: GlobalRef,

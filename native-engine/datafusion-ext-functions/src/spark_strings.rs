@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use arrow::array::{Array, ArrayRef, ListArray, ListBuilder, StringArray, StringBuilder};
 use arrow::datatypes::DataType;
-use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion::common::cast::{as_int32_array, as_list_array, as_string_array};
+use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
+use std::sync::Arc;
 
 pub fn string_space(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let n_array = args[0].clone().into_array(1);
     let repeated_string_array = Arc::new(StringArray::from_iter(
         as_int32_array(&n_array)?
             .into_iter()
-            .map(|n| n.map(|n| " ".repeat(n.max(0) as usize)))
+            .map(|n| n.map(|n| " ".repeat(n.max(0) as usize))),
     ));
     Ok(ColumnarValue::Array(repeated_string_array))
 }
@@ -37,16 +37,16 @@ pub fn string_repeat(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             return Ok(ColumnarValue::Scalar(ScalarValue::Utf8(None)));
         }
         _ => {
-            return Err(DataFusionError::Execution(
-                format!("string_repeat n only supports literal int32")
-            ));
+            return Err(DataFusionError::Execution(format!(
+                "string_repeat n only supports literal int32"
+            )));
         }
     };
 
     let repeated_string_array: ArrayRef = Arc::new(StringArray::from_iter(
         as_string_array(&string_array)?
             .into_iter()
-            .map(|s| s.map(|s| s.repeat(n as usize)))
+            .map(|s| s.map(|s| s.repeat(n as usize))),
     ));
     Ok(ColumnarValue::Array(repeated_string_array))
 }
@@ -56,9 +56,9 @@ pub fn string_split(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let pat = match &args[1] {
         ColumnarValue::Scalar(ScalarValue::Utf8(Some(pat))) if !pat.is_empty() => pat,
         _ => {
-            return Err(DataFusionError::Execution(
-                format!("string_split pattern only supports non-empty literal string")
-            ));
+            return Err(DataFusionError::Execution(format!(
+                "string_split pattern only supports non-empty literal string"
+            )));
         }
     };
 
@@ -129,7 +129,6 @@ pub fn string_concat(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             .collect::<StringArray>();
 
         Ok(ColumnarValue::Array(Arc::new(result)))
-
     } else {
         // short avenue with only scalars
         // returns null if args contains null
@@ -165,9 +164,9 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             return Ok(ColumnarValue::Scalar(ScalarValue::Utf8(None)));
         }
         _ => {
-            return Err(DataFusionError::Execution(
-                format!("string_concat_ws separator only supports literal string")
-            ));
+            return Err(DataFusionError::Execution(format!(
+                "string_concat_ws separator only supports literal string"
+            )));
         }
     };
 
@@ -189,7 +188,7 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                     }
                     if let Ok(l) = as_list_array(&array).cloned() {
                         if l.value_type() == DataType::Utf8 {
-                            return Ok(Arg::List(l))
+                            return Ok(Arg::List(l));
                         }
                     }
                 }
@@ -210,7 +209,7 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                                         if let ScalarValue::Utf8(s) = s {
                                             match s {
                                                 Some(s) => ls.push(s.as_ref()),
-                                                None => {},
+                                                None => {}
                                             }
                                         } else {
                                             is_valid_list = false;
@@ -227,16 +226,19 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                     }
                 }
             }
-            Err(DataFusionError::Execution(
-                format!("concat_ws args must be string or array<string>")
-            ))
+            Err(DataFusionError::Execution(format!(
+                "concat_ws args must be string or array<string>"
+            )))
         })
         .collect::<Result<Vec<_>>>()?;
 
     args.retain(|arg| !matches!(arg, Arg::Ignore));
 
     // fast path when all args are literals
-    if args.iter().all(|arg| matches!(arg, Arg::Literal(_) | Arg::LiteralList(_))) {
+    if args
+        .iter()
+        .all(|arg| matches!(arg, Arg::Literal(_) | Arg::LiteralList(_)))
+    {
         let mut segments = vec![];
         for arg in &args {
             match arg {
@@ -245,22 +247,26 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                 _ => unreachable!(),
             }
         }
-        return Ok(ColumnarValue::Scalar(ScalarValue::Utf8(Some(segments.join(sep)))));
+        return Ok(ColumnarValue::Scalar(ScalarValue::Utf8(Some(
+            segments.join(sep),
+        ))));
     }
 
-    let array_len = args.iter().map(|arg| {
-        match arg {
+    let array_len = args
+        .iter()
+        .map(|arg| match arg {
             Arg::Literal(_) => 1,
             Arg::LiteralList(_) => 1,
             Arg::Array(strings) => strings.len(),
             Arg::List(list) => list.len(),
             _ => unreachable!(),
-        }
-    }).max().unwrap_or(1);
+        })
+        .max()
+        .unwrap_or(1);
 
     let mut segments = vec![];
-    let concatenated_string_array: ArrayRef = Arc::new(StringArray::from_iter(
-        (0..array_len).map(|i| {
+    let concatenated_string_array: ArrayRef =
+        Arc::new(StringArray::from_iter((0..array_len).map(|i| {
             segments.clear();
             for arg in &args {
                 match &arg {
@@ -270,7 +276,7 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                         if strings.is_valid(i) {
                             segments.push(strings.value(i));
                         }
-                    },
+                    }
                     Arg::List(list) => {
                         if list.is_valid(i) {
                             let strings = as_string_array(list.values()).unwrap();
@@ -288,38 +294,32 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                 }
             }
             Some(segments.join(sep))
-        })
-    ));
+        })));
     Ok(ColumnarValue::Array(concatenated_string_array))
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::spark_strings::{
+        string_concat, string_concat_ws, string_repeat, string_space, string_split,
+    };
     use arrow::array::{Int32Array, ListArray, ListBuilder, StringArray, StringBuilder};
-    use datafusion::common::{Result, ScalarValue};
     use datafusion::common::cast::{as_list_array, as_string_array};
+    use datafusion::common::{Result, ScalarValue};
     use datafusion::physical_plan::ColumnarValue;
-    use crate::spark_strings::{string_concat, string_concat_ws, string_repeat, string_space, string_split};
+    use std::sync::Arc;
 
     #[test]
     fn test_string_space() -> Result<()> {
         // positive case
-        let r = string_space(&vec![
-            ColumnarValue::Array(Arc::new(Int32Array::from_iter(vec![
-                Some(3),
-                Some(0),
-                Some(-100),
-                None,
-            ]))),
-        ])?;
+        let r = string_space(&vec![ColumnarValue::Array(Arc::new(
+            Int32Array::from_iter(vec![Some(3), Some(0), Some(-100), None]),
+        ))])?;
         let s = r.into_array(4);
-        assert_eq!(as_string_array(&s)?.into_iter().collect::<Vec<_>>(), vec![
-            Some("   "),
-            Some(""),
-            Some(""),
-            None,
-        ]);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![Some("   "), Some(""), Some(""), None,]
+        );
         Ok(())
     }
 
@@ -335,11 +335,10 @@ mod test {
             ColumnarValue::Scalar(ScalarValue::from(3_i32)),
         ])?;
         let s = r.into_array(3);
-        assert_eq!(as_string_array(&s)?.into_iter().collect::<Vec<_>>(), vec![
-            Some("123123123"),
-            Some("aaa"),
-            None,
-        ]);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![Some("123123123"), Some("aaa"), None,]
+        );
 
         // repeat with n < 0
         let r = string_repeat(&vec![
@@ -351,11 +350,10 @@ mod test {
             ColumnarValue::Scalar(ScalarValue::from(-1_i32)),
         ])?;
         let s = r.into_array(3);
-        assert_eq!(as_string_array(&s)?.into_iter().collect::<Vec<_>>(), vec![
-            Some(""),
-            Some(""),
-            None,
-        ]);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![Some(""), Some(""), None,]
+        );
 
         // repeat with n = null
         let r = string_repeat(&vec![
@@ -367,11 +365,10 @@ mod test {
             ColumnarValue::Scalar(ScalarValue::Int32(None)),
         ])?;
         let s = r.into_array(3);
-        assert_eq!(as_string_array(&s)?.into_iter().collect::<Vec<_>>(), vec![
-            None,
-            None,
-            None,
-        ]);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![None, None, None,]
+        );
         Ok(())
     }
 
@@ -392,16 +389,21 @@ mod test {
         let list_values = as_list_array(&list)?.values();
 
         assert_eq!(list_offsets, vec![0, 6, 7, 8, 8]);
-        assert_eq!(as_string_array(list_values)?.into_iter().collect::<Vec<_>>(), vec![
-            Some("123"),
-            Some("456"),
-            Some(""),
-            Some(""),
-            Some("789"),
-            Some(""),
-            Some("123"),
-            Some(""),
-        ]);
+        assert_eq!(
+            as_string_array(list_values)?
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                Some("123"),
+                Some("456"),
+                Some(""),
+                Some(""),
+                Some("789"),
+                Some(""),
+                Some("123"),
+                Some(""),
+            ]
+        );
         Ok(())
     }
 
@@ -424,10 +426,10 @@ mod test {
             ColumnarValue::Scalar(ScalarValue::from("SomeScalar")),
         ])?;
         let s = r.into_array(2);
-        assert_eq!(as_string_array(&s)?.into_iter().collect::<Vec<_>>(), vec![
-            Some("123444SomeScalar"),
-            None,
-        ]);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![Some("123444SomeScalar"), None,]
+        );
         Ok(())
     }
     #[test]
@@ -460,10 +462,10 @@ mod test {
             ColumnarValue::Scalar(ScalarValue::Utf8(None)),
         ])?;
         let s = r.into_array(2);
-        assert_eq!(as_string_array(&s)?.into_iter().collect::<Vec<_>>(), vec![
-            Some("123||||XX||YY||SomeScalar"),
-            Some("456||||SomeScalar"),
-        ]);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![Some("123||||XX||YY||SomeScalar"), Some("456||||SomeScalar"),]
+        );
         Ok(())
     }
 }

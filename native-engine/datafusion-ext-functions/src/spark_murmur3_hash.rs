@@ -49,22 +49,18 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::spark_murmur3_hash::spark_murmur3_hash;
     use arrow::array::{ArrayRef, Int32Array, Int64Array, StringArray};
     use datafusion::logical_expr::ColumnarValue;
-    use crate::spark_murmur3_hash::spark_murmur3_hash;
+    use std::sync::Arc;
 
     #[test]
     fn test_murmur3_hash_int64() {
-        let result = spark_murmur3_hash(&vec![
-            ColumnarValue::Array(Arc::new(Int64Array::from(vec![
-                Some(1),
-                Some(0),
-                Some(-1),
-                Some(i64::MAX),
-                Some(i64::MIN),
-            ]))),
-        ]).unwrap().into_array(5);
+        let result = spark_murmur3_hash(&vec![ColumnarValue::Array(Arc::new(Int64Array::from(
+            vec![Some(1), Some(0), Some(-1), Some(i64::MAX), Some(i64::MIN)],
+        )))])
+        .unwrap()
+        .into_array(5);
 
         let expected = Int32Array::from(vec![
             Some(-1712319331),
@@ -73,16 +69,18 @@ mod test {
             Some(-1604625029),
             Some(-853646085),
         ]);
-        let expected:ArrayRef = Arc::new(expected);
+        let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
     }
 
     #[test]
     fn test_murmur3_hash_string() {
-        let result = spark_murmur3_hash(&vec![
-            ColumnarValue::Array(Arc::new(StringArray::from_iter_values(["hello", "bar", "", "😁", "天地"]))),
-        ]).unwrap().into_array(5);
+        let result = spark_murmur3_hash(&vec![ColumnarValue::Array(Arc::new(
+            StringArray::from_iter_values(["hello", "bar", "", "😁", "天地"]),
+        ))])
+        .unwrap()
+        .into_array(5);
 
         let expected = Int32Array::from(vec![
             Some(-1008564952),
@@ -91,7 +89,7 @@ mod test {
             Some(885025535),
             Some(-1899966402),
         ]);
-        let expected:ArrayRef = Arc::new(expected);
+        let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
     }

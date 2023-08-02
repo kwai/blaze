@@ -80,7 +80,6 @@ impl Agg for AggFirstIgnoresNull {
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-
         let partial_updater = self.partial_updater;
         let addr = agg_buf_addrs[0];
         let value = &values[0];
@@ -94,7 +93,6 @@ impl Agg for AggFirstIgnoresNull {
         agg_buf_addrs: &[u64],
         values: &[ArrayRef],
     ) -> Result<()> {
-
         let partial_updater = self.partial_updater;
         let addr = agg_buf_addrs[0];
         let value = &values[0];
@@ -113,7 +111,6 @@ impl Agg for AggFirstIgnoresNull {
         agg_buf2: &mut AggBuf,
         agg_buf_addrs: &[u64],
     ) -> Result<()> {
-
         let partial_buf_merger = self.partial_buf_merger;
         let addr = agg_buf_addrs[0];
         partial_buf_merger(agg_buf1, agg_buf2, addr);

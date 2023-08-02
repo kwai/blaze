@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{AggBuf, AggDynSet, AccumInitialValue};
+use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynSet};
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
@@ -34,7 +34,11 @@ impl AggCollectSet {
         data_type: DataType,
         arg_type: DataType,
     ) -> Result<Self> {
-        Ok(Self {child, data_type, arg_type})
+        Ok(Self {
+            child,
+            data_type,
+            arg_type,
+        })
     }
 }
 
@@ -72,7 +76,6 @@ impl Agg for AggCollectSet {
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-
         let dyn_set = agg_buf
             .dyn_value_mut(agg_buf_addrs[0])
             .as_any_mut()
@@ -90,7 +93,6 @@ impl Agg for AggCollectSet {
         agg_buf_addrs: &[u64],
         values: &[ArrayRef],
     ) -> Result<()> {
-
         let dyn_set = agg_buf
             .dyn_value_mut(agg_buf_addrs[0])
             .as_any_mut()
@@ -110,7 +112,6 @@ impl Agg for AggCollectSet {
         merging_agg_buf: &mut AggBuf,
         agg_buf_addrs: &[u64],
     ) -> Result<()> {
-
         let dyn_set1 = agg_buf
             .dyn_value_mut(agg_buf_addrs[0])
             .as_any_mut()

@@ -146,7 +146,11 @@ impl ExecutionPlan for RssShuffleWriterExec {
     }
 
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "RssShuffleWriterExec: partitioning={:?}", self.partitioning)
+        write!(
+            f,
+            "RssShuffleWriterExec: partitioning={:?}",
+            self.partitioning
+        )
     }
 
     fn statistics(&self) -> Statistics {

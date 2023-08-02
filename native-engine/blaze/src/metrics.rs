@@ -22,9 +22,8 @@ pub fn update_spark_metric_node(
     metric_node: JObject,
     execution_plan: Arc<dyn ExecutionPlan>,
 ) -> Result<()> {
-
     if metric_node.is_null() {
-        return Ok(())
+        return Ok(());
     }
 
     // update current node
@@ -49,10 +48,7 @@ pub fn update_spark_metric_node(
     Ok(())
 }
 
-fn update_metrics(
-    metric_node: JObject,
-    metric_values: &[(&str, i64)],
-) -> Result<()> {
+fn update_metrics(metric_node: JObject, metric_values: &[(&str, i64)]) -> Result<()> {
     for &(name, value) in metric_values {
         let jname = jni_new_string!(&name)?;
         jni_call!(SparkMetricNode(metric_node).add(jname.as_obj(), value) -> ())?;

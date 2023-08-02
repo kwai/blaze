@@ -17,21 +17,21 @@ use std::io::{Cursor, Write};
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Weak};
 
+use crate::common::memory_manager::{MemConsumer, MemManager};
+use crate::common::onheap_spill::try_new_spill;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::is_task_running;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::metrics::ScopedTimerGuard;
 use datafusion::physical_plan::stream::RecordBatchReceiverStream;
+use datafusion::physical_plan::SendableRecordBatchStream;
+use datafusion_ext_commons::io::{read_one_batch, write_one_batch};
 use futures::{FutureExt, StreamExt, TryFutureExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
-use datafusion_ext_commons::io::{read_one_batch, write_one_batch};
-use crate::common::memory_manager::{MemConsumer, MemManager};
-use crate::common::onheap_spill::try_new_spill;
 
 fn working_senders() -> &'static Mutex<Vec<Weak<WrappedRecordBatchSender>>> {
     static WORKING_SENDERS: OnceCell<Mutex<Vec<Weak<WrappedRecordBatchSender>>>> = OnceCell::new();
@@ -47,7 +47,7 @@ impl WrappedRecordBatchSender {
     pub fn new(task_context: Arc<TaskContext>, sender: Sender<Result<RecordBatch>>) -> Arc<Self> {
         let wrapped = Arc::new(Self {
             task_context,
-            sender
+            sender,
         });
         let mut working_senders = working_senders().lock();
         working_senders.push(Arc::downgrade(&wrapped));
@@ -60,13 +60,13 @@ impl WrappedRecordBatchSender {
             .into_iter()
             .filter(|wrapped| match wrapped.upgrade() {
                 Some(wrapped) if Arc::ptr_eq(&wrapped.task_context, task_context) => {
-                    let _ = wrapped.sender.send(Err(DataFusionError::Execution(
-                        format!("task completed/cancelled")
-                    )));
+                    let _ = wrapped.sender.send(Err(DataFusionError::Execution(format!(
+                        "task completed/cancelled"
+                    ))));
                     false
                 }
                 Some(_) => true, // do not modify senders from other tasks
-                None => false, // already released
+                None => false,   // already released
             })
             .collect();
     }
@@ -77,14 +77,14 @@ impl WrappedRecordBatchSender {
         mut stop_timer: Option<&mut ScopedTimerGuard<'_>>,
     ) {
         // panic if we meet an error
-        let batch = batch_result.unwrap_or_else(|err| {
-            panic!("output_with_sender: received an error: {}", err)
-        });
+        let batch = batch_result
+            .unwrap_or_else(|err| panic!("output_with_sender: received an error: {}", err));
 
         stop_timer.iter_mut().for_each(|timer| timer.stop());
-        self.sender.send(Ok(batch)).await.unwrap_or_else(|err| {
-            panic!("output_with_sender: send error: {}", err)
-        });
+        self.sender
+            .send(Ok(batch))
+            .await
+            .unwrap_or_else(|err| panic!("output_with_sender: send error: {}", err));
         stop_timer.iter_mut().for_each(|timer| timer.restart());
     }
 }
@@ -96,7 +96,7 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
     output: impl FnOnce(Arc<WrappedRecordBatchSender>) -> Fut + Send + 'static,
 ) -> Result<SendableRecordBatchStream> {
     let mut stream_builder = RecordBatchReceiverStream::builder(output_schema.clone(), 1);
-    let sender =stream_builder.tx().clone();
+    let sender = stream_builder.tx().clone();
     let err_sender = sender.clone();
 
     stream_builder.spawn(async move {
@@ -104,7 +104,10 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
         let result = AssertUnwindSafe(async move {
             output(wrapped)
                 .unwrap_or_else(|err| {
-                    panic!("output_with_sender[{}]: output() returns error: {}", desc, err);
+                    panic!(
+                        "output_with_sender[{}]: output() returns error: {}",
+                        desc, err
+                    );
                 })
                 .await
         })
@@ -125,9 +128,7 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
             if task_running {
                 panic!(
                     "output_with_sender[{}] error (task_running={}: {}",
-                    desc,
-                    task_running,
-                    err_message,
+                    desc, task_running, err_message,
                 );
             }
         }
@@ -140,7 +141,6 @@ pub fn output_bufferable_with_spill(
     task_context: Arc<TaskContext>,
     mut stream: SendableRecordBatchStream,
 ) -> Result<SendableRecordBatchStream> {
-
     let output_schema = stream.schema();
 
     output_with_sender(
@@ -179,5 +179,6 @@ pub fn output_bufferable_with_spill(
                 sender.send(Ok(batch), None).await;
             }
             Ok(())
-        })
+        },
+    )
 }

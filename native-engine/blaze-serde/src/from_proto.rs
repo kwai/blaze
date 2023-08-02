@@ -18,8 +18,8 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use arrow::datatypes::{FieldRef, SchemaRef};
-use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use base64::Engine;
 use chrono::DateTime;
 use datafusion::datasource::listing::{FileRange, PartitionedFile};
 use datafusion::datasource::object_store::ObjectStoreUrl;
@@ -41,8 +41,6 @@ use datafusion::physical_plan::{
     Partitioning,
 };
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics};
-use object_store::ObjectMeta;
-use object_store::path::Path;
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_plans::agg::{
     create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
@@ -63,6 +61,8 @@ use datafusion_ext_plans::rss_shuffle_writer_exec::RssShuffleWriterExec;
 use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
 use datafusion_ext_plans::sort_exec::SortExec;
 use datafusion_ext_plans::sort_merge_join_exec::SortMergeJoinExec;
+use object_store::path::Path;
+use object_store::ObjectMeta;
 
 use crate::error::PlanSerDeError;
 use crate::protobuf::physical_expr_node::ExprType;
@@ -998,7 +998,6 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
     type Error = PlanSerDeError;
 
     fn try_from(val: &protobuf::PartitionedFile) -> Result<Self, Self::Error> {
-
         Ok(PartitionedFile {
             object_meta: ObjectMeta {
                 location: Path::from(format!("/{}", BASE64_URL_SAFE_NO_PAD.encode(&val.path))),
@@ -1092,14 +1091,16 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         let partition_schema: SchemaRef = Arc::new(convert_required!(self.partition_schema)?);
 
         let file_groups = (0..self.num_partitions)
-            .map(|i| if i == self.partition_index {
-                Ok(self
-                    .file_group
-                    .as_ref()
-                    .expect("missing FileScanConfig.file_group")
-                    .try_into()?)
-            } else {
-                Ok(vec![])
+            .map(|i| {
+                if i == self.partition_index {
+                    Ok(self
+                        .file_group
+                        .as_ref()
+                        .expect("missing FileScanConfig.file_group")
+                        .try_into()?)
+                } else {
+                    Ok(vec![])
+                }
             })
             .collect::<Result<Vec<_>, PlanSerDeError>>()?;
 
@@ -1116,7 +1117,7 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
                 .map(|field| (field.name().clone(), field.data_type().clone()))
                 .collect(),
             output_ordering: vec![],
-            infinite_source: false
+            infinite_source: false,
         })
     }
 }

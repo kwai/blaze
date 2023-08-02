@@ -29,8 +29,8 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
 use datafusion_ext_commons::io::name_batch;
 use std::fmt::{Debug, Formatter};
-use std::{any::Any, sync::Arc};
 use std::hash::{Hash, Hasher};
+use std::{any::Any, sync::Arc};
 
 /// expression to get a field of from NameStruct.
 #[derive(Debug, Hash)]
@@ -152,10 +152,7 @@ mod test {
         let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", array, true)])?;
 
         let named_struct = Arc::new(NamedStructExpr::try_new(
-            vec![
-                Arc::new(Column::new("cccccc1", 0)),
-                Arc::new(Column::new("cccccc1", 0)),
-            ],
+            vec![Arc::new(Column::new("cccccc1", 0)), Arc::new(Column::new("cccccc1", 0))],
             DataType::Struct(Fields::from(vec![
                 Field::new(
                     "field1",

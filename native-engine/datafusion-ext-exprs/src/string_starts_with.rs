@@ -78,8 +78,7 @@ impl PhysicalExpr for StringStartsWithExpr {
         match expr {
             ColumnarValue::Array(array) => {
                 let string_array = array.as_any().downcast_ref::<StringArray>().unwrap();
-                let ret_array =
-                    Arc::new(BooleanArray::from_iter(string_array.iter().map(
+                let ret_array = Arc::new(BooleanArray::from_iter(string_array.iter().map(
                     |maybe_string| maybe_string.map(|string| string.starts_with(&self.prefix)),
                 )));
                 Ok(ColumnarValue::Array(ret_array))
@@ -117,18 +116,16 @@ impl PhysicalExpr for StringStartsWithExpr {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-    use arrow::array::{StringArray, ArrayRef, BooleanArray};
+    use arrow::array::{ArrayRef, BooleanArray, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
-
+    use std::sync::Arc;
 
     use crate::string_starts_with::StringStartsWithExpr;
 
     #[test]
     fn test_ok() {
-
         let string_array: ArrayRef = Arc::new(StringArray::from(vec![
             None,
             Some("rabaok".to_string()),
@@ -136,19 +133,18 @@ mod test {
             Some("s_skdo[]ra.,?';,{}\ra".to_string()),
             Some(" raefuwidn".to_string()),
         ]));
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("col3", DataType::Utf8, true),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("col3", DataType::Utf8, true)]));
 
-        let batch = RecordBatch::try_new(schema, vec![string_array])
-            .expect("Error creating RecordBatch");
+        let batch =
+            RecordBatch::try_new(schema, vec![string_array]).expect("Error creating RecordBatch");
 
         let pattern = "ra".to_string();
         let expr = Arc::new(StringStartsWithExpr::new(
             phys_expr::col("col3", &batch.schema()).unwrap(),
             pattern,
         ));
-        let ret = expr.evaluate(&batch)
+        let ret = expr
+            .evaluate(&batch)
             .expect("Error evaluating expr")
             .into_array(batch.num_rows());
 
@@ -172,19 +168,15 @@ mod test {
             Some("RustHe".to_string()),
             Some("HellHe".to_string()),
         ]));
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("col4", DataType::Utf8, true),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("col4", DataType::Utf8, true)]));
 
-        let batch = RecordBatch::try_new(schema, vec![string_array])
-            .expect("Error creating RecordBatch");
+        let batch =
+            RecordBatch::try_new(schema, vec![string_array]).expect("Error creating RecordBatch");
 
         let pattern = "ra".to_string();
-        let expr = Arc::new(StringStartsWithExpr::new(
-            phys_expr::lit("rarrr"),
-            pattern,
-        ));
-        let ret = expr.evaluate(&batch)
+        let expr = Arc::new(StringStartsWithExpr::new(phys_expr::lit("rarrr"), pattern));
+        let ret = expr
+            .evaluate(&batch)
             .expect("Error evaluating expr")
             .into_array(batch.num_rows());
 

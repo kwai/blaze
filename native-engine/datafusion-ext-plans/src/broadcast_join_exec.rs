@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::Duration;
+use crate::sort_exec::SortExec;
+use crate::sort_merge_join_exec::SortMergeJoinExec;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, Statistics};
@@ -29,12 +26,17 @@ use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream};
+use datafusion::physical_plan::{
+    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+};
 use futures::stream::once;
 use futures::{StreamExt, TryStreamExt};
 use parking_lot::Mutex;
-use crate::sort_exec::SortExec;
-use crate::sort_merge_join_exec::SortMergeJoinExec;
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
+use std::task::Poll;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct BroadcastJoinExec {
@@ -114,7 +116,6 @@ impl ExecutionPlan for BroadcastJoinExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-
         let stream = execute_broadcast_join(
             self.left.clone(),
             self.right.clone(),
@@ -153,7 +154,6 @@ async fn execute_broadcast_join(
     join_type: JoinType,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-
     // TODO: use configurable properties
     const HASH_JOIN_NUM_ROWS_LIMIT: usize = 100000;
     const HASH_JOIN_MEM_SIZE_LIMIT: usize = 16777216;
@@ -186,14 +186,19 @@ async fn execute_broadcast_join(
     }
 
     // convert left cached and rest batches into execution plan
-    let left_cached_stream: SendableRecordBatchStream =
-        Box::pin(MemoryStream::try_new(left_cached, left_schema.clone(), None)?);
-    let left_rest_stream: SendableRecordBatchStream =
-        Box::pin(RecordBatchStreamAdapter::new(left_schema.clone(), left_stream));
-    let left_stream: SendableRecordBatchStream =
-        Box::pin(RecordBatchStreamAdapter::new(
-            left_schema.clone(),
-            left_cached_stream.chain(left_rest_stream)));
+    let left_cached_stream: SendableRecordBatchStream = Box::pin(MemoryStream::try_new(
+        left_cached,
+        left_schema.clone(),
+        None,
+    )?);
+    let left_rest_stream: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+        left_schema.clone(),
+        left_stream,
+    ));
+    let left_stream: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+        left_schema.clone(),
+        left_cached_stream.chain(left_rest_stream),
+    ));
     let left = Arc::new(RecordBatchStreamsWrapperExec {
         schema: left_schema.clone(),
         stream: Mutex::new(Some(left_stream)),
@@ -214,23 +219,29 @@ async fn execute_broadcast_join(
             log::info!("BroadcastJoin is using hash join mode: {:?}", &join);
 
             let join_schema = join.schema();
-            let completed = join.execute(partition, context)?
+            let completed = join
+                .execute(partition, context)?
                 .chain(futures::stream::poll_fn(move |_| {
                     // update metrics
                     let join_metrics = join.metrics().unwrap();
                     metrics.record_output(join_metrics.output_rows().unwrap_or(0));
-                    metrics.elapsed_compute().add_duration(
-                        Duration::from_nanos(
-                            [
-                                join_metrics.elapsed_compute(),
-                            ].into_iter().flatten().sum::<usize>() as u64));
+                    metrics.elapsed_compute().add_duration(Duration::from_nanos(
+                        [join_metrics.elapsed_compute()]
+                            .into_iter()
+                            .flatten()
+                            .sum::<usize>() as u64,
+                    ));
                     Poll::Ready(None)
                 }));
-            Ok(Box::pin(RecordBatchStreamAdapter::new(join_schema, completed)))
+            Ok(Box::pin(RecordBatchStreamAdapter::new(
+                join_schema,
+                completed,
+            )))
         }
         JoinMode::SortMerge => {
-            let sort_exprs: Vec<PhysicalSortExpr> =
-                on.iter().map(|(_col_left, col_right)| PhysicalSortExpr {
+            let sort_exprs: Vec<PhysicalSortExpr> = on
+                .iter()
+                .map(|(_col_left, col_right)| PhysicalSortExpr {
                     expr: Arc::new(Column::new("", col_right.index())),
                     options: Default::default(),
                 })
@@ -247,24 +258,27 @@ async fn execute_broadcast_join(
             log::info!("BroadcastJoin is using sort-merge join mode: {:?}", &join);
 
             let join_schema = join.schema();
-            let completed = join.execute(partition, context)?
+            let completed = join
+                .execute(partition, context)?
                 .chain(futures::stream::poll_fn(move |_| {
                     // update metrics
                     let right_sorted_metrics = right_sorted.metrics().unwrap();
                     let join_metrics = join.metrics().unwrap();
                     metrics.record_output(join_metrics.output_rows().unwrap_or(0));
-                    metrics.elapsed_compute().add_duration(
-                        Duration::from_nanos(
-                            [
-                                right_sorted_metrics.elapsed_compute(),
-                                join_metrics.elapsed_compute(),
-                            ].into_iter().flatten().sum::<usize>() as u64));
+                    metrics.elapsed_compute().add_duration(Duration::from_nanos(
+                        [right_sorted_metrics.elapsed_compute(), join_metrics.elapsed_compute()]
+                            .into_iter()
+                            .flatten()
+                            .sum::<usize>() as u64,
+                    ));
                     Poll::Ready(None)
                 }));
-            Ok(Box::pin(RecordBatchStreamAdapter::new(join_schema, completed)))
+            Ok(Box::pin(RecordBatchStreamAdapter::new(
+                join_schema,
+                completed,
+            )))
         }
     }
-
 }
 
 struct RecordBatchStreamsWrapperExec {
@@ -300,15 +314,18 @@ impl ExecutionPlan for RecordBatchStreamsWrapperExec {
         vec![]
     }
 
-    fn with_new_children(self: Arc<Self>, _: Vec<Arc<dyn ExecutionPlan>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        _: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         unimplemented!()
     }
 
     fn execute(
-        &self, _partition: usize,
+        &self,
+        _partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-
         let stream = std::mem::take(&mut *self.stream.lock());
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema.clone(),

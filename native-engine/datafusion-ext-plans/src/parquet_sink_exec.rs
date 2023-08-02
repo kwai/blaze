@@ -15,30 +15,35 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::any::Any;
-use std::fmt::Formatter;
-use std::io::Write;
-use std::sync::Arc;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
+use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
-use datafusion::parquet::arrow::{ArrowWriter, parquet_to_arrow_schema};
+use datafusion::parquet::arrow::{parquet_to_arrow_schema, ArrowWriter};
 use datafusion::parquet::basic::{BrotliLevel, Compression, GzipLevel, ZstdLevel};
 use datafusion::parquet::file::properties::{WriterProperties, WriterVersion};
 use datafusion::parquet::schema::parser::parse_message_type;
 use datafusion::parquet::schema::types::SchemaDescriptor;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::{DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, Metric, Partitioning, SendableRecordBatchStream};
-use datafusion::physical_plan::metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricsSet, MetricValue, Time};
+use datafusion::physical_plan::metrics::{
+    BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time,
+};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion::physical_plan::{
+    DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, Metric, Partitioning,
+    SendableRecordBatchStream,
+};
+use datafusion_ext_commons::cast::cast;
+use datafusion_ext_commons::hadoop_fs::{FsDataOutputStream, FsProvider};
 use futures::stream::once;
 use futures::{StreamExt, TryStreamExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
-use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
-use datafusion_ext_commons::cast::cast;
-use datafusion_ext_commons::hadoop_fs::{FsDataOutputStream, FsProvider};
+use std::any::Any;
+use std::fmt::Formatter;
+use std::io::Write;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ParquetSinkExec {
@@ -91,7 +96,6 @@ impl ExecutionPlan for ParquetSinkExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-
         Ok(Arc::new(Self::new(
             children[0].clone(),
             self.fs_resource_id.clone(),
@@ -105,7 +109,6 @@ impl ExecutionPlan for ParquetSinkExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-
         let fs_resource_id = self.fs_resource_id.clone();
         let path = self.path.clone();
         let props = self.props.clone();
@@ -144,7 +147,8 @@ impl ExecutionPlan for ParquetSinkExec {
                 metrics,
                 io_time,
                 bytes_written,
-            )).try_flatten(),
+            ))
+            .try_flatten(),
         ));
         Ok(output)
     }
@@ -171,7 +175,6 @@ async fn execute_parquet_sink(
     io_time: Time,
     bytes_written: Count,
 ) -> Result<SendableRecordBatchStream> {
-
     let mut timer = metrics.elapsed_compute().timer();
 
     // parse hive_schema from props
@@ -182,7 +185,9 @@ async fn execute_parquet_sink(
         .and_then(|value| parse_message_type(value.as_str()).ok())
         .and_then(|tp| parquet_to_arrow_schema(&SchemaDescriptor::new(Arc::new(tp)), None).ok())
         .map(Arc::new)
-        .ok_or(DataFusionError::Execution(format!("missing parquet.hive.schema")))?;
+        .ok_or(DataFusionError::Execution(format!(
+            "missing parquet.hive.schema"
+        )))?;
 
     // parse row group byte size from props
     let block_size = props
@@ -205,14 +210,16 @@ async fn execute_parquet_sink(
 
         // init parquet writer after first batch is received
         // to avoid creating empty file
-        parquet_writer.lock().get_or_try_init(|| create_parquet_writer(
-            &fs_resource_id,
-            &path,
-            &hive_schema,
-            &props,
-            &io_time,
-            &bytes_written,
-        ))?;
+        parquet_writer.lock().get_or_try_init(|| {
+            create_parquet_writer(
+                &fs_resource_id,
+                &path,
+                &hive_schema,
+                &props,
+                &io_time,
+                &bytes_written,
+            )
+        })?;
 
         let parquet_writer = parquet_writer.clone();
         let metrics = metrics.clone();
@@ -228,7 +235,8 @@ async fn execute_parquet_sink(
             metrics.record_output(num_rows);
             Ok::<_, DataFusionError>(())
         });
-        fut.await.map_err(|err| DataFusionError::Execution(format!("{err}")))??;
+        fut.await
+            .map_err(|err| DataFusionError::Execution(format!("{err}")))??;
         timer.stop();
     }
 
@@ -239,7 +247,8 @@ async fn execute_parquet_sink(
             w.close()?;
             Ok::<_, DataFusionError>(())
         });
-        fut.await.map_err(|err| DataFusionError::Execution(format!("{err}")))??;
+        fut.await
+            .map_err(|err| DataFusionError::Execution(format!("{err}")))??;
     }
 
     // parquet sink does not provide any output records
@@ -268,19 +277,19 @@ fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
                 log::warn!("invalid parquet prop value: {}={}", $key, $value);
                 builder
             }
-        }}
+        }};
     }
 
     for (key, value) in prop_kvs {
         builder = match key.as_ref() {
-            "parquet.page.size" =>
-                setprop!(key, value, usize, set_data_page_size_limit),
-            "parquet.enable.dictionary" =>
-                setprop!(key, value, bool, set_dictionary_enabled),
-            "parquet.dictionary.page.size" =>
-                setprop!(key, value, usize, set_dictionary_page_size_limit),
-            "parquet.statistics.truncate.length" =>
-                setprop!(key, value, usize, set_max_statistics_size),
+            "parquet.page.size" => setprop!(key, value, usize, set_data_page_size_limit),
+            "parquet.enable.dictionary" => setprop!(key, value, bool, set_dictionary_enabled),
+            "parquet.dictionary.page.size" => {
+                setprop!(key, value, usize, set_dictionary_page_size_limit)
+            }
+            "parquet.statistics.truncate.length" => {
+                setprop!(key, value, usize, set_max_statistics_size)
+            }
             "parquet.writer.version" => {
                 builder.set_writer_version(match value.to_ascii_uppercase().as_ref() {
                     "PARQUET_1_0" => WriterVersion::PARQUET_1_0,
@@ -306,7 +315,7 @@ fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
                     }
                 })
             }
-            _ => builder
+            _ => builder,
         }
     }
     builder.build()
@@ -320,7 +329,6 @@ fn create_parquet_writer(
     io_time: &Time,
     bytes_written: &Count,
 ) -> Result<ArrowWriter<FSDataWriter>> {
-
     // get fs object from jni bridge resource
     let fs_provider = {
         let resource_id = jni_new_string!(&fs_resource_id)?;
@@ -355,9 +363,9 @@ impl FSDataWriter {
 }
 impl Write for FSDataWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.write_fully(&buf).map_err(|err| {
-            std::io::Error::new(std::io::ErrorKind::Other, err)
-        })?;
+        self.inner
+            .write_fully(&buf)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
         self.bytes_written.add(buf.len());
         Ok(buf.len())
     }
