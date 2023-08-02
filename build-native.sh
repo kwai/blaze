@@ -5,6 +5,9 @@ profile="$1"
 echo "Running cargo fmt..."
 cargo fmt --all -q --
 
+echo "Running cargo fix..."
+cargo fix --all --allow-dirty --allow-staged
+
 echo "Building native with [$profile] profile..."
 cargo +nightly build --profile="$profile" --verbose
 
