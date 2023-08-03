@@ -19,6 +19,42 @@ use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
 use std::sync::Arc;
 
+pub fn string_lower(args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    match &args[0] {
+        ColumnarValue::Array(array) => Ok(ColumnarValue::Array(Arc::new(StringArray::from_iter(
+            as_string_array(array)?
+                .into_iter()
+                .map(|s| s.map(|s| s.to_lowercase())),
+        )))),
+        ColumnarValue::Scalar(ScalarValue::Utf8(Some(str))) => Ok(ColumnarValue::Scalar(
+            ScalarValue::Utf8(Some(str.to_lowercase())),
+        )),
+        _ => {
+            return Err(DataFusionError::Execution(format!(
+                "string_lower only supports literal utf8"
+            )));
+        }
+    }
+}
+
+pub fn string_upper(args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    match &args[0] {
+        ColumnarValue::Array(array) => Ok(ColumnarValue::Array(Arc::new(StringArray::from_iter(
+            as_string_array(array)?
+                .into_iter()
+                .map(|s| s.map(|s| s.to_uppercase())),
+        )))),
+        ColumnarValue::Scalar(ScalarValue::Utf8(Some(str))) => Ok(ColumnarValue::Scalar(
+            ScalarValue::Utf8(Some(str.to_uppercase())),
+        )),
+        _ => {
+            return Err(DataFusionError::Execution(format!(
+                "string_lower only supports literal utf8"
+            )));
+        }
+    }
+}
+
 pub fn string_space(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let n_array = args[0].clone().into_array(1);
     let repeated_string_array = Arc::new(StringArray::from_iter(
@@ -319,6 +355,19 @@ mod test {
         assert_eq!(
             as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
             vec![Some("   "), Some(""), Some(""), None,]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_string_upper() -> Result<()> {
+        let r = string_lower(&vec![ColumnarValue::Array(Arc::new(
+            StringArray::from_iter(vec![Some("{123}"), Some("A'asd'"), None]),
+        ))])?;
+        let s = r.into_array(3);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![Some("{123}"), Some("A'asd'"), None,]
         );
         Ok(())
     }

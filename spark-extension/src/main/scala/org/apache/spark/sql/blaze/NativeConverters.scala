@@ -811,6 +811,18 @@ object NativeConverters extends Logging {
 //        buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
 //      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
 
+      //
+      case e: Lower
+          if SparkEnv.get.conf.getBoolean(
+            "spark.blaze.convertcase.function.enabled",
+            defaultValue = false) =>
+        buildExtScalarFunction("StringLower", e.children, e.dataType)
+      case e: Upper
+          if SparkEnv.get.conf.getBoolean(
+            "spark.blaze.convertcase.function.enabled",
+            defaultValue = false) =>
+        buildExtScalarFunction("StringUpper", e.children, e.dataType)
+
       case e: StringTrim =>
         buildScalarFunction(pb.ScalarFunction.Trim, e.srcStr +: e.trimStr.toSeq, e.dataType)
       case e: StringTrimLeft =>

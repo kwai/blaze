@@ -40,6 +40,8 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "StringSplit" => Arc::new(spark_strings::string_split),
         "StringConcat" => Arc::new(spark_strings::string_concat),
         "StringConcatWs" => Arc::new(spark_strings::string_concat_ws),
+        "StringLower" => Arc::new(spark_strings::string_lower),
+        "StringUpper" => Arc::new(spark_strings::string_upper),
 
         _ => Err(DataFusionError::NotImplemented(format!(
             "spark ext function not implemented: {}",
