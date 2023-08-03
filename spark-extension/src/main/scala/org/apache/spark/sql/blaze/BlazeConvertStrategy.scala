@@ -78,16 +78,9 @@ object BlazeConvertStrategy extends Logging {
     }
 
     // fill convert strategy of stage inputs
-    // get stageInput from Shim trait
     exec.foreachUp {
-      case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
-        stageInput.setTagValue(
-          convertStrategyTag,
-          if (NativeHelper.isNative(stageInput)) {
-            AlwaysConvert
-          } else {
-            NeverConvert
-          })
+      case e if !e.isInstanceOf[NativeSupports] && NativeHelper.isNative(e) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
       case _ =>
     }
 

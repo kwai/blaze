@@ -2,6 +2,8 @@
 
 profile="$1"
 
+export RUSTFLAGS="-C target-cpu=skylake $RUSTFLAGS"
+
 echo "Running cargo fix..."
 cargo fix --all --allow-dirty --allow-staged
 

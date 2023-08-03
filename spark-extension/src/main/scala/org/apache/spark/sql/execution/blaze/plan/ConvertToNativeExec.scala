@@ -72,7 +72,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
-      Shims.get.rddShims.getShuffleReadFull(inputRDD),
+      Shims.get.getRDDShuffleReadFull(inputRDD),
       (partition, context) => {
         val inputRowIter = inputRDD.compute(partition, context)
         val resourceId = s"ConvertToNativeExec:${UUID.randomUUID().toString}"

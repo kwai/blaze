@@ -20,67 +20,72 @@ import java.io.File
 
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
+import org.blaze.{protobuf => pb}
+import org.blaze.protobuf.PhysicalHashRepartition
+import org.blaze.protobuf.PhysicalPlanNode
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.{
-  IndexShuffleBlockResolver,
-  ShuffleHandle,
-  ShuffleManager,
-  ShuffleWriteMetricsReporter
-}
+import org.apache.spark.shuffle.IndexShuffleBlockResolver
+import org.apache.spark.shuffle.ShuffleHandle
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.NativeShuffleExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
+import org.apache.spark.sql.execution.blaze.plan.NativeShuffleExchangeBase
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
-import org.apache.spark.storage.{BlockManagerId, FileSegment}
-import org.blaze.protobuf.{PhysicalHashRepartition, PhysicalPlanNode}
-
 import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.storage.BlockManagerId
+import org.apache.spark.storage.FileSegment
 
 abstract class Shims {
-  def rddShims: RDDShims
-  def sparkPlanShims: SparkPlanShims
-  def shuffleShims: ShuffleShims
-  def broadcastShims: BroadcastShims
-  def exprShims: ExprShims
-  def parquetScanShims: ParquetScanShims
 
-  def createBasicWriteTaskStats(params: Map[String, Any]): BasicWriteTaskStats
-}
-object Shims {
-  lazy val get: Shims = {
-    classOf[Shims].getClassLoader
-      .loadClass("org.apache.spark.sql.blaze.ShimsImpl")
-      .newInstance()
-      .asInstanceOf[Shims]
-  }
-}
+  // shim methods for execution
 
-trait RDDShims {
-  def getShuffleReadFull(rdd: RDD[_]): Boolean
-  def setShuffleReadFull(rdd: RDD[_], shuffleReadFull: Boolean): Unit
-}
-
-trait SparkPlanShims {
   def isNative(plan: SparkPlan): Boolean
+
   def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports
+
+  def getUnderlyingBroadcast(plan: SparkPlan): BroadcastExchangeLike
+
   def executeNative(plan: SparkPlan): NativeRDD
 
   def isQueryStageInput(plan: SparkPlan): Boolean
-  def isShuffleQueryStageInput(plan: SparkPlan): Boolean
-  def getChildStage(plan: SparkPlan): SparkPlan
-  def needRenameColumns(plan: SparkPlan): Boolean
-  def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan
-  def simpleStringWithNodeId(plan: SparkPlan): String
-}
 
-trait ShuffleShims {
+  def isShuffleQueryStageInput(plan: SparkPlan): Boolean
+
+  def getChildStage(plan: SparkPlan): SparkPlan
+
+  def needRenameColumns(plan: SparkPlan): Boolean
+
+  def insertForceNativeExecutionWrapper(exec: SparkPlan): SparkPlan
+
+  def simpleStringWithNodeId(plan: SparkPlan): String
+
+  def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan
+
+  def createBasicWriteTaskStats(params: Map[String, Any]): BasicWriteTaskStats
+
+  def getRDDShuffleReadFull(rdd: RDD[_]): Boolean
+
+  def setRDDShuffleReadFull(rdd: RDD[_], shuffleReadFull: Boolean): Unit
+
+  // shim methods for expressions
+
+  def convertExpr(e: Expression): Option[pb.PhysicalExprNode]
+
+  def convertAggregateExpr(e: AggregateExpression): Option[pb.PhysicalExprNode]
+
+  def getLikeEscapeChar(expr: Expression): Char
+
+  def getAggregateExpressionFilter(expr: Expression): Option[Expression]
+
   def createArrowShuffleExchange(
       outputPartitioning: Partitioning,
       child: SparkPlan): NativeShuffleExchangeBase
@@ -104,25 +109,25 @@ trait ShuffleShims {
 
   def getMapStatus(
       shuffleServerId: BlockManagerId,
-      PartitionLengthMap: Array[Long],
+      partitionLengthMap: Array[Long],
       mapId: Long): MapStatus
 
   def getShuffleWriteExec(
       input: PhysicalPlanNode,
       nativeOutputPartitioning: PhysicalHashRepartition.Builder): PhysicalPlanNode
-}
 
-trait ParquetScanShims {
   def createParquetScan(exec: FileSourceScanExec): NativeParquetScanBase
-}
 
-trait BroadcastShims {
   def createArrowBroadcastExchange(
       mode: BroadcastMode,
       child: SparkPlan): NativeBroadcastExchangeBase
 }
 
-trait ExprShims {
-  def getEscapeChar(expr: Expression): Char
-  def getAggregateExpressionFilter(expr: Expression): Option[Expression]
+object Shims {
+  lazy val get: Shims = {
+    classOf[Shims].getClassLoader
+      .loadClass("org.apache.spark.sql.blaze.ShimsImpl")
+      .newInstance()
+      .asInstanceOf[Shims]
+  }
 }

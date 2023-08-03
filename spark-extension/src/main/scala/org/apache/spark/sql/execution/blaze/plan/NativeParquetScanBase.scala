@@ -174,7 +174,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
               }
             })
             getfsTimeMetric.add((System.currentTimeMillis() - currentTimeMillis) * 1000000)
-            context.addTaskCompletionListener(_ => fs.close())
+            context.addTaskCompletionListener[Unit](_ => fs.close())
             context.addTaskFailureListener((_, _) => fs.close())
             fs
           })

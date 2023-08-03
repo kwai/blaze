@@ -721,7 +721,7 @@ object NativeConverters extends Logging {
             }
         }
       case e: Like =>
-        assert(Shims.get.exprShims.getEscapeChar(e) == '\\')
+        assert(Shims.get.getLikeEscapeChar(e) == '\\')
         buildExprNode {
           _.setLikeExpr(
             pb.PhysicalLikeExprNode
@@ -886,9 +886,11 @@ object NativeConverters extends Logging {
 
       case Substring(str, Literal(pos, IntegerType), Literal(len, IntegerType))
           if pos.asInstanceOf[Int] >= 0 && len.asInstanceOf[Int] >= 0 =>
+        val longPos = pos.asInstanceOf[Int].toLong
+        val longLen = len.asInstanceOf[Int].toLong
         buildScalarFunction(
           pb.ScalarFunction.Substr,
-          str :: Literal(pos.asInstanceOf[Long]) :: Literal(len.asInstanceOf[Long]) :: Nil,
+          str :: Literal(longPos) :: Literal(longLen) :: Nil,
           StringType)
 
       case StringSpace(n) =>
@@ -896,20 +898,6 @@ object NativeConverters extends Logging {
 
       case StringRepeat(str, n @ Literal(_, IntegerType)) =>
         buildExtScalarFunction("StringRepeat", str :: n :: Nil, StringType)
-
-      case StringSplit(str, pat @ Literal(_, StringType))
-          // native StringSplit implementation does not support regex, so only most frequently
-          // used cases without regex are supported
-          if Seq(",", ", ", ":", ";", "#", "@", "_", "-", "\\|", "\\.").contains(pat.value) =>
-        val nativePat = pat.value match {
-          case "\\|" => "|"
-          case "\\." => "."
-          case other => other
-        }
-        buildExtScalarFunction(
-          "StringSplit",
-          str :: Literal(nativePat) :: Nil,
-          ArrayType(StringType))
 
       case e: Concat if e.children.forall(_.dataType == StringType) =>
         buildExtScalarFunction("StringConcat", e.children, e.dataType)
@@ -1026,12 +1014,16 @@ object NativeConverters extends Logging {
         buildExtScalarFunction("GetJsonObject", e.children, StringType)
 
       case e =>
+        Shims.get.convertExpr(e) match {
+          case Some(converted) => return converted
+          case _ =>
+        }
         fallback(e)
     }
   }
 
   def convertAggregateExpr(e: AggregateExpression): pb.PhysicalExprNode = {
-    assert(Shims.get.exprShims.getAggregateExpressionFilter(e).isEmpty)
+    assert(Shims.get.getAggregateExpressionFilter(e).isEmpty)
     val aggBuilder = pb.PhysicalAggExprNode.newBuilder()
 
     e.aggregateFunction match {
@@ -1063,13 +1055,13 @@ object NativeConverters extends Logging {
                 Literal(1))))
         }
 
-      case First(child, ignoresNullExpr) =>
-        aggBuilder.setAggFunction(if (ignoresNullExpr.eval().asInstanceOf[Boolean]) {
-          pb.AggFunction.FIRST_IGNORES_NULL
-        } else {
-          pb.AggFunction.FIRST
-        })
-        aggBuilder.addChildren(convertExpr(child))
+      // case First(child, ignoresNullExpr) =>
+      //   aggBuilder.setAggFunction(if (ignoresNullExpr.eval().asInstanceOf[Boolean]) {
+      //     pb.AggFunction.FIRST_IGNORES_NULL
+      //   } else {
+      //     pb.AggFunction.FIRST
+      //   })
+      //   aggBuilder.addChildren(convertExpr(child))
 
       case CollectList(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_LIST)
@@ -1077,6 +1069,13 @@ object NativeConverters extends Logging {
       case CollectSet(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_SET)
         aggBuilder.addChildren(convertExpr(child))
+
+      case _ =>
+        Shims.get.convertAggregateExpr(e) match {
+          case Some(converted) => return converted
+          case _ =>
+        }
+        throw new NotImplementedError(s"unsupported aggregate expression: $e")
     }
     pb.PhysicalExprNode
       .newBuilder()

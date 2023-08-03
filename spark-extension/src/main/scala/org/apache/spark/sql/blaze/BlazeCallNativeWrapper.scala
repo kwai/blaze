@@ -57,7 +57,7 @@ case class BlazeCallNativeWrapper(
     }
   }
 
-  context.foreach(_.addTaskCompletionListener(_ => close()))
+  context.foreach(_.addTaskCompletionListener[Unit]((_: TaskContext) => close()))
   context.foreach(_.addTaskFailureListener((_, _) => close()))
 
   def getRowIterator: Iterator[InternalRow] = {

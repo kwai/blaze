@@ -25,5 +25,5 @@ trait NativeSupports extends SparkPlan {
 
   protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
 
-  def shuffleReadFull: Boolean = Shims.get.rddShims.getShuffleReadFull(this.doExecuteNative())
+  def shuffleReadFull: Boolean = Shims.get.getRDDShuffleReadFull(this.doExecuteNative())
 }

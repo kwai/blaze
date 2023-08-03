@@ -52,7 +52,10 @@ import org.blaze.{protobuf => pb}
 import org.apache.spark.sql.catalyst.expressions.ExprId
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.aggregate.SortAggregateExec
-import org.apache.spark.sql.execution.blaze.plan.NativeAggExec._
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec.AggExecMode
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec.HashAgg
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec.NativeAggrInfo
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec.SortAgg
 import org.apache.spark.sql.types.BinaryType
 
 case class NativeAggExec(
@@ -86,7 +89,7 @@ case class NativeAggExec(
   val nativeAggrInfos: Seq[NativeAggrInfo] = aggregateExpressions
     .zip(aggregateAttributes)
     .map {
-      case (aggr, aggrAttr) => getNativeAggrInfo(aggr, aggrAttr)
+      case (aggr, aggrAttr) => NativeAggExec.getNativeAggrInfo(aggr, aggrAttr)
     }
 
   val nativeExecMode: pb.AggExecMode = execMode match {
@@ -119,8 +122,8 @@ case class NativeAggExec(
       groupingExpressions.map(_.toAttribute) ++ aggregateAttributes
     } else {
       groupingExpressions.map(_.toAttribute) :+
-        AttributeReference(AGG_BUF_COLUMN_NAME, BinaryType, nullable = false)(
-          ExprId.apply(AGG_BUF_COLUMN_EXPR_ID))
+        AttributeReference(NativeAggExec.AGG_BUF_COLUMN_NAME, BinaryType, nullable = false)(
+          ExprId.apply(NativeAggExec.AGG_BUF_COLUMN_EXPR_ID))
     }
 
   override def outputPartitioning: Partitioning =
@@ -178,7 +181,7 @@ case class NativeAggExec(
   }
 }
 
-object NativeAggExec {
+object NativeAggExec extends Logging {
 
   val AGG_BUF_COLUMN_EXPR_ID = 9223372036854775807L
   val AGG_BUF_COLUMN_NAME = s"#$AGG_BUF_COLUMN_EXPR_ID"
@@ -265,10 +268,11 @@ object NativeAggExec {
         case e: NativeSortExec if isSortExec => findRecursive(e.child)
         case e: UnaryExecNode if e.nodeName.contains("QueryStage") => findRecursive(e.child)
         case e: UnaryExecNode if e.nodeName.contains("InputAdapter") => findRecursive(e.child)
-        case stageInput if Shims.get.sparkPlanShims.isQueryStageInput(stageInput) =>
-          findRecursive(Shims.get.sparkPlanShims.getChildStage(stageInput))
-        case _ =>
-          None
+        case e: UnaryExecNode if e.nodeName.contains("CustomShuffleReader") =>
+          findRecursive(e.child)
+        case stageInput if Shims.get.isQueryStageInput(stageInput) =>
+          findRecursive(Shims.get.getChildStage(stageInput))
+        case _ => None
       }
     }
 

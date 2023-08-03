@@ -140,7 +140,8 @@ case class NativeShuffleExchangeExec(
     }
 
   override def createNativeShuffleWriteProcessor(
-      metrics: Map[String, SQLMetric]): ShuffleWriteProcessor = {
+      metrics: Map[String, SQLMetric],
+      numPartitions: Int): ShuffleWriteProcessor = {
 
     new ShuffleWriteProcessor {
       override protected def createMetricsReporter(

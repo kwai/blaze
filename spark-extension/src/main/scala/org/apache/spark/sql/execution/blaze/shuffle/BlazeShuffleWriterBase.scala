@@ -98,7 +98,7 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
     val dataSize = Files.size(tempDataFilePath)
     metrics.incBytesWritten(dataSize)
 
-    Shims.get.shuffleShims.commit(
+    Shims.get.commit(
       dep,
       shuffleBlockResolver,
       tempDataFilePath.toFile,

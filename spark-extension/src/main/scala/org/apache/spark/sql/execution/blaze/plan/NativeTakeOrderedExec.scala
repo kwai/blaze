@@ -120,7 +120,7 @@ case class NativeTakeOrderedExec(
     }
 
     // merge top-K from every children partitions into a single partition
-    val shuffled = Shims.get.shuffleShims.createArrowShuffleExchange(SinglePartition, partial)
+    val shuffled = Shims.get.createArrowShuffleExchange(SinglePartition, partial)
     val shuffledRDD = NativeHelper.executeNative(shuffled)
 
     // take top-K from the final partition

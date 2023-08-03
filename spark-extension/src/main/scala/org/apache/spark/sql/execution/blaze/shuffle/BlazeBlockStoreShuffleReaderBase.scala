@@ -92,7 +92,7 @@ object BlazeBlockStoreShuffleReaderBase {
             val path = pathField.get(in).asInstanceOf[String]
             val offset = in.getChannel.position()
             val fileSegment =
-              Shims.get.shuffleShims.createFileSegment(new File(path), offset, limit, 0)
+              Shims.get.createFileSegment(new File(path), offset, limit, 0)
             Some(fileSegment)
           case _ =>
             None

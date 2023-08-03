@@ -40,8 +40,8 @@ class NativeRDD(
     setName(friendlyName)
   }
 
-  def isShuffleReadFull: Boolean = Shims.get.rddShims.getShuffleReadFull(this)
-  Shims.get.rddShims.setShuffleReadFull(this, rddShuffleReadFull)
+  def isShuffleReadFull: Boolean = Shims.get.getRDDShuffleReadFull(this)
+  Shims.get.setRDDShuffleReadFull(this, rddShuffleReadFull)
 
   override protected def getPartitions: Array[Partition] = rddPartitions
   override protected def getDependencies: Seq[Dependency[_]] = rddDependencies

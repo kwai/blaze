@@ -29,7 +29,7 @@ case class ForceNativeExecutionWrapper(override val child: SparkPlan)
   override val outputPartitioning: Partitioning = child.outputPartitioning
   override val outputOrdering: Seq[SortOrder] = child.outputOrdering
 
-  override def doExecuteNative(): NativeRDD = Shims.get.sparkPlanShims.executeNative(child)
+  override def doExecuteNative(): NativeRDD = Shims.get.executeNative(child)
 
   override val nodeName: String = "InputAdapter"
 }

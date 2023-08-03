@@ -174,7 +174,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
     val ipcRDD =
       new RDD[Array[Byte]](sparkContext, new OneToOneDependency(inputRDD) :: Nil) {
         setName("NativeRDD.BroadcastWrite")
-        Shims.get.rddShims.setShuffleReadFull(this, inputRDD.isShuffleReadFull)
+        Shims.get.setRDDShuffleReadFull(this, inputRDD.isShuffleReadFull)
 
         override protected def getPartitions: Array[Partition] = inputRDD.partitions
 

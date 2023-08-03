@@ -119,7 +119,7 @@ abstract class NativeShuffleExchangeBase(
       nativeMetrics,
       rddPartitions = rdd.partitions,
       rddDependencies = shuffleDependency :: Nil,
-      Shims.get.rddShims.getShuffleReadFull(rdd),
+      Shims.get.getRDDShuffleReadFull(rdd),
       (partition, taskContext) => {
         val shuffleReadMetrics = taskContext.taskMetrics().createTempShuffleReadMetrics()
         val metricReporter = new SQLShuffleReadMetricsReporter(shuffleReadMetrics, metrics)
@@ -208,7 +208,7 @@ abstract class NativeShuffleExchangeBase(
 
         val input = nativeInputRDD.nativePlan(nativeInputPartition, taskContext)
         val nativeShuffleWriteExec =
-          Shims.get.shuffleShims.getShuffleWriteExec(input, nativeOutputPartitioning)
+          Shims.get.getShuffleWriteExec(input, nativeOutputPartitioning)
         nativeShuffleWriteExec
       },
       friendlyName = "NativeRDD.ShuffleWrite")

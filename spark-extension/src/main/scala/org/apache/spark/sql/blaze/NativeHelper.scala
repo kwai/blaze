@@ -64,13 +64,13 @@ object NativeHelper extends Logging {
   val tz: String = conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
 
   def isNative(exec: SparkPlan): Boolean =
-    Shims.get.sparkPlanShims.isNative(exec)
+    Shims.get.isNative(exec)
 
   def getUnderlyingNativePlan(exec: SparkPlan): NativeSupports =
-    Shims.get.sparkPlanShims.getUnderlyingNativePlan(exec)
+    Shims.get.getUnderlyingNativePlan(exec)
 
   def executeNative(exec: SparkPlan): NativeRDD =
-    Shims.get.sparkPlanShims.executeNative(exec)
+    Shims.get.executeNative(exec)
 
   def executeNativePlan(
       nativePlan: PhysicalPlanNode,

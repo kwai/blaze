@@ -155,8 +155,8 @@ async fn execute_broadcast_join(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     // TODO: use configurable properties
-    const HASH_JOIN_NUM_ROWS_LIMIT: usize = 100000;
-    const HASH_JOIN_MEM_SIZE_LIMIT: usize = 16777216;
+    const HASH_JOIN_NUM_ROWS_LIMIT: usize = 500000;
+    const HASH_JOIN_MEM_SIZE_LIMIT: usize = 67108864;
 
     // if broadcasted size is small enough, use hash join
     // otherwise use sort-merge join
