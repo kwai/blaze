@@ -96,7 +96,7 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 [[package]]
 name = "arrow"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "ahash",
  "arrow-arith",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "arrow-arith"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "arrow-array"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "ahash",
  "arrow-buffer",
@@ -148,7 +148,7 @@ dependencies = [
 [[package]]
 name = "arrow-buffer"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "half",
  "num",
@@ -157,7 +157,7 @@ dependencies = [
 [[package]]
 name = "arrow-cast"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -174,7 +174,7 @@ dependencies = [
 [[package]]
 name = "arrow-csv"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -192,7 +192,7 @@ dependencies = [
 [[package]]
 name = "arrow-data"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "arrow-ipc"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -216,7 +216,7 @@ dependencies = [
 [[package]]
 name = "arrow-json"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -235,7 +235,7 @@ dependencies = [
 [[package]]
 name = "arrow-ord"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -249,7 +249,7 @@ dependencies = [
 [[package]]
 name = "arrow-row"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -263,7 +263,7 @@ dependencies = [
 [[package]]
 name = "arrow-schema"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "bitflags 2.3.3",
  "serde",
@@ -272,7 +272,7 @@ dependencies = [
 [[package]]
 name = "arrow-select"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -284,7 +284,7 @@ dependencies = [
 [[package]]
 name = "arrow-string"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -740,7 +740,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "ahash",
  "arrow",
@@ -788,7 +788,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -802,7 +802,7 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "dashmap",
  "datafusion-common",
@@ -819,7 +819,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "ahash",
  "arrow",
@@ -925,7 +925,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "arrow",
  "async-trait",
@@ -942,7 +942,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "ahash",
  "arrow",
@@ -974,7 +974,7 @@ dependencies = [
 [[package]]
 name = "datafusion-row"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -985,7 +985,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=1c8bdc34b#1c8bdc34bd3f3827f1d191f35aeab7947b967036"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -1835,7 +1835,7 @@ dependencies = [
 [[package]]
 name = "parquet"
 version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=696fcb858#696fcb8587d36806e48f70d88cbb93adf34c7442"
+source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
 dependencies = [
  "ahash",
  "arrow-array",
