@@ -82,6 +82,12 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
         self.update_mem_used_with_diff(mem_increase as isize)
             .await?;
 
+        // we are likely to spill more frequently because the cost of spilling a shuffle
+        // repartition is lower than other consumers.
+        if self.mem_used_percent() > 0.5 {
+            self.spill().await?;
+        }
+
         // compute partition ids
         let num_output_partitions = self.num_output_partitions;
         let hashes = evaluate_hashes(&self.partitioning, &input)?;

@@ -148,6 +148,12 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             drop(buffered_partitions);
         }
         self.update_mem_used_with_diff(mem_diff).await?;
+
+        // we are likely to spill more frequently because the cost of spilling a shuffle
+        // repartition is lower than other consumers.
+        if self.mem_used_percent() > 0.5 {
+            self.spill().await?;
+        }
         Ok(())
     }
 

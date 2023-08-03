@@ -57,7 +57,7 @@ impl MemManager {
         self.consumers.lock().len()
     }
 
-    pub fn register_consumer(consumer: Arc<dyn MemConsumer>, spillable: bool) {
+    pub fn register_consumer(mut consumer: Arc<dyn MemConsumer>, spillable: bool) {
         let consumer_info = Arc::new(MemConsumerInfo {
             status: Mutex::new(MemConsumerStatus {
                 mem_used: 0,
@@ -68,11 +68,8 @@ impl MemManager {
 
         // safety:
         // get_consumer_info() is guaranteed not to be called before this operation
-        #[allow(clippy::cast_ref_to_mut)]
-        #[allow(cast_ref_to_mut)]
         unsafe {
-            let consumer_mut =
-                &mut *(consumer.as_ref() as *const dyn MemConsumer as *mut dyn MemConsumer);
+            let consumer_mut = Arc::get_mut_unchecked(&mut consumer);
             consumer_mut.set_consumer_info(Arc::downgrade(&consumer_info));
         }
 

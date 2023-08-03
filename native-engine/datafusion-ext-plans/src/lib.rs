@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![feature(get_mut_unchecked)]
+
 pub mod agg;
 pub mod agg_exec;
 pub mod broadcast_join_exec;

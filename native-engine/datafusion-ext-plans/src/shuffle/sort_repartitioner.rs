@@ -212,12 +212,16 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         self.buffered_batches.lock().await.push(input.clone());
 
-        // we are likely to spill more frequently because the cost of spilling a shuffle
-        // repartition is lower than other consumers.
         let mem_increase =
-            2 * (input.get_array_memory_size() + input.num_rows() * std::mem::size_of::<PI>());
+            input.get_array_memory_size() + input.num_rows() * std::mem::size_of::<PI>();
         self.update_mem_used_with_diff(mem_increase as isize)
             .await?;
+
+        // we are likely to spill more frequently because the cost of spilling a shuffle
+        // repartition is lower than other consumers.
+        if self.mem_used_percent() > 0.5 {
+            self.spill().await?;
+        }
         Ok(())
     }
 
