@@ -128,7 +128,7 @@ impl CachedExprsEvaluator {
             .iter()
             .map(|expr| {
                 expr.evaluate(&filtered_batch)
-                    .map(|c| c.into_array(batch.num_rows()))
+                    .map(|c| c.into_array(filtered_batch.num_rows()))
             })
             .collect()
     }
