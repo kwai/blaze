@@ -19,6 +19,7 @@ package org.apache.spark.sql.blaze
 import java.io.File
 import java.util.UUID
 
+import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
@@ -124,15 +125,6 @@ class ShimsImpl extends Shims with Logging {
   override def getChildStage(plan: SparkPlan): SparkPlan =
     plan.asInstanceOf[QueryStageExec].plan
 
-  override def insertForceNativeExecutionWrapper(exec: SparkPlan): SparkPlan = {
-    exec match {
-      case _: ShuffleQueryStageExec | _: CustomShuffleReaderExec =>
-        ForceNativeExecutionWrapper(exec)
-      case other =>
-        other.mapChildren(child => insertForceNativeExecutionWrapper(child))
-    }
-  }
-
   override def needRenameColumns(plan: SparkPlan): Boolean = {
     if (plan.output.isEmpty) {
       return false
@@ -143,7 +135,6 @@ class ShimsImpl extends Shims with Logging {
       case exec: QueryStageExec =>
         needRenameColumns(getChildStage(exec)) || exec.output != getChildStage(exec).output
       case CustomShuffleReaderExec(child, _, _) => needRenameColumns(child)
-      case ForceNativeExecutionWrapper(child) => needRenameColumns(child)
       case _ => false
     }
   }
@@ -308,14 +299,10 @@ class ShimsImpl extends Shims with Logging {
           (partition, taskContext) => {
 
             // use reflection to get partitionSpec because ShuffledRowRDDPartition is private
-            // scalastyle:off classforname
-            val shuffledRDDPartitionClass =
-              Class.forName("org.apache.spark.sql.execution.ShuffledRowRDDPartition")
-            // scalastyle:on classforname
-            val specField = shuffledRDDPartitionClass.getDeclaredField("spec")
-            specField.setAccessible(true)
             val sqlMetricsReporter = taskContext.taskMetrics().createTempShuffleReadMetrics()
-            val spec = specField.get(partition).asInstanceOf[ShufflePartitionSpec]
+            val spec = FieldUtils
+              .readDeclaredField(partition, "spec", true)
+              .asInstanceOf[ShufflePartitionSpec]
             val reader = spec match {
               case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
                 SparkEnv.get.shuffleManager

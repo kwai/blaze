@@ -16,4 +16,5 @@ services:
     environment:
       SHIM: "${SHIM}"
       MODE: "${MODE}"
-    command: "bash -c 'source ~/.bashrc && cd /blaze && ./release.sh -Pshim=${SHIM} -Pmode=${MODE}'"
+      SKIP_BUILD_NATIVE: "${SKIP_BUILD_NATIVE}"
+    command: "bash -c 'source ~/.bashrc && cd /blaze && ./release.sh -Pshim=${SHIM} -Pmode=${MODE}' -PSKIP_BUILD_NATIVE=${SKIP_BUILD_NATIVE}"

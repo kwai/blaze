@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.execution.blaze.plan
 
-import scala.collection.immutable.SortedMap
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -68,9 +67,6 @@ case class NativeShuffleExchangeExec(
       writeMetrics ++
       Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))).toMap
 
-  private val estimatedIpcCount: Int =
-    Math.max(child.outputPartitioning.numPartitions * outputPartitioning.numPartitions, 1)
-
   // 'mapOutputStatisticsFuture' is only needed when enable AQE.
   @transient override lazy val mapOutputStatisticsFuture: Future[MapOutputStatistics] = {
     if (inputRDD.getNumPartitions == 0) {
@@ -99,6 +95,8 @@ case class NativeShuffleExchangeExec(
             s"shuffleId=${shuffleDependency.shuffleId}" +
               s", numRecordsWritten=$numRecordsWritten" +
               s", totalBytesWritten=$totalBytesWritten")
+
+          metrics("dataSize").set((metrics("dataSize").value * dataSizeFactor).toLong)
           new MapOutputStatistics(
             stat.shuffleId,
             stat.bytesByPartitionId.map(n => (n * dataSizeFactor).ceil.toLong))

@@ -33,7 +33,8 @@ case class NativeBroadcastExchangeExec(mode: BroadcastMode, override val child: 
 
   override def runtimeStatistics: Statistics = {
     val dataSize = metrics("dataSize").value
-    Statistics(dataSize)
+    val rowCount = metrics.getOrElse("Native.output_rows", metrics("output_rows")).value
+    Statistics(dataSize, Some(rowCount))
   }
 
   @transient

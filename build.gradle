@@ -171,8 +171,10 @@ task cargo(type: Exec) {
 	executable "${projectDir}/build-native.sh"
 	args += [project.hasProperty("mode") ? getProperty("mode") : "release"]
 }
+if (System.getenv("SKIP_BUILD_NATIVE") != "true") {
+	tasks.shadowJar.dependsOn tasks.cargo
+}
 
-tasks.shadowJar.dependsOn tasks.cargo
 tasks.shadowJar.dependsOn project(":spark-extension").tasks.build
 if (shim != "shim-not-configured") {
 	tasks.shadowJar.dependsOn project(":spark-extension-shims-${shim}").tasks.build

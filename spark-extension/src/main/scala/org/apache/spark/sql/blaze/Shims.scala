@@ -64,8 +64,6 @@ abstract class Shims {
 
   def needRenameColumns(plan: SparkPlan): Boolean
 
-  def insertForceNativeExecutionWrapper(exec: SparkPlan): SparkPlan
-
   def simpleStringWithNodeId(plan: SparkPlan): String
 
   def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan

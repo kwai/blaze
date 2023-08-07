@@ -128,7 +128,7 @@ object BlazeConverters extends Logging {
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
     // convert
     var danglingConverted: Seq[SparkPlan] = Nil
-    Shims.get.insertForceNativeExecutionWrapper(exec).foreachUp { exec =>
+    exec.foreachUp { exec =>
       val (newDanglingConverted, newChildren) =
         danglingConverted.splitAt(danglingConverted.length - exec.children.length)
 
@@ -210,6 +210,10 @@ object BlazeConverters extends Logging {
       case e: DataWritingCommandExec if enableDataWriting => // data writing
         tryConvert(e, convertDataWritingCommandExec)
 
+      case exec if !exec.isInstanceOf[NativeSupports] && Shims.get.isNative(exec) =>
+        exec.setTagValue(convertibleTag, true)
+        exec.setTagValue(convertStrategyTag, AlwaysConvert)
+        exec
       case exec =>
         exec.setTagValue(convertibleTag, false)
         exec.setTagValue(convertStrategyTag, NeverConvert)
