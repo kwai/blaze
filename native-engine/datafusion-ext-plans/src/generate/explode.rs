@@ -47,13 +47,12 @@ impl Generator for ExplodeArray {
     fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
         let list = as_list_array(&input_array);
+        let value_offsets = list.value_offsets();
         let mut orig_row_id_builder = UInt32Builder::new();
         let mut pos_builder = Int32Builder::new();
 
         // build row_id and pos arrays
-        for (orig_row_id, (&start, &end)) in
-            list.value_offsets().into_iter().tuple_windows().enumerate()
-        {
+        for (orig_row_id, (&start, &end)) in value_offsets.iter().tuple_windows().enumerate() {
             if list.is_valid(orig_row_id) && start < end {
                 for i in start..end {
                     orig_row_id_builder.append_value(orig_row_id as u32);
@@ -63,7 +62,9 @@ impl Generator for ExplodeArray {
         }
 
         let orig_row_ids = orig_row_id_builder.finish();
-        let values = list.values().clone();
+        let values = list
+            .values()
+            .slice(value_offsets[0] as usize, orig_row_ids.len());
         let cols = if self.position {
             vec![Arc::new(pos_builder.finish()), values]
         } else {
@@ -100,12 +101,12 @@ impl Generator for ExplodeMap {
     fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
         let map = as_map_array(&input_array);
+        let value_offsets = map.value_offsets();
         let mut orig_row_id_builder = UInt32Builder::new();
         let mut pos_builder = Int32Builder::new();
 
         // build row_id and pos arrays
-        for (orig_row_id, (&start, &end)) in map.value_offsets().iter().tuple_windows().enumerate()
-        {
+        for (orig_row_id, (&start, &end)) in value_offsets.iter().tuple_windows().enumerate() {
             if map.is_valid(orig_row_id) && start < end {
                 for i in start..end {
                     orig_row_id_builder.append_value(orig_row_id as u32);
@@ -115,8 +116,12 @@ impl Generator for ExplodeMap {
         }
 
         let orig_row_ids = orig_row_id_builder.finish();
-        let keys = map.keys().clone();
-        let values = map.values().clone();
+        let keys = map
+            .keys()
+            .slice(value_offsets[0] as usize, orig_row_ids.len());
+        let values = map
+            .values()
+            .slice(value_offsets[0] as usize, orig_row_ids.len());
         let cols = if self.position {
             vec![Arc::new(pos_builder.finish()), keys, values]
         } else {
