@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.blaze
 
 import java.io.ByteArrayInputStream
@@ -29,92 +28,12 @@ import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.expressions.{
-  Abs,
-  Acos,
-  Add,
-  Alias,
-  And,
-  Asin,
-  Atan,
-  AttributeReference,
-  BitwiseAnd,
-  BitwiseOr,
-  BoundReference,
-  CaseWhen,
-  Cast,
-  Ceil,
-  CheckOverflow,
-  Coalesce,
-  Concat,
-  ConcatWs,
-  Contains,
-  Cos,
-  CreateArray,
-  CreateNamedStruct,
-  Divide,
-  EndsWith,
-  EqualTo,
-  Exp,
-  Expression,
-  Floor,
-  GetArrayItem,
-  GetMapValue,
-  GetStructField,
-  GreaterThan,
-  GreaterThanOrEqual,
-  If,
-  In,
-  InSet,
-  IsNotNull,
-  IsNull,
-  Length,
-  LessThan,
-  LessThanOrEqual,
-  Like,
-  Literal,
-  Log,
-  Log10,
-  Log2,
-  Lower,
-  MakeDecimal,
-  Md5,
-  Multiply,
-  Murmur3Hash,
-  Not,
-  NullIf,
-  OctetLength,
-  Or,
-  Pmod,
-  PromotePrecision,
-  Remainder,
-  Sha2,
-  ShiftLeft,
-  ShiftRight,
-  Signum,
-  Sin,
-  Sqrt,
-  StartsWith,
-  StringRepeat,
-  StringSpace,
-  StringSplit,
-  StringTrim,
-  StringTrimLeft,
-  StringTrimRight,
-  Substring,
-  Subtract,
-  Tan,
-  TruncDate,
-  Unevaluable,
-  UnscaledValue,
-  Upper
-}
+import org.apache.spark.sql.catalyst.expressions.{Abs, Acos, Add, Alias, And, Asin, Atan, AttributeReference, BitwiseAnd, BitwiseOr, BoundReference, CaseWhen, Cast, Ceil, CheckOverflow, Coalesce, Concat, ConcatWs, Contains, Cos, CreateArray, CreateNamedStruct, Divide, EndsWith, EqualTo, Exp, Expression, Floor, GetArrayItem, GetMapValue, GetStructField, GreaterThan, GreaterThanOrEqual, If, In, InSet, IsNotNull, IsNull, Length, LessThan, LessThanOrEqual, Like, Literal, Log, Log10, Log2, Lower, MakeDecimal, Md5, Multiply, Murmur3Hash, Not, NullIf, OctetLength, Or, Pmod, PromotePrecision, Remainder, Sha2, ShiftLeft, ShiftRight, Signum, Sin, Sqrt, StartsWith, StringRepeat, StringSpace, StringTrim, StringTrimLeft, StringTrimRight, Substring, Subtract, Tan, TruncDate, Unevaluable, UnscaledValue, Upper}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.catalyst.expressions.aggregate.CollectList
 import org.apache.spark.sql.catalyst.expressions.aggregate.CollectSet
 import org.apache.spark.sql.catalyst.expressions.aggregate.Count
-import org.apache.spark.sql.catalyst.expressions.aggregate.First
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
@@ -255,14 +174,13 @@ object NativeConverters extends Logging {
             .newBuilder()
             .addAllSubFieldTypes(
               s.fields
-                .map(
-                  e =>
-                    pb.Field
-                      .newBuilder()
-                      .setArrowType(convertDataType(e.dataType))
-                      .setName(e.name)
-                      .setNullable(e.nullable)
-                      .build())
+                .map(e =>
+                  pb.Field
+                    .newBuilder()
+                    .setArrowType(convertDataType(e.dataType))
+                    .setName(e.name)
+                    .setNullable(e.nullable)
+                    .build())
                 .toList
                 .asJava)
             .build())
@@ -919,12 +837,11 @@ object NativeConverters extends Logging {
 
       case CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()
-        val whenThens = branches.map {
-          case (w, t) =>
-            val whenThen = pb.PhysicalWhenThen.newBuilder()
-            whenThen.setWhenExpr(convertExprWithFallback(w, isPruningExpr, fallback))
-            whenThen.setThenExpr(convertExprWithFallback(t, isPruningExpr, fallback))
-            whenThen.build()
+        val whenThens = branches.map { case (w, t) =>
+          val whenThen = pb.PhysicalWhenThen.newBuilder()
+          whenThen.setWhenExpr(convertExprWithFallback(w, isPruningExpr, fallback))
+          whenThen.setThenExpr(convertExprWithFallback(t, isPruningExpr, fallback))
+          whenThen.build()
         }
         caseExpr.addAllWhenThenExpr(whenThens.asJava)
         elseValue.foreach(el =>

@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
@@ -84,31 +83,30 @@ case class NativeTakeOrderedExec(
       .execute()
       .map(_.copy())
       .mapPartitions(iter => Iterator.single(iter.toArray))
-      .reduce {
-        case (array1, array2) =>
-          val result = ArrayBuffer[InternalRow]()
-          var i = 0
-          var j = 0
+      .reduce { case (array1, array2) =>
+        val result = ArrayBuffer[InternalRow]()
+        var i = 0
+        var j = 0
 
-          while (result.length < limit && (i < array1.length || j < array2.length)) {
-            0 match {
-              case _ if i == array1.length =>
-                result.append(array2(j))
-                j += 1
-              case _ if j == array2.length =>
+        while (result.length < limit && (i < array1.length || j < array2.length)) {
+          0 match {
+            case _ if i == array1.length =>
+              result.append(array2(j))
+              j += 1
+            case _ if j == array2.length =>
+              result.append(array1(i))
+              i += 1
+            case _ =>
+              if (ord.compare(array1(i), array2(j)) <= 0) {
                 result.append(array1(i))
                 i += 1
-              case _ =>
-                if (ord.compare(array1(i), array2(j)) <= 0) {
-                  result.append(array1(i))
-                  i += 1
-                } else {
-                  result.append(array2(j))
-                  j += 1
-                }
-            }
+              } else {
+                result.append(array2(j))
+                j += 1
+              }
           }
-          result.toArray
+        }
+        result.toArray
       }
   }
 

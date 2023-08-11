@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.shuffle
 
 import java.io.File
@@ -47,14 +46,13 @@ abstract class BlazeBlockStoreShuffleReaderBase[K, C](
   protected def readBlocks(): Iterator[(BlockId, InputStream)]
 
   def readIpc(): Iterator[Object] = { // FileSegment | ReadableByteChannel
-    val ipcIterator = readBlocks().map {
-      case (_, inputStream) =>
-        getFileSegmentFromInputStream(inputStream) match {
-          case Some(fileSegment) =>
-            fileSegment
-          case None =>
-            Channels.newChannel(inputStream)
-        }
+    val ipcIterator = readBlocks().map { case (_, inputStream) =>
+      getFileSegmentFromInputStream(inputStream) match {
+        case Some(fileSegment) =>
+          fileSegment
+        case None =>
+          Channels.newChannel(inputStream)
+      }
     }
 
     // An interruptible iterator must be used here in order to support task cancellation

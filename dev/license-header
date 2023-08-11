@@ -13,16 +13,3 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.blaze
-
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.SparkPlan
-
-trait NativeSupports extends SparkPlan {
-  def doExecuteNative(): NativeRDD
-
-  protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
-
-  def shuffleReadFull: Boolean = Shims.get.getRDDShuffleReadFull(this.doExecuteNative())
-}

@@ -13,10 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.arrowio
-
-import scala.collection.JavaConverters.asScalaIteratorConverter
 
 import org.apache.arrow.c.ArrowArrayStream
 import org.apache.arrow.c.Data

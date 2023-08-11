@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.annotation.tailrec
@@ -88,8 +87,8 @@ case class NativeAggExec(
 
   val nativeAggrInfos: Seq[NativeAggrInfo] = aggregateExpressions
     .zip(aggregateAttributes)
-    .map {
-      case (aggr, aggrAttr) => NativeAggExec.getNativeAggrInfo(aggr, aggrAttr)
+    .map { case (aggr, aggrAttr) =>
+      NativeAggExec.getNativeAggrInfo(aggr, aggrAttr)
     }
 
   val nativeExecMode: pb.AggExecMode = execMode match {

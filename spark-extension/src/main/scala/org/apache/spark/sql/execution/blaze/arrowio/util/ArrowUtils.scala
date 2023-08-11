@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.arrowio.util
 
 import scala.collection.JavaConverters._
@@ -134,7 +133,9 @@ object ArrowUtils {
     }
   }
 
-  /** Maps schema from Spark to Arrow. NOTE: timeZoneId required for TimestampType in StructType */
+  /**
+   * Maps schema from Spark to Arrow. NOTE: timeZoneId required for TimestampType in StructType
+   */
   def toArrowSchema(schema: StructType): Schema = {
     new Schema(schema.map { field =>
       toArrowField(field.name, field.dataType, field.nullable)

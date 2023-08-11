@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
@@ -41,8 +40,8 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
   override def output: Seq[Attribute] =
     child.output
       .zip(renamedColumnNames)
-      .map {
-        case (attr, newName) => attr.withName(newName)
+      .map { case (attr, newName) =>
+        attr.withName(newName)
       }
   override def outputPartitioning: Partitioning = child.outputPartitioning
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering

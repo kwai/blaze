@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
@@ -22,16 +21,7 @@ import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.blaze.protobuf.{
-  IpcReadMode,
-  IpcReaderExecNode,
-  PhysicalExprNode,
-  PhysicalHashRepartition,
-  PhysicalPlanNode,
-  RssShuffleWriterExecNode,
-  Schema,
-  ShuffleWriterExecNode
-}
+import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalExprNode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
@@ -75,9 +65,9 @@ abstract class NativeShuffleExchangeBase(
   lazy val inputRDD: RDD[InternalRow] = child.execute()
 
   /**
-   * A [[ShuffleDependency]] that will partition rows of its child based on
-   * the partitioning scheme defined in `newPartitioning`. Those partitions of
-   * the returned ShuffleDependency will be the input of shuffle.
+   * A [[ShuffleDependency]] that will partition rows of its child based on the partitioning
+   * scheme defined in `newPartitioning`. Those partitions of the returned ShuffleDependency will
+   * be the input of shuffle.
    */
   @transient
   lazy val shuffleDependency: ShuffleDependency[Int, InternalRow, InternalRow] = {
@@ -246,8 +236,10 @@ object NativeShuffleExchangeBase extends Logging {
    *
    * See SPARK-2967, SPARK-4479, and SPARK-7375 for more discussion of this issue.
    *
-   * @param partitioner the partitioner for the shuffle
-   * @return true if rows should be copied before being shuffled, false otherwise
+   * @param partitioner
+   *   the partitioner for the shuffle
+   * @return
+   *   true if rows should be copied before being shuffled, false otherwise
    */
   private def needToCopyObjectsBeforeShuffle(partitioner: Partitioner): Boolean = {
     // Note: even though we only use the partitioner's `numPartitions` field, we require it to be

@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
@@ -41,7 +40,6 @@ import org.blaze.protobuf.SortOptions
 
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
-import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.InnerLike
 import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftSemi
@@ -64,23 +62,22 @@ case class NativeSortMergeJoinExec(
       .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
 
-  private val nativeJoinOn = leftKeys.zip(rightKeys).map {
-    case (leftKey, rightKey) =>
-      val leftColumn = NativeConverters.convertExpr(leftKey).getColumn match {
-        case column if column.getName.isEmpty =>
-          throw new NotImplementedError(s"SMJ leftKey is not column: ${leftKey}")
-        case column => column
-      }
-      val rightColumn = NativeConverters.convertExpr(rightKey).getColumn match {
-        case column if column.getName.isEmpty =>
-          throw new NotImplementedError(s"SMJ leftKey is not column: ${rightKey}")
-        case column => column
-      }
-      JoinOn
-        .newBuilder()
-        .setLeft(leftColumn)
-        .setRight(rightColumn)
-        .build()
+  private val nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
+    val leftColumn = NativeConverters.convertExpr(leftKey).getColumn match {
+      case column if column.getName.isEmpty =>
+        throw new NotImplementedError(s"SMJ leftKey is not column: ${leftKey}")
+      case column => column
+    }
+    val rightColumn = NativeConverters.convertExpr(rightKey).getColumn match {
+      case column if column.getName.isEmpty =>
+        throw new NotImplementedError(s"SMJ leftKey is not column: ${rightKey}")
+      case column => column
+    }
+    JoinOn
+      .newBuilder()
+      .setLeft(leftColumn)
+      .setRight(rightColumn)
+      .build()
   }
 
   private val nativeSortOptions = nativeJoinOn.map(_ => {

@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
@@ -761,11 +760,10 @@ object BlazeConverters extends Logging {
       output: Seq[Attribute]): NativeProjectExec = {
     val projectList = output
       .filter(!_.name.startsWith("JOIN_KEY:"))
-      .map(
-        attr =>
-          AttributeReference(attr.name, attr.dataType, attr.nullable, attr.metadata)(
-            attr.exprId,
-            attr.qualifier))
+      .map(attr =>
+        AttributeReference(attr.name, attr.dataType, attr.nullable, attr.metadata)(
+          attr.exprId,
+          attr.qualifier))
     NativeProjectExec(projectList, child)
   }
 
@@ -817,8 +815,8 @@ object BlazeConverters extends Logging {
   }
 
   case class ForceNativeExecutionWrapper(override val child: SparkPlan)
-    extends UnaryExecNode
-    with NativeSupports {
+      extends UnaryExecNode
+      with NativeSupports {
 
     setTagValue(convertibleTag, true)
     setTagValue(convertStrategyTag, AlwaysConvert)

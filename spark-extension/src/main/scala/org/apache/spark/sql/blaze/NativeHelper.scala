@@ -13,11 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.blaze
 
 import scala.collection.immutable.TreeMap
-import scala.language.reflectiveCalls
 
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.Partition

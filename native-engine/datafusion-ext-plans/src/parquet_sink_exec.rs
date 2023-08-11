@@ -266,8 +266,7 @@ fn adapt_schema(batch: RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
 }
 
 fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
-    let mut builder = WriterProperties::builder()
-        .set_created_by(format!("blaze-build-{}", git_version::git_version!()));
+    let mut builder = WriterProperties::builder().set_created_by(format!("blaze-engine"));
 
     macro_rules! setprop {
         ($key:expr, $value:expr, $tnum:ty, $setfn:ident) => {{

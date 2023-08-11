@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.blaze.memory
 
 import java.io.RandomAccessFile
@@ -21,8 +20,6 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 
 import scala.collection.mutable
-
-import org.apache.spark.SparkException
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.memory.OnHeapSpill.BLOCK_SIZE
@@ -139,8 +136,10 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
 
   /**
    * allocate memory from hsm
-   * @param size the amount of allocating memory
-   * @return true if the memory is fulfilled, otherwise false
+   * @param size
+   *   the amount of allocating memory
+   * @return
+   *   true if the memory is fulfilled, otherwise false
    */
   private def acquireMemory(size: Long): Boolean = {
     val allocated = hsm.acquireMemory(size)
@@ -172,7 +171,8 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
 
   /**
    * spill all data block into file and returen freed memory size
-   * @return freed memory size
+   * @return
+   *   freed memory size
    */
   private def spillInternal(): Long = {
     val channel = diskSpilledFile match {

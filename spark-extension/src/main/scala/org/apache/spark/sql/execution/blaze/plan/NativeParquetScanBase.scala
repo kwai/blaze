@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.net.URI
@@ -105,11 +104,10 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
   private val nativeFileGroups = (partition: FilePartition) => {
     // list input file statuses
     val nativePartitionedFile = (file: PartitionedFile) => {
-      val nativePartitionValues = partitionSchema.zipWithIndex.map {
-        case (field, index) =>
-          NativeConverters.convertValue(
-            file.partitionValues.get(index, field.dataType),
-            field.dataType)
+      val nativePartitionValues = partitionSchema.zipWithIndex.map { case (field, index) =>
+        NativeConverters.convertValue(
+          file.partitionValues.get(index, field.dataType),
+          field.dataType)
       }
       pb.PartitionedFile
         .newBuilder()

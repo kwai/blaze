@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.shuffle
 
 import scala.reflect.ClassTag
@@ -26,7 +25,6 @@ import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.io.CompressionCodec
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleHandle

@@ -13,10 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.execution.blaze.shuffle
-
-import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 
@@ -29,7 +26,6 @@ import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArrowShuffle
-import org.apache.spark.util.collection.OpenHashSet
 
 class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 

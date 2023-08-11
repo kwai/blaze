@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.blaze.memory
 
 import java.nio.ByteBuffer
@@ -52,7 +51,8 @@ class OnHeapSpillManager(taskContext: TaskContext)
 
   /**
    * allocate a new spill and return its id
-   * @return allocated spill id
+   * @return
+   *   allocated spill id
    */
   def newSpill(): Int = {
     synchronized {

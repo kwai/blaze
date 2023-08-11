@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.blaze;
 
 import java.nio.ByteBuffer;
@@ -29,52 +28,51 @@ import scala.collection.Iterator;
 
 @SuppressWarnings("unused")
 public class JniBridge {
-  public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
+    public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
-  public static native void initNative(long batchSize, long nativeMemory, double memoryFraction);
+    public static native void initNative(long batchSize, long nativeMemory, double memoryFraction);
 
-  public static native long callNative(BlazeCallNativeWrapper wrapper);
+    public static native long callNative(BlazeCallNativeWrapper wrapper);
 
-  public static native void finalizeNative(long ptr);
+    public static native void finalizeNative(long ptr);
 
-  public static ClassLoader getContextClassLoader() {
-    return Thread.currentThread().getContextClassLoader();
-  }
-
-  public static void setContextClassLoader(ClassLoader cl) {
-    Thread.currentThread().setContextClassLoader(cl);
-  }
-
-  public static Object getResource(String key) {
-    return resourcesMap.remove(key);
-  }
-
-  public static TaskContext getTaskContext() {
-    return TaskContext$.MODULE$.get();
-  }
-
-  public static void setTaskContext(TaskContext tc) {
-    TaskContext$.MODULE$.setTaskContext(tc);
-  }
-
-  public static OnHeapSpillManager getTaskOnHeapSpillManager() {
-    return OnHeapSpillManager$.MODULE$.current();
-  }
-
-  public static boolean isTaskRunning() {
-    TaskContext tc = getTaskContext();
-    if (tc == null) { // driver is always running
-      return true;
+    public static ClassLoader getContextClassLoader() {
+        return Thread.currentThread().getContextClassLoader();
     }
-    return !tc.isCompleted() && !tc.isInterrupted();
-  }
 
-  public static boolean isDriverSide() {
-    TaskContext tc = getTaskContext();
-    return tc == null;
-  }
+    public static void setContextClassLoader(ClassLoader cl) {
+        Thread.currentThread().setContextClassLoader(cl);
+    }
 
-  public static native void mergeIpcs(
-      Iterator<ReadableByteChannel> ipcBytesIter,
-      Function1<ByteBuffer, Unit> mergedIpcBytesHandler);
+    public static Object getResource(String key) {
+        return resourcesMap.remove(key);
+    }
+
+    public static TaskContext getTaskContext() {
+        return TaskContext$.MODULE$.get();
+    }
+
+    public static void setTaskContext(TaskContext tc) {
+        TaskContext$.MODULE$.setTaskContext(tc);
+    }
+
+    public static OnHeapSpillManager getTaskOnHeapSpillManager() {
+        return OnHeapSpillManager$.MODULE$.current();
+    }
+
+    public static boolean isTaskRunning() {
+        TaskContext tc = getTaskContext();
+        if (tc == null) { // driver is always running
+            return true;
+        }
+        return !tc.isCompleted() && !tc.isInterrupted();
+    }
+
+    public static boolean isDriverSide() {
+        TaskContext tc = getTaskContext();
+        return tc == null;
+    }
+
+    public static native void mergeIpcs(
+            Iterator<ReadableByteChannel> ipcBytesIter, Function1<ByteBuffer, Unit> mergedIpcBytesHandler);
 }
