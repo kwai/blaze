@@ -18,7 +18,6 @@ package org.apache.spark.sql.blaze
 
 import java.util.UUID
 
-import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
@@ -39,11 +38,13 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.GlobalLimitExec
@@ -52,7 +53,6 @@ import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.SortExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
-import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
@@ -83,11 +83,11 @@ import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableExec
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 
 object BlazeConverters extends Logging {
@@ -142,7 +142,7 @@ object BlazeConverters extends Logging {
   }
 
   def convertSparkPlan(exec: SparkPlan): SparkPlan = {
-    exec match {
+    val converted = exec match {
       case e: ShuffleExchangeExec => tryConvert(e, convertShuffleExchangeExec)
       case e: BroadcastExchangeExec => tryConvert(e, convertBroadcastExchangeExec)
       case e: FileSourceScanExec if enableScan => // scan
@@ -219,6 +219,16 @@ object BlazeConverters extends Logging {
         exec.setTagValue(convertStrategyTag, NeverConvert)
         exec
     }
+
+    if (!Shims.get.isNative(exec)) {
+      // handle non-native exec reading native shuffle
+      return exec.mapChildren {
+        case e if !e.isInstanceOf[NativeSupports] && Shims.get.isNative(e) =>
+          ForceNativeExecutionWrapper(e)
+        case e => e
+      }
+    }
+    exec
   }
 
   def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan = {
@@ -804,5 +814,19 @@ object BlazeConverters extends Logging {
         transformedAggExprs,
         transformedGroupingExprs,
         projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toSeq))
+  }
+
+  case class ForceNativeExecutionWrapper(override val child: SparkPlan)
+    extends UnaryExecNode
+    with NativeSupports {
+
+    setTagValue(convertibleTag, true)
+    setTagValue(convertStrategyTag, AlwaysConvert)
+
+    override val output: Seq[Attribute] = child.output
+    override val outputPartitioning: Partitioning = child.outputPartitioning
+    override val outputOrdering: Seq[SortOrder] = child.outputOrdering
+    override def doExecuteNative(): NativeRDD = Shims.get.executeNative(child)
+    override val nodeName: String = "InputAdapter"
   }
 }
