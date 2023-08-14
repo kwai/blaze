@@ -885,7 +885,7 @@ object NativeConverters extends Logging {
               .setInfix(infix.toString)))
 
       case Substring(str, Literal(pos, IntegerType), Literal(len, IntegerType))
-          if pos.asInstanceOf[Int] >= 0 && len.asInstanceOf[Int] >= 0 =>
+          if pos.asInstanceOf[Int] > 0 && len.asInstanceOf[Int] >= 0 =>
         val longPos = pos.asInstanceOf[Int].toLong
         val longLen = len.asInstanceOf[Int].toLong
         buildScalarFunction(
@@ -902,9 +902,13 @@ object NativeConverters extends Logging {
       case e: Concat if e.children.forall(_.dataType == StringType) =>
         buildExtScalarFunction("StringConcat", e.children, e.dataType)
 
-      case e: ConcatWs
-          if e.children.forall(
-            c => c.dataType == StringType || c.dataType == ArrayType(StringType)) =>
+      case e: ConcatWs if e.children.nonEmpty =>
+        assert(
+          e.children.head.isInstanceOf[Literal],
+          "only supports concat_ws with literal seperator")
+        assert(
+          e.children.forall(c => c.dataType == StringType || c.dataType == ArrayType(StringType)),
+          "only supports concat_ws with string or array<string> type")
         buildExtScalarFunction("StringConcatWs", e.children, e.dataType)
 
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
