@@ -22,7 +22,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
-
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -135,13 +135,14 @@ object BlazeConverters extends Logging {
       if (!isNeverConvert(exec)) {
         newExec = convertSparkPlan(newExec)
       }
+      BlazeSparkSessionExtension.dumpSimpleSparkPlanTreeNode(newExec)
       danglingConverted = newDanglingConverted :+ newExec
     }
     danglingConverted.head
   }
 
   def convertSparkPlan(exec: SparkPlan): SparkPlan = {
-    val converted = exec match {
+    exec match {
       case e: ShuffleExchangeExec => tryConvert(e, convertShuffleExchangeExec)
       case e: BroadcastExchangeExec => tryConvert(e, convertBroadcastExchangeExec)
       case e: FileSourceScanExec if enableScan => // scan
@@ -209,25 +210,24 @@ object BlazeConverters extends Logging {
       case e: DataWritingCommandExec if enableDataWriting => // data writing
         tryConvert(e, convertDataWritingCommandExec)
 
-      case exec if !exec.isInstanceOf[NativeSupports] && Shims.get.isNative(exec) =>
-        exec.setTagValue(convertibleTag, true)
-        exec.setTagValue(convertStrategyTag, AlwaysConvert)
-        exec
+      case exec: ForceNativeExecutionWrapper => exec
       case exec =>
-        exec.setTagValue(convertibleTag, false)
-        exec.setTagValue(convertStrategyTag, NeverConvert)
-        exec
+        Shims.get.convertMoreSparkPlan(exec) match {
+          case Some(exec) =>
+            exec.setTagValue(convertibleTag, true)
+            exec.setTagValue(convertStrategyTag, AlwaysConvert)
+            exec
+          case None =>
+            if (Shims.get.isNative(exec)) { // for QueryStageInput and CustomShuffleReader
+              exec.setTagValue(convertibleTag, true)
+              exec.setTagValue(convertStrategyTag, AlwaysConvert)
+            } else {
+              exec.setTagValue(convertibleTag, false)
+              exec.setTagValue(convertStrategyTag, NeverConvert)
+            }
+            exec
+        }
     }
-
-    if (!Shims.get.isNative(exec)) {
-      // handle non-native exec reading native shuffle
-      return exec.mapChildren {
-        case e if !e.isInstanceOf[NativeSupports] && Shims.get.isNative(e) =>
-          ForceNativeExecutionWrapper(e)
-        case e => e
-      }
-    }
-    exec
   }
 
   def tryConvert[T <: SparkPlan](exec: T, convert: T => SparkPlan): SparkPlan = {
@@ -464,7 +464,7 @@ object BlazeConverters extends Logging {
           case BuildRight => Shims.get.getUnderlyingBroadcast(exec.right)
         }
         underlyingBroadcast.setTagValue(NativeBroadcastExchangeBase.nativeExecutionTag, false)
-        exec
+        throw e
     }
   }
 
@@ -472,8 +472,7 @@ object BlazeConverters extends Logging {
     exec match {
       case exec: BroadcastExchangeExec =>
         logDebug(s"Converting BroadcastExchangeExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-        val converted =
-          Shims.get.createArrowBroadcastExchange(exec.mode, exec.child)
+        val converted = Shims.get.createArrowBroadcastExchange(exec.mode, exec.child)
         converted.setTagValue(NativeBroadcastExchangeBase.nativeExecutionTag, true)
         return converted
     }
@@ -725,7 +724,11 @@ object BlazeConverters extends Logging {
     }
   }
 
-  private def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
+  def forceNativeExecution(exec: SparkPlan): SparkPlan = {
+    ForceNativeExecutionWrapper(exec)
+  }
+
+  def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
     if (Shims.get.needRenameColumns(exec)) {
       return NativeRenameColumnsExec(exec, exec.output.map(Util.getFieldNameByExprId))
     }
@@ -814,17 +817,19 @@ object BlazeConverters extends Logging {
         projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toSeq))
   }
 
-  case class ForceNativeExecutionWrapper(override val child: SparkPlan)
+  private case class ForceNativeExecutionWrapper(override val child: SparkPlan)
       extends UnaryExecNode
       with NativeSupports {
 
     setTagValue(convertibleTag, true)
     setTagValue(convertStrategyTag, AlwaysConvert)
 
-    override val output: Seq[Attribute] = child.output
-    override val outputPartitioning: Partitioning = child.outputPartitioning
-    override val outputOrdering: Seq[SortOrder] = child.outputOrdering
+    override def output: Seq[Attribute] = child.output
+    override def outputPartitioning: Partitioning = child.outputPartitioning
+    override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+    override def requiredChildOrdering: Seq[Seq[SortOrder]] = child.requiredChildOrdering
     override def doExecuteNative(): NativeRDD = Shims.get.executeNative(child)
+    override def doExecuteBroadcast[T](): Broadcast[T] = child.doExecuteBroadcast()
     override val nodeName: String = "InputAdapter"
   }
 }

@@ -24,7 +24,6 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
 import org.apache.spark.TaskContext
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
@@ -354,6 +353,14 @@ class ShimsImpl extends Shims with Logging {
                   .build())
               .build()
           })
+    }
+  }
+
+  override def convertMoreSparkPlan(exec: SparkPlan): Option[SparkPlan] = {
+    exec match {
+      case _: CustomShuffleReaderExec | _: ReusedExchangeExec if isNative(exec) =>
+        Some(BlazeConverters.forceNativeExecution(BlazeConverters.addRenameColumnsExec(exec)))
+      case _ => None
     }
   }
 }

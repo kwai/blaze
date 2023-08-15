@@ -118,6 +118,8 @@ abstract class Shims {
   def createArrowBroadcastExchange(
       mode: BroadcastMode,
       child: SparkPlan): NativeBroadcastExchangeBase
+
+  def convertMoreSparkPlan(exec: SparkPlan): Option[SparkPlan]
 }
 
 object Shims {

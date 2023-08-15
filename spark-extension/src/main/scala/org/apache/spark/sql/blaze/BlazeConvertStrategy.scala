@@ -43,20 +43,12 @@ import org.apache.spark.sql.execution.command.DataWritingCommandExec
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
 
-  val depthTag: TreeNodeTag[Int] = TreeNodeTag("blaze.depth")
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
   val convertStrategyTag: TreeNodeTag[ConvertStrategy] = TreeNodeTag("blaze.convert.strategy")
 
   def apply(exec: SparkPlan): Unit = {
     exec.foreach(_.setTagValue(convertibleTag, true))
     exec.foreach(_.setTagValue(convertStrategyTag, Default))
-
-    // fill depth
-    exec.setTagValue(depthTag, 0)
-    exec.foreach(e => {
-      val childDepth = e.getTagValue(depthTag).get + 1
-      e.children.foreach(_.setTagValue(depthTag, childDepth))
-    })
 
     // try to convert all plans and fill convertible tag back to origin exec
     var danglingChildren = Seq[SparkPlan]()
@@ -68,7 +60,6 @@ object BlazeConvertStrategy extends Logging {
       converted match {
         case e if NativeHelper.isNative(e) || e.getTagValue(convertibleTag).contains(true) =>
           exec.setTagValue(convertibleTag, true)
-
         case _ =>
           exec.setTagValue(convertibleTag, false)
           exec.setTagValue(convertStrategyTag, NeverConvert)

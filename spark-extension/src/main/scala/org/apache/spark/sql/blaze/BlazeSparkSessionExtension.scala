@@ -52,7 +52,7 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
   }
 }
 
-object BlazeSparkSessionExtension {
+object BlazeSparkSessionExtension extends Logging {
   lazy val blazeEnabledKey: ConfigEntry[Boolean] = SQLConf
     .buildConf("spark.blaze.enable")
     .booleanConf
@@ -62,12 +62,23 @@ object BlazeSparkSessionExtension {
     .buildConf("spark.blaze.blazeMissPatterns")
     .stringConf
     .createOptional
+
+  def dumpSimpleSparkPlanTreeNode(exec: SparkPlan, depth: Int = 0): Unit = {
+    val nodeName = exec.nodeName
+    val convertible = exec
+      .getTagValue(BlazeConvertStrategy.convertibleTag)
+      .getOrElse(false)
+    val strategy =
+      exec.getTagValue(BlazeConvertStrategy.convertStrategyTag).getOrElse(Default)
+    logWarning(s" +${"-" * depth} $nodeName (convertible=$convertible, strategy=$strategy)")
+    exec.children.foreach(dumpSimpleSparkPlanTreeNode(_, depth + 1))
+  }
 }
 
 case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRule with Logging {
   import BlazeSparkSessionExtension._
 
-  override def preColumnarTransitions: Rule[SparkPlan] =
+  override def preColumnarTransitions: Rule[SparkPlan] = {
     new Rule[SparkPlan] {
       override def apply(sparkPlan: SparkPlan): SparkPlan = {
         if (!sparkPlan.conf.getConf(blazeEnabledKey)) {
@@ -81,23 +92,18 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
         // generate convert strategy
         BlazeConvertStrategy.apply(sparkPlan)
         logDebug("Blaze convert strategy for current stage:")
-        sparkPlan.foreach { exec =>
-          val depth = exec.getTagValue(BlazeConvertStrategy.depthTag).getOrElse(0)
-          val nodeName = exec.nodeName
-          val convertible = exec
-            .getTagValue(BlazeConvertStrategy.convertibleTag)
-            .getOrElse(false)
-          val strategy =
-            exec.getTagValue(BlazeConvertStrategy.convertStrategyTag).getOrElse(Default)
-          logWarning(s" +${"-" * depth} $nodeName (convertible=$convertible, strategy=$strategy)")
-        }
-        var sparkPlanTransformed = BlazeConverters.convertSparkPlanRecursively(sparkPlan)
+        dumpSimpleSparkPlanTreeNode(sparkPlan)
+
+        val sparkPlanTransformed = BlazeConverters.convertSparkPlanRecursively(sparkPlan)
+        logDebug("Blaze convert result for current stage:")
+        dumpSimpleSparkPlanTreeNode(sparkPlanTransformed)
 
         logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
           .treeString(verbose = true, addSuffix = true)}")
         sparkPlanTransformed
       }
     }
+  }
 }
 
 case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan] with Logging {
