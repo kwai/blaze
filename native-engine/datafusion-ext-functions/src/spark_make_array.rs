@@ -49,14 +49,31 @@ macro_rules! new_builder {
 
 macro_rules! array {
     ($ARGS:expr, $ARRAY_TYPE:ident, $BUILDER_TYPE:ident) => {{
+        // compute number of rows
+        let num_rows = $ARGS
+            .iter()
+            .map(|arg| arg.len())
+            .filter(|&len| len != 1) // may be result of scalar.to_array()
+            .next()
+            .unwrap_or(1);
+        if $ARGS
+            .iter()
+            .any(|arg| arg.len() != 1 && arg.len() != num_rows)
+        {
+            return Err(DataFusionError::Execution(format!(
+                "all columns of array must have the same length"
+            )));
+        }
+
         // downcast all arguments to their common format
         let args = downcast_vec!($ARGS, $ARRAY_TYPE).collect::<Result<Vec<&$ARRAY_TYPE>>>()?;
 
         let builder = new_builder!($BUILDER_TYPE, args[0].len());
         let mut builder = ListBuilder::<$BUILDER_TYPE>::new(builder);
         // for each entry in the array
-        for index in 0..args[0].len() {
+        for index in 0..num_rows {
             for arg in &args {
+                let index = index.min(arg.len() - 1); // handles result of scalar.to_array()
                 if arg.is_null(index) {
                     builder.values().append_null();
                 } else {
@@ -140,6 +157,35 @@ mod test {
 
         assert_eq!(&result, &expected);
     }
+
+    #[test]
+    fn test_make_array_int_mixed_params() {
+        let result = array(&vec![
+            ColumnarValue::Scalar(ScalarValue::from(123456)),
+            ColumnarValue::Array(Arc::new(Int32Array::from(vec![
+                Some(12),
+                Some(-123),
+                Some(0),
+                Some(9),
+                None,
+            ]))),
+        ])
+        .unwrap()
+        .into_array(5);
+
+        let expected = vec![
+            Some(vec![Some(123456), Some(12)]),
+            Some(vec![Some(123456), Some(-123)]),
+            Some(vec![Some(123456), Some(0)]),
+            Some(vec![Some(123456), Some(9)]),
+            Some(vec![Some(123456), None]),
+        ];
+        let expected = ListArray::from_iter_primitive::<Int32Type, _, _>(expected);
+        let expected: ArrayRef = Arc::new(expected);
+
+        assert_eq!(&result, &expected);
+    }
+
     #[test]
     fn test_make_array_float() {
         let result = array(&vec![
