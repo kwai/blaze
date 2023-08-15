@@ -26,6 +26,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
+import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
@@ -53,6 +54,11 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
     ArrowUtils.toArrowSchema(schema)
   }
   private val paramsSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
+  private val paramsToUnsafe = {
+    val toUnsafe = UnsafeProjection.create(javaParamsSchema)
+    toUnsafe.initialize(Option(TaskContext.get()).map(_.partitionId()).getOrElse(0))
+    toUnsafe
+  }
 
   def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
     var outputRoot: VectorSchemaRoot = null
@@ -78,7 +84,7 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
       // evaluate expression and write to output root
       val outputWriter = ArrowWriter.create(outputRoot)
       for (paramsRow <- ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(paramsRoot))) {
-        val outputRow = InternalRow(expr.eval(paramsRow))
+        val outputRow = InternalRow(expr.eval(paramsToUnsafe(paramsRow)))
         outputWriter.write(outputRow)
       }
       outputWriter.finish()
