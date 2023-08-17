@@ -22,6 +22,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
+use datafusion::physical_plan::metrics::Count;
 use datafusion::physical_plan::Partitioning;
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
@@ -37,6 +38,7 @@ pub struct RssSortShuffleRepartitioner {
     rss_partition_writer: GlobalRef,
     num_output_partitions: usize,
     batch_size: usize,
+    data_size_metric: Count,
 }
 
 impl RssSortShuffleRepartitioner {
@@ -45,6 +47,7 @@ impl RssSortShuffleRepartitioner {
         rss_partition_writer: GlobalRef,
         schema: SchemaRef,
         partitioning: Partitioning,
+        data_size_metric: Count,
         context: Arc<TaskContext>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
@@ -59,6 +62,7 @@ impl RssSortShuffleRepartitioner {
             rss_partition_writer,
             num_output_partitions,
             batch_size,
+            data_size_metric,
         }
     }
 
@@ -107,7 +111,14 @@ impl RssSortShuffleRepartitioner {
                     .map(|pi| (pi.batch_idx as usize, pi.row_idx as usize))
                     .collect::<Vec<_>>();
                 let sub_batch = interleaver.interleave(&sub_indices)?;
-                rss_write_batch(&self.rss_partition_writer, cur_partition_id, sub_batch)?;
+                let mut num_bytes_written_uncompressed = 0;
+                rss_write_batch(
+                    &self.rss_partition_writer,
+                    cur_partition_id,
+                    sub_batch,
+                    &mut num_bytes_written_uncompressed,
+                )?;
+                self.data_size_metric.add(num_bytes_written_uncompressed);
             }};
         }
 

@@ -24,7 +24,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
 use datafusion_ext_commons::concat_batches;
@@ -56,6 +56,7 @@ impl BucketShuffleRepartitioner {
         schema: SchemaRef,
         partitioning: Partitioning,
         metrics: BaselineMetrics,
+        data_size_metric: Count,
         context: Arc<TaskContext>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
@@ -68,7 +69,9 @@ impl BucketShuffleRepartitioner {
             output_index_file,
             buffered_partitions: Mutex::new(
                 (0..num_output_partitions)
-                    .map(|_| PartitionBuffer::new(schema.clone(), batch_size))
+                    .map(|_| {
+                        PartitionBuffer::new(schema.clone(), batch_size, data_size_metric.clone())
+                    })
                     .collect::<Vec<_>>(),
             ),
             spills: Mutex::new(vec![]),
@@ -321,10 +324,11 @@ struct PartitionBuffer {
     num_staging_rows: usize,
     batch_size: usize,
     staging_size: usize,
+    data_size_metric: Count,
 }
 
 impl PartitionBuffer {
-    fn new(schema: SchemaRef, batch_size: usize) -> Self {
+    fn new(schema: SchemaRef, batch_size: usize, data_size_metric: Count) -> Self {
         let staging_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
         Self {
             schema,
@@ -336,6 +340,7 @@ impl PartitionBuffer {
             num_staging_rows: 0,
             batch_size,
             staging_size,
+            data_size_metric,
         }
     }
 
@@ -438,7 +443,16 @@ impl PartitionBuffer {
         let frozen_capacity_old = self.frozen.capacity();
         let mut cursor = Cursor::new(&mut self.frozen);
         cursor.seek(SeekFrom::End(0))?;
-        write_one_batch(&frozen_batch, &mut cursor, true)?;
+        self.data_size_metric
+            .add(frozen_batch.get_array_memory_size());
+        let mut num_bytes_written_uncompressed = 0;
+        write_one_batch(
+            &frozen_batch,
+            &mut cursor,
+            true,
+            Some(&mut num_bytes_written_uncompressed),
+        )?;
+        self.data_size_metric.add(num_bytes_written_uncompressed);
 
         mem_diff += (self.frozen.capacity() - frozen_capacity_old) as isize;
         Ok(mem_diff)

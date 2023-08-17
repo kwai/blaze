@@ -21,7 +21,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::io::write_one_batch;
 use datafusion_ext_commons::loser_tree::LoserTree;
@@ -43,6 +43,7 @@ pub struct SortShuffleRepartitioner {
     num_output_partitions: usize,
     batch_size: usize,
     metrics: BaselineMetrics,
+    data_size_metric: Count,
 }
 
 impl SortShuffleRepartitioner {
@@ -53,6 +54,7 @@ impl SortShuffleRepartitioner {
         schema: SchemaRef,
         partitioning: Partitioning,
         metrics: BaselineMetrics,
+        data_size_metric: Count,
         context: Arc<TaskContext>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
@@ -70,6 +72,7 @@ impl SortShuffleRepartitioner {
             num_output_partitions,
             batch_size,
             metrics,
+            data_size_metric,
         }
     }
 
@@ -126,7 +129,14 @@ impl SortShuffleRepartitioner {
                 let sub_batch = interleaver.interleave(&sub_indices)?;
 
                 let mut buf = vec![];
-                write_one_batch(&sub_batch, &mut Cursor::new(&mut buf), true)?;
+                let mut num_bytes_written_uncompressed = 0;
+                write_one_batch(
+                    &sub_batch,
+                    &mut Cursor::new(&mut buf),
+                    true,
+                    Some(&mut num_bytes_written_uncompressed),
+                )?;
+                self.data_size_metric.add(num_bytes_written_uncompressed);
                 offset += buf.len() as u64;
                 w.write_all(&buf)?;
             }};

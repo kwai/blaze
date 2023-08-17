@@ -159,7 +159,7 @@ pub fn output_bufferable_with_spill(
                     // write all batches to spill
                     while let Some(batch) = stream.next().await.transpose()? {
                         let mut buf = vec![];
-                        write_one_batch(&batch, &mut Cursor::new(&mut buf), true)?;
+                        write_one_batch(&batch, &mut Cursor::new(&mut buf), true, None)?;
                         spill_writer.write_all(&buf)?;
                     }
                     spill_writer.flush()?;

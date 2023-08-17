@@ -24,6 +24,7 @@ use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
+use datafusion::physical_plan::metrics::Count;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
 use futures::lock::Mutex;
@@ -47,6 +48,7 @@ impl RssBucketShuffleRepartitioner {
         rss_partition_writer: GlobalRef,
         schema: SchemaRef,
         partitioning: Partitioning,
+        data_size_metric: Count,
         context: Arc<TaskContext>,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
@@ -59,6 +61,7 @@ impl RssBucketShuffleRepartitioner {
                         batch_size,
                         i,
                         rss_partition_writer.clone(),
+                        data_size_metric.clone(),
                     )
                 })
                 .collect(),
@@ -202,6 +205,7 @@ struct PartitionBuffer {
     active: Vec<Box<dyn ArrayBuilder>>,
     num_active_rows: usize,
     rss_batch_size: usize,
+    data_size_metric: Count,
 }
 
 impl PartitionBuffer {
@@ -210,6 +214,7 @@ impl PartitionBuffer {
         batch_size: usize,
         partition_id: usize,
         rss_partition_writer: GlobalRef,
+        data_size_metric: Count,
     ) -> Self {
         // use smaller batch size for rss to trigger more flushes
         let rss_batch_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
@@ -220,6 +225,7 @@ impl PartitionBuffer {
             active: vec![],
             num_active_rows: 0,
             rss_batch_size,
+            data_size_metric,
         }
     }
 
@@ -258,7 +264,14 @@ impl PartitionBuffer {
     /// this will break the appending order when mixing with append_rows(), but
     /// it does not affect the shuffle output result.
     fn append_batch(&mut self, batch: RecordBatch) -> Result<()> {
-        rss_write_batch(&self.rss_partition_writer, self.partition_id, batch)?;
+        let mut num_bytes_written_uncompressed = 0;
+        rss_write_batch(
+            &self.rss_partition_writer,
+            self.partition_id,
+            batch,
+            &mut num_bytes_written_uncompressed,
+        )?;
+        self.data_size_metric.add(num_bytes_written_uncompressed);
         Ok(())
     }
 
@@ -271,7 +284,14 @@ impl PartitionBuffer {
         self.num_active_rows = 0;
 
         let batch = make_batch(self.schema.clone(), active)?;
-        rss_write_batch(&self.rss_partition_writer, self.partition_id, batch)?;
+        let mut num_bytes_written_uncompressed = 0;
+        rss_write_batch(
+            &self.rss_partition_writer,
+            self.partition_id,
+            batch,
+            &mut num_bytes_written_uncompressed,
+        )?;
+        self.data_size_metric.add(num_bytes_written_uncompressed);
         Ok(())
     }
 }

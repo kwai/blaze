@@ -32,8 +32,8 @@ use crate::shuffle::rss_sort_repartitioner::RssSortShuffleRepartitioner;
 use crate::shuffle::ShuffleRepartitioner;
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
+use datafusion::physical_plan::metrics::{MetricBuilder, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
@@ -108,17 +108,22 @@ impl ExecutionPlan for RssShuffleWriterExec {
         )?;
         let rss_partition_writer = jni_new_global_ref!(rss_partition_writer_local.as_obj())?;
 
+        // record uncompressed data size
+        let data_size_metric = MetricBuilder::new(&self.metrics).counter("data_size", partition);
+
         let input = self.input.execute(partition, context.clone())?;
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
-            p if p.partition_count() == 1 => {
-                Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
-            }
+            p if p.partition_count() == 1 => Arc::new(RssSingleShuffleRepartitioner::new(
+                rss_partition_writer,
+                data_size_metric,
+            )),
             p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
                 let partitioner = Arc::new(RssBucketShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
                     self.schema(),
                     self.partitioning.clone(),
+                    data_size_metric,
                     context.clone(),
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
@@ -130,6 +135,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
                     rss_partition_writer,
                     self.schema(),
                     self.partitioning.clone(),
+                    data_size_metric,
                     context.clone(),
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);

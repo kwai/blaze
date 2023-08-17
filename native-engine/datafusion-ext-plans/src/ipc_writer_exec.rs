@@ -159,6 +159,7 @@ pub async fn write_ipc(
                 &batch,
                 &mut Cursor::new(&mut buffer),
                 true,
+                None,
             )?;
             drop(timer);
 

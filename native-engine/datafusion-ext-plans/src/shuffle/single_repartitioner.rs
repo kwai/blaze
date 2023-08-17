@@ -17,7 +17,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
-use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
 use datafusion_ext_commons::io::write_one_batch;
 use once_cell::sync::OnceCell;
 use std::fs::{File, OpenOptions};
@@ -28,6 +28,7 @@ pub struct SingleShuffleRepartitioner {
     output_index_file: String,
     output_data: OnceCell<File>,
     metrics: BaselineMetrics,
+    data_size_metric: Count,
 }
 
 impl SingleShuffleRepartitioner {
@@ -35,12 +36,14 @@ impl SingleShuffleRepartitioner {
         output_data_file: String,
         output_index_file: String,
         metrics: BaselineMetrics,
+        data_size_metric: Count,
     ) -> Self {
         Self {
             output_data_file,
             output_index_file,
             output_data: OnceCell::new(),
             metrics,
+            data_size_metric,
         }
     }
 
@@ -61,7 +64,14 @@ impl SingleShuffleRepartitioner {
 impl ShuffleRepartitioner for SingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let _timer = self.metrics.elapsed_compute().timer();
-        write_one_batch(&input, &mut self.get_output_data()?.try_clone()?, true)?;
+        let mut num_bytes_written_uncompressed = 0;
+        write_one_batch(
+            &input,
+            &mut self.get_output_data()?.try_clone()?,
+            true,
+            Some(&mut num_bytes_written_uncompressed),
+        )?;
+        self.data_size_metric.add(num_bytes_written_uncompressed);
         Ok(())
     }
 

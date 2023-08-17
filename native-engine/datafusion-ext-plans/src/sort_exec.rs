@@ -721,7 +721,7 @@ impl SortedBatches {
         // write batch1 + keys1, batch2 + keys2, ...
         for batch in self.batches {
             let mut buf = vec![];
-            write_one_batch(&batch, &mut Cursor::new(&mut buf), true)?;
+            write_one_batch(&batch, &mut Cursor::new(&mut buf), true, None)?;
             writer.write_all(&buf)?;
 
             for _ in 0..batch.num_rows() {

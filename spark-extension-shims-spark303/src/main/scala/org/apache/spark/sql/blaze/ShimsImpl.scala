@@ -54,7 +54,6 @@ import org.apache.spark.sql.execution.PartialReducerPartitionSpec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeShuffleExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
@@ -66,6 +65,7 @@ import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
+import org.apache.spark.OneToOneDependency
 
 class ShimsImpl extends Shims with Logging {
 
@@ -122,20 +122,6 @@ class ShimsImpl extends Shims with Logging {
 
   override def getChildStage(plan: SparkPlan): SparkPlan =
     plan.asInstanceOf[QueryStageExec].plan
-
-  override def needRenameColumns(plan: SparkPlan): Boolean = {
-    if (plan.output.isEmpty) {
-      return false
-    }
-    // use shim to get isQueryStageInput and getChildStage
-    plan match {
-      case _: NativeParquetScanExec | _: NativeUnionExec | _: ReusedExchangeExec => true
-      case exec: QueryStageExec =>
-        needRenameColumns(getChildStage(exec)) || exec.output != getChildStage(exec).output
-      case CustomShuffleReaderExec(child, _, _) => needRenameColumns(child)
-      case _ => false
-    }
-  }
 
   override def simpleStringWithNodeId(plan: SparkPlan): String = plan.simpleStringWithNodeId()
 
@@ -279,20 +265,19 @@ class ShimsImpl extends Shims with Logging {
   private def executeNativeCustomShuffleReader(exec: CustomShuffleReaderExec): NativeRDD = {
     exec match {
       case CustomShuffleReaderExec(child, _, _) if isNative(child) =>
-        val inputShuffledRowRDD = exec.execute().asInstanceOf[ShuffledRowRDD]
-        val shuffleHandle = inputShuffledRowRDD.dependency.shuffleHandle
+        val shuffledRDD = exec.execute().asInstanceOf[ShuffledRowRDD]
+        val shuffleHandle = shuffledRDD.dependency.shuffleHandle
 
         val inputRDD = executeNative(child)
-        val nativeSchema: pb.Schema = getUnderlyingNativePlan(child)
-          .asInstanceOf[NativeShuffleExchangeExec]
-          .nativeSchema
+        val nativeShuffle = getUnderlyingNativePlan(child).asInstanceOf[NativeShuffleExchangeExec]
+        val nativeSchema: pb.Schema = nativeShuffle.nativeSchema
         val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
 
         new NativeRDD(
-          inputShuffledRowRDD.sparkContext,
+          shuffledRDD.sparkContext,
           metrics,
-          inputShuffledRowRDD.partitions,
-          inputShuffledRowRDD.dependencies,
+          shuffledRDD.partitions,
+          new OneToOneDependency(shuffledRDD) :: Nil,
           true,
           (partition, taskContext) => {
 
@@ -303,43 +288,41 @@ class ShimsImpl extends Shims with Logging {
               .asInstanceOf[ShufflePartitionSpec]
             val reader = spec match {
               case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
-                SparkEnv.get.shuffleManager
-                  .getReader(
-                    shuffleHandle,
-                    startReducerIndex,
-                    endReducerIndex,
-                    taskContext,
-                    sqlMetricsReporter)
-                  .asInstanceOf[BlazeBlockStoreShuffleReader[_, _]]
+                SparkEnv.get.shuffleManager.getReader(
+                  shuffleHandle,
+                  startReducerIndex,
+                  endReducerIndex,
+                  taskContext,
+                  sqlMetricsReporter)
 
               case PartialReducerPartitionSpec(reducerIndex, startMapIndex, endMapIndex) =>
-                SparkEnv.get.shuffleManager
-                  .getReaderForRange(
-                    shuffleHandle,
-                    startMapIndex,
-                    endMapIndex,
-                    reducerIndex,
-                    reducerIndex + 1,
-                    taskContext,
-                    sqlMetricsReporter)
-                  .asInstanceOf[BlazeBlockStoreShuffleReader[_, _]]
+                SparkEnv.get.shuffleManager.getReaderForRange(
+                  shuffleHandle,
+                  startMapIndex,
+                  endMapIndex,
+                  reducerIndex,
+                  reducerIndex + 1,
+                  taskContext,
+                  sqlMetricsReporter)
 
               case PartialMapperPartitionSpec(mapIndex, startReducerIndex, endReducerIndex) =>
-                SparkEnv.get.shuffleManager
-                  .getReaderForRange(
-                    shuffleHandle,
-                    mapIndex,
-                    mapIndex + 1,
-                    startReducerIndex,
-                    endReducerIndex,
-                    taskContext,
-                    sqlMetricsReporter)
-                  .asInstanceOf[BlazeBlockStoreShuffleReader[_, _]]
+                SparkEnv.get.shuffleManager.getReaderForRange(
+                  shuffleHandle,
+                  mapIndex,
+                  mapIndex + 1,
+                  startReducerIndex,
+                  endReducerIndex,
+                  taskContext,
+                  sqlMetricsReporter)
             }
 
             // store fetch iterator in jni resource before native compute
             val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
-            JniBridge.resourcesMap.put(jniResourceId, () => reader.readIpc())
+            JniBridge.resourcesMap.put(
+              jniResourceId,
+              () => {
+                reader.asInstanceOf[BlazeBlockStoreShuffleReader[_, _]].readIpc()
+              })
 
             pb.PhysicalPlanNode
               .newBuilder()
@@ -347,7 +330,7 @@ class ShimsImpl extends Shims with Logging {
                 pb.IpcReaderExecNode
                   .newBuilder()
                   .setSchema(nativeSchema)
-                  .setNumPartitions(inputShuffledRowRDD.getNumPartitions)
+                  .setNumPartitions(shuffledRDD.getNumPartitions)
                   .setIpcProviderResourceId(jniResourceId)
                   .setMode(pb.IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
                   .build())

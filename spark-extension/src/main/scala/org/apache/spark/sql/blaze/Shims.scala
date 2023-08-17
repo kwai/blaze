@@ -61,8 +61,6 @@ abstract class Shims {
 
   def getChildStage(plan: SparkPlan): SparkPlan
 
-  def needRenameColumns(plan: SparkPlan): Boolean
-
   def simpleStringWithNodeId(plan: SparkPlan): String
 
   def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan

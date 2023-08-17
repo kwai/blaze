@@ -29,8 +29,8 @@ use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
+use datafusion::physical_plan::metrics::{MetricBuilder, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
@@ -102,11 +102,15 @@ impl ExecutionPlan for ShuffleWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // record uncompressed data size
+        let data_size_metric = MetricBuilder::new(&self.metrics).counter("data_size", partition);
+
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
                 self.output_data_file.clone(),
                 self.output_index_file.clone(),
                 BaselineMetrics::new(&self.metrics, partition),
+                data_size_metric,
             )),
             p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
                 let partitioner = Arc::new(BucketShuffleRepartitioner::new(
@@ -116,6 +120,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                     self.schema(),
                     self.partitioning.clone(),
                     BaselineMetrics::new(&self.metrics, partition),
+                    data_size_metric,
                     context.clone(),
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
@@ -129,6 +134,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                     self.schema(),
                     self.partitioning.clone(),
                     BaselineMetrics::new(&self.metrics, partition),
+                    data_size_metric,
                     context.clone(),
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);

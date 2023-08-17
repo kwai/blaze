@@ -17,18 +17,21 @@ use async_trait::async_trait;
 use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::Result;
+use datafusion::physical_plan::metrics::Count;
 use datafusion_ext_commons::io::write_one_batch;
 use jni::objects::GlobalRef;
 use std::io::Cursor;
 
 pub struct RssSingleShuffleRepartitioner {
     rss_partition_writer: GlobalRef,
+    data_size_metric: Count,
 }
 
 impl RssSingleShuffleRepartitioner {
-    pub fn new(rss_partition_writer: GlobalRef) -> Self {
+    pub fn new(rss_partition_writer: GlobalRef, data_size_metric: Count) -> Self {
         Self {
             rss_partition_writer,
+            data_size_metric,
         }
     }
 }
@@ -37,7 +40,14 @@ impl RssSingleShuffleRepartitioner {
 impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let mut cursor = Cursor::new(Vec::<u8>::new());
-        write_one_batch(&input, &mut cursor, true)?;
+        let mut num_bytes_written_uncompressed = 0;
+        write_one_batch(
+            &input,
+            &mut cursor,
+            true,
+            Some(&mut num_bytes_written_uncompressed),
+        )?;
+        self.data_size_metric.add(num_bytes_written_uncompressed);
 
         let rss_data = cursor.into_inner();
         let length = rss_data.len();

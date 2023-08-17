@@ -87,6 +87,7 @@ import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableExec
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 
 object BlazeConverters extends Logging {
@@ -535,7 +536,7 @@ object BlazeConverters extends Logging {
         case None =>
           addRenameColumnsExec(convertToNative(exec.child))
         case _ =>
-          if (Shims.get.needRenameColumns(exec.child)) {
+          if (needRenameColumns(exec.child)) {
             val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
               NativeAggExec.AGG_BUF_COLUMN_NAME
             NativeRenameColumnsExec(convertToNative(exec.child), newNames)
@@ -592,7 +593,7 @@ object BlazeConverters extends Logging {
         case None =>
           addRenameColumnsExec(convertToNative(exec.child))
         case _ =>
-          if (Shims.get.needRenameColumns(exec.child)) {
+          if (needRenameColumns(exec.child)) {
             val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
               NativeAggExec.AGG_BUF_COLUMN_NAME
             NativeRenameColumnsExec(convertToNative(exec.child), newNames)
@@ -637,7 +638,7 @@ object BlazeConverters extends Logging {
         case None =>
           addRenameColumnsExec(convertToNative(exec.child))
         case _ =>
-          if (Shims.get.needRenameColumns(exec.child)) {
+          if (needRenameColumns(exec.child)) {
             val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
               NativeAggExec.AGG_BUF_COLUMN_NAME
             NativeRenameColumnsExec(convertToNative(exec.child), newNames)
@@ -728,8 +729,21 @@ object BlazeConverters extends Logging {
     ForceNativeExecutionWrapper(exec)
   }
 
+  def needRenameColumns(plan: SparkPlan): Boolean = {
+    if (plan.output.isEmpty) {
+      return false
+    }
+    plan match {
+      case _: NativeParquetScanBase | _: NativeUnionExec => true
+      case ConvertToNativeExec(child) => needRenameColumns(child)
+      case exec if NativeHelper.isNative(exec) =>
+        NativeHelper.getUnderlyingNativePlan(exec).output != plan.output
+      case _ => false
+    }
+  }
+
   def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
-    if (Shims.get.needRenameColumns(exec)) {
+    if (needRenameColumns(exec)) {
       return NativeRenameColumnsExec(exec, exec.output.map(Util.getFieldNameByExprId))
     }
     exec
@@ -755,7 +769,9 @@ object BlazeConverters extends Logging {
           aliasExpr.metadata)(aliasExpr.exprId, aliasExpr.qualifier)
         transformedKeys.append(attr)
     }
-    (transformedKeys, NativeProjectExec(child.output ++ extraProjectList, child))
+    (
+      transformedKeys,
+      NativeProjectExec(child.output ++ extraProjectList, addRenameColumnsExec(child)))
   }
 
   private def buildPostJoinProject(
@@ -817,7 +833,7 @@ object BlazeConverters extends Logging {
         projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toSeq))
   }
 
-  private case class ForceNativeExecutionWrapper(override val child: SparkPlan)
+  case class ForceNativeExecutionWrapper(override val child: SparkPlan)
       extends UnaryExecNode
       with NativeSupports {
 

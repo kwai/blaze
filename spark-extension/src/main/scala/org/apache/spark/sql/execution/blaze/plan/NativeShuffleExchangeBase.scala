@@ -22,10 +22,8 @@ import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalExprNode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
-import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
-import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
@@ -164,6 +162,7 @@ abstract class NativeShuffleExchangeBase(
       Map(),
       nativeInputRDD.metrics :: Nil,
       Some({
+        case ("data_size", v) => metrics("dataSize") += v
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incRecordsWritten(v)
@@ -218,68 +217,4 @@ abstract class NativeShuffleExchangeBase(
 
   override def doCanonicalize(): SparkPlan =
     ShuffleExchangeExec(outputPartitioning, child).canonicalized
-}
-
-object NativeShuffleExchangeBase extends Logging {
-
-  /**
-   * Determines whether records must be defensively copied before being sent to the shuffle.
-   * Several of Spark's shuffle components will buffer deserialized Java objects in memory. The
-   * shuffle code assumes that objects are immutable and hence does not perform its own defensive
-   * copying. In Spark SQL, however, operators' iterators return the same mutable `Row` object. In
-   * order to properly shuffle the output of these operators, we need to perform our own copying
-   * prior to sending records to the shuffle. This copying is expensive, so we try to avoid it
-   * whenever possible. This method encapsulates the logic for choosing when to copy.
-   *
-   * In the long run, we might want to push this logic into core's shuffle APIs so that we don't
-   * have to rely on knowledge of core internals here in SQL.
-   *
-   * See SPARK-2967, SPARK-4479, and SPARK-7375 for more discussion of this issue.
-   *
-   * @param partitioner
-   *   the partitioner for the shuffle
-   * @return
-   *   true if rows should be copied before being shuffled, false otherwise
-   */
-  private def needToCopyObjectsBeforeShuffle(partitioner: Partitioner): Boolean = {
-    // Note: even though we only use the partitioner's `numPartitions` field, we require it to be
-    // passed instead of directly passing the number of partitions in order to guard against
-    // corner-cases where a partitioner constructed with `numPartitions` partitions may output
-    // fewer partitions (like RangePartitioner, for example).
-    val conf = SparkEnv.get.conf
-    val shuffleManager = SparkEnv.get.shuffleManager
-    val sortBasedShuffleOn = shuffleManager.isInstanceOf[SortShuffleManager]
-    val bypassMergeThreshold = conf.getInt("spark.shuffle.sort.bypassMergeThreshold", 200)
-    val numParts = partitioner.numPartitions
-    if (sortBasedShuffleOn) {
-      if (numParts <= bypassMergeThreshold) {
-        // If we're using the original SortShuffleManager and the number of output partitions is
-        // sufficiently small, then Spark will fall back to the hash-based shuffle write path, which
-        // doesn't buffer deserialized records.
-        // Note that we'll have to remove this case if we fix SPARK-6026 and remove this bypass.
-        false
-      } else if (numParts <= SortShuffleManager.MAX_SHUFFLE_OUTPUT_PARTITIONS_FOR_SERIALIZED_MODE) {
-        // SPARK-4550 and  SPARK-7081 extended sort-based shuffle to serialize individual records
-        // prior to sorting them. This optimization is only applied in cases where shuffle
-        // dependency does not specify an aggregator or ordering and the record serializer has
-        // certain properties and the number of partitions doesn't exceed the limitation. If this
-        // optimization is enabled, we can safely avoid the copy.
-        //
-        // Exchange never configures its ShuffledRDDs with aggregators or key orderings, and the
-        // serializer in Spark SQL always satisfy the properties, so we only need to check whether
-        // the number of partitions exceeds the limitation.
-        false
-      } else {
-        // Spark's SortShuffleManager uses `ExternalSorter` to buffer records in memory, so we must
-        // copy.
-        true
-      }
-    } else {
-      // Catch-all case to safely handle any future ShuffleManager implementations.
-      true
-    }
-  }
-  def canUseNativeShuffleWrite(outputPartitioning: Partitioning): Boolean = {
-    outputPartitioning.numPartitions == 1 || outputPartitioning.isInstanceOf[HashPartitioning]
-  }
 }

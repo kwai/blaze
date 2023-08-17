@@ -23,10 +23,16 @@ pub fn rss_write_batch(
     rss_partition_writer: &GlobalRef,
     partition_id: usize,
     batch: RecordBatch,
+    uncompressed_size: &mut usize,
 ) -> Result<()> {
     let mut data = vec![];
 
-    write_one_batch(&batch, &mut Cursor::new(&mut data), true)?;
+    write_one_batch(
+        &batch,
+        &mut Cursor::new(&mut data),
+        true,
+        Some(uncompressed_size),
+    )?;
     let data_len = data.len();
     let buf = jni_new_direct_byte_buffer!(&data)?;
     jni_call!(

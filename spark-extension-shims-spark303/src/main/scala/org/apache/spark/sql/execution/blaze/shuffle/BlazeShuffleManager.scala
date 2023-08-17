@@ -15,23 +15,16 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import scala.collection.JavaConverters._
-
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
-import org.apache.spark.shuffle.api.ShuffleExecutorComponents
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArrowShuffle
 
 class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
-
-  import BlazeShuffleManager._
-  import SortShuffleManager._
-
   val sortShuffleManager = new SortShuffleManager(conf)
 
   if (!conf.getBoolean("spark.shuffle.spill", defaultValue = true)) {
@@ -40,7 +33,6 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
         " Shuffle will continue to spill to disk when necessary.")
   }
 
-  private lazy val shuffleExecutorComponents = loadShuffleExecutorComponents(conf)
   override val shuffleBlockResolver = new IndexShuffleBlockResolver(conf)
 
   /**
@@ -89,7 +81,8 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
         SparkEnv.get.mapOutputTracker,
         None,
         None,
-        shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
+        shouldBatchFetch =
+          SortShuffleManager.canUseBatchFetch(startPartition, endPartition, context))
     } else {
       sortShuffleManager.getReader(handle, startPartition, endPartition, context, metrics)
     }
@@ -118,10 +111,10 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     } else {
       sortShuffleManager.getReaderForRange(
         handle,
-        startPartition,
-        endPartition,
         startMapIndex,
         endMapIndex,
+        startPartition,
+        endPartition,
         context,
         metrics)
     }
@@ -149,17 +142,5 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   /** Shut down this ShuffleManager. */
   override def stop(): Unit = {
     shuffleBlockResolver.stop()
-  }
-}
-
-private[spark] object BlazeShuffleManager extends Logging {
-  private def loadShuffleExecutorComponents(conf: SparkConf): ShuffleExecutorComponents = {
-    val executorComponents = ShuffleDataIOUtils.loadShuffleDataIO(conf).executor()
-    val extraConfigs = conf.getAllWithPrefix(ShuffleDataIOUtils.SHUFFLE_SPARK_CONF_PREFIX).toMap
-    executorComponents.initializeExecutor(
-      conf.getAppId,
-      SparkEnv.get.executorId,
-      extraConfigs.asJava)
-    executorComponents
   }
 }

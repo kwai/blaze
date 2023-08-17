@@ -45,19 +45,14 @@ class BlazeBlockStoreShuffleReader[K, C](
     with Logging {
 
   override def readBlocks(): Iterator[(BlockId, InputStream)] = {
-    SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
-      handle.shuffleId,
-      startPartition,
-      endPartition)
-
     val blocksByAddress = (startMapId, endMapId) match {
       case (Some(startId), Some(endId)) =>
         mapOutputTracker.getMapSizesByRange(
           handle.shuffleId,
-          startPartition,
-          endPartition,
           startId,
-          endId)
+          endId,
+          startPartition,
+          endPartition)
 
       case (None, None) =>
         mapOutputTracker.getMapSizesByExecutorId(handle.shuffleId, startPartition, endPartition)
