@@ -220,7 +220,7 @@
             <goals>
               <goal>scalafix</goal>
             </goals>
-            <phase>validate</phase>
+            <phase>prepare-package</phase>
           </execution>
         </executions>
       </plugin>
