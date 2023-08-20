@@ -13,9 +13,7 @@
 // limitations under the License.
 
 use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AccumInitialValue, AggBuf};
-use crate::agg::{
-    Agg, AggExecMode, AggExpr, AggMode, AggRecord, GroupingExpr, AGG_BUF_COLUMN_NAME,
-};
+use crate::agg::{Agg, AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME};
 use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -219,15 +217,18 @@ impl AggContext {
         }
     }
 
-    pub fn build_agg_columns(&self, records: &mut [AggRecord]) -> Result<Vec<ArrayRef>> {
+    pub fn build_agg_columns(
+        &self,
+        records: &mut [(impl AsRef<[u8]>, AggBuf)],
+    ) -> Result<Vec<ArrayRef>> {
         let mut agg_columns = vec![];
         if self.need_final_merge {
             // output final merged value
             for (idx, agg) in self.aggs.iter().enumerate() {
                 let addrs = &self.agg_buf_addrs[self.agg_buf_addr_offsets[idx]..];
                 let mut values = Vec::with_capacity(records.len());
-                for record in records.iter_mut() {
-                    let value = agg.agg.final_merge(&mut record.agg_buf, addrs)?;
+                for (_, agg_buf) in records.iter_mut() {
+                    let value = agg.agg.final_merge(agg_buf, addrs)?;
                     values.push(value);
                 }
                 let values = std::mem::take(&mut values);
@@ -236,8 +237,8 @@ impl AggContext {
         } else {
             // output agg_buf as a binary column
             let mut binary_array = BinaryBuilder::with_capacity(records.len(), 0);
-            for record in records.iter_mut() {
-                let agg_buf_bytes = record.agg_buf.save_to_bytes()?;
+            for (_, agg_buf) in records.iter_mut() {
+                let agg_buf_bytes = agg_buf.save_to_bytes()?;
                 binary_array.append_value(agg_buf_bytes);
             }
             agg_columns.push(Arc::new(binary_array.finish()));
@@ -248,14 +249,14 @@ impl AggContext {
     pub fn convert_records_to_batch(
         &self,
         grouping_row_converter: &mut RowConverter,
-        records: &mut [AggRecord],
+        records: &mut [(impl AsRef<[u8]>, AggBuf)],
     ) -> Result<RecordBatch> {
         let row_count = records.len();
         let grouping_row_parser = grouping_row_converter.parser();
         let grouping_columns = grouping_row_converter.convert_rows(
             records
                 .iter()
-                .map(|r| grouping_row_parser.parse(&r.grouping)),
+                .map(|(key, _)| grouping_row_parser.parse(key.as_ref())),
         )?;
         let agg_columns = self.build_agg_columns(records)?;
 

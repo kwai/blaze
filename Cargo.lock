@@ -895,6 +895,7 @@ dependencies = [
 name = "datafusion-ext-plans"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "arrow",
  "async-trait",
  "base64",
@@ -917,6 +918,7 @@ dependencies = [
  "panic-message",
  "parking_lot",
  "paste",
+ "rand",
  "tempfile",
  "tokio",
  "zstd",

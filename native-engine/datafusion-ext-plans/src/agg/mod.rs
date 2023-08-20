@@ -32,7 +32,6 @@ use datafusion::common::{DataFusionError, Result, ScalarValue};
 use datafusion::logical_expr::aggregate_function;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion_ext_exprs::cast::TryCastExpr;
-use derivative::Derivative;
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -217,23 +216,6 @@ pub trait Agg: Send + Sync + Debug {
                 }
             }
         })
-    }
-}
-
-#[derive(Derivative)]
-#[derivative(PartialOrd, PartialEq, Ord, Eq)]
-pub struct AggRecord {
-    pub grouping: Box<[u8]>,
-
-    #[derivative(PartialOrd = "ignore")]
-    #[derivative(PartialEq = "ignore")]
-    #[derivative(Ord = "ignore")]
-    pub agg_buf: AggBuf,
-}
-
-impl AggRecord {
-    pub fn new(grouping: Box<[u8]>, agg_buf: AggBuf) -> Self {
-        Self { grouping, agg_buf }
     }
 }
 

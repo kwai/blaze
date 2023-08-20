@@ -18,10 +18,12 @@ use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::Result;
 
+pub mod bytes_arena;
 pub mod cached_exprs_evaluator;
 pub mod memory_manager;
 pub mod onheap_spill;
 pub mod output;
+pub mod rdxsort;
 
 pub struct BatchesInterleaver {
     schema: SchemaRef,

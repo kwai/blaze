@@ -12,18 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ahash::RandomState;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::{BufReader, Read, Write};
 use std::mem::size_of;
 use std::sync::{Arc, Weak};
 
-use arrow::row::RowConverter;
+use arrow::row::{RowConverter, Rows};
 use async_trait::async_trait;
 use datafusion::common::Result;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
+
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use futures::lock::Mutex;
-use hashbrown::hash_map::Entry;
+use hashbrown::hash_map::{Entry, RawEntryMut};
 use hashbrown::HashMap;
 use lz4_flex::frame::FrameDecoder;
 
@@ -32,14 +35,23 @@ use datafusion_ext_commons::loser_tree::LoserTree;
 
 use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
-use crate::agg::AggRecord;
+use crate::common::bytes_arena::BytesArena;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::output::WrappedRecordBatchSender;
+use crate::common::rdxsort;
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
 const SPILL_OFFHEAP_MEM_COST: usize = 200000;
+
+// fixed constant random state used for hashing map keys
+const RANDOM_STATE: RandomState = RandomState::with_seeds(
+    0x9C6E1CA4E863D6DC,
+    0x5E2C7A28DC159691,
+    0xB6ED5B7156072B89,
+    0xA2B679F7684AC524,
+);
 
 pub struct AggTables {
     name: String,
@@ -61,10 +73,7 @@ impl AggTables {
         Self {
             name: format!("AggTable[partition={}]", partition_id),
             mem_consumer_info: None,
-            in_mem: Mutex::new(InMemTable {
-                is_hash: true, // only the first im-mem table uses hash
-                ..Default::default()
-            }),
+            in_mem: Mutex::new(InMemTable::new(true)), // only the first im-mem table uses hash
             spills: Mutex::default(),
             agg_ctx,
             context,
@@ -72,21 +81,22 @@ impl AggTables {
         }
     }
 
-    pub async fn has_spill(&self) -> bool {
-        !self.spills.lock().await.is_empty()
-    }
-
-    pub async fn update_in_mem(
+    pub async fn update_entries(
         &self,
-        process: impl FnOnce(&mut InMemTable) -> Result<()>,
+        key_rows: Rows,
+        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
     ) -> Result<()> {
-        let mem_used = {
-            let mut in_mem = self.in_mem.lock().await;
-            process(&mut in_mem)?;
-            in_mem.mem_used()
-        };
+        let mut in_mem = self.in_mem.lock().await;
+        in_mem.update_entries(&self.agg_ctx, key_rows, fn_entry)?;
+
+        let mem_used = in_mem.mem_used();
+        drop(in_mem);
         self.update_mem_used(mem_used).await?;
         Ok(())
+    }
+
+    pub async fn has_spill(&self) -> bool {
+        !self.spills.lock().await.is_empty()
     }
 
     pub async fn output(
@@ -98,7 +108,7 @@ impl AggTables {
         self.set_spillable(false);
         let mut timer = baseline_metrics.elapsed_compute().timer();
 
-        let in_mem = std::mem::take(&mut *self.in_mem.lock().await);
+        let in_mem = std::mem::replace(&mut *self.in_mem.lock().await, InMemTable::new(false));
         let spills = std::mem::take(&mut *self.spills.lock().await);
 
         let batch_size = self.context.session_config().batch_size();
@@ -111,9 +121,9 @@ impl AggTables {
         // only one in-mem table, directly output it
         if spills.is_empty() {
             let mut records = in_mem
-                .grouping_mappings
+                .map
                 .into_iter()
-                .map(|(_1, _2)| AggRecord::new(_1, _2))
+                .map(|(key_addr, value)| (in_mem.map_keys.get(key_addr), value))
                 .collect::<Vec<_>>();
 
             while !records.is_empty() {
@@ -151,14 +161,15 @@ impl AggTables {
             cursors.push(SpillCursor::try_from_spill(&spill, &self.agg_ctx)?);
         }
         let mut staging_records = Vec::with_capacity(batch_size);
-        let mut current_record: Option<AggRecord> = None;
+        let mut current_bucket_idx = 0;
+        let mut current_records: HashMap<Box<[u8]>, AggBuf> = HashMap::new();
 
         macro_rules! flush_staging {
             () => {{
-                let mut records = std::mem::take(&mut staging_records);
                 let batch = self
                     .agg_ctx
-                    .convert_records_to_batch(&mut grouping_row_converter, &mut records)?;
+                    .convert_records_to_batch(&mut grouping_row_converter, &mut staging_records)?;
+                staging_records.clear();
                 baseline_metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }};
@@ -167,55 +178,50 @@ impl AggTables {
         // create a tournament loser tree to do the merging
         // the mem-table and at least one spill should be in the tree
         let mut cursors: LoserTree<SpillCursor> =
-            LoserTree::new_by(cursors, |c1: &SpillCursor, c2: &SpillCursor| {
-                match (c1.peek(), c2.peek()) {
-                    (None, _) => false,
-                    (_, None) => true,
-                    (Some(c1), Some(c2)) => c1 < c2,
-                }
-            });
+            LoserTree::new_by(cursors, |c1, c2| c1.cur_bucket_idx < c2.cur_bucket_idx);
         assert!(cursors.len() > 0);
 
         loop {
             // extract min cursor with the loser tree
             let mut min_cursor = cursors.peek_mut();
-            if min_cursor.peek().is_none() {
-                // all cursors are finished
+
+            // meets next bucket -- flush records of current bucket
+            if min_cursor.cur_bucket_idx > current_bucket_idx {
+                for (key, value) in current_records.drain() {
+                    staging_records.push((key, value));
+                    if staging_records.len() >= batch_size {
+                        flush_staging!();
+                    }
+                }
+                current_bucket_idx = min_cursor.cur_bucket_idx;
+            }
+
+            // all cursors are finished
+            if current_bucket_idx == 65536 {
                 break;
             }
-            let mut min_record = min_cursor.pop()?.unwrap();
 
-            // merge min record into current record
-            match current_record.as_mut() {
-                None => current_record = Some(min_record),
-                Some(current_record) => {
-                    if &min_record == current_record {
-                        // update entry
+            // merge records of current bucket
+            for _ in 0..min_cursor.cur_bucket_count {
+                let (key, mut value) = min_cursor.next_record()?;
+                match current_records.entry(key) {
+                    Entry::Occupied(mut view) => {
                         for (idx, agg) in self.agg_ctx.aggs.iter().enumerate() {
                             let addr_offset = self.agg_ctx.agg_buf_addr_offsets[idx];
                             let addrs = &self.agg_ctx.agg_buf_addrs[addr_offset..];
                             agg.agg
-                                .partial_merge(
-                                    &mut current_record.agg_buf,
-                                    &mut min_record.agg_buf,
-                                    addrs,
-                                )
+                                .partial_merge(view.get_mut(), &mut value, addrs)
                                 .map_err(|err| {
                                     err.context("agg: executing partial_merge() error")
                                 })?;
                         }
-                    } else {
-                        let finished = std::mem::replace(current_record, min_record);
-                        staging_records.push(finished);
-                        if staging_records.len() >= batch_size {
-                            flush_staging!();
-                        }
+                    }
+                    Entry::Vacant(view) => {
+                        view.insert(value);
                     }
                 }
             }
-        }
-        if let Some(record) = current_record {
-            staging_records.push(record);
+            min_cursor.next_bucket()?;
         }
         if !staging_records.is_empty() {
             flush_staging!();
@@ -252,7 +258,7 @@ impl MemConsumer for AggTables {
         let mut in_mem = self.in_mem.lock().await;
         let mut spills = self.spills.lock().await;
 
-        spills.extend(std::mem::take(&mut *in_mem).try_into_spill()?);
+        spills.extend(std::mem::replace(&mut *in_mem, InMemTable::new(false)).try_into_spill()?);
         drop(spills);
         drop(in_mem);
 
@@ -268,105 +274,209 @@ impl Drop for AggTables {
 }
 
 /// Unordered in-mem hash table which can be updated
-#[derive(Default)]
 pub struct InMemTable {
-    is_hash: bool,
-    grouping_mappings: HashMap<Box<[u8]>, AggBuf>,
-    unsorted: Vec<AggRecord>,
-    data_mem_used: usize,
+    map_keys: Box<BytesArena>,
+    map: HashMap<u64, AggBuf, MapKeyHashBuilder>,
+    unsorted_keys: Vec<Rows>,
+    unsorted_values: Vec<AggBuf>,
+    unsorted_keys_mem_used: usize,
+    agg_buf_mem_used: usize,
+    pub is_hash: bool,
 }
 
+// a hasher for hashing addrs got from map_keys
+struct BytesArenaHasher(*const BytesArena, u64);
+impl Hasher for BytesArenaHasher {
+    fn write(&mut self, _bytes: &[u8]) {
+        unimplemented!()
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        // safety - this hasher has the same lifetime with bytes arena
+        // and guaranteed to have no read-write conflicts
+        let bytes_arena = unsafe { &*self.0 };
+        self.1 = RANDOM_STATE.hash_one(bytes_arena.get(i));
+    }
+
+    fn finish(&self) -> u64 {
+        self.1
+    }
+}
+
+// hash builder for map
+struct MapKeyHashBuilder(*const BytesArena);
+impl BuildHasher for MapKeyHashBuilder {
+    type Hasher = BytesArenaHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        BytesArenaHasher(self.0, 0)
+    }
+
+    fn hash_one<T: Hash>(&self, x: T) -> u64
+    where
+        Self: Sized,
+        Self::Hasher: Hasher,
+    {
+        // safety - this hasher has the same lifetime with bytes arena
+        // and guaranteed to have no read-write conflicts
+        // this hasher is specialized for hashing map keys, so it's safe
+        // to convert x to u64 (bytes arena's addr)
+        let bytes_arena = unsafe { &*self.0 };
+        let i = unsafe { *std::mem::transmute::<_, *const u64>(&x) };
+        RANDOM_STATE.hash_one(bytes_arena.get(i))
+    }
+}
+unsafe impl Send for MapKeyHashBuilder {}
+
 impl InMemTable {
+    fn new(is_hash: bool) -> Self {
+        let map_keys: Box<BytesArena> = Box::default();
+        let map_key_hash_builder = MapKeyHashBuilder(map_keys.as_ref() as *const BytesArena);
+        Self {
+            map_keys,
+            map: HashMap::with_hasher(map_key_hash_builder),
+            unsorted_keys: vec![],
+            unsorted_values: vec![],
+            unsorted_keys_mem_used: 0,
+            agg_buf_mem_used: 0,
+            is_hash,
+        }
+    }
+
     pub fn mem_used(&self) -> usize {
-        // includes amortized new size
-        // hash table is first transformed to sorted table
-        self.data_mem_used
-            + self.unsorted.len() * 2 * size_of::<AggRecord>()
-            + self.grouping_mappings.len()
-                * (
-                    1 // one-byte payload per entry according to hashbrown's doc
-                    + size_of::<AggRecord>() // hashmap entries
-                    + size_of::<AggRecord>()
-                    // hashmap is sorted into vec during spill
-                )
+        self.agg_buf_mem_used
+            // map memory usage, one byte per entry
+            + self.map_keys.mem_size()
+            + self.map.capacity() * size_of::<(u64, AggBuf, u8)>()
+            // unsorted memory usage
+            + self.unsorted_values.capacity() * size_of::<AggBuf>()
+            + self.unsorted_keys_mem_used
+            // memory usage for sorting
+            + self.num_records() * size_of::<(u16, &[u8], AggBuf)>()
     }
 
     pub fn num_records(&self) -> usize {
-        self.grouping_mappings.len() + self.unsorted.len()
+        self.map.len() + self.unsorted_values.len()
     }
 
-    pub fn with_entry_mut(
+    pub fn update_entries(
         &mut self,
         agg_ctx: &Arc<AggContext>,
-        grouping_row: Box<[u8]>,
-        fn_entry: impl FnOnce(&mut AggBuf) -> Result<()>,
+        key_rows: Rows,
+        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
     ) -> Result<()> {
-        let grouping_row_mem_size = grouping_row.len();
+        if self.is_hash {
+            self.update_hash_entries(agg_ctx, key_rows, fn_entry)
+        } else {
+            self.update_unsorted_entries(agg_ctx, key_rows, fn_entry)
+        }
+    }
 
-        // get entry from hash/unsorted table
-        let entry = if self.is_hash {
-            match self.grouping_mappings.entry(grouping_row) {
-                Entry::Occupied(e) => {
-                    let e = e.into_mut();
-                    self.data_mem_used -= e.mem_size();
-                    e
+    fn update_hash_entries(
+        &mut self,
+        agg_ctx: &Arc<AggContext>,
+        key_rows: Rows,
+        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
+    ) -> Result<()> {
+        let hashes: Vec<u64> = key_rows
+            .iter()
+            .map(|row| RANDOM_STATE.hash_one(row.as_ref()))
+            .collect();
+
+        for (row_idx, row) in key_rows.iter().enumerate() {
+            match self
+                .map
+                .raw_entry_mut()
+                .from_hash(hashes[row_idx], |&addr| {
+                    self.map_keys.get(addr) == row.as_ref()
+                }) {
+                RawEntryMut::Occupied(mut view) => {
+                    self.agg_buf_mem_used -= view.get().mem_size();
+                    fn_entry(row_idx, view.get_mut())?;
+                    self.agg_buf_mem_used += view.get().mem_size();
                 }
-                Entry::Vacant(e) => {
-                    self.data_mem_used += grouping_row_mem_size;
-                    e.insert(agg_ctx.initial_agg_buf.clone())
+                RawEntryMut::Vacant(view) => {
+                    let new_key_addr = self.map_keys.add(row.as_ref());
+                    let mut new_entry = agg_ctx.initial_agg_buf.clone();
+                    fn_entry(row_idx, &mut new_entry)?;
+                    self.agg_buf_mem_used += new_entry.mem_size();
+                    view.insert(new_key_addr, new_entry);
                 }
             }
-        } else {
-            self.data_mem_used += grouping_row_mem_size;
-            self.unsorted.push(AggRecord::new(
-                grouping_row,
-                agg_ctx.initial_agg_buf.clone(),
-            ));
-            &mut self.unsorted.last_mut().unwrap().agg_buf
-        };
-        fn_entry(entry)?;
-        self.data_mem_used += entry.mem_size();
+        }
         Ok(())
     }
 
-    fn into_rev_sorted_vec(mut self) -> Vec<AggRecord> {
-        let mut vec = if self.is_hash {
-            self.grouping_mappings.shrink_to_fit();
-            self.grouping_mappings
-                .into_iter()
-                .map(|(_1, _2)| AggRecord::new(_1, _2))
-                .collect::<Vec<_>>()
-        } else {
-            self.unsorted.shrink_to_fit();
-            self.unsorted
-        };
-        vec.sort_unstable_by(|_1, _2| _2.cmp(_1));
-        vec
+    fn update_unsorted_entries(
+        &mut self,
+        agg_ctx: &Arc<AggContext>,
+        key_rows: Rows,
+        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
+    ) -> Result<()> {
+        for i in 0..key_rows.num_rows() {
+            let mut new_entry = agg_ctx.initial_agg_buf.clone();
+            fn_entry(i, &mut new_entry)?;
+            self.agg_buf_mem_used += new_entry.mem_size();
+            self.unsorted_values.push(new_entry);
+        }
+        self.unsorted_keys_mem_used += key_rows.size();
+        self.unsorted_keys.push(key_rows);
+        Ok(())
     }
 
     fn try_into_spill(self) -> Result<Option<Box<dyn Spill>>> {
-        if self.grouping_mappings.is_empty() && self.unsorted.is_empty() {
+        if self.map.is_empty() && self.unsorted_values.is_empty() {
             return Ok(None);
         }
 
+        // sort all records using radix sort on hashcodes of keys
+        let mut sorted: Vec<(u16, &[u8], AggBuf)> = if self.is_hash {
+            self.map
+                .into_iter()
+                .map(|(key_addr, value)| {
+                    let key = self.map_keys.get(key_addr);
+                    let key_hash = RANDOM_STATE.hash_one(key) as u16;
+                    (key_hash, key, value)
+                })
+                .collect()
+        } else {
+            self.unsorted_values
+                .into_iter()
+                .zip(self.unsorted_keys.iter().flat_map(|rows| {
+                    rows.iter().map(|row| {
+                        // safety - row bytes has same lifetime with self.unsorted_rows
+                        unsafe { std::mem::transmute::<_, &'static [u8]>(row.as_ref()) }
+                    })
+                }))
+                .map(|(value, key)| (RANDOM_STATE.hash_one(key) as u16, key, value))
+                .collect()
+        };
+        let counts = rdxsort::radix_sort_u16_by(&mut sorted, |(h, _, _)| *h);
+
         let spill = try_new_spill()?;
         let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
-        let mut sorted = self.into_rev_sorted_vec();
+        let mut beg = 0;
 
-        while let Some(mut record) = sorted.pop() {
-            // write grouping row
-            write_len(record.grouping.as_ref().len() + 1, &mut writer)?;
-            writer.write_all(record.grouping.as_ref())?;
+        for i in 0..65536 {
+            if counts[i] > 0 {
+                // write bucket id and number of records in this bucket
+                write_len(i, &mut writer)?;
+                write_len(counts[i], &mut writer)?;
 
-            // write agg buf
-            record.agg_buf.save(&mut writer)?;
+                // write records in this bucket
+                for (_, key, value) in &mut sorted[beg..][..counts[i]] {
+                    // write key
+                    write_len(key.len(), &mut writer)?;
+                    writer.write_all(key)?;
 
-            // release memory in time
-            if sorted.len() + 1000 < sorted.capacity() {
-                sorted.shrink_to_fit();
+                    // write value
+                    value.save(&mut writer)?;
+                }
+                beg += counts[i];
             }
         }
-        write_len(0, &mut writer)?; // EOF
+        write_len(65536, &mut writer)?; // EOF
+        write_len(0, &mut writer)?;
 
         writer
             .finish()
@@ -379,41 +489,36 @@ impl InMemTable {
 struct SpillCursor {
     agg_ctx: Arc<AggContext>,
     input: FrameDecoder<BufReader<Box<dyn Read + Send>>>,
-    current: Option<AggRecord>,
+    pub cur_bucket_idx: usize,
+    pub cur_bucket_count: usize,
 }
 impl SpillCursor {
     fn try_from_spill(spill: &Box<dyn Spill>, agg_ctx: &Arc<AggContext>) -> Result<Self> {
-        let buf_reader = spill.get_buf_reader();
-        let mut iter = SpillCursor {
+        let input = FrameDecoder::new(spill.get_buf_reader());
+        let mut cursor = SpillCursor {
             agg_ctx: agg_ctx.clone(),
-            input: FrameDecoder::new(buf_reader),
-            current: None,
+            input,
+            cur_bucket_idx: 0,
+            cur_bucket_count: 0,
         };
-        iter.pop()?; // load first record into current
-        Ok(iter)
+        cursor.next_bucket()?;
+        Ok(cursor)
     }
 
-    fn peek(&self) -> &Option<AggRecord> {
-        &self.current
+    fn next_record(&mut self) -> Result<(Box<[u8]>, AggBuf)> {
+        // read key
+        let key_len = read_len(&mut self.input)?;
+        let key = read_bytes_slice(&mut self.input, key_len)?;
+
+        // read value
+        let mut value = self.agg_ctx.initial_agg_buf.clone();
+        value.load(&mut self.input)?;
+        Ok((key, value))
     }
 
-    fn pop(&mut self) -> Result<Option<AggRecord>> {
-        // read grouping
-        let prefix = read_len(&mut self.input)?;
-        if prefix == 0 {
-            // EOF
-            return Ok(std::mem::replace(&mut self.current, None));
-        }
-        let grouping_buf_len = prefix - 1;
-        let grouping = read_bytes_slice(&mut self.input, grouping_buf_len)?;
-
-        // read agg buf
-        let mut agg_buf = self.agg_ctx.initial_agg_buf.clone();
-        agg_buf.load(&mut self.input)?;
-
-        Ok(std::mem::replace(
-            &mut self.current,
-            Some(AggRecord::new(grouping, agg_buf)),
-        ))
+    fn next_bucket(&mut self) -> Result<()> {
+        self.cur_bucket_idx = read_len(&mut self.input)?;
+        self.cur_bucket_count = read_len(&mut self.input)?;
+        Ok(())
     }
 }

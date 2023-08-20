@@ -32,9 +32,10 @@ use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
+use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
-use crate::agg::agg_tables::{AggTables, InMemTable};
-use crate::agg::{AggExecMode, AggExpr, AggRecord, GroupingExpr};
+use crate::agg::agg_tables::AggTables;
+use crate::agg::{AggExecMode, AggExpr, GroupingExpr};
 use crate::common::memory_manager::MemManager;
 use crate::common::output::{output_bufferable_with_spill, output_with_sender};
 
@@ -213,11 +214,7 @@ async fn execute_agg_with_grouping_hash(
             .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
             .collect::<Result<_>>()
             .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
-        let grouping_rows: Vec<Box<[u8]>> = grouping_row_converter
-            .convert_columns(&grouping_arrays)?
-            .into_iter()
-            .map(|row| row.as_ref().into())
-            .collect();
+        let grouping_rows = grouping_row_converter.convert_columns(&grouping_arrays)?;
 
         // compute input arrays
         let input_arrays = agg_ctx
@@ -227,16 +224,11 @@ async fn execute_agg_with_grouping_hash(
             .get_input_agg_buf_array(&input_batch)
             .map_err(|err| err.context("agg: evaluating input agg-buf arrays error"))?;
 
-        // update to in-mem table
+        // insert or update rows into in-mem table
         tables
-            .update_in_mem(|in_mem: &mut InMemTable| {
-                for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
-                    in_mem.with_entry_mut(&agg_ctx, grouping_row, |agg_buf| {
-                        agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
-                        agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
-                        Ok(())
-                    })?;
-                }
+            .update_entries(grouping_rows, |row_idx, agg_buf| {
+                agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
+                agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
                 Ok(())
             })
             .await?;
@@ -313,9 +305,8 @@ async fn execute_agg_no_grouping(
             let elapsed_compute = baseline_metrics.elapsed_compute().clone();
             let mut timer = elapsed_compute.timer();
 
-            let record: AggRecord = AggRecord::new(Box::default(), agg_buf);
             let batch_result = agg_ctx
-                .build_agg_columns(&mut [record])
+                .build_agg_columns(&mut [(&[], agg_buf)])
                 .map_err(|e| ArrowError::ExternalError(Box::new(e)))
                 .and_then(|agg_columns| {
                     RecordBatch::try_new_with_options(
@@ -369,7 +360,7 @@ async fn execute_agg_sorted(
         |sender| async move {
             let batch_size = context.session_config().batch_size();
             let mut staging_records = vec![];
-            let mut current_record: Option<AggRecord> = None;
+            let mut current_record: Option<(Box<[u8]>, AggBuf)> = None;
             let mut timer = elapsed_compute.timer();
             timer.stop();
 
@@ -377,9 +368,9 @@ async fn execute_agg_sorted(
                 () => {{
                     let batch = agg_ctx.convert_records_to_batch(
                         &mut grouping_row_converter,
-                        &mut std::mem::take(&mut staging_records),
+                        &mut staging_records,
                     )?;
-
+                    staging_records.clear();
                     log::info!(
                         "aggregate exec (sorted) outputting one batch: num_rows={}",
                         batch.num_rows(),
@@ -416,11 +407,9 @@ async fn execute_agg_sorted(
                 // update to current record
                 for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
                     // if group key differs, renew one and move the old record to staging
-                    if Some(&grouping_row) != current_record.as_ref().map(|r| &r.grouping) {
-                        let finished_record = current_record.replace(AggRecord::new(
-                            grouping_row,
-                            agg_ctx.initial_agg_buf.clone(),
-                        ));
+                    if Some(&grouping_row) != current_record.as_ref().map(|r| &r.0) {
+                        let finished_record =
+                            current_record.replace((grouping_row, agg_ctx.initial_agg_buf.clone()));
                         if let Some(record) = finished_record {
                             staging_records.push(record);
                             if staging_records.len() >= batch_size {
@@ -428,7 +417,7 @@ async fn execute_agg_sorted(
                             }
                         }
                     }
-                    let agg_buf = &mut current_record.as_mut().unwrap().agg_buf;
+                    let agg_buf = &mut current_record.as_mut().unwrap().1;
                     agg_ctx
                         .partial_update_input(agg_buf, &input_arrays, row_idx)
                         .map_err(|err| {
