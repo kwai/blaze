@@ -14,6 +14,7 @@
 
 //! Defines the External shuffle repartition plan
 
+use crate::common::bytes_arena::BytesArena;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::output::{
@@ -48,6 +49,7 @@ use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt::Formatter;
 use std::io::{BufReader, Cursor, Read, Write};
+use std::mem::size_of;
 use std::sync::{Arc, Weak};
 
 const NUM_LEVELS: usize = 64;
@@ -142,7 +144,7 @@ impl ExecutionPlan for SortExec {
             input_schema: self.schema(),
             limit: self.fetch.unwrap_or(usize::MAX),
             sort_row_converter: SyncMutex::new(sort_row_converter),
-            levels: Mutex::new(vec![None; NUM_LEVELS]),
+            levels: Mutex::new((0..NUM_LEVELS).map(|_| None).collect()),
             spills: Default::default(),
             baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
         });
@@ -364,10 +366,11 @@ impl ExternalSorter {
                     }
                 }
                 2 => {
-                    let in_mem_batches2 = in_mem_batches.pop().unwrap();
-                    let in_mem_batches1 = in_mem_batches.pop().unwrap();
-                    let mut merge_iter =
-                        SortedBatches::merge_into_iter(in_mem_batches1, in_mem_batches2);
+                    let mut merge_iter = SortedBatches::merge_into_iter(
+                        in_mem_batches.pop().unwrap(),
+                        in_mem_batches.pop().unwrap(),
+                        None,
+                    );
                     while let Some((batch, _)) = merge_iter.next().transpose()? {
                         let batch_mem_size = batch.get_array_memory_size();
                         self.baseline_metrics.record_output(batch.num_rows());
@@ -411,41 +414,38 @@ impl ExternalSorter {
         macro_rules! flush_staging {
             () => {{
                 if num_total_output_rows < self.limit {
-                    flush_staging!(@do_flush);
-                }
-            }};
-            (@do_flush) => {{
-                let mut batches_base_idx = vec![];
-                let mut base_idx = 0;
-                for cursor in cursors.values() {
-                    batches_base_idx.push(base_idx);
-                    base_idx += cursor.cur_batches.len();
-                }
-                let staging_indices = std::mem::take(&mut staging_cursor_ids)
-                    .iter()
-                    .map(|&cursor_id| {
-                        let cursor = &mut cursors.values_mut()[cursor_id];
-                        let base_idx = batches_base_idx[cursor.id];
-                        let (batch_idx, row_idx) = cursor.next_row();
-                        (base_idx + batch_idx, row_idx)
-                    })
-                    .collect::<Vec<_>>();
+                    let mut batches_base_idx = vec![];
+                    let mut base_idx = 0;
+                    for cursor in cursors.values() {
+                        batches_base_idx.push(base_idx);
+                        base_idx += cursor.cur_batches.len();
+                    }
+                    let staging_indices = std::mem::take(&mut staging_cursor_ids)
+                        .iter()
+                        .map(|&cursor_id| {
+                            let cursor = &mut cursors.values_mut()[cursor_id];
+                            let base_idx = batches_base_idx[cursor.id];
+                            let (batch_idx, row_idx) = cursor.next_row();
+                            (base_idx + batch_idx, row_idx)
+                        })
+                        .collect::<Vec<_>>();
 
-                let mut batches = vec![];
-                for cursor in cursors.values() {
-                    batches.extend(cursor.cur_batches.clone());
+                    let mut batches = vec![];
+                    for cursor in cursors.values() {
+                        batches.extend(cursor.cur_batches.clone());
+                    }
+
+                    let mut batch = BatchesInterleaver::new(self.input_schema.clone(), &batches)
+                        .interleave(&staging_indices)?;
+                    if num_total_output_rows + batch.num_rows() > self.limit {
+                        batch = batch.slice(0, self.limit - num_total_output_rows);
+                    };
+                    num_total_output_rows += batch.num_rows();
+                    let _ = num_total_output_rows;
+
+                    self.baseline_metrics.record_output(batch.num_rows());
+                    sender.send(Ok(batch), Some(&mut timer)).await;
                 }
-
-                let mut batch = BatchesInterleaver::new(self.input_schema.clone(), &batches)
-                    .interleave(&staging_indices)?;
-                if num_total_output_rows + batch.num_rows() > self.limit {
-                    batch = batch.slice(0, self.limit - num_total_output_rows);
-                };
-                num_total_output_rows += batch.num_rows();
-                let _ = num_total_output_rows;
-
-                self.baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch), Some(&mut timer)).await;
             }};
         }
 
@@ -483,14 +483,12 @@ impl ExternalSorter {
     }
 }
 
-#[derive(Clone)]
 struct SortedBatches {
     sorter: Arc<ExternalSorter>,
     batches: Vec<RecordBatch>,
-    keys: Vec<Box<[u8]>>,
-    batches_num_rows: usize,
     batches_mem_size: usize,
-    keys_mem_size: usize,
+    keys: Vec<u64>,
+    key_data: BytesArena,
 }
 
 impl SortedBatches {
@@ -498,10 +496,9 @@ impl SortedBatches {
         Self {
             sorter,
             batches: vec![],
-            keys: vec![],
-            batches_num_rows: 0,
             batches_mem_size: 0,
-            keys_mem_size: 0,
+            keys: vec![],
+            key_data: BytesArena::default(),
         }
     }
 
@@ -518,18 +515,17 @@ impl SortedBatches {
             .collect::<Result<_>>()?;
 
         // sort keys
-        let (indices, keys): (Vec<u32>, Vec<Box<[u8]>>) = sorter
+        let mut key_data = BytesArena::default();
+        let (indices, keys): (Vec<u32>, Vec<u64>) = sorter
             .sort_row_converter
             .lock()
             .convert_columns(&key_cols)?
             .iter()
             .enumerate()
-            .map(|(idx, row)| (idx as u32, Box::<[u8]>::from(row.as_ref())))
             .sorted_unstable_by(|(_, row1), (_, row2)| row1.cmp(row2))
             .take(sorter.limit)
+            .map(|(idx, row)| (idx as u32, key_data.add(row.as_ref())))
             .unzip();
-
-        let keys_mem_size = keys.iter().map(|key| key.len()).sum::<usize>();
 
         // get sorted batch
         let indices = UInt32Array::from(indices);
@@ -541,7 +537,6 @@ impl SortedBatches {
                 .map(|c| Ok(arrow::compute::take(&c, &indices, None)?))
                 .collect::<Result<Vec<_>>>()?,
         )?;
-        let batches_num_rows = batch.num_rows();
         let batches_mem_size = batch.get_array_memory_size();
         let batches = vec![batch];
 
@@ -549,14 +544,16 @@ impl SortedBatches {
             sorter,
             batches,
             keys,
-            batches_num_rows,
+            key_data,
             batches_mem_size,
-            keys_mem_size,
         })
     }
 
     fn mem_size(&self) -> usize {
-        2 * (self.batches_mem_size + self.keys_mem_size + self.batches_num_rows * 8)
+        // keys and batches are doubled during merging
+        self.key_data.mem_size()
+            + self.keys.capacity() * size_of::<u64>() * 2
+            + self.batches_mem_size * 2
     }
 
     fn merge(&mut self, other: SortedBatches) -> Result<()> {
@@ -564,103 +561,107 @@ impl SortedBatches {
         let a = std::mem::replace(self, SortedBatches::new_empty(sorter));
         let b = other;
 
-        let mut new = Self {
-            sorter: a.sorter.clone(),
-            batches: vec![],
-            keys: vec![],
-            batches_num_rows: 0,
-            batches_mem_size: 0,
-            keys_mem_size: 0,
-        };
-
-        let mut merge_iter = Self::merge_into_iter(a, b);
+        let mut merge_iter = Self::merge_into_iter(a, b, Some(&mut self.key_data));
         while let Some((batch, keys)) = merge_iter.next().transpose()? {
-            new.batches_num_rows += batch.num_rows();
-            new.batches_mem_size += batch.get_array_memory_size();
-            new.keys_mem_size += keys.iter().map(|key| key.len()).sum::<usize>();
-            new.batches.push(batch);
-            new.keys.extend(keys);
+            self.batches_mem_size += batch.get_array_memory_size();
+            self.batches.push(batch);
+            self.keys.extend(keys);
         }
-        *self = new;
         Ok(())
     }
 
-    fn merge_into_iter(
+    fn merge_into_iter<'a>(
         a: SortedBatches,
         b: SortedBatches,
-    ) -> Box<dyn Iterator<Item = Result<(RecordBatch, Vec<Box<[u8]>>)>> + Send> {
-        struct MergeCursor {
+        key_data: Option<&'a mut BytesArena>,
+    ) -> Box<dyn Iterator<Item = Result<(RecordBatch, Vec<u64>)>> + Send + 'a> {
+        struct InputCursor {
+            batches: VecDeque<RecordBatch>,
+            batch_idx: usize,
+            row_idx: usize,
+            keys: VecDeque<u64>,
+            key_data: BytesArena,
+        }
+
+        struct MergeCursor<'a> {
+            cursors: [InputCursor; 2],
             empty_batch: RecordBatch,
-            a_batches: VecDeque<RecordBatch>,
-            b_batches: VecDeque<RecordBatch>,
-            a_keys: VecDeque<Box<[u8]>>,
-            b_keys: VecDeque<Box<[u8]>>,
-            a_row_idx: usize,
-            b_row_idx: usize,
+            key_data: Option<&'a mut BytesArena>,
             limit: usize,
             num_fetched: usize,
             batch_size: usize,
         }
-        impl Iterator for MergeCursor {
-            type Item = Result<(RecordBatch, Vec<Box<[u8]>>)>;
+
+        impl Iterator for MergeCursor<'_> {
+            type Item = Result<(RecordBatch, Vec<u64>)>;
 
             fn next(&mut self) -> Option<Self::Item> {
-                if self.a_keys.is_empty() && self.b_keys.is_empty() {
+                if self.cursors[0].keys.is_empty() && self.cursors[1].keys.is_empty() {
                     return None;
                 }
                 if self.num_fetched >= self.limit {
-                    self.a_batches.clear();
-                    self.b_batches.clear();
-                    self.a_keys.clear();
-                    self.b_keys.clear();
+                    for cursor in &mut self.cursors {
+                        cursor.batches.clear();
+                        cursor.keys.clear();
+                        cursor.key_data = BytesArena::default();
+                    }
                     return None;
                 }
 
                 let cur_batch_limit = self.batch_size.min(self.limit - self.num_fetched);
-                let mut indices = vec![];
-                let mut keys = vec![];
-                let mut a_batch_idx = 0;
-                let mut b_batch_idx = 0;
-                let mut a_row_idx = self.a_row_idx;
-                let mut b_row_idx = self.b_row_idx;
+                let mut indices = Vec::with_capacity(cur_batch_limit);
+                let mut keys = Vec::with_capacity(if self.key_data.is_some() {
+                    cur_batch_limit
+                } else {
+                    0
+                });
 
                 // merge keys and get indices for interleaving
                 while indices.len() < cur_batch_limit {
-                    let key_a = self.a_keys.front();
-                    let key_b = self.b_keys.front();
-                    let cmp = match (&key_a, &key_b) {
+                    let key_a = self.cursors[0].keys.front();
+                    let key_b = self.cursors[1].keys.front();
+                    let min_cursor_id = match (key_a, key_b) {
+                        (Some(a), Some(b)) => {
+                            let key_a = self.cursors[0].key_data.get(*a);
+                            let key_b = self.cursors[1].key_data.get(*b);
+                            (key_b < key_a) as usize
+                        }
+                        (Some(_), None) => 0,
+                        (None, Some(_)) => 1,
                         (None, None) => break,
-                        (_, None) => 0,
-                        (None, _) => 1,
-                        (Some(a), Some(b)) => (b < a) as i32,
                     };
+                    let min_cursor = &mut self.cursors[min_cursor_id];
 
-                    if cmp == 0 {
-                        indices.push((a_batch_idx * 2, a_row_idx));
-                        keys.push(self.a_keys.pop_front().unwrap());
-                        a_row_idx += 1;
-                        if a_row_idx >= self.a_batches[a_batch_idx].num_rows() {
-                            a_row_idx = 0;
-                            a_batch_idx += 1;
-                        }
-                    } else {
-                        indices.push((b_batch_idx * 2 + 1, b_row_idx));
-                        keys.push(self.b_keys.pop_front().unwrap());
-                        b_row_idx += 1;
-                        if b_row_idx >= self.b_batches[b_batch_idx].num_rows() {
-                            b_row_idx = 0;
-                            b_batch_idx += 1;
-                        }
+                    // append current row idx to indices
+                    indices.push((min_cursor.batch_idx * 2 + min_cursor_id, min_cursor.row_idx));
+
+                    // append current key
+                    let key_addr = min_cursor.keys.pop_front().unwrap();
+                    let key = min_cursor.key_data.specialized_get_and_drop_last(key_addr);
+                    if let Some(key_data) = self.key_data.as_mut() {
+                        keys.push(key_data.add(key));
+                    }
+
+                    // move to next record
+                    min_cursor.row_idx += 1;
+                    if min_cursor.row_idx >= min_cursor.batches[min_cursor.batch_idx].num_rows() {
+                        min_cursor.row_idx = 0;
+                        min_cursor.batch_idx += 1;
                     }
                 }
-                indices.shrink_to_fit();
-                keys.shrink_to_fit();
 
                 // get sorted batches
                 let mut interleaving = vec![];
-                for batch_idx in 0..=std::cmp::max(a_batch_idx, b_batch_idx) {
-                    for batch in [self.a_batches.get(batch_idx), self.b_batches.get(batch_idx)] {
-                        interleaving.push(batch.unwrap_or(&self.empty_batch).clone());
+                let max_batch_idx = self
+                    .cursors
+                    .iter()
+                    .map(|cursor| cursor.batch_idx)
+                    .max()
+                    .unwrap();
+                for batch_idx in 0..=max_batch_idx {
+                    for cursor in &self.cursors {
+                        let batch = cursor.batches.get(batch_idx).unwrap_or(&self.empty_batch);
+                        interleaving.push(batch.clone());
                     }
                 }
                 let interleaver = BatchesInterleaver::new(self.empty_batch.schema(), &interleaving);
@@ -670,30 +671,37 @@ impl SortedBatches {
                 };
 
                 // adjust batch and rows indices
-                while a_batch_idx > 0 {
-                    self.a_batches.pop_front();
-                    a_batch_idx -= 1;
-                }
-                while b_batch_idx > 0 {
-                    self.b_batches.pop_front();
-                    b_batch_idx -= 1;
+                for cursor in &mut self.cursors {
+                    while cursor.batch_idx > 0 {
+                        cursor.batches.pop_front();
+                        cursor.batch_idx -= 1;
+                    }
                 }
                 self.num_fetched += batch.num_rows();
-                self.a_row_idx = a_row_idx;
-                self.b_row_idx = b_row_idx;
-                return Some(Ok((batch, keys)));
+                Some(Ok((batch, keys)))
             }
         }
 
         let sorter = a.sorter.clone();
         let mc = MergeCursor {
             empty_batch: RecordBatch::new_empty(sorter.input_schema.clone()),
-            a_batches: a.batches.into(),
-            b_batches: b.batches.into(),
-            a_keys: a.keys.into(),
-            b_keys: b.keys.into(),
-            a_row_idx: 0,
-            b_row_idx: 0,
+            cursors: [
+                InputCursor {
+                    batches: a.batches.into(),
+                    batch_idx: 0,
+                    row_idx: 0,
+                    keys: a.keys.into(),
+                    key_data: a.key_data,
+                },
+                InputCursor {
+                    batches: b.batches.into(),
+                    batch_idx: 0,
+                    row_idx: 0,
+                    keys: b.keys.into(),
+                    key_data: b.key_data,
+                },
+            ],
+            key_data,
             limit: sorter.limit,
             num_fetched: 0,
             batch_size: sorter.sub_batch_size,
@@ -701,14 +709,14 @@ impl SortedBatches {
         Box::new(mc)
     }
 
-    fn try_into_spill(self) -> Result<Option<Box<dyn Spill>>> {
-        if self.batches_num_rows == 0 {
+    fn try_into_spill(mut self) -> Result<Option<Box<dyn Spill>>> {
+        if self.keys.is_empty() {
             return Ok(None);
         }
 
         let spill = try_new_spill()?;
         let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
-        let mut keys: VecDeque<Box<[u8]>> = self.keys.into();
+        let mut key_idx = 0;
 
         // write batch1 + keys1, batch2 + keys2, ...
         for batch in self.batches {
@@ -717,9 +725,12 @@ impl SortedBatches {
             writer.write_all(&buf)?;
 
             for _ in 0..batch.num_rows() {
-                let key = keys.pop_front().unwrap();
+                let key = self
+                    .key_data
+                    .specialized_get_and_drop_last(self.keys[key_idx]);
+                key_idx += 1;
                 write_len(key.len(), &mut writer)?;
-                writer.write_all(&key)?;
+                writer.write_all(key)?;
             }
         }
         writer

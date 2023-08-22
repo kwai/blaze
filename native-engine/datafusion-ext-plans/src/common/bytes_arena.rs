@@ -57,6 +57,22 @@ impl BytesArena {
         }
     }
 
+    /// specialized for merging two parts in sort-exec
+    /// works like an IntoIterator, free memory of visited items
+    pub(crate) fn specialized_get_and_drop_last(&mut self, addr: u64) -> &[u8] {
+        let (id, offset, len) = unapply_arena_addr(addr);
+        if id > 0 && !self.bufs[id - 1].is_empty() {
+            self.bufs[id - 1].truncate(0); // drop last buf
+            self.bufs[id - 1].shrink_to_fit();
+        }
+        unsafe {
+            // safety - performance critical, assume addr is valid
+            self.bufs
+                .get_unchecked(id)
+                .get_unchecked(offset..offset + len)
+        }
+    }
+
     pub fn mem_size(&self) -> usize {
         self.bufs_frozen_mem_size + self.cur_buf().capacity()
     }
