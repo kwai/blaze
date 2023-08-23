@@ -386,17 +386,17 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
 #[derive(Derivative)]
 #[derivative(Clone, Copy, Default, PartialOrd, PartialEq, Ord, Eq)]
-struct PI {
-    partition_id: u32,
-    hash: u32,
+pub struct PI {
+    pub partition_id: u32,
+    pub hash: u32,
 
     #[derivative(PartialOrd = "ignore")]
     #[derivative(PartialEq = "ignore")]
     #[derivative(Ord = "ignore")]
-    batch_idx: u32,
+    pub batch_idx: u32,
 
     #[derivative(PartialOrd = "ignore")]
     #[derivative(PartialEq = "ignore")]
     #[derivative(Ord = "ignore")]
-    row_idx: u32,
+    pub row_idx: u32,
 }

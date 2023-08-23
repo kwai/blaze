@@ -28,6 +28,7 @@ use datafusion::execution::context::TaskContext;
 use crate::common::memory_manager::MemManager;
 use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
 use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
+use crate::shuffle::rss_sort_repartitioner::RssSortShuffleRepartitioner;
 use crate::shuffle::ShuffleRepartitioner;
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
@@ -112,8 +113,19 @@ impl ExecutionPlan for RssShuffleWriterExec {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
-            Partitioning::Hash(_, _) => {
+            p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
                 let partitioner = Arc::new(RssBucketShuffleRepartitioner::new(
+                    partition,
+                    rss_partition_writer,
+                    self.schema(),
+                    self.partitioning.clone(),
+                    context.clone(),
+                ));
+                MemManager::register_consumer(partitioner.clone(), true);
+                partitioner
+            }
+            Partitioning::Hash(_, _) => {
+                let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
                     self.schema(),

@@ -28,10 +28,13 @@ use futures::StreamExt;
 use std::sync::Arc;
 
 pub mod bucket_repartitioner;
-pub mod rss_bucket_repartitioner;
-pub mod rss_single_repartitioner;
 pub mod single_repartitioner;
 pub mod sort_repartitioner;
+
+mod rss;
+pub mod rss_bucket_repartitioner;
+pub mod rss_single_repartitioner;
+pub mod rss_sort_repartitioner;
 
 #[async_trait]
 pub trait ShuffleRepartitioner: Send + Sync {

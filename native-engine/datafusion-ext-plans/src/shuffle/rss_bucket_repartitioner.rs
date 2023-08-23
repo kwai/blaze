@@ -15,9 +15,9 @@
 //! Defines the rss bucket shuffle repartitioner
 
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
+use crate::shuffle::rss::{rss_flush, rss_write_batch};
 use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
 use async_trait::async_trait;
-use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::*;
 use datafusion::arrow::error::Result as ArrowResult;
@@ -26,11 +26,9 @@ use datafusion::common::Result;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::Partitioning;
 use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
-use datafusion_ext_commons::io::write_one_batch;
 use futures::lock::Mutex;
 use itertools::Itertools;
-use jni::objects::{GlobalRef, JObject};
-use std::io::Cursor;
+use jni::objects::GlobalRef;
 use std::sync::{Arc, Weak};
 
 pub struct RssBucketShuffleRepartitioner {
@@ -38,6 +36,7 @@ pub struct RssBucketShuffleRepartitioner {
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     buffered_partitions: Mutex<Vec<PartitionBuffer>>,
     partitioning: Partitioning,
+    rss_partition_writer: GlobalRef,
     num_output_partitions: usize,
 }
 
@@ -52,22 +51,24 @@ impl RssBucketShuffleRepartitioner {
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
         let batch_size = context.session_config().batch_size();
-
+        let buffered_partitions = Mutex::new(
+            (0..num_output_partitions)
+                .map(|i| {
+                    PartitionBuffer::new(
+                        schema.clone(),
+                        batch_size,
+                        i,
+                        rss_partition_writer.clone(),
+                    )
+                })
+                .collect(),
+        );
         Self {
             name: format!("RssBucketShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
-            buffered_partitions: Mutex::new(
-                (0..num_output_partitions)
-                    .map(|_| {
-                        PartitionBuffer::new(
-                            schema.clone(),
-                            batch_size,
-                            rss_partition_writer.clone(),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            ),
+            buffered_partitions,
             partitioning,
+            rss_partition_writer,
             num_output_partitions,
         }
     }
@@ -84,7 +85,8 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
 
         // we are likely to spill more frequently because the cost of spilling a shuffle
         // repartition is lower than other consumers.
-        if self.mem_used_percent() > 0.5 {
+        // rss shuffle spill has even lower cost than normal shuffle
+        if self.mem_used_percent() > 0.25 {
             self.spill().await?;
         }
 
@@ -129,11 +131,7 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
             let output = &mut buffered_partitions[partition_id];
 
             if end - start < output.rss_batch_size {
-                output.append_rows(
-                    input.columns(),
-                    &shuffled_partition_ids[start..end],
-                    partition_id,
-                )?;
+                output.append_rows(input.columns(), &shuffled_partition_ids[start..end])?;
             } else {
                 // for bigger slice, we can use column based operation
                 // to build batches and directly append to output.
@@ -151,7 +149,7 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
                         .map(|c| arrow::compute::take(c, &indices, None))
                         .collect::<ArrowResult<Vec<ArrayRef>>>()?,
                 )?;
-                output.append_batch(batch, partition_id)?;
+                output.append_batch(batch)?;
             }
             drop(buffered_partitions);
         }
@@ -159,12 +157,7 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        let mut buffered_partitions = self.buffered_partitions.lock().await;
-        for i in 0..self.num_output_partitions {
-            buffered_partitions[i].flush_to_rss(i)?;
-        }
-        self.update_mem_used(0).await?;
-        Ok(())
+        self.spill().await
     }
 }
 
@@ -187,8 +180,9 @@ impl MemConsumer for RssBucketShuffleRepartitioner {
     async fn spill(&self) -> Result<()> {
         let mut partitions = self.buffered_partitions.lock().await;
         for i in 0..self.num_output_partitions {
-            partitions[i].flush_to_rss(i)?;
+            partitions[i].flush_to_rss()?;
         }
+        rss_flush(&self.rss_partition_writer)?;
         drop(partitions);
         self.update_mem_used(0).await?;
         Ok(())
@@ -202,6 +196,7 @@ impl Drop for RssBucketShuffleRepartitioner {
 }
 
 struct PartitionBuffer {
+    partition_id: usize,
     rss_partition_writer: GlobalRef,
     schema: SchemaRef,
     active: Vec<Box<dyn ArrayBuilder>>,
@@ -210,10 +205,16 @@ struct PartitionBuffer {
 }
 
 impl PartitionBuffer {
-    fn new(schema: SchemaRef, batch_size: usize, rss_partition_writer: GlobalRef) -> Self {
+    fn new(
+        schema: SchemaRef,
+        batch_size: usize,
+        partition_id: usize,
+        rss_partition_writer: GlobalRef,
+    ) -> Self {
         // use smaller batch size for rss to trigger more flushes
         let rss_batch_size = batch_size / (batch_size as f64 + 1.0).log2() as usize;
         Self {
+            partition_id,
             rss_partition_writer,
             schema,
             active: vec![],
@@ -222,12 +223,7 @@ impl PartitionBuffer {
         }
     }
 
-    fn append_rows(
-        &mut self,
-        columns: &[ArrayRef],
-        indices: &[usize],
-        partition_id: usize,
-    ) -> Result<()> {
+    fn append_rows(&mut self, columns: &[ArrayRef], indices: &[usize]) -> Result<()> {
         let mut start = 0;
 
         while start < indices.len() {
@@ -251,7 +247,7 @@ impl PartitionBuffer {
                 });
             self.num_active_rows += extend_len;
             if self.num_active_rows >= self.rss_batch_size {
-                self.flush_to_rss(partition_id)?;
+                self.flush_to_rss()?;
             }
             start += extend_len;
         }
@@ -261,12 +257,13 @@ impl PartitionBuffer {
     /// append a whole batch directly to staging
     /// this will break the appending order when mixing with append_rows(), but
     /// it does not affect the shuffle output result.
-    fn append_batch(&mut self, batch: RecordBatch, partition_id: usize) -> Result<()> {
-        write_batch_to_rss(self.rss_partition_writer.as_obj(), partition_id, &batch)
+    fn append_batch(&mut self, batch: RecordBatch) -> Result<()> {
+        rss_write_batch(&self.rss_partition_writer, self.partition_id, batch)?;
+        Ok(())
     }
 
     /// flush active data into rss
-    fn flush_to_rss(&mut self, partition_id: usize) -> Result<()> {
+    fn flush_to_rss(&mut self) -> Result<()> {
         if self.num_active_rows == 0 {
             return Ok(());
         }
@@ -274,24 +271,7 @@ impl PartitionBuffer {
         self.num_active_rows = 0;
 
         let batch = make_batch(self.schema.clone(), active)?;
-        write_batch_to_rss(self.rss_partition_writer.as_obj(), partition_id, &batch)?;
+        rss_write_batch(&self.rss_partition_writer, self.partition_id, batch)?;
         Ok(())
     }
-}
-
-fn write_batch_to_rss(
-    rss_partition_writer: JObject,
-    partition_id: usize,
-    batch: &RecordBatch,
-) -> Result<()> {
-    let mut data = vec![];
-
-    write_one_batch(batch, &mut Cursor::new(&mut data), true)?;
-    let data_len = data.len();
-    let buf = jni_new_direct_byte_buffer!(&data)?;
-    jni_call!(
-        BlazeRssPartitionWriterBase(rss_partition_writer)
-        .write(partition_id as i32, buf.as_obj(), data_len as i32) -> ()
-    )?;
-    Ok(())
 }

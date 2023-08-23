@@ -19,6 +19,7 @@ import java.nio.ByteBuffer
 
 trait RssPartitionWriterBase {
   def write(partitionId: Int, buffer: ByteBuffer, length: Int): Unit
-  def close(partitionId: Int): Unit
+  def flush(): Unit
+  def close(): Unit
   def getPartitionLengthMap: Array[Long]
 }
