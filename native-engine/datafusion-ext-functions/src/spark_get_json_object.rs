@@ -221,6 +221,7 @@ impl HiveGetJsonObjectMatcher {
                                     serde_json::Value::Null
                                 }
                             })
+                            .filter(|r| !r.is_null())
                             .collect(),
                     );
                 }
@@ -352,10 +353,22 @@ mod test {
                         {
                             "county": "西直门",
                             "city": 1.234
+                        },
+                        {
+                            "other": "invalid"
                         }
                     ]
                 }
             }"#;
+
+        let path = "$.message.location.county";
+        assert_eq!(
+            HiveGetJsonObjectEvaluator::try_new(path)
+                .unwrap()
+                .evaluate(input)
+                .unwrap(),
+            Some(r#"["浦东","西直门"]"#.to_owned())
+        );
 
         let path = "$.message.name";
         assert!(HiveGetJsonObjectEvaluator::try_new(path)
