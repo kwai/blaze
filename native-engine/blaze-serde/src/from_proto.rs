@@ -29,6 +29,7 @@ use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::{BuiltinScalarFunction, Operator};
 use datafusion::physical_expr::expressions::{LikeExpr, SCAndExpr, SCOrExpr};
 use datafusion::physical_expr::{functions, ScalarFunctionExpr};
+use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{
@@ -203,11 +204,38 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         ))
                     })?;
 
+                let join_filter = sort_merge_join
+                    .join_filter
+                    .as_ref()
+                    .map(|f| {
+                        let schema = Arc::new(convert_required!(f.schema)?);
+                        let expression = try_parse_physical_expr_required(&f.expression, &schema)?;
+                        let column_indices = f
+                            .column_indices
+                            .iter()
+                            .map(|i| {
+                                let side =
+                                    protobuf::JoinSide::from_i32(i.side).expect("invalid JoinSide");
+                                Ok(ColumnIndex {
+                                    index: i.index as usize,
+                                    side: side.into(),
+                                })
+                            })
+                            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
+
+                        Ok(JoinFilter::new(
+                            bind(expression, &schema)?,
+                            column_indices,
+                            schema.as_ref().clone(),
+                        ))
+                    })
+                    .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
                 Ok(Arc::new(SortMergeJoinExec::try_new(
                     left,
                     right,
                     on,
                     join_type.into(),
+                    join_filter,
                     sort_options,
                 )?))
             }
@@ -341,11 +369,39 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         ))
                     })?;
 
+                let join_filter = broadcast_join
+                    .join_filter
+                    .as_ref()
+                    .map(|f| {
+                        let schema = Arc::new(convert_required!(f.schema)?);
+                        let expression = try_parse_physical_expr_required(&f.expression, &schema)?;
+                        let column_indices = f
+                            .column_indices
+                            .iter()
+                            .map(|i| {
+                                let side =
+                                    protobuf::JoinSide::from_i32(i.side).expect("invalid JoinSide");
+                                Ok(ColumnIndex {
+                                    index: i.index as usize,
+                                    side: side.into(),
+                                })
+                            })
+                            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
+
+                        Ok(JoinFilter::new(
+                            bind(expression, &schema)?,
+                            column_indices,
+                            schema.as_ref().clone(),
+                        ))
+                    })
+                    .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
+
                 Ok(Arc::new(BroadcastJoinExec::try_new(
                     left,
                     right,
                     on,
                     join_type.into(),
+                    join_filter,
                 )?))
             }
             PhysicalPlanType::Union(union) => {

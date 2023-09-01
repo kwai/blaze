@@ -31,13 +31,11 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.sql.internal.SQLConf
 
 object NativeHelper extends Logging {
   val currentUser: UserGroupInformation = UserGroupInformation.getCurrentUser
   private val conf: SparkConf = SparkEnv.get.conf
 
-  val batchSize: Int = conf.getInt("spark.blaze.batchSize", 10000)
   val nativeMemory: Long = {
     val MEMORY_OVERHEAD_FACTOR = 0.10
     val MEMORY_OVERHEAD_MIN = 384L
@@ -58,8 +56,6 @@ object NativeHelper extends Logging {
       driverMemoryOverheadMiB * 1024L * 1024L
     }
   }
-  val memoryFraction: Double = conf.getDouble("spark.blaze.memoryFraction", 0.6);
-  val tz: String = conf.get(SQLConf.SESSION_LOCAL_TIMEZONE)
 
   def isNative(exec: SparkPlan): Boolean =
     Shims.get.isNative(exec)

@@ -54,9 +54,7 @@ fn init_logging() {
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
     env: JNIEnv,
     _: JClass,
-    batch_size: i64,
-    native_memory: i64,
-    memory_fraction: f64,
+    executor_memory_overhead: i64,
 ) {
     handle_unwinded_scope(|| -> Result<()> {
         // init logging
@@ -66,18 +64,20 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
         JavaClasses::init(&env);
 
         // init datafusion session context
-        SESSION.get_or_init(|| {
-            let max_memory = native_memory as usize;
-            let batch_size = batch_size as usize;
+        SESSION.get_or_try_init(|| {
+            let max_memory = executor_memory_overhead as usize;
+            let memory_fraction = jni_call_static!(BlazeConf.memoryFraction() -> f64)?;
+            let batch_size = jni_call_static!(BlazeConf.batchSize() -> i32)? as usize;
+            MemManager::init((max_memory as f64 * memory_fraction) as usize);
+
+            let session_config = SessionConfig::new().with_batch_size(batch_size);
             let runtime_config =
                 RuntimeConfig::new().with_disk_manager(DiskManagerConfig::Disabled);
-
-            MemManager::init((max_memory as f64 * memory_fraction) as usize);
-            let runtime = Arc::new(RuntimeEnv::new(runtime_config).unwrap());
-            let config = SessionConfig::new().with_batch_size(batch_size);
-            SessionContext::with_config_rt(config, runtime)
-        });
-        datafusion::error::Result::Ok(())
+            let runtime = Arc::new(RuntimeEnv::new(runtime_config)?);
+            let session = SessionContext::with_config_rt(session_config, runtime);
+            Ok::<_, DataFusionError>(session)
+        })?;
+        Ok::<_, DataFusionError>(())
     });
 }
 

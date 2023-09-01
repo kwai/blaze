@@ -125,15 +125,12 @@ object BlazeCallNativeWrapper extends Logging {
   private lazy val lazyInitNative: Unit = {
     logInfo(
       "Initializing native environment (" +
-        s"batchSize=${NativeHelper.batchSize}, " +
+        s"batchSize=${BlazeConf.batchSize}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
-        s"memoryFraction=${NativeHelper.memoryFraction}")
+        s"memoryFraction=${BlazeConf.memoryFraction}")
 
     BlazeCallNativeWrapper.loadLibBlaze()
-    JniBridge.initNative(
-      NativeHelper.batchSize,
-      NativeHelper.nativeMemory,
-      NativeHelper.memoryFraction)
+    JniBridge.initNative(NativeHelper.nativeMemory)
   }
 
   private def loadLibBlaze(): Unit = {

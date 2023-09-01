@@ -18,7 +18,6 @@ package org.apache.spark.sql.execution.blaze.plan
 import java.util.UUID
 
 import org.apache.spark.InterruptibleIterator
-
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -26,7 +25,6 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.types.StructType
-
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
@@ -34,10 +32,10 @@ import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.OneToOneDependency
+import org.apache.spark.sql.blaze.BlazeConf
 import org.blaze.protobuf.FFIReaderExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
-
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 
@@ -84,7 +82,7 @@ case class ConvertToNativeExec(override val child: SparkPlan)
                 inputRowIter,
                 renamedSchema,
                 context,
-                recordBatchSize = NativeHelper.batchSize / 4)
+                recordBatchSize = BlazeConf.batchSize / 4)
             new InterruptibleIterator(context, exportIter)
           })
 

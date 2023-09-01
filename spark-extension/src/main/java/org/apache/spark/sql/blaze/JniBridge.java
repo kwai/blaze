@@ -15,22 +15,17 @@
  */
 package org.apache.spark.sql.blaze;
 
-import java.nio.ByteBuffer;
-import java.nio.channels.ReadableByteChannel;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
 import org.apache.spark.sql.blaze.memory.OnHeapSpillManager;
 import org.apache.spark.sql.blaze.memory.OnHeapSpillManager$;
-import scala.Function1;
-import scala.Unit;
-import scala.collection.Iterator;
 
 @SuppressWarnings("unused")
 public class JniBridge {
     public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
-    public static native void initNative(long batchSize, long nativeMemory, double memoryFraction);
+    public static native void initNative(long nativeMemory);
 
     public static native long callNative(BlazeCallNativeWrapper wrapper);
 
@@ -72,7 +67,4 @@ public class JniBridge {
         TaskContext tc = getTaskContext();
         return tc == null;
     }
-
-    public static native void mergeIpcs(
-            Iterator<ReadableByteChannel> ipcBytesIter, Function1<ByteBuffer, Unit> mergedIpcBytesHandler);
 }

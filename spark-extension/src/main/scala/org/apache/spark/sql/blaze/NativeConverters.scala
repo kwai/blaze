@@ -26,7 +26,6 @@ import scala.collection.mutable
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.{Abs, Acos, Add, Alias, And, Asin, Atan, AttributeReference, BitwiseAnd, BitwiseOr, BoundReference, CaseWhen, Cast, Ceil, CheckOverflow, Coalesce, Concat, ConcatWs, Contains, Cos, CreateArray, CreateNamedStruct, Divide, EndsWith, EqualTo, Exp, Expression, Floor, GetArrayItem, GetMapValue, GetStructField, GreaterThan, GreaterThanOrEqual, If, In, InSet, IsNotNull, IsNull, Length, LessThan, LessThanOrEqual, Like, Literal, Log, Log10, Log2, Lower, MakeDecimal, Md5, Multiply, Murmur3Hash, Not, NullIf, OctetLength, Or, Pmod, PromotePrecision, Remainder, Sha2, ShiftLeft, ShiftRight, Signum, Sin, Sqrt, StartsWith, StringRepeat, StringSpace, StringTrim, StringTrimLeft, StringTrimRight, Substring, Subtract, Tan, TruncDate, Unevaluable, UnscaledValue, Upper}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
@@ -37,6 +36,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -243,6 +243,38 @@ object NativeConverters extends Logging {
     val schemaBuilder = pb.Schema.newBuilder()
     sparkSchema.foreach(sparkField => schemaBuilder.addColumns(convertField(sparkField)))
     schemaBuilder.build()
+  }
+
+  def convertJoinFilter(
+      filterExpr: Expression,
+      leftOutput: Seq[Attribute],
+      rightOutput: Seq[Attribute]): pb.JoinFilter = {
+    val schema = filterExpr.references.toSeq
+    val columnIndices = mutable.ArrayBuffer[pb.ColumnIndex]()
+    for (attr <- schema) {
+      attr.exprId match {
+        case exprId if leftOutput.exists(_.exprId == exprId) =>
+          columnIndices += pb.ColumnIndex
+            .newBuilder()
+            .setSide(pb.JoinSide.LEFT_SIDE)
+            .setIndex(leftOutput.indexWhere(_.exprId == attr.exprId))
+            .build()
+        case exprId if rightOutput.exists(_.exprId == exprId) =>
+          columnIndices += pb.ColumnIndex
+            .newBuilder()
+            .setSide(pb.JoinSide.RIGHT_SIDE)
+            .setIndex(rightOutput.indexWhere(_.exprId == attr.exprId))
+            .build()
+        case _ =>
+          throw new NotImplementedError(s"unsupported join filter: $filterExpr")
+      }
+    }
+    pb.JoinFilter
+      .newBuilder()
+      .setExpression(convertExpr(filterExpr))
+      .setSchema(Util.getNativeSchema(schema))
+      .addAllColumnIndices(columnIndices.asJava)
+      .build()
   }
 
   case class NativeExprWrapper(
@@ -730,15 +762,9 @@ object NativeConverters extends Logging {
 //      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
 
       //
-      case e: Lower
-          if SparkEnv.get.conf.getBoolean(
-            "spark.blaze.convertcase.function.enabled",
-            defaultValue = false) =>
+      case e: Lower if BlazeConf.enableCaseConvertFunctions() =>
         buildExtScalarFunction("StringLower", e.children, e.dataType)
-      case e: Upper
-          if SparkEnv.get.conf.getBoolean(
-            "spark.blaze.convertcase.function.enabled",
-            defaultValue = false) =>
+      case e: Upper if BlazeConf.enableCaseConvertFunctions() =>
         buildExtScalarFunction("StringUpper", e.children, e.dataType)
 
       case e: StringTrim =>

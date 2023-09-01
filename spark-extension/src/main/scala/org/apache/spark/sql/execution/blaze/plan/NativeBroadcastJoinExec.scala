@@ -19,8 +19,8 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
+import org.apache.spark.sql.blaze.BlazeConf
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
@@ -31,6 +31,8 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.LeftAnti
+import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.execution.BinaryExecNode
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
@@ -45,9 +47,19 @@ case class NativeBroadcastJoinExec(
     override val output: Seq[Attribute],
     override val outputPartitioning: Partitioning,
     override val outputOrdering: Seq[SortOrder],
-    joinType: JoinType)
+    joinType: JoinType,
+    joinFilterExpr: Option[Expression])
     extends BinaryExecNode
     with NativeSupports {
+
+  assert(
+    (joinType != LeftSemi && joinType != LeftAnti) || joinFilterExpr.isEmpty,
+    "Semi/Anti join with filter is not supported yet")
+
+  assert(
+    !BlazeConf.enableBhjFallbacksToSmj() || BlazeConf
+      .enableSmjInequalityJoin() || joinFilterExpr.isEmpty,
+    "Join filter is not supported when BhjFallbacksToSmj and SmjInequalityJoin both enabled")
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
     NativeHelper
@@ -63,7 +75,7 @@ case class NativeBroadcastJoinExec(
     }
     val rightColumn = NativeConverters.convertExpr(rightKey).getColumn match {
       case column if column.getName.isEmpty =>
-        throw new NotImplementedError(s"BHJ leftKey is not column: ${rightKey}")
+        throw new NotImplementedError(s"BHJ rightKey is not column: ${rightKey}")
       case column => column
     }
     pb.JoinOn
@@ -74,6 +86,8 @@ case class NativeBroadcastJoinExec(
   }
 
   private val nativeJoinType = NativeConverters.convertJoinType(joinType)
+  private val nativeJoinFilter =
+    joinFilterExpr.map(NativeConverters.convertJoinFilter(_, left.output, right.output))
 
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeHelper.executeNative(left)
@@ -99,6 +113,8 @@ case class NativeBroadcastJoinExec(
           .setRight(rightChild)
           .setJoinType(nativeJoinType)
           .addAllOn(nativeJoinOn.asJava)
+
+        nativeJoinFilter.foreach(joinFilter => broadcastJoinExec.setJoinFilter(joinFilter))
         pb.PhysicalPlanNode.newBuilder().setBroadcastJoin(broadcastJoinExec).build()
       },
       friendlyName = "NativeRDD.BroadcastJoin")

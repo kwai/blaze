@@ -385,6 +385,7 @@ message SortMergeJoinExecNode {
   repeated JoinOn on = 3;
   repeated SortOptions sort_options = 4;
   JoinType join_type = 5;
+  JoinFilter join_filter = 6;
 }
 
 message BroadcastJoinExecNode {
@@ -392,6 +393,7 @@ message BroadcastJoinExecNode {
   PhysicalPlanNode right = 2;
   repeated JoinOn on = 3;
   JoinType join_type = 4;
+  JoinFilter join_filter = 5;
 }
 
 message RenameColumnsExecNode {

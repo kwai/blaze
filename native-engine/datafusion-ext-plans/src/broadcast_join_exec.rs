@@ -16,12 +16,15 @@ use crate::sort_exec::SortExec;
 use crate::sort_merge_join_exec::SortMergeJoinExec;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
-use datafusion::common::{Result, Statistics};
+use blaze_jni_bridge::jni_call_static;
+use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::execution::context::TaskContext;
 use datafusion::logical_expr::JoinType;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::expressions::Column;
-use datafusion::physical_plan::joins::utils::{build_join_schema, check_join_is_valid, JoinOn};
+use datafusion::physical_plan::joins::utils::{
+    build_join_schema, check_join_is_valid, JoinFilter, JoinOn,
+};
 use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
@@ -31,6 +34,7 @@ use datafusion::physical_plan::{
 };
 use futures::stream::once;
 use futures::{StreamExt, TryStreamExt};
+use jni::sys::{jboolean, JNI_TRUE};
 use parking_lot::Mutex;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
@@ -48,6 +52,8 @@ pub struct BroadcastJoinExec {
     on: JoinOn,
     /// How the join is performed
     join_type: JoinType,
+    /// Optional filter before outputting
+    join_filter: Option<JoinFilter>,
     /// The schema once the join is applied
     schema: SchemaRef,
     /// Execution metrics
@@ -60,7 +66,19 @@ impl BroadcastJoinExec {
         right: Arc<dyn ExecutionPlan>,
         on: JoinOn,
         join_type: JoinType,
+        join_filter: Option<JoinFilter>,
     ) -> Result<Self> {
+        if matches!(
+            join_type,
+            JoinType::LeftSemi | JoinType::LeftAnti | JoinType::RightSemi | JoinType::RightAnti,
+        ) {
+            if join_filter.is_some() {
+                return Err(DataFusionError::Plan(format!(
+                    "Semi/Anti join with filter is not supported yet"
+                )));
+            }
+        }
+
         let left_schema = left.schema();
         let right_schema = right.schema();
 
@@ -72,6 +90,7 @@ impl BroadcastJoinExec {
             right,
             on,
             join_type,
+            join_filter,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
         })
@@ -108,6 +127,7 @@ impl ExecutionPlan for BroadcastJoinExec {
             children[1].clone(),
             self.on.iter().cloned().collect(),
             self.join_type,
+            self.join_filter.clone(),
         )?))
     }
 
@@ -123,6 +143,7 @@ impl ExecutionPlan for BroadcastJoinExec {
             context,
             self.on.clone(),
             self.join_type,
+            self.join_filter.clone(),
             BaselineMetrics::new(&self.metrics, partition),
         );
 
@@ -152,11 +173,15 @@ async fn execute_broadcast_join(
     context: Arc<TaskContext>,
     on: JoinOn,
     join_type: JoinType,
+    join_filter: Option<JoinFilter>,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-    // TODO: use configurable properties
-    const HASH_JOIN_NUM_ROWS_LIMIT: usize = 500000;
-    const HASH_JOIN_MEM_SIZE_LIMIT: usize = 67108864;
+    let enabled_fallback_to_smj: bool =
+        jni_call_static!(BlazeConf.enableBhjFallbacksToSmj() -> jboolean)? == JNI_TRUE;
+    let bhj_num_rows_limit: usize =
+        jni_call_static!(BlazeConf.bhjFallbacksToSmjRowsThreshold() -> i32)? as usize;
+    let bhj_mem_size_limit: usize =
+        jni_call_static!(BlazeConf.bhjFallbacksToSmjMemThreshold() -> i32)? as usize;
 
     // if broadcasted size is small enough, use hash join
     // otherwise use sort-merge join
@@ -168,42 +193,45 @@ async fn execute_broadcast_join(
     let mut join_mode = JoinMode::Hash;
 
     let left_schema = left.schema();
-    let mut left_stream = left.execute(0, context.clone())?.fuse();
-    let mut left_cached: Vec<RecordBatch> = vec![];
-    let mut left_num_rows = 0;
-    let mut left_mem_size = 0;
+    let mut left = left;
 
-    // read and cache batches from broadcasted side until reached limits
-    while let Some(batch) = left_stream.next().await.transpose()? {
-        left_num_rows += batch.num_rows();
-        left_mem_size += batch.get_array_memory_size();
-        left_cached.push(batch);
+    if enabled_fallback_to_smj {
+        let mut left_stream = left.execute(0, context.clone())?.fuse();
+        let mut left_cached: Vec<RecordBatch> = vec![];
+        let mut left_num_rows = 0;
+        let mut left_mem_size = 0;
 
-        if left_num_rows > HASH_JOIN_NUM_ROWS_LIMIT || left_mem_size > HASH_JOIN_MEM_SIZE_LIMIT {
-            join_mode = JoinMode::SortMerge;
-            break;
+        // read and cache batches from broadcasted side until reached limits
+        while let Some(batch) = left_stream.next().await.transpose()? {
+            left_num_rows += batch.num_rows();
+            left_mem_size += batch.get_array_memory_size();
+            left_cached.push(batch);
+            if left_num_rows > bhj_num_rows_limit || left_mem_size > bhj_mem_size_limit {
+                join_mode = JoinMode::SortMerge;
+                break;
+            }
         }
-    }
 
-    // convert left cached and rest batches into execution plan
-    let left_cached_stream: SendableRecordBatchStream = Box::pin(MemoryStream::try_new(
-        left_cached,
-        left_schema.clone(),
-        None,
-    )?);
-    let left_rest_stream: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
-        left_schema.clone(),
-        left_stream,
-    ));
-    let left_stream: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
-        left_schema.clone(),
-        left_cached_stream.chain(left_rest_stream),
-    ));
-    let left = Arc::new(RecordBatchStreamsWrapperExec {
-        schema: left_schema.clone(),
-        stream: Mutex::new(Some(left_stream)),
-        output_partitioning: right.output_partitioning(),
-    });
+        // convert left cached and rest batches into execution plan
+        let left_cached_stream: SendableRecordBatchStream = Box::pin(MemoryStream::try_new(
+            left_cached,
+            left_schema.clone(),
+            None,
+        )?);
+        let left_rest_stream: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+            left_schema.clone(),
+            left_stream,
+        ));
+        let left_stream: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+            left_schema.clone(),
+            left_cached_stream.chain(left_rest_stream),
+        ));
+        left = Arc::new(RecordBatchStreamsWrapperExec {
+            schema: left_schema.clone(),
+            stream: Mutex::new(Some(left_stream)),
+            output_partitioning: right.output_partitioning(),
+        });
+    }
 
     match join_mode {
         JoinMode::Hash => {
@@ -211,7 +239,7 @@ async fn execute_broadcast_join(
                 left.clone(),
                 right.clone(),
                 on,
-                None,
+                join_filter,
                 &join_type,
                 PartitionMode::CollectLeft,
                 false,
@@ -226,10 +254,17 @@ async fn execute_broadcast_join(
                     let join_metrics = join.metrics().unwrap();
                     metrics.record_output(join_metrics.output_rows().unwrap_or(0));
                     metrics.elapsed_compute().add_duration(Duration::from_nanos(
-                        [join_metrics.elapsed_compute()]
-                            .into_iter()
-                            .flatten()
-                            .sum::<usize>() as u64,
+                        [
+                            join_metrics
+                                .sum_by_name("build_time")
+                                .map(|v| v.as_usize() as u64),
+                            join_metrics
+                                .sum_by_name("join_time")
+                                .map(|v| v.as_usize() as u64),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .sum(),
                     ));
                     Poll::Ready(None)
                 }));
@@ -253,6 +288,7 @@ async fn execute_broadcast_join(
                 right_sorted.clone(),
                 on,
                 join_type,
+                join_filter,
                 sort_exprs.into_iter().map(|se| se.options).collect(),
             )?);
             log::info!("BroadcastJoin is using sort-merge join mode: {:?}", &join);

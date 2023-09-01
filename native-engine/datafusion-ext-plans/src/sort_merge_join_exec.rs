@@ -13,20 +13,21 @@
 // limitations under the License.
 
 use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
+use crate::common::{BatchTaker, BatchesInterleaver};
 use arrow::array::*;
 use arrow::buffer::NullBuffer;
-use arrow::compute::kernels::take::take;
-use arrow::compute::SortOptions;
-use arrow::datatypes::{DataType, SchemaRef};
-use arrow::error::ArrowError;
+use arrow::compute::{prep_null_mask_filter, SortOptions};
+use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
-use arrow::row::{RowConverter, Rows, SortField};
+use arrow::row::{Row, RowConverter, Rows, SortField};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::logical_expr::JoinType;
-use datafusion::physical_expr::expressions::Column;
+use datafusion::logical_expr::JoinType::*;
 use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::joins::utils::{build_join_schema, check_join_is_valid, JoinOn};
+use datafusion::physical_plan::joins::utils::{
+    build_join_schema, check_join_is_valid, JoinFilter, JoinOn, JoinSide,
+};
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, ScopedTimerGuard,
 };
@@ -34,17 +35,12 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
 };
-use datafusion_ext_commons::array_builder::{
-    builder_append_null, builder_extend, make_batch, new_array_builders,
-};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use parking_lot::Mutex as SyncMutex;
 use std::any::Any;
-use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 use std::fmt::Formatter;
-use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -57,6 +53,8 @@ pub struct SortMergeJoinExec {
     on: JoinOn,
     /// How the join is performed
     join_type: JoinType,
+    /// Optional filter before outputting
+    join_filter: Option<JoinFilter>,
     /// The schema once the join is applied
     schema: SchemaRef,
     /// Execution metrics
@@ -71,10 +69,19 @@ impl SortMergeJoinExec {
         right: Arc<dyn ExecutionPlan>,
         on: JoinOn,
         join_type: JoinType,
+        join_filter: Option<JoinFilter>,
         sort_options: Vec<SortOptions>,
     ) -> Result<Self> {
         let left_schema = left.schema();
         let right_schema = right.schema();
+
+        if matches!(join_type, LeftSemi | LeftAnti | RightSemi | RightAnti,) {
+            if join_filter.is_some() {
+                return Err(DataFusionError::Plan(format!(
+                    "Semi/Anti join with filter is not supported yet"
+                )));
+            }
+        }
 
         check_join_is_valid(&left_schema, &right_schema, &on)?;
         if sort_options.len() != on.len() {
@@ -92,6 +99,7 @@ impl SortMergeJoinExec {
             right,
             on,
             join_type,
+            join_filter,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
             sort_options,
@@ -114,14 +122,10 @@ impl ExecutionPlan for SortMergeJoinExec {
 
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
         match self.join_type {
-            JoinType::Inner | JoinType::Left | JoinType::LeftSemi | JoinType::LeftAnti => {
-                self.left.output_ordering()
-            }
-            JoinType::Right => self.right.output_ordering(),
-            JoinType::Full => None,
-            j @ (JoinType::RightSemi | JoinType::RightAnti) => {
-                panic!("join type not supported: {:?}", j);
-            }
+            Left | LeftSemi | LeftAnti => self.left.output_ordering(),
+            Right | RightSemi | RightAnti => self.right.output_ordering(),
+            Inner => self.left.output_ordering(),
+            Full => None,
         }
     }
 
@@ -139,6 +143,7 @@ impl ExecutionPlan for SortMergeJoinExec {
                 right.clone(),
                 self.on.clone(),
                 self.join_type,
+                self.join_filter.clone(),
                 self.sort_options.clone(),
             )?)),
             _ => Err(DataFusionError::Internal(
@@ -156,27 +161,46 @@ impl ExecutionPlan for SortMergeJoinExec {
         let right = self.right.execute(partition, context.clone())?;
         let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
 
-        let on_left = self.on.iter().map(|on| on.0.clone()).collect();
-        let on_right = self.on.iter().map(|on| on.1.clone()).collect();
+        let on_left: Vec<usize> = self.on.iter().map(|on| on.0.index()).collect();
+        let on_right: Vec<usize> = self.on.iter().map(|on| on.1.index()).collect();
 
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
+        let on_data_types = on_left
+            .iter()
+            .map(|&i| left.schema().field(i).data_type().clone())
+            .collect::<Vec<_>>();
+        let batch_size = context.session_config().batch_size();
+        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
+
+        // use smaller batch size and coalesce batches at the end, to avoid buffer overflowing
+        let join_params = JoinParams {
+            join_type: self.join_type,
+            output_schema: self.schema(),
+            on_left,
+            on_right,
+            on_data_types,
+            join_filter: self.join_filter.clone(),
+            sort_options: self.sort_options.clone(),
+            batch_size: sub_batch_size,
+        };
+
+        let metrics_cloned = metrics.clone();
+        let output_schema = self.schema();
+        let output_stream = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            futures::stream::once(
-                execute_join(
-                    context,
-                    self.join_type,
-                    self.schema(),
-                    left,
-                    right,
-                    on_left,
-                    on_right,
-                    self.sort_options.clone(),
-                    metrics,
-                )
-                .map_err(|e| ArrowError::ExternalError(Box::new(e))),
-            )
+            futures::stream::once(async move {
+                output_with_sender("SortMergeJoin", context, output_schema, move |sender| {
+                    execute_join(left, right, join_params, metrics_cloned, sender)
+                })
+            })
             .try_flatten(),
-        )))
+        ));
+
+        let output_coalesced = Box::pin(CoalesceStream::new(
+            output_stream,
+            batch_size,
+            metrics.elapsed_compute().clone(),
+        ));
+        Ok(output_coalesced)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -200,50 +224,24 @@ impl ExecutionPlan for SortMergeJoinExec {
 struct JoinParams {
     join_type: JoinType,
     output_schema: SchemaRef,
-    left_schema: SchemaRef,
-    right_schema: SchemaRef,
     on_left: Vec<usize>,
     on_right: Vec<usize>,
     on_data_types: Vec<DataType>,
     sort_options: Vec<SortOptions>,
+    join_filter: Option<JoinFilter>,
     batch_size: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn execute_join(
-    context: Arc<TaskContext>,
-    join_type: JoinType,
-    output_schema: SchemaRef,
-    left: SendableRecordBatchStream,
-    right: SendableRecordBatchStream,
-    on_left: Vec<Column>,
-    on_right: Vec<Column>,
-    sort_options: Vec<SortOptions>,
+    lstream: SendableRecordBatchStream,
+    rstream: SendableRecordBatchStream,
+    join_params: JoinParams,
     metrics: Arc<BaselineMetrics>,
-) -> Result<SendableRecordBatchStream> {
-    let left_schema = left.schema();
-    let right_schema = right.schema();
-    let on_left = on_left.into_iter().map(|c| c.index()).collect::<Vec<_>>();
-    let on_right = on_right.into_iter().map(|c| c.index()).collect::<Vec<_>>();
-    let on_data_types = on_left
-        .iter()
-        .map(|&i| left_schema.field(i).data_type().clone())
-        .collect::<Vec<_>>();
-    let batch_size = context.session_config().batch_size();
-    let sub_batch_size = batch_size / batch_size.ilog2() as usize;
+    sender: Arc<WrappedRecordBatchSender>,
+) -> Result<()> {
+    let elapsed_time = metrics.elapsed_compute().clone();
+    let mut timer = elapsed_time.timer();
 
-    // use smaller batch size and coalesce batches at the end, to avoid buffer overflowing
-    let join_params = JoinParams {
-        join_type,
-        output_schema,
-        left_schema,
-        right_schema,
-        on_left,
-        on_right,
-        on_data_types,
-        sort_options,
-        batch_size: sub_batch_size,
-    };
     let on_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
         join_params
             .on_data_types
@@ -255,497 +253,175 @@ async fn execute_join(
             .collect(),
     )?));
 
-    let mut left_cursor =
-        StreamCursor::try_new(left, on_row_converter.clone(), join_params.on_left.clone()).await?;
-    let mut right_cursor = StreamCursor::try_new(
-        right,
+    let mut lcur = StreamCursor::try_new(
+        lstream,
         on_row_converter.clone(),
-        join_params.on_right.clone(),
+        join_params.on_left.clone(),
+        &mut timer,
     )
     .await?;
 
-    let output_schema = join_params.output_schema.clone();
-    let metrics_cloned = metrics.clone();
-    let output_stream = output_with_sender(
-        "SortMergeJoin",
-        context,
-        output_schema,
-        move |sender| async move {
-            match join_params.join_type {
-                JoinType::Inner | JoinType::Left | JoinType::Right | JoinType::Full => {
-                    join_combined(
-                        &mut left_cursor,
-                        &mut right_cursor,
-                        join_params,
-                        metrics_cloned,
-                        sender,
-                    )
-                    .await?;
-                }
-                JoinType::LeftSemi | JoinType::LeftAnti => {
-                    join_semi(
-                        &mut left_cursor,
-                        &mut right_cursor,
-                        join_params,
-                        metrics_cloned,
-                        sender,
-                    )
-                    .await?;
-                }
-                other @ (JoinType::RightSemi | JoinType::RightAnti) => {
-                    panic!("join type not supported: {other}");
-                }
-            }
-            Ok(())
-        },
-    )?;
-    let output_coalesced = Box::pin(CoalesceStream::new(
-        output_stream,
-        batch_size,
-        metrics.elapsed_compute().clone(),
-    ));
-    Ok(output_coalesced)
-}
+    let mut rcur = StreamCursor::try_new(
+        rstream,
+        on_row_converter.clone(),
+        join_params.on_right.clone(),
+        &mut timer,
+    )
+    .await?;
 
-async fn join_combined(
-    left_cursor: &mut StreamCursor,
-    right_cursor: &mut StreamCursor,
-    join_params: JoinParams,
-    metrics: Arc<BaselineMetrics>,
-    sender: Arc<WrappedRecordBatchSender>,
-) -> Result<()> {
-    let elapsed_time = metrics.elapsed_compute().clone();
-    let mut timer = elapsed_time.timer();
-
-    let left_dts = join_params
-        .left_schema
-        .fields()
-        .iter()
-        .map(|field| field.data_type().clone())
-        .collect::<Vec<_>>();
-    let right_dts = join_params
-        .right_schema
-        .fields()
-        .iter()
-        .map(|field| field.data_type().clone())
-        .collect::<Vec<_>>();
     let join_type = join_params.join_type;
+    let mut joiner = Joiner::new();
+    let mut leqs = vec![];
+    let mut reqs = vec![];
 
-    let mut staging_len = 0;
-    let mut staging = new_array_builders(&join_params.output_schema, join_params.batch_size);
-    let num_left_columns = join_params.left_schema.fields().len();
-
-    macro_rules! flush_staging {
-        () => {{
-            let batch = make_batch(
-                join_params.output_schema.clone(),
-                std::mem::replace(&mut staging, {
-                    new_array_builders(&join_params.output_schema, join_params.batch_size)
-                }),
-            )?;
-            staging_len = 0;
-            let _ = staging_len; // suppress value unused warnings
-
-            metrics.record_output(batch.num_rows());
-            sender.send(Ok(batch), Some(&mut timer)).await;
-        }};
-    }
-    macro_rules! cartesian_join_lr {
-        ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
-            for l in $range1.clone() {
-                for r in $range2.clone() {
-                    let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
-
-                    $batch1.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(staging_l[i].as_mut(), c, &[l], c.data_type());
-                    });
-                    $batch2.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(staging_r[i].as_mut(), c, &[r], c.data_type())
-                    });
-
-                    staging_len += 1;
-                    if staging_len >= join_params.batch_size {
-                        flush_staging!();
-                    }
-                }
+    macro_rules! joiner_accept_pair {
+        ($lidx:expr, $ridx:expr) => {{
+            let lidx = $lidx;
+            let ridx = $ridx;
+            let r = joiner.accept_pair(&join_params, &mut lcur, &mut rcur, lidx, ridx)?;
+            if let Some(batch) = r {
+                metrics.record_output(batch.num_rows());
+                sender.send(Ok(batch), Some(&mut timer)).await;
             }
         }};
     }
 
-    macro_rules! cartesian_join_rl {
-        ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
-            for r in $range2.clone() {
-                for l in $range1.clone() {
-                    let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
-
-                    $batch1.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(staging_l[i].as_mut(), c, &[l], c.data_type());
-                    });
-                    $batch2.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(staging_r[i].as_mut(), c, &[r], c.data_type())
-                    });
-
-                    staging_len += 1;
-                    if staging_len >= join_params.batch_size {
-                        flush_staging!();
-                    }
-                }
-            }
-        }};
-    }
-
-    macro_rules! cartesian_join_columnar_lr {
-        ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
-            let mut lindices = UInt64Builder::new();
-            let mut rindices = UInt64Builder::new();
-
-            for l in $range1.clone() {
-                for r in $range2.clone() {
-                    lindices.append_value(l as u64);
-                    rindices.append_value(r as u64);
-                }
-
-                if lindices.len() >= join_params.batch_size || l + 1 == $range1.end {
-                    if staging_len > 0 {
-                        // for keeping input order
-                        flush_staging!();
-                    }
-                    let larray = lindices.finish();
-                    let rarray = rindices.finish();
-                    for offset in (0..larray.len()).step_by(join_params.batch_size) {
-                        let len = join_params.batch_size.min(larray.len() - offset);
-                        let mut cols = Vec::with_capacity(join_params.output_schema.fields().len());
-                        for c in $batch1.columns() {
-                            cols.push(take(c.as_ref(), &larray.slice(offset, len), None)?);
-                        }
-                        for c in $batch2.columns() {
-                            cols.push(take(c.as_ref(), &rarray.slice(offset, len), None)?);
-                        }
-                        let batch = RecordBatch::try_new(join_params.output_schema.clone(), cols)?;
-                        metrics.record_output(batch.num_rows());
-                        sender.send(Ok(batch), Some(&mut timer)).await;
-                    }
-                }
-            }
-        }};
-    }
-
-    macro_rules! cartesian_join_columnar_rl {
-        ($batch1:expr, $range1:expr, $batch2:expr, $range2:expr) => {{
-            let mut lindices = UInt64Builder::new();
-            let mut rindices = UInt64Builder::new();
-
-            for r in $range2.clone() {
-                for l in $range1.clone() {
-                    lindices.append_value(l as u64);
-                    rindices.append_value(r as u64);
-                }
-
-                if rindices.len() >= join_params.batch_size || r + 1 == $range2.end {
-                    if staging_len > 0 {
-                        // for keeping input order
-                        flush_staging!();
-                    }
-                    let larray = lindices.finish();
-                    let rarray = rindices.finish();
-                    for offset in (0..larray.len()).step_by(join_params.batch_size) {
-                        let len = join_params.batch_size.min(larray.len() - offset);
-                        let mut cols = Vec::with_capacity(join_params.output_schema.fields().len());
-                        for c in $batch1.columns() {
-                            cols.push(take(c.as_ref(), &larray.slice(offset, len), None)?);
-                        }
-                        for c in $batch2.columns() {
-                            cols.push(take(c.as_ref(), &rarray.slice(offset, len), None)?);
-                        }
-                        let batch = RecordBatch::try_new(join_params.output_schema.clone(), cols)?;
-                        metrics.record_output(batch.num_rows());
-                        sender.send(Ok(batch), Some(&mut timer)).await;
-                    }
-                }
-            }
-        }};
-    }
-
-    loop {
-        let left_finished = left_cursor.on_rows.is_none();
-        let right_finished = right_cursor.on_rows.is_none();
-        let all_finished = left_finished && right_finished;
-
-        if left_finished && matches!(join_type, JoinType::Inner | JoinType::Left) {
-            break;
-        }
-        if right_finished && matches!(join_type, JoinType::Inner | JoinType::Right) {
-            break;
-        }
-        if all_finished && matches!(join_type, JoinType::Full) {
-            break;
-        }
-
-        let ord = compare_cursor(left_cursor, right_cursor);
-        match ord {
+    // process records until one side is exhausted
+    while !lcur.finished && !rcur.finished {
+        let r = compare_cursor(&lcur, lcur.cur_idx, &rcur, rcur.cur_idx);
+        match r {
             Ordering::Less => {
-                if matches!(join_type, JoinType::Left | JoinType::Full) {
-                    let left_batch = left_cursor.batch.as_ref().unwrap();
-                    let idx = left_cursor.idx;
-                    let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
-
-                    // append <left-columns + nulls> for left/full joins
-                    left_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(staging_l[i].as_mut(), c, &[idx], c.data_type());
-                    });
-                    right_dts.iter().enumerate().for_each(|(i, dt)| {
-                        builder_append_null(staging_r[i].as_mut(), dt);
-                    });
-
-                    staging_len += 1;
-                    if staging_len >= join_params.batch_size {
-                        flush_staging!();
-                    }
+                if matches!(join_type, Left | LeftAnti | Full) {
+                    joiner_accept_pair!(Some(lcur.cur_idx), None);
                 }
-                left_cursor.forward(&mut timer).await?;
-                continue;
+                lcur.next(&mut timer).await?;
+                lcur.clear_outdated(joiner.l_min_reserved_bidx);
             }
             Ordering::Greater => {
-                if matches!(join_type, JoinType::Right | JoinType::Full) {
-                    let right_batch = right_cursor.batch.as_ref().unwrap();
-                    let idx = right_cursor.idx;
-                    let (staging_l, staging_r) = staging.split_at_mut(num_left_columns);
+                if matches!(join_type, Right | RightAnti | Full) {
+                    joiner_accept_pair!(None, Some(rcur.cur_idx));
+                }
+                rcur.next(&mut timer).await?;
+                rcur.clear_outdated(joiner.r_min_reserved_bidx);
+            }
+            Ordering::Equal => {
+                let lidx0 = lcur.cur_idx;
+                let ridx0 = rcur.cur_idx;
+                leqs.push(lidx0);
+                reqs.push(ridx0);
+                lcur.next(&mut timer).await?;
+                rcur.next(&mut timer).await?;
 
-                    // append <nulls + right-columns> for right/full joins
-                    left_dts.iter().enumerate().for_each(|(i, dt)| {
-                        builder_append_null(staging_l[i].as_mut(), dt);
-                    });
-                    right_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                        builder_extend(staging_r[i].as_mut(), c, &[idx], c.data_type());
-                    });
-
-                    staging_len += 1;
-                    if staging_len >= join_params.batch_size {
-                        flush_staging!();
+                let mut leq = true;
+                let mut req = true;
+                while leq && req {
+                    if leq && !lcur.finished && lcur.row(lcur.cur_idx) == lcur.row(lidx0) {
+                        leqs.push(lcur.cur_idx);
+                        lcur.next(&mut timer).await?;
+                    } else {
+                        leq = false;
+                    }
+                    if req && !rcur.finished && rcur.row(rcur.cur_idx) == rcur.row(ridx0) {
+                        reqs.push(rcur.cur_idx);
+                        rcur.next(&mut timer).await?;
+                    } else {
+                        req = false;
                     }
                 }
-                right_cursor.forward(&mut timer).await?;
-                continue;
-            }
-            Ordering::Equal => {}
-        }
 
-        // NOTE:
-        //  Perform cartesian join of two equal parts.
-        //  In cartesian join, at least one side must be very small,
-        //  otherwise the size of producted output will explode and
-        //  cannot be executed.
-        //  So here we read equal batches of two cursors side by side
-        //  and find the smaller one. once it is found, it can be probed
-        //  to each batch of the bigger side and the bigger side is no
-        //  longer needed to be stored in memory.
-
-        let on_row = left_cursor
-            .on_rows
-            .as_ref()
-            .unwrap()
-            .row(left_cursor.idx)
-            .owned();
-        let cursors = [left_cursor.borrow_mut(), right_cursor.borrow_mut()];
-        let mut finished = [false, false];
-        let mut num_rows = [0, 0];
-        let mut cur_indices = [0, 0];
-        let mut buffers = [
-            Vec::<(RecordBatch, Range<usize>)>::new(),
-            Vec::<(RecordBatch, Range<usize>)>::new(),
-        ];
-
-        macro_rules! flush_buffers {
-            // at least one side is finished
-            () => {{
-                if finished[0] || finished[1] {
-                    for (batch1, range1) in &buffers[0] {
-                        for (batch2, range2) in &buffers[1] {
-                            if range1.len() * range2.len() < 64 {
-                                if join_params.join_type == JoinType::Right {
-                                    cartesian_join_rl!(
-                                        &batch1,
-                                        range1.clone(),
-                                        &batch2,
-                                        range2.clone()
-                                    );
-                                } else {
-                                    cartesian_join_lr!(
-                                        &batch1,
-                                        range1.clone(),
-                                        &batch2,
-                                        range2.clone()
-                                    );
-                                }
-                            } else {
-                                if join_params.join_type == JoinType::Right {
-                                    cartesian_join_columnar_rl!(
-                                        &batch1,
-                                        range1.clone(),
-                                        &batch2,
-                                        range2.clone()
-                                    );
-                                } else {
-                                    cartesian_join_columnar_lr!(
-                                        &batch1,
-                                        range1.clone(),
-                                        &batch2,
-                                        range2.clone()
-                                    );
-                                }
+                match join_type {
+                    Inner | Left | Right | Full => {
+                        for &l in &leqs {
+                            for &r in &reqs {
+                                joiner_accept_pair!(Some(l), Some(r));
                             }
                         }
                     }
-                    if finished[0] {
-                        buffers[1].clear();
+                    LeftSemi => {
+                        for &l in &leqs {
+                            joiner_accept_pair!(Some(l), None);
+                        }
                     }
-                    if finished[1] {
-                        buffers[0].clear();
+                    RightSemi => {
+                        for &r in &reqs {
+                            joiner_accept_pair!(None, Some(r));
+                        }
+                    }
+                    LeftAnti | RightAnti => {}
+                }
+
+                if leq {
+                    while !lcur.finished && lcur.row(lcur.cur_idx) == rcur.row(ridx0) {
+                        match join_type {
+                            Inner | Left | Right | Full => {
+                                for &r in &reqs {
+                                    joiner_accept_pair!(Some(lcur.cur_idx), Some(r));
+                                }
+                            }
+                            LeftSemi => {
+                                joiner_accept_pair!(Some(lcur.cur_idx), None);
+                            }
+                            RightSemi | LeftAnti | RightAnti => {}
+                        }
+                        lcur.next(&mut timer).await?;
+                        lcur.clear_outdated(joiner.l_min_reserved_bidx);
                     }
                 }
-            }};
+                if req {
+                    while !rcur.finished && rcur.row(rcur.cur_idx) == lcur.row(lidx0) {
+                        match join_type {
+                            Inner | Left | Right | Full => {
+                                for &l in &leqs {
+                                    joiner_accept_pair!(Some(l), Some(rcur.cur_idx));
+                                }
+                            }
+                            RightSemi => {
+                                joiner_accept_pair!(None, Some(rcur.cur_idx));
+                            }
+                            LeftSemi | LeftAnti | RightAnti => {}
+                        }
+                        rcur.next(&mut timer).await?;
+                        rcur.clear_outdated(joiner.r_min_reserved_bidx);
+                    }
+                }
+                leqs.clear();
+                reqs.clear();
+                lcur.clear_outdated(joiner.l_min_reserved_bidx);
+                rcur.clear_outdated(joiner.r_min_reserved_bidx);
+            }
         }
 
-        // forward first row
-        for i in 0..2 {
-            let batch = cursors[i].batch.as_ref().unwrap();
-            let idx = cursors[i].idx;
-            if idx < batch.num_rows() - 1 {
-                cur_indices[i] = idx;
-            } else {
-                buffers[i].push((batch.clone(), idx..idx + 1));
-                num_rows[i] += 1;
-                cur_indices[i] = 0;
-            }
-            cursors[i].forward(&mut timer).await?;
-        }
-
-        // read rest equal rows
-        while finished != [true, true] {
-            let i = match finished {
-                // find unfinished smaller side
-                [false, true] => 0,
-                [true, false] => 1,
-                _ => {
-                    if num_rows[0] < num_rows[1] {
-                        0
-                    } else {
-                        1
-                    }
-                }
-            };
-
-            if cursors[i].on_rows.is_none() {
-                finished[i] = true;
-                flush_buffers!();
-                continue;
-            }
-
-            let batch = cursors[i].batch.as_ref().unwrap();
-            let on_rows = cursors[i].on_rows.as_ref().unwrap();
-            let idx = cursors[i].idx;
-
-            if on_rows.row(idx).as_ref() == on_row.as_ref() {
-                // equal -- if current batch is finished, append to buffer
-                if idx == batch.num_rows() - 1 {
-                    let range = cur_indices[i]..batch.num_rows();
-                    num_rows[i] += range.len();
-                    buffers[i].push((batch.clone(), range));
-                    cur_indices[i] = 0;
-                    flush_buffers!();
-                }
-                cursors[i].forward(&mut timer).await?;
-            } else {
-                // unequal -- if current batch is forwarded, append to buffer, then exit
-                if idx > cur_indices[i] {
-                    let range = cur_indices[i]..idx;
-                    num_rows[i] += range.len();
-                    buffers[i].push((batch.clone(), range));
-                }
-                finished[i] = true;
-                flush_buffers!();
+        // flush joiner if cursors buffered too many batches
+        if !joiner.is_empty() && lcur.num_buffered_batches() + rcur.num_buffered_batches() > 5 {
+            if let Some(batch) = joiner.flush_pairs(&join_params, &mut lcur, &mut rcur)? {
+                metrics.record_output(batch.num_rows());
+                sender.send(Ok(batch), Some(&mut timer)).await;
             }
         }
     }
 
-    if staging_len > 0 {
-        flush_staging!();
+    // process rest records in inexhausted side
+    if matches!(join_type, Left | LeftAnti | Full) {
+        while !lcur.finished {
+            joiner_accept_pair!(Some(lcur.cur_idx), None);
+            lcur.next(&mut timer).await?;
+            lcur.clear_outdated(joiner.l_min_reserved_bidx);
+        }
     }
-    Ok(())
-}
+    if matches!(join_type, Right | RightAnti | Full) {
+        while !rcur.finished {
+            joiner_accept_pair!(None, Some(rcur.cur_idx));
+            rcur.next(&mut timer).await?;
+            rcur.clear_outdated(joiner.r_min_reserved_bidx);
+        }
+    }
 
-async fn join_semi(
-    left_cursor: &mut StreamCursor,
-    right_cursor: &mut StreamCursor,
-    join_params: JoinParams,
-    metrics: Arc<BaselineMetrics>,
-    sender: Arc<WrappedRecordBatchSender>,
-) -> Result<()> {
-    let elapsed_time = metrics.elapsed_compute().clone();
-    let mut timer = elapsed_time.timer();
-
-    let join_type = join_params.join_type;
-    let mut staging_len = 0;
-    let mut staging = new_array_builders(&join_params.left_schema, join_params.batch_size);
-
-    macro_rules! flush_staging {
-        () => {{
-            let batch = make_batch(
-                join_params.output_schema.clone(),
-                std::mem::replace(&mut staging, {
-                    new_array_builders(&join_params.output_schema, join_params.batch_size)
-                }),
-            )?;
-            staging_len = 0;
-            let _ = staging_len; // suppress value unused warnings
-
+    // flush joiner
+    if !joiner.is_empty() {
+        if let Some(batch) = joiner.flush_pairs(&join_params, &mut lcur, &mut rcur)? {
             metrics.record_output(batch.num_rows());
             sender.send(Ok(batch), Some(&mut timer)).await;
-        }};
-    }
-    macro_rules! output_left_current_record {
-        () => {{
-            let left_batch = left_cursor.batch.as_ref().unwrap();
-            let idx = left_cursor.idx;
-            left_batch.columns().iter().enumerate().for_each(|(i, c)| {
-                builder_extend(staging[i].as_mut(), c, &[idx], c.data_type());
-            });
-            staging_len += 1;
-            if staging_len >= join_params.batch_size {
-                flush_staging!();
-            }
-        }};
-    }
-
-    while left_cursor.on_rows.is_some() {
-        if join_type == JoinType::LeftSemi && right_cursor.on_rows.is_none() {
-            break;
         }
-
-        let ord = compare_cursor(left_cursor, right_cursor);
-        match ord {
-            Ordering::Less => {
-                if join_type == JoinType::LeftAnti {
-                    output_left_current_record!();
-                }
-                left_cursor.forward(&mut timer).await?;
-                continue;
-            }
-            Ordering::Equal => {
-                if join_type == JoinType::LeftSemi {
-                    output_left_current_record!();
-                }
-                left_cursor.forward(&mut timer).await?;
-                continue;
-            }
-            Ordering::Greater => {
-                right_cursor.forward(&mut timer).await?;
-                continue;
-            }
-        }
-    }
-    if staging_len > 0 {
-        flush_staging!();
     }
     Ok(())
 }
@@ -754,114 +430,284 @@ struct StreamCursor {
     stream: SendableRecordBatchStream,
     on_row_converter: Arc<SyncMutex<RowConverter>>,
     on_columns: Vec<usize>,
-    batch: Option<RecordBatch>,
-    on_rows: Option<Rows>,
-    on_row_null_buffer: Option<NullBuffer>,
-    idx: usize,
+
+    // IMPORTANT:
+    // batches/rows/null_buffers always contains a `null batch` in the front
+    batches: Vec<RecordBatch>,
+    on_rows: Vec<Arc<Rows>>,
+    on_row_null_buffers: Vec<Option<NullBuffer>>,
+    cur_idx: (usize, usize),
+    num_null_batches: usize,
+    finished: bool,
 }
 
 impl StreamCursor {
     async fn try_new(
-        mut stream: SendableRecordBatchStream,
+        stream: SendableRecordBatchStream,
         on_row_converter: Arc<SyncMutex<RowConverter>>,
         on_columns: Vec<usize>,
+        stop_timer: &mut ScopedTimerGuard<'_>,
     ) -> Result<Self> {
-        if let Some(batch) = stream.next().await.transpose()? {
-            let mut cursor = Self {
-                stream,
-                on_row_converter,
-                on_columns,
-                on_rows: None,
-                on_row_null_buffer: None,
-                batch: Some(batch),
-                idx: 0,
-            };
-            cursor.update_rows()?;
-            return Ok(cursor);
-        }
+        let empty_batch = RecordBatch::new_empty(Arc::new(Schema::new(
+            stream
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| f.as_ref().clone().with_nullable(true))
+                .collect::<Vec<_>>(),
+        )));
+        let null_batch = BatchTaker(&empty_batch).take_opt([Option::<usize>::None])?;
+        let null_on_rows = Arc::new(
+            on_row_converter
+                .lock()
+                .convert_columns(null_batch.project(&on_columns)?.columns())?,
+        );
+        let null_nb = NullBuffer::new_null(1);
 
-        Ok(Self {
+        let mut cursor = Self {
             stream,
             on_row_converter,
             on_columns,
-            on_rows: None,
-            on_row_null_buffer: None,
-            batch: None,
-            idx: 0,
-        })
+            batches: vec![null_batch],
+            on_rows: vec![null_on_rows],
+            on_row_null_buffers: vec![Some(null_nb)],
+            cur_idx: (1, 0),
+            num_null_batches: 1,
+            finished: false,
+        };
+        if !cursor.next_batch(stop_timer).await? {
+            cursor.finished = true;
+        }
+        Ok(cursor)
     }
 
-    fn update_rows(&mut self) -> Result<()> {
-        if let Some(batch) = self.batch.as_ref() {
-            let on_columns = batch.project(&self.on_columns)?.columns().to_vec();
+    async fn next(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<()> {
+        let mut cur_idx = self.cur_idx;
 
-            self.on_rows = Some(self.on_row_converter.lock().convert_columns(&on_columns)?);
-            self.on_row_null_buffer = on_columns
+        if cur_idx.1 + 1 < self.batches[cur_idx.0].num_rows() {
+            cur_idx.1 += 1;
+        } else {
+            cur_idx.0 += 1;
+            cur_idx.1 = 0;
+            if !self.next_batch(stop_timer).await? {
+                self.finished = true;
+            }
+        }
+        self.cur_idx = cur_idx;
+        Ok(())
+    }
+
+    async fn next_batch(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<bool> {
+        stop_timer.stop();
+        if let Some(batch) = self.stream.next().await.transpose()? {
+            stop_timer.restart();
+            let on_columns = batch.project(&self.on_columns)?.columns().to_vec();
+            let on_row_null_buffer = on_columns
                 .iter()
                 .map(|c| c.nulls().cloned())
                 .reduce(|lhs, rhs| NullBuffer::union(lhs.as_ref(), rhs.as_ref()))
                 .unwrap_or(None);
+            let on_rows = Arc::new(self.on_row_converter.lock().convert_columns(&on_columns)?);
+
+            self.batches.push(batch);
+            self.on_row_null_buffers.push(on_row_null_buffer);
+            self.on_rows.push(on_rows);
+            return Ok(true);
         } else {
-            self.on_rows = None;
-            self.on_row_null_buffer = None;
+            stop_timer.restart();
         }
-        Ok(())
+        Ok(false)
     }
 
-    async fn forward(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<()> {
-        if let Some(batch) = &self.batch {
-            if self.idx + 1 < batch.num_rows() {
-                self.idx += 1;
-                return Ok(());
-            }
-            loop {
-                stop_timer.stop();
-                let maybe_next = self.stream.next().await.transpose()?;
-                stop_timer.restart();
+    #[inline]
+    fn row<'a>(&'a self, idx: (usize, usize)) -> Row<'a> {
+        let bidx = idx.0;
+        let ridx = idx.1;
+        self.on_rows[bidx].row(ridx)
+    }
 
-                match maybe_next {
-                    Some(batch) => {
-                        if batch.num_rows() == 0 {
-                            continue;
-                        }
-                        self.batch = Some(batch);
-                        self.idx = 0;
-                        break;
-                    }
-                    None => {
-                        self.batch = None;
-                        self.idx = 0;
-                        break;
-                    }
+    #[inline]
+    fn num_buffered_batches(&self) -> usize {
+        self.batches.len() - self.num_null_batches
+    }
+
+    #[inline]
+    fn clear_outdated(&mut self, min_reserved_bidx: usize) {
+        // fill out-dated batches with null batches
+        for i in self.num_null_batches..min_reserved_bidx.min(self.cur_idx.0) {
+            self.batches[i] = self.batches[0].clone();
+            self.on_rows[i] = self.on_rows[0].clone();
+            self.on_row_null_buffers[i] = self.on_row_null_buffers[0].clone();
+            self.num_null_batches += 1;
+        }
+    }
+}
+
+#[derive(Default)]
+struct Joiner {
+    ljoins: Vec<(usize, usize)>,
+    rjoins: Vec<(usize, usize)>,
+    l_min_reserved_bidx: usize,
+    r_min_reserved_bidx: usize,
+}
+
+impl Joiner {
+    fn new() -> Self {
+        Self {
+            ljoins: vec![],
+            rjoins: vec![],
+            l_min_reserved_bidx: usize::MAX,
+            r_min_reserved_bidx: usize::MAX,
+        }
+    }
+
+    fn accept_pair(
+        &mut self,
+        join_params: &JoinParams,
+        lcur: &mut StreamCursor,
+        rcur: &mut StreamCursor,
+        l: Option<(usize, usize)>,
+        r: Option<(usize, usize)>,
+    ) -> Result<Option<RecordBatch>> {
+        if let Some((bidx, ridx)) = l {
+            self.ljoins.push((bidx, ridx));
+            self.l_min_reserved_bidx = self.l_min_reserved_bidx.min(bidx);
+        } else {
+            self.ljoins.push((0, 0));
+        }
+
+        if let Some((bidx, ridx)) = r {
+            self.rjoins.push((bidx, ridx));
+            self.r_min_reserved_bidx = self.r_min_reserved_bidx.min(bidx);
+        } else {
+            self.rjoins.push((0, 0));
+        }
+
+        let batch_size = join_params.batch_size;
+        if self.ljoins.len() >= batch_size || self.rjoins.len() >= batch_size {
+            return self.flush_pairs(join_params, lcur, rcur);
+        }
+        Ok(None)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.ljoins.is_empty() && self.rjoins.is_empty()
+    }
+
+    fn flush_pairs(
+        &mut self,
+        join_params: &JoinParams,
+        lcur: &mut StreamCursor,
+        rcur: &mut StreamCursor,
+    ) -> Result<Option<RecordBatch>> {
+        self.l_min_reserved_bidx = usize::MAX;
+        self.r_min_reserved_bidx = usize::MAX;
+
+        if let Some(join_filter) = &join_params.join_filter {
+            // get intermediate batch
+            let intermediate_columns = join_filter
+                .column_indices()
+                .iter()
+                .map(|ci| {
+                    let (cur, joins) = match ci.side {
+                        JoinSide::Left => (&lcur, &self.ljoins),
+                        JoinSide::Right => (&rcur, &self.rjoins),
+                    };
+                    let arrays = cur
+                        .batches
+                        .iter()
+                        .map(|b| b.column(ci.index).as_ref())
+                        .collect::<Vec<_>>();
+                    Ok(arrow::compute::interleave(&arrays, joins)?)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let intermediate_batch =
+                RecordBatch::try_new(Arc::new(join_filter.schema().clone()), intermediate_columns)?;
+
+            // evalute filter
+            let filtered_array = join_filter
+                .expression()
+                .evaluate(&intermediate_batch)?
+                .into_array(intermediate_batch.num_rows());
+            let filtered = as_boolean_array(&filtered_array);
+            let filtered = if filtered.null_count() > 0 {
+                prep_null_mask_filter(filtered)
+            } else {
+                filtered.clone()
+            };
+
+            // apply filter
+            let mut retained = 0;
+            for (i, selected) in filtered.values().iter().enumerate() {
+                if selected {
+                    self.ljoins[retained] = self.ljoins[i];
+                    self.rjoins[retained] = self.rjoins[i];
+                    retained += 1;
                 }
             }
-            self.update_rows()?;
-        } else {
-            self.on_rows = None;
-            self.on_row_null_buffer = None;
+            self.ljoins.truncate(retained);
+            self.rjoins.truncate(retained);
+            if retained == 0 {
+                return Ok(None);
+            }
         }
-        Ok(())
+
+        let output_columns = match join_params.join_type {
+            LeftSemi | LeftAnti => BatchesInterleaver::new(lcur.batches[0].schema(), &lcur.batches)
+                .interleave(&self.ljoins)?
+                .columns()
+                .to_vec(),
+            RightSemi | RightAnti => {
+                BatchesInterleaver::new(rcur.batches[0].schema(), &rcur.batches)
+                    .interleave(&self.rjoins)?
+                    .columns()
+                    .to_vec()
+            }
+            _ => [
+                BatchesInterleaver::new(lcur.batches[0].schema(), &lcur.batches)
+                    .interleave(&self.ljoins)?
+                    .columns(),
+                BatchesInterleaver::new(rcur.batches[0].schema(), &rcur.batches)
+                    .interleave(&self.rjoins)?
+                    .columns(),
+            ]
+            .concat(),
+        };
+        self.ljoins.clear();
+        self.rjoins.clear();
+        let batch = RecordBatch::try_new(join_params.output_schema.clone(), output_columns)?;
+        Ok(Some(batch))
     }
 }
 
-fn compare_cursor(left_cursor: &StreamCursor, right_cursor: &StreamCursor) -> Ordering {
-    match (&left_cursor.on_rows, &right_cursor.on_rows) {
+fn compare_cursor(
+    lcur: &StreamCursor,
+    lidx: (usize, usize),
+    rcur: &StreamCursor,
+    ridx: (usize, usize),
+) -> Ordering {
+    match (&lcur.on_rows.get(lidx.0), &rcur.on_rows.get(ridx.0)) {
         (None, _) => Ordering::Greater,
         (_, None) => Ordering::Less,
-        (Some(left_rows), Some(right_rows)) => {
-            let left_key = &left_rows.row(left_cursor.idx);
-            let right_key = &right_rows.row(right_cursor.idx);
-            match left_key.cmp(right_key) {
+        (Some(lrows), Some(rrows)) => {
+            let lkey = &lrows.row(lidx.1);
+            let rkey = &rrows.row(ridx.1);
+            match lkey.cmp(rkey) {
                 Ordering::Greater => Ordering::Greater,
                 Ordering::Less => Ordering::Less,
-                _ => match &left_cursor.on_row_null_buffer {
-                    Some(nb) if nb.is_null(left_cursor.idx) => Ordering::Less,
-                    _ => Ordering::Equal,
-                },
+                _ => {
+                    if let Some(nb) = &lcur.on_row_null_buffers[lidx.0] {
+                        if nb.is_null(lidx.1) {
+                            return Ordering::Less;
+                        }
+                    }
+                    Ordering::Equal
+                }
             }
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use crate::sort_merge_join_exec::SortMergeJoinExec;
@@ -873,6 +719,7 @@ mod tests {
     use datafusion::assert_batches_sorted_eq;
     use datafusion::error::Result;
     use datafusion::logical_expr::JoinType;
+    use datafusion::logical_expr::JoinType::*;
     use datafusion::physical_expr::expressions::Column;
     use datafusion::physical_plan::common;
     use datafusion::physical_plan::joins::utils::*;
@@ -1002,7 +849,7 @@ mod tests {
         join_type: JoinType,
     ) -> Result<SortMergeJoinExec> {
         let sort_options = vec![SortOptions::default(); on.len()];
-        SortMergeJoinExec::try_new(left, right, on, join_type, sort_options)
+        SortMergeJoinExec::try_new(left, right, on, join_type, None, sort_options)
     }
 
     fn join_with_options(
@@ -1012,7 +859,7 @@ mod tests {
         join_type: JoinType,
         sort_options: Vec<SortOptions>,
     ) -> Result<SortMergeJoinExec> {
-        SortMergeJoinExec::try_new(left, right, on, join_type, sort_options)
+        SortMergeJoinExec::try_new(left, right, on, join_type, None, sort_options)
     }
 
     async fn join_collect(
@@ -1076,7 +923,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Inner).await?;
+        let (_, batches) = join_collect(left, right, on, Inner).await?;
 
         let expected = vec![
             "+----+----+----+----+----+----+",
@@ -1115,7 +962,7 @@ mod tests {
             ),
         ];
 
-        let (_columns, batches) = join_collect(left, right, on, JoinType::Inner).await?;
+        let (_columns, batches) = join_collect(left, right, on, Inner).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b2 | c1 | a1 | b2 | c2 |",
@@ -1153,7 +1000,7 @@ mod tests {
             ),
         ];
 
-        let (_columns, batches) = join_collect(left, right, on, JoinType::Inner).await?;
+        let (_columns, batches) = join_collect(left, right, on, Inner).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b2 | c1 | a1 | b2 | c2 |",
@@ -1192,7 +1039,7 @@ mod tests {
             ),
         ];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Inner).await?;
+        let (_, batches) = join_collect(left, right, on, Inner).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b2 | c1 | a1 | b2 | c2 |",
@@ -1233,7 +1080,7 @@ mod tests {
             left,
             right,
             on,
-            JoinType::Inner,
+            Inner,
             vec![
                 SortOptions {
                     descending: true,
@@ -1281,8 +1128,7 @@ mod tests {
             ),
         ];
 
-        let (_, batches) =
-            join_collect_batch_size_equals_two(left, right, on, JoinType::Inner).await?;
+        let (_, batches) = join_collect_batch_size_equals_two(left, right, on, Inner).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b2 | c1 | a1 | b2 | c2 |",
@@ -1317,7 +1163,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Left).await?;
+        let (_, batches) = join_collect(left, right, on, Left).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b1 | c2 |",
@@ -1349,7 +1195,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Right).await?;
+        let (_, batches) = join_collect(left, right, on, Right).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b1 | c2 |",
@@ -1381,7 +1227,7 @@ mod tests {
             Column::new_with_schema("b2", &right.schema()).unwrap(),
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Full).await?;
+        let (_, batches) = join_collect(left, right, on, Full).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b2 | c2 |",
@@ -1413,7 +1259,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::LeftAnti).await?;
+        let (_, batches) = join_collect(left, right, on, LeftAnti).await?;
         let expected = vec![
             "+----+----+----+",
             "| a1 | b1 | c1 |",
@@ -1444,7 +1290,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::LeftSemi).await?;
+        let (_, batches) = join_collect(left, right, on, LeftSemi).await?;
         let expected = vec![
             "+----+----+----+",
             "| a1 | b1 | c1 |",
@@ -1477,7 +1323,7 @@ mod tests {
             Column::new_with_schema("b", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Inner).await?;
+        let (_, batches) = join_collect(left, right, on, Inner).await?;
         let expected = vec![
             "+---+---+---+----+---+----+",
             "| a | b | c | a  | b | c  |",
@@ -1509,7 +1355,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Inner).await?;
+        let (_, batches) = join_collect(left, right, on, Inner).await?;
 
         let expected = vec![
             "+------------+------------+------------+------------+------------+------------+",
@@ -1543,7 +1389,7 @@ mod tests {
             Column::new_with_schema("b1", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Inner).await?;
+        let (_, batches) = join_collect(left, right, on, Inner).await?;
         let expected = vec![
             "+-------------------------+---------------------+-------------------------+-------------------------+---------------------+-------------------------+",
             "| a1                      | b1                  | c1                      | a2                      | b1                  | c2                      |",
@@ -1576,7 +1422,7 @@ mod tests {
             Column::new_with_schema("b2", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Left).await?;
+        let (_, batches) = join_collect(left, right, on, Left).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b2 | c2 |",
@@ -1612,7 +1458,7 @@ mod tests {
             Column::new_with_schema("b2", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Right).await?;
+        let (_, batches) = join_collect(left, right, on, Right).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b2 | c2 |",
@@ -1656,7 +1502,7 @@ mod tests {
             Column::new_with_schema("b2", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Left).await?;
+        let (_, batches) = join_collect(left, right, on, Left).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b2 | c2 |",
@@ -1705,7 +1551,7 @@ mod tests {
             Column::new_with_schema("b2", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Right).await?;
+        let (_, batches) = join_collect(left, right, on, Right).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b2 | c2 |",
@@ -1754,7 +1600,7 @@ mod tests {
             Column::new_with_schema("b2", &right.schema())?,
         )];
 
-        let (_, batches) = join_collect(left, right, on, JoinType::Full).await?;
+        let (_, batches) = join_collect(left, right, on, Full).await?;
         let expected = vec![
             "+----+----+----+----+----+----+",
             "| a1 | b1 | c1 | a2 | b2 | c2 |",

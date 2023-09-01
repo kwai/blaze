@@ -20,21 +20,19 @@ import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
-
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.TaskContext
-
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.blaze.NativeHelper
+import org.apache.spark.sql.blaze.BlazeConf
 
 class ArrowFFIExportIterator(
     rowIter: Iterator[InternalRow],
     schema: StructType,
     taskContext: TaskContext,
-    recordBatchSize: Int = NativeHelper.batchSize)
+    recordBatchSize: Int = BlazeConf.batchSize)
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 

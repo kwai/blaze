@@ -34,10 +34,10 @@ import org.apache.spark.SparkException
 import org.apache.spark.TaskContext
 import org.apache.spark.broadcast
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -125,7 +125,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   }
 
   override def doExecuteNative(): NativeRDD = {
-    val broadcast = doExecuteBroadcastNative[Array[Byte]]()
+    val broadcast = doExecuteBroadcastNative[Array[Array[Byte]]]()
     val nativeMetrics = MetricNode(metrics, Nil)
     val partitions = Array(new Partition() {
       override def index: Int = 0
@@ -140,7 +140,9 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       (_, _) => {
         val resourceId = s"ArrowBroadcastExchangeExec:${UUID.randomUUID()}"
         val provideIpcIterator = () => {
-          Iterator.single(Channels.newChannel(new ByteArrayInputStream(broadcast.value)))
+          broadcast.value.iterator.map(bytes => {
+            Channels.newChannel(new ByteArrayInputStream(bytes))
+          })
         }
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
         pb.PhysicalPlanNode
@@ -160,7 +162,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
 
   val nativeSchema: pb.Schema = Util.getNativeSchema(output)
 
-  def collectNative(): Array[Byte] = {
+  def collectNative(): Array[Array[Byte]] = {
     val inputRDD = NativeHelper.executeNative(child match {
       case child if NativeHelper.isNative(child) => child
       case child => ConvertToNativeExec(child)
@@ -236,8 +238,8 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   }
 
   @transient
-  lazy val nativeRelationFuture: Future[Broadcast[Array[Byte]]] = {
-    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Byte]]](
+  lazy val nativeRelationFuture: Future[Broadcast[Array[Array[Byte]]]] = {
+    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Array[Byte]]]](
       sqlContext.sparkSession,
       BroadcastExchangeExec.executionContext) {
       try {
@@ -246,7 +248,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
           s"native broadcast exchange (runId $getRunId)",
           interruptOnCancel = true)
         val broadcasted = sparkContext.broadcast(collectNative())
-        Promise[Broadcast[Array[Byte]]].trySuccess(broadcasted)
+        Promise[Broadcast[Array[Array[Byte]]]].trySuccess(broadcasted)
         broadcasted
       } catch {
         case e: Throwable =>
@@ -264,7 +266,11 @@ object NativeBroadcastExchangeBase {
   def buildBroadcastData(
       collectedData: Array[Array[Byte]],
       keys: Seq[Expression],
-      nativeSchema: pb.Schema): Array[Byte] = {
+      nativeSchema: pb.Schema): Array[Array[Byte]] = {
+
+    if (!BlazeConf.enableBhjFallbacksToSmj()) { // no need to sort data in driver side
+      return collectedData
+    }
 
     val readerIpcProviderResourceId = s"BuildBroadcastDataReader:${UUID.randomUUID()}"
     val readerExec = pb.IpcReaderExecNode
@@ -327,6 +333,6 @@ object NativeBroadcastExchangeBase {
       override def index: Int = 0
     }
     assert(NativeHelper.executeNativePlan(exec, null, singlePartition, None).isEmpty)
-    bos.toByteArray
+    Array(bos.toByteArray)
   }
 }

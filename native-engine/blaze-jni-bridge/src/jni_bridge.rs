@@ -395,6 +395,7 @@ pub struct JavaClasses<'a> {
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
     pub cSparkUDFWrapperContext: SparkUDFWrapperContext<'a>,
+    pub cBlazeConf: BlazeConf<'a>,
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
@@ -457,6 +458,7 @@ impl JavaClasses<'static> {
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
                 cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env).unwrap(),
+                cBlazeConf: BlazeConf::new(env).unwrap(),
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env).unwrap(),
@@ -1106,6 +1108,50 @@ impl<'a> SparkMetricNode<'a> {
                 .get_method_id(class, "add", "(Ljava/lang/String;J)V")
                 .unwrap(),
             method_add_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeConf<'a> {
+    pub class: JClass<'a>,
+    pub method_batchSize: JStaticMethodID,
+    pub method_batchSize_ret: ReturnType,
+    pub method_memoryFraction: JStaticMethodID,
+    pub method_memoryFraction_ret: ReturnType,
+    pub method_enableBhjFallbacksToSmj: JStaticMethodID,
+    pub method_enableBhjFallbacksToSmj_ret: ReturnType,
+    pub method_bhjFallbacksToSmjRowsThreshold: JStaticMethodID,
+    pub method_bhjFallbacksToSmjRowsThreshold_ret: ReturnType,
+    pub method_bhjFallbacksToSmjMemThreshold: JStaticMethodID,
+    pub method_bhjFallbacksToSmjMemThreshold_ret: ReturnType,
+}
+
+impl<'a> BlazeConf<'_> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/BlazeConf";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeConf<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeConf {
+            class,
+            method_batchSize: env.get_static_method_id(class, "batchSize", "()I").unwrap(),
+            method_batchSize_ret: ReturnType::Primitive(Primitive::Int),
+            method_memoryFraction: env
+                .get_static_method_id(class, "memoryFraction", "()D")
+                .unwrap(),
+            method_memoryFraction_ret: ReturnType::Primitive(Primitive::Double),
+            method_enableBhjFallbacksToSmj: env
+                .get_static_method_id(class, "enableBhjFallbacksToSmj", "()Z")
+                .unwrap(),
+            method_enableBhjFallbacksToSmj_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_bhjFallbacksToSmjRowsThreshold: env
+                .get_static_method_id(class, "bhjFallbacksToSmjRowsThreshold", "()I")
+                .unwrap(),
+            method_bhjFallbacksToSmjRowsThreshold_ret: ReturnType::Primitive(Primitive::Int),
+            method_bhjFallbacksToSmjMemThreshold: env
+                .get_static_method_id(class, "bhjFallbacksToSmjMemThreshold", "()I")
+                .unwrap(),
+            method_bhjFallbacksToSmjMemThreshold_ret: ReturnType::Primitive(Primitive::Int),
         })
     }
 }

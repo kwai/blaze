@@ -329,7 +329,6 @@ object BlazeConverters extends Logging {
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    assert(condition.isEmpty, "SortMergeJoin with post filter not yet supported")
     var nativeLeft = convertToNative(left)
     var nativeRight = convertToNative(right)
     var modifiedLeftKeys = leftKeys
@@ -353,7 +352,7 @@ object BlazeConverters extends Logging {
       modifiedLeftKeys,
       modifiedRightKeys,
       joinType,
-      None,
+      condition,
       addRenameColumnsExec(nativeLeft),
       addRenameColumnsExec(nativeRight))
     val smj = NativeSortMergeJoinExec(
@@ -364,7 +363,8 @@ object BlazeConverters extends Logging {
       smjOrig.output,
       smjOrig.outputPartitioning,
       smjOrig.outputOrdering,
-      smjOrig.joinType)
+      smjOrig.joinType,
+      smjOrig.condition)
 
     if (needPostProject) {
       buildPostJoinProject(smj, exec.output)
@@ -384,7 +384,6 @@ object BlazeConverters extends Logging {
         exec.left,
         exec.right)
       logDebug(s"Converting BroadcastHashJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-      assert(condition.isEmpty, "BroadcastJoin with post filter not yet supported")
       var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
@@ -439,7 +438,7 @@ object BlazeConverters extends Logging {
         modifiedProbedKeys,
         modifiedJoinType,
         BuildLeft,
-        None,
+        condition,
         addRenameColumnsExec(hashed),
         addRenameColumnsExec(nativeProbed))
 
@@ -451,7 +450,8 @@ object BlazeConverters extends Logging {
         bhjOrig.output,
         bhjOrig.outputPartitioning,
         bhjOrig.outputOrdering,
-        bhjOrig.joinType)
+        bhjOrig.joinType,
+        bhjOrig.condition)
 
       if (needPostProject) {
         buildPostJoinProject(bhj, exec.output)
