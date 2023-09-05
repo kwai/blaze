@@ -33,7 +33,8 @@ use datafusion::physical_plan::metrics::{
 };
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    Statistics,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::{StreamExt, TryStreamExt};
@@ -104,6 +105,16 @@ impl SortMergeJoinExec {
             metrics: ExecutionPlanMetricsSet::new(),
             sort_options,
         })
+    }
+}
+
+impl DisplayAs for SortMergeJoinExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "SortMergeJoin: join_type={:?}, on={:?}, schema={:?}",
+            self.join_type, self.on, self.schema,
+        )
     }
 }
 
@@ -205,14 +216,6 @@ impl ExecutionPlan for SortMergeJoinExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "SortMergeJoin: join_type={:?}, on={:?}, schema={:?}",
-            self.join_type, self.on, self.schema,
-        )
     }
 
     fn statistics(&self) -> Statistics {

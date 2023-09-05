@@ -32,7 +32,7 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::io::{
     read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch,
@@ -79,6 +79,18 @@ impl SortExec {
             fetch,
             metrics,
         }
+    }
+}
+
+impl DisplayAs for SortExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        let exprs = self
+            .exprs
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "SortExec: {}", exprs)
     }
 }
 
@@ -175,16 +187,6 @@ impl ExecutionPlan for SortExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        let exprs = self
-            .exprs
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        write!(f, "SortExec: {}", exprs)
     }
 
     fn statistics(&self) -> Statistics {

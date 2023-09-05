@@ -21,12 +21,12 @@ use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::metrics::{BaselineMetrics, MetricBuilder};
-use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
+use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use datafusion_ext_commons::streams::ipc_stream::{IpcReadMode, IpcReaderStream};
 use jni::objects::JObject;
@@ -57,6 +57,12 @@ impl IpcReaderExec {
             mode,
             metrics: ExecutionPlanMetricsSet::new(),
         }
+    }
+}
+
+impl DisplayAs for IpcReaderExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "IpcReader: [{:?}]", &self.schema)
     }
 }
 
@@ -131,10 +137,6 @@ impl ExecutionPlan for IpcReaderExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "IpcReader: [{:?}]", &self.schema)
     }
 
     fn statistics(&self) -> Statistics {

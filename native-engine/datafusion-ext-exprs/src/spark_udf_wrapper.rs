@@ -33,7 +33,7 @@ use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hasher;
 
-use arrow::ffi::{ArrowArray, ArrowArrayRef, FFI_ArrowArray, FFI_ArrowSchema};
+use arrow::ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema};
 use std::sync::Arc;
 
 pub struct SparkUDFWrapperExpr {
@@ -159,8 +159,7 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
 
         // import output from context
         let import_ffi_schema = FFI_ArrowSchema::try_from(self.import_schema.as_ref())?;
-        let import_struct_array =
-            make_array(ArrowArray::new(import_ffi_array, import_ffi_schema).to_data()?);
+        let import_struct_array = make_array(from_ffi(import_ffi_array, &import_ffi_schema)?);
         let import_array = as_struct_array(&import_struct_array).column(0).clone();
         Ok(ColumnarValue::Array(import_array))
     }

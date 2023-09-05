@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{ArrayData, StructArray};
+use arrow::array::StructArray;
 use arrow::datatypes::SchemaRef;
-use arrow::ffi::{ArrowArray, FFI_ArrowArray, FFI_ArrowSchema};
+use arrow::ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::{jni_call, jni_new_object};
 use datafusion::error::Result;
-use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
 use datafusion::physical_plan::RecordBatchStream;
 use futures::Stream;
@@ -95,11 +94,11 @@ impl FFIReaderStream {
             ffi_arrow_array_ptr.as_obj(),
         ) -> JObject)?;
 
-        let imported = ArrowArray::new(ffi_arrow_array, ffi_arrow_schema);
-        let struct_array = StructArray::from(ArrayData::try_from(imported)?);
+        let imported = from_ffi(ffi_arrow_array, &ffi_arrow_schema)?;
+        let struct_array = StructArray::from(imported);
         let batch = RecordBatch::from(struct_array);
 
-        self.size_counter.add(batch_byte_size(&batch));
+        self.size_counter.add(batch.get_array_memory_size());
         Ok(Some(batch))
     }
 }

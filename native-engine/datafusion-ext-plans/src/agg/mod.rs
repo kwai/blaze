@@ -231,7 +231,7 @@ pub fn create_agg(
         }
         AggFunction::Sum => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = aggregate_function::return_type(
+            let return_type = aggregate_function::AggregateFunction::return_type(
                 &aggregate_function::AggregateFunction::Sum,
                 &[arg_type],
             )?;
@@ -242,7 +242,7 @@ pub fn create_agg(
         }
         AggFunction::Avg => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = aggregate_function::return_type(
+            let return_type = aggregate_function::AggregateFunction::return_type(
                 &aggregate_function::AggregateFunction::Avg,
                 &[arg_type],
             )?;

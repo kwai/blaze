@@ -47,39 +47,39 @@ datafusion-ext-exprs = { path = "./native-engine/datafusion-ext-exprs" }
 datafusion-ext-functions = { path = "./native-engine/datafusion-ext-functions" }
 datafusion-ext-plans = { path = "./native-engine/datafusion-ext-plans" }
 
-# datafusion: branch=v27-blaze
-datafusion = { version = "27.0.0", features = ["simd"] }
+# datafusion: branch=v30-blaze
+datafusion = { version = "30.0.0", features = ["simd"] }
 
-# arrow: branch=v42-blaze
-arrow = { version = "42.0.0", features = ["ffi", "simd"]}
-arrow-schema = { version = "42.0.0", features = ["serde"] }
-parquet = { version = "42.0.0", features = ["simd"] }
+# arrow: branch=v45-blaze
+arrow = { version = "45.0.0", features = ["ffi", "simd"]}
+arrow-schema = { version = "45.0.0", features = ["serde"] }
+parquet = { version = "45.0.0", features = ["simd"] }
 
 # serde_json: branch=v1.0.96-blaze
 serde_json = { version = "1.0.96" }
 
 [patch.crates-io]
-# datafusion: branch=v27-blaze
-datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "6bfa06c10"}
-datafusion-common = { git = "https://github.com/richox/arrow-datafusion.git", rev = "6bfa06c10"}
-datafusion-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "6bfa06c10"}
-datafusion-execution = { git = "https://github.com/richox/arrow-datafusion.git", rev = "6bfa06c10"}
-datafusion-optimizer = { git = "https://github.com/richox/arrow-datafusion.git", rev = "6bfa06c10"}
-datafusion-physical-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "6bfa06c10"}
+# datafusion: branch=v30-blaze
+datafusion = { git = "https://github.com/richox/arrow-datafusion.git", rev = "b3e9403cc"}
+datafusion-common = { git = "https://github.com/richox/arrow-datafusion.git", rev = "b3e9403cc"}
+datafusion-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "b3e9403cc"}
+datafusion-execution = { git = "https://github.com/richox/arrow-datafusion.git", rev = "b3e9403cc"}
+datafusion-optimizer = { git = "https://github.com/richox/arrow-datafusion.git", rev = "b3e9403cc"}
+datafusion-physical-expr = { git = "https://github.com/richox/arrow-datafusion.git", rev = "b3e9403cc"}
 
-# arrow: branch=v42-blaze
-arrow = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-arith = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-array = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-buffer = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-cast = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-data = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-ord = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-row = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-schema = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-select = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-arrow-string = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
-parquet = { git = "https://github.com/richox/arrow-rs.git", rev = "2eb072067"}
+# arrow: branch=v45-blaze
+arrow = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-arith = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-array = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-buffer = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-cast = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-data = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-ord = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-row = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-schema = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-select = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+arrow-string = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
+parquet = { git = "https://github.com/richox/arrow-rs.git", rev = "35b6fded9"}
 
 # serde_json: branch=v1.0.96-blaze
 serde_json = { git = "https://github.com/richox/json", branch = "v1.0.96-blaze" }

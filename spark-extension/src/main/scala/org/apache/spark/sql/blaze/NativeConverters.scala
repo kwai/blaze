@@ -583,15 +583,13 @@ object NativeConverters extends Logging {
       case e @ Add(lhs, rhs) =>
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
-          val left = Cast(lhs, DoubleType)
-          val right = Cast(rhs, DoubleType)
           buildExprNode {
-            _.setTryCast(
-              pb.PhysicalTryCastNode
+            _.setBinaryExpr(
+              pb.PhysicalBinaryExprNode
                 .newBuilder()
-                .setExpr(convertExprWithFallback(Add.apply(left, right), isPruningExpr, fallback))
-                .setArrowType(convertDataType(resultType))
-                .build())
+                .setL(convertExprWithFallback(Cast(lhs, resultType), isPruningExpr, fallback))
+                .setR(convertExprWithFallback(rhs, isPruningExpr, fallback))
+                .setOp("Plus"))
           }
         } else {
           buildBinaryExprNode(lhs, rhs, "Plus")
@@ -600,16 +598,13 @@ object NativeConverters extends Logging {
       case e @ Subtract(lhs, rhs) =>
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
-          val left = Cast(lhs, DoubleType)
-          val right = Cast(rhs, DoubleType)
           buildExprNode {
-            _.setTryCast(
-              pb.PhysicalTryCastNode
+            _.setBinaryExpr(
+              pb.PhysicalBinaryExprNode
                 .newBuilder()
-                .setExpr(
-                  convertExprWithFallback(Subtract.apply(left, right), isPruningExpr, fallback))
-                .setArrowType(convertDataType(resultType))
-                .build())
+                .setL(convertExprWithFallback(Cast(lhs, resultType), isPruningExpr, fallback))
+                .setR(convertExprWithFallback(rhs, isPruningExpr, fallback))
+                .setOp("Minus"))
           }
         } else {
           buildBinaryExprNode(lhs, rhs, "Minus")
@@ -618,16 +613,13 @@ object NativeConverters extends Logging {
       case e @ Multiply(lhs, rhs) =>
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
-          val left = Cast(lhs, DoubleType)
-          val right = Cast(rhs, DoubleType)
           buildExprNode {
-            _.setTryCast(
-              pb.PhysicalTryCastNode
+            _.setBinaryExpr(
+              pb.PhysicalBinaryExprNode
                 .newBuilder()
-                .setExpr(
-                  convertExprWithFallback(Multiply.apply(left, right), isPruningExpr, fallback))
-                .setArrowType(convertDataType(resultType))
-                .build())
+                .setL(convertExprWithFallback(Cast(lhs, resultType), isPruningExpr, fallback))
+                .setR(convertExprWithFallback(rhs, isPruningExpr, fallback))
+                .setOp("Multiply"))
           }
         } else {
           buildBinaryExprNode(lhs, rhs, "Multiply")
@@ -636,16 +628,13 @@ object NativeConverters extends Logging {
       case e @ Divide(lhs, rhs) =>
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
-          val left = Cast(lhs, DoubleType)
-          val right = Cast(rhs, DoubleType)
           buildExprNode {
-            _.setTryCast(
-              pb.PhysicalTryCastNode
+            _.setBinaryExpr(
+              pb.PhysicalBinaryExprNode
                 .newBuilder()
-                .setExpr(
-                  convertExprWithFallback(Divide.apply(left, right), isPruningExpr, fallback))
-                .setArrowType(convertDataType(resultType))
-                .build())
+                .setL(convertExprWithFallback(Cast(lhs, resultType), isPruningExpr, fallback))
+                .setR(convertExprWithFallback(rhs, isPruningExpr, fallback))
+                .setOp("Divide"))
           }
         } else {
           buildBinaryExprNode(lhs, rhs, "Divide")

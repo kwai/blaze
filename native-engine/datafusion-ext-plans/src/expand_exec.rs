@@ -21,7 +21,8 @@ use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream,
 };
 use futures::{Stream, StreamExt};
 use std::any::Any;
@@ -67,6 +68,12 @@ impl ExpandExec {
             input,
             metrics: ExecutionPlanMetricsSet::new(),
         })
+    }
+}
+
+impl DisplayAs for ExpandExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "ExpandExec")
     }
 }
 
@@ -128,10 +135,6 @@ impl ExecutionPlan for ExpandExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ExpandExec")
     }
 
     fn statistics(&self) -> Statistics {

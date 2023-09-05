@@ -22,7 +22,8 @@ use datafusion::physical_plan::metrics::{
 };
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    Statistics,
 };
 use datafusion_ext_commons::streams::ffi_stream::FFIReaderStream;
 use jni::objects::JObject;
@@ -54,6 +55,12 @@ impl FFIReaderExec {
 
 impl Debug for FFIReaderExec {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FFIReader")
+    }
+}
+
+impl DisplayAs for FFIReaderExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "FFIReader")
     }
 }
@@ -116,10 +123,6 @@ impl ExecutionPlan for FFIReaderExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "FFIReader")
     }
 
     fn statistics(&self) -> Statistics {

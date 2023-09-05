@@ -69,7 +69,12 @@
                     <exclude>org/apache/commons/codec/**/*</exclude>
                     <exclude>org/apache/commons/compress/**/*</exclude>
                     <exclude>org/slf4j/**/*</exclude>
-                    <exclude>com/fasterxml/jackson/**/*</exclude>
+                  </excludes>
+                </filter>
+                <filter>
+                  <artifact>com.fasterxml.jackson.core:*</artifact>
+                  <excludes>
+                    <exclude>**</exclude>
                   </excludes>
                 </filter>
                 <filter>

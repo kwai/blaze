@@ -95,8 +95,8 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 
 [[package]]
 name = "arrow"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "ahash",
  "arrow-arith",
@@ -116,8 +116,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-arith"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -130,8 +130,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-array"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "ahash",
  "arrow-buffer",
@@ -147,8 +147,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-buffer"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "half",
  "num",
@@ -156,8 +156,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-cast"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -173,8 +173,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-csv"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -191,8 +191,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-data"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -202,8 +202,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-ipc"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -215,8 +215,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-json"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -225,7 +225,7 @@ dependencies = [
  "arrow-schema",
  "chrono",
  "half",
- "indexmap",
+ "indexmap 2.0.0",
  "lexical-core",
  "num",
  "serde",
@@ -234,8 +234,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-ord"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -248,8 +248,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-row"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -262,8 +262,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-schema"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "bitflags 2.3.3",
  "serde",
@@ -271,8 +271,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-select"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -283,14 +283,15 @@ dependencies = [
 
 [[package]]
 name = "arrow-string"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
  "arrow-schema",
  "arrow-select",
+ "num",
  "regex",
  "regex-syntax",
 ]
@@ -740,8 +741,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
+version = "30.0.0"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=b3e9403cc#b3e9403cc36a051633908ad860206e06e2056578"
 dependencies = [
  "ahash",
  "arrow",
@@ -758,13 +759,13 @@ dependencies = [
  "datafusion-expr",
  "datafusion-optimizer",
  "datafusion-physical-expr",
- "datafusion-row",
  "datafusion-sql",
  "flate2",
  "futures",
  "glob",
+ "half",
  "hashbrown 0.14.0",
- "indexmap",
+ "indexmap 2.0.0",
  "itertools 0.11.0",
  "lazy_static",
  "log",
@@ -788,26 +789,37 @@ dependencies = [
 
 [[package]]
 name = "datafusion-common"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
+version = "30.0.0"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=b3e9403cc#b3e9403cc36a051633908ad860206e06e2056578"
 dependencies = [
  "arrow",
  "arrow-array",
+ "async-compression",
+ "bytes",
+ "bzip2",
  "chrono",
+ "flate2",
+ "futures",
  "num_cpus",
  "object_store",
  "parquet",
  "sqlparser",
+ "tokio",
+ "tokio-util",
+ "xz2",
+ "zstd",
 ]
 
 [[package]]
 name = "datafusion-execution"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
+version = "30.0.0"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=b3e9403cc#b3e9403cc36a051633908ad860206e06e2056578"
 dependencies = [
+ "arrow",
  "dashmap",
  "datafusion-common",
  "datafusion-expr",
+ "futures",
  "hashbrown 0.14.0",
  "log",
  "object_store",
@@ -819,8 +831,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-expr"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
+version = "30.0.0"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=b3e9403cc#b3e9403cc36a051633908ad860206e06e2056578"
 dependencies = [
  "ahash",
  "arrow",
@@ -926,8 +938,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-optimizer"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
+version = "30.0.0"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=b3e9403cc#b3e9403cc36a051633908ad860206e06e2056578"
 dependencies = [
  "arrow",
  "async-trait",
@@ -943,26 +955,28 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-expr"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
+version = "30.0.0"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=b3e9403cc#b3e9403cc36a051633908ad860206e06e2056578"
 dependencies = [
  "ahash",
  "arrow",
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
+ "base64",
  "blake2",
  "blake3",
  "chrono",
  "datafusion-common",
  "datafusion-expr",
- "datafusion-row",
  "half",
  "hashbrown 0.14.0",
- "indexmap",
+ "hex",
+ "indexmap 2.0.0",
  "itertools 0.11.0",
  "lazy_static",
  "libc",
+ "log",
  "md-5",
  "paste",
  "petgraph",
@@ -974,20 +988,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "datafusion-row"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
-dependencies = [
- "arrow",
- "datafusion-common",
- "paste",
- "rand",
-]
-
-[[package]]
 name = "datafusion-sql"
-version = "27.0.0"
-source = "git+https://github.com/richox/arrow-datafusion.git?rev=6bfa06c10#6bfa06c102d6aac4fb0357c4996b81c71c05060e"
+version = "30.0.0"
+source = "git+https://github.com/richox/arrow-datafusion.git?rev=b3e9403cc#b3e9403cc36a051633908ad860206e06e2056578"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -1036,6 +1039,12 @@ name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
+
+[[package]]
+name = "equivalent"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "errno"
@@ -1299,6 +1308,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "443144c8cdadd93ebf52ddb4056d257f5b52c04d3c804e657d19eb73fc33668b"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "humantime"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1345,6 +1360,16 @@ checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
 dependencies = [
  "autocfg",
  "hashbrown 0.12.3",
+]
+
+[[package]]
+name = "indexmap"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5477fe2230a79769d8dc68e0eabf5437907c0457a5614a9e8dddb67f65eb65d"
+dependencies = [
+ "equivalent",
+ "hashbrown 0.14.0",
 ]
 
 [[package]]
@@ -1797,8 +1822,8 @@ dependencies = [
 
 [[package]]
 name = "parquet"
-version = "42.0.0"
-source = "git+https://github.com/richox/arrow-rs.git?rev=2eb072067#2eb072067b9c57c5f9375483e8e0b975b58c8f61"
+version = "45.0.0"
+source = "git+https://github.com/richox/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -1856,7 +1881,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dd7d28ee937e54fe3080c91faa1c3a46c06de6252988a7f4592ba2310ef22a4"
 dependencies = [
  "fixedbitset",
- "indexmap",
+ "indexmap 1.9.3",
 ]
 
 [[package]]

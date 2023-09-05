@@ -21,7 +21,6 @@ use blaze_jni_bridge::{
     jni_call, jni_get_object_class, jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
 use datafusion::error::Result;
-use datafusion::physical_plan::common::batch_byte_size;
 use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
 use datafusion::physical_plan::RecordBatchStream;
 use futures::Stream;
@@ -153,7 +152,7 @@ impl Stream for IpcReaderStream {
 
         if let Some(reader) = &mut self.reader {
             if let Some(batch) = reader.next_batch()? {
-                self.size_counter.add(batch_byte_size(&batch));
+                self.size_counter.add(batch.get_array_memory_size());
                 return self
                     .baseline_metrics
                     .record_poll(Poll::Ready(Some(Ok(batch))));

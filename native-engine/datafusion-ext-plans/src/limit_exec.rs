@@ -5,8 +5,8 @@ use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
-    Statistics,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
 };
 use futures::{Stream, StreamExt};
 use std::any::Any;
@@ -29,6 +29,12 @@ impl LimitExec {
             limit,
             metrics: ExecutionPlanMetricsSet::new(),
         }
+    }
+}
+
+impl DisplayAs for LimitExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "LimitExec(limit={})", self.limit)
     }
 }
 
@@ -77,10 +83,6 @@ impl ExecutionPlan for LimitExec {
             cur: 0,
             baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
         }))
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "LimitExec(limit={})", self.limit)
     }
 
     fn statistics(&self) -> Statistics {

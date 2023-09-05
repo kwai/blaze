@@ -31,7 +31,7 @@ use datafusion::physical_plan::metrics::{
 };
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, Metric, Partitioning,
+    DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, Metric, Partitioning,
     SendableRecordBatchStream,
 };
 use datafusion_ext_commons::cast::cast;
@@ -68,6 +68,12 @@ impl ParquetSinkExec {
             props,
             metrics: ExecutionPlanMetricsSet::new(),
         }
+    }
+}
+
+impl DisplayAs for ParquetSinkExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "ParquetSink [path={}]", self.path)
     }
 }
 
@@ -155,10 +161,6 @@ impl ExecutionPlan for ParquetSinkExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ParquetSink [path={}]", self.path)
     }
 
     fn statistics(&self) -> Statistics {

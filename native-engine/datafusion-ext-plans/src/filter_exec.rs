@@ -22,7 +22,7 @@ use datafusion::physical_expr::{PhysicalExprRef, PhysicalSortExpr};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
@@ -68,6 +68,16 @@ impl FilterExec {
 
     pub fn predicates(&self) -> &[PhysicalExprRef] {
         &self.predicates
+    }
+}
+
+impl DisplayAs for FilterExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "FilterExec [{}]",
+            self.predicates.iter().map(|e| format!("{e}")).join(", ")
+        )
     }
 }
 
@@ -123,14 +133,6 @@ impl ExecutionPlan for FilterExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "FilterExec [{}]",
-            self.predicates.iter().map(|e| format!("{e}")).join(", ")
-        )
     }
 
     fn statistics(&self) -> Statistics {

@@ -28,8 +28,8 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::Partitioning::UnknownPartitioning;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
-    Statistics,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
 };
 use futures::Stream;
 
@@ -45,6 +45,16 @@ impl EmptyPartitionsExec {
             schema,
             num_partitions,
         }
+    }
+}
+
+impl DisplayAs for EmptyPartitionsExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "EmptyPartitionsExec: partitions={}, schema={:?}",
+            &self.num_partitions, &self.schema,
+        )
     }
 }
 
@@ -92,14 +102,6 @@ impl ExecutionPlan for EmptyPartitionsExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         None
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "EmptyPartitionsExec: partitions={}, schema={:?}",
-            &self.num_partitions, &self.schema,
-        )
     }
 
     fn statistics(&self) -> Statistics {

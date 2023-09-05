@@ -86,10 +86,11 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
 
   private val nativeFileSchema =
     NativeConverters.convertSchema(StructType(basedFileScan.relation.dataSchema.map {
-      case field if basedFileScan.requiredSchema.exists(_.name == field.name) => field
+      case field if basedFileScan.requiredSchema.exists(_.name == field.name) =>
+        field.copy(nullable = true)
       case field =>
         // avoid converting unsupported type in non-used fields
-        StructField(field.name, NullType)
+        StructField(field.name, NullType, nullable = true)
     }))
 
   private val nativePartitionSchema =

@@ -23,7 +23,7 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
@@ -126,12 +126,14 @@ impl ExecutionPlan for AggExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Agg {:?}", self.agg_ctx)
-    }
-
     fn statistics(&self) -> Statistics {
         todo!()
+    }
+}
+
+impl DisplayAs for AggExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "Agg {:?}", self.agg_ctx)
     }
 }
 

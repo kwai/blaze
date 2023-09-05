@@ -30,7 +30,7 @@ use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use futures::stream::once;
 use futures::{StreamExt, TryStreamExt};
@@ -157,12 +157,14 @@ impl ExecutionPlan for BroadcastJoinExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "BroadcastJoin")
-    }
-
     fn statistics(&self) -> Statistics {
         unimplemented!()
+    }
+}
+
+impl DisplayAs for BroadcastJoinExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "BroadcastJoin")
     }
 }
 
@@ -325,7 +327,13 @@ struct RecordBatchStreamsWrapperExec {
 
 impl Debug for RecordBatchStreamsWrapperExec {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RecordBatchStreamsWrapperExec")
+        write!(f, "RecordBatchStreamsWrapper")
+    }
+}
+
+impl DisplayAs for RecordBatchStreamsWrapperExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "RecordBatchStreamsWrapper")
     }
 }
 

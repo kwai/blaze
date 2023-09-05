@@ -26,7 +26,7 @@ use datafusion::physical_expr::{PhysicalExprRef, PhysicalSortExpr};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::stream::once;
@@ -68,6 +68,19 @@ impl ProjectExec {
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
         })
+    }
+}
+
+impl DisplayAs for ProjectExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "ProjectExec [{}]",
+            self.expr
+                .iter()
+                .map(|(e, name)| format!("{e} AS {name}"))
+                .join(", ")
+        )
     }
 }
 
@@ -135,17 +148,6 @@ impl ExecutionPlan for ProjectExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "ProjectExec [{}]",
-            self.expr
-                .iter()
-                .map(|(e, name)| format!("{e} AS {name}"))
-                .join(", ")
-        )
     }
 
     fn statistics(&self) -> Statistics {

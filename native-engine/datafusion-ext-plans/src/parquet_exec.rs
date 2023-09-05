@@ -38,7 +38,7 @@ use datafusion::parquet::file::metadata::ParquetMetaData;
 use datafusion::physical_optimizer::pruning::PruningPredicate;
 use datafusion::physical_plan::metrics::{BaselineMetrics, MetricValue, Time};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{Metric, PhysicalExpr, RecordBatchStream};
+use datafusion::physical_plan::{DisplayAs, Metric, PhysicalExpr, RecordBatchStream};
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
@@ -135,6 +135,30 @@ impl ParquetExec {
             pruning_predicate,
             page_pruning_predicate,
         }
+    }
+}
+
+impl DisplayAs for ParquetExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> fmt::Result {
+        let limit = self.base_config.limit;
+        let file_group = self
+            .base_config
+            .file_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        write!(
+            f,
+            "ParquetExec: limit={:?}, file_group={:?}, predicate={}",
+            limit,
+            file_group,
+            self.pruning_predicate
+                .as_ref()
+                .map(|pre| format!("{}", pre.predicate_expr()))
+                .unwrap_or(format!("<empty>")),
+        )
     }
 }
 
@@ -246,28 +270,6 @@ impl ExecutionPlan for ParquetExec {
             })
             .try_flatten(),
         )))
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let limit = self.base_config.limit;
-        let file_group = self
-            .base_config
-            .file_groups
-            .iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>();
-
-        write!(
-            f,
-            "ParquetExec: limit={:?}, file_group={:?}, predicate={}",
-            limit,
-            file_group,
-            self.pruning_predicate
-                .as_ref()
-                .map(|pre| format!("{}", pre.predicate_expr()))
-                .unwrap_or(format!("<empty>")),
-        )
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

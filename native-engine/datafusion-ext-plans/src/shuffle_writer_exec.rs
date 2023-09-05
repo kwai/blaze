@@ -32,11 +32,11 @@ use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
 use datafusion::physical_plan::metrics::{MetricBuilder, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::physical_plan::Statistics;
+use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
 use futures::stream::once;
 use futures::{TryFutureExt, TryStreamExt};
 
@@ -54,6 +54,12 @@ pub struct ShuffleWriterExec {
     output_index_file: String,
     /// Metrics
     metrics: ExecutionPlanMetricsSet,
+}
+
+impl DisplayAs for ShuffleWriterExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "ShuffleWriterExec: partitioning={:?}", self.partitioning)
+    }
 }
 
 #[async_trait]
@@ -161,10 +167,6 @@ impl ExecutionPlan for ShuffleWriterExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
-    }
-
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "ShuffleWriterExec: partitioning={:?}", self.partitioning)
     }
 
     fn statistics(&self) -> Statistics {
