@@ -24,12 +24,11 @@ import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
-import org.apache.spark.sql.vectorized.ColumnarBatch
 
 class ArrowFFIStreamImportIterator(
     taskContext: Option[TaskContext],
     arrowFFIStreamPtr: Long,
-    onNextBatch: ColumnarBatch => Unit = _ => Unit)
+    checkError: () => Unit = () => Unit)
     extends Iterator[InternalRow] {
 
   private var stream = ArrowArrayStream.wrap(arrowFFIStreamPtr)
@@ -50,6 +49,7 @@ class ArrowFFIStreamImportIterator(
     var hasNextBatch = false
     try {
       hasNextBatch = reader.loadNextBatch()
+      checkError()
     } catch {
       case _ if taskContext.exists(tc => tc.isCompleted() || tc.isInterrupted()) =>
         hasNextBatch = false
@@ -61,8 +61,6 @@ class ArrowFFIStreamImportIterator(
 
     val currentBatch = ColumnarHelper.rootAsBatch(reader.getVectorSchemaRoot)
     try {
-      onNextBatch(currentBatch)
-
       // convert batch to persisted row iterator
       val toUnsafe = this.toUnsafe
       val rowIterator = currentBatch.rowIterator()
@@ -103,6 +101,7 @@ class ArrowFFIStreamImportIterator(
       reader = null
       stream.close()
       stream = null
+      checkError()
     }
   }
 }

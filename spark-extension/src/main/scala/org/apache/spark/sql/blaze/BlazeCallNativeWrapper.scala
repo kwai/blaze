@@ -49,7 +49,7 @@ case class BlazeCallNativeWrapper(
   logInfo(s"Start executing native plan")
   private var nativeRuntimePtr = JniBridge.callNative(this)
   private var rowIterator = {
-    val iter = new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr, _ => checkError())
+    val iter = new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr, checkError)
     context match {
       case Some(tc) => new InterruptibleIterator[InternalRow](tc, iter)
       case None => iter
