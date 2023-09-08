@@ -34,9 +34,10 @@ import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.FilterExecNode
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
-
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.And
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.IsNotNull
 
 case class NativeFilterExec(condition: Expression, override val child: SparkPlan)
     extends UnaryExecNode
@@ -54,9 +55,18 @@ case class NativeFilterExec(condition: Expression, override val child: SparkPlan
 
   private val nativeFilterExprs = {
     val splittedExprs = ArrayBuffer[PhysicalExprNode]()
+
+    // do not split simple IsNotNull(col) exprs
+    def isNaiveIsNotNullColumns(expr: Expression): Boolean = {
+      expr match {
+        case IsNotNull(_: AttributeReference) => true
+        case And(lhs, rhs) if isNaiveIsNotNullColumns(lhs) && isNaiveIsNotNullColumns(rhs) => true
+        case _ => false
+      }
+    }
     def split(expr: Expression): Unit = {
       expr match {
-        case And(lhs, rhs) =>
+        case e @ And(lhs, rhs) if !isNaiveIsNotNullColumns(e) =>
           split(lhs)
           split(rhs)
         case expr => splittedExprs.append(NativeConverters.convertExpr(expr))
