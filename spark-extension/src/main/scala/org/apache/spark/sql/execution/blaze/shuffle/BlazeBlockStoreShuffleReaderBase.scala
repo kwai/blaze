@@ -30,15 +30,13 @@ import org.apache.spark.TaskContext
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.FileSegment
 
 abstract class BlazeBlockStoreShuffleReaderBase[K, C](
     handle: BaseShuffleHandle[K, _, C],
-    context: TaskContext,
-    readMetrics: ShuffleReadMetricsReporter)
+    context: TaskContext)
     extends ShuffleReader[K, C] {
   import BlazeBlockStoreShuffleReaderBase._
 

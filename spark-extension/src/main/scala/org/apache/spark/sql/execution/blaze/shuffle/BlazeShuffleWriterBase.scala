@@ -45,6 +45,8 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
   System.setProperty("io.netty.maxDirectMemory", "0")
   System.setProperty("io.netty.noPreferDirect", "true")
 
+  protected var partitionLengths: Array[Long] = Array[Long]()
+
   override def write(records: Iterator[Product2[K, V]]): Unit = {}
 
   def nativeShuffleWrite(
@@ -80,7 +82,7 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
 
     // get partition lengths from shuffle write output index file
     var offset = 0L
-    val partitionLengths = Files
+    partitionLengths = Files
       .readAllBytes(tempIndexFilePath)
       .grouped(8)
       .drop(1) // first partition offset is always 0

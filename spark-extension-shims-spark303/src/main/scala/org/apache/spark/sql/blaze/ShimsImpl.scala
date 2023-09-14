@@ -19,11 +19,11 @@ import java.io.File
 import java.util.UUID
 
 import org.apache.commons.lang3.reflect.FieldUtils
+import org.apache.hadoop.conf.Configuration
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
 import org.apache.spark.TaskContext
-import org.blaze.{protobuf => pb}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
@@ -66,8 +66,190 @@ import org.apache.spark.sql.types.StringType
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.OneToOneDependency
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.blaze.BlazeConverters.ForceNativeExecutionWrapperBase
+import org.apache.spark.sql.blaze.NativeConverters.NativeExprWrapperBase
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Generator
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeBase
+import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
+import org.apache.spark.sql.execution.blaze.plan.Helper.getTaskResourceId
+import org.apache.spark.sql.execution.blaze.plan.NativeAggBase
+import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.AggExecMode
+import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinExec
+import org.apache.spark.sql.execution.blaze.plan.NativeExpandBase
+import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
+import org.apache.spark.sql.execution.blaze.plan.NativeFilterBase
+import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
+import org.apache.spark.sql.execution.blaze.plan.NativeGenerateBase
+import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
+import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitBase
+import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitBase
+import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableBase
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableExec
+import org.apache.spark.sql.execution.blaze.plan.NativePartialTakeOrderedBase
+import org.apache.spark.sql.execution.blaze.plan.NativePartialTakeOrderedExec
+import org.apache.spark.sql.execution.blaze.plan.NativeProjectBase
+import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
+import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsBase
+import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
+import org.apache.spark.sql.execution.blaze.plan.NativeSortBase
+import org.apache.spark.sql.execution.blaze.plan.NativeSortExec
+import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinBase
+import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinExec
+import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedBase
+import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
+import org.apache.spark.sql.execution.blaze.plan.NativeUnionBase
+import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
+import org.apache.spark.sql.execution.blaze.plan.NativeWindowBase
+import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
+import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
+import org.apache.spark.sql.execution.datasources.BasicWriteTaskStatsTracker
+import org.apache.spark.sql.execution.datasources.WriteTaskStats
+import org.apache.spark.sql.execution.datasources.WriteTaskStatsTracker
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
+import org.apache.spark.sql.types.DataType
+import org.apache.spark.util.SerializableConfiguration
+import org.blaze.{protobuf => pb}
+import org.blaze.protobuf.PhysicalExprNode
 
 class ShimsImpl extends Shims with Logging {
+
+  override def createConvertToNativeExec(child: SparkPlan): ConvertToNativeBase =
+    ConvertToNativeExec(child)
+
+  override def createNativeAggExec(
+      execMode: AggExecMode,
+      requiredChildDistributionExpressions: Option[Seq[Expression]],
+      groupingExpressions: Seq[NamedExpression],
+      aggregateExpressions: Seq[AggregateExpression],
+      aggregateAttributes: Seq[Attribute],
+      initialInputBufferOffset: Int,
+      child: SparkPlan): NativeAggBase =
+    NativeAggExec(
+      execMode,
+      requiredChildDistributionExpressions,
+      groupingExpressions,
+      aggregateExpressions,
+      aggregateAttributes,
+      initialInputBufferOffset,
+      child)
+
+  override def createNativeBroadcastExchangeExec(
+      mode: BroadcastMode,
+      child: SparkPlan): NativeBroadcastExchangeBase =
+    NativeBroadcastExchangeExec(mode, child)
+
+  override def createNativeBroadcastJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      outputPartitioning: Partitioning,
+      leftKeys: Seq[Expression],
+      rightKeys: Seq[Expression],
+      joinType: JoinType,
+      condition: Option[Expression]): NativeBroadcastJoinBase =
+    NativeBroadcastJoinExec(
+      left,
+      right,
+      outputPartitioning,
+      leftKeys,
+      rightKeys,
+      joinType,
+      condition)
+
+  override def createNativeSortMergeJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      leftKeys: Seq[Expression],
+      rightKeys: Seq[Expression],
+      joinType: JoinType,
+      condition: Option[Expression]): NativeSortMergeJoinBase =
+    NativeSortMergeJoinExec(left, right, leftKeys, rightKeys, joinType, condition)
+
+  override def createNativeExpandExec(
+      projections: Seq[Seq[Expression]],
+      output: Seq[Attribute],
+      child: SparkPlan): NativeExpandBase =
+    NativeExpandExec(projections, output, child)
+
+  override def createNativeFilterExec(condition: Expression, child: SparkPlan): NativeFilterBase =
+    NativeFilterExec(condition, child)
+
+  override def createNativeGenerateExec(
+      generator: Generator,
+      requiredChildOutput: Seq[Attribute],
+      outer: Boolean,
+      generatorOutput: Seq[Attribute],
+      child: SparkPlan): NativeGenerateBase =
+    NativeGenerateExec(generator, requiredChildOutput, outer, generatorOutput, child)
+
+  override def createNativeGlobalLimitExec(limit: Long, child: SparkPlan): NativeGlobalLimitBase =
+    NativeGlobalLimitExec(limit, child)
+
+  override def createNativeLocalLimitExec(limit: Long, child: SparkPlan): NativeLocalLimitBase =
+    NativeLocalLimitExec(limit, child)
+
+  override def createNativeParquetInsertIntoHiveTableExec(
+      cmd: InsertIntoHiveTable,
+      child: SparkPlan): NativeParquetInsertIntoHiveTableBase =
+    NativeParquetInsertIntoHiveTableExec(cmd, child)
+
+  override def createNativeParquetScanExec(
+      basedFileScan: FileSourceScanExec): NativeParquetScanBase =
+    NativeParquetScanExec(basedFileScan)
+
+  override def createNativeProjectExec(
+      projectList: Seq[NamedExpression],
+      child: SparkPlan,
+      addTypeCast: Boolean = false): NativeProjectBase =
+    NativeProjectExec(projectList, child, addTypeCast)
+
+  override def createNativeRenameColumnsExec(
+      child: SparkPlan,
+      newColumnNames: Seq[String]): NativeRenameColumnsBase =
+    NativeRenameColumnsExec(child, newColumnNames)
+
+  override def createNativeShuffleExchangeExec(
+      outputPartitioning: Partitioning,
+      child: SparkPlan): NativeShuffleExchangeBase =
+    NativeShuffleExchangeExec(outputPartitioning, child)
+
+  override def createNativeSortExec(
+      sortOrder: Seq[SortOrder],
+      global: Boolean,
+      child: SparkPlan): NativeSortBase =
+    NativeSortExec(sortOrder, global, child)
+
+  override def createNativeTakeOrderedExec(
+      limit: Long,
+      sortOrder: Seq[SortOrder],
+      child: SparkPlan): NativeTakeOrderedBase =
+    NativeTakeOrderedExec(limit, sortOrder, child)
+
+  override def createNativePartialTakeOrderedExec(
+      limit: Long,
+      sortOrder: Seq[SortOrder],
+      child: SparkPlan,
+      metrics: Map[String, SQLMetric]): NativePartialTakeOrderedBase =
+    NativePartialTakeOrderedExec(limit, sortOrder, child, metrics)
+
+  override def createNativeUnionExec(children: Seq[SparkPlan]): NativeUnionBase =
+    NativeUnionExec(children)
+
+  override def createNativeWindowExec(
+      windowExpression: Seq[NamedExpression],
+      partitionSpec: Seq[Expression],
+      orderSpec: Seq[SortOrder],
+      child: SparkPlan): NativeWindowBase =
+    NativeWindowExec(windowExpression, partitionSpec, orderSpec, child)
 
   override def getUnderlyingBroadcast(plan: SparkPlan): BroadcastExchangeLike = {
     plan match {
@@ -98,12 +280,7 @@ class ShimsImpl extends Shims with Logging {
 
   override def executeNative(plan: SparkPlan): NativeRDD = {
     plan match {
-      case plan: NativeSupports =>
-        val executeQueryMethod =
-          classOf[SparkPlan].getDeclaredMethod("executeQuery", classOf[() => _])
-        executeQueryMethod.setAccessible(true)
-        executeQueryMethod.invoke(plan, () => plan.doExecuteNative()).asInstanceOf[NativeRDD]
-
+      case plan: NativeSupports => plan.executeNative()
       case plan: CustomShuffleReaderExec => executeNativeCustomShuffleReader(plan)
       case plan: QueryStageExec => executeNative(plan.plan)
       case plan: ReusedExchangeExec => executeNative(plan.child)
@@ -141,22 +318,6 @@ class ShimsImpl extends Shims with Logging {
   override def getRDDShuffleReadFull(rdd: RDD[_]): Boolean = true
 
   override def setRDDShuffleReadFull(rdd: RDD[_], shuffleReadFull: Boolean): Unit = {}
-
-  override def createArrowShuffleExchange(
-      outputPartitioning: Partitioning,
-      child: SparkPlan): NativeShuffleExchangeBase = {
-    NativeShuffleExchangeExec(outputPartitioning, child)
-  }
-
-  override def createParquetScan(exec: FileSourceScanExec): NativeParquetScanBase = {
-    NativeParquetScanExec(exec)
-  }
-
-  override def createArrowBroadcastExchange(
-      mode: BroadcastMode,
-      child: SparkPlan): NativeBroadcastExchangeBase = {
-    NativeBroadcastExchangeExec(mode, child)
-  }
 
   override def createFileSegment(
       file: File,
@@ -342,8 +503,47 @@ class ShimsImpl extends Shims with Logging {
   override def convertMoreSparkPlan(exec: SparkPlan): Option[SparkPlan] = {
     exec match {
       case _: CustomShuffleReaderExec | _: ReusedExchangeExec if isNative(exec) =>
-        Some(BlazeConverters.forceNativeExecution(BlazeConverters.addRenameColumnsExec(exec)))
+        Some(ForceNativeExecutionWrapper(BlazeConverters.addRenameColumnsExec(exec)))
+
       case _ => None
     }
   }
+
+  override def getSqlContext(sparkPlan: SparkPlan): SQLContext = sparkPlan.sqlContext
+
+  override def createBasicWriteJobStatsTrackerForNativeParquetSink(
+      serializableHadoopConf: SerializableConfiguration,
+      metrics: Map[String, SQLMetric]): BasicWriteJobStatsTracker = {
+    new BasicWriteJobStatsTracker(serializableHadoopConf, metrics) {
+      // read task stats from resources, the value should be set
+      // in BlazeParquetRecordWriter.close()
+      override def newTaskInstance(): WriteTaskStatsTracker = {
+        class StatsTracker(hadoopConf: Configuration)
+            extends BasicWriteTaskStatsTracker(hadoopConf) {
+          override def getFinalStats(): WriteTaskStats = {
+            JniBridge.getResource(getTaskResourceId("taskStats")).asInstanceOf[WriteTaskStats]
+          }
+        }
+        new StatsTracker(serializableHadoopConf.value)
+      }
+    }
+  }
+
+  override def createNativeExprWrapper(
+      nativeExpr: PhysicalExprNode,
+      dataType: DataType,
+      nullable: Boolean): Expression = {
+    NativeExprWrapper(nativeExpr, dataType, nullable)
+  }
 }
+
+case class ForceNativeExecutionWrapper(override val child: SparkPlan)
+    extends ForceNativeExecutionWrapperBase(child) {
+  override protected def doCanonicalize(): SparkPlan = child.canonicalized
+}
+
+case class NativeExprWrapper(
+    nativeExpr: PhysicalExprNode,
+    override val dataType: DataType,
+    override val nullable: Boolean)
+    extends NativeExprWrapperBase(nativeExpr, dataType, nullable)

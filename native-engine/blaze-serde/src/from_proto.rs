@@ -75,6 +75,7 @@ use datafusion_ext_exprs::cast::TryCastExpr;
 use datafusion_ext_exprs::get_indexed_field::GetIndexedFieldExpr;
 use datafusion_ext_exprs::get_map_value::GetMapValueExpr;
 use datafusion_ext_exprs::named_struct::NamedStructExpr;
+use datafusion_ext_exprs::spark_scalar_subquery_wrapper::SparkScalarSubqueryWrapperExpr;
 use datafusion_ext_exprs::spark_udf_wrapper::SparkUDFWrapperExpr;
 use datafusion_ext_exprs::string_contains::StringContainsExpr;
 use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
@@ -955,6 +956,13 @@ fn try_parse_physical_expr(
                 .map(|x| try_parse_physical_expr(x, input_schema))
                 .collect::<Result<Vec<_>, _>>()?,
         )?),
+        ExprType::SparkScalarSubqueryWrapperExpr(e) => {
+            Arc::new(SparkScalarSubqueryWrapperExpr::try_new(
+                e.serialized.clone(),
+                convert_required!(e.return_type)?,
+                e.return_nullable,
+            )?)
+        }
         ExprType::GetIndexedFieldExpr(e) => {
             let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
             let key = convert_required!(e.key)?;

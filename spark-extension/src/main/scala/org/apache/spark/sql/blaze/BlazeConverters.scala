@@ -17,6 +17,7 @@ package org.apache.spark.sql.blaze
 
 import java.util.UUID
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
@@ -39,10 +40,6 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
-import org.apache.spark.sql.catalyst.plans.FullOuter
-import org.apache.spark.sql.catalyst.plans.Inner
-import org.apache.spark.sql.catalyst.plans.LeftOuter
-import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
@@ -55,37 +52,22 @@ import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
-import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinExec
-import org.apache.spark.sql.execution.blaze.plan.NativeFilterExec
-import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
-import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
-import org.apache.spark.sql.execution.blaze.plan.NativeProjectExec
-import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
-import org.apache.spark.sql.execution.blaze.plan.NativeSortExec
-import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinExec
-import org.apache.spark.sql.execution.blaze.plan.NativeTakeOrderedExec
-import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
+import org.apache.spark.sql.execution.blaze.plan._
+import org.apache.spark.sql.execution.blaze.plan.NativeAggBase
+import org.apache.spark.sql.execution.blaze.plan.NativeProjectBase
+import org.apache.spark.sql.execution.blaze.plan.NativeUnionBase
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
-import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
-import org.apache.spark.sql.execution.joins.BuildLeft
-import org.apache.spark.sql.execution.joins.BuildRight
-import org.apache.spark.sql.execution.joins.SortMergeJoinExec
+import org.apache.spark.sql.execution.joins._
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
-import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
 import org.apache.spark.sql.execution.GenerateExec
-import org.apache.spark.sql.execution.blaze.plan.NativeGenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
-import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableExec
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
@@ -125,6 +107,11 @@ object BlazeConverters extends Logging {
   val enableDataWriting: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.data.writing", defaultValue = false)
 
+  import org.apache.spark.sql.catalyst.plans._
+  import org.apache.spark.sql.catalyst.optimizer._
+  var _UnusedQueryPlan: QueryPlan[_] = _
+  var _UnusedOptimizer: Optimizer = _
+
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
     // convert
     var danglingConverted: Seq[SparkPlan] = Nil
@@ -136,7 +123,6 @@ object BlazeConverters extends Logging {
       if (!isNeverConvert(exec)) {
         newExec = convertSparkPlan(newExec)
       }
-      BlazeSparkSessionExtension.dumpSimpleSparkPlanTreeNode(newExec)
       danglingConverted = newDanglingConverted :+ newExec
     }
     danglingConverted.head
@@ -172,7 +158,7 @@ object BlazeConverters extends Logging {
         if (!e.getTagValue(convertibleTag).contains(true)) {
           if (e.requiredChildDistributionExpressions.isDefined) {
             assert(
-              NativeAggExec.findPreviousNativeAggrExec(e).isEmpty,
+              NativeAggBase.findPreviousNativeAggrExec(e).isEmpty,
               "native agg followed by non-native agg is forbidden")
           }
         }
@@ -183,7 +169,7 @@ object BlazeConverters extends Logging {
         if (!e.getTagValue(convertibleTag).contains(true)) {
           if (e.requiredChildDistributionExpressions.isDefined) {
             assert(
-              NativeAggExec.findPreviousNativeAggrExec(e).isEmpty,
+              NativeAggBase.findPreviousNativeAggrExec(e).isEmpty,
               "native agg followed by non-native agg is forbidden")
           }
         }
@@ -194,7 +180,7 @@ object BlazeConverters extends Logging {
         if (!e.getTagValue(convertibleTag).contains(true)) {
           if (e.requiredChildDistributionExpressions.isDefined) {
             assert(
-              NativeAggExec.findPreviousNativeAggrExec(e).isEmpty,
+              NativeAggBase.findPreviousNativeAggrExec(e).isEmpty,
               "native agg followed by non-native agg is forbidden")
           }
         }
@@ -211,7 +197,7 @@ object BlazeConverters extends Logging {
       case e: DataWritingCommandExec if enableDataWriting => // data writing
         tryConvert(e, convertDataWritingCommandExec)
 
-      case exec: ForceNativeExecutionWrapper => exec
+      case exec: ForceNativeExecutionWrapperBase => exec
       case exec =>
         Shims.get.convertMoreSparkPlan(exec) match {
           case Some(exec) =>
@@ -258,7 +244,9 @@ object BlazeConverters extends Logging {
         convertToNative(child)
       case _ => child
     }
-    Shims.get.createArrowShuffleExchange(outputPartitioning, addRenameColumnsExec(convertedChild))
+    Shims.get.createNativeShuffleExchangeExec(
+      outputPartitioning,
+      addRenameColumnsExec(convertedChild))
   }
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
@@ -289,14 +277,14 @@ object BlazeConverters extends Logging {
     logDebug(s"  optionalBucketSet: ${optionalBucketSet}")
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
-    Shims.get.createParquetScan(exec)
+    addRenameColumnsExec(Shims.get.createNativeParquetScanExec(exec))
   }
 
   def convertProjectExec(exec: ProjectExec): SparkPlan = {
     val (projectList, child) = (exec.projectList, exec.child)
     logDebug(s"Converting ProjectExec: ${Shims.get.simpleStringWithNodeId(exec)}")
     projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
-    NativeProjectExec(projectList, addRenameColumnsExec(convertToNative(child)))
+    Shims.get.createNativeProjectExec(projectList, addRenameColumnsExec(convertToNative(child)))
   }
 
   def convertFilterExec(exec: FilterExec): SparkPlan =
@@ -304,7 +292,9 @@ object BlazeConverters extends Logging {
       case exec: FilterExec =>
         logDebug(s"Converting FilterExec: ${Shims.get.simpleStringWithNodeId(exec)}")
         logDebug(s"  condition: ${exec.condition}")
-        NativeFilterExec(exec.condition, addRenameColumnsExec(convertToNative(exec.child)))
+        Shims.get.createNativeFilterExec(
+          exec.condition,
+          addRenameColumnsExec(convertToNative(exec.child)))
       case _ =>
         logDebug(s"Ignoring FilterExec: ${Shims.get.simpleStringWithNodeId(exec)}")
         exec
@@ -315,12 +305,15 @@ object BlazeConverters extends Logging {
     logDebug(s"Converting SortExec: ${Shims.get.simpleStringWithNodeId(exec)}")
     logDebug(s"  global: ${global}")
     sortOrder.foreach(s => logDebug(s"  sortOrder: ${s}"))
-    NativeSortExec(sortOrder, global, addRenameColumnsExec(convertToNative(child)))
+    Shims.get.createNativeSortExec(
+      sortOrder,
+      global,
+      addRenameColumnsExec(convertToNative(child)))
   }
 
   def convertUnionExec(exec: UnionExec): SparkPlan = {
     logDebug(s"Converting UnionExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    NativeUnionExec(exec.children.map(child => {
+    Shims.get.createNativeUnionExec(exec.children.map(child => {
       addRenameColumnsExec(convertToNative(child))
     }))
   }
@@ -355,14 +348,11 @@ object BlazeConverters extends Logging {
       condition,
       addRenameColumnsExec(nativeLeft),
       addRenameColumnsExec(nativeRight))
-    val smj = NativeSortMergeJoinExec(
+    val smj = Shims.get.createNativeSortMergeJoinExec(
       smjOrig.left,
       smjOrig.right,
       smjOrig.leftKeys,
       smjOrig.rightKeys,
-      smjOrig.output,
-      smjOrig.outputPartitioning,
-      smjOrig.outputOrdering,
       smjOrig.joinType,
       smjOrig.condition)
 
@@ -384,6 +374,11 @@ object BlazeConverters extends Logging {
         exec.left,
         exec.right)
       logDebug(s"Converting BroadcastHashJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
+      logDebug(s"  leftKeys: ${exec.leftKeys}")
+      logDebug(s"  rightKeys: ${exec.rightKeys}")
+      logDebug(s"  joinType: ${exec.joinType}")
+      logDebug(s"  buildSide: ${exec.buildSide}")
+      logDebug(s"  condition: ${exec.condition}")
       var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
@@ -422,7 +417,7 @@ object BlazeConverters extends Logging {
         case BuildLeft => joinType
         case BuildRight =>
           needPostProject = true
-          joinType match { // reverse join type
+          val modifiedJoinType = joinType match { // reverse join type
             case Inner => Inner
             case FullOuter => FullOuter
             case LeftOuter => RightOuter
@@ -431,6 +426,7 @@ object BlazeConverters extends Logging {
               throw new NotImplementedError(
                 "BHJ Semi/Anti join with BuildRight is not yet supported")
           }
+          modifiedJoinType
       }
 
       val bhjOrig = BroadcastHashJoinExec(
@@ -442,14 +438,12 @@ object BlazeConverters extends Logging {
         addRenameColumnsExec(hashed),
         addRenameColumnsExec(nativeProbed))
 
-      val bhj = NativeBroadcastJoinExec(
+      val bhj = Shims.get.createNativeBroadcastJoinExec(
         bhjOrig.left,
         bhjOrig.right,
+        bhjOrig.outputPartitioning,
         bhjOrig.leftKeys,
         bhjOrig.rightKeys,
-        bhjOrig.output,
-        bhjOrig.outputPartitioning,
-        bhjOrig.outputOrdering,
         bhjOrig.joinType,
         bhjOrig.condition)
 
@@ -473,7 +467,8 @@ object BlazeConverters extends Logging {
     exec match {
       case exec: BroadcastExchangeExec =>
         logDebug(s"Converting BroadcastExchangeExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-        val converted = Shims.get.createArrowBroadcastExchange(exec.mode, exec.child)
+        logDebug(s"  mode: ${exec.mode}")
+        val converted = Shims.get.createNativeBroadcastExchangeExec(exec.mode, exec.child)
         converted.setTagValue(NativeBroadcastExchangeBase.nativeExecutionTag, true)
         return converted
     }
@@ -482,21 +477,20 @@ object BlazeConverters extends Logging {
 
   def convertLocalLimitExec(exec: LocalLimitExec): SparkPlan = {
     logDebug(s"Converting LocalLimitExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    NativeLocalLimitExec(exec.limit.toLong, exec.child)
+    Shims.get.createNativeLocalLimitExec(exec.limit.toLong, exec.child)
   }
 
   def convertGlobalLimitExec(exec: GlobalLimitExec): SparkPlan = {
     logDebug(s"Converting GlobalLimitExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    NativeGlobalLimitExec(exec.limit.toLong, exec.child)
+    Shims.get.createNativeGlobalLimitExec(exec.limit.toLong, exec.child)
   }
 
   def convertTakeOrderedAndProjectExec(exec: TakeOrderedAndProjectExec): SparkPlan = {
     logDebug(s"Converting TakeOrderedAndProjectExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    val nativeTakeOrdered =
-      NativeTakeOrderedExec(
-        exec.limit,
-        exec.sortOrder,
-        addRenameColumnsExec(convertToNative(exec.child)))
+    val nativeTakeOrdered = Shims.get.createNativeTakeOrderedExec(
+      exec.limit,
+      exec.sortOrder,
+      addRenameColumnsExec(convertToNative(exec.child)))
 
     if (exec.projectList != exec.child.output) {
       val project = ProjectExec(exec.projectList, nativeTakeOrdered)
@@ -523,10 +517,10 @@ object BlazeConverters extends Logging {
 
     // ensure native partial agg exists
     if (exec.requiredChildDistributionExpressions.isDefined) {
-      assert(NativeAggExec.findPreviousNativeAggrExec(exec).isDefined)
+      assert(NativeAggBase.findPreviousNativeAggrExec(exec).isDefined)
     }
-    val nativeAggr = NativeAggExec(
-      NativeAggExec.HashAgg,
+    val nativeAggr = Shims.get.createNativeAggExec(
+      NativeAggBase.HashAgg,
       exec.requiredChildDistributionExpressions,
       exec.groupingExpressions,
       exec.aggregateExpressions,
@@ -538,8 +532,8 @@ object BlazeConverters extends Logging {
         case _ =>
           if (needRenameColumns(exec.child)) {
             val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
-              NativeAggExec.AGG_BUF_COLUMN_NAME
-            NativeRenameColumnsExec(convertToNative(exec.child), newNames)
+              NativeAggBase.AGG_BUF_COLUMN_NAME
+            Shims.get.createNativeRenameColumnsExec(convertToNative(exec.child), newNames)
           } else {
             convertToNative(exec.child)
           }
@@ -549,7 +543,7 @@ object BlazeConverters extends Logging {
       exec.aggregateExpressions.forall(_.mode == Final)
     if (isFinal) { // wraps with a projection to handle resutExpressions
       try {
-        return NativeProjectExec(exec.resultExpressions, nativeAggr)
+        return Shims.get.createNativeProjectExec(exec.resultExpressions, nativeAggr)
       } catch {
         case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
           logWarning(
@@ -580,10 +574,10 @@ object BlazeConverters extends Logging {
 
     // ensure native partial agg exists
     if (exec.requiredChildDistributionExpressions.isDefined) {
-      assert(NativeAggExec.findPreviousNativeAggrExec(exec).isDefined)
+      assert(NativeAggBase.findPreviousNativeAggrExec(exec).isDefined)
     }
-    val nativeAggr = NativeAggExec(
-      NativeAggExec.HashAgg,
+    val nativeAggr = Shims.get.createNativeAggExec(
+      NativeAggBase.HashAgg,
       exec.requiredChildDistributionExpressions,
       exec.groupingExpressions,
       exec.aggregateExpressions,
@@ -595,8 +589,8 @@ object BlazeConverters extends Logging {
         case _ =>
           if (needRenameColumns(exec.child)) {
             val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
-              NativeAggExec.AGG_BUF_COLUMN_NAME
-            NativeRenameColumnsExec(convertToNative(exec.child), newNames)
+              NativeAggBase.AGG_BUF_COLUMN_NAME
+            Shims.get.createNativeRenameColumnsExec(convertToNative(exec.child), newNames)
           } else {
             convertToNative(exec.child)
           }
@@ -606,7 +600,7 @@ object BlazeConverters extends Logging {
       exec.aggregateExpressions.forall(_.mode == Final)
     if (isFinal) { // wraps with a projection to handle resutExpressions
       try {
-        return NativeProjectExec(exec.resultExpressions, nativeAggr)
+        return Shims.get.createNativeProjectExec(exec.resultExpressions, nativeAggr)
       } catch {
         case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
           logWarning(
@@ -625,10 +619,10 @@ object BlazeConverters extends Logging {
 
     // ensure native partial agg exists
     if (exec.requiredChildDistributionExpressions.isDefined) {
-      assert(NativeAggExec.findPreviousNativeAggrExec(exec).isDefined)
+      assert(NativeAggBase.findPreviousNativeAggrExec(exec).isDefined)
     }
-    val nativeAggr = NativeAggExec(
-      NativeAggExec.SortAgg,
+    val nativeAggr = Shims.get.createNativeAggExec(
+      NativeAggBase.SortAgg,
       exec.requiredChildDistributionExpressions,
       exec.groupingExpressions,
       exec.aggregateExpressions,
@@ -640,8 +634,8 @@ object BlazeConverters extends Logging {
         case _ =>
           if (needRenameColumns(exec.child)) {
             val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
-              NativeAggExec.AGG_BUF_COLUMN_NAME
-            NativeRenameColumnsExec(convertToNative(exec.child), newNames)
+              NativeAggBase.AGG_BUF_COLUMN_NAME
+            Shims.get.createNativeRenameColumnsExec(convertToNative(exec.child), newNames)
           } else {
             convertToNative(exec.child)
           }
@@ -651,7 +645,7 @@ object BlazeConverters extends Logging {
       exec.aggregateExpressions.forall(_.mode == Final)
     if (isFinal) { // wraps with a projection to handle resutExpressions
       try {
-        return NativeProjectExec(exec.resultExpressions, nativeAggr)
+        return Shims.get.createNativeProjectExec(exec.resultExpressions, nativeAggr)
       } catch {
         case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
           logWarning(
@@ -668,7 +662,7 @@ object BlazeConverters extends Logging {
   def convertExpandExec(exec: ExpandExec): SparkPlan = {
     logDebug(s"Converting ExpandExec: ${Shims.get.simpleStringWithNodeId(exec)}")
     logDebug(s"  projections: ${exec.projections}")
-    NativeExpandExec(
+    Shims.get.createNativeExpandExec(
       exec.projections,
       exec.output,
       addRenameColumnsExec(convertToNative(exec.child)))
@@ -679,7 +673,7 @@ object BlazeConverters extends Logging {
     logDebug(s"  window exprs: ${exec.windowExpression}")
     logDebug(s"  partition spec: ${exec.partitionSpec}")
     logDebug(s"  order spec: ${exec.orderSpec}")
-    NativeWindowExec(
+    Shims.get.createNativeWindowExec(
       exec.windowExpression,
       exec.partitionSpec,
       exec.orderSpec,
@@ -692,7 +686,7 @@ object BlazeConverters extends Logging {
     logDebug(s"  generatorOutput: ${exec.generatorOutput}")
     logDebug(s"  requiredChildOutput: ${exec.requiredChildOutput}")
     logDebug(s"  outer: ${exec.outer}")
-    NativeGenerateExec(
+    Shims.get.createNativeGenerateExec(
       exec.generator,
       exec.requiredChildOutput,
       exec.outer,
@@ -710,7 +704,7 @@ object BlazeConverters extends Logging {
       case DataWritingCommandExec(cmd: InsertIntoHiveTable, child)
           if cmd.table.storage.outputFormat.contains(
             classOf[MapredParquetOutputFormat].getName) =>
-        NativeParquetInsertIntoHiveTableExec(cmd, child)
+        Shims.get.createNativeParquetInsertIntoHiveTableExec(cmd, child)
       case _ =>
         throw new NotImplementedError("unsupported DataWritingCommandExec")
     }
@@ -721,21 +715,18 @@ object BlazeConverters extends Logging {
       case exec if NativeHelper.isNative(exec) => exec
       case exec =>
         assert(exec.find(_.isInstanceOf[DataWritingCommandExec]).isEmpty)
-        ConvertToNativeExec(exec)
+        Shims.get.createConvertToNativeExec(exec)
     }
   }
 
-  def forceNativeExecution(exec: SparkPlan): SparkPlan = {
-    ForceNativeExecutionWrapper(exec)
-  }
-
+  @tailrec
   def needRenameColumns(plan: SparkPlan): Boolean = {
     if (plan.output.isEmpty) {
       return false
     }
     plan match {
-      case _: NativeParquetScanBase | _: NativeUnionExec => true
-      case ConvertToNativeExec(child) => needRenameColumns(child)
+      case _: NativeParquetScanBase | _: NativeUnionBase => true
+      case _: ConvertToNativeBase => needRenameColumns(plan.children.head)
       case exec if NativeHelper.isNative(exec) =>
         NativeHelper.getUnderlyingNativePlan(exec).output != plan.output
       case _ => false
@@ -744,14 +735,16 @@ object BlazeConverters extends Logging {
 
   def addRenameColumnsExec(exec: SparkPlan): SparkPlan = {
     if (needRenameColumns(exec)) {
-      return NativeRenameColumnsExec(exec, exec.output.map(Util.getFieldNameByExprId))
+      return Shims.get.createNativeRenameColumnsExec(
+        exec,
+        exec.output.map(Util.getFieldNameByExprId))
     }
     exec
   }
 
   private def buildJoinColumnsProject(
       child: SparkPlan,
-      joinKeys: Seq[Expression]): (Seq[AttributeReference], NativeProjectExec) = {
+      joinKeys: Seq[Expression]): (Seq[AttributeReference], NativeProjectBase) = {
     val extraProjectList = ArrayBuffer[NamedExpression]()
     val transformedKeys = ArrayBuffer[AttributeReference]()
 
@@ -771,19 +764,20 @@ object BlazeConverters extends Logging {
     }
     (
       transformedKeys,
-      NativeProjectExec(child.output ++ extraProjectList, addRenameColumnsExec(child)))
+      Shims.get
+        .createNativeProjectExec(child.output ++ extraProjectList, addRenameColumnsExec(child)))
   }
 
   private def buildPostJoinProject(
       child: SparkPlan,
-      output: Seq[Attribute]): NativeProjectExec = {
+      output: Seq[Attribute]): NativeProjectBase = {
     val projectList = output
       .filter(!_.name.startsWith("JOIN_KEY:"))
       .map(attr =>
         AttributeReference(attr.name, attr.dataType, attr.nullable, attr.metadata)(
           attr.exprId,
           attr.qualifier))
-    NativeProjectExec(projectList, child)
+    Shims.get.createNativeProjectExec(projectList, child)
   }
 
   private def getPartialAggProjection(
@@ -798,7 +792,7 @@ object BlazeConverters extends Logging {
     val containsNonTrivial = (aggExprChildren ++ groupingExprs).exists {
       case _: AttributeReference | _: Literal => false
       case e: Alias if e.child.isInstanceOf[Literal] => false
-      case e => true
+      case _ => true
     }
     if (!containsNonTrivial) {
       return None
@@ -806,11 +800,7 @@ object BlazeConverters extends Logging {
 
     val projections = mutable.LinkedHashMap[Expression, AttributeReference]()
     val transformedGroupingExprs = groupingExprs.map {
-      case e: Alias if e.child.isInstanceOf[Literal] => e
-      case e: Alias =>
-        projections.getOrElseUpdate(
-          e.child,
-          AttributeReference(e.name, e.dataType, e.nullable, e.metadata)(e.exprId, e.qualifier))
+      case e @ Alias(_: Literal, _) => e
       case e =>
         projections.getOrElseUpdate(
           e,
@@ -819,7 +809,7 @@ object BlazeConverters extends Logging {
     val transformedAggExprs = aggregateExprs.map { expr =>
       expr.copy(aggregateFunction = expr.aggregateFunction
         .mapChildren {
-          case e: Literal => e
+          case e @ (Literal(_, _) | Alias(_: Literal, _)) => e
           case e =>
             val nextCol = s"_c${projections.size}"
             projections.getOrElseUpdate(e, AttributeReference(nextCol, e.dataType, e.nullable)())
@@ -828,12 +818,12 @@ object BlazeConverters extends Logging {
     }
     Some(
       (
-        transformedAggExprs,
-        transformedGroupingExprs,
-        projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toSeq))
+        transformedAggExprs.toList,
+        transformedGroupingExprs.toList,
+        projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toList))
   }
 
-  case class ForceNativeExecutionWrapper(override val child: SparkPlan)
+  abstract class ForceNativeExecutionWrapperBase(override val child: SparkPlan)
       extends UnaryExecNode
       with NativeSupports {
 
@@ -846,6 +836,7 @@ object BlazeConverters extends Logging {
     override def requiredChildOrdering: Seq[Seq[SortOrder]] = child.requiredChildOrdering
     override def doExecuteNative(): NativeRDD = Shims.get.executeNative(child)
     override def doExecuteBroadcast[T](): Broadcast[T] = child.doExecuteBroadcast()
+
     override val nodeName: String = "InputAdapter"
   }
 }

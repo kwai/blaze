@@ -20,9 +20,6 @@ import java.io.File
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.blaze.{protobuf => pb}
-import org.blaze.protobuf.PhysicalHashRepartition
-import org.blaze.protobuf.PhysicalPlanNode
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
@@ -34,18 +31,124 @@ import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
-import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
-import org.apache.spark.sql.execution.blaze.plan.NativeShuffleExchangeBase
+import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Generator
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
+import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinBase
+import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
+import org.apache.spark.util.SerializableConfiguration
 
 abstract class Shims {
 
-  // shim methods for execution
+  def initExtension(): Unit = {}
+
+  def onApplyingExtension(): Unit = {}
+
+  def createConvertToNativeExec(child: SparkPlan): ConvertToNativeBase
+
+  def createNativeAggExec(
+      execMode: NativeAggBase.AggExecMode,
+      requiredChildDistributionExpressions: Option[Seq[Expression]],
+      groupingExpressions: Seq[NamedExpression],
+      aggregateExpressions: Seq[AggregateExpression],
+      aggregateAttributes: Seq[Attribute],
+      initialInputBufferOffset: Int,
+      child: SparkPlan): NativeAggBase
+
+  def createNativeBroadcastExchangeExec(
+      mode: BroadcastMode,
+      child: SparkPlan): NativeBroadcastExchangeBase
+
+  def createNativeBroadcastJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      outputPartitioning: Partitioning,
+      leftKeys: Seq[Expression],
+      rightKeys: Seq[Expression],
+      joinType: JoinType,
+      condition: Option[Expression]): NativeBroadcastJoinBase
+
+  def createNativeSortMergeJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      leftKeys: Seq[Expression],
+      rightKeys: Seq[Expression],
+      joinType: JoinType,
+      condition: Option[Expression]): NativeSortMergeJoinBase
+
+  def createNativeExpandExec(
+      projections: Seq[Seq[Expression]],
+      output: Seq[Attribute],
+      child: SparkPlan): NativeExpandBase
+
+  def createNativeFilterExec(condition: Expression, child: SparkPlan): NativeFilterBase
+
+  def createNativeGenerateExec(
+      generator: Generator,
+      requiredChildOutput: Seq[Attribute],
+      outer: Boolean,
+      generatorOutput: Seq[Attribute],
+      child: SparkPlan): NativeGenerateBase
+
+  def createNativeGlobalLimitExec(limit: Long, child: SparkPlan): NativeGlobalLimitBase
+
+  def createNativeLocalLimitExec(limit: Long, child: SparkPlan): NativeLocalLimitBase
+
+  def createNativeParquetInsertIntoHiveTableExec(
+      cmd: InsertIntoHiveTable,
+      child: SparkPlan): NativeParquetInsertIntoHiveTableBase
+
+  def createNativeParquetScanExec(basedFileScan: FileSourceScanExec): NativeParquetScanBase
+
+  def createNativeProjectExec(
+      projectList: Seq[NamedExpression],
+      child: SparkPlan,
+      addTypeCast: Boolean = false): NativeProjectBase
+
+  def createNativeRenameColumnsExec(
+      child: SparkPlan,
+      newColumnNames: Seq[String]): NativeRenameColumnsBase
+
+  def createNativeShuffleExchangeExec(
+      outputPartitioning: Partitioning,
+      child: SparkPlan): NativeShuffleExchangeBase
+
+  def createNativeSortExec(
+      sortOrder: Seq[SortOrder],
+      global: Boolean,
+      child: SparkPlan): NativeSortBase
+
+  def createNativeTakeOrderedExec(
+      limit: Long,
+      sortOrder: Seq[SortOrder],
+      child: SparkPlan): NativeTakeOrderedBase
+
+  def createNativePartialTakeOrderedExec(
+      limit: Long,
+      sortOrder: Seq[SortOrder],
+      child: SparkPlan,
+      metrics: Map[String, SQLMetric]): NativePartialTakeOrderedBase
+
+  def createNativeUnionExec(children: Seq[SparkPlan]): NativeUnionBase
+
+  def createNativeWindowExec(
+      windowExpression: Seq[NamedExpression],
+      partitionSpec: Seq[Expression],
+      orderSpec: Seq[SortOrder],
+      child: SparkPlan): NativeWindowBase
 
   def isNative(plan: SparkPlan): Boolean
 
@@ -81,10 +184,6 @@ abstract class Shims {
 
   def getAggregateExpressionFilter(expr: Expression): Option[Expression]
 
-  def createArrowShuffleExchange(
-      outputPartitioning: Partitioning,
-      child: SparkPlan): NativeShuffleExchangeBase
-
   def createFileSegment(file: File, offset: Long, length: Long, numRecords: Long): FileSegment
 
   def commit(
@@ -108,16 +207,22 @@ abstract class Shims {
       mapId: Long): MapStatus
 
   def getShuffleWriteExec(
-      input: PhysicalPlanNode,
-      nativeOutputPartitioning: PhysicalHashRepartition.Builder): PhysicalPlanNode
-
-  def createParquetScan(exec: FileSourceScanExec): NativeParquetScanBase
-
-  def createArrowBroadcastExchange(
-      mode: BroadcastMode,
-      child: SparkPlan): NativeBroadcastExchangeBase
+      input: pb.PhysicalPlanNode,
+      nativeOutputPartitioning: pb.PhysicalHashRepartition.Builder): pb.PhysicalPlanNode
 
   def convertMoreSparkPlan(exec: SparkPlan): Option[SparkPlan]
+
+  def getSqlContext(sparkPlan: SparkPlan): SQLContext
+
+  def createBasicWriteJobStatsTrackerForNativeParquetSink(
+      serializableHadoopConf: SerializableConfiguration,
+      metrics: Map[String, SQLMetric]): BasicWriteJobStatsTracker
+
+  def createNativeExprWrapper(
+      nativeExpr: pb.PhysicalExprNode,
+      dataType: DataType,
+      nullable: Boolean): Expression
+
 }
 
 object Shims {

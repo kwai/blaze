@@ -41,7 +41,7 @@ class BlazeBlockStoreShuffleReader[K, C](
     startMapId: Option[Int] = None,
     endMapId: Option[Int] = None,
     shouldBatchFetch: Boolean = false)
-    extends BlazeBlockStoreShuffleReaderBase[K, C](handle, context, readMetrics)
+    extends BlazeBlockStoreShuffleReaderBase[K, C](handle, context)
     with Logging {
 
   override def readBlocks(): Iterator[(BlockId, InputStream)] = {

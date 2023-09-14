@@ -37,6 +37,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -44,6 +45,7 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
@@ -73,8 +75,10 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
+import org.blaze.protobuf.PhysicalExprNode
 
 object NativeConverters extends Logging {
+  val subqueryEvaluatedTag: TreeNodeTag[Boolean] = TreeNodeTag[Boolean]("subqueryEvaluated")
 
   def convertScalarType(dataType: DataType): pb.ScalarType = {
     val scalarTypeBuilder = dataType match {
@@ -266,7 +270,7 @@ object NativeConverters extends Logging {
             .setIndex(rightOutput.indexWhere(_.exprId == attr.exprId))
             .build()
         case _ =>
-          throw new NotImplementedError(s"unsupported join filter: $filterExpr")
+          columnIndices += pb.ColumnIndex.newBuilder().buildPartial()
       }
     }
     pb.JoinFilter
@@ -277,12 +281,14 @@ object NativeConverters extends Logging {
       .build()
   }
 
-  case class NativeExprWrapper(
-      wrapped: pb.PhysicalExprNode,
+  abstract class NativeExprWrapperBase(
+      _wrapped: pb.PhysicalExprNode,
       override val dataType: DataType = NullType,
       override val nullable: Boolean = true,
       override val children: Seq[Expression] = Nil)
-      extends Unevaluable
+      extends Unevaluable {
+    val wrapped: PhysicalExprNode = _wrapped
+  }
 
   def convertExpr(sparkExpr: Expression): pb.PhysicalExprNode = {
     def fallbackToError: Expression => pb.PhysicalExprNode = { e =>
@@ -312,11 +318,11 @@ object NativeConverters extends Logging {
             try {
               val converted =
                 convertExprWithFallback(child, isPruningExpr = false, fallbackToError)
-              NativeExprWrapper(converted, child.dataType, child.nullable)
+              Shims.get.createNativeExprWrapper(converted, child.dataType, child.nullable)
             } catch {
               case _: NotImplementedError =>
                 val fallbacked = convertExpr(child)
-                NativeExprWrapper(fallbacked, child.dataType, child.nullable)
+                Shims.get.createNativeExprWrapper(fallbacked, child.dataType, child.nullable)
             }
           }
           convertExprWithFallback(childrenConverted, isPruningExpr = false, fallbackToError)
@@ -388,7 +394,7 @@ object NativeConverters extends Logging {
 
   private def convertExprWithFallback(
       sparkExpr: Expression,
-      isPruningExpr: Boolean = false,
+      isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): pb.PhysicalExprNode = {
     assert(sparkExpr.deterministic, s"nondeterministic expression not supported: $sparkExpr")
 
@@ -444,13 +450,12 @@ object NativeConverters extends Logging {
 
     def unpackBinaryTypeCast(expr: Expression) =
       expr match {
-        case Cast(inner, BinaryType, _) => inner
+        case expr: Cast if expr.dataType == BinaryType => expr.child
         case expr => expr
       }
 
     sparkExpr match {
-      case NativeExprWrapper(wrapped, _, _, _) =>
-        wrapped
+      case e: NativeExprWrapperBase => e.wrapped
       case Literal(value, dataType) =>
         buildExprNode { b =>
           if (value == null) {
@@ -500,21 +505,35 @@ object NativeConverters extends Logging {
 
       // ScalarSubquery
       case subquery: ScalarSubquery =>
-        subquery.updateResult()
-        val value = Literal.create(subquery.eval(null), subquery.dataType)
-        convertExprWithFallback(value, isPruningExpr, fallback)
+        // if (!subquery.getTagValue(subqueryEvaluatedTag).getOrElse(false)) {
+        //   subquery.updateResult()
+        //   subquery.setTagValue(subqueryEvaluatedTag, true)
+        // }
+        // val value = Literal.create(subquery.eval(null), subquery.dataType)
+        // convertExprWithFallback(value, isPruningExpr, fallback)
+        val serialized = serializeExpression(
+          subquery.asInstanceOf[Expression with Serializable],
+          StructType(Nil))
+        buildExprNode {
+          _.setSparkScalarSubqueryWrapperExpr(
+            pb.PhysicalSparkScalarSubqueryWrapperExprNode
+              .newBuilder()
+              .setSerialized(ByteString.copyFrom(serialized))
+              .setReturnType(convertDataType(subquery.dataType))
+              .setReturnNullable(subquery.nullable))
+        }
 
       // cast
       // not performing native cast for timestamp/dates (will use UDFWrapper instead)
-      case Cast(child, dataType, _)
-          if !Seq(dataType, child.dataType).contains(TimestampType) &&
-            !Seq(dataType, child.dataType).contains(DateType) =>
+      case cast: Cast
+          if !Seq(cast.dataType, cast.child.dataType).contains(TimestampType) &&
+            !Seq(cast.dataType, cast.child.dataType).contains(DateType) =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
-              .setArrowType(convertDataType(dataType))
+              .setExpr(convertExprWithFallback(cast.child, isPruningExpr, fallback))
+              .setArrowType(convertDataType(cast.dataType))
               .build())
         }
 
@@ -580,7 +599,9 @@ object NativeConverters extends Logging {
       case GreaterThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "GtEq")
       case LessThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "LtEq")
 
-      case e @ Add(lhs, rhs) =>
+      case e: Add =>
+        val lhs = e.left
+        val rhs = e.right
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
           buildExprNode {
@@ -595,7 +616,9 @@ object NativeConverters extends Logging {
           buildBinaryExprNode(lhs, rhs, "Plus")
         }
 
-      case e @ Subtract(lhs, rhs) =>
+      case e: Subtract =>
+        val lhs = e.left
+        val rhs = e.right
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
           buildExprNode {
@@ -610,7 +633,9 @@ object NativeConverters extends Logging {
           buildBinaryExprNode(lhs, rhs, "Minus")
         }
 
-      case e @ Multiply(lhs, rhs) =>
+      case e: Multiply =>
+        val lhs = e.left
+        val rhs = e.right
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
           buildExprNode {
@@ -625,7 +650,9 @@ object NativeConverters extends Logging {
           buildBinaryExprNode(lhs, rhs, "Multiply")
         }
 
-      case e @ Divide(lhs, rhs) =>
+      case e: Divide =>
+        val lhs = e.left
+        val rhs = e.right
         if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
           val resultType = arithDecimalReturnType(e)
           buildExprNode {
@@ -650,7 +677,9 @@ object NativeConverters extends Logging {
           }
         }
 
-      case e @ Remainder(lhs, rhs) =>
+      case e: Remainder =>
+        val lhs = e.left
+        val rhs = e.right
         val resultType = arithDecimalReturnType(e)
         rhs match {
           case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
@@ -682,7 +711,7 @@ object NativeConverters extends Logging {
         }
 
       // if rhs is complex in and/or operators, use short-circuiting implementation
-      case e @ And(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
+      case And(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
         buildExprNode {
           _.setScAndExpr(
             pb.PhysicalSCAndExprNode
@@ -690,7 +719,7 @@ object NativeConverters extends Logging {
               .setLeft(convertExprWithFallback(lhs, isPruningExpr, fallback))
               .setRight(convertExprWithFallback(rhs, isPruningExpr, fallback)))
         }
-      case e @ Or(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
+      case Or(lhs, rhs) if rhs.find(HiveUDFUtil.isHiveUDF).isDefined =>
         buildExprNode {
           _.setScOrExpr(
             pb.PhysicalSCOrExprNode
@@ -890,7 +919,7 @@ object NativeConverters extends Logging {
 
       case PromotePrecision(_1) =>
         _1 match {
-          case Cast(_, dt, _) if dt == _1.dataType =>
+          case cast: Cast if cast.dataType == _1.dataType =>
             convertExprWithFallback(_1, isPruningExpr, fallback)
           case _ =>
             convertExprWithFallback(Cast(_1, _1.dataType), isPruningExpr, fallback)
@@ -917,33 +946,39 @@ object NativeConverters extends Logging {
               .setReturnType(convertDataType(e.dataType)))
         }
 
-      case GetArrayItem(child, Literal(ordinalValue: Number, _)) =>
+      case e: GetArrayItem =>
+        e.ordinal match {
+          case Literal(ordinalValue: Number, _) =>
+            buildExprNode {
+              _.setGetIndexedFieldExpr(
+                pb.PhysicalGetIndexedFieldExprNode
+                  .newBuilder()
+                  .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
+                  .setKey(convertValue(
+                    ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
+                    LongType)))
+            }
+        }
+
+      case e: GetMapValue =>
+        e.key match {
+          case Literal(value, dataType) =>
+            buildExprNode {
+              _.setGetMapValueExpr(
+                pb.PhysicalGetMapValueExprNode
+                  .newBuilder()
+                  .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
+                  .setKey(convertValue(value, dataType)))
+            }
+        }
+
+      case e: GetStructField =>
         buildExprNode {
           _.setGetIndexedFieldExpr(
             pb.PhysicalGetIndexedFieldExprNode
               .newBuilder()
-              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
-              .setKey(convertValue(
-                ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
-                LongType)))
-        }
-
-      case GetMapValue(child, Literal(value, dataType)) =>
-        buildExprNode {
-          _.setGetMapValueExpr(
-            pb.PhysicalGetMapValueExprNode
-              .newBuilder()
-              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
-              .setKey(convertValue(value, dataType)))
-        }
-
-      case GetStructField(child, ordinal, _) =>
-        buildExprNode {
-          _.setGetIndexedFieldExpr(
-            pb.PhysicalGetIndexedFieldExprNode
-              .newBuilder()
-              .setExpr(convertExprWithFallback(child, isPruningExpr, fallback))
-              .setKey(convertValue(ordinal, IntegerType)))
+              .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
+              .setKey(convertValue(e.ordinal, IntegerType)))
         }
 
       // hive UDFJson
@@ -973,18 +1008,18 @@ object NativeConverters extends Logging {
     val aggBuilder = pb.PhysicalAggExprNode.newBuilder()
 
     e.aggregateFunction match {
-      case e @ Max(child) if e.dataType.isInstanceOf[AtomicType] =>
+      case e: Max if e.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.MAX)
-        aggBuilder.addChildren(convertExpr(child))
-      case e @ Min(child) if e.dataType.isInstanceOf[AtomicType] =>
+        aggBuilder.addChildren(convertExpr(e.child))
+      case e: Min if e.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.MIN)
-        aggBuilder.addChildren(convertExpr(child))
-      case e @ Sum(child) if e.dataType.isInstanceOf[AtomicType] =>
+        aggBuilder.addChildren(convertExpr(e.child))
+      case e: Sum if e.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.SUM)
-        aggBuilder.addChildren(convertExpr(child))
-      case e @ Average(child) if e.dataType.isInstanceOf[AtomicType] =>
+        aggBuilder.addChildren(convertExpr(e.child))
+      case e: Average if e.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.AVG)
-        aggBuilder.addChildren(convertExpr(child))
+        aggBuilder.addChildren(convertExpr(e.child))
       case Count(children) if !children.exists(_.nullable) =>
         aggBuilder.setAggFunction(pb.AggFunction.COUNT)
         aggBuilder.addChildren(convertExpr(Literal.apply(1)))
@@ -1072,11 +1107,19 @@ object NativeConverters extends Logging {
     }
   }
 
-  private def arithDecimalReturnType(e: Expression): DataType = {
+  private def arithDecimalReturnType(e: BinaryArithmetic): DataType = {
+    if (!e.children.forall(_.dataType.isInstanceOf[DecimalType])) {
+      return e.dataType
+    }
+    val p1 = e.left.dataType.asInstanceOf[DecimalType].precision
+    val s1 = e.left.dataType.asInstanceOf[DecimalType].scale
+    val p2 = e.right.dataType.asInstanceOf[DecimalType].precision
+    val s2 = e.right.dataType.asInstanceOf[DecimalType].scale
+
     import scala.math.max
     import scala.math.min
     e match {
-      case Add(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+      case _: Add | _: Subtract =>
         val resultScale = max(s1, s2)
         if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
           DecimalType.adjustPrecisionScale(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
@@ -1084,22 +1127,14 @@ object NativeConverters extends Logging {
           DecimalType.bounded(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
         }
 
-      case Subtract(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
-        val resultScale = max(s1, s2)
-        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
-          DecimalType.adjustPrecisionScale(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
-        } else {
-          DecimalType.bounded(max(p1 - s1, p2 - s2) + resultScale + 1, resultScale)
-        }
-
-      case Multiply(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+      case _: Multiply =>
         if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
           DecimalType.adjustPrecisionScale(p1 + p2 + 1, s1 + s2)
         } else {
           DecimalType.bounded(p1 + p2 + 1, s1 + s2)
         }
 
-      case Divide(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+      case _: Divide =>
         if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
           // Precision: p1 - s1 + s2 + max(6, s1 + p2 + 1)
           // Scale: max(6, s1 + p2 + 1)
@@ -1118,19 +1153,13 @@ object NativeConverters extends Logging {
           DecimalType.bounded(intDig + decDig, decDig)
         }
 
-      case Remainder(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
+      case _: Remainder | _: Pmod =>
         if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
           DecimalType.adjustPrecisionScale(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
         } else {
           DecimalType.bounded(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
         }
 
-      case Pmod(e1 @ DecimalType.Expression(p1, s1), e2 @ DecimalType.Expression(p2, s2)) =>
-        if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
-          DecimalType.adjustPrecisionScale(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
-        } else {
-          DecimalType.bounded(min(p1 - s1, p2 - s2) + max(s1, s2), max(s1, s2))
-        }
       case e => e.dataType
     }
   }

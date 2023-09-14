@@ -46,3 +46,6 @@ target/
 
 # Protoc generated src
 spark-extension/src/generated-sources
+
+# exclude spark241kwaiae shim module
+spark-extension-shims-spark241kwaiae

@@ -50,6 +50,7 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
+import org.apache.spark.sql.catalyst.plans.physical.IdentityBroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.SparkPlan
@@ -66,29 +67,24 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
     with NativeSupports {
 
   override def output: Seq[Attribute] = child.output
+  override def outputPartitioning: Partitioning = BroadcastPartitioning(mode)
 
-  private lazy val isNative = {
+  protected lazy val isNative: Boolean = {
     getTagValue(NativeBroadcastExchangeBase.nativeExecutionTag).getOrElse(false)
   }
+  protected val nativeSchema: pb.Schema = Util.getNativeSchema(output)
 
   def getRunId: UUID
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq :+
       ("dataSize", SQLMetrics.createSizeMetric(sparkContext, "data size")) :+
+      ("numOutputRows", SQLMetrics.createMetric(sparkContext, "number of output rows")) :+
       ("collectTime", SQLMetrics.createTimingMetric(sparkContext, "time to collect")) :+
       ("buildTime", SQLMetrics.createTimingMetric(sparkContext, "time to build")) :+
-      ("broadcastTime", SQLMetrics.createTimingMetric(sparkContext, "time to broadcast")) :+
-      ("ipc_write_rows", SQLMetrics.createMetric(sparkContext, "Native.ipc_write_rows")) :+
-      ("ipc_write_time", SQLMetrics
-        .createNanoTimingMetric(sparkContext, "Native.ipc_write_time")): _*)
-
-  override def outputPartitioning: Partitioning = BroadcastPartitioning(mode)
-
-  override def doCanonicalize(): SparkPlan = child.canonicalized
+      ("broadcastTime", SQLMetrics.createTimingMetric(sparkContext, "time to broadcast")): _*)
 
   override protected def doExecute(): RDD[InternalRow] = {
     throw new UnsupportedOperationException(
@@ -160,16 +156,12 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       friendlyName = "NativeRDD.BroadcastRead")
   }
 
-  val nativeSchema: pb.Schema = Util.getNativeSchema(output)
-
   def collectNative(): Array[Array[Byte]] = {
     val inputRDD = NativeHelper.executeNative(child match {
       case child if NativeHelper.isNative(child) => child
-      case child => ConvertToNativeExec(child)
+      case child => Shims.get.createConvertToNativeExec(child)
     })
-    val modifiedMetrics = metrics ++ Map(
-      "output_rows" -> metrics("ipc_write_rows"),
-      "elapsed_compute" -> metrics("ipc_write_time"))
+    val modifiedMetrics = metrics ++ Map("output_rows" -> metrics("numOutputRows"))
     val nativeMetrics = MetricNode(modifiedMetrics, inputRDD.metrics :: Nil)
 
     val ipcRDD =
@@ -188,6 +180,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
               val byteArray = new Array[Byte](byteBuffer.capacity())
               byteBuffer.get(byteArray)
               ipcs += byteArray
+              metrics("dataSize") += byteArray.length
             })
 
           val input = inputRDD.nativePlan(inputRDD.partitions(split.index), context)
@@ -218,7 +211,8 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
     // build broadcast data
     val collectedData = ipcRDD.collect()
     val keys = mode match {
-      case HashedRelationBroadcastMode(keys) => keys
+      case mode: HashedRelationBroadcastMode => mode.key
+      case IdentityBroadcastMode => Nil
     }
     buildBroadcastData(collectedData, keys, nativeSchema)
   }
@@ -240,7 +234,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   @transient
   lazy val nativeRelationFuture: Future[Broadcast[Array[Array[Byte]]]] = {
     SQLExecution.withThreadLocalCaptured[Broadcast[Array[Array[Byte]]]](
-      sqlContext.sparkSession,
+      Shims.get.getSqlContext(this).sparkSession,
       BroadcastExchangeExec.executionContext) {
       try {
         sparkContext.setJobGroup(
@@ -257,6 +251,9 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       }
     }
   }
+
+  override protected def doCanonicalize(): SparkPlan =
+    Shims.get.createNativeBroadcastExchangeExec(mode.canonicalized, child.canonicalized)
 }
 
 object NativeBroadcastExchangeBase {
@@ -268,8 +265,8 @@ object NativeBroadcastExchangeBase {
       keys: Seq[Expression],
       nativeSchema: pb.Schema): Array[Array[Byte]] = {
 
-    if (!BlazeConf.enableBhjFallbacksToSmj()) { // no need to sort data in driver side
-      return collectedData
+    if (!BlazeConf.enableBhjFallbacksToSmj() || keys.isEmpty) {
+      return collectedData // no need to sort data in driver side
     }
 
     val readerIpcProviderResourceId = s"BuildBroadcastDataReader:${UUID.randomUUID()}"

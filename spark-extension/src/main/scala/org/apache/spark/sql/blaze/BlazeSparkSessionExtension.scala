@@ -16,7 +16,6 @@
 package org.apache.spark.sql.blaze
 
 import org.apache.spark.SparkEnv
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.internal.config.OptionalConfigEntry
@@ -24,16 +23,12 @@ import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.ColumnarRule
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
-import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.internal.SQLConf
 
 class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {
+  Shims.get.initExtension()
 
   override def apply(extensions: SparkSessionExtensions): Unit = {
     SparkEnv.get.conf.set("spark.sql.adaptive.enabled", "true")
@@ -41,10 +36,7 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
 
     assert(BlazeSparkSessionExtension.blazeEnabledKey != null)
-
-    extensions.injectOptimizerRule(sparkSession => {
-      BlazeRuleEngine(sparkSession)
-    })
+    Shims.get.onApplyingExtension()
 
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)
@@ -70,7 +62,7 @@ object BlazeSparkSessionExtension extends Logging {
       .getOrElse(false)
     val strategy =
       exec.getTagValue(BlazeConvertStrategy.convertStrategyTag).getOrElse(Default)
-    logWarning(s" +${"-" * depth} $nodeName (convertible=$convertible, strategy=$strategy)")
+    logInfo(s" +${"-" * depth} $nodeName (convertible=$convertible, strategy=$strategy)")
     exec.children.foreach(dumpSimpleSparkPlanTreeNode(_, depth + 1))
   }
 }
@@ -91,62 +83,17 @@ case class BlazeColumnarOverrides(sparkSession: SparkSession) extends ColumnarRu
 
         // generate convert strategy
         BlazeConvertStrategy.apply(sparkPlan)
-        logDebug("Blaze convert strategy for current stage:")
+        logInfo("Blaze convert strategy for current stage:")
         dumpSimpleSparkPlanTreeNode(sparkPlan)
 
         val sparkPlanTransformed = BlazeConverters.convertSparkPlanRecursively(sparkPlan)
-        logDebug("Blaze convert result for current stage:")
+        logInfo("Blaze convert result for current stage:")
         dumpSimpleSparkPlanTreeNode(sparkPlanTransformed)
 
-        logDebug(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
+        logInfo(s"Transformed spark plan after preColumnarTransitions:\n${sparkPlanTransformed
           .treeString(verbose = true, addSuffix = true)}")
         sparkPlanTransformed
       }
     }
-  }
-}
-
-case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan] with Logging {
-  import BlazeSparkSessionExtension._
-
-  override def apply(plan: LogicalPlan): LogicalPlan = {
-    plan.foreachUp {
-      case p @ LogicalRelation(fsRelation: HadoopFsRelation, _, _, _) =>
-        // non parquet table rule
-        if (!fsRelation.fileFormat.isInstanceOf[ParquetFileFormat]) {
-          turnOffBlazeWithReason(p.conf, BlazeMissPatterns.NonParquetFormat)
-        }
-
-        // read encrypted table rule
-        val readEncryptedTableEnable = sparkSession.sparkContext.conf
-          .getBoolean("spark.hive.exist.read.encrypted.table", defaultValue = false)
-        if (readEncryptedTableEnable) {
-          turnOffBlazeWithReason(p.conf, BlazeMissPatterns.ReadEncryptedTable)
-        }
-
-        // skip scan dp_dd.*** table because parquet statics don't get min/max info
-        if (p.catalogTable.map(_.identifier.unquotedString).getOrElse("").contains("dp_dd")) {
-          turnOffBlazeWithReason(p.conf, BlazeMissPatterns.ReadHbaseTable)
-        }
-
-      case h: HiveTableRelation =>
-        turnOffBlazeWithReason(h.conf, BlazeMissPatterns.NonParquetFormat)
-
-      case _ =>
-    }
-    plan
-  }
-
-  private def turnOffBlazeWithReason(planConf: SQLConf, blazeMissPattern: String): Unit = {
-    planConf.setConf(blazeEnabledKey, false)
-    sparkSession.sparkContext.conf
-      .set(blazeMissPatterns, blazeMissPattern)
-  }
-
-  object BlazeMissPatterns extends Enumeration {
-    type BlazeMissPatterns = String
-    val NonParquetFormat = "NonParquetFormat"
-    val ReadEncryptedTable = "ReadEncryptedTable"
-    val ReadHbaseTable = "ReadHbaseTable"
   }
 }

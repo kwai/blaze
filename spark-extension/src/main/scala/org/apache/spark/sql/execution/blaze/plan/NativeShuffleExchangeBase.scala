@@ -16,18 +16,21 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
+
 import scala.collection.JavaConverters._
+
 import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.blaze.protobuf.{IpcReadMode, IpcReaderExecNode, PhysicalExprNode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
+import org.blaze.protobuf.{IpcReaderExecNode, IpcReadMode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
@@ -44,7 +47,6 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnsafeRowSerializer
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
-import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
 
@@ -60,7 +62,11 @@ abstract class NativeShuffleExchangeBase(
     new UnsafeRowSerializer(child.output.size, longMetric("dataSize"))
 
   @transient
-  lazy val inputRDD: RDD[InternalRow] = child.execute()
+  lazy val inputRDD: RDD[InternalRow] = if (NativeHelper.isNative(child)) {
+    NativeHelper.executeNative(child)
+  } else {
+    child.execute()
+  }
 
   /**
    * A [[ShuffleDependency]] that will partition rows of its child based on the partitioning
@@ -74,16 +80,20 @@ abstract class NativeShuffleExchangeBase(
       child.output,
       outputPartitioning,
       serializer,
-      metrics,
-      nativeHashExprs)
+      metrics)
   }
 
-  val nativeSchema: Schema = Util.getNativeSchema(child.output)
-  val nativeHashExprs: List[PhysicalExprNode] = outputPartitioning match {
+  def nativeSchema: Schema = Util.getNativeSchema(child.output)
+
+  private def nativeHashExprs = outputPartitioning match {
     case HashPartitioning(expressions, _) =>
       expressions.map(expr => NativeConverters.convertExpr(expr)).toList
     case _ => null
   }
+
+  // check whether native converting is supported
+  nativeSchema
+  nativeHashExprs
 
   protected def doExecuteNonNative(): RDD[InternalRow]
 
@@ -111,6 +121,7 @@ abstract class NativeShuffleExchangeBase(
       (partition, taskContext) => {
         val shuffleReadMetrics = taskContext.taskMetrics().createTempShuffleReadMetrics()
         val metricReporter = new SQLShuffleReadMetricsReporter(shuffleReadMetrics, metrics)
+        val nativeSchema = this.nativeSchema
 
         // store fetch iterator in jni resource before native compute
         val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
@@ -152,9 +163,7 @@ abstract class NativeShuffleExchangeBase(
       outputAttributes: Seq[Attribute],
       outputPartitioning: Partitioning,
       serializer: Serializer,
-      metrics: Map[String, SQLMetric],
-      nativeHashExprs: List[PhysicalExprNode])
-      : ShuffleDependency[Int, InternalRow, InternalRow] = {
+      metrics: Map[String, SQLMetric]): ShuffleDependency[Int, InternalRow, InternalRow] = {
 
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val numPartitions = outputPartitioning.numPartitions
@@ -172,6 +181,7 @@ abstract class NativeShuffleExchangeBase(
         case ("spilled_bytes", v) => metrics("spilled_bytes").add(v)
         case _ =>
       }))
+    val nativeHashExprs = this.nativeHashExprs
 
     val nativeShuffleRDD = new NativeRDD(
       nativeInputRDD.sparkContext,
@@ -214,7 +224,4 @@ abstract class NativeShuffleExchangeBase(
       schema = StructType.fromAttributes(outputAttributes))
     dependency
   }
-
-  override def doCanonicalize(): SparkPlan =
-    ShuffleExchangeExec(outputPartitioning, child).canonicalized
 }

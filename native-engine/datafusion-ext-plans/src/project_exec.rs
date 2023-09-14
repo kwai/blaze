@@ -19,7 +19,6 @@ use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
 use crate::common::output::output_with_sender;
 use crate::filter_exec::FilterExec;
 use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
-use arrow::record_batch::RecordBatch;
 use datafusion::common::{Result, Statistics};
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr::{PhysicalExprRef, PhysicalSortExpr};
@@ -172,12 +171,8 @@ async fn execute_project_with_filtering(
         move |sender| async move {
             while let Some(batch) = input.next().await.transpose()? {
                 let mut timer = metrics.elapsed_compute().timer();
-                let output_arrays = cached_expr_evaluator.filter_project(&batch)?;
-                let output_batch = if !output_arrays.is_empty() {
-                    RecordBatch::try_new(output_schema.clone(), output_arrays)?
-                } else {
-                    RecordBatch::new_empty(output_schema.clone())
-                };
+                let output_batch =
+                    cached_expr_evaluator.filter_project(&batch, output_schema.clone())?;
                 metrics.record_output(output_batch.num_rows());
                 sender.send(Ok(output_batch), Some(&mut timer)).await;
             }

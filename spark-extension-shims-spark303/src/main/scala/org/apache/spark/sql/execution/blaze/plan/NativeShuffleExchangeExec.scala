@@ -160,4 +160,7 @@ case class NativeShuffleExchangeExec(
       }
     }
   }
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
 }

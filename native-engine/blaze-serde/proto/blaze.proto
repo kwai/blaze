@@ -94,11 +94,14 @@ message PhysicalExprNode {
     // spark udf wrapper
     PhysicalSparkUDFWrapperExprNode spark_udf_wrapper_expr = 10000;
 
+    // spark scalar subquery wrapper
+    PhysicalSparkScalarSubqueryWrapperExprNode spark_scalar_subquery_wrapper_expr = 10001;
+
     // GetIndexedField
-    PhysicalGetIndexedFieldExprNode get_indexed_field_expr = 10001;
+    PhysicalGetIndexedFieldExprNode get_indexed_field_expr = 10002;
 
     // GetMapValue
-    PhysicalGetMapValueExprNode get_map_value_expr = 10002;
+    PhysicalGetMapValueExprNode get_map_value_expr = 10003;
 
     // CreateNamedStruct
     PhysicalNamedStructExprNode named_struct = 11000;
@@ -290,6 +293,12 @@ message PhysicalSparkUDFWrapperExprNode {
   ArrowType return_type = 2;
   bool return_nullable = 3;
   repeated PhysicalExprNode params = 4;
+}
+
+message PhysicalSparkScalarSubqueryWrapperExprNode {
+  bytes serialized = 1;
+  ArrowType return_type = 2;
+  bool return_nullable = 3;
 }
 
 message PhysicalGetIndexedFieldExprNode {

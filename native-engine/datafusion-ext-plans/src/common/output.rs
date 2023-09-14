@@ -102,6 +102,13 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
     stream_builder.spawn(async move {
         let wrapped = WrappedRecordBatchSender::new(task_context, sender);
         let result = AssertUnwindSafe(async move {
+            let task_running = is_task_running();
+            if !task_running {
+                panic!(
+                    "output_with_sender[{}] canceled due to task finished/killed",
+                    desc
+                );
+            }
             output(wrapped)
                 .unwrap_or_else(|err| {
                     panic!(
@@ -125,11 +132,13 @@ pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
 
             // panic current spawn
             let task_running = is_task_running();
-            if task_running {
+            if !task_running {
                 panic!(
-                    "output_with_sender[{}] error (task_running={}: {}",
-                    desc, task_running, err_message,
+                    "output_with_sender[{}] canceled due to task finished/killed",
+                    desc
                 );
+            } else {
+                panic!("output_with_sender[{}] error: {}", desc, err_message);
             }
         }
     });

@@ -24,11 +24,15 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryConsumer
+import org.apache.spark.memory.MemoryMode
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.util.Utils
 
 class OnHeapSpillManager(taskContext: TaskContext)
-    extends MemoryConsumer(taskContext.taskMemoryManager)
+    extends MemoryConsumer(
+      taskContext.taskMemoryManager,
+      taskContext.taskMemoryManager.pageSizeBytes(),
+      MemoryMode.ON_HEAP)
     with Logging {
   import org.apache.spark.sql.blaze.memory.OnHeapSpillManager._
 

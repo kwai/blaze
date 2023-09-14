@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{new_empty_array, Array, ArrayRef, BooleanArray};
+use arrow::array::{Array, ArrayRef, BooleanArray};
 use arrow::compute::{filter, filter_record_batch, prep_null_mask_filter};
-use arrow::datatypes::{DataType, Schema};
-use arrow::record_batch::RecordBatch;
+use arrow::datatypes::{DataType, Schema, SchemaRef};
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::cast::as_boolean_array;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::common::{Result, ScalarValue};
@@ -67,8 +67,13 @@ impl CachedExprsEvaluator {
         self.cache.with(|_| self.filter_impl(batch))
     }
 
-    pub fn filter_project(&self, batch: &RecordBatch) -> Result<Vec<ArrayRef>> {
-        self.cache.with(|_| self.filter_project_impl(batch))
+    pub fn filter_project(
+        &self,
+        batch: &RecordBatch,
+        output_schema: SchemaRef,
+    ) -> Result<RecordBatch> {
+        self.cache
+            .with(|_| self.filter_project_impl(batch, output_schema.clone()))
     }
 
     fn filter_impl(&self, batch: &RecordBatch) -> Result<RecordBatch> {
@@ -111,26 +116,31 @@ impl CachedExprsEvaluator {
         Ok(batch)
     }
 
-    fn filter_project_impl(&self, batch: &RecordBatch) -> Result<Vec<ArrayRef>> {
+    fn filter_project_impl(
+        &self,
+        batch: &RecordBatch,
+        output_schema: SchemaRef,
+    ) -> Result<RecordBatch> {
         // execute filters, cache are retained for later projection
         let filtered_batch = self.filter_impl(batch)?;
         if filtered_batch.num_rows() == 0 {
-            let batch_schema = batch.schema();
-            return Ok(self
-                .transformed_projection_exprs
-                .iter()
-                .map(|expr| Ok(new_empty_array(&expr.data_type(&batch_schema)?)))
-                .collect::<Result<_>>()?);
+            return Ok(RecordBatch::new_empty(output_schema));
         }
 
         // project
-        self.transformed_projection_exprs
+        let output_cols = self
+            .transformed_projection_exprs
             .iter()
             .map(|expr| {
                 expr.evaluate(&filtered_batch)
                     .map(|c| c.into_array(filtered_batch.num_rows()))
             })
-            .collect()
+            .collect::<Result<Vec<ArrayRef>>>()?;
+        Ok(RecordBatch::try_new_with_options(
+            output_schema,
+            output_cols,
+            &RecordBatchOptions::new().with_row_count(Some(filtered_batch.num_rows())),
+        )?)
     }
 }
 

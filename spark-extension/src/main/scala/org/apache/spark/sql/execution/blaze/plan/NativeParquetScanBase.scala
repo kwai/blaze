@@ -26,7 +26,6 @@ import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
@@ -34,16 +33,17 @@ import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.datasources.FileScanRDD
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.FilePartition
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
@@ -81,10 +81,16 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
 
   private val partitionSchema = basedFileScan.relation.partitionSchema
 
-  private val nativePruningPredicateFilters = basedFileScan.dataFilters
+  private val fileSizes = inputFileScanRDD.filePartitions
+    .flatMap(_.files)
+    .groupBy(_.filePath)
+    .mapValues(_.map(_.length).sum)
+    .map(identity) // make this map serializable
+
+  private def nativePruningPredicateFilters = basedFileScan.dataFilters
     .map(expr => NativeConverters.convertScanPruningExpr(expr))
 
-  private val nativeFileSchema =
+  private def nativeFileSchema =
     NativeConverters.convertSchema(StructType(basedFileScan.relation.dataSchema.map {
       case field if basedFileScan.requiredSchema.exists(_.name == field.name) =>
         field.copy(nullable = true)
@@ -93,16 +99,10 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
         StructField(field.name, NullType, nullable = true)
     }))
 
-  private val nativePartitionSchema =
+  private def nativePartitionSchema =
     NativeConverters.convertSchema(partitionSchema)
 
-  private val fileSizes = inputFileScanRDD.filePartitions
-    .flatMap(_.files)
-    .groupBy(_.filePath)
-    .mapValues(_.map(_.length).sum)
-    .map(identity) // make this map serializable
-
-  private val nativeFileGroups = (partition: FilePartition) => {
+  private def nativeFileGroups = (partition: FilePartition) => {
     // list input file statuses
     val nativePartitionedFile = (file: PartitionedFile) => {
       val nativePartitionValues = partitionSchema.zipWithIndex.map { case (field, index) =>
@@ -144,9 +144,13 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
           inputMetric.incRecordsRead(v)
         case _ =>
       }))
-    val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
+    val nativePruningPredicateFilters = this.nativePruningPredicateFilters
+    val nativeFileSchema = this.nativeFileSchema
+    val nativeFileGroups = this.nativeFileGroups
+    val nativePartitionSchema = this.nativePartitionSchema
 
-    val sparkSession = basedFileScan.relation.sparkSession
+    val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
+    val sparkSession = Shims.get.getSqlContext(basedFileScan).sparkSession
     val hadoopConf =
       sparkSession.sessionState.newHadoopConfWithOptions(basedFileScan.relation.options)
     val broadcastedHadoopConf =
@@ -207,5 +211,5 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
   override val nodeName: String =
     s"NativeParquetScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
 
-  override def doCanonicalize(): SparkPlan = basedFileScan.canonicalized
+  override protected def doCanonicalize(): SparkPlan = basedFileScan.canonicalized
 }

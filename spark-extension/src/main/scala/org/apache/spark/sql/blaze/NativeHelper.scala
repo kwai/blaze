@@ -63,8 +63,9 @@ object NativeHelper extends Logging {
   def getUnderlyingNativePlan(exec: SparkPlan): NativeSupports =
     Shims.get.getUnderlyingNativePlan(exec)
 
-  def executeNative(exec: SparkPlan): NativeRDD =
+  def executeNative(exec: SparkPlan): NativeRDD = {
     Shims.get.executeNative(exec)
+  }
 
   def executeNativePlan(
       nativePlan: PhysicalPlanNode,

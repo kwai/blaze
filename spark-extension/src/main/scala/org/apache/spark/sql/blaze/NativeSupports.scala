@@ -20,9 +20,13 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 
 trait NativeSupports extends SparkPlan {
-  def doExecuteNative(): NativeRDD
+  protected def doExecuteNative(): NativeRDD
 
   protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
+
+  def executeNative(): NativeRDD = executeQuery {
+    doExecuteNative()
+  }
 
   def shuffleReadFull: Boolean = Shims.get.getRDDShuffleReadFull(this.doExecuteNative())
 }
