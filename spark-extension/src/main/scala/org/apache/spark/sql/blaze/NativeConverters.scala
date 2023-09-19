@@ -637,7 +637,17 @@ object NativeConverters extends Logging {
                 .setOp("Divide"))
           }
         } else {
-          buildBinaryExprNode(lhs, rhs, "Divide")
+          val resultType = e.dataType
+          val lhsCasted = castIfNecessary(lhs, resultType)
+          val rhsCasted = castIfNecessary(rhs, resultType)
+          buildExprNode {
+            _.setBinaryExpr(
+              pb.PhysicalBinaryExprNode
+                .newBuilder()
+                .setL(convertExprWithFallback(lhsCasted, isPruningExpr, fallback))
+                .setR(buildExtScalarFunction("NullIfZero", rhsCasted :: Nil, rhs.dataType))
+                .setOp("Divide"))
+          }
         }
 
       case e @ Remainder(lhs, rhs) =>
