@@ -47,15 +47,16 @@ import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.util.SerializableConfiguration
 
-abstract class Shims {
+abstract class Shims extends Serializable {
 
   def initExtension(): Unit = {}
 
-  def onApplyingExtension(): Unit = {}
+  def onApplyingExtension(extension: SparkSessionExtensions): Unit = {}
 
   def createConvertToNativeExec(child: SparkPlan): ConvertToNativeBase
 

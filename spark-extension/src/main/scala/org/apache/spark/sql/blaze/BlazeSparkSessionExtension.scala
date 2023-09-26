@@ -36,7 +36,7 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
 
     assert(BlazeSparkSessionExtension.blazeEnabledKey != null)
-    Shims.get.onApplyingExtension()
+    Shims.get.onApplyingExtension(extensions)
 
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)
@@ -49,7 +49,6 @@ object BlazeSparkSessionExtension extends Logging {
     .buildConf("spark.blaze.enable")
     .booleanConf
     .createWithDefault(true)
-
 
   def dumpSimpleSparkPlanTreeNode(exec: SparkPlan, depth: Int = 0): Unit = {
     val nodeName = exec.nodeName
