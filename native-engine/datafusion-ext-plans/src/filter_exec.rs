@@ -13,11 +13,14 @@
 // limitations under the License.
 
 use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
+use crate::common::column_pruning::ExecuteWithColumnPruning;
 use crate::common::output::output_with_sender;
+use crate::project_exec::ProjectExec;
 use arrow::datatypes::{DataType, SchemaRef};
 use datafusion::common::Statistics;
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
+use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{PhysicalExprRef, PhysicalSortExpr};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
@@ -137,6 +140,31 @@ impl ExecutionPlan for FilterExec {
 
     fn statistics(&self) -> Statistics {
         todo!()
+    }
+}
+
+impl ExecuteWithColumnPruning for FilterExec {
+    fn execute_projected(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+        projection: &[usize],
+    ) -> Result<SendableRecordBatchStream> {
+        let schema = self.schema();
+        let project = Arc::new(ProjectExec::try_new(
+            schema
+                .fields()
+                .iter()
+                .enumerate()
+                .map(|(i, field)| {
+                    let name = field.name().to_owned();
+                    let col: PhysicalExprRef = Arc::new(Column::new(&name, i));
+                    (col, name)
+                })
+                .collect(),
+            Arc::new(self.clone()),
+        )?);
+        project.execute_projected(partition, context, projection)
     }
 }
 

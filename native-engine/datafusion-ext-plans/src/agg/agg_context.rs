@@ -20,7 +20,6 @@ use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
 use datafusion::common::cast::as_binary_array;
 use datafusion::common::{Result, ScalarValue};
-use datafusion::physical_expr::PhysicalExpr;
 use once_cell::sync::OnceCell;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -177,30 +176,20 @@ impl AggContext {
             return Ok(vec![]);
         }
         let mut input_arrays = Vec::with_capacity(self.aggs.len());
-        let mut cached_partial_args: Vec<(Arc<dyn PhysicalExpr>, ArrayRef)> = vec![];
+        let mut values = vec![];
 
         for agg in &self.aggs {
-            let mut values = vec![];
-
             if agg.mode.is_partial() {
-                // find all distincted partial input args. distinction is used
-                // to avoid duplicated evaluating the input arrays.
                 let mut cur_values = vec![];
                 for expr in &agg.agg.exprs() {
-                    let value = cached_partial_args
-                        .iter()
-                        .find(|(cached_expr, _)| expr.eq(cached_expr))
-                        .map(|(_, values)| Ok(values.clone()))
-                        .unwrap_or_else(|| {
-                            expr.evaluate(input_batch)
-                                .map(|r| r.into_array(input_batch.num_rows()))
-                        })?;
-                    cached_partial_args.push((expr.clone(), value.clone()));
+                    let value = expr
+                        .evaluate(input_batch)
+                        .map(|r| r.into_array(input_batch.num_rows()))?;
                     cur_values.push(value);
                 }
                 values.extend(agg.agg.prepare_partial_args(&cur_values)?);
             }
-            input_arrays.push(values);
+            input_arrays.push(std::mem::take(&mut values));
         }
         Ok(input_arrays)
     }

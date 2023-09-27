@@ -15,13 +15,14 @@
 //! Defines the External shuffle repartition plan
 
 use crate::common::bytes_arena::BytesArena;
+use crate::common::column_pruning::ExecuteWithColumnPruning;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::output::{
     output_bufferable_with_spill, output_with_sender, WrappedRecordBatchSender,
 };
-use crate::common::BatchesInterleaver;
-use arrow::array::{ArrayRef, UInt32Array};
+use crate::common::{BatchTaker, BatchesInterleaver};
+use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use arrow::row::{RowConverter, SortField};
@@ -132,57 +133,8 @@ impl ExecutionPlan for SortExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let input_schema = self.input.schema();
-        let batch_size = context.session_config().batch_size();
-        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
-
-        let sort_row_converter = RowConverter::new(
-            self.exprs
-                .iter()
-                .map(|expr: &PhysicalSortExpr| {
-                    Ok(SortField::new_with_options(
-                        expr.expr.data_type(&input_schema)?,
-                        expr.options,
-                    ))
-                })
-                .collect::<Result<Vec<SortField>>>()?,
-        )?;
-
-        let external_sorter = Arc::new(ExternalSorter {
-            name: format!("ExternalSorter[partition={}]", partition),
-            mem_consumer_info: None,
-            sub_batch_size,
-            exprs: self.exprs.clone(),
-            input_schema: self.schema(),
-            limit: self.fetch.unwrap_or(usize::MAX),
-            sort_row_converter: SyncMutex::new(sort_row_converter),
-            levels: Mutex::new((0..NUM_LEVELS).map(|_| None).collect()),
-            spills: Default::default(),
-            baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
-        });
-        MemManager::register_consumer(external_sorter.clone(), true);
-
-        let input = self.input.execute(partition, context.clone())?;
-        let coalesced = Box::pin(CoalesceStream::new(
-            input,
-            batch_size,
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        ));
-
-        let output = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(external_sort(coalesced, context, external_sorter)).try_flatten(),
-        ));
-        let coalesced = Box::pin(CoalesceStream::new(
-            output,
-            batch_size,
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        ));
-        Ok(coalesced)
+        let projection: Vec<usize> = (0..self.schema().fields().len()).collect();
+        self.execute_projected(partition, context, &projection)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -199,12 +151,13 @@ struct ExternalSorter {
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     sub_batch_size: usize,
     exprs: Vec<PhysicalSortExpr>,
-    input_schema: SchemaRef,
+    input_projected_schema: SchemaRef,
     limit: usize,
     sort_row_converter: SyncMutex<RowConverter>,
     levels: Mutex<Vec<Option<SortedBatches>>>,
     spills: Mutex<Vec<Box<dyn Spill>>>,
     baseline_metrics: BaselineMetrics,
+    projection: Vec<usize>,
 }
 
 #[async_trait]
@@ -242,6 +195,68 @@ impl MemConsumer for ExternalSorter {
         // adjust memory usage
         self.update_mem_used(mem_used).await?;
         Ok(())
+    }
+}
+
+impl ExecuteWithColumnPruning for SortExec {
+    fn execute_projected(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+        projection: &[usize],
+    ) -> Result<SendableRecordBatchStream> {
+        let input_schema = self.input.schema();
+        let batch_size = context.session_config().batch_size();
+        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
+
+        let sort_row_converter = RowConverter::new(
+            self.exprs
+                .iter()
+                .map(|expr: &PhysicalSortExpr| {
+                    Ok(SortField::new_with_options(
+                        expr.expr.data_type(&input_schema)?,
+                        expr.options,
+                    ))
+                })
+                .collect::<Result<Vec<SortField>>>()?,
+        )?;
+
+        let external_sorter = Arc::new(ExternalSorter {
+            name: format!("ExternalSorter[partition={}]", partition),
+            mem_consumer_info: None,
+            sub_batch_size,
+            exprs: self.exprs.clone(),
+            projection: projection.to_vec(),
+            input_projected_schema: Arc::new(self.schema().project(projection)?),
+            limit: self.fetch.unwrap_or(usize::MAX),
+            sort_row_converter: SyncMutex::new(sort_row_converter),
+            levels: Mutex::new((0..NUM_LEVELS).map(|_| None).collect()),
+            spills: Default::default(),
+            baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
+        });
+        MemManager::register_consumer(external_sorter.clone(), true);
+
+        let input = self.input.execute(partition, context.clone())?;
+        let coalesced = Box::pin(CoalesceStream::new(
+            input,
+            batch_size,
+            BaselineMetrics::new(&self.metrics, partition)
+                .elapsed_compute()
+                .clone(),
+        ));
+
+        let output = Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            once(external_sort(coalesced, context, external_sorter)).try_flatten(),
+        ));
+        let coalesced = Box::pin(CoalesceStream::new(
+            output,
+            batch_size,
+            BaselineMetrics::new(&self.metrics, partition)
+                .elapsed_compute()
+                .clone(),
+        ));
+        Ok(coalesced)
     }
 }
 
@@ -437,8 +452,9 @@ impl ExternalSorter {
                         batches.extend(cursor.cur_batches.clone());
                     }
 
-                    let mut batch = BatchesInterleaver::new(self.input_schema.clone(), &batches)
-                        .interleave(&staging_indices)?;
+                    let mut batch =
+                        BatchesInterleaver::new(self.input_projected_schema.clone(), &batches)
+                            .interleave(&staging_indices)?;
                     if num_total_output_rows + batch.num_rows() > self.limit {
                         batch = batch.slice(0, self.limit - num_total_output_rows);
                     };
@@ -529,16 +545,8 @@ impl SortedBatches {
             .map(|(idx, row)| (idx as u32, key_data.add(row.as_ref())))
             .unzip();
 
-        // get sorted batch
-        let indices = UInt32Array::from(indices);
-        let batch = RecordBatch::try_new(
-            batch.schema(),
-            batch
-                .columns()
-                .iter()
-                .map(|c| Ok(arrow::compute::take(&c, &indices, None)?))
-                .collect::<Result<Vec<_>>>()?,
-        )?;
+        // get projected sorted batch
+        let batch = BatchTaker(&batch.project(&sorter.projection)?).take(indices)?;
         let batches_mem_size = batch.get_array_memory_size();
         let batches = vec![batch];
 
@@ -686,7 +694,7 @@ impl SortedBatches {
 
         let sorter = a.sorter.clone();
         let mc = MergeCursor {
-            empty_batch: RecordBatch::new_empty(sorter.input_schema.clone()),
+            empty_batch: RecordBatch::new_empty(sorter.input_projected_schema.clone()),
             cursors: [
                 InputCursor {
                     batches: a.batches.into(),
@@ -797,7 +805,7 @@ impl SpillCursor {
     fn load_next_batch(&mut self) -> Result<bool> {
         if let Some(batch) = read_one_batch(
             &mut self.input,
-            Some(self.sorter.input_schema.clone()),
+            Some(self.sorter.input_projected_schema.clone()),
             true,
         )? {
             self.cur_batch_num_rows = batch.num_rows();
