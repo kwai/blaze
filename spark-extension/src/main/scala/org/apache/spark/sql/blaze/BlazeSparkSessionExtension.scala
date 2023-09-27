@@ -50,10 +50,6 @@ object BlazeSparkSessionExtension extends Logging {
     .booleanConf
     .createWithDefault(true)
 
-  lazy val blazeMissPatterns: OptionalConfigEntry[String] = SQLConf
-    .buildConf("spark.blaze.blazeMissPatterns")
-    .stringConf
-    .createOptional
 
   def dumpSimpleSparkPlanTreeNode(exec: SparkPlan, depth: Int = 0): Unit = {
     val nodeName = exec.nodeName
