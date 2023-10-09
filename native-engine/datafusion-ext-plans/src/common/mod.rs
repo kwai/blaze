@@ -20,6 +20,7 @@ use datafusion::common::Result;
 
 pub mod bytes_arena;
 pub mod cached_exprs_evaluator;
+pub mod column_pruning;
 pub mod memory_manager;
 pub mod onheap_spill;
 pub mod output;

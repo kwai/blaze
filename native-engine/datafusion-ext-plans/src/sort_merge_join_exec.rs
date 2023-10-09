@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::common::column_pruning::ExecuteWithColumnPruning;
 use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
 use crate::common::{BatchTaker, BatchesInterleaver};
 use arrow::array::*;
 use arrow::buffer::NullBuffer;
 use arrow::compute::{prep_null_mask_filter, SortOptions};
 use arrow::datatypes::{DataType, Schema, SchemaRef};
-use arrow::record_batch::RecordBatch;
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::{Row, RowConverter, Rows, SortField};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -26,7 +27,7 @@ use datafusion::logical_expr::JoinType;
 use datafusion::logical_expr::JoinType::*;
 use datafusion::physical_expr::PhysicalSortExpr;
 use datafusion::physical_plan::joins::utils::{
-    build_join_schema, check_join_is_valid, JoinFilter, JoinOn, JoinSide,
+    build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter, JoinOn, JoinSide,
 };
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, ScopedTimerGuard,
@@ -94,7 +95,6 @@ impl SortMergeJoinExec {
         }
 
         let schema = Arc::new(build_join_schema(&left_schema, &right_schema, &join_type).0);
-
         Ok(Self {
             left,
             right,
@@ -105,6 +105,30 @@ impl SortMergeJoinExec {
             metrics: ExecutionPlanMetricsSet::new(),
             sort_options,
         })
+    }
+
+    fn create_join_params(&self, batch_size: usize) -> JoinParams {
+        let on_left: Vec<usize> = self.on.iter().map(|on| on.0.index()).collect();
+        let on_right: Vec<usize> = self.on.iter().map(|on| on.1.index()).collect();
+        let on_data_types = on_left
+            .iter()
+            .map(|&i| self.left.schema().field(i).data_type().clone())
+            .collect::<Vec<_>>();
+        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
+
+        // use smaller batch size and coalesce batches at the end, to avoid buffer overflowing
+        JoinParams {
+            join_type: self.join_type,
+            output_schema: self.schema(),
+            on_left,
+            on_right,
+            on_data_types,
+            join_filter: self.join_filter.clone(),
+            sort_options: self.sort_options.clone(),
+            batch_size: sub_batch_size,
+            left_output_projection: (0..self.left.schema().fields().len()).collect(),
+            right_output_projection: (0..self.right.schema().fields().len()).collect(),
+        }
     }
 }
 
@@ -168,50 +192,12 @@ impl ExecutionPlan for SortMergeJoinExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
+        let batch_size = context.session_config().batch_size();
+        let join_params = self.create_join_params(batch_size);
         let left = self.left.execute(partition, context.clone())?;
         let right = self.right.execute(partition, context.clone())?;
-        let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
-
-        let on_left: Vec<usize> = self.on.iter().map(|on| on.0.index()).collect();
-        let on_right: Vec<usize> = self.on.iter().map(|on| on.1.index()).collect();
-
-        let on_data_types = on_left
-            .iter()
-            .map(|&i| left.schema().field(i).data_type().clone())
-            .collect::<Vec<_>>();
-        let batch_size = context.session_config().batch_size();
-        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
-
-        // use smaller batch size and coalesce batches at the end, to avoid buffer overflowing
-        let join_params = JoinParams {
-            join_type: self.join_type,
-            output_schema: self.schema(),
-            on_left,
-            on_right,
-            on_data_types,
-            join_filter: self.join_filter.clone(),
-            sort_options: self.sort_options.clone(),
-            batch_size: sub_batch_size,
-        };
-
-        let metrics_cloned = metrics.clone();
-        let output_schema = self.schema();
-        let output_stream = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            futures::stream::once(async move {
-                output_with_sender("SortMergeJoin", context, output_schema, move |sender| {
-                    execute_join(left, right, join_params, metrics_cloned, sender)
-                })
-            })
-            .try_flatten(),
-        ));
-
-        let output_coalesced = Box::pin(CoalesceStream::new(
-            output_stream,
-            batch_size,
-            metrics.elapsed_compute().clone(),
-        ));
-        Ok(output_coalesced)
+        execute_with_join_params(context, join_params, left, right, metrics)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -220,6 +206,28 @@ impl ExecutionPlan for SortMergeJoinExec {
 
     fn statistics(&self) -> Statistics {
         todo!()
+    }
+}
+
+impl ExecuteWithColumnPruning for SortMergeJoinExec {
+    fn execute_projected(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+        projection: &[usize],
+    ) -> Result<SendableRecordBatchStream> {
+        let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
+        let batch_size = context.session_config().batch_size();
+
+        let (join_params, left_projection, right_projection) =
+            self.create_join_params(batch_size).project(projection)?;
+        let left = self
+            .left
+            .execute_projected(partition, context.clone(), &left_projection)?;
+        let right = self
+            .right
+            .execute_projected(partition, context.clone(), &right_projection)?;
+        execute_with_join_params(context, join_params, left, right, metrics)
     }
 }
 
@@ -232,7 +240,135 @@ struct JoinParams {
     on_data_types: Vec<DataType>,
     sort_options: Vec<SortOptions>,
     join_filter: Option<JoinFilter>,
+    left_output_projection: Vec<usize>,
+    right_output_projection: Vec<usize>,
     batch_size: usize,
+}
+
+impl JoinParams {
+    fn project(&self, projection: &[usize]) -> Result<(Self, Vec<usize>, Vec<usize>)> {
+        let num_left_fields = self.left_output_projection.len();
+        let mut left_projection = vec![];
+        let mut right_projection = vec![];
+
+        for &i in projection {
+            match self.join_type {
+                Inner | Left | Right | Full => {
+                    if i < num_left_fields {
+                        left_projection.push(i);
+                    } else {
+                        right_projection.push(i - num_left_fields);
+                    }
+                }
+                LeftSemi | LeftAnti => {
+                    left_projection.push(i);
+                }
+                RightSemi | RightAnti => {
+                    right_projection.push(i);
+                }
+            }
+        }
+        let num_left_output_columns = left_projection.len();
+        let num_right_output_columns = right_projection.len();
+
+        let mut on_left_projected = vec![];
+        let mut on_right_projected = vec![];
+        for &l in &self.on_left {
+            on_left_projected.push(left_projection.iter().position(|&i| i == l).unwrap_or_else(
+                || {
+                    left_projection.push(l);
+                    left_projection.len() - 1
+                },
+            ));
+        }
+        for &r in &self.on_right {
+            on_right_projected.push(
+                right_projection
+                    .iter()
+                    .position(|&i| i == r)
+                    .unwrap_or_else(|| {
+                        right_projection.push(r);
+                        right_projection.len() - 1
+                    }),
+            );
+        }
+
+        let mut join_filter_projected = None;
+        if let Some(join_filter) = &self.join_filter {
+            join_filter_projected = Some(JoinFilter::new(
+                join_filter.expression().clone(),
+                join_filter
+                    .column_indices()
+                    .iter()
+                    .map(|ci| {
+                        let projected_index = match ci.side {
+                            JoinSide::Left => left_projection
+                                .iter()
+                                .position(|&i| i == ci.index)
+                                .unwrap_or_else(|| {
+                                    left_projection.push(ci.index);
+                                    left_projection.len() - 1
+                                }),
+                            JoinSide::Right => right_projection
+                                .iter()
+                                .position(|&i| i == ci.index)
+                                .unwrap_or_else(|| {
+                                    right_projection.push(ci.index);
+                                    right_projection.len() - 1
+                                }),
+                        };
+                        ColumnIndex {
+                            index: projected_index,
+                            side: ci.side,
+                        }
+                    })
+                    .collect(),
+                join_filter.schema().clone(),
+            ));
+        }
+
+        let projected = Self {
+            join_type: self.join_type,
+            output_schema: Arc::new(self.output_schema.project(projection)?),
+            on_left: on_left_projected,
+            on_right: on_right_projected,
+            on_data_types: self.on_data_types.clone(),
+            sort_options: self.sort_options.clone(),
+            join_filter: join_filter_projected,
+            batch_size: self.batch_size,
+            left_output_projection: (0..num_left_output_columns).collect(),
+            right_output_projection: (0..num_right_output_columns).collect(),
+        };
+        Ok((projected, left_projection, right_projection))
+    }
+}
+
+fn execute_with_join_params(
+    context: Arc<TaskContext>,
+    join_params: JoinParams,
+    left: SendableRecordBatchStream,
+    right: SendableRecordBatchStream,
+    metrics: Arc<BaselineMetrics>,
+) -> Result<SendableRecordBatchStream> {
+    let batch_size = join_params.batch_size;
+    let metrics_cloned = metrics.clone();
+    let output_schema = join_params.output_schema.clone();
+    let output_stream = Box::pin(RecordBatchStreamAdapter::new(
+        join_params.output_schema.clone(),
+        futures::stream::once(async move {
+            output_with_sender("SortMergeJoin", context, output_schema, move |sender| {
+                execute_join(left, right, join_params, metrics_cloned, sender)
+            })
+        })
+        .try_flatten(),
+    ));
+
+    let output_coalesced = Box::pin(CoalesceStream::new(
+        output_stream,
+        batch_size,
+        metrics.elapsed_compute().clone(),
+    ));
+    Ok(output_coalesced)
 }
 
 async fn execute_join(
@@ -260,6 +396,7 @@ async fn execute_join(
         lstream,
         on_row_converter.clone(),
         join_params.on_left.clone(),
+        join_params.left_output_projection.clone(),
         &mut timer,
     )
     .await?;
@@ -268,6 +405,7 @@ async fn execute_join(
         rstream,
         on_row_converter.clone(),
         join_params.on_right.clone(),
+        join_params.right_output_projection.clone(),
         &mut timer,
     )
     .await?;
@@ -437,6 +575,8 @@ struct StreamCursor {
     // IMPORTANT:
     // batches/rows/null_buffers always contains a `null batch` in the front
     batches: Vec<RecordBatch>,
+    projected_batches: Vec<RecordBatch>,
+    projection: Vec<usize>,
     on_rows: Vec<Arc<Rows>>,
     on_row_null_buffers: Vec<Option<NullBuffer>>,
     cur_idx: (usize, usize),
@@ -449,6 +589,7 @@ impl StreamCursor {
         stream: SendableRecordBatchStream,
         on_row_converter: Arc<SyncMutex<RowConverter>>,
         on_columns: Vec<usize>,
+        projection: Vec<usize>,
         stop_timer: &mut ScopedTimerGuard<'_>,
     ) -> Result<Self> {
         let empty_batch = RecordBatch::new_empty(Arc::new(Schema::new(
@@ -471,7 +612,9 @@ impl StreamCursor {
             stream,
             on_row_converter,
             on_columns,
+            projected_batches: vec![null_batch.project(&projection)?],
             batches: vec![null_batch],
+            projection,
             on_rows: vec![null_on_rows],
             on_row_null_buffers: vec![Some(null_nb)],
             cur_idx: (1, 0),
@@ -512,6 +655,8 @@ impl StreamCursor {
                 .unwrap_or(None);
             let on_rows = Arc::new(self.on_row_converter.lock().convert_columns(&on_columns)?);
 
+            self.projected_batches
+                .push(batch.project(&self.projection)?);
             self.batches.push(batch);
             self.on_row_null_buffers.push(on_row_null_buffer);
             self.on_rows.push(on_rows);
@@ -538,6 +683,7 @@ impl StreamCursor {
     fn clear_outdated(&mut self, min_reserved_bidx: usize) {
         // fill out-dated batches with null batches
         for i in self.num_null_batches..min_reserved_bidx.min(self.cur_idx.0) {
+            self.projected_batches[i] = self.projected_batches[0].clone();
             self.batches[i] = self.batches[0].clone();
             self.on_rows[i] = self.on_rows[0].clone();
             self.on_row_null_buffers[i] = self.on_row_null_buffers[0].clone();
@@ -655,30 +801,40 @@ impl Joiner {
             }
         }
 
-        let output_columns = match join_params.join_type {
-            LeftSemi | LeftAnti => BatchesInterleaver::new(lcur.batches[0].schema(), &lcur.batches)
-                .interleave(&self.ljoins)?
-                .columns()
-                .to_vec(),
-            RightSemi | RightAnti => {
-                BatchesInterleaver::new(rcur.batches[0].schema(), &rcur.batches)
+        let lcols = || -> Result<Vec<ArrayRef>> {
+            Ok(if !lcur.projection.is_empty() {
+                BatchesInterleaver::new(lcur.projected_batches[0].schema(), &lcur.projected_batches)
+                    .interleave(&self.ljoins)?
+                    .columns()
+                    .to_vec()
+            } else {
+                vec![]
+            })
+        };
+        let rcols = || -> Result<Vec<ArrayRef>> {
+            Ok(if !rcur.projection.is_empty() {
+                BatchesInterleaver::new(rcur.projected_batches[0].schema(), &rcur.projected_batches)
                     .interleave(&self.rjoins)?
                     .columns()
                     .to_vec()
-            }
-            _ => [
-                BatchesInterleaver::new(lcur.batches[0].schema(), &lcur.batches)
-                    .interleave(&self.ljoins)?
-                    .columns(),
-                BatchesInterleaver::new(rcur.batches[0].schema(), &rcur.batches)
-                    .interleave(&self.rjoins)?
-                    .columns(),
-            ]
-            .concat(),
+            } else {
+                vec![]
+            })
         };
+
+        let output_columns = match join_params.join_type {
+            LeftSemi | LeftAnti => lcols()?,
+            RightSemi | RightAnti => rcols()?,
+            _ => [lcols()?, rcols()?].concat(),
+        };
+        let num_output_records = std::cmp::max(self.ljoins.len(), self.rjoins.len());
         self.ljoins.clear();
         self.rjoins.clear();
-        let batch = RecordBatch::try_new(join_params.output_schema.clone(), output_columns)?;
+        let batch = RecordBatch::try_new_with_options(
+            join_params.output_schema.clone(),
+            output_columns,
+            &RecordBatchOptions::new().with_row_count(Some(num_output_records)),
+        )?;
         Ok(Some(batch))
     }
 }

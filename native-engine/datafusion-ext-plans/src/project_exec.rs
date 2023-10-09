@@ -35,6 +35,8 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
+use crate::common::column_pruning::{prune_columns, ExecuteWithColumnPruning};
+
 #[derive(Debug, Clone)]
 pub struct ProjectExec {
     expr: Vec<(PhysicalExprRef, String)>,
@@ -126,14 +128,27 @@ impl ExecutionPlan for ProjectExec {
         let exprs: Vec<PhysicalExprRef> = self.expr.iter().map(|(e, _name)| e.clone()).collect();
 
         let fut = if let Some(filter_exec) = self.input.as_any().downcast_ref::<FilterExec>() {
-            let input = filter_exec.children()[0].execute(partition, context.clone())?;
-            let filters = filter_exec.predicates().to_vec();
-            execute_project_with_filtering(input, self.schema(), context, filters, exprs, metrics)
-                .boxed()
+            execute_project_with_filtering(
+                filter_exec.children()[0].clone(),
+                partition,
+                context,
+                self.schema(),
+                filter_exec.predicates().to_vec(),
+                exprs,
+                metrics,
+            )
+            .boxed()
         } else {
-            let input = self.input.execute(partition, context.clone())?;
-            execute_project_with_filtering(input, self.schema(), context, vec![], exprs, metrics)
-                .boxed()
+            execute_project_with_filtering(
+                self.input.clone(),
+                partition,
+                context,
+                self.schema(),
+                vec![],
+                exprs,
+                metrics,
+            )
+            .boxed()
         };
 
         let output = Box::pin(RecordBatchStreamAdapter::new(
@@ -154,15 +169,47 @@ impl ExecutionPlan for ProjectExec {
     }
 }
 
+impl ExecuteWithColumnPruning for ProjectExec {
+    fn execute_projected(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+        projection: &[usize],
+    ) -> Result<SendableRecordBatchStream> {
+        let projected_project: Arc<dyn ExecutionPlan> = Arc::new(ProjectExec {
+            input: self.input.clone(),
+            expr: projection.iter().map(|&i| self.expr[i].clone()).collect(),
+            schema: Arc::new(self.schema.project(projection)?),
+            metrics: self.metrics.clone(),
+        });
+        projected_project.execute(partition, context)
+    }
+}
+
 async fn execute_project_with_filtering(
-    mut input: SendableRecordBatchStream,
-    output_schema: SchemaRef,
+    input: Arc<dyn ExecutionPlan>,
+    partition: usize,
     context: Arc<TaskContext>,
+    output_schema: SchemaRef,
     filters: Vec<PhysicalExprRef>,
     exprs: Vec<PhysicalExprRef>,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
+    // execute input with pruning
+    let num_exprs = exprs.len();
+    let (pruned_exprs, projection) = prune_columns(&[exprs, filters].concat())?;
+    let exprs = pruned_exprs
+        .iter()
+        .take(num_exprs)
+        .cloned()
+        .collect::<Vec<PhysicalExprRef>>();
+    let filters = pruned_exprs
+        .iter()
+        .skip(num_exprs)
+        .cloned()
+        .collect::<Vec<PhysicalExprRef>>();
     let cached_expr_evaluator = CachedExprsEvaluator::try_new(filters, exprs)?;
+    let mut input = input.execute_projected(partition, context.clone(), &projection)?;
 
     output_with_sender(
         "Project",
