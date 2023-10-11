@@ -14,8 +14,10 @@
 
 use arrow::array::*;
 use arrow::datatypes::*;
+use bigdecimal::{FromPrimitive, ToPrimitive};
+use datafusion::common::cast::{as_float32_array, as_float64_array};
 use datafusion::common::{DataFusionError, Result};
-use num::{Bounded, FromPrimitive, Integer, Signed, ToPrimitive};
+use num::{cast::AsPrimitive, Bounded, Float, Integer, NumCast, Signed};
 use paste::paste;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -35,6 +37,33 @@ pub fn cast_impl(
 ) -> Result<ArrayRef> {
     Ok(match (&array.data_type(), cast_type) {
         (_, &DataType::Null) => Arc::new(NullArray::new(array.len())),
+
+        // float to int
+        (&DataType::Float32, &DataType::Int8) => Arc::new(cast_float_to_integer::<_, Int8Type>(
+            as_float32_array(array)?,
+        )),
+        (&DataType::Float32, &DataType::Int16) => Arc::new(cast_float_to_integer::<_, Int16Type>(
+            as_float32_array(array)?,
+        )),
+        (&DataType::Float32, &DataType::Int32) => Arc::new(cast_float_to_integer::<_, Int32Type>(
+            as_float32_array(array)?,
+        )),
+        (&DataType::Float32, &DataType::Int64) => Arc::new(cast_float_to_integer::<_, Int64Type>(
+            as_float32_array(array)?,
+        )),
+        (&DataType::Float64, &DataType::Int8) => Arc::new(cast_float_to_integer::<_, Int8Type>(
+            as_float64_array(array)?,
+        )),
+        (&DataType::Float64, &DataType::Int16) => Arc::new(cast_float_to_integer::<_, Int16Type>(
+            as_float64_array(array)?,
+        )),
+        (&DataType::Float64, &DataType::Int32) => Arc::new(cast_float_to_integer::<_, Int32Type>(
+            as_float64_array(array)?,
+        )),
+        (&DataType::Float64, &DataType::Int64) => Arc::new(cast_float_to_integer::<_, Int64Type>(
+            as_float64_array(array)?,
+        )),
+
         (&DataType::Utf8, &DataType::Int8)
         | (&DataType::Utf8, &DataType::Int16)
         | (&DataType::Utf8, &DataType::Int32)
@@ -244,6 +273,15 @@ fn try_cast_boolean_array_to_string(array: &dyn Array, cast_type: &DataType) -> 
     unreachable!("cast_type must be DataType::Utf8")
 }
 
+fn cast_float_to_integer<F: ArrowPrimitiveType, T: ArrowPrimitiveType>(
+    array: &PrimitiveArray<F>,
+) -> PrimitiveArray<T>
+where
+    F::Native: AsPrimitive<T::Native>,
+{
+    arrow::compute::unary(array, |v| v.as_())
+}
+
 // this implementation is original copied from spark UTF8String.scala
 fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str) -> Option<T> {
     let bytes = input.as_bytes();
@@ -329,4 +367,40 @@ fn to_decimal(input: &str, precision: u8, scale: i8) -> Option<i128> {
             let (bigint, _exp) = decimal.as_bigint_and_exponent();
             bigint.to_i128()
         })
+}
+
+#[cfg(test)]
+mod test {
+    use crate::cast::*;
+    use datafusion::common::cast::as_int32_array;
+
+    #[test]
+    fn test_float_to_int() {
+        let f64_array: ArrayRef = Arc::new(Float64Array::from_iter(vec![
+            None,
+            Some(123.456),
+            Some(987.654),
+            Some(i32::MAX as f64 + 10000.0),
+            Some(i32::MIN as f64 - 10000.0),
+            Some(f64::INFINITY),
+            Some(f64::NEG_INFINITY),
+            Some(f64::NAN),
+        ]));
+        let casted = cast(&f64_array, &DataType::Int32).unwrap();
+        let i32_array = as_int32_array(&casted).unwrap();
+
+        assert_eq!(
+            i32_array,
+            &Int32Array::from_iter(vec![
+                None,
+                Some(123),
+                Some(987),
+                Some(i32::MAX),
+                Some(i32::MIN),
+                Some(i32::MAX),
+                Some(i32::MIN),
+                Some(0),
+            ])
+        );
+    }
 }
