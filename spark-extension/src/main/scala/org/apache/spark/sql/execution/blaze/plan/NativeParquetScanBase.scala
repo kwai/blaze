@@ -130,6 +130,12 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
       .build()
   }
 
+  // check whether native converting is supported
+  nativePruningPredicateFilters
+  nativeFileSchema
+  nativePartitionSchema
+  nativeFileGroups
+
   override def doExecuteNative(): NativeRDD = {
     val partitions = inputFileScanRDD.filePartitions.toArray
     val nativeMetrics = MetricNode(
