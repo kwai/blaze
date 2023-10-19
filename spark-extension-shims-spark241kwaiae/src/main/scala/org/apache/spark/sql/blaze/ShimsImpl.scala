@@ -794,18 +794,19 @@ case class BlazeRuleEngine(sparkSession: SparkSession) extends Rule[LogicalPlan]
   private def turnOffBlazeWithReason(planConf: SQLConf, blazeMissPattern: String): Unit = {
     planConf.setConf(blazeEnabledKey, false)
     sparkSession.sparkContext.conf
-      .set(blazeMissPatterns, blazeMissPattern)
+      .set(BlazeRuleEngine.blazeMissPatterns, blazeMissPattern)
   }
 
-  private lazy val blazeMissPatterns: OptionalConfigEntry[String] = SQLConf
-    .buildConf("spark.blaze.blazeMissPatterns")
-    .stringConf
-    .createOptional
-
   object BlazeMissPatterns extends Enumeration {
-    type BlazeMissPatterns = String
     val NonParquetFormat = "NonParquetFormat"
     val ReadEncryptedTable = "ReadEncryptedTable"
     val ReadHbaseTable = "ReadHbaseTable"
   }
+}
+
+object BlazeRuleEngine {
+  lazy val blazeMissPatterns: OptionalConfigEntry[String] = SQLConf
+    .buildConf("spark.blaze.blazeMissPatterns")
+    .stringConf
+    .createOptional
 }
