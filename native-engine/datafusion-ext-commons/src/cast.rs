@@ -17,7 +17,7 @@ use arrow::datatypes::*;
 use bigdecimal::{FromPrimitive, ToPrimitive};
 use datafusion::common::cast::{as_float32_array, as_float64_array};
 use datafusion::common::{DataFusionError, Result};
-use num::{cast::AsPrimitive, Bounded, Float, Integer, NumCast, Signed};
+use num::{cast::AsPrimitive, Bounded, Integer, Signed};
 use paste::paste;
 use std::str::FromStr;
 use std::sync::Arc;
