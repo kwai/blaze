@@ -90,7 +90,7 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: FilterExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: SortExec if isAlwaysConvert(e.child) =>
+      case e: SortExec => // prefer native sort even if child is non-native
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: UnionExec
           if e.children.count(isAlwaysConvert) >= e.children.count(isNeverConvert) =>
@@ -185,6 +185,14 @@ object BlazeConvertStrategy extends Logging {
           e.children.find(_.isInstanceOf[FileSourceScanExec]) match {
             case Some(scan) => dontConvertIf(scan, !isNeverConvert(scan))
             case _ =>
+          }
+        }
+
+        // NonNative -> NativeSort -> NonNative
+        // don't use native sort
+        if (isNeverConvert(e)) {
+          e.children.filter(_.isInstanceOf[SortExec]).foreach { sort =>
+            dontConvertIf(sort, !isNeverConvert(sort) && isNeverConvert(sort.children.head))
           }
         }
       }
