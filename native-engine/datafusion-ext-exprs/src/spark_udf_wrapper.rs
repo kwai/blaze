@@ -18,7 +18,8 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use blaze_jni_bridge::{
-    is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
+    is_task_running, jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
+    jni_new_object,
 };
 use datafusion::common::DataFusionError;
 use datafusion::error::Result;
@@ -43,7 +44,8 @@ pub struct SparkUDFWrapperExpr {
     pub params: Vec<Arc<dyn PhysicalExpr>>,
     pub import_schema: SchemaRef,
     pub params_schema: OnceCell<SchemaRef>,
-    jcontext: OnceCell<GlobalRef>,
+    pub num_threads: usize,
+    jcontexts: Vec<OnceCell<GlobalRef>>,
 }
 
 impl PartialEq<dyn Any> for SparkUDFWrapperExpr {
@@ -67,6 +69,7 @@ impl SparkUDFWrapperExpr {
         return_nullable: bool,
         params: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Self> {
+        let num_threads = jni_call_static!(BlazeConf.udfWrapperNumThreads() -> i32)? as usize;
         Ok(Self {
             serialized,
             return_type: return_type.clone(),
@@ -74,8 +77,20 @@ impl SparkUDFWrapperExpr {
             params,
             import_schema: Arc::new(Schema::new(vec![Field::new("", return_type, true)])),
             params_schema: OnceCell::new(),
-            jcontext: OnceCell::new(),
+            num_threads,
+            jcontexts: vec![OnceCell::new(); num_threads],
         })
+    }
+
+    fn jcontext(&self, idx: usize) -> Result<GlobalRef> {
+        self.jcontexts[idx]
+            .get_or_try_init(|| {
+                let serialized_buf = jni_new_direct_byte_buffer!(&self.serialized)?;
+                let jcontext_local =
+                    jni_new_object!(SparkUDFWrapperContext(serialized_buf.as_obj()))?;
+                jni_new_global_ref!(jcontext_local.as_obj())
+            })
+            .cloned()
     }
 }
 
@@ -128,13 +143,6 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
                 Ok(Arc::new(Schema::new(param_fields)))
             })?;
 
-        // init jvm side context
-        let jcontext = self.jcontext.get_or_try_init(|| {
-            let serialized_buf = jni_new_direct_byte_buffer!(&self.serialized)?;
-            let jcontext_local = jni_new_object!(SparkUDFWrapperContext(serialized_buf.as_obj(),))?;
-            jni_new_global_ref!(jcontext_local.as_obj())
-        })?;
-
         // evalute params
         let num_rows = batch.num_rows();
         let params: Vec<ArrayRef> = self
@@ -147,21 +155,43 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             params,
             &RecordBatchOptions::new().with_row_count(Some(num_rows)),
         )?;
-        let params_struct_array = Arc::new(StructArray::from(params_batch));
 
-        // evalute via context
-        let mut export_ffi_array = FFI_ArrowArray::new(&params_struct_array.to_data());
-        let mut import_ffi_array = FFI_ArrowArray::empty();
-        jni_call!(SparkUDFWrapperContext(jcontext.as_obj()).eval(
-            &mut export_ffi_array as *mut FFI_ArrowArray as i64,
-            &mut import_ffi_array as *mut FFI_ArrowArray as i64,
-        ) -> ())?;
+        // invoke UDF through JNI without threads
+        if self.num_threads <= 1 {
+            return Ok(ColumnarValue::Array(invoke_udf(
+                self.jcontext(0)?,
+                params_batch,
+                self.import_schema.clone(),
+            )?));
+        }
 
-        // import output from context
-        let import_ffi_schema = FFI_ArrowSchema::try_from(self.import_schema.as_ref())?;
-        let import_struct_array = make_array(from_ffi(import_ffi_array, &import_ffi_schema)?);
-        let import_array = as_struct_array(&import_struct_array).column(0).clone();
-        Ok(ColumnarValue::Array(import_array))
+        // invoke UDF through JNI with threads
+        let sub_batch_size = num_rows / self.num_threads + 1;
+        let futs = (0..num_rows)
+            .step_by(sub_batch_size)
+            .enumerate()
+            .map(|(thread_id, beg)| {
+                let jcontext = self.jcontext(thread_id)?;
+                let import_schema = self.import_schema.clone();
+                let len = sub_batch_size.min(num_rows.saturating_sub(beg));
+                let params_batch = params_batch.slice(beg, len);
+                Ok(std::thread::spawn(move || {
+                    invoke_udf(jcontext, params_batch, import_schema)
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let sub_imported_arrays = futs
+            .into_iter()
+            .map(|fut| fut.join().unwrap())
+            .collect::<Result<Vec<_>>>()?;
+        let imported_array = arrow::compute::concat(
+            &sub_imported_arrays
+                .iter()
+                .map(|array| array.as_ref())
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(ColumnarValue::Array(imported_array))
     }
 
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
@@ -183,4 +213,26 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
     fn dyn_hash(&self, state: &mut dyn Hasher) {
         state.write(&self.serialized);
     }
+}
+
+fn invoke_udf(
+    jcontext: GlobalRef,
+    params_batch: RecordBatch,
+    result_schema: SchemaRef,
+) -> Result<ArrayRef> {
+    let params_struct_array = Arc::new(StructArray::from(params_batch));
+
+    // evalute via context
+    let mut export_ffi_array = FFI_ArrowArray::new(&params_struct_array.to_data());
+    let mut import_ffi_array = FFI_ArrowArray::empty();
+    jni_call!(SparkUDFWrapperContext(jcontext.as_obj()).eval(
+        &mut export_ffi_array as *mut FFI_ArrowArray as i64,
+        &mut import_ffi_array as *mut FFI_ArrowArray as i64,
+    ) -> ())?;
+
+    // import output from context
+    let import_ffi_schema = FFI_ArrowSchema::try_from(result_schema.as_ref())?;
+    let import_struct_array = make_array(from_ffi(import_ffi_array, &import_ffi_schema)?);
+    let import_array = as_struct_array(&import_struct_array).column(0).clone();
+    Ok(import_array)
 }

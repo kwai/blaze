@@ -59,6 +59,10 @@ public class BlazeConf {
         return booleanConf("spark.blaze.enable.caseconvert.functions", false);
     }
 
+    public static int udfWrapperNumThreads() {
+        return intConf("spark.blaze.udfWrapperNumThreads", 1);
+    }
+
     private static int intConf(String key, int defaultValue) {
         return conf().getInt(key, defaultValue);
     }
