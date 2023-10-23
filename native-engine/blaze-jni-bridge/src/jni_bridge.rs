@@ -1125,6 +1125,8 @@ pub struct BlazeConf<'a> {
     pub method_bhjFallbacksToSmjRowsThreshold_ret: ReturnType,
     pub method_bhjFallbacksToSmjMemThreshold: JStaticMethodID,
     pub method_bhjFallbacksToSmjMemThreshold_ret: ReturnType,
+    pub method_udfWrapperNumThreads: JStaticMethodID,
+    pub method_udfWrapperNumThreads_ret: ReturnType,
 }
 
 impl<'a> BlazeConf<'_> {
@@ -1152,6 +1154,10 @@ impl<'a> BlazeConf<'_> {
                 .get_static_method_id(class, "bhjFallbacksToSmjMemThreshold", "()I")
                 .unwrap(),
             method_bhjFallbacksToSmjMemThreshold_ret: ReturnType::Primitive(Primitive::Int),
+            method_udfWrapperNumThreads: env
+                .get_static_method_id(class, "udfWrapperNumThreads", "()I")
+                .unwrap(),
+            method_udfWrapperNumThreads_ret: ReturnType::Primitive(Primitive::Int),
         })
     }
 }
