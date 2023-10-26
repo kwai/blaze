@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
 use crate::common::column_pruning::ExecuteWithColumnPruning;
 use crate::common::output::output_with_sender;
@@ -125,7 +126,10 @@ impl ExecutionPlan for FilterExec {
         let metrics = BaselineMetrics::new(&self.metrics, partition);
         let elapsed_compute = metrics.elapsed_compute().clone();
 
-        let input = self.input.execute(partition, context.clone())?;
+        let input = stat_input(
+            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
+            self.input.execute(partition, context.clone())?,
+        )?;
         let filtered = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(execute_filter(input, context, predicates, metrics)).try_flatten(),

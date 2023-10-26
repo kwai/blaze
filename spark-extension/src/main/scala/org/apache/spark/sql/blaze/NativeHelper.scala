@@ -78,13 +78,28 @@ object NativeHelper extends Logging {
     BlazeCallNativeWrapper(nativePlan, partition, context, metrics).getRowIterator
   }
 
-  def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] =
-    TreeMap(
+  def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] = {
+    var metrics = TreeMap(
       "output_rows" -> SQLMetrics.createMetric(sc, "Native.output_rows"),
       "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
-      "input_rows" -> SQLMetrics.createMetric(sc, "Native.input_rows"),
-      "input_batches" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
       "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"),
       "spilled_bytes" -> SQLMetrics.createSizeMetric(sc, "Native.spilled_bytes"))
+
+    if (BlazeConf.enableInputBatchStatistics()) {
+      metrics ++= TreeMap(
+        "input_batch_count" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
+        "input_row_count" -> SQLMetrics.createMetric(sc, "Native.input_rows"),
+        "input_batch_mem_size_total" -> SQLMetrics.createSizeMetric(
+          sc,
+          "Native.input_batch_mem_bytes"),
+        "input_batch_mem_size_avg" -> SQLMetrics.createSizeMetric(
+          sc,
+          "Native.input_batch_mem_bytes_avg"),
+        "input_batch_num_rows_avg" -> SQLMetrics.createAverageMetric(
+          sc,
+          "Native.input_batch_num_rows_avg"))
+    }
+    metrics
+  }
 }

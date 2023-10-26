@@ -36,6 +36,7 @@ use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::AggTables;
 use crate::agg::{AggExecMode, AggExpr, GroupingExpr};
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::memory_manager::MemManager;
 use crate::common::output::{output_bufferable_with_spill, output_with_sender};
 
@@ -192,7 +193,10 @@ async fn execute_agg_with_grouping_hash(
     drop(timer);
 
     // start processing input batches
-    let input = input.execute(partition_id, context.clone())?;
+    let input = stat_input(
+        InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition_id)?,
+        input.execute(partition_id, context.clone())?,
+    )?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         context.session_config().batch_size(),
@@ -270,7 +274,10 @@ async fn execute_agg_no_grouping(
     let mut agg_buf = agg_ctx.initial_agg_buf.clone();
 
     // start processing input batches
-    let input = input.execute(partition_id, context.clone())?;
+    let input = stat_input(
+        InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition_id)?,
+        input.execute(partition_id, context.clone())?,
+    )?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         context.session_config().batch_size(),
@@ -349,7 +356,10 @@ async fn execute_agg_sorted(
     )?;
 
     // start processing input batches
-    let input = input.execute(partition_id, context.clone())?;
+    let input = stat_input(
+        InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition_id)?,
+        input.execute(partition_id, context.clone())?,
+    )?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         context.session_config().batch_size(),
