@@ -895,6 +895,7 @@ dependencies = [
  "blaze-jni-bridge",
  "datafusion",
  "datafusion-ext-commons",
+ "itertools 0.11.0",
  "log",
  "num",
  "paste",
