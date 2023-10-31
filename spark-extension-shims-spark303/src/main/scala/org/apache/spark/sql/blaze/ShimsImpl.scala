@@ -82,6 +82,8 @@ import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.AggExecMode
 import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinExec
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastNestedLoopJoinBase
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterBase
@@ -164,6 +166,13 @@ class ShimsImpl extends Shims with Logging {
       rightKeys,
       joinType,
       condition)
+
+  override def createNativeBroadcastNestedLoopJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      joinType: JoinType,
+      condition: Option[Expression]): NativeBroadcastNestedLoopJoinBase =
+    NativeBroadcastNestedLoopJoinExec(left, right, joinType, condition)
 
   override def createNativeSortMergeJoinExec(
       left: SparkPlan,
