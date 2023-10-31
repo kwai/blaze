@@ -34,6 +34,8 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "CheckOverflow" => Arc::new(spark_check_overflow::spark_check_overflow),
         "Murmur3Hash" => Arc::new(spark_murmur3_hash::spark_murmur3_hash),
         "GetJsonObject" => Arc::new(spark_get_json_object::spark_get_json_object),
+        "GetParsedJsonObject" => Arc::new(spark_get_json_object::spark_get_parsed_json_object),
+        "ParseJson" => Arc::new(spark_get_json_object::spark_parse_json),
         "MakeArray" => Arc::new(spark_make_array::array),
         "StringSpace" => Arc::new(spark_strings::string_space),
         "StringRepeat" => Arc::new(spark_strings::string_repeat),

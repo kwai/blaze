@@ -24,6 +24,7 @@ use datafusion::physical_expr::expressions::{
 };
 use datafusion::physical_expr::{scatter, PhysicalExpr, PhysicalExprRef};
 use datafusion::physical_plan::ColumnarValue;
+use datafusion_ext_commons::uda::UserDefinedArray;
 use itertools::Itertools;
 use parking_lot::Mutex;
 use std::any::Any;
@@ -97,10 +98,18 @@ impl CachedExprsEvaluator {
                     if let Some(ColumnarValue::Array(array)) = &value {
                         return Ok(Some(ColumnarValue::Array({
                             // also apply filter on cached arrays
-                            if let Some(previous_selected) = &previous_selected {
-                                filter(&scatter(previous_selected, array)?, selected)?
+                            if let Some(uda) = array.as_any().downcast_ref::<UserDefinedArray>() {
+                                if let Some(previous_selected) = &previous_selected {
+                                    Arc::new(uda.scatter(previous_selected)?.filter(selected)?)
+                                } else {
+                                    Arc::new(uda.filter(selected)?)
+                                }
                             } else {
-                                filter(&array, selected)?
+                                if let Some(previous_selected) = &previous_selected {
+                                    filter(&scatter(previous_selected, array)?, selected)?
+                                } else {
+                                    filter(&array, selected)?
+                                }
                             }
                         })));
                     }

@@ -17,8 +17,14 @@ use arrow::array::{new_null_array, Array};
 use arrow::datatypes::DataType;
 use datafusion::common::{Result, ScalarValue};
 use datafusion::physical_plan::ColumnarValue;
+use datafusion_ext_commons::uda::UserDefinedArray;
+use itertools::Either;
+use std::any::Any;
+use std::fmt::Debug;
 use std::sync::Arc;
 
+/// implement hive/spark's UDFGetJson
+/// get_json_object(str, path) == get_parsed_json_object(parse_json(str), path)
 pub fn spark_get_json_object(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let json_string_array = match &args[0] {
         ColumnarValue::Array(array) => array.clone(),
@@ -61,6 +67,82 @@ pub fn spark_get_json_object(args: &[ColumnarValue]) -> Result<ColumnarValue> {
             })
         })
         .collect::<StringArray>();
+    Ok(ColumnarValue::Array(Arc::new(output)))
+}
+
+pub fn spark_parse_json(args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    let json_string_array = match &args[0] {
+        ColumnarValue::Array(array) => array.clone(),
+        ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(1),
+    };
+
+    let json_strings = json_string_array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+
+    let json_values: Vec<Option<Arc<dyn Any + Send + Sync + 'static>>> = json_strings
+        .iter()
+        .map(|s| {
+            s.and_then(|s| {
+                serde_json::from_str::<serde_json::Value>(s)
+                    .map(|v| {
+                        let any: Arc<dyn Any + Send + Sync + 'static> = Arc::new(v);
+                        any
+                    })
+                    .ok()
+            })
+        })
+        .collect();
+
+    Ok(ColumnarValue::Array(Arc::new(
+        UserDefinedArray::from_items(DataType::Binary, json_values),
+    )))
+}
+
+pub fn spark_get_parsed_json_object(args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    let json_array = match &args[0] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<UserDefinedArray>().unwrap(),
+        ColumnarValue::Scalar(_) => unreachable!(),
+    };
+
+    let path_string = match &args[1] {
+        ColumnarValue::Scalar(ScalarValue::Utf8(str)) => match str {
+            Some(path) => path,
+            None => {
+                return Ok(ColumnarValue::Array(new_null_array(
+                    &DataType::Utf8,
+                    json_array.len(),
+                )))
+            }
+        },
+        _ => unreachable!("path should be ScalarValue"),
+    };
+
+    let mut evaluator = match HiveGetJsonObjectEvaluator::try_new(path_string) {
+        Ok(evaluator) => evaluator,
+        Err(_) => {
+            return Ok(ColumnarValue::Array(new_null_array(
+                &DataType::Utf8,
+                json_array.len(),
+            )));
+        }
+    };
+
+    let output = StringArray::from(
+        json_array
+            .iter()
+            .map(|value| {
+                value.as_ref().and_then(|value| {
+                    let json_value = value.downcast_ref::<serde_json::Value>().unwrap();
+                    evaluator
+                        .evaluate_with_value(json_value)
+                        .ok()
+                        .unwrap_or(None)
+                })
+            })
+            .collect::<Vec<_>>(),
+    );
     Ok(ColumnarValue::Array(Arc::new(output)))
 }
 
@@ -112,6 +194,39 @@ impl HiveGetJsonObjectEvaluator {
         let ret = match value {
             serde_json::Value::Null => Ok(None),
             serde_json::Value::String(string) => Ok(Some(string)),
+            serde_json::Value::Number(number) => Ok(Some(number.to_string())),
+            serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                serde_json::to_string(&value).map(Some).map_err(|_| {
+                    HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
+                })
+            }
+        };
+        ret
+    }
+
+    fn evaluate_with_value(
+        &mut self,
+        value: &serde_json::Value,
+    ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
+        let mut base_value;
+        let mut value_ref = value;
+        for matcher in &self.matchers {
+            if !value_ref.is_null() {
+                match matcher.evaluate_ref(value_ref) {
+                    Either::Left(v) => {
+                        value_ref = v;
+                    }
+                    Either::Right(v) => {
+                        base_value = v;
+                        value_ref = &base_value;
+                    }
+                }
+            }
+        }
+        let ret = match value_ref {
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::String(string) => Ok(Some(string.to_string())),
             serde_json::Value::Number(number) => Ok(Some(number.to_string())),
             serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
@@ -238,6 +353,56 @@ impl HiveGetJsonObjectMatcher {
             }
         }
         serde_json::Value::Null
+    }
+
+    fn evaluate_ref<'a>(
+        &self,
+        value: &'a serde_json::Value,
+    ) -> Either<&'a serde_json::Value, serde_json::Value> {
+        match self {
+            HiveGetJsonObjectMatcher::Root => {
+                return Either::Left(value);
+            }
+            HiveGetJsonObjectMatcher::Child(child) => {
+                if let serde_json::Value::Object(object) = value {
+                    return match object.get(child) {
+                        Some(v) => Either::Left(v),
+                        None => Either::Right(serde_json::Value::Null),
+                    };
+                } else if let serde_json::Value::Array(array) = value {
+                    return Either::Right(serde_json::Value::Array(
+                        array
+                            .iter()
+                            .map(|item| {
+                                if let serde_json::Value::Object(object) = item {
+                                    match object.get(child) {
+                                        Some(v) => v.clone(),
+                                        None => serde_json::Value::Null,
+                                    }
+                                } else {
+                                    serde_json::Value::Null
+                                }
+                            })
+                            .filter(|r| !r.is_null())
+                            .collect(),
+                    ));
+                }
+            }
+            HiveGetJsonObjectMatcher::Subscript(index) => {
+                if let serde_json::Value::Array(array) = value {
+                    return match array.get(*index) {
+                        Some(v) => Either::Left(v),
+                        None => Either::Right(serde_json::Value::Null),
+                    };
+                }
+            }
+            HiveGetJsonObjectMatcher::SubscriptAll => {
+                if let serde_json::Value::Array(_) = value {
+                    return Either::Left(value);
+                }
+            }
+        }
+        Either::Right(serde_json::Value::Null)
     }
 }
 
