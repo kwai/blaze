@@ -63,6 +63,10 @@ public class BlazeConf {
         return intConf("spark.blaze.udfWrapperNumThreads", 1);
     }
 
+    public static boolean ignoreCorruptedFiles() {
+        return booleanConf("spark.files.ignoreCorruptFiles", false);
+    }
+
     private static int intConf(String key, int defaultValue) {
         return conf().getInt(key, defaultValue);
     }
