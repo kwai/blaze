@@ -206,12 +206,17 @@ impl AggContext {
 
         let mut input_arrays = Vec::with_capacity(self.aggs.len());
         let mut offset = 0;
-        for agg in self.aggs.iter().filter(|agg| agg.mode.is_partial()) {
-            let prepared = agg
-                .agg
-                .prepare_partial_args(&agg_exprs_batch.columns()[offset..])?;
-            input_arrays.push(prepared);
-            offset += agg.agg.exprs().len();
+        for agg in &self.aggs {
+            if agg.mode.is_partial() {
+                let num_agg_exprs = agg.agg.exprs().len();
+                let prepared = agg
+                    .agg
+                    .prepare_partial_args(&agg_exprs_batch.columns()[offset..][..num_agg_exprs])?;
+                input_arrays.push(prepared);
+                offset += num_agg_exprs;
+            } else {
+                input_arrays.push(vec![]);
+            }
         }
         Ok(input_arrays)
     }
