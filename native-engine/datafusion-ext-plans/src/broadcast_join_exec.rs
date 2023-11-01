@@ -319,10 +319,10 @@ async fn execute_broadcast_join(
     }
 }
 
-struct RecordBatchStreamsWrapperExec {
-    schema: SchemaRef,
-    stream: Mutex<Option<SendableRecordBatchStream>>,
-    output_partitioning: Partitioning,
+pub struct RecordBatchStreamsWrapperExec {
+    pub schema: SchemaRef,
+    pub stream: Mutex<Option<SendableRecordBatchStream>>,
+    pub output_partitioning: Partitioning,
 }
 
 impl Debug for RecordBatchStreamsWrapperExec {

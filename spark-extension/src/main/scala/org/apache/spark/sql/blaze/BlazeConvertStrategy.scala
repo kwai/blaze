@@ -39,6 +39,7 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
+import org.apache.spark.sql.execution.joins.BroadcastNestedLoopJoinExec
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -98,6 +99,8 @@ object BlazeConvertStrategy extends Logging {
       case e: SortMergeJoinExec if e.children.exists(isAlwaysConvert) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: BroadcastHashJoinExec if e.children.forall(isAlwaysConvert) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: BroadcastNestedLoopJoinExec if e.children.forall(isAlwaysConvert) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: LocalLimitExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
