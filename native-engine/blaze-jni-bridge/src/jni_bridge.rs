@@ -232,6 +232,10 @@ macro_rules! jni_call {
                 .map(|s| $crate::jni_bridge::LocalRef(s.into()))
         })
     }};
+    ($clsname:ident($obj:expr).$method:ident($($args:expr),* $(,)?) -> bool) => {{
+        use jni::sys::*;
+        Ok(jni_call!($clsname($obj).$method($($args),*) -> jboolean)? == JNI_TRUE)
+    }};
     ($clsname:ident($obj:expr).$method:ident($($args:expr),* $(,)?) -> $ret:ty) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
             jni_call!(env, $clsname($obj).$method($($args,)*))
@@ -264,6 +268,10 @@ macro_rules! jni_call_static {
                 .and_then(|result| $crate::jni_map_error_with_env!(env, $crate::jni_bridge::JObject::try_from(result)))
                 .map(|s| $crate::jni_bridge::LocalRef(s.into()))
         })
+    }};
+    ($clsname:ident.$method:ident($($args:expr),* $(,)?) -> bool) => {{
+        jni_call_static!($clsname.$method($($args),*) -> jni::sys::jboolean)
+            .map(|r| r == jni::sys::JNI_TRUE)
     }};
     ($clsname:ident.$method:ident($($args:expr),* $(,)?) -> $ret:ty) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
@@ -1127,6 +1135,10 @@ pub struct BlazeConf<'a> {
     pub method_bhjFallbacksToSmjMemThreshold_ret: ReturnType,
     pub method_udfWrapperNumThreads: JStaticMethodID,
     pub method_udfWrapperNumThreads_ret: ReturnType,
+    pub method_ignoreCorruptedFiles: JStaticMethodID,
+    pub method_ignoreCorruptedFiles_ret: ReturnType,
+    pub method_enableInputBatchStatistics: JStaticMethodID,
+    pub method_enableInputBatchStatistics_ret: ReturnType,
 }
 
 impl<'a> BlazeConf<'_> {
@@ -1158,6 +1170,14 @@ impl<'a> BlazeConf<'_> {
                 .get_static_method_id(class, "udfWrapperNumThreads", "()I")
                 .unwrap(),
             method_udfWrapperNumThreads_ret: ReturnType::Primitive(Primitive::Int),
+            method_ignoreCorruptedFiles: env
+                .get_static_method_id(class, "ignoreCorruptedFiles", "()Z")
+                .unwrap(),
+            method_ignoreCorruptedFiles_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_enableInputBatchStatistics: env
+                .get_static_method_id(class, "enableInputBatchStatistics", "()Z")
+                .unwrap(),
+            method_enableInputBatchStatistics_ret: ReturnType::Primitive(Primitive::Boolean),
         })
     }
 }
