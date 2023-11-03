@@ -18,6 +18,7 @@ use arrow::error::Result as ArrowResult;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::Result;
 
+pub mod batch_statisitcs;
 pub mod bytes_arena;
 pub mod cached_exprs_evaluator;
 pub mod column_pruning;

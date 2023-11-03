@@ -14,6 +14,7 @@
 
 //! Defines the External shuffle repartition plan
 
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::bytes_arena::BytesArena;
 use crate::common::column_pruning::ExecuteWithColumnPruning;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
@@ -236,7 +237,10 @@ impl ExecuteWithColumnPruning for SortExec {
         });
         MemManager::register_consumer(external_sorter.clone(), true);
 
-        let input = self.input.execute(partition, context.clone())?;
+        let input = stat_input(
+            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
+            self.input.execute(partition, context.clone())?,
+        )?;
         let coalesced = Box::pin(CoalesceStream::new(
             input,
             batch_size,

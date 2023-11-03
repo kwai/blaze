@@ -63,6 +63,10 @@ public class BlazeConf {
         return intConf("spark.blaze.udfWrapperNumThreads", 1);
     }
 
+    public static boolean enableInputBatchStatistics() {
+        return booleanConf("spark.blaze.enableInputBatchStatistics", false);
+    }
+
     public static boolean ignoreCorruptedFiles() {
         return booleanConf("spark.files.ignoreCorruptFiles", false);
     }

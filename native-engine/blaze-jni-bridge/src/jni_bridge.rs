@@ -1135,10 +1135,10 @@ pub struct BlazeConf<'a> {
     pub method_bhjFallbacksToSmjMemThreshold_ret: ReturnType,
     pub method_udfWrapperNumThreads: JStaticMethodID,
     pub method_udfWrapperNumThreads_ret: ReturnType,
-    pub method_ignoreCorruptedFiles: JStaticMethodID,
-    pub method_ignoreCorruptedFiles_ret: ReturnType,
     pub method_enableInputBatchStatistics: JStaticMethodID,
     pub method_enableInputBatchStatistics_ret: ReturnType,
+    pub method_ignoreCorruptedFiles: JStaticMethodID,
+    pub method_ignoreCorruptedFiles_ret: ReturnType,
 }
 
 impl<'a> BlazeConf<'_> {
@@ -1170,14 +1170,14 @@ impl<'a> BlazeConf<'_> {
                 .get_static_method_id(class, "udfWrapperNumThreads", "()I")
                 .unwrap(),
             method_udfWrapperNumThreads_ret: ReturnType::Primitive(Primitive::Int),
-            method_ignoreCorruptedFiles: env
-                .get_static_method_id(class, "ignoreCorruptedFiles", "()Z")
-                .unwrap(),
-            method_ignoreCorruptedFiles_ret: ReturnType::Primitive(Primitive::Boolean),
             method_enableInputBatchStatistics: env
                 .get_static_method_id(class, "enableInputBatchStatistics", "()Z")
                 .unwrap(),
             method_enableInputBatchStatistics_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_ignoreCorruptedFiles: env
+                .get_static_method_id(class, "ignoreCorruptedFiles", "()Z")
+                .unwrap(),
+            method_ignoreCorruptedFiles_ret: ReturnType::Primitive(Primitive::Boolean),
         })
     }
 }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::output::output_with_sender;
 use crate::generate::Generator;
 use arrow::array::UInt32Builder;
@@ -148,13 +149,15 @@ impl ExecutionPlan for GenerateExec {
         let outer = self.outer;
         let child_output_cols = self.required_child_output_cols.clone();
         let metrics = BaselineMetrics::new(&self.metrics, partition);
-
-        let input_stream = self.input.execute(partition, context.clone())?;
+        let input = stat_input(
+            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
+            self.input.execute(partition, context.clone())?,
+        )?;
         let output_stream = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(
                 execute_generate(
-                    input_stream,
+                    input,
                     context,
                     output_schema,
                     generator,
