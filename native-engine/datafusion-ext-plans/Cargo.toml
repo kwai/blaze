@@ -21,7 +21,7 @@ datafusion-ext-exprs = { workspace = true }
 derivative = "2.2.0"
 futures = "0.3"
 hashbrown = "0.13.1"
-itertools = "0.10.3"
+itertools = "0.11.0"
 jni = "0.20.0"
 log = "0.4.14"
 lz4_flex = "0.10.0"
