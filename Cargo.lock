@@ -435,7 +435,7 @@ dependencies = [
  "once_cell",
  "panic-message",
  "paste",
- "prost",
+ "prost 0.11.9",
  "simplelog",
  "tokio",
 ]
@@ -465,7 +465,7 @@ dependencies = [
  "datafusion-ext-plans",
  "log",
  "object_store",
- "prost",
+ "prost 0.11.9",
  "tonic-build",
 ]
 
@@ -1952,12 +1952,12 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prettyplease"
-version = "0.1.25"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c8646e95016a7a6c4adea95bafa8a16baab64b583356217f2c85db4a39d9a86"
+checksum = "ae005bd773ab59b4725093fd7df83fd7892f7d8eafb48dbd7de6e024e4215f9d"
 dependencies = [
  "proc-macro2",
- "syn 1.0.109",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -1982,27 +1982,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b82eaa1d779e9a4bc1c3217db8ffbeabaae1dca241bf70183242128d48681cd"
 dependencies = [
  "bytes",
- "prost-derive",
+ "prost-derive 0.11.9",
+]
+
+[[package]]
+name = "prost"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4fdd22f3b9c31b53c060df4a0613a1c7f062d4115a2b984dd15b1858f7e340d"
+dependencies = [
+ "bytes",
+ "prost-derive 0.12.1",
 ]
 
 [[package]]
 name = "prost-build"
-version = "0.11.9"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "119533552c9a7ffacc21e099c24a0ac8bb19c2a2a3f363de84cd9b844feab270"
+checksum = "8bdf592881d821b83d471f8af290226c8d51402259e9bb5be7f9f8bdebbb11ac"
 dependencies = [
  "bytes",
  "heck",
- "itertools 0.10.5",
- "lazy_static",
+ "itertools 0.11.0",
  "log",
  "multimap",
+ "once_cell",
  "petgraph",
  "prettyplease",
- "prost",
+ "prost 0.12.1",
  "prost-types",
  "regex",
- "syn 1.0.109",
+ "syn 2.0.37",
  "tempfile",
  "which",
 ]
@@ -2021,12 +2031,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-types"
-version = "0.11.9"
+name = "prost-derive"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
+checksum = "265baba7fabd416cf5078179f7d2cbeca4ce7a9041111900675ea7c4cb8a4c32"
 dependencies = [
- "prost",
+ "anyhow",
+ "itertools 0.11.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.37",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e081b29f63d83a4bc75cfc9f3fe424f9156cf92d8a4f0c9407cce9a1b67327cf"
+dependencies = [
+ "prost 0.12.1",
 ]
 
 [[package]]
@@ -2555,15 +2578,15 @@ dependencies = [
 
 [[package]]
 name = "tonic-build"
-version = "0.8.4"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bf5e9b9c0f7e0a7c027dcfaba7b2c60816c7049171f679d99ee2ff65d0de8c4"
+checksum = "9d021fc044c18582b9a2408cd0dd05b1596e3ecdb5c4df822bb0183545683889"
 dependencies = [
  "prettyplease",
  "proc-macro2",
  "prost-build",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.37",
 ]
 
 [[package]]
