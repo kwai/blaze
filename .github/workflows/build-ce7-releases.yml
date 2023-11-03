@@ -26,8 +26,8 @@ jobs:
         id: cache
         uses: actions/cache@v3
         with:
-          path: blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
-          key: blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          path: target-docker/blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
+          key: blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
 
       - uses: ScribeMD/rootless-docker@0.2.2
         if: steps.cache.outputs.cache-hit != 'true'
