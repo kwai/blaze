@@ -16,6 +16,8 @@
 
 # BLAZE
 
+[![TPC-DS](https://github.com/blaze-init/blaze/actions/workflows/tpcds.yml/badge.svg?branch=master)](https://github.com/blaze-init/blaze/actions/workflows/tpcds.yml)
+
 The Blaze accelerator for Apache Spark leverages native vectorized execution to accelerate query processing. It combines
 the power of the [Apache Arrow-DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the Spark distributed
 computing framework.
