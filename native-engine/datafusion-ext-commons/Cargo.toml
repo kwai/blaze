@@ -27,4 +27,4 @@ postcard = { version = "1.0.4", features = ["alloc"]}
 tempfile = "3"
 thrift = "0.17.0"
 tokio = "1.19"
-zstd = "0.12.3"
+zstd = "0.13.0"
