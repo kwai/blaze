@@ -140,7 +140,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
  "num",
  "packed_simd_2",
 ]
@@ -257,7 +257,7 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
 ]
 
 [[package]]
@@ -731,7 +731,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
 dependencies = [
  "cfg-if",
- "hashbrown 0.14.0",
+ "hashbrown",
  "lock_api",
  "once_cell",
  "parking_lot_core",
@@ -762,7 +762,7 @@ dependencies = [
  "futures",
  "glob",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
  "indexmap",
  "itertools 0.11.0",
  "lazy_static",
@@ -818,7 +818,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "futures",
- "hashbrown 0.14.0",
+ "hashbrown",
  "log",
  "object_store",
  "parking_lot",
@@ -918,7 +918,7 @@ dependencies = [
  "datafusion-ext-exprs",
  "derivative",
  "futures",
- "hashbrown 0.13.2",
+ "hashbrown",
  "itertools 0.10.5",
  "jni",
  "log",
@@ -946,7 +946,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
- "hashbrown 0.14.0",
+ "hashbrown",
  "itertools 0.11.0",
  "log",
  "regex-syntax",
@@ -969,7 +969,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
  "hex",
  "indexmap",
  "itertools 0.11.0",
@@ -1257,15 +1257,6 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
-dependencies = [
- "ahash",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
@@ -1361,7 +1352,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5477fe2230a79769d8dc68e0eabf5437907c0457a5614a9e8dddb67f65eb65d"
 dependencies = [
  "equivalent",
- "hashbrown 0.14.0",
+ "hashbrown",
 ]
 
 [[package]]
@@ -1832,7 +1823,7 @@ dependencies = [
  "chrono",
  "flate2",
  "futures",
- "hashbrown 0.14.0",
+ "hashbrown",
  "lz4",
  "num",
  "num-bigint",
