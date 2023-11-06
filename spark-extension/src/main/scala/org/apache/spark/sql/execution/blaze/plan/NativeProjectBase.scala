@@ -36,6 +36,7 @@ import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.ProjectionExecNode
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 
 abstract class NativeProjectBase(
     projectList: Seq[NamedExpression],
@@ -58,6 +59,7 @@ abstract class NativeProjectBase(
       .toSeq: _*)
 
   override def output: Seq[Attribute] = projectList.map(_.toAttribute)
+  override def outputPartitioning: Partitioning = child.outputPartitioning
 
   private def nativeProject = getNativeProjectBuilder(projectList, addTypeCast).buildPartial()
 
