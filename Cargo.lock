@@ -464,7 +464,7 @@ dependencies = [
  "datafusion-ext-functions",
  "datafusion-ext-plans",
  "log",
- "object_store",
+ "object_store 0.7.1",
  "prost",
  "tonic-build",
 ]
@@ -768,7 +768,7 @@ dependencies = [
  "lazy_static",
  "log",
  "num_cpus",
- "object_store",
+ "object_store 0.6.1",
  "parking_lot",
  "parquet",
  "percent-encoding",
@@ -799,7 +799,7 @@ dependencies = [
  "flate2",
  "futures",
  "num_cpus",
- "object_store",
+ "object_store 0.6.1",
  "parquet",
  "sqlparser",
  "tokio",
@@ -820,7 +820,7 @@ dependencies = [
  "futures",
  "hashbrown 0.14.0",
  "log",
- "object_store",
+ "object_store 0.6.1",
  "parking_lot",
  "rand",
  "tempfile",
@@ -924,7 +924,7 @@ dependencies = [
  "log",
  "lz4_flex",
  "num",
- "object_store",
+ "object_store 0.7.1",
  "once_cell",
  "panic-message",
  "parking_lot",
@@ -1760,6 +1760,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "object_store"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f930c88a43b1c3f6e776dfe495b4afab89882dbc81530c632db2ed65451ebcb4"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures",
+ "humantime",
+ "itertools 0.11.0",
+ "parking_lot",
+ "percent-encoding",
+ "snafu",
+ "tokio",
+ "tracing",
+ "url",
+ "walkdir",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1836,7 +1857,7 @@ dependencies = [
  "lz4",
  "num",
  "num-bigint",
- "object_store",
+ "object_store 0.6.1",
  "paste",
  "seq-macro",
  "snap",
