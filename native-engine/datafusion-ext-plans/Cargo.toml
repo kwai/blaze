@@ -11,7 +11,7 @@ default = ["tokio/rt-multi-thread"]
 ahash = "0.8"
 arrow = { workspace = true }
 async-trait = "0.1.74"
-base64 = "0.21.2"
+base64 = "0.21.5"
 bytes = "1.4.0"
 blaze-jni-bridge = { workspace = true }
 bytesize = "1.1.0"
