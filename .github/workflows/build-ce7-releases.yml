@@ -38,7 +38,6 @@ jobs:
           key: docker-centos7-${{ hashFiles('dev/docker-build/centos7/Dockerfile') }}
 
       - name: Build blaze-engine-${{ matrix.sparkver }}
-        if: steps.cache.outputs.cache-hit != 'true'
         run: SHIM=${{ matrix.sparkver }} MODE=release ./release-docker.sh
 
       - name: Upload blaze-engine-${{ matrix.sparkver }}
