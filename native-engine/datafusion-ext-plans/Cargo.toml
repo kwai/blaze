@@ -20,7 +20,7 @@ datafusion-ext-commons = { workspace = true }
 datafusion-ext-exprs = { workspace = true }
 derivative = "2.2.0"
 futures = "0.3"
-hashbrown = "0.14.0"
+hashbrown = "0.14.2"
 itertools = "0.10.3"
 jni = "0.20.0"
 log = "0.4.14"
