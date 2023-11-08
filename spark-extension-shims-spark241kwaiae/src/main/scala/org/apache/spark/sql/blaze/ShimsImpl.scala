@@ -16,10 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-import java.lang.reflect.Method
 import java.util.UUID
-
-import scala.collection.JavaConverters.collectionAsScalaIterableConverter
 
 import com.kuaishou.dataarch.shuffle.proto.dto.common.PartitionStatistics
 import org.apache.commons.lang3.reflect.FieldUtils
@@ -65,7 +62,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
-import org.apache.spark.sql.execution.InputAdapter
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeExec
 import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
@@ -76,8 +72,6 @@ import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriter
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsExec
-import org.apache.spark.sql.execution.joins.BuildLeft
-import org.apache.spark.sql.execution.joins.BuildRight
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.blaze.BlazeConverters.ForceNativeExecutionWrapperBase
@@ -130,10 +124,11 @@ import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.SparkSessionExtensions
-import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastNestedLoopJoinBase
+import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -196,6 +191,14 @@ class ShimsImpl extends Shims with Logging {
       rightKeys,
       joinType,
       condition)
+
+  override def createNativeBroadcastNestedLoopJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      joinType: JoinType,
+      condition: Option[Expression]): NativeBroadcastNestedLoopJoinBase = {
+    NativeBroadcastNestedLoopJoinExec(left, right, joinType, condition)
+  }
 
   override def createNativeSortMergeJoinExec(
       left: SparkPlan,
