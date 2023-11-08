@@ -992,7 +992,12 @@ object NativeConverters extends Logging {
             && e.children(0).dataType == StringType
             && e.children(1).dataType == StringType
             && e.children(1).isInstanceOf[Literal]) =>
-        buildExtScalarFunction("GetJsonObject", e.children, StringType)
+        // use GetParsedJsonObject + ParseJson for reusing parsed json value in native
+        val parsed = Shims.get.createNativeExprWrapper(
+          buildExtScalarFunction("ParseJson", e.children(0) :: Nil, BinaryType),
+          BinaryType,
+          nullable = false)
+        buildExtScalarFunction("GetParsedJsonObject", parsed :: e.children(1) :: Nil, StringType)
 
       case e =>
         Shims.get.convertExpr(e) match {

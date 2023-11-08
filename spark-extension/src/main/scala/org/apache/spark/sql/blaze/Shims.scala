@@ -82,6 +82,12 @@ abstract class Shims extends Serializable {
       joinType: JoinType,
       condition: Option[Expression]): NativeBroadcastJoinBase
 
+  def createNativeBroadcastNestedLoopJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      joinType: JoinType,
+      condition: Option[Expression]): NativeBroadcastNestedLoopJoinBase
+
   def createNativeSortMergeJoinExec(
       left: SparkPlan,
       right: SparkPlan,
@@ -223,7 +229,6 @@ abstract class Shims extends Serializable {
       nativeExpr: pb.PhysicalExprNode,
       dataType: DataType,
       nullable: Boolean): Expression
-
 }
 
 object Shims {

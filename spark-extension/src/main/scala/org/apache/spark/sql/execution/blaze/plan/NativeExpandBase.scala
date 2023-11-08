@@ -42,7 +42,14 @@ abstract class NativeExpandBase(
   override lazy val metrics: Map[String, SQLMetric] = Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .filterKeys(Set(
+        "output_rows",
+        "elapsed_compute",
+        "input_batch_count",
+        "input_batch_mem_size_total",
+        "input_batch_mem_size_avg",
+        "input_batch_num_rows_avg",
+        "input_row_count"))
       .toSeq: _*)
 
   override def outputPartitioning: Partitioning = UnknownPartitioning(0)

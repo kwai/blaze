@@ -96,7 +96,7 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 [[package]]
 name = "arrow"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "ahash",
  "arrow-arith",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "arrow-arith"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "arrow-array"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "ahash",
  "arrow-buffer",
@@ -140,7 +140,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
  "num",
  "packed_simd_2",
 ]
@@ -148,7 +148,7 @@ dependencies = [
 [[package]]
 name = "arrow-buffer"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "half",
  "num",
@@ -157,7 +157,7 @@ dependencies = [
 [[package]]
 name = "arrow-cast"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -174,7 +174,7 @@ dependencies = [
 [[package]]
 name = "arrow-csv"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -192,7 +192,7 @@ dependencies = [
 [[package]]
 name = "arrow-data"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "arrow-ipc"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -216,7 +216,7 @@ dependencies = [
 [[package]]
 name = "arrow-json"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -235,7 +235,7 @@ dependencies = [
 [[package]]
 name = "arrow-ord"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -249,7 +249,7 @@ dependencies = [
 [[package]]
 name = "arrow-row"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -257,13 +257,13 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
 ]
 
 [[package]]
 name = "arrow-schema"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "bitflags 2.4.0",
  "serde",
@@ -272,7 +272,7 @@ dependencies = [
 [[package]]
 name = "arrow-select"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -284,7 +284,7 @@ dependencies = [
 [[package]]
 name = "arrow-string"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -316,9 +316,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.73"
+version = "0.1.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc00ceb34980c03614e35a3a4e218276a0a824e911d07651cd0d858a51e8c0f0"
+checksum = "a66537f1bb974b254c98ed142ff995236e81b9d0fe4db0575f46612cb15eb0f9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -357,9 +357,9 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.21.4"
+version = "0.21.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ba43ea6f343b788c8764558649e08df62f86c6ef251fdaeb1ffd010a9ae50a2"
+checksum = "35636a1494ede3b646cc98f74f8e62c773a38a659ebc777a2cf26b9b74171df9"
 
 [[package]]
 name = "bigdecimal"
@@ -731,7 +731,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
 dependencies = [
  "cfg-if",
- "hashbrown 0.14.0",
+ "hashbrown",
  "lock_api",
  "once_cell",
  "parking_lot_core",
@@ -740,7 +740,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=575fbfae9#575fbfae982e36ac6a7a2435ee272fdb96185834"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=312358e45#312358e453cc7bf8cf5bfbef15d6a1caefed5c42"
 dependencies = [
  "ahash",
  "arrow",
@@ -762,7 +762,7 @@ dependencies = [
  "futures",
  "glob",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
  "indexmap",
  "itertools 0.11.0",
  "lazy_static",
@@ -788,7 +788,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=575fbfae9#575fbfae982e36ac6a7a2435ee272fdb96185834"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=312358e45#312358e453cc7bf8cf5bfbef15d6a1caefed5c42"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -811,14 +811,14 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=575fbfae9#575fbfae982e36ac6a7a2435ee272fdb96185834"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=312358e45#312358e453cc7bf8cf5bfbef15d6a1caefed5c42"
 dependencies = [
  "arrow",
  "dashmap",
  "datafusion-common",
  "datafusion-expr",
  "futures",
- "hashbrown 0.14.0",
+ "hashbrown",
  "log",
  "object_store",
  "parking_lot",
@@ -830,7 +830,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=575fbfae9#575fbfae982e36ac6a7a2435ee272fdb96185834"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=312358e45#312358e453cc7bf8cf5bfbef15d6a1caefed5c42"
 dependencies = [
  "ahash",
  "arrow",
@@ -895,6 +895,7 @@ dependencies = [
  "blaze-jni-bridge",
  "datafusion",
  "datafusion-ext-commons",
+ "itertools 0.11.0",
  "log",
  "num",
  "paste",
@@ -917,7 +918,7 @@ dependencies = [
  "datafusion-ext-exprs",
  "derivative",
  "futures",
- "hashbrown 0.13.2",
+ "hashbrown",
  "itertools 0.10.5",
  "jni",
  "log",
@@ -937,7 +938,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=575fbfae9#575fbfae982e36ac6a7a2435ee272fdb96185834"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=312358e45#312358e453cc7bf8cf5bfbef15d6a1caefed5c42"
 dependencies = [
  "arrow",
  "async-trait",
@@ -945,7 +946,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
- "hashbrown 0.14.0",
+ "hashbrown",
  "itertools 0.11.0",
  "log",
  "regex-syntax",
@@ -954,7 +955,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=575fbfae9#575fbfae982e36ac6a7a2435ee272fdb96185834"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=312358e45#312358e453cc7bf8cf5bfbef15d6a1caefed5c42"
 dependencies = [
  "ahash",
  "arrow",
@@ -968,7 +969,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "half",
- "hashbrown 0.14.0",
+ "hashbrown",
  "hex",
  "indexmap",
  "itertools 0.11.0",
@@ -988,7 +989,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=575fbfae9#575fbfae982e36ac6a7a2435ee272fdb96185834"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=312358e45#312358e453cc7bf8cf5bfbef15d6a1caefed5c42"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -1037,6 +1038,12 @@ name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
 
 [[package]]
 name = "equivalent"
@@ -1256,18 +1263,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.13.2"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
-dependencies = [
- "ahash",
-]
-
-[[package]]
-name = "hashbrown"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
+checksum = "f93e7192158dbcda357bdec5fb5788eebf8bbac027f3f33e719d29135ae84156"
 dependencies = [
  "ahash",
  "allocator-api2",
@@ -1360,7 +1358,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5477fe2230a79769d8dc68e0eabf5437907c0457a5614a9e8dddb67f65eb65d"
 dependencies = [
  "equivalent",
- "hashbrown 0.14.0",
+ "hashbrown",
 ]
 
 [[package]]
@@ -1583,9 +1581,9 @@ dependencies = [
 
 [[package]]
 name = "lz4_flex"
-version = "0.10.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b8c72594ac26bfd34f2d99dfced2edfaddfe8a476e3ff2ca0eb293d925c4f83"
+checksum = "3ea9b256699eda7b0387ffbc776dd625e28bde3918446381781245b7a50349d8"
 dependencies = [
  "twox-hash",
 ]
@@ -1815,7 +1813,7 @@ dependencies = [
 [[package]]
 name = "parquet"
 version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=35b6fded9#35b6fded90248e05262734fb8b894e19281e66a3"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=1173507b57#1173507b577dbce1bdf7621cb25604fd2385fd20"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -1831,7 +1829,7 @@ dependencies = [
  "chrono",
  "flate2",
  "futures",
- "hashbrown 0.14.0",
+ "hashbrown",
  "lz4",
  "num",
  "num-bigint",
@@ -1934,11 +1932,12 @@ checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 
 [[package]]
 name = "postcard"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d534c6e61df1c7166e636ca612d9820d486fe96ddad37f7abc671517b297488e"
+checksum = "a55c51ee6c0db07e68448e336cf8ea4131a620edefebf9893e759b2d793420f8"
 dependencies = [
  "cobs",
+ "embedded-io",
  "heapless",
  "serde",
 ]

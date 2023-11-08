@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
 use crate::common::output::output_with_sender;
 use crate::filter_exec::FilterExec;
@@ -122,8 +123,8 @@ impl ExecutionPlan for ProjectExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let batch_size = context.session_config().batch_size();
-        let metrics = BaselineMetrics::new(&self.metrics, partition);
-        let elapsed_compute = metrics.elapsed_compute().clone();
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
+        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
 
         let exprs: Vec<PhysicalExprRef> = self.expr.iter().map(|(e, _name)| e.clone()).collect();
 
@@ -135,7 +136,7 @@ impl ExecutionPlan for ProjectExec {
                 self.schema(),
                 filter_exec.predicates().to_vec(),
                 exprs,
-                metrics,
+                self.metrics.clone(),
             )
             .boxed()
         } else {
@@ -146,7 +147,7 @@ impl ExecutionPlan for ProjectExec {
                 self.schema(),
                 vec![],
                 exprs,
-                metrics,
+                self.metrics.clone(),
             )
             .boxed()
         };
@@ -193,9 +194,10 @@ async fn execute_project_with_filtering(
     output_schema: SchemaRef,
     filters: Vec<PhysicalExprRef>,
     exprs: Vec<PhysicalExprRef>,
-    metrics: BaselineMetrics,
+    metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     // execute input with pruning
+    let baseline_metrics = BaselineMetrics::new(&metrics, partition);
     let num_exprs = exprs.len();
     let (pruned_exprs, projection) = prune_columns(&[exprs, filters].concat())?;
     let exprs = pruned_exprs
@@ -209,7 +211,11 @@ async fn execute_project_with_filtering(
         .cloned()
         .collect::<Vec<PhysicalExprRef>>();
     let cached_expr_evaluator = CachedExprsEvaluator::try_new(filters, exprs)?;
-    let mut input = input.execute_projected(partition, context.clone(), &projection)?;
+
+    let mut input = stat_input(
+        InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition)?,
+        input.execute_projected(partition, context.clone(), &projection)?,
+    )?;
 
     output_with_sender(
         "Project",
@@ -217,10 +223,10 @@ async fn execute_project_with_filtering(
         output_schema.clone(),
         move |sender| async move {
             while let Some(batch) = input.next().await.transpose()? {
-                let mut timer = metrics.elapsed_compute().timer();
+                let mut timer = baseline_metrics.elapsed_compute().timer();
                 let output_batch =
                     cached_expr_evaluator.filter_project(&batch, output_schema.clone())?;
-                metrics.record_output(output_batch.num_rows());
+                baseline_metrics.record_output(output_batch.num_rows());
                 sender.send(Ok(output_batch), Some(&mut timer)).await;
             }
             Ok(())

@@ -41,6 +41,7 @@ use datafusion::physical_plan::{
     Partitioning,
 };
 use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics};
+
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_plans::agg::{
     create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
@@ -80,6 +81,7 @@ use datafusion_ext_exprs::spark_udf_wrapper::SparkUDFWrapperExpr;
 use datafusion_ext_exprs::string_contains::StringContainsExpr;
 use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
 use datafusion_ext_exprs::string_starts_with::StringStartsWithExpr;
+use datafusion_ext_plans::broadcast_nested_loop_join_exec::BroadcastNestedLoopJoinExec;
 use datafusion_ext_plans::generate::create_generator;
 use datafusion_ext_plans::generate_exec::GenerateExec;
 use datafusion_ext_plans::parquet_sink_exec::ParquetSinkExec;
@@ -401,6 +403,49 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     left,
                     right,
                     on,
+                    join_type.into(),
+                    join_filter,
+                )?))
+            }
+            PhysicalPlanType::BroadcastNestedLoopJoin(bnlj) => {
+                let left: Arc<dyn ExecutionPlan> = convert_box_required!(bnlj.left)?;
+                let right: Arc<dyn ExecutionPlan> = convert_box_required!(bnlj.right)?;
+                let join_type = protobuf::JoinType::from_i32(bnlj.join_type).ok_or_else(|| {
+                    proto_error(format!(
+                        "Received a BroadcastNestedLoopJoinNode message with unknown JoinType {}",
+                        bnlj.join_type
+                    ))
+                })?;
+                let join_filter = bnlj
+                    .join_filter
+                    .as_ref()
+                    .map(|f| {
+                        let schema = Arc::new(convert_required!(f.schema)?);
+                        let expression = try_parse_physical_expr_required(&f.expression, &schema)?;
+                        let column_indices = f
+                            .column_indices
+                            .iter()
+                            .map(|i| {
+                                let side =
+                                    protobuf::JoinSide::from_i32(i.side).expect("invalid JoinSide");
+                                Ok(ColumnIndex {
+                                    index: i.index as usize,
+                                    side: side.into(),
+                                })
+                            })
+                            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
+
+                        Ok(JoinFilter::new(
+                            bind(expression, &schema)?,
+                            column_indices,
+                            schema.as_ref().clone(),
+                        ))
+                    })
+                    .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
+
+                Ok(Arc::new(BroadcastNestedLoopJoinExec::try_new(
+                    left,
+                    right,
                     join_type.into(),
                     join_filter,
                 )?))

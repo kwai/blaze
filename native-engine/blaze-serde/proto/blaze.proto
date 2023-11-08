@@ -47,6 +47,7 @@ message PhysicalPlanNode {
     WindowExecNode window = 20;
     GenerateExecNode generate = 21;
     ParquetSinkExecNode parquet_sink = 22;
+    BroadcastNestedLoopJoinExecNode broadcast_nested_loop_join = 23;
   }
 }
 
@@ -403,6 +404,13 @@ message BroadcastJoinExecNode {
   repeated JoinOn on = 3;
   JoinType join_type = 4;
   JoinFilter join_filter = 5;
+}
+
+message BroadcastNestedLoopJoinExecNode {
+  PhysicalPlanNode left = 1;
+  PhysicalPlanNode right = 2;
+  JoinType join_type = 3;
+  JoinFilter join_filter = 4;
 }
 
 message RenameColumnsExecNode {
