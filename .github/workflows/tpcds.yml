@@ -51,7 +51,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: blaze-engine-spark303
-          path: target/blaze-engine-spark303-pre-2.0.6-SNAPSHOT.jar
+          path: target/blaze-engine-spark303-pre-*-SNAPSHOT.jar
 
       - name: Build Spark333
         run: mvn package -Ppre -Pspark333
@@ -59,7 +59,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: blaze-engine-spark333
-          path: target/blaze-engine-spark333-pre-2.0.6-SNAPSHOT.jar
+          path: target/blaze-engine-spark333-pre-*-SNAPSHOT.jar
 
   setup-spark:
     name: Setup Spark
