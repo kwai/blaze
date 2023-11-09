@@ -114,10 +114,10 @@ comparison with vanilla Spark on TPC-DS 1TB dataset. The benchmark result shows 
 Stay tuned and join us for more upcoming thrilling numbers.
 
 Query time:
-![20230925-query-time](./benchmark-results/blaze-query-time-comparison-20230925.png)
+![20231108-query-time](./benchmark-results/blaze-query-time-comparison-20231108.png)
 
 Cluster resources:
-![20230925-resources](./benchmark-results/blaze-executor-time-comparison-20230925.png)
+![20231108-resources](./benchmark-results/blaze-cluster-resources-cost-comparison-20231108.png)
 
 We also encourage you to benchmark Blaze and share the results with us. 🤗
 
