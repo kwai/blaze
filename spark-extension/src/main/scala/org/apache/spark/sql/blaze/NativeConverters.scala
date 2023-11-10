@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
+import org.apache.spark.sql.catalyst.expressions.aggregate.First
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -1041,13 +1042,17 @@ object NativeConverters extends Logging {
                 Literal(1))))
         }
 
-      // case First(child, ignoresNullExpr) =>
-      //   aggBuilder.setAggFunction(if (ignoresNullExpr.eval().asInstanceOf[Boolean]) {
-      //     pb.AggFunction.FIRST_IGNORES_NULL
-      //   } else {
-      //     pb.AggFunction.FIRST
-      //   })
-      //   aggBuilder.addChildren(convertExpr(child))
+      case First(child, ignoresNullExpr) =>
+        val ignoresNull = ignoresNullExpr.asInstanceOf[Any] match {
+          case Literal(v: Boolean, BooleanType) => v
+          case v: Boolean => v
+        }
+        aggBuilder.setAggFunction(if (ignoresNull) {
+          pb.AggFunction.FIRST_IGNORES_NULL
+        } else {
+          pb.AggFunction.FIRST
+        })
+        aggBuilder.addChildren(convertExpr(child))
 
       case CollectList(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_LIST)
