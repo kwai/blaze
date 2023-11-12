@@ -26,6 +26,7 @@ pub mod memory_manager;
 pub mod onheap_spill;
 pub mod output;
 pub mod rdxsort;
+pub mod slim_bytes;
 
 pub struct BatchTaker<'a>(pub &'a RecordBatch);
 
