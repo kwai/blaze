@@ -40,6 +40,7 @@ use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::output::WrappedRecordBatchSender;
 use crate::common::rdxsort;
+use crate::common::slim_bytes::SlimBytes;
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
@@ -162,7 +163,7 @@ impl AggTables {
         }
         let mut staging_records = Vec::with_capacity(batch_size);
         let mut current_bucket_idx = 0;
-        let mut current_records: HashMap<Box<[u8]>, AggBuf> = HashMap::new();
+        let mut current_records: HashMap<SlimBytes, AggBuf> = HashMap::new();
 
         macro_rules! flush_staging {
             () => {{
@@ -511,10 +512,10 @@ impl SpillCursor {
         Ok(cursor)
     }
 
-    fn next_record(&mut self) -> Result<(Box<[u8]>, AggBuf)> {
+    fn next_record(&mut self) -> Result<(SlimBytes, AggBuf)> {
         // read key
         let key_len = read_len(&mut self.input)?;
-        let key = read_bytes_slice(&mut self.input, key_len)?;
+        let key = read_bytes_slice(&mut self.input, key_len)?.into();
 
         // read value
         let mut value = self.agg_ctx.initial_agg_buf.clone();

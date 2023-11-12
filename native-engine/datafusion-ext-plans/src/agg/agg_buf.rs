@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::common::slim_bytes::SlimBytes;
 use arrow::array::Array;
 use datafusion::common::{Result, ScalarValue};
 use datafusion_ext_commons::io::{
     read_array, read_bytes_slice, read_data_type, read_len, write_array, write_data_type,
     write_len, write_u8,
 };
+use slimmer_box::SlimmerBox;
 use std::any::Any;
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Write};
@@ -25,15 +27,24 @@ use std::mem::{size_of, size_of_val};
 
 #[derive(Eq, PartialEq)]
 pub struct AggBuf {
-    fixed: Box<[u8]>,
-    dyns: Box<[Box<dyn AggDynValue>]>,
+    fixed: SlimBytes,
+    dyns: SlimmerBox<[Box<dyn AggDynValue>]>,
 }
+
+// safety: types inside SlimmerBox are threads-safely
+unsafe impl Send for AggBuf {}
+unsafe impl Sync for AggBuf {}
 
 impl Clone for AggBuf {
     fn clone(&self) -> Self {
         Self {
             fixed: self.fixed.clone(),
-            dyns: self.dyns.iter().map(|v| v.clone_boxed()).collect(),
+            dyns: SlimmerBox::from_box(
+                self.dyns
+                    .iter()
+                    .map(|v| v.clone_boxed())
+                    .collect::<Box<[Box<dyn AggDynValue>]>>(),
+            ),
         }
     }
 }
@@ -57,7 +68,8 @@ impl AggBuf {
 
     pub fn set_fixed_valid(&mut self, addr: u64, valid: bool) {
         let idx = get_fixed_addr_valid_idx(addr);
-        self.fixed[self.fixed.len() - 1 - idx / 8] |= (valid as u8) << (idx % 8);
+        let fixed_len = self.fixed.len();
+        self.fixed[fixed_len - 1 - idx / 8] |= (valid as u8) << (idx % 8);
     }
 
     pub fn fixed_value<T: Sized + Copy>(&self, addr: u64) -> T {
@@ -114,7 +126,7 @@ impl AggBuf {
         Ok(())
     }
 
-    pub fn save_to_bytes(&mut self) -> Result<Box<[u8]>> {
+    pub fn save_to_bytes(&mut self) -> Result<SlimBytes> {
         let mut bytes = vec![];
         let mut write: Box<dyn Write> = Box::new(Cursor::new(&mut bytes));
         self.save(&mut write)?;
@@ -209,7 +221,7 @@ pub fn create_agg_buf_from_initial_value(
 
     let agg_buf = AggBuf {
         fixed: fixed.into(),
-        dyns: dyns.into(),
+        dyns: SlimmerBox::from_box(dyns.into()),
     };
     Ok((agg_buf, addrs.into()))
 }
@@ -330,20 +342,20 @@ impl AggDynValue for AggDynScalar {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct AggDynBinary {
-    pub value: Option<Box<[u8]>>,
+    pub value: Option<SlimBytes>,
 }
 
 #[allow(clippy::borrowed_box)]
 impl AggDynBinary {
-    pub fn new(value: Option<Box<[u8]>>) -> Self {
+    pub fn new(value: Option<SlimBytes>) -> Self {
         Self { value }
     }
 
-    pub fn value(value: &Box<dyn AggDynValue>) -> &Option<Box<[u8]>> {
+    pub fn value(value: &Box<dyn AggDynValue>) -> &Option<SlimBytes> {
         &value.as_any().downcast_ref::<Self>().unwrap().value
     }
 
-    pub fn value_mut(value: &mut Box<dyn AggDynValue>) -> &mut Option<Box<[u8]>> {
+    pub fn value_mut(value: &mut Box<dyn AggDynValue>) -> &mut Option<SlimBytes> {
         &mut value.as_any_mut().downcast_mut::<Self>().unwrap().value
     }
 
@@ -351,7 +363,7 @@ impl AggDynBinary {
         let len = read_len(&mut r)?;
         if len > 0 {
             let len = len - 1;
-            self.value = Some(read_bytes_slice(&mut r, len)?);
+            self.value = Some(read_bytes_slice(&mut r, len)?.into());
         } else {
             self.value = None;
         }
