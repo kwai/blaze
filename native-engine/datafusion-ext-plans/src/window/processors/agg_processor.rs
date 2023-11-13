@@ -14,6 +14,7 @@
 
 use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AggBuf};
 use crate::agg::Agg;
+use crate::common::slim_bytes::SlimBytes;
 use crate::window::window_context::WindowContext;
 use crate::window::WindowFunctionProcessor;
 use arrow::array::ArrayRef;
@@ -22,7 +23,7 @@ use datafusion::common::{Result, ScalarValue};
 use std::sync::Arc;
 
 pub struct AggProcessor {
-    cur_partition: Box<[u8]>,
+    cur_partition: SlimBytes,
     agg: Arc<dyn Agg>,
     agg_buf_init: AggBuf,
     agg_buf: AggBuf,
@@ -33,7 +34,7 @@ impl AggProcessor {
     pub fn try_new(agg: Arc<dyn Agg>) -> Result<Self> {
         let (agg_buf, agg_buf_addrs) = create_agg_buf_from_initial_value(agg.accums_initial())?;
         Ok(Self {
-            cur_partition: Box::default(),
+            cur_partition: Default::default(),
             agg,
             agg_buf_init: agg_buf.clone(),
             agg_buf,
