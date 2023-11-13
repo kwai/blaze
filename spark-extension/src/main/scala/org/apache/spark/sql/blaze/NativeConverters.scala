@@ -141,7 +141,6 @@ object NativeConverters extends Logging {
 
       // array/list
       case a: ArrayType =>
-        typedCheckChildTypeNested(a.elementType)
         arrowTypeBuilder.setLIST(
           org.blaze.protobuf.List
             .newBuilder()
@@ -154,8 +153,6 @@ object NativeConverters extends Logging {
             .build())
 
       case m: MapType =>
-        typedCheckChildTypeNested(m.keyType)
-        typedCheckChildTypeNested(m.valueType)
         arrowTypeBuilder.setMAP(
           org.blaze.protobuf.Map
             .newBuilder()
@@ -173,7 +170,6 @@ object NativeConverters extends Logging {
                 .setNullable(m.valueContainsNull))
             .build())
       case s: StructType =>
-        s.fields.foreach(field => typedCheckChildTypeNested(field.dataType))
         arrowTypeBuilder.setSTRUCT(
           org.blaze.protobuf.Struct
             .newBuilder()
@@ -1107,13 +1103,6 @@ object NativeConverters extends Logging {
         val paramsSchema = ois.readObject().asInstanceOf[StructType]
         (expr, paramsSchema)
       }
-    }
-  }
-
-  def typedCheckChildTypeNested(dt: DataType): Unit = {
-    if (dt.isInstanceOf[ArrayType] || dt.isInstanceOf[MapType] || dt.isInstanceOf[StructType]) {
-      throw new NotImplementedError(
-        s"Data type conversion not implemented for nesting type with child type: ${dt.simpleString}")
     }
   }
 

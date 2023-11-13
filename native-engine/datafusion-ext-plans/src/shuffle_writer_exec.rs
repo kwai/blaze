@@ -23,7 +23,7 @@ use crate::common::memory_manager::MemManager;
 use crate::shuffle::bucket_repartitioner::BucketShuffleRepartitioner;
 use crate::shuffle::single_repartitioner::SingleShuffleRepartitioner;
 use crate::shuffle::sort_repartitioner::SortShuffleRepartitioner;
-use crate::shuffle::ShuffleRepartitioner;
+use crate::shuffle::{can_use_bucket_repartitioner, ShuffleRepartitioner};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use async_trait::async_trait;
@@ -119,7 +119,10 @@ impl ExecutionPlan for ShuffleWriterExec {
                 BaselineMetrics::new(&self.metrics, partition),
                 data_size_metric,
             )),
-            p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
+            p @ Partitioning::Hash(_, _)
+                if can_use_bucket_repartitioner(&self.input.schema())
+                    && p.partition_count() < 200 =>
+            {
                 let partitioner = Arc::new(BucketShuffleRepartitioner::new(
                     partition,
                     self.output_data_file.clone(),
