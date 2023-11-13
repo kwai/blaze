@@ -31,6 +31,7 @@ pub struct AggSum {
     data_type: DataType,
     accums_initial: Vec<AccumInitialValue>,
     partial_updater: fn(&mut AggBuf, u64, &ArrayRef, usize),
+    partial_batch_updater: fn(&mut [AggBuf], u64, &ArrayRef),
     partial_buf_merger: fn(&mut AggBuf, &mut AggBuf, u64),
 }
 
@@ -38,12 +39,14 @@ impl AggSum {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         let accums_initial = vec![AccumInitialValue::Scalar(ScalarValue::try_from(&data_type)?)];
         let partial_updater = get_partial_updater(&data_type)?;
+        let partial_batch_updater = get_partial_batch_updater(&data_type)?;
         let partial_buf_merger = get_partial_buf_merger(&data_type)?;
         Ok(Self {
             child,
             data_type,
             accums_initial,
             partial_updater,
+            partial_batch_updater,
             partial_buf_merger,
         })
     }
@@ -97,6 +100,18 @@ impl Agg for AggSum {
         Ok(())
     }
 
+    fn partial_batch_update(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<usize> {
+        let partial_batch_updater = self.partial_batch_updater;
+        let addr = agg_buf_addrs[0];
+        partial_batch_updater(agg_bufs, addr, &values[0]);
+        Ok(0)
+    }
+
     fn partial_update_all(
         &self,
         agg_buf: &mut AggBuf,
@@ -148,6 +163,20 @@ impl Agg for AggSum {
         partial_buf_merger(agg_buf1, agg_buf2, addr);
         Ok(())
     }
+
+    fn partial_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        merging_agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<usize> {
+        let partial_buf_merger = self.partial_buf_merger;
+        let addr = agg_buf_addrs[0];
+        for (agg_buf, merging_agg_buf) in agg_bufs.iter_mut().zip(merging_agg_bufs) {
+            partial_buf_merger(agg_buf, merging_agg_buf, addr);
+        }
+        Ok(0)
+    }
 }
 
 fn partial_update_prim<T: Copy + Add<Output = T>>(agg_buf: &mut AggBuf, addr: u64, v: T) {
@@ -190,6 +219,41 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
         ))),
     }
 }
+
+fn get_partial_batch_updater(dt: &DataType) -> Result<fn(&mut [AggBuf], u64, &ArrayRef)> {
+    macro_rules! fn_fixed {
+        ($ty:ident) => {{
+            Ok(|agg_bufs, addr, v| {
+                type TArray = paste! {[<$ty Array>]};
+                let value = v.as_any().downcast_ref::<TArray>().unwrap();
+                for (agg_buf, value) in agg_bufs.iter_mut().zip(value.iter()) {
+                    if let Some(value) = value {
+                        partial_update_prim(agg_buf, addr, value);
+                    }
+                }
+            })
+        }};
+    }
+    match dt {
+        DataType::Null => Ok(|_, _, _| ()),
+        DataType::Float32 => fn_fixed!(Float32),
+        DataType::Float64 => fn_fixed!(Float64),
+        DataType::Int8 => fn_fixed!(Int8),
+        DataType::Int16 => fn_fixed!(Int16),
+        DataType::Int32 => fn_fixed!(Int32),
+        DataType::Int64 => fn_fixed!(Int64),
+        DataType::UInt8 => fn_fixed!(UInt8),
+        DataType::UInt16 => fn_fixed!(UInt16),
+        DataType::UInt32 => fn_fixed!(UInt32),
+        DataType::UInt64 => fn_fixed!(UInt64),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
+        other => Err(DataFusionError::NotImplemented(format!(
+            "unsupported data type in sum(): {}",
+            other
+        ))),
+    }
+}
+
 fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, u64)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{

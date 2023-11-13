@@ -232,10 +232,11 @@ async fn execute_agg_with_grouping_hash(
 
         // insert or update rows into in-mem table
         tables
-            .update_entries(grouping_rows, |row_idx, agg_buf| {
-                agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
-                agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
-                Ok(())
+            .update_entries(grouping_rows, |agg_bufs| {
+                let mut mem_diff = 0;
+                mem_diff += agg_ctx.partial_batch_update_input(agg_bufs, &input_arrays)?;
+                mem_diff += agg_ctx.partial_batch_merge_input(agg_bufs, agg_buf_array)?;
+                Ok(mem_diff)
             })
             .await?;
     }
