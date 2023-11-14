@@ -16,7 +16,6 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.blaze.{protobuf => pb}
@@ -44,6 +43,7 @@ import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinBase
 import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
@@ -118,6 +118,8 @@ abstract class Shims {
       child: SparkPlan): NativeParquetInsertIntoHiveTableBase
 
   def createNativeParquetScanExec(basedFileScan: FileSourceScanExec): NativeParquetScanBase
+
+  def createNativeIcebergScanExec(baseBatchExec: BatchScanExec): NativeIcebergScanBase
 
   def createNativeProjectExec(
       projectList: Seq[NamedExpression],

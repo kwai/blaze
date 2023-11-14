@@ -17,7 +17,6 @@ package org.apache.spark.sql.blaze
 
 import java.io.File
 import java.util.UUID
-
 import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.ShuffleDependency
@@ -110,6 +109,7 @@ import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.datasources.BasicWriteTaskStatsTracker
 import org.apache.spark.sql.execution.datasources.WriteTaskStats
 import org.apache.spark.sql.execution.datasources.WriteTaskStatsTracker
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeSortMergeJoinExec
@@ -213,6 +213,10 @@ class ShimsImpl extends Shims with Logging {
   override def createNativeParquetScanExec(
       basedFileScan: FileSourceScanExec): NativeParquetScanBase =
     NativeParquetScanExec(basedFileScan)
+
+  override def createNativeIcebergScanExec(
+      baseBatchExec: BatchScanExec): NativeIcebergScanBase =
+    NativeIcebergScanExec(baseBatchExec)
 
   override def createNativeProjectExec(
       projectList: Seq[NamedExpression],

@@ -16,11 +16,9 @@
 package org.apache.spark.sql.blaze
 
 import java.util.UUID
-
 import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
 import org.apache.spark.broadcast.Broadcast
@@ -70,6 +68,7 @@ import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 
 object BlazeConverters extends Logging {
@@ -136,6 +135,8 @@ object BlazeConverters extends Logging {
       case e: BroadcastExchangeExec => tryConvert(e, convertBroadcastExchangeExec)
       case e: FileSourceScanExec if enableScan => // scan
         tryConvert(e, convertFileSourceScanExec)
+      case e: BatchScanExec if enableScan => // ds scan
+        tryConvert(e, convertBatchScanExec)
       case e: ProjectExec if enableProject => // project
         tryConvert(e, convertProjectExec)
       case e: FilterExec if enableFilter => // filter
@@ -283,6 +284,18 @@ object BlazeConverters extends Logging {
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
     addRenameColumnsExec(Shims.get.createNativeParquetScanExec(exec))
   }
+
+  def convertBatchScanExec(exec: BatchScanExec): SparkPlan = {
+    val (output, scan, runtimeFilters, keyGroupedPartitioning) =
+      (exec.output, exec.scan, exec.runtimeFilters, exec.keyGroupedPartitioning)
+    logDebug(s"Converting FileSourceScanExec: ${Shims.get.simpleStringWithNodeId(exec)}")
+    logDebug(s"  output: ${output}")
+    logDebug(s"  scan: ${scan}")
+    logDebug(s"  runtimeFilters: ${runtimeFilters}")
+    logDebug(s"  keyGroupedPartitioning: ${keyGroupedPartitioning}")
+    addRenameColumnsExec(Shims.get.createNativeIcebergScanExec(exec))
+  }
+
 
   def convertProjectExec(exec: ProjectExec): SparkPlan = {
     val (projectList, child) = (exec.projectList, exec.child)
