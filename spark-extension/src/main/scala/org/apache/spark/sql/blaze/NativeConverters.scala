@@ -780,13 +780,6 @@ object NativeConverters extends Logging {
       case Length(arg) if arg.dataType == StringType =>
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
 
-      // TODO: datafusion's upper/lower() has different behavior from spark
-//      case e: Lower =>
-//        logInfo(s"lower children is: ${e.children} and type is: ${e.dataType}")
-//        buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
-//      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
-
-      //
       case e: Lower if BlazeConf.enableCaseConvertFunctions() =>
         buildExtScalarFunction("StringLower", e.children, e.dataType)
       case e: Upper if BlazeConf.enableCaseConvertFunctions() =>
@@ -943,30 +936,31 @@ object NativeConverters extends Logging {
               .setReturnType(convertDataType(e.dataType)))
         }
 
-      case e: GetArrayItem =>
-        e.ordinal match {
-          case Literal(ordinalValue: Number, _) =>
-            buildExprNode {
-              _.setGetIndexedFieldExpr(
-                pb.PhysicalGetIndexedFieldExprNode
-                  .newBuilder()
-                  .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
-                  .setKey(convertValue(
-                    ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
-                    LongType)))
-            }
+      case e: GetArrayItem
+          if e.ordinal.isInstanceOf[Literal] && e.ordinal
+            .asInstanceOf[Literal]
+            .value
+            .isInstanceOf[Number] =>
+        val ordinalValue = e.ordinal.asInstanceOf[Literal].value.asInstanceOf[Number]
+        buildExprNode {
+          _.setGetIndexedFieldExpr(
+            pb.PhysicalGetIndexedFieldExprNode
+              .newBuilder()
+              .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
+              .setKey(convertValue(
+                ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
+                LongType)))
         }
 
-      case e: GetMapValue =>
-        e.key match {
-          case Literal(value, dataType) =>
-            buildExprNode {
-              _.setGetMapValueExpr(
-                pb.PhysicalGetMapValueExprNode
-                  .newBuilder()
-                  .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
-                  .setKey(convertValue(value, dataType)))
-            }
+      case e: GetMapValue if e.key.isInstanceOf[Literal] =>
+        val value = e.key.asInstanceOf[Literal].value
+        val dataType = e.key.asInstanceOf[Literal].dataType
+        buildExprNode {
+          _.setGetMapValueExpr(
+            pb.PhysicalGetMapValueExprNode
+              .newBuilder()
+              .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
+              .setKey(convertValue(value, dataType)))
         }
 
       case e: GetStructField =>
