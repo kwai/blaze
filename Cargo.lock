@@ -2267,9 +2267,9 @@ dependencies = [
 
 [[package]]
 name = "slimmer_box"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "852101ed9a31f9e4216cbf842d49bf874a46a1d9564d024d8ce09fb1fcfdc0c9"
+checksum = "cdf1b38e57ffd4d5c99011f7c231d72038edeec7f25314209a0fa55042cbd0e2"
 dependencies = [
  "ptr_meta",
 ]
