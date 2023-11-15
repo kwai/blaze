@@ -296,7 +296,6 @@ object BlazeConverters extends Logging {
     addRenameColumnsExec(Shims.get.createNativeIcebergScanExec(exec))
   }
 
-
   def convertProjectExec(exec: ProjectExec): SparkPlan = {
     val (projectList, child) = (exec.projectList, exec.child)
     logDebug(s"Converting ProjectExec: ${Shims.get.simpleStringWithNodeId(exec)}")
@@ -811,7 +810,7 @@ object BlazeConverters extends Logging {
       return false
     }
     plan match {
-      case _: NativeParquetScanBase | _: NativeUnionBase => true
+      case _: NativeParquetScanBase | _: NativeUnionBase | _: NativeIcebergScanBase => true
       case _: ConvertToNativeBase => needRenameColumns(plan.children.head)
       case exec if NativeHelper.isNative(exec) =>
         NativeHelper.getUnderlyingNativePlan(exec).output != plan.output

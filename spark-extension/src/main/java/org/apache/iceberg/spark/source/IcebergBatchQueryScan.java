@@ -15,11 +15,14 @@
  */
 package org.apache.iceberg.spark.source;
 
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.spark.SparkFilters;
 import org.apache.iceberg.spark.SparkSchemaUtil;
@@ -41,46 +44,60 @@ import org.apache.spark.sql.sources.Not;
 import org.apache.spark.sql.sources.Or;
 import org.apache.spark.sql.types.StructType;
 
-public class IcebergBatchQueryScan {
+public class IcebergBatchQueryScan implements Serializable {
 
-    SparkBatchQueryScan sparkBatchQueryScan;
+    String tableIdent;
+    StructType projection;
+    StructType partType;
+    Schema icebergPartitionSchema;
+    org.apache.iceberg.expressions.Expression dataFilter;
+
+    Table table;
 
     public IcebergBatchQueryScan(Scan scan) {
         if (scan instanceof SparkBatchQueryScan) {
-            sparkBatchQueryScan = (SparkBatchQueryScan) scan;
+            SparkBatchQueryScan sparkBatchQueryScan = (SparkBatchQueryScan) scan;
+            table = sparkBatchQueryScan.table();
+            tableIdent = table.name();
+            Schema expected = sparkBatchQueryScan.scan().schema();
+            projection = SparkSchemaUtil.convert(expected);
+            icebergPartitionSchema = icebergPartitionSchema();
+            partType = SparkSchemaUtil.convert(icebergPartitionSchema);
+            dataFilter = sparkBatchQueryScan.scan().filter();
+            table = sparkBatchQueryScan.table();
         } else {
             throw new IllegalStateException("error converting scan " + scan.toString());
         }
     }
 
     public String tableIdent() {
-        return sparkBatchQueryScan.table().name();
+        return tableIdent;
     }
 
     public StructType projection() {
-        Schema expected = sparkBatchQueryScan.scan().schema();
-        return SparkSchemaUtil.convert(expected);
+        return projection;
     }
 
     public StructType partitionSchema() {
-        Schema partSchema = sparkBatchQueryScan.table().spec().schema();
-        return SparkSchemaUtil.convert(partSchema);
-    }
-
-    public Schema icebergPartitionSchema() {
-        return sparkBatchQueryScan.table().spec().schema();
+        return partType;
     }
 
     public StructType tableSchema() {
-        Schema tableSchema = sparkBatchQueryScan.table().schema();
-        return SparkSchemaUtil.convert(tableSchema);
+        return SparkSchemaUtil.convert(table.schema());
+    }
+
+    public Schema icebergPartitionSchema() {
+        PartitionSpec partitionSpec = table.spec();
+        Schema fullSchema = table.schema();
+        return new Schema(partitionSpec.fields().stream()
+                .map(field -> fullSchema.findField(field.fieldId()))
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toList()));
     }
 
     public Expression dataFilter(SparkSession spark) {
         try {
-            org.apache.iceberg.expressions.Expression icebergExpression =
-                    sparkBatchQueryScan.scan().filter();
-            Filter v1Filter = SparkFilters.convertToSparkFilter(icebergExpression);
+            Filter v1Filter = SparkFilters.convertToSparkFilter(dataFilter);
             String where = FilterToSql.filterToSql(v1Filter);
             return SparkExpressionConverter.collectResolvedSparkExpression(spark, tableIdent(), where);
         } catch (Exception e) {
@@ -89,9 +106,8 @@ public class IcebergBatchQueryScan {
     }
 
     public Configuration getConf() {
-        if (sparkBatchQueryScan.table().io() instanceof HadoopFileIO) {
-            HadoopFileIO hadoopFileIO =
-                    (HadoopFileIO) sparkBatchQueryScan.table().io();
+        if (table.io() instanceof HadoopFileIO) {
+            HadoopFileIO hadoopFileIO = (HadoopFileIO) table.io();
             return hadoopFileIO.getConf();
         } else {
             throw new UnsupportedOperationException();

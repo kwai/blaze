@@ -39,6 +39,7 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.execution.joins.BroadcastNestedLoopJoinExec
 
 object BlazeConvertStrategy extends Logging {
@@ -86,6 +87,8 @@ object BlazeConvertStrategy extends Logging {
       case e: BroadcastExchangeExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: FileSourceScanExec =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: BatchScanExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: ProjectExec if isAlwaysConvert(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)

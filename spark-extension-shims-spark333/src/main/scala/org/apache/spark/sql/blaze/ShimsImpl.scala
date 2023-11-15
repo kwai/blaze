@@ -214,8 +214,7 @@ class ShimsImpl extends Shims with Logging {
       basedFileScan: FileSourceScanExec): NativeParquetScanBase =
     NativeParquetScanExec(basedFileScan)
 
-  override def createNativeIcebergScanExec(
-      baseBatchExec: BatchScanExec): NativeIcebergScanBase =
+  override def createNativeIcebergScanExec(baseBatchExec: BatchScanExec): NativeIcebergScanBase =
     NativeIcebergScanExec(baseBatchExec)
 
   override def createNativeProjectExec(

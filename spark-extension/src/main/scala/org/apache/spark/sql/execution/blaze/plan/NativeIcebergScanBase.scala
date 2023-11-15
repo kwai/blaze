@@ -24,19 +24,19 @@ import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.datasources.v2.{BatchScanExec, DataSourceRDD, DataSourceRDDPartition}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.{LeafExecNode, SparkPlan}
-import org.apache.spark.sql.types.{NullType, StructField, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.apache.spark.{Partition, TaskContext}
 import org.blaze.{protobuf => pb}
 
 import java.net.URI
 import java.security.PrivilegedExceptionAction
-import java.util.UUID
+import java.util.{Collections, UUID}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 abstract class NativeIcebergScanBase(baseDataSourceScan: BatchScanExec)
-  extends LeafExecNode
+    extends LeafExecNode
     with NativeSupports {
 
   override lazy val metrics: Map[String, SQLMetric] = mutable
@@ -60,42 +60,28 @@ abstract class NativeIcebergScanBase(baseDataSourceScan: BatchScanExec)
 
   override val output: Seq[Attribute] = baseDataSourceScan.output
   override val outputPartitioning: Partitioning = baseDataSourceScan.outputPartitioning
-  private val partitionSchema = scan.partitionSchema()
 
   private def nativePruningPredicateFilters = Seq(
     NativeConverters.convertScanPruningExpr(scan.dataFilter(sparkSession)))
 
-  private def nativeFileSchema =
-    NativeConverters.convertSchema(
-      StructType(
-        baseDataSourceScan.scan.readSchema.map(field =>
-          // avoid converting unsupported type in non-used fields
-          StructField(field.name, NullType, nullable = true))))
-
-  private def nativePartitionSchema = NativeConverters.convertSchema(partitionSchema)
+  private def nativeFileSchema = NativeConverters.convertSchema(scan.tableSchema())
+  private def nativePartitionSchema = NativeConverters.convertSchema(StructType.apply(Seq.empty))
 
   private def nativeFileGroups = (partition: DataSourceRDDPartition) => {
     // list input file statuses
-    val partSchema = scan.icebergPartitionSchema()
-    val partSchemaFields = partSchema.columns().asScala
-
     val nativePartitionedFile = (file: FileScanTask) => {
-      val nativePartitionValues = partitionSchema.zip(partSchemaFields).map { case (field, fd) =>
-        val accessor = partSchema.accessorForField(fd.fieldId())
-        NativeConverters.convertValue(accessor.get(file.partition()), field.dataType)
-      }
 
       pb.PartitionedFile
         .newBuilder()
         .setPath(file.file().path().toString)
-        .setSize(file.sizeBytes())
-        .addAllPartitionValues(nativePartitionValues.asJava)
+        .setSize(file.length())
+        .addAllPartitionValues(Collections.emptyList())
         .setLastModifiedNs(0)
         .setRange(
           pb.FileRange
             .newBuilder()
-            .setStart(file.start)
-            .setEnd(file.start + file.length)
+            .setStart(file.start())
+            .setEnd(file.start() + file.length())
             .build())
         .build()
     }

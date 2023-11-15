@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2022 The Blaze Authors
  *
@@ -19,9 +18,8 @@ package org.apache.spark.sql.execution.blaze.plan
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 
 case class NativeIcebergScanExec(baseDataSourceScan: BatchScanExec)
-  extends NativeIcebergScanBase(baseDataSourceScan) {
+    extends NativeIcebergScanBase(baseDataSourceScan) {
 
   override def simpleString(maxFields: Int): String =
     s"$nodeName (${baseDataSourceScan.simpleString(maxFields)})"
 }
-
