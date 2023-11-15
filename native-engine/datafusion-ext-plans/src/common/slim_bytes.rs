@@ -23,6 +23,12 @@ pub struct SlimBytes(SlimmerBox<[u8]>);
 unsafe impl Send for SlimBytes {}
 unsafe impl Sync for SlimBytes {}
 
+impl SlimBytes {
+    pub fn into_vec(self) -> Vec<u8> {
+        SlimmerBox::into_box(self.0).into_vec()
+    }
+}
+
 impl Default for SlimBytes {
     fn default() -> Self {
         SlimBytes(SlimmerBox::new(&[]))
