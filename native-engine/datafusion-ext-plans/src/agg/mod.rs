@@ -21,8 +21,7 @@ pub mod collect_set;
 pub mod count;
 pub mod first;
 pub mod first_ignores_null;
-pub mod max;
-pub mod min;
+pub mod maxmin;
 pub mod sum;
 
 use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr};
@@ -110,6 +109,22 @@ pub trait Agg: Send + Sync + Debug {
         row_idx: usize,
     ) -> Result<()>;
 
+    fn partial_batch_update(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        for row_idx in 0..agg_bufs.len() {
+            let agg_buf = &mut agg_bufs[row_idx];
+            mem_diff -= agg_buf.mem_size();
+            self.partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
+            mem_diff += agg_buf.mem_size();
+        }
+        Ok(mem_diff)
+    }
+
     fn partial_update_all(
         &self,
         agg_buf: &mut AggBuf,
@@ -123,6 +138,23 @@ pub trait Agg: Send + Sync + Debug {
         merging_agg_buf: &mut AggBuf,
         agg_buf_addrs: &[u64],
     ) -> Result<()>;
+
+    fn partial_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        merging_agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        for row_idx in 0..agg_bufs.len() {
+            let agg_buf = &mut agg_bufs[row_idx];
+            let merging_agg_buf = &mut merging_agg_bufs[row_idx];
+            mem_diff -= agg_buf.mem_size();
+            self.partial_merge(agg_buf, merging_agg_buf, agg_buf_addrs)?;
+            mem_diff += agg_buf.mem_size();
+        }
+        Ok(mem_diff)
+    }
 
     fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         // default implementation:
@@ -253,11 +285,11 @@ pub fn create_agg(
         }
         AggFunction::Max => {
             let dt = children[0].data_type(input_schema)?;
-            Arc::new(max::AggMax::try_new(children[0].clone(), dt)?)
+            Arc::new(maxmin::AggMax::try_new(children[0].clone(), dt)?)
         }
         AggFunction::Min => {
             let dt = children[0].data_type(input_schema)?;
-            Arc::new(min::AggMin::try_new(children[0].clone(), dt)?)
+            Arc::new(maxmin::AggMin::try_new(children[0].clone(), dt)?)
         }
         AggFunction::First => {
             let dt = children[0].data_type(input_schema)?;

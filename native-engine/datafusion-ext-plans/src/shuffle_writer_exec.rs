@@ -18,11 +18,12 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::memory_manager::MemManager;
 use crate::shuffle::bucket_repartitioner::BucketShuffleRepartitioner;
 use crate::shuffle::single_repartitioner::SingleShuffleRepartitioner;
 use crate::shuffle::sort_repartitioner::SortShuffleRepartitioner;
-use crate::shuffle::ShuffleRepartitioner;
+use crate::shuffle::{can_use_bucket_repartitioner, ShuffleRepartitioner};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use async_trait::async_trait;
@@ -118,7 +119,10 @@ impl ExecutionPlan for ShuffleWriterExec {
                 BaselineMetrics::new(&self.metrics, partition),
                 data_size_metric,
             )),
-            p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
+            p @ Partitioning::Hash(_, _)
+                if can_use_bucket_repartitioner(&self.input.schema())
+                    && p.partition_count() < 200 =>
+            {
                 let partitioner = Arc::new(BucketShuffleRepartitioner::new(
                     partition,
                     self.output_data_file.clone(),
@@ -149,7 +153,10 @@ impl ExecutionPlan for ShuffleWriterExec {
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
 
-        let input = self.input.execute(partition, context.clone())?;
+        let input = stat_input(
+            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
+            self.input.execute(partition, context.clone())?,
+        )?;
         let stream = repartitioner
             .execute(
                 context.clone(),

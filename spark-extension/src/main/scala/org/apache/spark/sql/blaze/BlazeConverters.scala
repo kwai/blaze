@@ -87,6 +87,8 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.smj", defaultValue = true)
   val enableBhj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.bhj", defaultValue = true)
+  val enableBnlj: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.bnlj", defaultValue = true)
   val enableLocalLimit: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.limit", defaultValue = true)
   val enableGlobalLimit: Boolean =
@@ -146,6 +148,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertSortMergeJoinExec)
       case e: BroadcastHashJoinExec if enableBhj => // broadcast hash join
         tryConvert(e, convertBroadcastHashJoinExec)
+      case e: BroadcastNestedLoopJoinExec if enableBnlj => // broadcast nested loop join
+        tryConvert(e, convertBroadcastNestedLoopJoinExec)
       case e: LocalLimitExec if enableLocalLimit => // local limit
         tryConvert(e, convertLocalLimitExec)
       case e: GlobalLimitExec if enableGlobalLimit => // global limit
@@ -451,6 +455,75 @@ object BlazeConverters extends Logging {
         buildPostJoinProject(bhj, exec.output)
       } else {
         bhj
+      }
+    } catch {
+      case e @ (_: NotImplementedError | _: Exception) =>
+        val underlyingBroadcast = exec.buildSide match {
+          case BuildLeft => Shims.get.getUnderlyingBroadcast(exec.left)
+          case BuildRight => Shims.get.getUnderlyingBroadcast(exec.right)
+        }
+        underlyingBroadcast.setTagValue(NativeBroadcastExchangeBase.nativeExecutionTag, false)
+        throw e
+    }
+  }
+
+  def convertBroadcastNestedLoopJoinExec(exec: BroadcastNestedLoopJoinExec): SparkPlan = {
+    try {
+      val (joinType, buildSide, condition, left, right) =
+        (exec.joinType, exec.buildSide, exec.condition, exec.left, exec.right)
+      logDebug(
+        s"Converting BroadcastNestedLoopJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
+      logDebug(s"  joinType: ${exec.joinType}")
+      logDebug(s"  buildSide: ${exec.buildSide}")
+      logDebug(s"  condition: ${exec.condition}")
+      val (broadcasted, nativeProbed) = buildSide match {
+        case BuildRight =>
+          assert(NativeHelper.isNative(right), "broadcast join build side is not native")
+          val convertedLeft = convertToNative(left)
+          (right, convertedLeft)
+
+        case BuildLeft =>
+          assert(NativeHelper.isNative(left), "broadcast join build side is not native")
+          val convertedRight = convertToNative(right)
+          (left, convertedRight)
+
+        case _ =>
+          // scalastyle:off throwerror
+          throw new NotImplementedError(
+            "Ignore BroadcastNestedLoopJoin with unsupported children structure")
+      }
+
+      // the in-memory inner table is not the same in different join types
+      // reference: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html
+      var needPostProject = false
+      val (modifiedLeft, modifiedRight, modifiedJoinType) = (buildSide, joinType) match {
+        case (BuildLeft, RightOuter | FullOuter) => (broadcasted, nativeProbed, joinType)
+        case (BuildRight, Inner | LeftOuter | LeftSemi | LeftAnti) =>
+          (nativeProbed, broadcasted, joinType)
+        case _ =>
+          needPostProject = true
+          val modifiedJoinType = joinType match { // reverse join type
+            case Inner => (nativeProbed, broadcasted, Inner)
+            case FullOuter => (broadcasted, nativeProbed, FullOuter)
+            case LeftOuter => (broadcasted, nativeProbed, RightOuter)
+            case RightOuter => (nativeProbed, broadcasted, LeftOuter)
+            case _ =>
+              throw new NotImplementedError(
+                s"BNLJ $joinType with $buildSide is not yet supported")
+          }
+          modifiedJoinType
+      }
+
+      val bnlj = Shims.get.createNativeBroadcastNestedLoopJoinExec(
+        addRenameColumnsExec(modifiedLeft),
+        addRenameColumnsExec(modifiedRight),
+        modifiedJoinType,
+        condition)
+
+      if (needPostProject) {
+        buildPostJoinProject(bnlj, exec.output)
+      } else {
+        bnlj
       }
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>

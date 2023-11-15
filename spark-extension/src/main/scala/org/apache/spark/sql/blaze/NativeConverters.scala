@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
+import org.apache.spark.sql.catalyst.expressions.aggregate.First
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -140,7 +141,6 @@ object NativeConverters extends Logging {
 
       // array/list
       case a: ArrayType =>
-        typedCheckChildTypeNested(a.elementType)
         arrowTypeBuilder.setLIST(
           org.blaze.protobuf.List
             .newBuilder()
@@ -153,8 +153,6 @@ object NativeConverters extends Logging {
             .build())
 
       case m: MapType =>
-        typedCheckChildTypeNested(m.keyType)
-        typedCheckChildTypeNested(m.valueType)
         arrowTypeBuilder.setMAP(
           org.blaze.protobuf.Map
             .newBuilder()
@@ -172,7 +170,6 @@ object NativeConverters extends Logging {
                 .setNullable(m.valueContainsNull))
             .build())
       case s: StructType =>
-        s.fields.foreach(field => typedCheckChildTypeNested(field.dataType))
         arrowTypeBuilder.setSTRUCT(
           org.blaze.protobuf.Struct
             .newBuilder()
@@ -783,13 +780,6 @@ object NativeConverters extends Logging {
       case Length(arg) if arg.dataType == StringType =>
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
 
-      // TODO: datafusion's upper/lower() has different behavior from spark
-//      case e: Lower =>
-//        logInfo(s"lower children is: ${e.children} and type is: ${e.dataType}")
-//        buildScalarFunction(pb.ScalarFunction.Lower, e.children, e.dataType)
-//      case e: Upper => buildScalarFunction(pb.ScalarFunction.Upper, e.children, e.dataType)
-
-      //
       case e: Lower if BlazeConf.enableCaseConvertFunctions() =>
         buildExtScalarFunction("StringLower", e.children, e.dataType)
       case e: Upper if BlazeConf.enableCaseConvertFunctions() =>
@@ -946,30 +936,31 @@ object NativeConverters extends Logging {
               .setReturnType(convertDataType(e.dataType)))
         }
 
-      case e: GetArrayItem =>
-        e.ordinal match {
-          case Literal(ordinalValue: Number, _) =>
-            buildExprNode {
-              _.setGetIndexedFieldExpr(
-                pb.PhysicalGetIndexedFieldExprNode
-                  .newBuilder()
-                  .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
-                  .setKey(convertValue(
-                    ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
-                    LongType)))
-            }
+      case e: GetArrayItem
+          if e.ordinal.isInstanceOf[Literal] && e.ordinal
+            .asInstanceOf[Literal]
+            .value
+            .isInstanceOf[Number] =>
+        val ordinalValue = e.ordinal.asInstanceOf[Literal].value.asInstanceOf[Number]
+        buildExprNode {
+          _.setGetIndexedFieldExpr(
+            pb.PhysicalGetIndexedFieldExprNode
+              .newBuilder()
+              .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
+              .setKey(convertValue(
+                ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
+                LongType)))
         }
 
-      case e: GetMapValue =>
-        e.key match {
-          case Literal(value, dataType) =>
-            buildExprNode {
-              _.setGetMapValueExpr(
-                pb.PhysicalGetMapValueExprNode
-                  .newBuilder()
-                  .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
-                  .setKey(convertValue(value, dataType)))
-            }
+      case e: GetMapValue if e.key.isInstanceOf[Literal] =>
+        val value = e.key.asInstanceOf[Literal].value
+        val dataType = e.key.asInstanceOf[Literal].dataType
+        buildExprNode {
+          _.setGetMapValueExpr(
+            pb.PhysicalGetMapValueExprNode
+              .newBuilder()
+              .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
+              .setKey(convertValue(value, dataType)))
         }
 
       case e: GetStructField =>
@@ -992,7 +983,12 @@ object NativeConverters extends Logging {
             && e.children(0).dataType == StringType
             && e.children(1).dataType == StringType
             && e.children(1).isInstanceOf[Literal]) =>
-        buildExtScalarFunction("GetJsonObject", e.children, StringType)
+        // use GetParsedJsonObject + ParseJson for reusing parsed json value in native
+        val parsed = Shims.get.createNativeExprWrapper(
+          buildExtScalarFunction("ParseJson", e.children(0) :: Nil, BinaryType),
+          BinaryType,
+          nullable = false)
+        buildExtScalarFunction("GetParsedJsonObject", parsed :: e.children(1) :: Nil, StringType)
 
       case e =>
         Shims.get.convertExpr(e) match {
@@ -1036,13 +1032,17 @@ object NativeConverters extends Logging {
                 Literal(1))))
         }
 
-      // case First(child, ignoresNullExpr) =>
-      //   aggBuilder.setAggFunction(if (ignoresNullExpr.eval().asInstanceOf[Boolean]) {
-      //     pb.AggFunction.FIRST_IGNORES_NULL
-      //   } else {
-      //     pb.AggFunction.FIRST
-      //   })
-      //   aggBuilder.addChildren(convertExpr(child))
+      case First(child, ignoresNullExpr) =>
+        val ignoresNull = ignoresNullExpr.asInstanceOf[Any] match {
+          case Literal(v: Boolean, BooleanType) => v
+          case v: Boolean => v
+        }
+        aggBuilder.setAggFunction(if (ignoresNull) {
+          pb.AggFunction.FIRST_IGNORES_NULL
+        } else {
+          pb.AggFunction.FIRST
+        })
+        aggBuilder.addChildren(convertExpr(child))
 
       case CollectList(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_LIST)
@@ -1097,13 +1097,6 @@ object NativeConverters extends Logging {
         val paramsSchema = ois.readObject().asInstanceOf[StructType]
         (expr, paramsSchema)
       }
-    }
-  }
-
-  def typedCheckChildTypeNested(dt: DataType): Unit = {
-    if (dt.isInstanceOf[ArrayType] || dt.isInstanceOf[MapType] || dt.isInstanceOf[StructType]) {
-      throw new NotImplementedError(
-        s"Data type conversion not implemented for nesting type with child type: ${dt.simpleString}")
     }
   }
 

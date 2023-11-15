@@ -14,6 +14,7 @@
 
 //! Defines the External shuffle repartition plan
 
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::bytes_arena::BytesArena;
 use crate::common::column_pruning::ExecuteWithColumnPruning;
 use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
@@ -21,6 +22,7 @@ use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::output::{
     output_bufferable_with_spill, output_with_sender, WrappedRecordBatchSender,
 };
+use crate::common::slim_bytes::SlimBytes;
 use crate::common::{BatchTaker, BatchesInterleaver};
 use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
@@ -236,7 +238,10 @@ impl ExecuteWithColumnPruning for SortExec {
         });
         MemManager::register_consumer(external_sorter.clone(), true);
 
-        let input = self.input.execute(partition, context.clone())?;
+        let input = stat_input(
+            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
+            self.input.execute(partition, context.clone())?,
+        )?;
         let coalesced = Box::pin(CoalesceStream::new(
             input,
             batch_size,
@@ -760,7 +765,7 @@ struct SpillCursor {
     cur_batches: Vec<RecordBatch>,
     cur_batch_idx: usize,
     cur_row_idx: usize,
-    cur_key: Box<[u8]>,
+    cur_key: SlimBytes,
     finished: bool,
 }
 
@@ -780,7 +785,7 @@ impl SpillCursor {
             cur_batches: vec![],
             cur_batch_idx: 0,
             cur_row_idx: 0,
-            cur_key: Box::default(),
+            cur_key: Default::default(),
             finished: false,
         };
         iter.next_key()?; // load first record into current
@@ -797,7 +802,7 @@ impl SpillCursor {
             return Ok(());
         }
         let sorted_row_len = read_len(&mut self.input)?;
-        self.cur_key = read_bytes_slice(&mut self.input, sorted_row_len)?;
+        self.cur_key = read_bytes_slice(&mut self.input, sorted_row_len)?.into();
         self.cur_loaded_num_rows += 1;
         Ok(())
     }

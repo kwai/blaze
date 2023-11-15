@@ -36,8 +36,10 @@ use crate::agg::agg_buf::AggBuf;
 use crate::agg::agg_context::AggContext;
 use crate::agg::agg_tables::AggTables;
 use crate::agg::{AggExecMode, AggExpr, GroupingExpr};
+use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
 use crate::common::memory_manager::MemManager;
 use crate::common::output::{output_bufferable_with_spill, output_with_sender};
+use crate::common::slim_bytes::SlimBytes;
 
 #[derive(Debug)]
 pub struct AggExec {
@@ -192,7 +194,10 @@ async fn execute_agg_with_grouping_hash(
     drop(timer);
 
     // start processing input batches
-    let input = input.execute(partition_id, context.clone())?;
+    let input = stat_input(
+        InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition_id)?,
+        input.execute(partition_id, context.clone())?,
+    )?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         context.session_config().batch_size(),
@@ -228,10 +233,11 @@ async fn execute_agg_with_grouping_hash(
 
         // insert or update rows into in-mem table
         tables
-            .update_entries(grouping_rows, |row_idx, agg_buf| {
-                agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
-                agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
-                Ok(())
+            .update_entries(grouping_rows, |agg_bufs| {
+                let mut mem_diff = 0;
+                mem_diff += agg_ctx.partial_batch_update_input(agg_bufs, &input_arrays)?;
+                mem_diff += agg_ctx.partial_batch_merge_input(agg_bufs, agg_buf_array)?;
+                Ok(mem_diff)
             })
             .await?;
     }
@@ -270,7 +276,10 @@ async fn execute_agg_no_grouping(
     let mut agg_buf = agg_ctx.initial_agg_buf.clone();
 
     // start processing input batches
-    let input = input.execute(partition_id, context.clone())?;
+    let input = stat_input(
+        InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition_id)?,
+        input.execute(partition_id, context.clone())?,
+    )?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         context.session_config().batch_size(),
@@ -349,7 +358,10 @@ async fn execute_agg_sorted(
     )?;
 
     // start processing input batches
-    let input = input.execute(partition_id, context.clone())?;
+    let input = stat_input(
+        InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition_id)?,
+        input.execute(partition_id, context.clone())?,
+    )?;
     let mut coalesced = Box::pin(CoalesceStream::new(
         input,
         context.session_config().batch_size(),
@@ -362,7 +374,7 @@ async fn execute_agg_sorted(
         |sender| async move {
             let batch_size = context.session_config().batch_size();
             let mut staging_records = vec![];
-            let mut current_record: Option<(Box<[u8]>, AggBuf)> = None;
+            let mut current_record: Option<(SlimBytes, AggBuf)> = None;
             let mut timer = elapsed_compute.timer();
             timer.stop();
 
@@ -392,7 +404,7 @@ async fn execute_agg_sorted(
                     .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
                     .collect::<Result<_>>()
                     .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
-                let grouping_rows: Vec<Box<[u8]>> = grouping_row_converter
+                let grouping_rows: Vec<SlimBytes> = grouping_row_converter
                     .convert_columns(&grouping_arrays)?
                     .into_iter()
                     .map(|row| row.as_ref().into())

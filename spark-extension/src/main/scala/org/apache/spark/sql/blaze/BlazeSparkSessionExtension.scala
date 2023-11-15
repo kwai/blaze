@@ -18,7 +18,6 @@ package org.apache.spark.sql.blaze
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.ConfigEntry
-import org.apache.spark.internal.config.OptionalConfigEntry
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.SparkPlan

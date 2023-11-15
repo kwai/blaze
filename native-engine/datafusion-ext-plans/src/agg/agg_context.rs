@@ -14,12 +14,14 @@
 
 use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AccumInitialValue, AggBuf};
 use crate::agg::{Agg, AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME};
+use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
 use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
 use datafusion::common::cast::as_binary_array;
 use datafusion::common::{Result, ScalarValue};
+use datafusion::physical_expr::PhysicalExprRef;
 use once_cell::sync::OnceCell;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -40,6 +42,8 @@ pub struct AggContext {
     pub initial_agg_buf: AggBuf,
     pub initial_input_agg_buf: AggBuf,
     pub initial_input_buffer_offset: usize,
+    pub agg_expr_evaluator: CachedExprsEvaluator,
+    pub agg_expr_evaluator_output_schema: SchemaRef,
 
     // agg buf addr offsets/lens of every aggs
     pub agg_buf_addrs: Box<[u64]>,
@@ -150,6 +154,25 @@ impl AggContext {
             offset += len;
         }
 
+        let agg_exprs_flatten: Vec<PhysicalExprRef> = aggs
+            .iter()
+            .filter(|agg| agg.mode.is_partial())
+            .flat_map(|agg| agg.agg.exprs())
+            .collect();
+        let agg_expr_evaluator_output_schema = Arc::new(Schema::new(
+            agg_exprs_flatten
+                .iter()
+                .map(|e| {
+                    Ok(Field::new(
+                        "",
+                        e.data_type(&input_schema)?,
+                        e.nullable(&input_schema)?,
+                    ))
+                })
+                .collect::<Result<Fields>>()?,
+        ));
+        let agg_expr_evaluator = CachedExprsEvaluator::try_new(vec![], agg_exprs_flatten)?;
+
         Ok(Self {
             exec_mode,
             need_partial_update,
@@ -165,6 +188,8 @@ impl AggContext {
             initial_agg_buf,
             initial_input_agg_buf,
             agg_buf_addrs,
+            agg_expr_evaluator,
+            agg_expr_evaluator_output_schema,
             initial_input_buffer_offset,
             agg_buf_addr_offsets: agg_buf_addr_offsets.into(),
             agg_buf_addr_counts: agg_buf_addr_counts.into(),
@@ -175,21 +200,23 @@ impl AggContext {
         if !self.need_partial_update {
             return Ok(vec![]);
         }
-        let mut input_arrays = Vec::with_capacity(self.aggs.len());
-        let mut values = vec![];
+        let agg_exprs_batch = self
+            .agg_expr_evaluator
+            .filter_project(input_batch, self.agg_expr_evaluator_output_schema.clone())?;
 
+        let mut input_arrays = Vec::with_capacity(self.aggs.len());
+        let mut offset = 0;
         for agg in &self.aggs {
             if agg.mode.is_partial() {
-                let mut cur_values = vec![];
-                for expr in &agg.agg.exprs() {
-                    let value = expr
-                        .evaluate(input_batch)
-                        .map(|r| r.into_array(input_batch.num_rows()))?;
-                    cur_values.push(value);
-                }
-                values.extend(agg.agg.prepare_partial_args(&cur_values)?);
+                let num_agg_exprs = agg.agg.exprs().len();
+                let prepared = agg
+                    .agg
+                    .prepare_partial_args(&agg_exprs_batch.columns()[offset..][..num_agg_exprs])?;
+                input_arrays.push(prepared);
+                offset += num_agg_exprs;
+            } else {
+                input_arrays.push(vec![]);
             }
-            input_arrays.push(std::mem::take(&mut values));
         }
         Ok(input_arrays)
     }
@@ -275,6 +302,21 @@ impl AggContext {
         Ok(())
     }
 
+    pub fn partial_batch_update_input(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        input_arrays: &[Vec<ArrayRef>],
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        if self.need_partial_update {
+            for (idx, agg) in &self.need_partial_update_aggs {
+                mem_diff +=
+                    agg.partial_batch_update(agg_bufs, self.agg_addrs(*idx), &input_arrays[*idx])?;
+            }
+        }
+        Ok(mem_diff)
+    }
+
     pub fn partial_update_input_all(
         &self,
         agg_buf: &mut AggBuf,
@@ -302,6 +344,29 @@ impl AggContext {
             }
         }
         Ok(())
+    }
+
+    pub fn partial_batch_merge_input(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_array: &BinaryArray,
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        if self.need_partial_merge {
+            let mut input_agg_bufs = agg_buf_array
+                .iter()
+                .map(|value| {
+                    let mut input_agg_buf = self.initial_input_agg_buf.clone();
+                    input_agg_buf.load_from_bytes(value.unwrap())?;
+                    Ok(input_agg_buf)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            for (idx, agg) in &self.need_partial_merge_aggs {
+                mem_diff +=
+                    agg.partial_batch_merge(agg_bufs, &mut input_agg_bufs, self.agg_addrs(*idx))?;
+            }
+        }
+        Ok(mem_diff)
     }
 
     pub fn partial_merge_input_all(

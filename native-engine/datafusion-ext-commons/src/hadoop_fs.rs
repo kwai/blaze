@@ -107,15 +107,6 @@ impl FsDataOutputStream {
     }
 }
 
-impl Drop for FsDataOutputStream {
-    fn drop(&mut self) {
-        let _timer = self.io_time.timer();
-        if let Err(e) = jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ()) {
-            log::warn!("error closing hadoop FSDataOutputStream: {:?}", e);
-        }
-    }
-}
-
 pub struct FsProvider {
     fs_provider: GlobalRef,
     io_time: Time,

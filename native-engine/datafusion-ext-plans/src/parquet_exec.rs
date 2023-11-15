@@ -30,7 +30,7 @@ use datafusion::common::DataFusionError;
 use datafusion::datasource::physical_plan::parquet::page_filter::PagePruningPredicate;
 use datafusion::datasource::physical_plan::parquet::ParquetOpener;
 use datafusion::datasource::physical_plan::{
-    FileMeta, FileScanConfig, FileStream, ParquetFileMetrics, ParquetFileReaderFactory,
+    FileMeta, FileScanConfig, FileStream, OnError, ParquetFileMetrics, ParquetFileReaderFactory,
 };
 use datafusion::parquet::arrow::async_reader::{fetch_parquet_metadata, AsyncFileReader};
 use datafusion::parquet::errors::ParquetError;
@@ -245,12 +245,12 @@ impl ExecutionPlan for ParquetExec {
 
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-        let mut stream = Box::pin(FileStream::new(
-            &self.base_config,
-            partition_index,
-            opener,
-            &self.metrics,
-        )?);
+        let mut file_stream =
+            FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?;
+        if jni_call_static!(BlazeConf.ignoreCorruptedFiles() -> bool)? {
+            file_stream = file_stream.with_on_error(OnError::Skip);
+        }
+        let mut stream = Box::pin(file_stream);
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),

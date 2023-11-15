@@ -1,0 +1,146 @@
+name: TPC-DS
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build-validator:
+    name: Build Validator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: s4u/setup-maven-action@main
+        with:
+          maven-version: 3.5.4
+          checkout-repository: blaze-init/tpcds-validator
+
+      - name: Build
+        run: mvn package -DskipTests
+
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: validator
+          path: target/tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar
+
+  build-blaze-jar:
+    name: Build Blaze JAR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: s4u/setup-maven-action@main
+        with: {maven-version: 3.5.4}
+
+      - uses: arduino/setup-protoc@v2
+        with: {version: "21.7"}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with: {rustflags: --allow warnings}
+
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1
+
+          ## - name: Rust Clippy Check
+          ##   uses: actions-rs/clippy-check@v1
+          ##   with:
+          ##     token: ${{ secrets.GITHUB_TOKEN }}
+          ##     args: --all-features
+
+      - name: Build Spark303
+        run: mvn package -Ppre -Pspark303
+      - name: Upload Spark303
+        uses: actions/upload-artifact@v3
+        with:
+          name: blaze-engine-spark303
+          path: target/blaze-engine-spark303-pre-*-SNAPSHOT.jar
+
+      - name: Build Spark333
+        run: mvn package -Ppre -Pspark333
+      - name: Upload Spark333
+        uses: actions/upload-artifact@v3
+        with:
+          name: blaze-engine-spark333
+          path: target/blaze-engine-spark333-pre-*-SNAPSHOT.jar
+
+  setup-spark:
+    name: Setup Spark
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - sparkver: spark303
+            sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.0.3/spark-3.0.3-bin-hadoop2.7.tgz
+          - sparkver: spark333
+            sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.3.3/spark-3.3.3-bin-hadoop3.tgz
+    steps:
+      - uses: actions/cache@v3
+        with:
+          path: spark-bin-${{ matrix.sparkver }}
+          key: spark-bin-${{ matrix.sparkver }}
+
+      - name: Setup ${{ matrix.sparkver }}
+        if: steps.cache-spark.outputs.cache-hit != 'true'
+        run: |
+          wget -c ${{ matrix.sparkurl }}
+          mkdir -p spark-bin-${{ matrix.sparkver }}
+          cd spark-bin-${{ matrix.sparkver }} && tar -xf ../spark-*.tgz --strip-component=1
+
+  test-it:
+    name: Run test ${{ matrix.query }}
+    needs: [build-validator, build-blaze-jar, setup-spark]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sparkver: [spark303, spark333]
+        query: [q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11,
+                q12, q13, q14a, q14b, q15, q16, q17, q18, q19, q20,
+                q21, q22, q23a, q23b, q24a, q24b, q25, q26, q27, q28, q29,
+                q31, q33, q34, q35, q36, q37, q38, q39a, q39b, q40,
+                q41, q42, q43, q44, q45, q46, q47, q48, q49, q50,
+                q51, q52, q53, q54, q55, q56, q57, q58, q59, q60,
+                q61, q62, q63, q64, q65, q66, q67, q68, q69, q70,
+                q71, q72, q73, q74, q75, q76, q77, q78, q79, q80,
+                q81, q82, q83, q84, q85, q86, q87, q88, q89, q90,
+                q91, q92, q93, q94, q95, q96, q97, q98, q99]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v3
+        with: {name: validator}
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: blaze-engine-${{ matrix.sparkver }}
+
+      - uses: actions/cache@v3
+        with:
+          path: spark-bin-${{ matrix.sparkver }}
+          key: spark-bin-${{ matrix.sparkver }}
+
+      - name: Checkout TPC-DS Data
+        uses: actions/checkout@v4
+        with:
+          repository: blaze-init/tpcds_1g
+          path: dev/tpcds_1g
+
+      - name: Install Blaze JAR
+        run: cp blaze-engine-*${{ matrix.sparkver }}*.jar spark-bin-${{ matrix.sparkver }}/jars/
+
+      - name: Run with BHJ
+        run: |
+          export RUST_LOG=ERROR
+          SPARK_HOME=spark-bin-${{ matrix.sparkver }} dev/run-tpcds-test \
+            --data-location dev/tpcds_1g \
+            --conf spark.driver.memory=3g \
+            --conf spark.driver.memoryOverhead=2048 \
+            --query-filter ${{ matrix.query }}
+
+      - name: Run without BHJ
+        run: |
+          export RUST_LOG=ERROR
+          SPARK_HOME=spark-bin-${{ matrix.sparkver }} dev/run-tpcds-test \
+            --conf spark.sql.autoBroadcastJoinThreshold=-1 \
+            --conf spark.driver.memory=3g \
+            --conf spark.driver.memoryOverhead=2048 \
+            --data-location dev/tpcds_1g \
+            --query-filter ${{ matrix.query }}
