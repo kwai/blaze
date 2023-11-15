@@ -415,7 +415,7 @@ fn get_partial_buf_merger<P: AggMaxMinParams>(
             if v.is_some() {
                 let w = AggDynStr::value_mut(agg_buf1.dyn_value_mut(addr));
                 let v = v.as_ref().unwrap();
-                if w.as_ref().filter(|w| w.as_ref() >= v.as_ref()).is_none() {
+                if w.as_ref().filter(|w| w.cmp(&v) == P::ORD).is_none() {
                     *w = Some(v.to_owned());
                 }
             }
