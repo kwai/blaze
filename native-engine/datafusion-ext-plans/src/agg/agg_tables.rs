@@ -15,7 +15,7 @@
 use ahash::RandomState;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::{BufReader, Read, Write};
-use std::mem::size_of;
+use std::mem::{size_of, ManuallyDrop};
 use std::sync::{Arc, Weak};
 
 use arrow::row::{RowConverter, Rows};
@@ -40,6 +40,7 @@ use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
 use crate::common::onheap_spill::{try_new_spill, Spill};
 use crate::common::output::WrappedRecordBatchSender;
 use crate::common::rdxsort;
+use crate::common::slim_bytes::SlimBytes;
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
@@ -84,10 +85,10 @@ impl AggTables {
     pub async fn update_entries(
         &self,
         key_rows: Rows,
-        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
+        fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
     ) -> Result<()> {
         let mut in_mem = self.in_mem.lock().await;
-        in_mem.update_entries(&self.agg_ctx, key_rows, fn_entry)?;
+        in_mem.update_entries(&self.agg_ctx, key_rows, fn_entries)?;
 
         let mem_used = in_mem.mem_used();
         drop(in_mem);
@@ -162,7 +163,7 @@ impl AggTables {
         }
         let mut staging_records = Vec::with_capacity(batch_size);
         let mut current_bucket_idx = 0;
-        let mut current_records: HashMap<Box<[u8]>, AggBuf> = HashMap::new();
+        let mut current_records: HashMap<SlimBytes, AggBuf> = HashMap::new();
 
         macro_rules! flush_staging {
             () => {{
@@ -363,12 +364,12 @@ impl InMemTable {
         &mut self,
         agg_ctx: &Arc<AggContext>,
         key_rows: Rows,
-        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
+        fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
     ) -> Result<()> {
         if self.is_hash {
-            self.update_hash_entries(agg_ctx, key_rows, fn_entry)
+            self.update_hash_entries(agg_ctx, key_rows, fn_entries)
         } else {
-            self.update_unsorted_entries(agg_ctx, key_rows, fn_entry)
+            self.update_unsorted_entries(agg_ctx, key_rows, fn_entries)
         }
     }
 
@@ -376,12 +377,13 @@ impl InMemTable {
         &mut self,
         agg_ctx: &Arc<AggContext>,
         key_rows: Rows,
-        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
+        fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
     ) -> Result<()> {
         let hashes: Vec<u64> = key_rows
             .iter()
             .map(|row| RANDOM_STATE.hash_one(row.as_ref()))
             .collect();
+        let mut agg_bufs = Vec::with_capacity(key_rows.num_rows());
 
         for (row_idx, row) in key_rows.iter().enumerate() {
             match self
@@ -390,19 +392,25 @@ impl InMemTable {
                 .from_hash(hashes[row_idx], |&addr| {
                     self.map_keys.get(addr) == row.as_ref()
                 }) {
-                RawEntryMut::Occupied(mut view) => {
-                    self.agg_buf_mem_used -= view.get().mem_size();
-                    fn_entry(row_idx, view.get_mut())?;
-                    self.agg_buf_mem_used += view.get().mem_size();
+                RawEntryMut::Occupied(view) => {
+                    // safety: agg_buf lives longer than this function call.
+                    // items in agg_bufs are later moved into ManuallyDrop to avoid double drop.
+                    agg_bufs.push(unsafe { std::ptr::read(view.get() as *const AggBuf) });
                 }
                 RawEntryMut::Vacant(view) => {
                     let new_key_addr = self.map_keys.add(row.as_ref());
-                    let mut new_entry = agg_ctx.initial_agg_buf.clone();
-                    fn_entry(row_idx, &mut new_entry)?;
-                    self.agg_buf_mem_used += new_entry.mem_size();
+                    let new_entry = agg_ctx.initial_agg_buf.clone();
+                    // safety: agg_buf lives longer than this function call.
+                    // items in agg_bufs are later moved into ManuallyDrop to avoid double drop.
+                    agg_bufs.push(unsafe { std::ptr::read(&new_entry as *const AggBuf) });
                     view.insert(new_key_addr, new_entry);
                 }
             }
+        }
+
+        self.agg_buf_mem_used += fn_entries(&mut agg_bufs)?;
+        for agg_buf in agg_bufs {
+            let _ = ManuallyDrop::new(agg_buf);
         }
         Ok(())
     }
@@ -411,14 +419,13 @@ impl InMemTable {
         &mut self,
         agg_ctx: &Arc<AggContext>,
         key_rows: Rows,
-        fn_entry: impl Fn(usize, &mut AggBuf) -> Result<()>,
+        fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
     ) -> Result<()> {
-        for i in 0..key_rows.num_rows() {
-            let mut new_entry = agg_ctx.initial_agg_buf.clone();
-            fn_entry(i, &mut new_entry)?;
-            self.agg_buf_mem_used += new_entry.mem_size();
-            self.unsorted_values.push(new_entry);
-        }
+        let beg = self.unsorted_values.len();
+        let len = key_rows.num_rows();
+        self.unsorted_values
+            .extend((0..len).map(|_| agg_ctx.initial_agg_buf.clone()));
+        self.agg_buf_mem_used += fn_entries(&mut self.unsorted_values[beg..][..len])?;
         self.unsorted_keys_mem_used += key_rows.size();
         self.unsorted_keys.push(key_rows);
         Ok(())
@@ -505,10 +512,10 @@ impl SpillCursor {
         Ok(cursor)
     }
 
-    fn next_record(&mut self) -> Result<(Box<[u8]>, AggBuf)> {
+    fn next_record(&mut self) -> Result<(SlimBytes, AggBuf)> {
         // read key
         let key_len = read_len(&mut self.input)?;
-        let key = read_bytes_slice(&mut self.input, key_len)?;
+        let key = read_bytes_slice(&mut self.input, key_len)?.into();
 
         // read value
         let mut value = self.agg_ctx.initial_agg_buf.clone();

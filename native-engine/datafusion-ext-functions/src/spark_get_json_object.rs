@@ -408,11 +408,13 @@ impl HiveGetJsonObjectMatcher {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use crate::spark_get_json_object::{
+        spark_get_parsed_json_object, spark_parse_json, HiveGetJsonObjectEvaluator,
+    };
     use arrow::array::{AsArray, StringArray};
     use datafusion::common::ScalarValue;
     use datafusion::logical_expr::ColumnarValue;
-    use crate::spark_get_json_object::{HiveGetJsonObjectEvaluator, spark_get_parsed_json_object, spark_parse_json};
+    use std::sync::Arc;
 
     #[test]
     fn test_hive_demo() {
@@ -538,27 +540,37 @@ mod test {
         //assert_eq!(v, None);
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.county"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path]).unwrap().into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
+            .unwrap()
+            .into_array(1);
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"["浦东","西直门"]"#));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.NOT_EXISTED"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path]).unwrap().into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
+            .unwrap()
+            .into_array(1);
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"[]"#));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.name"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path]).unwrap().into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
+            .unwrap()
+            .into_array(1);
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert!(v.unwrap().contains("Asher"));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.city"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path]).unwrap().into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
+            .unwrap()
+            .into_array(1);
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"["1.234",1.234]"#));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location[0]"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path]).unwrap().into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
+            .unwrap()
+            .into_array(1);
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"{"city":"1.234","county":"浦东"}"#));
     }

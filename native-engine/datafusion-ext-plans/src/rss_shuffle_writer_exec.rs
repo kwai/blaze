@@ -29,7 +29,7 @@ use crate::common::memory_manager::MemManager;
 use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
 use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
 use crate::shuffle::rss_sort_repartitioner::RssSortShuffleRepartitioner;
-use crate::shuffle::ShuffleRepartitioner;
+use crate::shuffle::{can_use_bucket_repartitioner, ShuffleRepartitioner};
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
@@ -127,7 +127,10 @@ impl ExecutionPlan for RssShuffleWriterExec {
                 rss_partition_writer,
                 data_size_metric,
             )),
-            p @ Partitioning::Hash(_, _) if p.partition_count() < 200 => {
+            p @ Partitioning::Hash(_, _)
+                if can_use_bucket_repartitioner(&self.input.schema())
+                    && p.partition_count() < 200 =>
+            {
                 let partitioner = Arc::new(RssBucketShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,

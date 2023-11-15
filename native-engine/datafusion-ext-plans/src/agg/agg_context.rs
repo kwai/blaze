@@ -302,6 +302,21 @@ impl AggContext {
         Ok(())
     }
 
+    pub fn partial_batch_update_input(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        input_arrays: &[Vec<ArrayRef>],
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        if self.need_partial_update {
+            for (idx, agg) in &self.need_partial_update_aggs {
+                mem_diff +=
+                    agg.partial_batch_update(agg_bufs, self.agg_addrs(*idx), &input_arrays[*idx])?;
+            }
+        }
+        Ok(mem_diff)
+    }
+
     pub fn partial_update_input_all(
         &self,
         agg_buf: &mut AggBuf,
@@ -329,6 +344,29 @@ impl AggContext {
             }
         }
         Ok(())
+    }
+
+    pub fn partial_batch_merge_input(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_array: &BinaryArray,
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        if self.need_partial_merge {
+            let mut input_agg_bufs = agg_buf_array
+                .iter()
+                .map(|value| {
+                    let mut input_agg_buf = self.initial_input_agg_buf.clone();
+                    input_agg_buf.load_from_bytes(value.unwrap())?;
+                    Ok(input_agg_buf)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            for (idx, agg) in &self.need_partial_merge_aggs {
+                mem_diff +=
+                    agg.partial_batch_merge(agg_bufs, &mut input_agg_bufs, self.agg_addrs(*idx))?;
+            }
+        }
+        Ok(mem_diff)
     }
 
     pub fn partial_merge_input_all(

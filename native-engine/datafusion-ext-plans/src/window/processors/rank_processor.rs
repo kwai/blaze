@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::common::slim_bytes::SlimBytes;
 use crate::window::window_context::WindowContext;
 use crate::window::WindowFunctionProcessor;
 use arrow::array::{ArrayRef, Int32Builder};
@@ -20,8 +21,8 @@ use datafusion::common::Result;
 use std::sync::Arc;
 
 pub struct RankProcessor {
-    cur_partition: Box<[u8]>,
-    cur_order: Box<[u8]>,
+    cur_partition: SlimBytes,
+    cur_order: SlimBytes,
     cur_rank: i32,
     cur_equals: i32,
     is_dense: bool,
@@ -30,8 +31,8 @@ pub struct RankProcessor {
 impl RankProcessor {
     pub fn new(is_dense: bool) -> Self {
         Self {
-            cur_partition: Box::default(),
-            cur_order: Box::default(),
+            cur_partition: Default::default(),
+            cur_order: Default::default(),
             cur_rank: 0,
             cur_equals: 1,
             is_dense,

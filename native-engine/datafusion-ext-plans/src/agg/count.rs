@@ -75,6 +75,22 @@ impl Agg for AggCount {
         Ok(())
     }
 
+    fn partial_batch_update(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<usize> {
+        let addr = agg_buf_addrs[0];
+        let value = &values[0];
+        for (row_idx, agg_buf) in agg_bufs.iter_mut().enumerate() {
+            if value.is_valid(row_idx) {
+                agg_buf.update_fixed_value::<i64>(addr, |v| v + 1);
+            }
+        }
+        Ok(0)
+    }
+
     fn partial_update_all(
         &self,
         agg_buf: &mut AggBuf,
@@ -99,6 +115,19 @@ impl Agg for AggCount {
         Ok(())
     }
 
+    fn partial_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        merging_agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<usize> {
+        let addr = agg_buf_addrs[0];
+        for (agg_buf, merging_agg_buf) in agg_bufs.iter_mut().zip(merging_agg_bufs) {
+            let merging_num_valids = merging_agg_buf.fixed_value::<i64>(addr);
+            agg_buf.update_fixed_value::<i64>(addr, |v| v + merging_num_valids);
+        }
+        Ok(0)
+    }
     fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         let addr = agg_buf_addrs[0];
         Ok(ScalarValue::from(agg_buf.fixed_value::<i64>(addr)))

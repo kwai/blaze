@@ -14,6 +14,7 @@
 
 use crate::common::onheap_spill::Spill;
 use crate::common::output::output_with_sender;
+use arrow::datatypes::SchemaRef;
 use arrow::error::Result as ArrowResult;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
@@ -22,6 +23,7 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::metrics::BaselineMetrics;
 use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
+use datafusion_ext_commons::array_builder::has_array_builder_supported;
 use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
 use futures::StreamExt;
@@ -35,6 +37,13 @@ mod rss;
 pub mod rss_bucket_repartitioner;
 pub mod rss_single_repartitioner;
 pub mod rss_sort_repartitioner;
+
+pub fn can_use_bucket_repartitioner(schema: &SchemaRef) -> bool {
+    schema
+        .fields()
+        .iter()
+        .all(|field| has_array_builder_supported(field.data_type()))
+}
 
 #[async_trait]
 pub trait ShuffleRepartitioner: Send + Sync {

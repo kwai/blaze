@@ -103,6 +103,22 @@ impl Agg for AggAvg {
         Ok(())
     }
 
+    fn partial_batch_update(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+        values: &[ArrayRef],
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        mem_diff += self
+            .agg_sum
+            .partial_batch_update(agg_bufs, agg_buf_addrs, values)?;
+        mem_diff += self
+            .agg_count
+            .partial_batch_update(agg_bufs, &agg_buf_addrs[1..], values)?;
+        Ok(mem_diff)
+    }
+
     fn partial_update_all(
         &self,
         agg_buf: &mut AggBuf,
@@ -127,6 +143,22 @@ impl Agg for AggAvg {
         self.agg_count
             .partial_merge(agg_buf1, agg_buf2, &agg_buf_addrs[1..])?;
         Ok(())
+    }
+
+    fn partial_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        merging_agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<usize> {
+        let mut mem_diff = 0;
+        mem_diff += self
+            .agg_sum
+            .partial_batch_merge(agg_bufs, merging_agg_bufs, agg_buf_addrs)?;
+        mem_diff +=
+            self.agg_count
+                .partial_batch_merge(agg_bufs, merging_agg_bufs, &agg_buf_addrs[1..])?;
+        Ok(mem_diff)
     }
 
     fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
