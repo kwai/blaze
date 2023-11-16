@@ -57,6 +57,14 @@ impl Agg for AggCollectSet {
         vec![self.child.clone()]
     }
 
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+        Ok(Arc::new(Self::try_new(
+            exprs[0].clone(),
+            self.data_type.clone(),
+            self.arg_type.clone(),
+        )?))
+    }
+
     fn data_type(&self) -> &DataType {
         &self.data_type
     }
@@ -83,7 +91,9 @@ impl Agg for AggCollectSet {
             .unwrap();
         let values = &values[0];
 
-        dyn_set.append(ScalarValue::try_from_array(&values, row_idx)?);
+        if values.is_valid(row_idx) {
+            dyn_set.append(ScalarValue::try_from_array(&values, row_idx)?);
+        }
         Ok(())
     }
 
@@ -101,7 +111,9 @@ impl Agg for AggCollectSet {
         let values = &values[0];
 
         for i in 0..values.len() {
-            dyn_set.append(ScalarValue::try_from_array(&values, i)?);
+            if values.is_valid(i) {
+                dyn_set.append(ScalarValue::try_from_array(&values, i)?);
+            }
         }
         Ok(())
     }
@@ -137,5 +149,17 @@ impl Agg for AggCollectSet {
             Some(std::mem::take(&mut dyn_set.values).into_iter().collect()),
             self.arg_type.clone(),
         ))
+    }
+
+    fn final_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<ArrayRef> {
+        let values: Vec<ScalarValue> = agg_bufs
+            .iter_mut()
+            .map(|agg_buf| self.final_merge(agg_buf, agg_buf_addrs))
+            .collect::<Result<_>>()?;
+        Ok(ScalarValue::iter_to_array(values)?)
     }
 }

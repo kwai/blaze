@@ -20,7 +20,7 @@ use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use arrow::row::RowConverter;
 use datafusion::common::cast::as_binary_array;
-use datafusion::common::{Result, ScalarValue};
+use datafusion::common::Result;
 use datafusion::physical_expr::PhysicalExprRef;
 use once_cell::sync::OnceCell;
 use std::fmt::{Debug, Formatter};
@@ -235,25 +235,23 @@ impl AggContext {
 
     pub fn build_agg_columns(
         &self,
-        records: &mut [(impl AsRef<[u8]>, AggBuf)],
+        mut records: Vec<(impl AsRef<[u8]>, AggBuf)>,
     ) -> Result<Vec<ArrayRef>> {
         let mut agg_columns = vec![];
+
         if self.need_final_merge {
             // output final merged value
+            let mut agg_bufs: Vec<AggBuf> =
+                records.into_iter().map(|(_, agg_buf)| agg_buf).collect();
             for (idx, agg) in self.aggs.iter().enumerate() {
                 let addrs = &self.agg_buf_addrs[self.agg_buf_addr_offsets[idx]..];
-                let mut values = Vec::with_capacity(records.len());
-                for (_, agg_buf) in records.iter_mut() {
-                    let value = agg.agg.final_merge(agg_buf, addrs)?;
-                    values.push(value);
-                }
-                let values = std::mem::take(&mut values);
-                agg_columns.push(ScalarValue::iter_to_array(values)?);
+                let values = agg.agg.final_batch_merge(&mut agg_bufs, addrs)?;
+                agg_columns.push(values);
             }
         } else {
             // output agg_buf as a binary column
             let mut binary_array = BinaryBuilder::with_capacity(records.len(), 0);
-            for (_, agg_buf) in records.iter_mut() {
+            for (_, agg_buf) in &mut records {
                 let agg_buf_bytes = agg_buf.save_to_bytes()?;
                 binary_array.append_value(agg_buf_bytes);
             }
@@ -265,7 +263,7 @@ impl AggContext {
     pub fn convert_records_to_batch(
         &self,
         grouping_row_converter: &mut RowConverter,
-        records: &mut [(impl AsRef<[u8]>, AggBuf)],
+        records: Vec<(impl AsRef<[u8]>, AggBuf)>,
     ) -> Result<RecordBatch> {
         let row_count = records.len();
         let grouping_row_parser = grouping_row_converter.parser();

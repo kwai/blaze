@@ -109,7 +109,7 @@ impl AggTables {
         self.set_spillable(false);
         let mut timer = baseline_metrics.elapsed_compute().timer();
 
-        let in_mem = std::mem::replace(&mut *self.in_mem.lock().await, InMemTable::new(false));
+        let in_mem = std::mem::replace(&mut *self.in_mem.lock().await, InMemTable::new(true));
         let spills = std::mem::take(&mut *self.spills.lock().await);
 
         let batch_size = self.context.session_config().batch_size();
@@ -128,12 +128,12 @@ impl AggTables {
                 .collect::<Vec<_>>();
 
             while !records.is_empty() {
-                let mut chunk = records.split_off(records.len().saturating_sub(batch_size));
+                let chunk = records.split_off(records.len().saturating_sub(batch_size));
                 records.shrink_to_fit();
 
                 let batch = self
                     .agg_ctx
-                    .convert_records_to_batch(&mut grouping_row_converter, &mut chunk)?;
+                    .convert_records_to_batch(&mut grouping_row_converter, chunk)?;
                 let batch_mem_size = batch.get_array_memory_size();
 
                 baseline_metrics.record_output(batch.num_rows());
@@ -167,10 +167,10 @@ impl AggTables {
 
         macro_rules! flush_staging {
             () => {{
-                let batch = self
-                    .agg_ctx
-                    .convert_records_to_batch(&mut grouping_row_converter, &mut staging_records)?;
-                staging_records.clear();
+                let batch = self.agg_ctx.convert_records_to_batch(
+                    &mut grouping_row_converter,
+                    std::mem::take(&mut staging_records),
+                )?;
                 baseline_metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }};
@@ -286,17 +286,14 @@ pub struct InMemTable {
 }
 
 // a hasher for hashing addrs got from map_keys
-struct BytesArenaHasher(*const BytesArena, u64);
+struct BytesArenaHasher(&'static BytesArena, u64);
 impl Hasher for BytesArenaHasher {
     fn write(&mut self, _bytes: &[u8]) {
         unimplemented!()
     }
 
     fn write_u64(&mut self, i: u64) {
-        // safety - this hasher has the same lifetime with bytes arena
-        // and guaranteed to have no read-write conflicts
-        let bytes_arena = unsafe { &*self.0 };
-        self.1 = RANDOM_STATE.hash_one(bytes_arena.get(i));
+        self.1 = RANDOM_STATE.hash_one(self.0.get(i));
     }
 
     fn finish(&self) -> u64 {
@@ -305,7 +302,7 @@ impl Hasher for BytesArenaHasher {
 }
 
 // hash builder for map
-struct MapKeyHashBuilder(*const BytesArena);
+struct MapKeyHashBuilder(&'static BytesArena);
 impl BuildHasher for MapKeyHashBuilder {
     type Hasher = BytesArenaHasher;
 
@@ -318,13 +315,10 @@ impl BuildHasher for MapKeyHashBuilder {
         Self: Sized,
         Self::Hasher: Hasher,
     {
-        // safety - this hasher has the same lifetime with bytes arena
-        // and guaranteed to have no read-write conflicts
         // this hasher is specialized for hashing map keys, so it's safe
         // to convert x to u64 (bytes arena's addr)
-        let bytes_arena = unsafe { &*self.0 };
         let i = unsafe { *std::mem::transmute::<_, *const u64>(&x) };
-        RANDOM_STATE.hash_one(bytes_arena.get(i))
+        RANDOM_STATE.hash_one(self.0.get(i))
     }
 }
 unsafe impl Send for MapKeyHashBuilder {}
@@ -332,7 +326,10 @@ unsafe impl Send for MapKeyHashBuilder {}
 impl InMemTable {
     fn new(is_hash: bool) -> Self {
         let map_keys: Box<BytesArena> = Box::default();
-        let map_key_hash_builder = MapKeyHashBuilder(map_keys.as_ref() as *const BytesArena);
+        let map_key_hash_builder = MapKeyHashBuilder(unsafe {
+            // safety: hash builder's lifetime is shorter than map_keys
+            std::mem::transmute::<_, &'static BytesArena>(map_keys.as_ref())
+        });
         Self {
             map_keys,
             map: HashMap::with_hasher(map_key_hash_builder),

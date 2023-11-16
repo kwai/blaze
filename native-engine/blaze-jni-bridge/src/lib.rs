@@ -14,7 +14,7 @@
 
 use datafusion::common::Result;
 use jni::objects::GlobalRef;
-use jni::sys::{jboolean, JNI_FALSE, JNI_TRUE};
+use jni::sys::{JNI_FALSE, JNI_TRUE};
 use once_cell::sync::OnceCell;
 
 pub mod jni_bridge;
@@ -25,11 +25,15 @@ pub fn is_jni_bridge_inited() -> bool {
 
 pub fn is_task_running() -> bool {
     fn is_task_running_impl() -> Result<bool> {
-        if jni_call_static!(JniBridge.isTaskRunning() -> jboolean).unwrap() != JNI_TRUE {
+        if !jni_call_static!(JniBridge.isTaskRunning() -> bool).unwrap() {
             jni_exception_clear!()?;
             return Ok(false);
         }
         Ok(true)
+    }
+    if !is_jni_bridge_inited() {
+        // only for testing
+        return true;
     }
     is_task_running_impl().expect("calling JniBridge.isTaskRunning() error")
 }

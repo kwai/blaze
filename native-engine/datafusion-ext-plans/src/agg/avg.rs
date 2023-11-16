@@ -18,11 +18,10 @@ use crate::agg::sum::AggSum;
 use crate::agg::Agg;
 use arrow::array::*;
 use arrow::datatypes::*;
+use datafusion::common::cast::{as_decimal128_array, as_int64_array};
 use datafusion::common::{Result, ScalarValue};
 use datafusion::error::DataFusionError;
-
 use datafusion::physical_expr::PhysicalExpr;
-use paste::paste;
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -67,6 +66,13 @@ impl Agg for AggAvg {
 
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![self.child.clone()]
+    }
+
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+        Ok(Arc::new(Self::try_new(
+            exprs[0].clone(),
+            self.data_type.clone(),
+        )?))
     }
 
     fn data_type(&self) -> &DataType {
@@ -170,37 +176,85 @@ impl Agg for AggAvg {
         let final_merger = self.final_merger;
         Ok(final_merger(sum, count))
     }
+
+    fn final_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<ArrayRef> {
+        let sums = self.agg_sum.final_batch_merge(agg_bufs, agg_buf_addrs)?;
+        let counts = self
+            .agg_count
+            .final_batch_merge(agg_bufs, &agg_buf_addrs[1..])?;
+
+        let counts_zero_free: Int64Array = as_int64_array(&counts)?.unary_opt(|count| {
+            let not_zero = !count.is_zero();
+            not_zero.then_some(count)
+        });
+
+        if let &DataType::Decimal128(prec, scale) = self.data_type() {
+            let sums = as_decimal128_array(&sums)?;
+            let counts = counts_zero_free;
+            let avgs =
+                arrow::compute::binary::<_, _, _, Decimal128Type>(&sums, &counts, |sum, count| {
+                    sum.checked_div_euclid(count as i128).unwrap_or_default()
+                })?;
+            Ok(Arc::new(avgs.with_precision_and_scale(prec, scale)?))
+        } else {
+            let counts = counts_zero_free;
+            Ok(arrow::compute::divide_dyn_opt(
+                &arrow::compute::cast(&sums, &DataType::Float64)?,
+                &arrow::compute::cast(&counts, &DataType::Float64)?,
+            )?)
+        }
+    }
 }
 
 fn get_final_merger(dt: &DataType) -> Result<fn(ScalarValue, i64) -> ScalarValue> {
     macro_rules! get_fn {
-        ($ty:ident) => {{
-            Ok(|mut sum: ScalarValue, count: i64| {
-                type TArrowType = paste! {[<$ty Type>]};
-                type TNative = <TArrowType as ArrowPrimitiveType>::Native;
-                match &mut sum {
-                    ScalarValue::$ty(None, ..) => {}
-                    ScalarValue::$ty(Some(sum), ..) => {
-                        *sum /= (count as TNative);
-                    }
+        ($ty:ident, f64) => {{
+            Ok(|sum: ScalarValue, count: i64| {
+                let avg = match sum {
+                    ScalarValue::$ty(sum, ..) => ScalarValue::Float64(if !count.is_zero() {
+                        sum.map(|sum| sum as f64 / (count as f64))
+                    } else {
+                        None
+                    }),
                     _ => unreachable!(),
                 };
-                sum
+                avg
+            })
+        }};
+        (Decimal128) => {{
+            Ok(|sum: ScalarValue, count: i64| {
+                let avg = match sum {
+                    ScalarValue::Decimal128(sum, prec, scale) => ScalarValue::Decimal128(
+                        if !count.is_zero() {
+                            sum.map(|sum| sum / (count as i128))
+                        } else {
+                            None
+                        },
+                        prec,
+                        scale,
+                    ),
+                    _ => unreachable!(),
+                };
+                avg
             })
         }};
     }
     match dt {
         DataType::Null => Ok(|_, _| ScalarValue::Null),
-        DataType::Float32 => get_fn!(Float32),
-        DataType::Float64 => get_fn!(Float64),
-        DataType::Int8 => get_fn!(Int8),
-        DataType::Int16 => get_fn!(Int16),
-        DataType::Int32 => get_fn!(Int32),
-        DataType::Int64 => get_fn!(Int64),
-        DataType::UInt8 => get_fn!(UInt8),
-        DataType::UInt16 => get_fn!(UInt16),
-        DataType::UInt32 => get_fn!(UInt32),
-        DataType::UInt64 => get_fn!(UInt64),
+        DataType::Float32 => get_fn!(Float32, f64),
+        DataType::Float64 => get_fn!(Float64, f64),
+        DataType::Int8 => get_fn!(Int8, f64),
+        DataType::Int16 => get_fn!(Int16, f64),
+        DataType::Int32 => get_fn!(Int32, f64),
+        DataType::Int64 => get_fn!(Int64, f64),
+        DataType::UInt8 => get_fn!(UInt8, f64),
+        DataType::UInt16 => get_fn!(UInt16, f64),
+        DataType::UInt32 => get_fn!(UInt32, f64),
+        DataType::UInt64 => get_fn!(UInt64, f64),
         DataType::Decimal128(..) => get_fn!(Decimal128),
         other => Err(DataFusionError::NotImplemented(format!(
             "unsupported data type in avg(): {}",

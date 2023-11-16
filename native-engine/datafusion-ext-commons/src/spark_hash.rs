@@ -57,7 +57,7 @@ fn spark_compatible_murmur3_hash<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
         // safety: data length must be aligned to 4 bytes
         let mut h1 = seed as i32;
         for i in (0..data.len()).step_by(4) {
-            let mut half_word = *(data.as_ptr().add(i) as *const i32);
+            let mut half_word = std::ptr::read_unaligned(data.as_ptr().add(i) as *const i32);
             if cfg!(target_endian = "big") {
                 half_word = half_word.reverse_bits();
             }

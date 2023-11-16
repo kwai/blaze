@@ -45,6 +45,9 @@ jobs:
           ##     token: ${{ secrets.GITHUB_TOKEN }}
           ##     args: --all-features
 
+      - name: Cargo test
+        run: cargo test --workspace --all-features
+
       - name: Build Spark303
         run: mvn package -Ppre -Pspark303
       - name: Upload Spark303
