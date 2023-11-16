@@ -326,7 +326,12 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
         write_len(1, output)?;
-        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+        write_bits_buffer(
+            null_buffer.buffer(),
+            null_buffer.offset(),
+            null_buffer.len(),
+            output,
+        )?;
     } else {
         write_len(0, output)?;
     }
@@ -366,22 +371,25 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
 fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> Result<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
         write_len(1, output)?;
-        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+        write_bits_buffer(
+            null_buffer.buffer(),
+            null_buffer.offset(),
+            null_buffer.len(),
+            output,
+        )?;
     } else {
         write_len(0, output)?;
     }
 
-    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
-    let mut cur_offset = first_offset;
-    for &offset in array.value_offsets().iter().skip(1) {
-        let len = offset - cur_offset;
+    let value_offsets = array.value_offsets();
+    for (beg, end) in value_offsets.iter().zip(&value_offsets[1..]) {
+        let len = end - beg;
         write_len(len as usize, output)?;
-        cur_offset = offset;
     }
-    let values_len = cur_offset - first_offset;
-    let values = array
-        .values()
-        .slice(first_offset as usize, values_len as usize);
+    let values = array.values().slice(
+        value_offsets[0] as usize,
+        value_offsets[array.len()] as usize - value_offsets[0] as usize,
+    );
     write_array(&values, output)?;
     Ok(())
 }
@@ -426,7 +434,12 @@ fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> Result<()> {
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
         write_len(1, output)?;
-        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+        write_bits_buffer(
+            null_buffer.buffer(),
+            null_buffer.offset(),
+            null_buffer.len(),
+            output,
+        )?;
     } else {
         write_len(0, output)?;
     }
@@ -510,7 +523,12 @@ fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> Result<(
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
         write_len(1, output)?;
-        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+        write_bits_buffer(
+            null_buffer.buffer(),
+            null_buffer.offset(),
+            null_buffer.len(),
+            output,
+        )?;
     } else {
         write_len(0, output)?;
     }
@@ -548,7 +566,12 @@ fn write_boolean_array<W: Write>(array: &BooleanArray, output: &mut W) -> Result
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
         write_len(1, output)?;
-        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+        write_bits_buffer(
+            null_buffer.buffer(),
+            null_buffer.offset(),
+            null_buffer.len(),
+            output,
+        )?;
     } else {
         write_len(0, output)?;
     }
@@ -586,7 +609,12 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
 ) -> Result<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
         write_len(1, output)?;
-        write_bits_buffer(null_buffer.buffer(), array.offset(), array.len(), output)?;
+        write_bits_buffer(
+            null_buffer.buffer(),
+            null_buffer.offset(),
+            null_buffer.len(),
+            output,
+        )?;
     } else {
         write_len(0, output)?;
     }
@@ -645,6 +673,7 @@ mod test {
     use arrow::array::*;
     use arrow::datatypes::*;
     use arrow::record_batch::RecordBatch;
+    use datafusion::assert_batches_eq;
     use std::io::Cursor;
     use std::sync::Arc;
 
@@ -707,12 +736,38 @@ mod test {
         ])
         .unwrap();
 
+        assert_batches_eq!(
+            vec![
+                "+-----------+-----------+",
+                "| list1     | list2     |",
+                "+-----------+-----------+",
+                "| [0, 1, 2] | [0, 1, 2] |",
+                "|           |           |",
+                "| [3, , 5]  | [3, , 5]  |",
+                "| [6, 7]    | [6, 7]    |",
+                "+-----------+-----------+",
+            ],
+            &[batch.clone()]
+        );
+
         // test read after write
         let mut buf = vec![];
         write_batch(&batch, &mut buf, true, None).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
+        assert_batches_eq!(
+            vec![
+                "+-----------+-----------+",
+                "| list1     | list2     |",
+                "+-----------+-----------+",
+                "| [0, 1, 2] | [0, 1, 2] |",
+                "|           |           |",
+                "| [3, , 5]  | [3, , 5]  |",
+                "| [6, 7]    | [6, 7]    |",
+                "+-----------+-----------+",
+            ],
+            &[name_batch(decoded_batch, &batch.schema()).unwrap()]
+        );
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
@@ -720,7 +775,17 @@ mod test {
         write_batch(&sliced, &mut buf, true, None).unwrap();
         let mut cursor = Cursor::new(buf);
         let decoded_batch = read_batch(&mut cursor, true).unwrap();
-        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
+        assert_batches_eq!(
+            vec![
+                "+----------+----------+",
+                "| list1    | list2    |",
+                "+----------+----------+",
+                "|          |          |",
+                "| [3, , 5] | [3, , 5] |",
+                "+----------+----------+",
+            ],
+            &[name_batch(decoded_batch, &batch.schema()).unwrap()]
+        );
     }
 
     #[test]
