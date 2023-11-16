@@ -64,6 +64,13 @@ impl Agg for AggFirst {
         vec![self.child.clone()]
     }
 
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+        Ok(Arc::new(Self::try_new(
+            exprs[0].clone(),
+            self.data_type.clone(),
+        )?))
+    }
+
     fn data_type(&self) -> &DataType {
         &self.data_type
     }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use arrow::record_batch::RecordBatch;
-use blaze_jni_bridge::jni_call_static;
+use blaze_jni_bridge::{is_jni_bridge_inited, jni_call_static};
 use datafusion::common::Result;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
@@ -34,7 +34,8 @@ impl InputBatchStatistics {
         metrics_set: &ExecutionPlanMetricsSet,
         partition: usize,
     ) -> Result<Option<Self>> {
-        let enabled = jni_call_static!(BlazeConf.enableInputBatchStatistics() -> bool)?;
+        let enabled = is_jni_bridge_inited()
+            && jni_call_static!(BlazeConf.enableInputBatchStatistics() -> bool)?;
         Ok(enabled.then_some(Self::from_metrics_set(metrics_set, partition)))
     }
 

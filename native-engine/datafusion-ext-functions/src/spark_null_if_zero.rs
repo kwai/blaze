@@ -25,7 +25,10 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     Ok(match &args[0] {
         ColumnarValue::Scalar(scalar) => {
             let data_type = scalar.get_datatype();
-            let zero = ScalarValue::new_zero(&data_type)?;
+            let zero = match &data_type {
+                &DataType::Decimal128(prec, scale) => ScalarValue::Decimal128(Some(0), prec, scale),
+                _other => ScalarValue::new_zero(&data_type)?,
+            };
             if scalar.eq(&zero) {
                 ColumnarValue::Scalar(ScalarValue::try_from(data_type)?)
             } else {

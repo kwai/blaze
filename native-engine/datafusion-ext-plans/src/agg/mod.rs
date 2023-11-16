@@ -95,6 +95,7 @@ pub trait Agg: Send + Sync + Debug {
     fn data_type(&self) -> &DataType;
     fn nullable(&self) -> bool;
     fn accums_initial(&self) -> &[AccumInitialValue];
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>>;
 
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // default implementation: directly return the inputs
@@ -246,6 +247,120 @@ pub trait Agg: Send + Sync + Debug {
                         "unsupported data type: {other}"
                     )));
                 }
+            }
+        })
+    }
+
+    fn final_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<ArrayRef> {
+        // default implementation:
+        // extract the only one values from agg_buf and convert to ScalarValue
+        // this works for sum/min/max/first
+        let addr = agg_buf_addrs[0];
+
+        macro_rules! handle_fixed {
+            ($ty:ident) => {{
+                type B = paste::paste! {[< $ty Builder >]};
+                let mut builder = B::with_capacity(agg_bufs.len());
+                for agg_buf in agg_bufs {
+                    if agg_buf.is_fixed_valid(addr) {
+                        builder.append_value(agg_buf.fixed_value(addr));
+                    } else {
+                        builder.append_null();
+                    };
+                }
+                builder.finish()
+            }};
+        }
+        macro_rules! mkarray {
+            ($a:expr) => {{
+                let array: Arc<dyn Array + 'static> = Arc::new($a);
+                array
+            }};
+        }
+        Ok(match self.data_type() {
+            DataType::Null => mkarray!(NullArray::new(agg_bufs.len())),
+            DataType::Boolean => mkarray!(handle_fixed!(Boolean)),
+            DataType::Float32 => mkarray!(handle_fixed!(Float32)),
+            DataType::Float64 => mkarray!(handle_fixed!(Float64)),
+            DataType::Int8 => mkarray!(handle_fixed!(Int8)),
+            DataType::Int16 => mkarray!(handle_fixed!(Int16)),
+            DataType::Int32 => mkarray!(handle_fixed!(Int32)),
+            DataType::Int64 => mkarray!(handle_fixed!(Int64)),
+            DataType::UInt8 => mkarray!(handle_fixed!(UInt8)),
+            DataType::UInt16 => mkarray!(handle_fixed!(UInt16)),
+            DataType::UInt32 => mkarray!(handle_fixed!(UInt32)),
+            DataType::UInt64 => mkarray!(handle_fixed!(UInt64)),
+            DataType::Decimal128(prec, scale) => {
+                mkarray!(handle_fixed!(Decimal128).with_precision_and_scale(*prec, *scale)?)
+            }
+            DataType::Date32 => mkarray!(handle_fixed!(Date32)),
+            DataType::Date64 => mkarray!(handle_fixed!(Date64)),
+            DataType::Timestamp(TimeUnit::Second, tz) => {
+                mkarray!(handle_fixed!(TimestampSecond).with_timezone_opt(tz.clone()))
+            }
+            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+                mkarray!(handle_fixed!(TimestampMillisecond).with_timezone_opt(tz.clone()))
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+                mkarray!(handle_fixed!(TimestampMicrosecond).with_timezone_opt(tz.clone()))
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+                mkarray!(handle_fixed!(TimestampNanosecond).with_timezone_opt(tz.clone()))
+            }
+            DataType::Utf8 => {
+                mkarray!(agg_bufs
+                    .iter_mut()
+                    .map(|agg_buf| {
+                        let value = std::mem::take(
+                            &mut agg_buf
+                                .dyn_value_mut(addr)
+                                .as_any_mut()
+                                .downcast_mut::<AggDynStr>()
+                                .unwrap()
+                                .value,
+                        );
+                        value.map(|v| v.into_string())
+                    })
+                    .collect::<StringArray>())
+            }
+            DataType::Binary => {
+                mkarray!(agg_bufs
+                    .iter_mut()
+                    .map(|agg_buf| {
+                        let value = std::mem::take(
+                            &mut agg_buf
+                                .dyn_value_mut(addr)
+                                .as_any_mut()
+                                .downcast_mut::<AggDynBinary>()
+                                .unwrap()
+                                .value,
+                        );
+                        value.map(|v| v.into_vec())
+                    })
+                    .collect::<BinaryArray>())
+            }
+            _other => {
+                println!("{:?}", _other);
+                let scalars = agg_bufs
+                    .iter_mut()
+                    .map(|agg_buf| {
+                        let value = std::mem::replace(
+                            &mut agg_buf
+                                .dyn_value_mut(addr)
+                                .as_any_mut()
+                                .downcast_mut::<AggDynScalar>()
+                                .unwrap()
+                                .value,
+                            ScalarValue::Null,
+                        );
+                        value
+                    })
+                    .collect::<Vec<_>>();
+                ScalarValue::iter_to_array(scalars)?
             }
         })
     }

@@ -38,6 +38,10 @@ lto = false
 codegen-units = 16
 strip = false
 
+[profile.dev]
+debug = true
+overflow-checks = false
+
 [workspace.dependencies]
 blaze = { path = "./native-engine/blaze" }
 blaze-jni-bridge = { path = "./native-engine/blaze-jni-bridge" }
