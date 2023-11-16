@@ -19,7 +19,7 @@ use datafusion::physical_plan::ColumnarValue;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-/// implements org.apache.spark.sql.catalyst.expressions.MakeDecimal
+/// implements org.apache.spark.sql.catalyst.expressions.CheckOverflow
 pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let to_precision = match &args[1] {
         &ColumnarValue::Scalar(ScalarValue::Int32(Some(precision))) => precision as u8,
@@ -137,7 +137,10 @@ mod test {
             Some(123213244568923),
             Some(1234567890),
             None,
-        ]);
+        ])
+        .with_precision_and_scale(20, 8)
+        .unwrap();
+
         let result = spark_check_overflow(&vec![
             ColumnarValue::Array(Arc::new(array)),
             ColumnarValue::Scalar(ScalarValue::Int32(Some(10))), //precision
@@ -145,7 +148,7 @@ mod test {
         ])
         .unwrap()
         .into_array(5);
-        let expected = Decimal128Array::from(vec![None, Some(13245), None, Some(1234567890), None])
+        let expected = Decimal128Array::from(vec![None, Some(13), None, Some(1234568), None])
             .with_precision_and_scale(10, 5)
             .unwrap();
         let expected: ArrayRef = Arc::new(expected);

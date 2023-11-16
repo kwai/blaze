@@ -49,6 +49,13 @@ impl Agg for AggCount {
         vec![self.child.clone()]
     }
 
+    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+        Ok(Arc::new(Self::try_new(
+            exprs[0].clone(),
+            self.data_type.clone(),
+        )?))
+    }
+
     fn data_type(&self) -> &DataType {
         &self.data_type
     }
@@ -131,5 +138,19 @@ impl Agg for AggCount {
     fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
         let addr = agg_buf_addrs[0];
         Ok(ScalarValue::from(agg_buf.fixed_value::<i64>(addr)))
+    }
+
+    fn final_batch_merge(
+        &self,
+        agg_bufs: &mut [AggBuf],
+        agg_buf_addrs: &[u64],
+    ) -> Result<ArrayRef> {
+        let addr = agg_buf_addrs[0];
+        Ok(Arc::new(
+            agg_bufs
+                .iter()
+                .map(|agg_buf| agg_buf.fixed_value::<i64>(addr))
+                .collect::<Int64Array>(),
+        ))
     }
 }

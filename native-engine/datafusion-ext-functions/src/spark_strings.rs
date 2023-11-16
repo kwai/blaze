@@ -338,6 +338,7 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 mod test {
     use crate::spark_strings::{
         string_concat, string_concat_ws, string_lower, string_repeat, string_space, string_split,
+        string_upper,
     };
     use arrow::array::{Int32Array, ListBuilder, StringArray, StringBuilder};
     use datafusion::common::cast::{as_list_array, as_string_array};
@@ -361,13 +362,26 @@ mod test {
 
     #[test]
     fn test_string_upper() -> Result<()> {
+        let r = string_upper(&vec![ColumnarValue::Array(Arc::new(
+            StringArray::from_iter(vec![Some("{123}"), Some("A'asd'"), None]),
+        ))])?;
+        let s = r.into_array(3);
+        assert_eq!(
+            as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
+            vec![Some("{123}"), Some("A'ASD'"), None,]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_string_lower() -> Result<()> {
         let r = string_lower(&vec![ColumnarValue::Array(Arc::new(
             StringArray::from_iter(vec![Some("{123}"), Some("A'asd'"), None]),
         ))])?;
         let s = r.into_array(3);
         assert_eq!(
             as_string_array(&s)?.into_iter().collect::<Vec<_>>(),
-            vec![Some("{123}"), Some("A'asd'"), None,]
+            vec![Some("{123}"), Some("a'asd'"), None,]
         );
         Ok(())
     }
