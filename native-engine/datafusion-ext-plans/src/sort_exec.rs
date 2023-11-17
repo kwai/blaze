@@ -623,7 +623,10 @@ impl SortedBatches {
                     return None;
                 }
 
-                let cur_batch_limit = self.batch_size.min(self.limit - self.num_fetched);
+                let cur_batch_limit = self
+                    .batch_size
+                    .min(self.cursors[0].keys.len() + self.cursors[1].keys.len())
+                    .min(self.limit - self.num_fetched);
                 let mut indices = Vec::with_capacity(cur_batch_limit);
                 let mut keys = Vec::with_capacity(if self.key_data.is_some() {
                     cur_batch_limit
@@ -631,79 +634,60 @@ impl SortedBatches {
                     0
                 });
 
-                macro_rules! min_cursor {
-                    () => {{
-                        let key_addr0 = self.cursors[0].keys.front().unwrap();
-                        let key_addr1 = self.cursors[1].keys.front().unwrap();
-                        let key0 = self.cursors[0].key_data.get(*key_addr0);
-                        let key1 = self.cursors[1].key_data.get(*key_addr1);
-                        (key1 < key0) as usize
-                    }}
-                }
-                macro_rules! forward_cursor {
-                    ($cursor_id:expr) => {{
-                        let cursor = &mut self.cursors[$cursor_id];
-
-                        // append current row idx to indices
-                        indices.push((cursor.batch_idx * 2 + $cursor_id, cursor.row_idx));
-
-                        // append current key
-                        let key_addr = cursor.keys.pop_front().unwrap();
-                        let key = cursor.key_data.specialized_get_and_drop_last(key_addr);
-                        if let Some(key_data) = self.key_data.as_mut() {
-                            keys.push(key_data.add(key));
-                        }
-
-                        // move to next record
-                        cursor.row_idx += 1;
-                        if cursor.row_idx >= cursor.batches[cursor.batch_idx].num_rows() {
-                            cursor.row_idx = 0;
-                            cursor.batch_idx += 1;
-                        }
-                    }}
-                }
-
-                macro_rules! has {
-                    ($id:expr) => {{
-                        indices.len() < cur_batch_limit && self.cursors[$id].keys.front().is_some()
-                    }}
-                }
-
-                loop {
-                    let has1 = has!(1);
-                    while has1 && has!(0) && min_cursor!() == 0 {
-                        forward_cursor!(0);
+                // merge keys and get indices for interleaving
+                'outer: loop {
+                    macro_rules! min_cursor {
+                        () => {{
+                            let key_addr0 = self.cursors[0].keys.front().unwrap();
+                            let key_addr1 = self.cursors[1].keys.front().unwrap();
+                            let key0 = self.cursors[0].key_data.get(*key_addr0);
+                            let key1 = self.cursors[1].key_data.get(*key_addr1);
+                            (key1 < key0) as usize
+                        }};
                     }
-                    if !has1 {
-                        break;
+                    macro_rules! forward_cursor {
+                        ($cursor_id:expr) => {{
+                            if indices.len() >= cur_batch_limit {
+                                break 'outer;
+                            }
+                            let cursor = &mut self.cursors[$cursor_id];
+
+                            // append current row idx to indices
+                            indices.push((cursor.batch_idx * 2 + $cursor_id, cursor.row_idx));
+
+                            // append current key
+                            let key_addr = cursor.keys.pop_front().unwrap();
+                            let key = cursor.key_data.specialized_get_and_drop_last(key_addr);
+                            if let Some(key_data) = self.key_data.as_mut() {
+                                keys.push(key_data.add(key));
+                            }
+
+                            // move to next record
+                            cursor.row_idx += 1;
+                            if cursor.row_idx >= cursor.batches[cursor.batch_idx].num_rows() {
+                                cursor.row_idx = 0;
+                                cursor.batch_idx += 1;
+                            }
+                        }};
+                    }
+                    macro_rules! has {
+                        ($id:expr) => {{
+                            !self.cursors[$id].keys.is_empty()
+                        }};
+                    }
+
+                    // forward many 0s and one 1s
+                    while has!(0) && (!has!(1) || min_cursor!() == 0) {
+                        forward_cursor!(0);
                     }
                     forward_cursor!(1);
 
-                    let has0 = has!(0);
-                    while has0 && has!(1) && min_cursor!() == 1 {
+                    // forward many 1s and one 0s
+                    while has!(1) && (!has!(0) || min_cursor!() == 1) {
                         forward_cursor!(1);
-                    }
-                    if !has0 {
-                        break;
                     }
                     forward_cursor!(0);
                 }
-                // merge keys and get indices for interleaving
-                // while indices.len() < cur_batch_limit {
-                //     let key_a = self.cursors[0].keys.front();
-                //     let key_b = self.cursors[1].keys.front();
-                //     let min_cursor_id = match (key_a, key_b) {
-                //         (Some(a), Some(b)) => {
-                //             let key_a = self.cursors[0].key_data.get(*a);
-                //             let key_b = self.cursors[1].key_data.get(*b);
-                //             (key_b < key_a) as usize
-                //         }
-                //         (Some(_), None) => 0,
-                //         (None, Some(_)) => 1,
-                //         (None, None) => break,
-                //     };
-                //     forward_cursor!(min_cursor_id);
-                // }
 
                 // get sorted batches
                 let mut interleaving = vec![];
