@@ -105,6 +105,7 @@ impl NativeExecutionRuntime {
         };
 
         // spawn batch producer
+        let sender_cloned = sender.clone();
         let consume_stream = move || async move {
             while let Some(batch) = AssertUnwindSafe(stream.next())
                 .catch_unwind()
@@ -166,6 +167,7 @@ impl NativeExecutionRuntime {
                         );
                         None
                     };
+
                 set_error(
                     &native_wrapper,
                     &format!(
@@ -175,6 +177,10 @@ impl NativeExecutionRuntime {
                     ),
                     cause.map(|e| e.as_obj()),
                 )?;
+
+                // terminate the MpscBatchReader after error is set
+                let _ = sender_cloned.send(None);
+
                 log::info!(
                     "native execution [partition={}] exited abnormally.",
                     partition,
