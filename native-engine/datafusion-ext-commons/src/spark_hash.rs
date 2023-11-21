@@ -16,10 +16,12 @@
 
 use std::sync::Arc;
 
-use arrow::array::*;
-use arrow::datatypes::{
-    ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type, Int8Type,
-    TimeUnit,
+use arrow::{
+    array::*,
+    datatypes::{
+        ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type,
+        Int8Type, TimeUnit,
+    },
 };
 use datafusion::error::{DataFusionError, Result};
 
@@ -92,12 +94,14 @@ fn test_murmur3() {
         .into_iter()
         .map(|s| spark_compatible_murmur3_hash(s.as_bytes(), 42) as i32)
         .collect::<Vec<_>>();
-    let _expected = vec![142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928];
+    let _expected = vec![
+        142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928,
+    ];
     assert_eq!(_hashes, _expected)
 }
 
 macro_rules! hash_array {
-    ($array_type:ident, $column: ident, $hashes: ident) => {
+    ($array_type:ident, $column:ident, $hashes:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
@@ -114,7 +118,7 @@ macro_rules! hash_array {
 }
 
 macro_rules! hash_list {
-    ($array_type:ident, $column: ident, $hash: ident) => {
+    ($array_type:ident, $column:ident, $hash:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         if array.null_count() == 0 {
             for i in 0..array.len() {
@@ -131,7 +135,7 @@ macro_rules! hash_list {
 }
 
 macro_rules! hash_array_primitive {
-    ($array_type:ident, $column: ident, $ty: ident, $hashes: ident) => {
+    ($array_type:ident, $column:ident, $ty:ident, $hashes:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         let values = array.values();
 
@@ -150,7 +154,7 @@ macro_rules! hash_array_primitive {
 }
 
 macro_rules! hash_list_primitive {
-    ($array_type:ident, $column: ident, $ty: ident, $hash: ident) => {
+    ($array_type:ident, $column:ident, $ty:ident, $hash:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         let values = array.values();
         if array.null_count() == 0 {
@@ -168,7 +172,7 @@ macro_rules! hash_list_primitive {
 }
 
 macro_rules! hash_array_decimal {
-    ($array_type:ident, $column: ident, $hashes: ident) => {
+    ($array_type:ident, $column:ident, $hashes:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
 
         if array.null_count() == 0 {
@@ -186,7 +190,7 @@ macro_rules! hash_array_decimal {
 }
 
 macro_rules! hash_list_decimal {
-    ($array_type:ident, $column: ident, $hash: ident) => {
+    ($array_type:ident, $column:ident, $hash:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
 
         if array.null_count() == 0 {
@@ -312,7 +316,7 @@ pub fn create_hashes<'a>(
             DataType::LargeUtf8 => {
                 hash_array!(LargeStringArray, col, hashes_buffer);
             }
-            DataType::Decimal128(_, _) => {
+            DataType::Decimal128(..) => {
                 hash_array_decimal!(Decimal128Array, col, hashes_buffer);
             }
             DataType::Dictionary(index_type, _) => match **index_type {
@@ -410,7 +414,7 @@ pub fn create_hashes<'a>(
                         DataType::LargeUtf8 => {
                             hash_list!(LargeStringArray, sub_array, hash);
                         }
-                        DataType::Decimal128(_, _) => {
+                        DataType::Decimal128(..) => {
                             hash_list_decimal!(Decimal128Array, sub_array, hash);
                         }
                         _ => {
@@ -422,7 +426,7 @@ pub fn create_hashes<'a>(
                     }
                 }
             }
-            DataType::Map(_, _) => {
+            DataType::Map(..) => {
                 let map_array = col.as_any().downcast_ref::<MapArray>().unwrap();
                 let key_array = map_array.keys();
                 let value_array = map_array.values();
@@ -455,7 +459,7 @@ pub fn create_hashes<'a>(
 }
 
 macro_rules! hash_map_primitive {
-    ($array_type:ident, $column: ident, $ty: ident, $hash: ident, $idx: ident) => {
+    ($array_type:ident, $column:ident, $ty:ident, $hash:ident, $idx:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         *$hash = spark_compatible_murmur3_hash(
             (array.value($idx as usize) as $ty).to_le_bytes(),
@@ -465,14 +469,14 @@ macro_rules! hash_map_primitive {
 }
 
 macro_rules! hash_map_binary {
-    ($array_type:ident, $column: ident, $hash: ident, $idx: ident) => {
+    ($array_type:ident, $column:ident, $hash:ident, $idx:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         *$hash = spark_compatible_murmur3_hash(&array.value($idx as usize), *$hash);
     };
 }
 
 macro_rules! hash_map_decimal {
-    ($array_type:ident, $column: ident, $hash: ident, $idx: ident) => {
+    ($array_type:ident, $column:ident, $hash:ident, $idx:ident) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         *$hash = spark_compatible_murmur3_hash(array.value($idx as usize).to_le_bytes(), *$hash);
     };
@@ -541,7 +545,7 @@ fn update_map_hashes(array: &ArrayRef, idx: i32, hash: &mut u32) -> Result<()> {
             DataType::LargeUtf8 => {
                 hash_map_binary!(LargeStringArray, array, hash, idx);
             }
-            DataType::Decimal128(_, _) => {
+            DataType::Decimal128(..) => {
                 hash_map_decimal!(Decimal128Array, array, hash, idx);
             }
             _ => {
@@ -567,13 +571,16 @@ pub fn pmod(hash: u32, n: usize) -> usize {
 mod tests {
     use std::sync::Arc;
 
-    use crate::spark_hash::{create_hashes, pmod, spark_compatible_murmur3_hash};
-    use arrow::array::{
-        make_array, Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, MapArray,
-        StringArray, StructArray, UInt32Array,
+    use arrow::{
+        array::{
+            make_array, Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, MapArray,
+            StringArray, StructArray, UInt32Array,
+        },
+        buffer::Buffer,
+        datatypes::{DataType, Field, ToByteSlice},
     };
-    use arrow::buffer::Buffer;
-    use arrow::datatypes::{DataType, Field, ToByteSlice};
+
+    use crate::spark_hash::{create_hashes, pmod, spark_compatible_murmur3_hash};
 
     #[test]
     fn test_list() {
@@ -639,7 +646,8 @@ mod tests {
         let mut hashes = vec![42; 5];
         create_hashes(&[i], &mut hashes).unwrap();
 
-        // generated with Murmur3Hash(Seq(Literal("")), 42).eval() since Spark is tested against this as well
+        // generated with Murmur3Hash(Seq(Literal("")), 42).eval() since Spark is tested
+        // against this as well
         let expected = vec![3286402344, 2486176763, 142593372, 885025535, 2395000894];
         assert_eq!(hashes, expected);
     }

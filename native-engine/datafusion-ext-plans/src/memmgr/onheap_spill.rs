@@ -12,16 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter, Read, Seek, Write},
+    sync::Arc,
+};
+
 use blaze_jni_bridge::{
     is_jni_bridge_inited, jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
-use datafusion::common::Result;
-use datafusion::parquet::file::reader::Length;
-use jni::objects::GlobalRef;
-use jni::sys::{jboolean, jlong, JNI_TRUE};
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Seek, Write};
-use std::sync::Arc;
+use datafusion::{common::Result, parquet::file::reader::Length};
+use jni::{
+    objects::GlobalRef,
+    sys::{jboolean, jlong, JNI_TRUE},
+};
 
 pub trait Spill: Send + Sync {
     fn complete(&self) -> Result<()>;

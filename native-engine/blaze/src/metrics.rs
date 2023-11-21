@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use blaze_jni_bridge::{jni_call, jni_new_string};
-use datafusion::common::Result;
-use datafusion::physical_plan::ExecutionPlan;
-use jni::objects::JObject;
 use std::sync::Arc;
+
+use blaze_jni_bridge::{jni_call, jni_new_string};
+use datafusion::{common::Result, physical_plan::ExecutionPlan};
+use jni::objects::JObject;
 
 pub fn update_spark_metric_node(
     metric_node: JObject,

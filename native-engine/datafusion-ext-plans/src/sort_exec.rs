@@ -14,51 +14,62 @@
 
 //! Defines the External shuffle repartition plan
 
-use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
-use crate::common::bytes_arena::BytesArena;
-use crate::common::column_pruning::ExecuteWithColumnPruning;
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{try_new_spill, Spill};
-use crate::common::output::{
-    output_bufferable_with_spill, output_with_sender, WrappedRecordBatchSender,
+use std::{
+    any::Any,
+    collections::VecDeque,
+    fmt::Formatter,
+    io::{BufReader, Cursor, Read, Write},
+    mem::size_of,
+    sync::{Arc, Weak},
 };
-use crate::common::slim_bytes::SlimBytes;
-use crate::common::{BatchTaker, BatchesInterleaver};
-use arrow::array::ArrayRef;
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use arrow::row::{RowConverter, SortField};
+
+use arrow::{
+    array::ArrayRef,
+    datatypes::SchemaRef,
+    record_batch::RecordBatch,
+    row::{RowConverter, SortField},
+};
 use async_trait::async_trait;
-use datafusion::common::{DataFusionError, Result, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+use datafusion::{
+    common::{DataFusionError, Result, Statistics},
+    execution::context::TaskContext,
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    },
 };
-use datafusion_ext_commons::io::{
-    read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch,
+use datafusion_ext_commons::{
+    bytes_arena::BytesArena,
+    io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch},
+    loser_tree::LoserTree,
+    slim_bytes::SlimBytes,
+    streams::coalesce_stream::CoalesceInput,
 };
-use datafusion_ext_commons::loser_tree::LoserTree;
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::lock::Mutex;
-use futures::stream::once;
-use futures::{StreamExt, TryStreamExt};
+use futures::{lock::Mutex, stream::once, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use lz4_flex::frame::FrameDecoder;
 use parking_lot::Mutex as SyncMutex;
-use std::any::Any;
-use std::collections::VecDeque;
-use std::fmt::Formatter;
-use std::io::{BufReader, Cursor, Read, Write};
-use std::mem::size_of;
-use std::sync::{Arc, Weak};
+
+use crate::{
+    common::{
+        batch_statisitcs::{stat_input, InputBatchStatistics},
+        column_pruning::ExecuteWithColumnPruning,
+        output::{TaskOutputter, WrappedRecordBatchSender},
+        BatchTaker, BatchesInterleaver,
+    },
+    memmgr::{
+        onheap_spill::{try_new_spill, Spill},
+        MemConsumer, MemConsumerInfo, MemManager,
+    },
+};
 
 const NUM_LEVELS: usize = 64;
 
 // reserve memory for each spill
-// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB + batches=~100KB
+// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB +
+// batches=~100KB
 const SPILL_OFFHEAP_MEM_COST: usize = 300000;
 
 #[derive(Debug)]
@@ -242,25 +253,19 @@ impl ExecuteWithColumnPruning for SortExec {
             InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
             self.input.execute(partition, context.clone())?,
         )?;
-        let coalesced = Box::pin(CoalesceStream::new(
+        let coalesced = context.coalesce_with_default_batch_size(
             input,
-            batch_size,
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        ));
+            &BaselineMetrics::new(&self.metrics, partition),
+        )?;
 
         let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(external_sort(coalesced, context, external_sorter)).try_flatten(),
+            once(external_sort(coalesced, context.clone(), external_sorter)).try_flatten(),
         ));
-        let coalesced = Box::pin(CoalesceStream::new(
+        let coalesced = context.coalesce_with_default_batch_size(
             output,
-            batch_size,
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        ));
+            &BaselineMetrics::new(&self.metrics, partition),
+        )?;
         Ok(coalesced)
     }
 }
@@ -286,19 +291,14 @@ async fn external_sort(
     let has_spill = sorter.spills.lock().await.is_empty();
     let sorter_cloned = sorter.clone();
 
-    let output = output_with_sender(
-        "Sort",
-        context.clone(),
-        input.schema(),
-        |sender| async move {
-            sorter.output(sender).await?;
-            Ok(())
-        },
-    )?;
+    let output = context.output_with_sender("Sort", input.schema(), |sender| async move {
+        sorter.output(sender).await?;
+        Ok(())
+    })?;
 
     // if running in-memory, buffer output when memory usage is high
     if !has_spill {
-        return output_bufferable_with_spill(sorter_cloned, context, output);
+        return context.output_bufferable_with_spill(sorter_cloned, output);
     }
     Ok(output)
 }
@@ -877,19 +877,23 @@ fn max_level_id(levels: &[Option<SortedBatches>]) -> Option<usize> {
 
 #[cfg(test)]
 mod test {
-    use crate::sort_exec::SortExec;
-    use arrow::array::Int32Array;
-    use arrow::compute::SortOptions;
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::common::Result;
-    use datafusion::physical_expr::expressions::Column;
-    use datafusion::physical_expr::PhysicalSortExpr;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::prelude::SessionContext;
     use std::sync::Arc;
+
+    use arrow::{
+        array::Int32Array,
+        compute::SortOptions,
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::{
+        assert_batches_eq,
+        common::Result,
+        physical_expr::{expressions::Column, PhysicalSortExpr},
+        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        prelude::SessionContext,
+    };
+
+    use crate::sort_exec::SortExec;
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),
@@ -960,19 +964,19 @@ mod test {
 
 #[cfg(test)]
 mod fuzztest {
-    use crate::common::memory_manager::MemManager;
-    use crate::sort_exec::SortExec;
-    use arrow::compute::SortOptions;
-    use arrow::record_batch::RecordBatch;
-    use datafusion::common::{Result, ScalarValue};
-    use datafusion::logical_expr::ColumnarValue;
-    use datafusion::physical_expr::expressions::Column;
-    use datafusion::physical_expr::math_expressions::random;
-    use datafusion::physical_expr::PhysicalSortExpr;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::prelude::{SessionConfig, SessionContext};
-    use datafusion_ext_commons::concat_batches;
     use std::sync::Arc;
+
+    use arrow::{compute::SortOptions, record_batch::RecordBatch};
+    use datafusion::{
+        common::{Result, ScalarValue},
+        logical_expr::ColumnarValue,
+        physical_expr::{expressions::Column, math_expressions::random, PhysicalSortExpr},
+        physical_plan::memory::MemoryExec,
+        prelude::{SessionConfig, SessionContext},
+    };
+    use datafusion_ext_commons::concat_batches;
+
+    use crate::{memmgr::MemManager, sort_exec::SortExec};
 
     #[tokio::test]
     async fn fuzztest() -> Result<()> {

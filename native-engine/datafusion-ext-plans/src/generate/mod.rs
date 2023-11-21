@@ -14,17 +14,16 @@
 
 pub mod explode;
 
+use std::{fmt::Debug, sync::Arc};
+
+use arrow::{
+    array::{ArrayRef, UInt32Array},
+    datatypes::{DataType, SchemaRef},
+    record_batch::RecordBatch,
+};
+use datafusion::{common::Result, error::DataFusionError, physical_plan::PhysicalExpr};
+
 use crate::generate::explode::{ExplodeArray, ExplodeMap};
-
-use arrow::datatypes::{DataType, SchemaRef};
-
-use arrow::array::{ArrayRef, UInt32Array};
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::error::DataFusionError;
-use datafusion::physical_plan::PhysicalExpr;
-use std::fmt::Debug;
-use std::sync::Arc;
 
 pub trait Generator: Debug + Send + Sync {
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;

@@ -12,17 +12,64 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::concat_batches;
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::physical_plan::metrics::Time;
-use datafusion::physical_plan::{RecordBatchStream, SendableRecordBatchStream};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{ready, Context, Poll},
+};
+
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use datafusion::{
+    common::Result,
+    execution::TaskContext,
+    physical_plan::{
+        metrics::{BaselineMetrics, Time},
+        RecordBatchStream, SendableRecordBatchStream,
+    },
+};
 use futures::{Stream, StreamExt};
-use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+
+use crate::concat_batches;
 
 const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 26; // limit output batch size to 64MB
+
+pub trait CoalesceInput {
+    fn coalesce_input(
+        &self,
+        input: SendableRecordBatchStream,
+        batch_size: usize,
+        metrics: &BaselineMetrics,
+    ) -> Result<SendableRecordBatchStream>;
+
+    fn coalesce_with_default_batch_size(
+        &self,
+        input: SendableRecordBatchStream,
+        metrics: &BaselineMetrics,
+    ) -> Result<SendableRecordBatchStream>;
+}
+
+impl CoalesceInput for Arc<TaskContext> {
+    fn coalesce_input(
+        &self,
+        input: SendableRecordBatchStream,
+        batch_size: usize,
+        metrics: &BaselineMetrics,
+    ) -> Result<SendableRecordBatchStream> {
+        Ok(Box::pin(CoalesceStream::new(
+            input,
+            batch_size,
+            metrics.elapsed_compute().clone(),
+        )))
+    }
+
+    fn coalesce_with_default_batch_size(
+        &self,
+        input: SendableRecordBatchStream,
+        metrics: &BaselineMetrics,
+    ) -> Result<SendableRecordBatchStream> {
+        self.coalesce_input(input, self.session_config().batch_size(), metrics)
+    }
+}
 
 pub struct CoalesceStream {
     input: SendableRecordBatchStream,

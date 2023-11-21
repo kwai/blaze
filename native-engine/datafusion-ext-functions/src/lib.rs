@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use datafusion::common::{DataFusionError, Result};
-use datafusion::logical_expr::ScalarFunctionImplementation;
 use std::sync::Arc;
+
+use datafusion::{
+    common::{DataFusionError, Result},
+    logical_expr::ScalarFunctionImplementation,
+};
 
 mod spark_check_overflow;
 mod spark_get_json_object;

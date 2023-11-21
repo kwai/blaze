@@ -1,5 +1,3 @@
-#![feature(new_uninit)]
-#![feature(io_error_other)]
 // Copyright 2022 The Blaze Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,18 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::compute::concat;
-use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
+#![feature(new_uninit)]
+#![feature(io_error_other)]
+#![feature(slice_swap_unchecked)]
+
+use arrow::{
+    compute::concat,
+    datatypes::SchemaRef,
+    error::Result as ArrowResult,
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
 use log::trace;
 
 pub mod array_builder;
+pub mod bytes_arena;
 pub mod cast;
-pub mod ffi;
 pub mod hadoop_fs;
 pub mod io;
 pub mod loser_tree;
+pub mod rdxsort;
+pub mod slim_bytes;
 pub mod spark_hash;
 pub mod streams;
 pub mod uda;

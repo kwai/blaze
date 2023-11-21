@@ -14,12 +14,10 @@
 
 //! Array expressions
 
-use arrow::array::*;
-use arrow::datatypes::DataType;
-use datafusion::common::Result;
-use datafusion::error::DataFusionError;
-use datafusion::logical_expr::ColumnarValue;
 use std::sync::Arc;
+
+use arrow::{array::*, datatypes::DataType};
+use datafusion::{common::Result, error::DataFusionError, logical_expr::ColumnarValue};
 
 macro_rules! downcast_vec {
     ($ARGS:expr, $ARRAY_TYPE:ident) => {{
@@ -130,12 +128,15 @@ pub fn array(values: &[ColumnarValue]) -> Result<ColumnarValue> {
 }
 #[cfg(test)]
 mod test {
-    use crate::spark_make_array::array;
-    use arrow::array::{ArrayRef, Int32Array, ListArray};
-    use arrow::datatypes::{Float32Type, Int32Type};
-    use datafusion::common::ScalarValue;
-    use datafusion::physical_plan::ColumnarValue;
     use std::sync::Arc;
+
+    use arrow::{
+        array::{ArrayRef, Int32Array, ListArray},
+        datatypes::{Float32Type, Int32Type},
+    };
+    use datafusion::{common::ScalarValue, physical_plan::ColumnarValue};
+
+    use crate::spark_make_array::array;
 
     #[test]
     fn test_make_array_int() {

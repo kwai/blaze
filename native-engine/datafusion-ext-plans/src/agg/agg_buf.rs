@@ -12,18 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::slim_bytes::SlimBytes;
+use std::{
+    any::Any,
+    collections::HashSet,
+    io::{Cursor, Read, Write},
+    mem::{size_of, size_of_val},
+};
+
 use arrow::array::Array;
 use datafusion::common::{Result, ScalarValue};
-use datafusion_ext_commons::io::{
-    read_array, read_bytes_slice, read_data_type, read_len, write_array, write_data_type,
-    write_len, write_u8,
+use datafusion_ext_commons::{
+    io::{
+        read_array, read_bytes_slice, read_data_type, read_len, write_array, write_data_type,
+        write_len, write_u8,
+    },
+    slim_bytes::SlimBytes,
 };
 use slimmer_box::SlimmerBox;
-use std::any::Any;
-use std::collections::HashSet;
-use std::io::{Cursor, Read, Write};
-use std::mem::{size_of, size_of_val};
 
 #[derive(Eq, PartialEq)]
 pub struct AggBuf {
@@ -176,7 +181,7 @@ pub fn create_agg_buf_from_initial_value(
                 ScalarValue::Boolean(v) => handle_fixed!(v.map(|x| x as u8), 1),
                 ScalarValue::Float32(v) => handle_fixed!(v, 4),
                 ScalarValue::Float64(v) => handle_fixed!(v, 8),
-                ScalarValue::Decimal128(v, _, _) => handle_fixed!(v, 16),
+                ScalarValue::Decimal128(v, ..) => handle_fixed!(v, 16),
                 ScalarValue::Int8(v) => handle_fixed!(v, 1),
                 ScalarValue::Int16(v) => handle_fixed!(v, 2),
                 ScalarValue::Int32(v) => handle_fixed!(v, 4),
@@ -655,13 +660,14 @@ fn make_dyn_addr(idx: usize) -> u64 {
 
 #[cfg(test)]
 mod test {
+    use std::{collections::HashSet, io::Cursor};
+
+    use arrow::datatypes::DataType;
+    use datafusion::common::{Result, ScalarValue};
+
     use crate::agg::agg_buf::{
         create_agg_buf_from_initial_value, AccumInitialValue, AggDynList, AggDynSet, AggDynStr,
     };
-    use arrow::datatypes::DataType;
-    use datafusion::common::{Result, ScalarValue};
-    use std::collections::HashSet;
-    use std::io::Cursor;
 
     #[test]
     fn test_dyn_list() {
@@ -677,7 +683,11 @@ mod test {
         dyn_list.load(&mut Cursor::new(&mut buf)).unwrap();
         assert_eq!(
             dyn_list.values,
-            vec![ScalarValue::from(1i32), ScalarValue::from(2i32), ScalarValue::from(3i32),]
+            vec![
+                ScalarValue::from(1i32),
+                ScalarValue::from(2i32),
+                ScalarValue::from(3i32),
+            ]
         );
     }
 
@@ -698,15 +708,24 @@ mod test {
         assert_eq!(
             dyn_set.values,
             HashSet::from_iter(
-                vec![ScalarValue::from(1i32), ScalarValue::from(2i32), ScalarValue::from(3i32),]
-                    .into_iter()
+                vec![
+                    ScalarValue::from(1i32),
+                    ScalarValue::from(2i32),
+                    ScalarValue::from(3i32),
+                ]
+                .into_iter()
             )
         );
     }
 
     #[test]
     fn test_agg_buf() {
-        let data_types = vec![DataType::Null, DataType::Int32, DataType::Int64, DataType::Utf8];
+        let data_types = vec![
+            DataType::Null,
+            DataType::Int32,
+            DataType::Int64,
+            DataType::Utf8,
+        ];
         let scalars = data_types
             .iter()
             .map(|dt: &DataType| Ok(AccumInitialValue::Scalar(dt.clone().try_into()?)))

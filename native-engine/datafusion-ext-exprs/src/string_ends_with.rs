@@ -12,17 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{
+    any::Any,
+    fmt::{Display, Formatter},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
+
+use arrow::{
+    array::{Array, BooleanArray, StringArray},
+    datatypes::{DataType, Schema},
+    record_batch::RecordBatch,
+};
+use datafusion::{
+    common::{DataFusionError, Result, ScalarValue},
+    logical_expr::ColumnarValue,
+    physical_plan::PhysicalExpr,
+};
+
 use crate::down_cast_any_ref;
-use arrow::array::{Array, BooleanArray, StringArray};
-use arrow::datatypes::{DataType, Schema};
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{DataFusionError, Result, ScalarValue};
-use datafusion::logical_expr::ColumnarValue;
-use datafusion::physical_plan::PhysicalExpr;
-use std::any::Any;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 #[derive(Debug, Hash)]
 pub struct StringEndsWithExpr {
@@ -117,14 +125,16 @@ impl PhysicalExpr for StringEndsWithExpr {
 #[cfg(test)]
 mod test {
 
-    use crate::string_ends_with::StringEndsWithExpr;
-    use arrow::array::{ArrayRef, BooleanArray, StringArray};
+    use std::sync::Arc;
 
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
+    use arrow::{
+        array::{ArrayRef, BooleanArray, StringArray},
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
     use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
 
-    use std::sync::Arc;
+    use crate::string_ends_with::StringEndsWithExpr;
 
     #[test]
     fn test_array() {
@@ -135,14 +145,14 @@ mod test {
             Some("rr".to_string()),
             Some("roser r".to_string()),
         ]));
-        //create a shema with the field
+        // create a shema with the field
         let schema = Arc::new(Schema::new(vec![Field::new("col2", DataType::Utf8, true)]));
 
-        //create a RecordBatch with the shema and StringArray
+        // create a RecordBatch with the shema and StringArray
         let batch =
             RecordBatch::try_new(schema, vec![string_array]).expect("Error creating RecordBatch");
 
-        //test: col2 like '%rr'
+        // test: col2 like '%rr'
         let pattern = "rr".to_string();
         let expr = Arc::new(StringEndsWithExpr::new(
             phys_expr::col("col2", &batch.schema()).unwrap(),
@@ -166,7 +176,7 @@ mod test {
 
     #[test]
     fn test_scalar_string() {
-        //create a StringArray from the vector
+        // create a StringArray from the vector
         let string_array: ArrayRef = Arc::new(StringArray::from(vec![
             Some("Hello, Rust".to_string()),
             Some("Hello, He".to_string()),
@@ -174,14 +184,14 @@ mod test {
             Some("RustHe".to_string()),
             Some("HellHe".to_string()),
         ]));
-        //create a schema with the field
+        // create a schema with the field
         let schema = Arc::new(Schema::new(vec![Field::new("col3", DataType::Utf8, true)]));
 
-        //create a RecordBatch with the schema and StringArray
+        // create a RecordBatch with the schema and StringArray
         let batch =
             RecordBatch::try_new(schema, vec![string_array]).expect("Error creating RecordBatch");
 
-        //test: col3 like "%He"
+        // test: col3 like "%He"
         let pattern = "He".to_string();
         // select "Hello, Rust" like "%He" from batch
         let expr = Arc::new(StringEndsWithExpr::new(
@@ -193,7 +203,7 @@ mod test {
             .expect("Error evaluating expr")
             .into_array(batch.num_rows());
 
-        //verify result
+        // verify result
         let expected: ArrayRef = Arc::new(BooleanArray::from(vec![
             Some(false),
             Some(false),

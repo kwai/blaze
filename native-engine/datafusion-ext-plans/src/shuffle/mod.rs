@@ -12,22 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::onheap_spill::Spill;
-use crate::common::output::output_with_sender;
-use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::RecordBatch;
-use async_trait::async_trait;
-use datafusion::common::Result;
-use datafusion::error::DataFusionError;
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::metrics::BaselineMetrics;
-use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
-use datafusion_ext_commons::array_builder::has_array_builder_supported;
-use datafusion_ext_commons::spark_hash::{create_hashes, pmod};
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::StreamExt;
 use std::sync::Arc;
+
+use arrow::{datatypes::SchemaRef, error::Result as ArrowResult, record_batch::RecordBatch};
+use async_trait::async_trait;
+use datafusion::{
+    common::Result,
+    error::DataFusionError,
+    execution::context::TaskContext,
+    physical_plan::{metrics::BaselineMetrics, Partitioning, SendableRecordBatchStream},
+};
+use datafusion_ext_commons::{
+    array_builder::has_array_builder_supported,
+    spark_hash::{create_hashes, pmod},
+    streams::coalesce_stream::CoalesceInput,
+};
+use futures::StreamExt;
+
+use crate::{common::output::TaskOutputter, memmgr::onheap_spill::Spill};
 
 pub mod bucket_repartitioner;
 pub mod single_repartitioner;
@@ -56,20 +58,15 @@ impl dyn ShuffleRepartitioner {
         self: Arc<Self>,
         context: Arc<TaskContext>,
         input: SendableRecordBatchStream,
-        batch_size: usize,
         metrics: BaselineMetrics,
     ) -> Result<SendableRecordBatchStream> {
         let input_schema = input.schema();
 
         // coalesce input
-        let mut coalesced = Box::pin(CoalesceStream::new(
-            input,
-            batch_size,
-            metrics.elapsed_compute().clone(),
-        ));
+        let mut coalesced = context.coalesce_with_default_batch_size(input, &metrics)?;
 
         // process all input batches
-        output_with_sender("Shuffle", context, input_schema, |_| async move {
+        context.output_with_sender("Shuffle", input_schema, |_| async move {
             while let Some(batch) = coalesced.next().await.transpose()? {
                 let _timer = metrics.elapsed_compute().timer();
                 metrics.record_output(batch.num_rows());

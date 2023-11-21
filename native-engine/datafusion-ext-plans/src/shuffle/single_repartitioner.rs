@@ -12,16 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::shuffle::ShuffleRepartitioner;
+use std::{
+    fs::{File, OpenOptions},
+    io::{Seek, Write},
+};
+
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::common::Result;
-use datafusion::error::DataFusionError;
-use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
+use datafusion::{
+    common::Result,
+    error::DataFusionError,
+    physical_plan::metrics::{BaselineMetrics, Count},
+};
 use datafusion_ext_commons::io::write_one_batch;
 use once_cell::sync::OnceCell;
-use std::fs::{File, OpenOptions};
-use std::io::{Seek, Write};
+
+use crate::shuffle::ShuffleRepartitioner;
 
 pub struct SingleShuffleRepartitioner {
     output_data_file: String,

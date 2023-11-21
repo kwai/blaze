@@ -12,17 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::spark_udf_wrapper::SparkUDFWrapperExpr;
-use arrow::datatypes::{DataType, Schema};
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use datafusion::common::{Result, ScalarValue};
-use datafusion::logical_expr::ColumnarValue;
-use datafusion::physical_plan::PhysicalExpr;
+use std::{
+    any::Any,
+    fmt::{Debug, Display, Formatter},
+    hash::Hasher,
+    sync::Arc,
+};
+
+use arrow::{
+    datatypes::{DataType, Schema},
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
+use datafusion::{
+    common::{Result, ScalarValue},
+    logical_expr::ColumnarValue,
+    physical_plan::PhysicalExpr,
+};
 use once_cell::sync::OnceCell;
-use std::any::Any;
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::Hasher;
-use std::sync::Arc;
+
+use crate::spark_udf_wrapper::SparkUDFWrapperExpr;
 
 pub struct SparkScalarSubqueryWrapperExpr {
     pub serialized: Vec<u8>,

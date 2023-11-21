@@ -12,15 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynList};
-use crate::agg::Agg;
-use arrow::array::*;
-use arrow::datatypes::*;
-use datafusion::common::{Result, ScalarValue};
-use datafusion::physical_expr::PhysicalExpr;
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    sync::Arc,
+};
+
+use arrow::{array::*, datatypes::*};
+use datafusion::{
+    common::{Result, ScalarValue},
+    physical_expr::PhysicalExpr,
+};
+
+use crate::agg::{
+    agg_buf::{AccumInitialValue, AggBuf, AggDynList},
+    Agg,
+};
 
 pub struct AggCollectList {
     child: Arc<dyn PhysicalExpr>,

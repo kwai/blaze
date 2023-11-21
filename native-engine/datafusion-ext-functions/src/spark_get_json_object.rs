@@ -12,16 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::StringArray;
-use arrow::array::{new_null_array, Array};
-use arrow::datatypes::DataType;
-use datafusion::common::{Result, ScalarValue};
-use datafusion::physical_plan::ColumnarValue;
+use std::{any::Any, fmt::Debug, sync::Arc};
+
+use arrow::{
+    array::{new_null_array, Array, StringArray},
+    datatypes::DataType,
+};
+use datafusion::{
+    common::{Result, ScalarValue},
+    physical_plan::ColumnarValue,
+};
 use datafusion_ext_commons::uda::UserDefinedArray;
 use itertools::Either;
-use std::any::Any;
-use std::fmt::Debug;
-use std::sync::Arc;
 
 /// implement hive/spark's UDFGetJson
 /// get_json_object(str, path) == get_parsed_json_object(parse_json(str), path)
@@ -261,7 +263,8 @@ impl HiveGetJsonObjectMatcher {
                 chars.next();
 
                 if chars.peek().cloned() == Some('[') {
-                    return Self::parse(chars); // handle special case like $.aaa.[0].xxx
+                    return Self::parse(chars); // handle special case like
+                                               // $.aaa.[0].xxx
                 }
                 let mut child_name = String::new();
                 loop {
@@ -408,13 +411,14 @@ impl HiveGetJsonObjectMatcher {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
+    use arrow::array::{AsArray, StringArray};
+    use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
+
     use crate::spark_get_json_object::{
         spark_get_parsed_json_object, spark_parse_json, HiveGetJsonObjectEvaluator,
     };
-    use arrow::array::{AsArray, StringArray};
-    use datafusion::common::ScalarValue;
-    use datafusion::logical_expr::ColumnarValue;
-    use std::sync::Arc;
 
     #[test]
     fn test_hive_demo() {
@@ -534,10 +538,10 @@ mod test {
         let input_array = Arc::new(StringArray::from(vec![input]));
         let parsed = spark_parse_json(&[ColumnarValue::Array(input_array)]).unwrap();
 
-        //let path = ColumnarValue::Scalar(ScalarValue::from("$.NOT_EXISTED"));
-        //let r = spark_get_parsed_json_object(&[parsed.clone(), path]).unwrap().into_array(1);
-        //let v = r.as_string::<i32>().iter().next().unwrap();
-        //assert_eq!(v, None);
+        // let path = ColumnarValue::Scalar(ScalarValue::from("$.NOT_EXISTED"));
+        // let r = spark_get_parsed_json_object(&[parsed.clone(),
+        // path]).unwrap().into_array(1); let v = r.as_string::<i32>().iter().
+        // next().unwrap(); assert_eq!(v, None);
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.county"));
         let r = spark_get_parsed_json_object(&[parsed.clone(), path])

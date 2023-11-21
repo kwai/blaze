@@ -32,7 +32,7 @@ class ArrowFFIExportIterator(
     rowIter: Iterator[InternalRow],
     schema: StructType,
     taskContext: TaskContext,
-    recordBatchSize: Int = BlazeConf.batchSize)
+    recordBatchSize: Int = BlazeConf.BATCH_SIZE.intConf())
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 

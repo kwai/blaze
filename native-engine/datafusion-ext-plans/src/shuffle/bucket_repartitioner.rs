@@ -14,26 +14,37 @@
 
 //! Defines the sort-based shuffle writer
 
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{try_new_spill, Spill};
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
-use arrow::array::*;
-use arrow::datatypes::*;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::RecordBatch;
+use std::{
+    fs::{File, OpenOptions},
+    io::{Cursor, Read, Seek, SeekFrom, Write},
+    sync::{Arc, Weak},
+};
+
+use arrow::{array::*, datatypes::*, error::Result as ArrowResult, record_batch::RecordBatch};
 use async_trait::async_trait;
-use datafusion::common::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
-use datafusion::physical_plan::Partitioning;
-use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
-use datafusion_ext_commons::concat_batches;
-use datafusion_ext_commons::io::write_one_batch;
+use datafusion::{
+    common::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_plan::{
+        metrics::{BaselineMetrics, Count},
+        Partitioning,
+    },
+};
+use datafusion_ext_commons::{
+    array_builder::{builder_extend, make_batch, new_array_builders},
+    concat_batches,
+    io::write_one_batch,
+};
 use futures::lock::Mutex;
 use itertools::Itertools;
-use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::sync::{Arc, Weak};
+
+use crate::{
+    memmgr::{
+        onheap_spill::{try_new_spill, Spill},
+        MemConsumer, MemConsumerInfo, MemManager,
+    },
+    shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill},
+};
 
 pub struct BucketShuffleRepartitioner {
     name: String,
@@ -475,14 +486,14 @@ fn slot_size(len: usize, data_type: &DataType) -> usize {
         DataType::Float64 => len * 8,
         DataType::Date32 => len * 4,
         DataType::Date64 => len * 8,
-        DataType::Timestamp(_, _) => len * 8,
+        DataType::Timestamp(..) => len * 8,
         DataType::Time32(_) => len * 4,
         DataType::Time64(_) => len * 8,
         DataType::Binary => len * 4,
         DataType::LargeBinary => len * 8,
         DataType::Utf8 => len * 4,
         DataType::LargeUtf8 => len * 8,
-        DataType::Decimal128(_, _) => len * 16,
+        DataType::Decimal128(..) => len * 16,
         DataType::Dictionary(key_type, _) => match key_type.as_ref() {
             DataType::Int8 => len,
             DataType::Int16 => len * 2,

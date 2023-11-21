@@ -12,26 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::rt::NativeExecutionRuntime;
-use crate::{handle_unwinded_scope, SESSION};
-use blaze_jni_bridge::jni_bridge::JavaClasses;
-use blaze_jni_bridge::*;
+use std::sync::Arc;
+
+use blaze_jni_bridge::{
+    conf::{DoubleConf, IntConf},
+    jni_bridge::JavaClasses,
+    *,
+};
 use blaze_serde::protobuf::TaskDefinition;
-use datafusion::common::Result;
-use datafusion::error::DataFusionError;
-use datafusion::execution::disk_manager::DiskManagerConfig;
-use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
-use datafusion::physical_plan::{displayable, ExecutionPlan};
-use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_ext_plans::common::memory_manager::MemManager;
-use jni::objects::JClass;
-use jni::objects::JObject;
-use jni::JNIEnv;
+use datafusion::{
+    common::Result,
+    error::DataFusionError,
+    execution::{
+        disk_manager::DiskManagerConfig,
+        runtime_env::{RuntimeConfig, RuntimeEnv},
+    },
+    physical_plan::{displayable, ExecutionPlan},
+    prelude::{SessionConfig, SessionContext},
+};
+use datafusion_ext_plans::memmgr::MemManager;
+use jni::{
+    objects::{JClass, JObject},
+    JNIEnv,
+};
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
 use prost::Message;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
-use std::sync::Arc;
+
+use crate::{handle_unwinded_scope, rt::NativeExecutionRuntime, SESSION};
 
 fn init_logging() {
     static LOGGING_INIT: OnceCell<()> = OnceCell::new();
@@ -66,8 +75,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
         // init datafusion session context
         SESSION.get_or_try_init(|| {
             let max_memory = executor_memory_overhead as usize;
-            let memory_fraction = jni_call_static!(BlazeConf.memoryFraction() -> f64)?;
-            let batch_size = jni_call_static!(BlazeConf.batchSize() -> i32)? as usize;
+            let memory_fraction = conf::MEMORY_FRACTION.value()?;
+            let batch_size = conf::BATCH_SIZE.value()? as usize;
             MemManager::init((max_memory as f64 * memory_fraction) as usize);
 
             let session_config = SessionConfig::new().with_batch_size(batch_size);

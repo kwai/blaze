@@ -82,7 +82,7 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
                 inputRowIter,
                 renamedSchema,
                 context,
-                recordBatchSize = BlazeConf.batchSize / 4)
+                recordBatchSize = BlazeConf.BATCH_SIZE.intConf() / 4)
             new InterruptibleIterator(context, exportIter)
           })
 

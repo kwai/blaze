@@ -15,35 +15,34 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
+use std::{any::Any, fmt::Formatter, io::Write, sync::Arc};
+
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
-use datafusion::common::{DataFusionError, Result, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::parquet::arrow::{parquet_to_arrow_schema, ArrowWriter};
-use datafusion::parquet::basic::{BrotliLevel, Compression, GzipLevel, ZstdLevel};
-use datafusion::parquet::file::properties::{WriterProperties, WriterVersion};
-use datafusion::parquet::schema::parser::parse_message_type;
-use datafusion::parquet::schema::types::SchemaDescriptor;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time,
+use datafusion::{
+    common::{DataFusionError, Result, Statistics},
+    execution::context::TaskContext,
+    parquet::{
+        arrow::{parquet_to_arrow_schema, ArrowWriter},
+        basic::{BrotliLevel, Compression, GzipLevel, ZstdLevel},
+        file::properties::{WriterProperties, WriterVersion},
+        schema::{parser::parse_message_type, types::SchemaDescriptor},
+    },
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, Metric, Partitioning,
+        SendableRecordBatchStream,
+    },
 };
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, Metric, Partitioning,
-    SendableRecordBatchStream,
+use datafusion_ext_commons::{
+    cast::cast,
+    hadoop_fs::{FsDataOutputStream, FsProvider},
 };
-use datafusion_ext_commons::cast::cast;
-use datafusion_ext_commons::hadoop_fs::{FsDataOutputStream, FsProvider};
-use futures::stream::once;
-use futures::{StreamExt, TryStreamExt};
+use futures::{stream::once, StreamExt, TryStreamExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
-use std::any::Any;
-use std::fmt::Formatter;
-use std::io::Write;
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ParquetSinkExec {

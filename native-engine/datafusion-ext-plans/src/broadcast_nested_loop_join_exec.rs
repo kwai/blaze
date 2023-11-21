@@ -12,24 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::broadcast_join_exec::RecordBatchStreamsWrapperExec;
-use arrow::datatypes::SchemaRef;
-use datafusion::common::{JoinType, Result, Statistics};
-use datafusion::execution::{SendableRecordBatchStream, TaskContext};
+use std::{any::Any, fmt::Formatter, sync::Arc};
 
-use datafusion::physical_expr::{Partitioning, PhysicalSortExpr};
-use datafusion::physical_plan::joins::utils::{build_join_schema, check_join_is_valid, JoinFilter};
-use datafusion::physical_plan::joins::NestedLoopJoinExec;
-use datafusion::physical_plan::memory::MemoryExec;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan};
-use futures::stream::once;
-use futures::{StreamExt, TryStreamExt};
+use arrow::datatypes::SchemaRef;
+use datafusion::{
+    common::{JoinType, Result, Statistics},
+    execution::{SendableRecordBatchStream, TaskContext},
+    physical_expr::{Partitioning, PhysicalSortExpr},
+    physical_plan::{
+        joins::{
+            utils::{build_join_schema, check_join_is_valid, JoinFilter},
+            NestedLoopJoinExec,
+        },
+        memory::MemoryExec,
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan,
+    },
+};
+use futures::{stream::once, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
-use std::any::Any;
-use std::fmt::Formatter;
-use std::sync::Arc;
+
+use crate::broadcast_join_exec::RecordBatchStreamsWrapperExec;
 
 #[derive(Debug)]
 pub struct BroadcastNestedLoopJoinExec {

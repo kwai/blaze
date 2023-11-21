@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::shuffle::ShuffleRepartitioner;
+use std::io::Cursor;
+
 use async_trait::async_trait;
 use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
-use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::physical_plan::metrics::Count;
+use datafusion::{arrow::record_batch::RecordBatch, common::Result, physical_plan::metrics::Count};
 use datafusion_ext_commons::io::write_one_batch;
 use jni::objects::GlobalRef;
-use std::io::Cursor;
+
+use crate::shuffle::ShuffleRepartitioner;
 
 pub struct RssSingleShuffleRepartitioner {
     rss_partition_writer: GlobalRef,

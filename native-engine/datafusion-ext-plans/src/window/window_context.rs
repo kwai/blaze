@@ -12,13 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::window::WindowExpr;
-use arrow::datatypes::{Field, FieldRef, Fields, Schema, SchemaRef};
-use arrow::record_batch::RecordBatch;
-use arrow::row::{RowConverter, Rows, SortField};
-use datafusion::common::Result;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
 use std::sync::{Arc, Mutex as SyncMutex};
+
+use arrow::{
+    datatypes::{Field, FieldRef, Fields, Schema, SchemaRef},
+    record_batch::RecordBatch,
+    row::{RowConverter, Rows, SortField},
+};
+use datafusion::{
+    common::Result,
+    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+};
+
+use crate::window::WindowExpr;
 
 #[derive(Debug)]
 pub struct WindowContext {

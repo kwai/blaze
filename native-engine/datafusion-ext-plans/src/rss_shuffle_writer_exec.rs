@@ -14,37 +14,36 @@
 
 //! Defines the External shuffle repartition plan
 
-use std::any::Any;
-use std::fmt::Debug;
-use std::sync::Arc;
+use std::{any::Any, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::ArrowError;
-
-use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-
-use crate::common::memory_manager::MemManager;
-use crate::shuffle::rss_bucket_repartitioner::RssBucketShuffleRepartitioner;
-use crate::shuffle::rss_single_repartitioner::RssSingleShuffleRepartitioner;
-use crate::shuffle::rss_sort_repartitioner::RssSortShuffleRepartitioner;
-use crate::shuffle::{can_use_bucket_repartitioner, ShuffleRepartitioner};
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
-use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
-use datafusion::physical_plan::metrics::{MetricBuilder, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::Partitioning;
-use datafusion::physical_plan::SendableRecordBatchStream;
-use datafusion::physical_plan::Statistics;
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
-use futures::stream::once;
-use futures::{TryFutureExt, TryStreamExt};
+use datafusion::{
+    arrow::datatypes::SchemaRef,
+    error::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_plan::{
+        expressions::PhysicalSortExpr,
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        Statistics,
+    },
+};
+use futures::{stream::once, TryStreamExt};
 
-/// The rss shuffle writer operator maps each input partition to M output partitions based on a
-/// partitioning scheme. No guarantees are made about the order of the resulting partitions.
+use crate::{
+    memmgr::MemManager,
+    shuffle::{
+        can_use_bucket_repartitioner, rss_bucket_repartitioner::RssBucketShuffleRepartitioner,
+        rss_single_repartitioner::RssSingleShuffleRepartitioner,
+        rss_sort_repartitioner::RssSortShuffleRepartitioner, ShuffleRepartitioner,
+    },
+};
+
+/// The rss shuffle writer operator maps each input partition to M output
+/// partitions based on a partitioning scheme. No guarantees are made about the
+/// order of the resulting partitions.
 #[derive(Debug)]
 pub struct RssShuffleWriterExec {
     /// Input execution plan
@@ -127,7 +126,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
                 rss_partition_writer,
                 data_size_metric,
             )),
-            p @ Partitioning::Hash(_, _)
+            p @ Partitioning::Hash(..)
                 if can_use_bucket_repartitioner(&self.input.schema())
                     && p.partition_count() < 200 =>
             {
@@ -142,7 +141,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
-            Partitioning::Hash(_, _) => {
+            Partitioning::Hash(..) => {
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
@@ -156,19 +155,14 @@ impl ExecutionPlan for RssShuffleWriterExec {
             }
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
-
-        let stream = repartitioner
-            .execute(
-                context.clone(),
-                input,
-                context.session_config().batch_size(),
-                BaselineMetrics::new(&self.metrics, partition),
-            )
-            .map_err(|e| ArrowError::ExternalError(Box::new(e)));
-
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(stream).try_flatten(),
+            once(repartitioner.execute(
+                context.clone(),
+                input,
+                BaselineMetrics::new(&self.metrics, partition),
+            ))
+            .try_flatten(),
         )))
     }
 
