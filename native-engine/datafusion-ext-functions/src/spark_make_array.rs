@@ -17,7 +17,11 @@
 use std::sync::Arc;
 
 use arrow::{array::*, datatypes::DataType};
-use datafusion::{common::Result, error::DataFusionError, logical_expr::ColumnarValue};
+use datafusion::{
+    common::{Result, ScalarValue},
+    error::DataFusionError,
+    logical_expr::ColumnarValue,
+};
 
 macro_rules! downcast_vec {
     ($ARGS:expr, $ARRAY_TYPE:ident) => {{
@@ -107,9 +111,17 @@ fn array_array(args: &[ArrayRef]) -> Result<ArrayRef> {
         DataType::UInt32 => array!(args, UInt32Array, UInt32Builder),
         DataType::UInt64 => array!(args, UInt64Array, UInt64Builder),
         data_type => {
-            return Err(DataFusionError::NotImplemented(format!(
-                "Array is not implemented for type '{data_type:?}'."
-            )))
+            // naive implementation with scalar values
+            let num_rows = args[0].len();
+            let mut output_scalars = Vec::with_capacity(num_rows);
+            for i in 0..num_rows {
+                let row_scalars: Vec<ScalarValue> = args
+                    .iter()
+                    .map(|arg| ScalarValue::try_from_array(arg, i))
+                    .collect::<Result<_>>()?;
+                output_scalars.push(ScalarValue::new_list(Some(row_scalars), data_type.clone()));
+            }
+            ScalarValue::iter_to_array(output_scalars)?
         }
     };
     Ok(res)
