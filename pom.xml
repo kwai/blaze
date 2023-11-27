@@ -15,7 +15,7 @@
   <properties>
     <revision>2.0.7-SNAPSHOT</revision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <arrowVersion>14.0.1</arrowVersion>
+    <arrowVersion>15.0.0-SNAPSHOT</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
   </properties>
 
@@ -73,6 +73,17 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+
+  <repositories>
+    <repository>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <id>arrow-snapshot</id>
+      <url>https://nightlies.apache.org/arrow/java/</url>
+      <layout>default</layout>
+    </repository>
+  </repositories>
 
   <build>
     <plugins>
