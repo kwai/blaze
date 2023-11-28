@@ -33,6 +33,7 @@ use datafusion::{
     common::DataFusionError, error::Result, logical_expr::ColumnarValue,
     physical_expr::utils::expr_list_eq_any_order, physical_plan::PhysicalExpr,
 };
+use datafusion_ext_commons::cast::cast;
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
@@ -149,7 +150,11 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         let params: Vec<ArrayRef> = self
             .params
             .iter()
-            .map(|param| param.evaluate(batch).map(|r| r.into_array(num_rows)))
+            .zip(params_schema.fields())
+            .map(|(param, field)| {
+                let param_array = param.evaluate(batch).map(|r| r.into_array(num_rows))?;
+                cast(&param_array, field.data_type())
+            })
             .collect::<Result<_>>()?;
         let params_batch = RecordBatch::try_new_with_options(
             params_schema.clone(),
