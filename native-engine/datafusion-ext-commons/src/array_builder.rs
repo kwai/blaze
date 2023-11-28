@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::*;
-use arrow::datatypes::*;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::RecordBatch;
+use arrow::{array::*, datatypes::*, error::Result as ArrowResult, record_batch::RecordBatch};
 
 // NOTE:
 // we suggest not using this mod because array_builders do not support
@@ -122,7 +119,7 @@ pub fn builder_extend(
         DataType::LargeBinary => append!(LargeBinary),
         DataType::Utf8 => append!(String),
         DataType::LargeUtf8 => append!(LargeString),
-        DataType::Decimal128(_, _) => append!(Decimal128),
+        DataType::Decimal128(..) => append!(Decimal128),
         dt => unimplemented!("data type not supported in builder_extend: {:?}", dt),
     }
 }

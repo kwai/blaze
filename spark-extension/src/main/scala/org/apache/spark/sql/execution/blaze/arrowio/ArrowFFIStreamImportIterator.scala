@@ -75,7 +75,7 @@ class ArrowFFIStreamImportIterator(
     } finally {
       // current batch can be closed after all rows converted to UnsafeRow
       currentBatch.close()
-      reader.getVectorSchemaRoot.clear()
+      // reader.getVectorSchemaRoot.clear()
     }
     hasNext
   }

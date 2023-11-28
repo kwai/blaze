@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::*;
-use arrow::datatypes::*;
+use std::{str::FromStr, sync::Arc};
+
+use arrow::{array::*, datatypes::*};
 use bigdecimal::{FromPrimitive, ToPrimitive};
-use datafusion::common::cast::{as_float32_array, as_float64_array};
-use datafusion::common::{DataFusionError, Result};
+use datafusion::common::{
+    cast::{as_float32_array, as_float64_array},
+    DataFusionError, Result,
+};
 use num::{cast::AsPrimitive, Bounded, Integer, Signed};
 use paste::paste;
-use std::str::FromStr;
-use std::sync::Arc;
 
 pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
     return cast_impl(array, cast_type, false);
@@ -71,15 +72,15 @@ pub fn cast_impl(
             // spark compatible string to integer cast
             try_cast_string_array_to_integer(array, cast_type)?
         }
-        (&DataType::Utf8, &DataType::Decimal128(_, _)) => {
+        (&DataType::Utf8, &DataType::Decimal128(..)) => {
             // spark compatible string to decimal cast
             try_cast_string_array_to_decimal(array, cast_type)?
         }
-        (&DataType::Decimal128(_, _), DataType::Utf8) => {
+        (&DataType::Decimal128(..), DataType::Utf8) => {
             // spark compatible decimal to string cast
             try_cast_decimal_array_to_string(array, cast_type)?
         }
-        (&DataType::Timestamp(_, _), DataType::Float64) => {
+        (&DataType::Timestamp(..), DataType::Float64) => {
             // timestamp to f64 = timestamp to i64 to f64, only used in agg.sum()
             arrow::compute::cast(
                 &arrow::compute::cast(array, &DataType::Int64)?,
@@ -92,14 +93,14 @@ pub fn cast_impl(
         }
         (&DataType::List(_), DataType::List(to_field)) => {
             let list = as_list_array(array);
-            let casted_items = cast_impl(list.values(), to_field.data_type(), match_struct_fields)?;
+            let items = cast_impl(list.values(), to_field.data_type(), match_struct_fields)?;
             make_array(ArrayData::try_new(
                 DataType::List(to_field.clone()),
                 list.len(),
                 list.nulls().map(|nb| nb.buffer().clone()),
                 list.offset(),
                 list.to_data().buffers().to_vec(),
-                vec![casted_items.into_data()],
+                vec![items.into_data()],
             )?)
         }
         (&DataType::Struct(_), DataType::Struct(to_fields)) => {
@@ -136,7 +137,7 @@ pub fn cast_impl(
                 let mut null_column_name = vec![];
                 let casted_array = to_fields
                     .iter()
-                    .map(|field: &FieldRef| {
+                    .map(|field| {
                         let col = struct_.column_by_name(field.name().as_str());
                         if col.is_some() {
                             cast_impl(col.unwrap(), field.data_type(), match_struct_fields)
@@ -171,21 +172,20 @@ pub fn cast_impl(
                 )?)
             }
         }
-        (&DataType::Map(_, _), &DataType::Map(ref to_entries_field, to_sorted)) => {
+        (&DataType::Map(..), &DataType::Map(ref to_entries_field, to_sorted)) => {
             let map = as_map_array(array);
-            let casted_entries = cast_impl(
+            let entries = cast_impl(
                 map.entries(),
                 to_entries_field.data_type(),
                 match_struct_fields,
             )?;
-
             make_array(ArrayData::try_new(
                 DataType::Map(to_entries_field.clone(), to_sorted),
                 map.len(),
                 map.nulls().map(|nb| nb.buffer().clone()),
                 map.offset(),
                 map.to_data().buffers().to_vec(),
-                vec![casted_entries.into_data()],
+                vec![entries.into_data()],
             )?)
         }
         _ => {
@@ -322,16 +322,18 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
             return None;
         };
 
-        // We are going to process the new digit and accumulate the result. However, before doing
-        // this, if the result is already smaller than the stopValue(Long.MIN_VALUE / radix), then
-        // result * 10 will definitely be smaller than minValue, and we can stop.
+        // We are going to process the new digit and accumulate the result. However,
+        // before doing this, if the result is already smaller than the
+        // stopValue(Long.MIN_VALUE / radix), then result * 10 will definitely
+        // be smaller than minValue, and we can stop.
         if result < stop_value {
             return None;
         }
 
         result = result * radix - T::from_u8(digit).unwrap();
-        // Since the previous result is less than or equal to stopValue(Long.MIN_VALUE / radix), we
-        // can just use `result > 0` to check overflow. If result overflows, we should stop.
+        // Since the previous result is less than or equal to stopValue(Long.MIN_VALUE /
+        // radix), we can just use `result > 0` to check overflow. If result
+        // overflows, we should stop.
         if result > T::zero() {
             return None;
         }
@@ -371,8 +373,9 @@ fn to_decimal(input: &str, precision: u8, scale: i8) -> Option<i128> {
 
 #[cfg(test)]
 mod test {
-    use crate::cast::*;
     use datafusion::common::cast::as_int32_array;
+
+    use crate::cast::*;
 
     #[test]
     fn test_float_to_int() {

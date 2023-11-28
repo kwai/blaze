@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::ops::{Deref, DerefMut};
+
 use arrow::row::Row;
 use slimmer_box::SlimmerBox;
-use std::ops::{Deref, DerefMut};
 
 #[derive(Debug, Clone, Hash, PartialOrd, PartialEq, Ord, Eq)]
 pub struct SlimBytes(SlimmerBox<[u8]>);

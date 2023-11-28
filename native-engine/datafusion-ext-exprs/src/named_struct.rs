@@ -12,25 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::down_cast_any_ref;
-
-use datafusion::arrow::array::StructArray;
-
-use arrow::array::Array;
-use arrow::datatypes::{Field, Fields, SchemaRef};
-use arrow::record_batch::RecordBatchOptions;
-use datafusion::arrow::{
-    datatypes::{DataType, Schema},
-    record_batch::RecordBatch,
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    hash::{Hash, Hasher},
+    sync::Arc,
 };
-use datafusion::common::DataFusionError;
-use datafusion::common::Result;
-use datafusion::logical_expr::ColumnarValue;
-use datafusion::physical_expr::{expr_list_eq_any_order, PhysicalExpr};
+
+use arrow::{
+    array::Array,
+    datatypes::{Field, Fields, SchemaRef},
+    record_batch::RecordBatchOptions,
+};
+use datafusion::{
+    arrow::{
+        array::StructArray,
+        datatypes::{DataType, Schema},
+        record_batch::RecordBatch,
+    },
+    common::{DataFusionError, Result},
+    logical_expr::ColumnarValue,
+    physical_expr::{expr_list_eq_any_order, PhysicalExpr},
+};
 use datafusion_ext_commons::io::name_batch;
-use std::fmt::{Debug, Formatter};
-use std::hash::{Hash, Hasher};
-use std::{any::Any, sync::Arc};
+
+use crate::down_cast_any_ref;
 
 /// expression to get a field of from NameStruct.
 #[derive(Debug, Hash)]
@@ -131,14 +137,15 @@ impl PhysicalExpr for NamedStructExpr {
 
 #[cfg(test)]
 mod test {
-    use crate::named_struct::NamedStructExpr;
-    use arrow::array::*;
-    use arrow::datatypes::*;
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::physical_plan::expressions::Column;
-    use datafusion::physical_plan::PhysicalExpr;
     use std::sync::Arc;
+
+    use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
+    use datafusion::{
+        assert_batches_eq,
+        physical_plan::{expressions::Column, PhysicalExpr},
+    };
+
+    use crate::named_struct::NamedStructExpr;
 
     #[test]
     fn test_list() -> Result<(), Box<dyn std::error::Error>> {
@@ -152,7 +159,10 @@ mod test {
         let input_batch = RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", array, true)])?;
 
         let named_struct = Arc::new(NamedStructExpr::try_new(
-            vec![Arc::new(Column::new("cccccc1", 0)), Arc::new(Column::new("cccccc1", 0))],
+            vec![
+                Arc::new(Column::new("cccccc1", 0)),
+                Arc::new(Column::new("cccccc1", 0)),
+            ],
             DataType::Struct(Fields::from(vec![
                 Field::new(
                     "field1",

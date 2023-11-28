@@ -15,28 +15,32 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
-use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
-use crate::common::output::output_with_sender;
-use crate::filter_exec::FilterExec;
-use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
-use datafusion::common::{Result, Statistics};
-use datafusion::execution::TaskContext;
-use datafusion::physical_expr::{PhysicalExprRef, PhysicalSortExpr};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
-};
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::stream::once;
-use futures::{FutureExt, StreamExt, TryStreamExt};
-use itertools::Itertools;
-use std::any::Any;
-use std::fmt::Formatter;
-use std::sync::Arc;
+use std::{any::Any, fmt::Formatter, sync::Arc};
 
-use crate::common::column_pruning::{prune_columns, ExecuteWithColumnPruning};
+use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
+use datafusion::{
+    common::{Result, Statistics},
+    execution::TaskContext,
+    physical_expr::{PhysicalExprRef, PhysicalSortExpr},
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    },
+};
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
+use futures::{stream::once, FutureExt, StreamExt, TryStreamExt};
+use itertools::Itertools;
+
+use crate::{
+    common::{
+        batch_statisitcs::{stat_input, InputBatchStatistics},
+        cached_exprs_evaluator::CachedExprsEvaluator,
+        column_pruning::{prune_columns, ExecuteWithColumnPruning},
+        output::TaskOutputter,
+    },
+    filter_exec::FilterExec,
+};
 
 #[derive(Debug, Clone)]
 pub struct ProjectExec {
@@ -122,17 +126,14 @@ impl ExecutionPlan for ProjectExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let batch_size = context.session_config().batch_size();
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-
         let exprs: Vec<PhysicalExprRef> = self.expr.iter().map(|(e, _name)| e.clone()).collect();
 
         let fut = if let Some(filter_exec) = self.input.as_any().downcast_ref::<FilterExec>() {
             execute_project_with_filtering(
                 filter_exec.children()[0].clone(),
                 partition,
-                context,
+                context.clone(),
                 self.schema(),
                 filter_exec.predicates().to_vec(),
                 exprs,
@@ -143,7 +144,7 @@ impl ExecutionPlan for ProjectExec {
             execute_project_with_filtering(
                 self.input.clone(),
                 partition,
-                context,
+                context.clone(),
                 self.schema(),
                 vec![],
                 exprs,
@@ -156,9 +157,7 @@ impl ExecutionPlan for ProjectExec {
             self.schema(),
             once(fut).try_flatten(),
         ));
-
-        let coalesced = Box::pin(CoalesceStream::new(output, batch_size, elapsed_compute));
-        Ok(coalesced)
+        Ok(context.coalesce_with_default_batch_size(output, &baseline_metrics)?)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -217,19 +216,14 @@ async fn execute_project_with_filtering(
         input.execute_projected(partition, context.clone(), &projection)?,
     )?;
 
-    output_with_sender(
-        "Project",
-        context,
-        output_schema.clone(),
-        move |sender| async move {
-            while let Some(batch) = input.next().await.transpose()? {
-                let mut timer = baseline_metrics.elapsed_compute().timer();
-                let output_batch =
-                    cached_expr_evaluator.filter_project(&batch, output_schema.clone())?;
-                baseline_metrics.record_output(output_batch.num_rows());
-                sender.send(Ok(output_batch), Some(&mut timer)).await;
-            }
-            Ok(())
-        },
-    )
+    context.output_with_sender("Project", output_schema.clone(), move |sender| async move {
+        while let Some(batch) = input.next().await.transpose()? {
+            let mut timer = baseline_metrics.elapsed_compute().timer();
+            let output_batch =
+                cached_expr_evaluator.filter_project(&batch, output_schema.clone())?;
+            baseline_metrics.record_output(output_batch.num_rows());
+            sender.send(Ok(output_batch), Some(&mut timer)).await;
+        }
+        Ok(())
+    })
 }

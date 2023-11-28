@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::io::Cursor;
+
 use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
 use datafusion::common::Result;
 use datafusion_ext_commons::io::write_one_batch;
 use jni::objects::GlobalRef;
-use std::io::Cursor;
 
 pub fn rss_write_batch(
     rss_partition_writer: &GlobalRef,

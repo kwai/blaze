@@ -14,79 +14,83 @@
 
 //! Serde code to convert from protocol buffers to Rust data structures.
 
-use std::convert::{TryFrom, TryInto};
-use std::sync::Arc;
+use std::{
+    convert::{TryFrom, TryInto},
+    sync::Arc,
+};
 
 use arrow::datatypes::{FieldRef, SchemaRef};
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
-use base64::Engine;
+use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use chrono::DateTime;
-use datafusion::datasource::listing::{FileRange, PartitionedFile};
-use datafusion::datasource::object_store::ObjectStoreUrl;
-use datafusion::datasource::physical_plan::FileScanConfig;
-use datafusion::error::DataFusionError;
-use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::{BuiltinScalarFunction, Operator};
-use datafusion::physical_expr::expressions::{LikeExpr, SCAndExpr, SCOrExpr};
-use datafusion::physical_expr::{functions, ScalarFunctionExpr};
-use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
-use datafusion::physical_plan::sorts::sort::SortOptions;
-use datafusion::physical_plan::union::UnionExec;
-use datafusion::physical_plan::{
-    expressions as phys_expr,
-    expressions::{
-        BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal,
-        NegativeExpr, NotExpr, PhysicalSortExpr,
+use datafusion::{
+    datasource::{
+        listing::{FileRange, PartitionedFile},
+        object_store::ObjectStoreUrl,
+        physical_plan::FileScanConfig,
     },
-    Partitioning,
+    error::DataFusionError,
+    execution::context::ExecutionProps,
+    logical_expr::{BuiltinScalarFunction, Operator},
+    physical_expr::{
+        expressions::{LikeExpr, SCAndExpr, SCOrExpr},
+        functions, ScalarFunctionExpr,
+    },
+    physical_plan::{
+        expressions as phys_expr,
+        expressions::{
+            BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal,
+            NegativeExpr, NotExpr, PhysicalSortExpr,
+        },
+        joins::utils::{ColumnIndex, JoinFilter},
+        sorts::sort::SortOptions,
+        union::UnionExec,
+        ColumnStatistics, ExecutionPlan, Partitioning, PhysicalExpr, Statistics,
+    },
 };
-use datafusion::physical_plan::{ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics};
-
 use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
-use datafusion_ext_plans::agg::{
-    create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
+use datafusion_ext_exprs::{
+    cast::TryCastExpr, get_indexed_field::GetIndexedFieldExpr, get_map_value::GetMapValueExpr,
+    named_struct::NamedStructExpr, spark_scalar_subquery_wrapper::SparkScalarSubqueryWrapperExpr,
+    spark_udf_wrapper::SparkUDFWrapperExpr, string_contains::StringContainsExpr,
+    string_ends_with::StringEndsWithExpr, string_starts_with::StringStartsWithExpr,
 };
-use datafusion_ext_plans::agg_exec::AggExec;
-use datafusion_ext_plans::broadcast_join_exec::BroadcastJoinExec;
-use datafusion_ext_plans::debug_exec::DebugExec;
-use datafusion_ext_plans::empty_partitions_exec::EmptyPartitionsExec;
-use datafusion_ext_plans::expand_exec::ExpandExec;
-use datafusion_ext_plans::ffi_reader_exec::FFIReaderExec;
-use datafusion_ext_plans::filter_exec::FilterExec;
-use datafusion_ext_plans::ipc_reader_exec::IpcReaderExec;
-use datafusion_ext_plans::ipc_writer_exec::IpcWriterExec;
-use datafusion_ext_plans::limit_exec::LimitExec;
-use datafusion_ext_plans::parquet_exec::ParquetExec;
-use datafusion_ext_plans::project_exec::ProjectExec;
-use datafusion_ext_plans::rename_columns_exec::RenameColumnsExec;
-use datafusion_ext_plans::rss_shuffle_writer_exec::RssShuffleWriterExec;
-use datafusion_ext_plans::shuffle_writer_exec::ShuffleWriterExec;
-use datafusion_ext_plans::sort_exec::SortExec;
-use datafusion_ext_plans::sort_merge_join_exec::SortMergeJoinExec;
-use object_store::path::Path;
-use object_store::ObjectMeta;
+use datafusion_ext_plans::{
+    agg::{create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr},
+    agg_exec::AggExec,
+    broadcast_join_exec::BroadcastJoinExec,
+    broadcast_nested_loop_join_exec::BroadcastNestedLoopJoinExec,
+    debug_exec::DebugExec,
+    empty_partitions_exec::EmptyPartitionsExec,
+    expand_exec::ExpandExec,
+    ffi_reader_exec::FFIReaderExec,
+    filter_exec::FilterExec,
+    generate::create_generator,
+    generate_exec::GenerateExec,
+    ipc_reader_exec::IpcReaderExec,
+    ipc_writer_exec::IpcWriterExec,
+    limit_exec::LimitExec,
+    parquet_exec::ParquetExec,
+    parquet_sink_exec::ParquetSinkExec,
+    project_exec::ProjectExec,
+    rename_columns_exec::RenameColumnsExec,
+    rss_shuffle_writer_exec::RssShuffleWriterExec,
+    shuffle_writer_exec::ShuffleWriterExec,
+    sort_exec::SortExec,
+    sort_merge_join_exec::SortMergeJoinExec,
+    window::{WindowExpr, WindowFunction, WindowRankType},
+    window_exec::WindowExec,
+};
+use object_store::{path::Path, ObjectMeta};
 
-use crate::error::PlanSerDeError;
-use crate::protobuf::physical_expr_node::ExprType;
-use crate::protobuf::physical_plan_node::PhysicalPlanType;
-use crate::protobuf::GenerateFunction;
-use crate::{convert_box_required, convert_required, into_required, protobuf, Schema};
-use crate::{from_proto_binary_op, proto_error};
-use datafusion_ext_exprs::cast::TryCastExpr;
-use datafusion_ext_exprs::get_indexed_field::GetIndexedFieldExpr;
-use datafusion_ext_exprs::get_map_value::GetMapValueExpr;
-use datafusion_ext_exprs::named_struct::NamedStructExpr;
-use datafusion_ext_exprs::spark_scalar_subquery_wrapper::SparkScalarSubqueryWrapperExpr;
-use datafusion_ext_exprs::spark_udf_wrapper::SparkUDFWrapperExpr;
-use datafusion_ext_exprs::string_contains::StringContainsExpr;
-use datafusion_ext_exprs::string_ends_with::StringEndsWithExpr;
-use datafusion_ext_exprs::string_starts_with::StringStartsWithExpr;
-use datafusion_ext_plans::broadcast_nested_loop_join_exec::BroadcastNestedLoopJoinExec;
-use datafusion_ext_plans::generate::create_generator;
-use datafusion_ext_plans::generate_exec::GenerateExec;
-use datafusion_ext_plans::parquet_sink_exec::ParquetSinkExec;
-use datafusion_ext_plans::window::{WindowExpr, WindowFunction, WindowRankType};
-use datafusion_ext_plans::window_exec::WindowExec;
+use crate::{
+    convert_box_required, convert_required,
+    error::PlanSerDeError,
+    from_proto_binary_op, into_required, proto_error, protobuf,
+    protobuf::{
+        physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType, GenerateFunction,
+    },
+    Schema,
+};
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -563,6 +567,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     physical_groupings,
                     physical_aggs,
                     agg.initial_input_buffer_offset as usize,
+                    agg.supports_partial_skipping,
                     input,
                 )?))
             }

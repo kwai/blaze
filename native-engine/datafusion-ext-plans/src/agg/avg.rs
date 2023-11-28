@@ -12,19 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{AccumInitialValue, AggBuf};
-use crate::agg::count::AggCount;
-use crate::agg::sum::AggSum;
-use crate::agg::Agg;
-use arrow::array::*;
-use arrow::datatypes::*;
-use datafusion::common::cast::{as_decimal128_array, as_int64_array};
-use datafusion::common::{Result, ScalarValue};
-use datafusion::error::DataFusionError;
-use datafusion::physical_expr::PhysicalExpr;
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    sync::Arc,
+};
+
+use arrow::{array::*, datatypes::*};
+use datafusion::{
+    common::{
+        cast::{as_decimal128_array, as_int64_array},
+        Result, ScalarValue,
+    },
+    error::DataFusionError,
+    physical_expr::PhysicalExpr,
+};
+
+use crate::agg::{
+    agg_buf::{AccumInitialValue, AggBuf},
+    count::AggCount,
+    sum::AggSum,
+    Agg,
+};
 
 pub struct AggAvg {
     child: Arc<dyn PhysicalExpr>,
@@ -212,7 +221,7 @@ impl Agg for AggAvg {
 
 fn get_final_merger(dt: &DataType) -> Result<fn(ScalarValue, i64) -> ScalarValue> {
     macro_rules! get_fn {
-        ($ty:ident, f64) => {{
+        ($ty:ident,f64) => {{
             Ok(|sum: ScalarValue, count: i64| {
                 let avg = match sum {
                     ScalarValue::$ty(sum, ..) => ScalarValue::Float64(if !count.is_zero() {

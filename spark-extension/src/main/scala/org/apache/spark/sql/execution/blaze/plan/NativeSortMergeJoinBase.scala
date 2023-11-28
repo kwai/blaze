@@ -54,7 +54,7 @@ abstract class NativeSortMergeJoinBase(
     "Semi/Anti join with filter is not supported yet")
 
   assert(
-    BlazeConf.enableSmjInequalityJoin() || condition.isEmpty,
+    BlazeConf.SMJ_INEQUALITY_JOIN_ENABLE.booleanConf() || condition.isEmpty,
     "inequality sort-merge join is not enabled")
 
   override lazy val metrics: Map[String, SQLMetric] = Map(

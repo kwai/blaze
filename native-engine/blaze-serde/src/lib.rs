@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::error::PlanSerDeError;
-use arrow::datatypes::{DataType, Field, Fields, IntervalUnit, Schema, TimeUnit};
-use datafusion::logical_expr::Operator;
-use datafusion::physical_plan::joins::utils::JoinSide;
-use datafusion::prelude::JoinType;
-use datafusion::scalar::ScalarValue;
-use datafusion_ext_plans::agg::AggFunction;
 use std::sync::Arc;
+
+use arrow::datatypes::{DataType, Field, Fields, IntervalUnit, Schema, TimeUnit};
+use datafusion::{
+    logical_expr::Operator, physical_plan::joins::utils::JoinSide, prelude::JoinType,
+    scalar::ScalarValue,
+};
+use datafusion_ext_plans::agg::AggFunction;
+
+use crate::error::PlanSerDeError;
 
 // include the generated protobuf source as a submodule
 #[allow(clippy::all)]
@@ -306,8 +308,10 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     .ok_or_else(|| proto_error("Protobuf deserialization error: Map message missing required field 'value_type'"))?
                     .as_ref();
 
-                let vec_field =
-                    vec![Arc::new(key_type.try_into()?), Arc::new(value_type.try_into()?)];
+                let vec_field = vec![
+                    Arc::new(key_type.try_into()?),
+                    Arc::new(value_type.try_into()?),
+                ];
                 let fields = Arc::new(Field::new(
                     "entries",
                     DataType::Struct(vec_field.into()),

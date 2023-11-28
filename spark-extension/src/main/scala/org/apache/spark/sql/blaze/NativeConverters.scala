@@ -780,9 +780,9 @@ object NativeConverters extends Logging {
       case Length(arg) if arg.dataType == StringType =>
         buildScalarFunction(pb.ScalarFunction.CharacterLength, arg :: Nil, IntegerType)
 
-      case e: Lower if BlazeConf.enableCaseConvertFunctions() =>
+      case e: Lower if BlazeConf.CASE_CONVERT_FUNCTIONS_ENABLE.booleanConf() =>
         buildExtScalarFunction("StringLower", e.children, e.dataType)
-      case e: Upper if BlazeConf.enableCaseConvertFunctions() =>
+      case e: Upper if BlazeConf.CASE_CONVERT_FUNCTIONS_ENABLE.booleanConf() =>
         buildExtScalarFunction("StringUpper", e.children, e.dataType)
 
       case e: StringTrim =>
@@ -864,13 +864,11 @@ object NativeConverters extends Logging {
       case e: Concat if e.children.forall(_.dataType == StringType) =>
         buildExtScalarFunction("StringConcat", e.children, e.dataType)
 
-      case e: ConcatWs if e.children.nonEmpty =>
-        assert(
-          e.children.head.isInstanceOf[Literal],
-          "only supports concat_ws with literal seperator")
-        assert(
-          e.children.forall(c => c.dataType == StringType || c.dataType == ArrayType(StringType)),
-          "only supports concat_ws with string or array<string> type")
+      case e: ConcatWs
+          if e.children.nonEmpty
+            && e.children.head.isInstanceOf[Literal]
+            && e.children.forall(c =>
+              c.dataType == StringType || c.dataType == ArrayType(StringType)) =>
         buildExtScalarFunction("StringConcatWs", e.children, e.dataType)
 
       case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)

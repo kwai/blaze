@@ -12,35 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::sort_exec::SortExec;
-use crate::sort_merge_join_exec::SortMergeJoinExec;
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use blaze_jni_bridge::jni_call_static;
-use datafusion::common::{DataFusionError, Result, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::logical_expr::JoinType;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::expressions::Column;
-use datafusion::physical_plan::joins::utils::{
-    build_join_schema, check_join_is_valid, JoinFilter, JoinOn,
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    sync::Arc,
+    task::Poll,
+    time::Duration,
 };
-use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
-use datafusion::physical_plan::memory::MemoryStream;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use blaze_jni_bridge::{
+    conf,
+    conf::{BooleanConf, IntConf},
 };
-use futures::stream::once;
-use futures::{StreamExt, TryStreamExt};
-use jni::sys::{jboolean, JNI_TRUE};
+use datafusion::{
+    common::{DataFusionError, Result, Statistics},
+    execution::context::TaskContext,
+    logical_expr::JoinType,
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        expressions::Column,
+        joins::{
+            utils::{build_join_schema, check_join_is_valid, JoinFilter, JoinOn},
+            HashJoinExec, PartitionMode,
+        },
+        memory::MemoryStream,
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    },
+};
+use futures::{stream::once, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::Duration;
+
+use crate::{sort_exec::SortExec, sort_merge_join_exec::SortMergeJoinExec};
 
 #[derive(Debug)]
 pub struct BroadcastJoinExec {
@@ -178,12 +183,9 @@ async fn execute_broadcast_join(
     join_filter: Option<JoinFilter>,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-    let enabled_fallback_to_smj: bool =
-        jni_call_static!(BlazeConf.enableBhjFallbacksToSmj() -> jboolean)? == JNI_TRUE;
-    let bhj_num_rows_limit: usize =
-        jni_call_static!(BlazeConf.bhjFallbacksToSmjRowsThreshold() -> i32)? as usize;
-    let bhj_mem_size_limit: usize =
-        jni_call_static!(BlazeConf.bhjFallbacksToSmjMemThreshold() -> i32)? as usize;
+    let enabled_fallback_to_smj = conf::BHJ_FALLBACKS_TO_SMJ_ENABLE.value()?;
+    let bhj_num_rows_limit = conf::BHJ_FALLBACKS_TO_SMJ_ROWS_THRESHOLD.value()? as usize;
+    let bhj_mem_size_limit = conf::BHJ_FALLBACKS_TO_SMJ_MEM_THRESHOLD.value()? as usize;
 
     // if broadcasted size is small enough, use hash join
     // otherwise use sort-merge join
@@ -304,10 +306,13 @@ async fn execute_broadcast_join(
                     let join_metrics = join.metrics().unwrap();
                     metrics.record_output(join_metrics.output_rows().unwrap_or(0));
                     metrics.elapsed_compute().add_duration(Duration::from_nanos(
-                        [right_sorted_metrics.elapsed_compute(), join_metrics.elapsed_compute()]
-                            .into_iter()
-                            .flatten()
-                            .sum::<usize>() as u64,
+                        [
+                            right_sorted_metrics.elapsed_compute(),
+                            join_metrics.elapsed_compute(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .sum::<usize>() as u64,
                     ));
                     Poll::Ready(None)
                 }));

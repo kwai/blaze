@@ -12,30 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::down_cast_any_ref;
-use arrow::array::{as_struct_array, make_array, Array, ArrayRef, StructArray};
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use std::{
+    any::Any,
+    fmt::{Debug, Display, Formatter},
+    hash::Hasher,
+    sync::Arc,
+};
 
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use arrow::{
+    array::{as_struct_array, make_array, Array, ArrayRef, StructArray},
+    datatypes::{DataType, Field, Schema, SchemaRef},
+    ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
 use blaze_jni_bridge::{
-    is_task_running, jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
+    conf, conf::IntConf, is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref,
     jni_new_object,
 };
-use datafusion::common::DataFusionError;
-use datafusion::error::Result;
-use datafusion::logical_expr::ColumnarValue;
-use datafusion::physical_expr::utils::expr_list_eq_any_order;
-use datafusion::physical_plan::PhysicalExpr;
-
+use datafusion::{
+    common::DataFusionError, error::Result, logical_expr::ColumnarValue,
+    physical_expr::utils::expr_list_eq_any_order, physical_plan::PhysicalExpr,
+};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
-use std::any::Any;
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::Hasher;
-
-use arrow::ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema};
-use std::sync::Arc;
+use crate::down_cast_any_ref;
 
 pub struct SparkUDFWrapperExpr {
     pub serialized: Vec<u8>,
@@ -69,7 +70,7 @@ impl SparkUDFWrapperExpr {
         return_nullable: bool,
         params: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Self> {
-        let num_threads = jni_call_static!(BlazeConf.udfWrapperNumThreads() -> i32)? as usize;
+        let num_threads = conf::UDF_WRAPPER_NUM_THREADS.value()? as usize;
         Ok(Self {
             serialized,
             return_type: return_type.clone(),

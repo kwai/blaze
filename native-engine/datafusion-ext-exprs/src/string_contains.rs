@@ -12,17 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{
+    any::Any,
+    fmt::{Display, Formatter},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
+
+use arrow::{
+    array::{Array, BooleanArray, StringArray},
+    datatypes::{DataType, Schema},
+    record_batch::RecordBatch,
+};
+use datafusion::{
+    common::{DataFusionError, Result, ScalarValue},
+    logical_expr::ColumnarValue,
+    physical_plan::PhysicalExpr,
+};
+
 use crate::down_cast_any_ref;
-use arrow::array::{Array, BooleanArray, StringArray};
-use arrow::datatypes::{DataType, Schema};
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{DataFusionError, Result, ScalarValue};
-use datafusion::logical_expr::ColumnarValue;
-use datafusion::physical_plan::PhysicalExpr;
-use std::any::Any;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 #[derive(Debug, Hash)]
 pub struct StringContainsExpr {
@@ -114,12 +122,16 @@ impl PhysicalExpr for StringContainsExpr {
 
 #[cfg(test)]
 mod test {
-    use crate::string_contains::StringContainsExpr;
-    use arrow::array::{ArrayRef, BooleanArray, StringArray};
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
     use std::sync::Arc;
+
+    use arrow::{
+        array::{ArrayRef, BooleanArray, StringArray},
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
+
+    use crate::string_contains::StringContainsExpr;
 
     #[test]
     fn test_ok() {

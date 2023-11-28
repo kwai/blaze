@@ -12,20 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::*;
-use arrow::compute::*;
-use arrow::datatypes::*;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::cast::{as_list_array, as_struct_array};
-use datafusion::common::DataFusionError;
-use datafusion::common::Result;
-use datafusion::common::ScalarValue;
-use datafusion::logical_expr::ColumnarValue;
-use datafusion::physical_expr::PhysicalExpr;
-use std::convert::TryInto;
-use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
-use std::{any::Any, sync::Arc};
+use std::{
+    any::Any,
+    convert::TryInto,
+    fmt::Debug,
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
+
+use arrow::{array::*, compute::*, datatypes::*, record_batch::RecordBatch};
+use datafusion::{
+    common::{
+        cast::{as_list_array, as_struct_array},
+        DataFusionError, Result, ScalarValue,
+    },
+    logical_expr::ColumnarValue,
+    physical_expr::PhysicalExpr,
+};
 
 use crate::down_cast_any_ref;
 
@@ -187,15 +190,16 @@ fn get_indexed_field(data_type: &DataType, key: &ScalarValue) -> Result<Field> {
 
 #[cfg(test)]
 mod test {
-    use super::GetIndexedFieldExpr;
-    use arrow::array::*;
-    use arrow::datatypes::*;
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::physical_plan::expressions::Column;
-    use datafusion::physical_plan::PhysicalExpr;
-    use datafusion::scalar::ScalarValue;
     use std::sync::Arc;
+
+    use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
+    use datafusion::{
+        assert_batches_eq,
+        physical_plan::{expressions::Column, PhysicalExpr},
+        scalar::ScalarValue,
+    };
+
+    use super::GetIndexedFieldExpr;
 
     #[test]
     fn test_list() -> Result<(), Box<dyn std::error::Error>> {

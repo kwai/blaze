@@ -21,6 +21,7 @@ import scala.collection.mutable
 
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
@@ -135,6 +136,18 @@ abstract class NativeAggBase(
   override def outputPartitioning: Partitioning =
     child.outputPartitioning
 
+  private val supportsPartialSkipping = (
+    BlazeConf.PARTIAL_AGG_SKIPPING_ENABLE.booleanConf()
+      && (child match { // do not trigger skipping after ExpandExec
+        case _: NativeExpandBase => false
+        case c: NativeProjectBase if c.child.isInstanceOf[NativeExpandBase] => false
+        case _ => true
+      })
+      && initialInputBufferOffset == 0
+      && aggregateExpressions.forall(_.mode == Partial)
+      && requiredChildDistribution.forall(_ == UnspecifiedDistribution)
+  )
+
   override def doExecuteNative(): NativeRDD = {
     val inputRDD = NativeHelper.executeNative(child)
     val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
@@ -155,7 +168,6 @@ abstract class NativeAggBase(
 
         lazy val inputPlan =
           inputRDD.nativePlan(inputRDD.partitions(partition.index), taskContext)
-
         pb.PhysicalPlanNode
           .newBuilder()
           .setAgg(
@@ -168,6 +180,7 @@ abstract class NativeAggBase(
               .addAllAggExpr(nativeAggrs.asJava)
               .addAllGroupingExpr(nativeGroupingExprs.asJava)
               .setInitialInputBufferOffset(initialInputBufferOffset)
+              .setSupportsPartialSkipping(supportsPartialSkipping)
               .setInput(inputPlan))
           .build()
       },

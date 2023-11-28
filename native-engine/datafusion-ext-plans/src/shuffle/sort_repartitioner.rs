@@ -12,24 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{try_new_spill, Spill};
-use crate::common::BatchesInterleaver;
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill};
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufReader, Cursor, Read, Seek, Write},
+    sync::{Arc, Weak},
+};
+
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use async_trait::async_trait;
-use datafusion::common::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
-use datafusion::physical_plan::Partitioning;
-use datafusion_ext_commons::io::write_one_batch;
-use datafusion_ext_commons::loser_tree::LoserTree;
+use datafusion::{
+    common::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_plan::{
+        metrics::{BaselineMetrics, Count},
+        Partitioning,
+    },
+};
+use datafusion_ext_commons::{io::write_one_batch, loser_tree::LoserTree};
 use derivative::Derivative;
 use futures::lock::Mutex;
-use std::fs::{File, OpenOptions};
-use std::io::{BufReader, Cursor, Read, Seek, Write};
-use std::sync::{Arc, Weak};
+
+use crate::{
+    common::BatchesInterleaver,
+    memmgr::{
+        onheap_spill::{try_new_spill, Spill},
+        MemConsumer, MemConsumerInfo, MemManager,
+    },
+    shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner, ShuffleSpill},
+};
 
 pub struct SortShuffleRepartitioner {
     name: String,

@@ -12,24 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::common::{DataFusionError, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::Partitioning::UnknownPartitioning;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream,
+use std::{
+    any::Any,
+    fmt::Formatter,
+    pin::Pin,
+    sync::Arc,
+    task::{ready, Context, Poll},
+};
+
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use datafusion::{
+    common::{DataFusionError, Result, Statistics},
+    execution::context::TaskContext,
+    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
+        Partitioning::UnknownPartitioning,
+        RecordBatchStream, SendableRecordBatchStream,
+    },
 };
 use futures::{Stream, StreamExt};
-use std::any::Any;
-use std::fmt::Formatter;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{ready, Context, Poll};
 
 #[derive(Debug, Clone)]
 pub struct ExpandExec {
@@ -195,21 +198,25 @@ impl Stream for ExpandStream {
 
 #[cfg(test)]
 mod test {
-    use crate::common::memory_manager::MemManager;
-    use crate::expand_exec::ExpandExec;
-    use arrow::array::{BooleanArray, Float32Array, Int32Array, StringArray};
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::common::{Result, ScalarValue};
-    use datafusion::logical_expr::Operator;
-    use datafusion::physical_expr::expressions::{binary, col, lit};
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::prelude::SessionContext;
     use std::sync::Arc;
 
-    //build i32 table
+    use arrow::{
+        array::{BooleanArray, Float32Array, Int32Array, StringArray},
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::{
+        assert_batches_eq,
+        common::{Result, ScalarValue},
+        logical_expr::Operator,
+        physical_expr::expressions::{binary, col, lit},
+        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        prelude::SessionContext,
+    };
+
+    use crate::{expand_exec::ExpandExec, memmgr::MemManager};
+
+    // build i32 table
     fn build_table_i32(a: (&str, &Vec<i32>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Int32, false)]);
 
@@ -226,7 +233,7 @@ mod test {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    //build f32 table
+    // build f32 table
     fn build_table_f32(a: (&str, &Vec<f32>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Float32, false)]);
 
@@ -243,7 +250,7 @@ mod test {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    //build str table
+    // build str table
     fn build_table_str(a: (&str, &Vec<String>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Utf8, false)]);
 
@@ -260,7 +267,7 @@ mod test {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    //build boolean table
+    // build boolean table
     fn build_table_bool(a: (&str, &Vec<bool>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Boolean, false)]);
 
@@ -415,7 +422,12 @@ mod test {
 
         let input = build_table_string((
             "a",
-            &vec!["hello".to_string(), ",".to_string(), "rust".to_string(), "!".to_string()],
+            &vec![
+                "hello".to_string(),
+                ",".to_string(),
+                "rust".to_string(),
+                "!".to_string(),
+            ],
         ));
         let schema = Schema::new(vec![Field::new("test_str", DataType::Utf8, false)]);
 

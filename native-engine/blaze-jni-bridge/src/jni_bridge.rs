@@ -13,21 +13,16 @@
 // limitations under the License.
 
 pub use datafusion;
-pub use jni;
-pub use jni::errors::Result as JniResult;
-pub use jni::objects::JClass;
-pub use jni::objects::JMethodID;
-pub use jni::objects::JObject;
-pub use jni::objects::JStaticMethodID;
-pub use jni::objects::JValue;
-pub use jni::signature::Primitive;
-pub use jni::signature::ReturnType;
-pub use jni::sys::jvalue;
-pub use jni::JNIEnv;
-pub use jni::JavaVM;
-pub use paste::paste;
-
+pub use jni::{
+    self,
+    errors::Result as JniResult,
+    objects::{JClass, JMethodID, JObject, JStaticMethodID, JValue},
+    signature::{Primitive, ReturnType},
+    sys::jvalue,
+    JNIEnv, JavaVM,
+};
 use once_cell::sync::OnceCell;
+pub use paste::paste;
 
 thread_local! {
     pub static THREAD_JNIENV: once_cell::unsync::Lazy<JNIEnv<'static>> =
@@ -1123,22 +1118,14 @@ impl<'a> SparkMetricNode<'a> {
 #[allow(non_snake_case)]
 pub struct BlazeConf<'a> {
     pub class: JClass<'a>,
-    pub method_batchSize: JStaticMethodID,
-    pub method_batchSize_ret: ReturnType,
-    pub method_memoryFraction: JStaticMethodID,
-    pub method_memoryFraction_ret: ReturnType,
-    pub method_enableBhjFallbacksToSmj: JStaticMethodID,
-    pub method_enableBhjFallbacksToSmj_ret: ReturnType,
-    pub method_bhjFallbacksToSmjRowsThreshold: JStaticMethodID,
-    pub method_bhjFallbacksToSmjRowsThreshold_ret: ReturnType,
-    pub method_bhjFallbacksToSmjMemThreshold: JStaticMethodID,
-    pub method_bhjFallbacksToSmjMemThreshold_ret: ReturnType,
-    pub method_udfWrapperNumThreads: JStaticMethodID,
-    pub method_udfWrapperNumThreads_ret: ReturnType,
-    pub method_enableInputBatchStatistics: JStaticMethodID,
-    pub method_enableInputBatchStatistics_ret: ReturnType,
-    pub method_ignoreCorruptedFiles: JStaticMethodID,
-    pub method_ignoreCorruptedFiles_ret: ReturnType,
+    pub method_booleanConf: JStaticMethodID,
+    pub method_booleanConf_ret: ReturnType,
+    pub method_intConf: JStaticMethodID,
+    pub method_intConf_ret: ReturnType,
+    pub method_longConf: JStaticMethodID,
+    pub method_longConf_ret: ReturnType,
+    pub method_doubleConf: JStaticMethodID,
+    pub method_doubleConf_ret: ReturnType,
 }
 
 impl<'a> BlazeConf<'_> {
@@ -1148,36 +1135,22 @@ impl<'a> BlazeConf<'_> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeConf {
             class,
-            method_batchSize: env.get_static_method_id(class, "batchSize", "()I").unwrap(),
-            method_batchSize_ret: ReturnType::Primitive(Primitive::Int),
-            method_memoryFraction: env
-                .get_static_method_id(class, "memoryFraction", "()D")
+            method_booleanConf: env
+                .get_static_method_id(class, "booleanConf", "(Ljava/lang/String;)Z")
                 .unwrap(),
-            method_memoryFraction_ret: ReturnType::Primitive(Primitive::Double),
-            method_enableBhjFallbacksToSmj: env
-                .get_static_method_id(class, "enableBhjFallbacksToSmj", "()Z")
+            method_booleanConf_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_intConf: env
+                .get_static_method_id(class, "intConf", "(Ljava/lang/String;)I")
                 .unwrap(),
-            method_enableBhjFallbacksToSmj_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_bhjFallbacksToSmjRowsThreshold: env
-                .get_static_method_id(class, "bhjFallbacksToSmjRowsThreshold", "()I")
+            method_intConf_ret: ReturnType::Primitive(Primitive::Int),
+            method_longConf: env
+                .get_static_method_id(class, "longConf", "(Ljava/lang/String;)J")
                 .unwrap(),
-            method_bhjFallbacksToSmjRowsThreshold_ret: ReturnType::Primitive(Primitive::Int),
-            method_bhjFallbacksToSmjMemThreshold: env
-                .get_static_method_id(class, "bhjFallbacksToSmjMemThreshold", "()I")
+            method_longConf_ret: ReturnType::Primitive(Primitive::Long),
+            method_doubleConf: env
+                .get_static_method_id(class, "doubleConf", "(Ljava/lang/String;)D")
                 .unwrap(),
-            method_bhjFallbacksToSmjMemThreshold_ret: ReturnType::Primitive(Primitive::Int),
-            method_udfWrapperNumThreads: env
-                .get_static_method_id(class, "udfWrapperNumThreads", "()I")
-                .unwrap(),
-            method_udfWrapperNumThreads_ret: ReturnType::Primitive(Primitive::Int),
-            method_enableInputBatchStatistics: env
-                .get_static_method_id(class, "enableInputBatchStatistics", "()Z")
-                .unwrap(),
-            method_enableInputBatchStatistics_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_ignoreCorruptedFiles: env
-                .get_static_method_id(class, "ignoreCorruptedFiles", "()Z")
-                .unwrap(),
-            method_ignoreCorruptedFiles_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_doubleConf_ret: ReturnType::Primitive(Primitive::Double),
         })
     }
 }
@@ -1241,8 +1214,10 @@ pub struct BlazeCallNativeWrapper<'a> {
     pub method_getRawTaskDefinition_ret: ReturnType,
     pub method_getMetrics: JMethodID,
     pub method_getMetrics_ret: ReturnType,
-    pub method_setArrowFFIStreamPtr: JMethodID,
-    pub method_setArrowFFIStreamPtr_ret: ReturnType,
+    pub method_importSchema: JMethodID,
+    pub method_importSchema_ret: ReturnType,
+    pub method_importBatch: JMethodID,
+    pub method_importBatch_ret: ReturnType,
     pub method_setError: JMethodID,
     pub method_setError_ret: ReturnType,
 }
@@ -1257,10 +1232,6 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                 .get_method_id(class, "getRawTaskDefinition", "()[B")
                 .unwrap(),
             method_getRawTaskDefinition_ret: ReturnType::Array,
-            method_setArrowFFIStreamPtr: env
-                .get_method_id(class, "setArrowFFIStreamPtr", "(J)V")
-                .unwrap(),
-            method_setArrowFFIStreamPtr_ret: ReturnType::Primitive(Primitive::Void),
             method_getMetrics: env
                 .get_method_id(
                     class,
@@ -1269,6 +1240,10 @@ impl<'a> BlazeCallNativeWrapper<'a> {
                 )
                 .unwrap(),
             method_getMetrics_ret: ReturnType::Object,
+            method_importSchema: env.get_method_id(class, "importSchema", "(J)V").unwrap(),
+            method_importSchema_ret: ReturnType::Primitive(Primitive::Void),
+            method_importBatch: env.get_method_id(class, "importBatch", "(J)V").unwrap(),
+            method_importBatch_ret: ReturnType::Primitive(Primitive::Void),
             method_setError: env
                 .get_method_id(class, "setError", "(Ljava/lang/Throwable;)V")
                 .unwrap(),

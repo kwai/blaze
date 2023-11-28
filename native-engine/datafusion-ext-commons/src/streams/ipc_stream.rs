@@ -12,26 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    fs::File,
+    io::{BufReader, Error as IoError, Read, Seek, SeekFrom},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-use crate::io::read_one_batch;
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use blaze_jni_bridge::{
     jni_call, jni_get_object_class, jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
-use datafusion::error::Result;
-use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
-use datafusion::physical_plan::RecordBatchStream;
+use datafusion::{
+    error::Result,
+    physical_plan::{
+        metrics::{BaselineMetrics, Count},
+        RecordBatchStream,
+    },
+};
 use futures::Stream;
-use jni::objects::{GlobalRef, JObject};
-use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
-use std::fs::File;
-use std::io::{BufReader, Read, SeekFrom};
-use std::io::{Error as IoError, Seek};
-use std::pin::Pin;
-use std::task::Context;
-use std::task::Poll;
+use jni::{
+    objects::{GlobalRef, JObject},
+    sys::{jboolean, jint, jlong, JNI_TRUE},
+};
+
+use crate::io::read_one_batch;
 
 #[derive(Debug, Clone, Copy)]
 pub enum IpcReadMode {
