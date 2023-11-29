@@ -40,7 +40,7 @@ use datafusion::{
     },
     physical_plan::ColumnarValue,
 };
-use datafusion_ext_commons::uda::UserDefinedArray;
+use datafusion_ext_commons::{cast::cast, uda::UserDefinedArray};
 use itertools::Itertools;
 use parking_lot::Mutex;
 
@@ -149,9 +149,15 @@ impl CachedExprsEvaluator {
         let output_cols = self
             .transformed_projection_exprs
             .iter()
-            .map(|expr| {
-                expr.evaluate(&filtered_batch)
-                    .map(|c| c.into_array(filtered_batch.num_rows()))
+            .zip(output_schema.fields())
+            .map(|(expr, field)| {
+                let array = expr
+                    .evaluate(&filtered_batch)
+                    .map(|c| c.into_array(filtered_batch.num_rows()))?;
+                if array.data_type() != field.data_type() {
+                    return cast(&array, field.data_type());
+                }
+                Ok(array)
             })
             .collect::<Result<Vec<ArrayRef>>>()?;
         Ok(RecordBatch::try_new_with_options(

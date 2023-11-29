@@ -22,7 +22,7 @@ use std::{
 
 use arrow::{
     datatypes::{Field, Fields, Schema, SchemaRef},
-    record_batch::RecordBatch,
+    record_batch::{RecordBatch, RecordBatchOptions},
 };
 use async_trait::async_trait;
 use datafusion::{
@@ -190,11 +190,14 @@ impl Stream for RenameColumnsStream {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(batch)) => {
-                self.baseline_metrics
-                    .record_poll(Poll::Ready(Some(Ok(RecordBatch::try_new(
+                let num_rows = batch.num_rows();
+                self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(
+                    RecordBatch::try_new_with_options(
                         self.schema.clone(),
                         batch.columns().to_vec(),
-                    )?))))
+                        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                    )?,
+                ))))
             }
         }
     }

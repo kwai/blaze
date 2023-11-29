@@ -154,24 +154,6 @@ macro_rules! hash_array_decimal {
     };
 }
 
-macro_rules! hash_list_decimal {
-    ($array_type:ident, $column:ident, $hash:ident) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-
-        if array.null_count() == 0 {
-            for i in 0..array.len() {
-                *$hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *$hash);
-            }
-        } else {
-            for i in 0..array.len() {
-                if !array.is_null(i) {
-                    *$hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *$hash);
-                }
-            }
-        }
-    };
-}
-
 /// Hash the values in a dictionary array
 fn create_hashes_dictionary<K: ArrowDictionaryKeyType>(
     array: &ArrayRef,
