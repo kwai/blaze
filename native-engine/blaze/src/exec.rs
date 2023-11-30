@@ -35,27 +35,12 @@ use jni::{
     objects::{JClass, JObject},
     JNIEnv,
 };
-use log::LevelFilter;
 use once_cell::sync::OnceCell;
 use prost::Message;
-use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, ThreadLogMode};
 
-use crate::{handle_unwinded_scope, rt::NativeExecutionRuntime, SESSION};
+use crate::{handle_unwinded_scope, logging::init_logging, rt::NativeExecutionRuntime};
 
-fn init_logging() {
-    static LOGGING_INIT: OnceCell<()> = OnceCell::new();
-    LOGGING_INIT.get_or_init(|| {
-        TermLogger::init(
-            LevelFilter::Info,
-            ConfigBuilder::new()
-                .set_thread_mode(ThreadLogMode::Both)
-                .build(),
-            TerminalMode::Stderr,
-            ColorChoice::Never,
-        )
-        .unwrap();
-    });
-}
+static SESSION: OnceCell<SessionContext> = OnceCell::new();
 
 #[allow(non_snake_case)]
 #[allow(clippy::single_match)]
