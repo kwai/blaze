@@ -15,7 +15,7 @@
 use std::{any::Any, fmt::Formatter, sync::Arc};
 
 use arrow::{
-    array::ArrayRef,
+    array::{Array, ArrayRef},
     datatypes::SchemaRef,
     error::ArrowError,
     record_batch::{RecordBatch, RecordBatchOptions},
@@ -31,7 +31,7 @@ use datafusion::{
         SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
+use datafusion_ext_commons::{cast::cast, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
 
 use crate::{
@@ -171,10 +171,21 @@ async fn execute_window(
                 })
                 .collect::<Result<_>>()?;
 
-            let output_cols = [batch.columns().to_vec(), window_cols].concat();
+            let outputs: Vec<ArrayRef> = batch
+                .columns()
+                .iter()
+                .chain(&window_cols)
+                .zip(context.output_schema.fields())
+                .map(|(array, field)| {
+                    if array.data_type() != field.data_type() {
+                        return cast(&array, field.data_type());
+                    }
+                    Ok(array.clone())
+                })
+                .collect::<Result<_>>()?;
             let output_batch = RecordBatch::try_new_with_options(
                 context.output_schema.clone(),
-                output_cols,
+                outputs,
                 &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
             )?;
 

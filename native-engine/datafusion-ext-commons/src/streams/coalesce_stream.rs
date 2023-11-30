@@ -23,13 +23,12 @@ use datafusion::{
     common::Result,
     execution::TaskContext,
     physical_plan::{
+        coalesce_batches::concat_batches,
         metrics::{BaselineMetrics, Time},
         RecordBatchStream, SendableRecordBatchStream,
     },
 };
 use futures::{Stream, StreamExt};
-
-use crate::concat_batches;
 
 const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 26; // limit output batch size to 64MB
 

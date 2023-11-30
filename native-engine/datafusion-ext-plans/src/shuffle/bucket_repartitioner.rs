@@ -20,19 +20,24 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use arrow::{array::*, datatypes::*, error::Result as ArrowResult, record_batch::RecordBatch};
+use arrow::{
+    array::*,
+    datatypes::*,
+    error::Result as ArrowResult,
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
 use async_trait::async_trait;
 use datafusion::{
     common::{DataFusionError, Result},
     execution::context::TaskContext,
     physical_plan::{
+        coalesce_batches::concat_batches,
         metrics::{BaselineMetrics, Count},
         Partitioning,
     },
 };
 use datafusion_ext_commons::{
     array_builder::{builder_extend, make_batch, new_array_builders},
-    concat_batches,
     io::write_one_batch,
 };
 use futures::lock::Mutex;
@@ -149,13 +154,15 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
                         .iter()
                         .map(|&idx| idx as u64),
                 );
-                let batch = RecordBatch::try_new(
+                let num_rows = indices.len();
+                let batch = RecordBatch::try_new_with_options(
                     input.schema(),
                     input
                         .columns()
                         .iter()
                         .map(|c| arrow::compute::take(c, &indices, None))
                         .collect::<ArrowResult<Vec<ArrayRef>>>()?,
+                    &RecordBatchOptions::new().with_row_count(Some(num_rows)),
                 )?;
                 mem_diff += output.append_batch(batch)?;
             }

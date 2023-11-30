@@ -19,10 +19,10 @@ use std::{
 };
 
 use arrow::{
-    array::UInt32Builder,
+    array::{ArrayRef, UInt32Builder},
     datatypes::{Field, Schema, SchemaRef},
     error::ArrowError,
-    record_batch::RecordBatch,
+    record_batch::{RecordBatch, RecordBatchOptions},
 };
 use datafusion::{
     common::{Result, Statistics},
@@ -34,7 +34,7 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
+use datafusion_ext_commons::{cast::cast, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
 use num::integer::Roots;
 
@@ -284,8 +284,24 @@ async fn execute_generate(
                             .iter()
                             .map(|col| Ok(arrow::compute::take(col, &generated_ids, None)?))
                             .collect::<Result<Vec<_>>>()?;
-                        let outputs = [child_outputs, generated_outputs].concat();
-                        let output_batch = RecordBatch::try_new(output_schema.clone(), outputs)?;
+
+                        let num_rows = generated_ids.len();
+                        let outputs: Vec<ArrayRef> = child_outputs
+                            .iter()
+                            .chain(&generated_outputs)
+                            .zip(output_schema.fields())
+                            .map(|(array, field)| {
+                                if array.data_type() != field.data_type() {
+                                    return cast(&array, field.data_type());
+                                }
+                                Ok(array.clone())
+                            })
+                            .collect::<Result<_>>()?;
+                        let output_batch = RecordBatch::try_new_with_options(
+                            output_schema.clone(),
+                            outputs,
+                            &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                        )?;
                         start = end;
 
                         metrics.record_output(output_batch.num_rows());

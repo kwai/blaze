@@ -16,6 +16,7 @@
 
 use std::sync::{Arc, Weak};
 
+use arrow::record_batch::RecordBatchOptions;
 use async_trait::async_trait;
 use datafusion::{
     arrow::{array::*, datatypes::*, error::Result as ArrowResult, record_batch::RecordBatch},
@@ -149,13 +150,15 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
                         .iter()
                         .map(|&idx| idx as u64),
                 );
-                let batch = RecordBatch::try_new(
+                let num_rows = indices.len();
+                let batch = RecordBatch::try_new_with_options(
                     input.schema(),
                     input
                         .columns()
                         .iter()
                         .map(|c| arrow::compute::take(c, &indices, None))
                         .collect::<ArrowResult<Vec<ArrayRef>>>()?,
+                    &RecordBatchOptions::new().with_row_count(Some(num_rows)),
                 )?;
                 output.append_batch(batch)?;
             }

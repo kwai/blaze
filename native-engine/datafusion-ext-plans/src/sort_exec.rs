@@ -971,10 +971,9 @@ mod fuzztest {
         common::{Result, ScalarValue},
         logical_expr::ColumnarValue,
         physical_expr::{expressions::Column, math_expressions::random, PhysicalSortExpr},
-        physical_plan::memory::MemoryExec,
+        physical_plan::{coalesce_batches::concat_batches, memory::MemoryExec},
         prelude::{SessionConfig, SessionContext},
     };
-    use datafusion_ext_commons::concat_batches;
 
     use crate::{memmgr::MemManager, sort_exec::SortExec};
 

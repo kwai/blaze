@@ -751,6 +751,8 @@ impl Joiner {
         self.r_min_reserved_bidx = usize::MAX;
 
         if let Some(join_filter) = &join_params.join_filter {
+            let num_intermediate_rows = std::cmp::max(self.ljoins.len(), self.rjoins.len());
+
             // get intermediate batch
             let intermediate_columns = join_filter
                 .column_indices()
@@ -768,8 +770,12 @@ impl Joiner {
                     Ok(arrow::compute::interleave(&arrays, joins)?)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let intermediate_batch =
-                RecordBatch::try_new(Arc::new(join_filter.schema().clone()), intermediate_columns)?;
+
+            let intermediate_batch = RecordBatch::try_new_with_options(
+                Arc::new(join_filter.schema().clone()),
+                intermediate_columns,
+                &RecordBatchOptions::new().with_row_count(Some(num_intermediate_rows)),
+            )?;
 
             // evalute filter
             let filtered_array = join_filter
