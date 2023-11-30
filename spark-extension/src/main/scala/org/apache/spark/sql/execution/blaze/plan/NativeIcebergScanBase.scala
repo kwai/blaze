@@ -74,7 +74,7 @@ abstract class NativeIcebergScanBase(baseDataSourceScan: BatchScanExec)
       pb.PartitionedFile
         .newBuilder()
         .setPath(file.file().path().toString)
-        .setSize(file.length())
+        .setSize(file.file().fileSizeInBytes())
         .addAllPartitionValues(Collections.emptyList())
         .setLastModifiedNs(0)
         .setRange(
