@@ -58,9 +58,6 @@ class ArrowFFIExportIterator(
       if (root == null) {
         root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
         arrowWriter = ArrowWriter.create(root)
-      } else {
-        root.allocateNew()
-        arrowWriter.reset()
       }
       var rowCount = 0
 
@@ -77,7 +74,8 @@ class ArrowFFIExportIterator(
           emptyDictionaryProvider,
           ArrowArray.wrap(exportArrowArrayPtr),
           ArrowSchema.wrap(exportArrowSchemaPtr))
-        root.close()
+        root.clear()
+        arrowWriter.reset()
       }
     }
 
