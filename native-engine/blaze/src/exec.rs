@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::env;
 use std::sync::Arc;
 
 use blaze_jni_bridge::{
@@ -90,6 +91,21 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
     });
 }
 
+pub fn set_log_level() {
+    let log_level = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    let level_filter = match log_level.as_str() {
+        "off" => LevelFilter::Off,
+        "error" => LevelFilter::Error,
+        "warn" => LevelFilter::Warn,
+        "info" => LevelFilter::Info,
+        "debug" => LevelFilter::Debug,
+        "trace" => LevelFilter::Trace,
+        _ => LevelFilter::Info,
+    };
+
+    log::set_max_level(level_filter);
+}
+
 #[allow(non_snake_case)]
 #[no_mangle]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
@@ -98,6 +114,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     native_wrapper: JObject,
 ) -> i64 {
     handle_unwinded_scope(|| -> Result<i64> {
+        set_log_level();
         log::info!("Entering blaze callNative()");
         let native_wrapper = jni_new_global_ref!(native_wrapper).unwrap();
 

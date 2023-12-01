@@ -10,14 +10,24 @@
     <module>spark-extension</module>
     <module>dev/mvn-build-helper/assembly</module>
     <module>dev/mvn-build-helper/proto</module>
+    <module>spark-extension-shims-spark333</module>
   </modules>
 
   <properties>
     <top.level.dir>${project.basedir}</top.level.dir>
     <revision>2.0.7-SNAPSHOT</revision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <arrowVersion>15.0.0-SNAPSHOT</arrowVersion>
+    <arrowVersion>13.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
+    <shimName>spark333</shimName>
+    <javaVersion>1.8</javaVersion>
+    <scalaVersion>2.12</scalaVersion>
+    <scalaLongVersion>2.12.15</scalaLongVersion>
+    <scalaTestVersion>3.2.9</scalaTestVersion>
+    <scalafmtVersion>3.0.0</scalafmtVersion>
+    <sparkVersion>3.3.3</sparkVersion>
+    <releaseMode>pre</releaseMode>
+    <buildNativeWithRelease>false</buildNativeWithRelease>
   </properties>
 
   <dependencyManagement>
