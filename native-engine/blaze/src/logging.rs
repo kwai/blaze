@@ -12,22 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use log::LevelFilter;
-use log4rs::{
-    append::console::{ConsoleAppender, Target},
-    config::{Appender, Config, Root},
-};
-use once_cell::sync::OnceCell;
+use chrono::Local;
+use log::{Level, LevelFilter, Log, Metadata, Record};
+
+const MAX_LEVEL: Level = Level::Info;
 
 pub fn init_logging() {
-    static LOGGING_INIT: OnceCell<()> = OnceCell::new();
-    LOGGING_INIT.get_or_init(|| {
-        let stderr = Box::new(ConsoleAppender::builder().target(Target::Stderr).build());
-        let stderr_appender = Appender::builder().build("stderr", stderr);
-        let config = Config::builder()
-            .appender(stderr_appender)
-            .build(Root::builder().appender("stderr").build(LevelFilter::Info))
-            .expect("log4rs build config error");
-        log4rs::init_config(config).expect("log4rs init config error");
-    });
+    log::set_logger(&SimpleLogger).expect("error setting logger");
+    log::set_max_level(LevelFilter::Info);
+}
+
+#[derive(Clone, Copy)]
+struct SimpleLogger;
+
+impl Log for SimpleLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= MAX_LEVEL
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            let local_time = Local::now().format("%d/%m/%Y %H:%M:%S");
+            eprintln!(
+                "{} [{}] Blaze - {}",
+                local_time,
+                record.level(),
+                record.args()
+            );
+        }
+    }
+
+    fn flush(&self) {
+        // do nothing
+    }
 }

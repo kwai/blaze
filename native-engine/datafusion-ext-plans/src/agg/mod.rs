@@ -345,7 +345,6 @@ pub trait Agg: Send + Sync + Debug {
                     .collect::<BinaryArray>())
             }
             _other => {
-                println!("{:?}", _other);
                 let scalars = agg_bufs
                     .iter_mut()
                     .map(|agg_buf| {
