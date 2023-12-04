@@ -12,19 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynStr};
-use crate::agg::Agg;
-use arrow::array::*;
-use arrow::datatypes::*;
-use datafusion::common::{Result, ScalarValue};
-use datafusion::error::DataFusionError;
-use datafusion::physical_expr::PhysicalExpr;
+use std::{
+    any::Any,
+    cmp::Ordering,
+    fmt::{Debug, Formatter},
+    marker::PhantomData,
+    sync::Arc,
+};
+
+use arrow::{array::*, datatypes::*};
+use datafusion::{
+    common::{Result, ScalarValue},
+    error::DataFusionError,
+    physical_expr::PhysicalExpr,
+};
 use paste::paste;
-use std::any::Any;
-use std::cmp::Ordering;
-use std::fmt::{Debug, Formatter};
-use std::marker::PhantomData;
-use std::sync::Arc;
+
+use crate::agg::{
+    agg_buf::{AccumInitialValue, AggBuf, AggDynStr},
+    Agg,
+};
 
 pub type AggMax = AggMaxMin<AggMaxParams>;
 pub type AggMin = AggMaxMin<AggMinParams>;
@@ -41,7 +48,9 @@ pub struct AggMaxMin<P: AggMaxMinParams> {
 
 impl<P: AggMaxMinParams> AggMaxMin<P> {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accums_initial = vec![AccumInitialValue::Scalar(ScalarValue::try_from(&data_type)?)];
+        let accums_initial = vec![AccumInitialValue::Scalar(ScalarValue::try_from(
+            &data_type,
+        )?)];
         let partial_updater = get_partial_updater::<P>(&data_type)?;
         let partial_batch_updater = get_partial_batch_updater::<P>(&data_type)?;
         let partial_buf_merger = get_partial_buf_merger::<P>(&data_type)?;
@@ -177,7 +186,7 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
             DataType::Timestamp(TimeUnit::Nanosecond, _) => {
                 handle_fixed!(TimestampNanosecond, P::maxmin)
             }
-            DataType::Decimal128(_, _) => handle_fixed!(Decimal128, P::maxmin),
+            DataType::Decimal128(..) => handle_fixed!(Decimal128, P::maxmin),
             DataType::Utf8 => {
                 let value = values[0].as_any().downcast_ref::<StringArray>().unwrap();
                 if let Some(max) = P::maxmin_string(value) {
@@ -295,7 +304,7 @@ fn get_partial_updater<P: AggMaxMinParams>(
         DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(|agg_buf: &mut AggBuf, addr: u64, v: &ArrayRef, i: usize| {
             let value = v.as_any().downcast_ref::<StringArray>().unwrap();
             if value.is_valid(i) {
@@ -353,7 +362,7 @@ fn get_partial_batch_updater<P: AggMaxMinParams>(
         DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(|agg_bufs: &mut [AggBuf], addr: u64, v: &ArrayRef| {
             let value = v.as_any().downcast_ref::<StringArray>().unwrap();
             for (agg_buf, v) in agg_bufs.iter_mut().zip(value.iter()) {
@@ -416,7 +425,7 @@ fn get_partial_buf_merger<P: AggMaxMinParams>(
         DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(|agg_buf1, agg_buf2, addr| {
             let v = AggDynStr::value(agg_buf2.dyn_value_mut(addr));
             if v.is_some() {

@@ -15,21 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{
-    tree_node::{Transformed, TreeNode},
-    Result,
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
 };
-use datafusion::execution::{SendableRecordBatchStream, TaskContext};
-use datafusion::physical_expr::expressions::Column;
-use datafusion::physical_expr::utils::collect_columns;
-use datafusion::physical_expr::PhysicalExprRef;
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::ExecutionPlan;
+
+use arrow::record_batch::RecordBatch;
+use datafusion::{
+    common::{
+        tree_node::{Transformed, TreeNode},
+        Result,
+    },
+    execution::{SendableRecordBatchStream, TaskContext},
+    physical_expr::{expressions::Column, utils::collect_columns, PhysicalExprRef},
+    physical_plan::{stream::RecordBatchStreamAdapter, ExecutionPlan},
+};
 use futures::StreamExt;
 use itertools::Itertools;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 pub trait ExecuteWithColumnPruning {
     fn execute_projected(

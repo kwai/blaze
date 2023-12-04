@@ -12,19 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{AccumInitialValue, AggBuf};
-use crate::agg::Agg;
-use arrow::array::*;
-use arrow::datatypes::*;
-use datafusion::common::{Result, ScalarValue};
-use datafusion::error::DataFusionError;
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    ops::Add,
+    sync::Arc,
+};
 
-use datafusion::physical_expr::PhysicalExpr;
+use arrow::{array::*, datatypes::*};
+use datafusion::{
+    common::{Result, ScalarValue},
+    error::DataFusionError,
+    physical_expr::PhysicalExpr,
+};
 use paste::paste;
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::ops::Add;
-use std::sync::Arc;
+
+use crate::agg::{
+    agg_buf::{AccumInitialValue, AggBuf},
+    Agg,
+};
 
 pub struct AggSum {
     child: Arc<dyn PhysicalExpr>,
@@ -37,7 +43,9 @@ pub struct AggSum {
 
 impl AggSum {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accums_initial = vec![AccumInitialValue::Scalar(ScalarValue::try_from(&data_type)?)];
+        let accums_initial = vec![AccumInitialValue::Scalar(ScalarValue::try_from(
+            &data_type,
+        )?)];
         let partial_updater = get_partial_updater(&data_type)?;
         let partial_batch_updater = get_partial_batch_updater(&data_type)?;
         let partial_buf_merger = get_partial_buf_merger(&data_type)?;
@@ -286,7 +294,7 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::UInt16 => fn_fixed!(UInt16),
         DataType::UInt32 => fn_fixed!(UInt32),
         DataType::UInt64 => fn_fixed!(UInt64),
-        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
         other => Err(DataFusionError::NotImplemented(format!(
             "unsupported data type in sum(): {}",
             other

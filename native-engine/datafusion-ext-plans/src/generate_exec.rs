@@ -12,29 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
-use crate::common::output::output_with_sender;
-use crate::generate::Generator;
-use arrow::array::UInt32Builder;
-use arrow::datatypes::{Field, Schema, SchemaRef};
-use arrow::error::ArrowError;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{Result, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::expressions::Column;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    sync::Arc,
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::stream::once;
-use futures::{StreamExt, TryFutureExt, TryStreamExt};
+
+use arrow::{
+    array::{ArrayRef, UInt32Builder},
+    datatypes::{Field, Schema, SchemaRef},
+    error::ArrowError,
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
+use datafusion::{
+    common::{Result, Statistics},
+    execution::context::TaskContext,
+    physical_expr::{expressions::Column, PhysicalExpr, PhysicalSortExpr},
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    },
+};
+use datafusion_ext_commons::{cast::cast, streams::coalesce_stream::CoalesceInput};
+use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
 use num::integer::Roots;
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+
+use crate::{
+    common::{
+        batch_statisitcs::{stat_input, InputBatchStatistics},
+        output::TaskOutputter,
+    },
+    generate::Generator,
+};
 
 #[derive(Debug)]
 pub struct GenerateExec {
@@ -143,7 +153,6 @@ impl ExecutionPlan for GenerateExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let batch_size = context.session_config().batch_size();
         let output_schema = self.output_schema.clone();
         let generator = self.generator.clone();
         let outer = self.outer;
@@ -158,12 +167,11 @@ impl ExecutionPlan for GenerateExec {
             once(
                 execute_generate(
                     input,
-                    context,
+                    context.clone(),
                     output_schema,
                     generator,
                     outer,
                     child_output_cols,
-                    batch_size,
                     metrics,
                 )
                 .map_err(ArrowError::from),
@@ -172,11 +180,7 @@ impl ExecutionPlan for GenerateExec {
         ));
 
         let metrics = BaselineMetrics::new(&self.metrics, partition);
-        let output_coalesced = Box::pin(CoalesceStream::new(
-            output_stream,
-            batch_size,
-            metrics.elapsed_compute().clone(),
-        ));
+        let output_coalesced = context.coalesce_with_default_batch_size(output_stream, &metrics)?;
         Ok(output_coalesced)
     }
 
@@ -196,12 +200,11 @@ async fn execute_generate(
     generator: Arc<dyn Generator>,
     outer: bool,
     child_output_cols: Vec<Column>,
-    batch_size: usize,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-    output_with_sender(
+    let batch_size = context.session_config().batch_size();
+    context.output_with_sender(
         "Generate",
-        context,
         output_schema.clone(),
         move |sender| async move {
             while let Some(batch) = input_stream
@@ -281,8 +284,24 @@ async fn execute_generate(
                             .iter()
                             .map(|col| Ok(arrow::compute::take(col, &generated_ids, None)?))
                             .collect::<Result<Vec<_>>>()?;
-                        let outputs = [child_outputs, generated_outputs].concat();
-                        let output_batch = RecordBatch::try_new(output_schema.clone(), outputs)?;
+
+                        let num_rows = generated_ids.len();
+                        let outputs: Vec<ArrayRef> = child_outputs
+                            .iter()
+                            .chain(&generated_outputs)
+                            .zip(output_schema.fields())
+                            .map(|(array, field)| {
+                                if array.data_type() != field.data_type() {
+                                    return cast(&array, field.data_type());
+                                }
+                                Ok(array.clone())
+                            })
+                            .collect::<Result<_>>()?;
+                        let output_batch = RecordBatch::try_new_with_options(
+                            output_schema.clone(),
+                            outputs,
+                            &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                        )?;
                         start = end;
 
                         metrics.record_output(output_batch.num_rows());
@@ -297,18 +316,21 @@ async fn execute_generate(
 
 #[cfg(test)]
 mod test {
-    use crate::generate::{create_generator, GenerateFunc};
-    use crate::generate_exec::GenerateExec;
-    use arrow::array::*;
-    use arrow::datatypes::*;
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::common::Result;
-    use datafusion::physical_expr::expressions::Column;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::prelude::SessionContext;
     use std::sync::Arc;
+
+    use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
+    use datafusion::{
+        assert_batches_eq,
+        common::Result,
+        physical_expr::expressions::Column,
+        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        prelude::SessionContext,
+    };
+
+    use crate::{
+        generate::{create_generator, GenerateFunc},
+        generate_exec::GenerateExec,
+    };
 
     #[tokio::test]
     async fn test_explode() -> Result<()> {

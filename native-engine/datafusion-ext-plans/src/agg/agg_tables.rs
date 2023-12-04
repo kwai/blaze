@@ -12,35 +12,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{
+    hash::{BuildHasher, Hash, Hasher},
+    io::{BufReader, Read, Write},
+    mem::{size_of, ManuallyDrop},
+    sync::{Arc, Weak},
+};
+
 use ahash::RandomState;
-use std::hash::{BuildHasher, Hash, Hasher};
-use std::io::{BufReader, Read, Write};
-use std::mem::{size_of, ManuallyDrop};
-use std::sync::{Arc, Weak};
-
-use arrow::row::{RowConverter, Rows};
+use arrow::{record_batch::RecordBatch, row::Rows};
 use async_trait::async_trait;
-use datafusion::common::Result;
-use datafusion::error::DataFusionError;
-use datafusion::execution::context::TaskContext;
-
-use datafusion::physical_plan::metrics::BaselineMetrics;
+use datafusion::{
+    common::Result, error::DataFusionError, execution::context::TaskContext,
+    physical_plan::metrics::BaselineMetrics,
+};
+use datafusion_ext_commons::{
+    bytes_arena::BytesArena,
+    io::{read_bytes_slice, read_len, write_len},
+    loser_tree::LoserTree,
+    rdxsort,
+    slim_bytes::SlimBytes,
+};
 use futures::lock::Mutex;
-use hashbrown::hash_map::{Entry, RawEntryMut};
-use hashbrown::HashMap;
+use hashbrown::{
+    hash_map::{Entry, RawEntryMut},
+    HashMap,
+};
 use lz4_flex::frame::FrameDecoder;
 
-use datafusion_ext_commons::io::{read_bytes_slice, read_len, write_len};
-use datafusion_ext_commons::loser_tree::LoserTree;
-
-use crate::agg::agg_buf::AggBuf;
-use crate::agg::agg_context::AggContext;
-use crate::common::bytes_arena::BytesArena;
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{try_new_spill, Spill};
-use crate::common::output::WrappedRecordBatchSender;
-use crate::common::rdxsort;
-use crate::common::slim_bytes::SlimBytes;
+use crate::{
+    agg::{agg_buf::AggBuf, agg_context::AggContext},
+    common::output::WrappedRecordBatchSender,
+    memmgr::{
+        onheap_spill::{try_new_spill, Spill},
+        MemConsumer, MemConsumerInfo, MemManager,
+    },
+};
 
 // reserve memory for each spill
 // estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
@@ -74,7 +81,8 @@ impl AggTables {
         Self {
             name: format!("AggTable[partition={}]", partition_id),
             mem_consumer_info: None,
-            in_mem: Mutex::new(InMemTable::new(true)), // only the first im-mem table uses hash
+            // only the first im-mem table uses hash
+            in_mem: Mutex::new(InMemTable::new(agg_ctx.clone(), InMemMode::Hash)),
             spills: Mutex::default(),
             agg_ctx,
             context,
@@ -82,17 +90,33 @@ impl AggTables {
         }
     }
 
-    pub async fn update_entries(
-        &self,
-        key_rows: Rows,
-        fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
-    ) -> Result<()> {
+    pub async fn process_input_batch(&self, input_batch: RecordBatch) -> Result<()> {
         let mut in_mem = self.in_mem.lock().await;
-        in_mem.update_entries(&self.agg_ctx, key_rows, fn_entries)?;
 
+        // compute grouping rows
+        let grouping_rows = self.agg_ctx.create_grouping_rows(&input_batch)?;
+
+        // compute input arrays
+        let input_arrays = self.agg_ctx.create_input_arrays(&input_batch)?;
+        let agg_buf_array = self.agg_ctx.get_input_agg_buf_array(&input_batch)?;
+        in_mem.update_entries(grouping_rows, |agg_bufs| {
+            let mut mem_diff = 0;
+            mem_diff += self
+                .agg_ctx
+                .partial_batch_update_input(agg_bufs, &input_arrays)?;
+            mem_diff += self
+                .agg_ctx
+                .partial_batch_merge_input(agg_bufs, agg_buf_array)?;
+            Ok(mem_diff)
+        })?;
         let mem_used = in_mem.mem_used();
         drop(in_mem);
-        self.update_mem_used(mem_used).await?;
+
+        // if triggered partial skipping, no need to update memory usage and try to
+        // spill
+        if self.mode().await != InMemMode::PartialSkipped {
+            self.update_mem_used(mem_used).await?;
+        }
         Ok(())
     }
 
@@ -100,16 +124,53 @@ impl AggTables {
         !self.spills.lock().await.is_empty()
     }
 
-    pub async fn output(
+    pub async fn mode(&self) -> InMemMode {
+        self.in_mem.lock().await.mode
+    }
+
+    pub async fn renew_in_mem_table(&self, mode: InMemMode) -> InMemTable {
+        let mut old = self.in_mem.lock().await;
+        let new = InMemTable::new(self.agg_ctx.clone(), mode);
+        std::mem::replace(&mut *old, new)
+    }
+
+    pub async fn process_partial_skipped(
         &self,
-        mut grouping_row_converter: RowConverter,
+        input_batch: RecordBatch,
         baseline_metrics: BaselineMetrics,
         sender: Arc<WrappedRecordBatchSender>,
     ) -> Result<()> {
         self.set_spillable(false);
         let mut timer = baseline_metrics.elapsed_compute().timer();
 
-        let in_mem = std::mem::replace(&mut *self.in_mem.lock().await, InMemTable::new(true));
+        let old_in_mem = self.renew_in_mem_table(InMemMode::PartialSkipped).await;
+        assert_eq!(old_in_mem.num_records(), 0); // old table must be cleared
+
+        self.process_input_batch(input_batch).await?;
+        let in_mem = self.renew_in_mem_table(InMemMode::PartialSkipped).await;
+        let records = in_mem
+            .unsorted_keys
+            .iter()
+            .flat_map(|rows| rows.iter())
+            .zip(in_mem.unsorted_values.into_iter())
+            .collect::<Vec<_>>();
+        let batch = self.agg_ctx.convert_records_to_batch(records)?;
+
+        baseline_metrics.record_output(batch.num_rows());
+        sender.send(Ok(batch), Some(&mut timer)).await;
+        self.update_mem_used(0).await?;
+        return Ok(());
+    }
+
+    pub async fn output(
+        &self,
+        baseline_metrics: BaselineMetrics,
+        sender: Arc<WrappedRecordBatchSender>,
+    ) -> Result<()> {
+        self.set_spillable(false);
+        let mut timer = baseline_metrics.elapsed_compute().timer();
+
+        let in_mem = self.renew_in_mem_table(InMemMode::PartialSkipped).await;
         let spills = std::mem::take(&mut *self.spills.lock().await);
 
         let batch_size = self.context.session_config().batch_size();
@@ -131,9 +192,7 @@ impl AggTables {
                 let chunk = records.split_off(records.len().saturating_sub(batch_size));
                 records.shrink_to_fit();
 
-                let batch = self
-                    .agg_ctx
-                    .convert_records_to_batch(&mut grouping_row_converter, chunk)?;
+                let batch = self.agg_ctx.convert_records_to_batch(chunk)?;
                 let batch_mem_size = batch.get_array_memory_size();
 
                 baseline_metrics.record_output(batch.num_rows());
@@ -167,10 +226,9 @@ impl AggTables {
 
         macro_rules! flush_staging {
             () => {{
-                let batch = self.agg_ctx.convert_records_to_batch(
-                    &mut grouping_row_converter,
-                    std::mem::take(&mut staging_records),
-                )?;
+                let batch = self
+                    .agg_ctx
+                    .convert_records_to_batch(std::mem::take(&mut staging_records))?;
                 baseline_metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }};
@@ -259,11 +317,16 @@ impl MemConsumer for AggTables {
         let mut in_mem = self.in_mem.lock().await;
         let mut spills = self.spills.lock().await;
 
-        spills.extend(std::mem::replace(&mut *in_mem, InMemTable::new(false)).try_into_spill()?);
-        drop(spills);
-        drop(in_mem);
-
-        self.update_mem_used(0).await?;
+        // do not spill anything if triggered partial skipping
+        // regardless minRows configuration
+        in_mem.check_trigger_partial_skipping();
+        if in_mem.mode != InMemMode::PartialSkipped {
+            let replaced_in_mem = InMemTable::new(self.agg_ctx.clone(), InMemMode::Merge);
+            spills.extend(std::mem::replace(&mut *in_mem, replaced_in_mem).try_into_spill()?);
+            drop(spills);
+            drop(in_mem);
+            self.update_mem_used(0).await?;
+        }
         Ok(())
     }
 }
@@ -274,15 +337,24 @@ impl Drop for AggTables {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InMemMode {
+    Hash,
+    Merge,
+    PartialSkipped,
+}
+
 /// Unordered in-mem hash table which can be updated
 pub struct InMemTable {
+    agg_ctx: Arc<AggContext>,
     map_keys: Box<BytesArena>,
     map: HashMap<u64, AggBuf, MapKeyHashBuilder>,
     unsorted_keys: Vec<Rows>,
     unsorted_values: Vec<AggBuf>,
     unsorted_keys_mem_used: usize,
     agg_buf_mem_used: usize,
-    pub is_hash: bool,
+    num_input_records: usize,
+    mode: InMemMode,
 }
 
 // a hasher for hashing addrs got from map_keys
@@ -324,20 +396,22 @@ impl BuildHasher for MapKeyHashBuilder {
 unsafe impl Send for MapKeyHashBuilder {}
 
 impl InMemTable {
-    fn new(is_hash: bool) -> Self {
+    fn new(agg_ctx: Arc<AggContext>, mode: InMemMode) -> Self {
         let map_keys: Box<BytesArena> = Box::default();
         let map_key_hash_builder = MapKeyHashBuilder(unsafe {
             // safety: hash builder's lifetime is shorter than map_keys
             std::mem::transmute::<_, &'static BytesArena>(map_keys.as_ref())
         });
         Self {
+            agg_ctx,
             map_keys,
             map: HashMap::with_hasher(map_key_hash_builder),
             unsorted_keys: vec![],
             unsorted_values: vec![],
             unsorted_keys_mem_used: 0,
             agg_buf_mem_used: 0,
-            is_hash,
+            num_input_records: 0,
+            mode,
         }
     }
 
@@ -359,20 +433,24 @@ impl InMemTable {
 
     pub fn update_entries(
         &mut self,
-        agg_ctx: &Arc<AggContext>,
         key_rows: Rows,
         fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
     ) -> Result<()> {
-        if self.is_hash {
-            self.update_hash_entries(agg_ctx, key_rows, fn_entries)
+        let num_input_records = key_rows.num_rows();
+        let mem_diff = if self.mode == InMemMode::Hash {
+            self.update_hash_entries(key_rows, fn_entries)?
         } else {
-            self.update_unsorted_entries(agg_ctx, key_rows, fn_entries)
+            self.update_unsorted_entries(key_rows, fn_entries)?
+        };
+        self.num_input_records += num_input_records;
+        if self.num_input_records >= self.agg_ctx.partial_skipping_min_rows {
+            self.check_trigger_partial_skipping();
         }
+        Ok(mem_diff)
     }
 
     fn update_hash_entries(
         &mut self,
-        agg_ctx: &Arc<AggContext>,
         key_rows: Rows,
         fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
     ) -> Result<()> {
@@ -396,7 +474,7 @@ impl InMemTable {
                 }
                 RawEntryMut::Vacant(view) => {
                     let new_key_addr = self.map_keys.add(row.as_ref());
-                    let new_entry = agg_ctx.initial_agg_buf.clone();
+                    let new_entry = self.agg_ctx.initial_agg_buf.clone();
                     // safety: agg_buf lives longer than this function call.
                     // items in agg_bufs are later moved into ManuallyDrop to avoid double drop.
                     agg_bufs.push(unsafe { std::ptr::read(&new_entry as *const AggBuf) });
@@ -414,18 +492,31 @@ impl InMemTable {
 
     fn update_unsorted_entries(
         &mut self,
-        agg_ctx: &Arc<AggContext>,
         key_rows: Rows,
         fn_entries: impl Fn(&mut [AggBuf]) -> Result<usize>,
     ) -> Result<()> {
         let beg = self.unsorted_values.len();
         let len = key_rows.num_rows();
         self.unsorted_values
-            .extend((0..len).map(|_| agg_ctx.initial_agg_buf.clone()));
+            .extend((0..len).map(|_| self.agg_ctx.initial_agg_buf.clone()));
         self.agg_buf_mem_used += fn_entries(&mut self.unsorted_values[beg..][..len])?;
         self.unsorted_keys_mem_used += key_rows.size();
         self.unsorted_keys.push(key_rows);
         Ok(())
+    }
+
+    fn check_trigger_partial_skipping(&mut self) {
+        if self.agg_ctx.supports_partial_skipping && self.mode != InMemMode::PartialSkipped {
+            let num_input_records = self.num_input_records;
+            let num_records = self.num_records();
+            let cardinality_ratio = num_records as f64 / num_input_records as f64;
+            if cardinality_ratio > self.agg_ctx.partial_skipping_ratio {
+                log::warn!(
+                    "Agg: cardinality ratio = {cardinality_ratio}, will trigger partial skipping"
+                );
+                self.mode = InMemMode::PartialSkipped;
+            }
+        }
     }
 
     fn try_into_spill(self) -> Result<Option<Box<dyn Spill>>> {
@@ -433,59 +524,66 @@ impl InMemTable {
             return Ok(None);
         }
 
+        fn write_spill(
+            bucket_counts: &[usize],
+            bucketed_records: &mut [(u16, impl AsRef<[u8]>, AggBuf)],
+        ) -> Result<Box<dyn Spill>> {
+            let spill = try_new_spill()?;
+            let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
+            let mut beg = 0;
+
+            for i in 0..65536 {
+                if bucket_counts[i] > 0 {
+                    // write bucket id and number of records in this bucket
+                    write_len(i, &mut writer)?;
+                    write_len(bucket_counts[i], &mut writer)?;
+
+                    // write records in this bucket
+                    for (_, key, value) in &mut bucketed_records[beg..][..bucket_counts[i]] {
+                        // write key
+                        let key = key.as_ref();
+                        write_len(key.len(), &mut writer)?;
+                        writer.write_all(key)?;
+
+                        // write value
+                        value.save(&mut writer)?;
+                    }
+                }
+                beg += bucket_counts[i];
+            }
+            write_len(65536, &mut writer)?; // EOF
+            write_len(0, &mut writer)?;
+            writer
+                .finish()
+                .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
+            spill.complete()?;
+            Ok(spill)
+        }
+
         // sort all records using radix sort on hashcodes of keys
-        let mut sorted: Vec<(u16, &[u8], AggBuf)> = if self.is_hash {
-            self.map
+        let spill = if self.mode == InMemMode::Hash {
+            let mut sorted = self
+                .map
                 .into_iter()
                 .map(|(key_addr, value)| {
                     let key = self.map_keys.get(key_addr);
                     let key_hash = RANDOM_STATE.hash_one(key) as u16;
                     (key_hash, key, value)
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            let bucket_counts = rdxsort::radix_sort_u16_by(&mut sorted, |(h, ..)| *h);
+            write_spill(&bucket_counts, &mut sorted)?
         } else {
-            self.unsorted_values
-                .into_iter()
-                .zip(self.unsorted_keys.iter().flat_map(|rows| {
-                    rows.iter().map(|row| {
-                        // safety - row bytes has same lifetime with self.unsorted_rows
-                        unsafe { std::mem::transmute::<_, &'static [u8]>(row.as_ref()) }
-                    })
-                }))
-                .map(|(value, key)| (RANDOM_STATE.hash_one(key) as u16, key, value))
-                .collect()
+            let mut sorted = self
+                .unsorted_keys
+                .iter()
+                .flat_map(|rows| rows.iter())
+                .zip(self.unsorted_values.into_iter())
+                .map(|(key, value)| (RANDOM_STATE.hash_one(key.as_ref()) as u16, key, value))
+                .collect::<Vec<_>>();
+            let bucket_counts = rdxsort::radix_sort_u16_by(&mut sorted, |(h, ..)| *h);
+            write_spill(&bucket_counts, &mut sorted)?
         };
-        let counts = rdxsort::radix_sort_u16_by(&mut sorted, |(h, _, _)| *h);
-
-        let spill = try_new_spill()?;
-        let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
-        let mut beg = 0;
-
-        for i in 0..65536 {
-            if counts[i] > 0 {
-                // write bucket id and number of records in this bucket
-                write_len(i, &mut writer)?;
-                write_len(counts[i], &mut writer)?;
-
-                // write records in this bucket
-                for (_, key, value) in &mut sorted[beg..][..counts[i]] {
-                    // write key
-                    write_len(key.len(), &mut writer)?;
-                    writer.write_all(key)?;
-
-                    // write value
-                    value.save(&mut writer)?;
-                }
-                beg += counts[i];
-            }
-        }
-        write_len(65536, &mut writer)?; // EOF
-        write_len(0, &mut writer)?;
-
-        writer
-            .finish()
-            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
-        spill.complete()?;
         Ok(Some(spill))
     }
 }

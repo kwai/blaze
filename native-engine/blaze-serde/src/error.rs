@@ -114,10 +114,12 @@ pub trait FromOptionalField<T> {
     /// on the contained data, returning any error encountered
     fn optional(self) -> std::result::Result<Option<T>, PlanSerDeError>;
 
-    /// Converts an optional protobuf field to a different type, returning an error if None
+    /// Converts an optional protobuf field to a different type, returning an
+    /// error if None
     ///
-    /// Returns `Error::MissingRequiredField` if None, otherwise calls [`FromField::field`]
-    /// on the contained data, returning any error encountered
+    /// Returns `Error::MissingRequiredField` if None, otherwise calls
+    /// [`FromField::field`] on the contained data, returning any error
+    /// encountered
     fn required(self, field: impl Into<String>) -> std::result::Result<T, PlanSerDeError>;
 }
 

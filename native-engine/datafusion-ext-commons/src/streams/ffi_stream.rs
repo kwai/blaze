@@ -12,19 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::StructArray;
-use arrow::datatypes::SchemaRef;
-use arrow::ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema};
-use arrow::record_batch::RecordBatch;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+
+use arrow::{
+    array::StructArray,
+    datatypes::SchemaRef,
+    ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
+    record_batch::RecordBatch,
+};
 use blaze_jni_bridge::{jni_call, jni_new_object};
-use datafusion::error::Result;
-use datafusion::physical_plan::metrics::{BaselineMetrics, Count};
-use datafusion::physical_plan::RecordBatchStream;
+use datafusion::{
+    error::Result,
+    physical_plan::{
+        metrics::{BaselineMetrics, Count},
+        RecordBatchStream,
+    },
+};
 use futures::Stream;
-use jni::objects::{GlobalRef, JObject};
-use jni::sys::{jboolean, JNI_TRUE};
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use jni::{
+    objects::{GlobalRef, JObject},
+    sys::{jboolean, JNI_TRUE},
+};
 
 pub struct FFIReaderStream {
     schema: SchemaRef,

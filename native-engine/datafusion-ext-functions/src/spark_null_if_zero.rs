@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::*;
-use arrow::compute::*;
-use arrow::datatypes::*;
-use datafusion::common::Result;
-use datafusion::common::{DataFusionError, ScalarValue};
-use datafusion::physical_plan::ColumnarValue;
 use std::sync::Arc;
+
+use arrow::{array::*, compute::*, datatypes::*};
+use datafusion::{
+    common::{DataFusionError, Result, ScalarValue},
+    physical_plan::ColumnarValue,
+};
 
 /// used to avoid DivideByZero error in divide/modulo
 pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
@@ -86,11 +86,12 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
 #[cfg(test)]
 mod test {
-    use crate::spark_null_if_zero::spark_null_if_zero;
-    use arrow::array::{ArrayRef, Decimal128Array, Float32Array, Int32Array};
-    use datafusion::common::ScalarValue;
-    use datafusion::logical_expr::ColumnarValue;
     use std::sync::Arc;
+
+    use arrow::array::{ArrayRef, Decimal128Array, Float32Array, Int32Array};
+    use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
+
+    use crate::spark_null_if_zero::spark_null_if_zero;
 
     #[test]
     fn test_null_if_zero_int() {

@@ -86,7 +86,7 @@ object NativeHelper extends Logging {
       "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"),
       "spilled_bytes" -> SQLMetrics.createSizeMetric(sc, "Native.spilled_bytes"))
 
-    if (BlazeConf.enableInputBatchStatistics()) {
+    if (BlazeConf.INPUT_BATCH_STATISTICS_ENABLE.booleanConf()) {
       metrics ++= TreeMap(
         "input_batch_count" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
         "input_row_count" -> SQLMetrics.createMetric(sc, "Native.input_rows"),

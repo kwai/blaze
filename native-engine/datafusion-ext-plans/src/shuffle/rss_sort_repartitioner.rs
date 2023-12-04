@@ -12,22 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::BatchesInterleaver;
-use crate::shuffle::rss::{rss_flush, rss_write_batch};
-use crate::shuffle::sort_repartitioner::PI;
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
+use std::{
+    mem::size_of,
+    sync::{Arc, Weak},
+};
+
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use async_trait::async_trait;
-use datafusion::common::Result;
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::metrics::Count;
-use datafusion::physical_plan::Partitioning;
+use datafusion::{
+    common::Result,
+    execution::context::TaskContext,
+    physical_plan::{metrics::Count, Partitioning},
+};
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
-use std::mem::size_of;
-use std::sync::{Arc, Weak};
+
+use crate::{
+    common::BatchesInterleaver,
+    memmgr::{MemConsumer, MemConsumerInfo, MemManager},
+    shuffle::{
+        evaluate_hashes, evaluate_partition_ids,
+        rss::{rss_flush, rss_write_batch},
+        sort_repartitioner::PI,
+        ShuffleRepartitioner,
+    },
+};
 
 pub struct RssSortShuffleRepartitioner {
     name: String,

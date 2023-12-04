@@ -12,13 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod onheap_spill;
+
+use std::{
+    sync::{Arc, Weak},
+    time::Duration,
+};
+
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::common::Result;
 use once_cell::sync::OnceCell;
 use parking_lot::{Condvar, Mutex};
-use std::sync::{Arc, Weak};
-use std::time::Duration;
 
 static MEM_MANAGER: OnceCell<Arc<MemManager>> = OnceCell::new();
 

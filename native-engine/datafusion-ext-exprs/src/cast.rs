@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{
+    any::Any,
+    fmt::{Display, Formatter},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
+
+use arrow::{datatypes::*, record_batch::RecordBatch};
+use datafusion::{
+    common::Result, logical_expr::ColumnarValue, physical_expr::PhysicalExpr, scalar::ScalarValue,
+};
+
 use crate::down_cast_any_ref;
-use arrow::datatypes::*;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::logical_expr::ColumnarValue;
-use datafusion::physical_expr::PhysicalExpr;
-use datafusion::scalar::ScalarValue;
-use std::any::Any;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 /// cast expression compatible with spark
 #[derive(Debug, Hash)]
@@ -101,18 +103,21 @@ impl PhysicalExpr for TryCastExpr {
 }
 #[cfg(test)]
 mod test {
-    use crate::cast::TryCastExpr;
-    use arrow::array::{ArrayRef, Float32Array, Int32Array, StringArray};
-
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
     use std::sync::Arc;
+
+    use arrow::{
+        array::{ArrayRef, Float32Array, Int32Array, StringArray},
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
+
+    use crate::cast::TryCastExpr;
 
     #[test]
     fn test_ok_1() {
-        //input: Array
-        //cast Float32 into Int32
+        // input: Array
+        // cast Float32 into Int32
         let float_arr: ArrayRef = Arc::new(Float32Array::from(vec![
             Some(7.6),
             Some(9.0),
@@ -156,8 +161,8 @@ mod test {
 
     #[test]
     fn test_ok_2() {
-        //input: Array
-        //cast Utf8 into Float32
+        // input: Array
+        // cast Utf8 into Float32
         let string_arr: ArrayRef = Arc::new(StringArray::from(vec![
             Some("123"),
             Some("321.9"),
@@ -195,8 +200,8 @@ mod test {
 
     #[test]
     fn test_ok_3() {
-        //input: Scalar
-        //cast Utf8 into Float32
+        // input: Scalar
+        // cast Utf8 into Float32
         let string_arr: ArrayRef = Arc::new(StringArray::from(vec![
             Some("123"),
             Some("321.9"),

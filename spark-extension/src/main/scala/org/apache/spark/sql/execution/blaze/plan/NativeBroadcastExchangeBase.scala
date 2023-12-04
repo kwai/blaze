@@ -265,7 +265,7 @@ object NativeBroadcastExchangeBase {
       keys: Seq[Expression],
       nativeSchema: pb.Schema): Array[Array[Byte]] = {
 
-    if (!BlazeConf.enableBhjFallbacksToSmj() || keys.isEmpty) {
+    if (!BlazeConf.BHJ_FALLBACKS_TO_SMJ_ENABLE.booleanConf() || keys.isEmpty) {
       return collectedData // no need to sort data in driver side
     }
 

@@ -13,10 +13,13 @@
 // limitations under the License.
 
 use datafusion::common::Result;
-use jni::objects::GlobalRef;
-use jni::sys::{JNI_FALSE, JNI_TRUE};
+use jni::{
+    objects::GlobalRef,
+    sys::{JNI_FALSE, JNI_TRUE},
+};
 use once_cell::sync::OnceCell;
 
+pub mod conf;
 pub mod jni_bridge;
 
 pub fn is_jni_bridge_inited() -> bool {

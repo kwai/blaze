@@ -12,26 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::Formatter;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::{
+    any::Any,
+    fmt::Formatter,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use crate::agg::AGG_BUF_COLUMN_NAME;
-use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
-use arrow::record_batch::RecordBatch;
+use arrow::{
+    datatypes::{Field, Fields, Schema, SchemaRef},
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
 use async_trait::async_trait;
-use datafusion::error::DataFusionError;
-use datafusion::error::Result;
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+use datafusion::{
+    error::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+        SendableRecordBatchStream, Statistics,
+    },
 };
 use futures::{Stream, StreamExt};
+
+use crate::agg::AGG_BUF_COLUMN_NAME;
 
 #[derive(Debug, Clone)]
 pub struct RenameColumnsExec {
@@ -184,11 +190,14 @@ impl Stream for RenameColumnsStream {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(batch)) => {
-                self.baseline_metrics
-                    .record_poll(Poll::Ready(Some(Ok(RecordBatch::try_new(
+                let num_rows = batch.num_rows();
+                self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(
+                    RecordBatch::try_new_with_options(
                         self.schema.clone(),
                         batch.columns().to_vec(),
-                    )?))))
+                        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                    )?,
+                ))))
             }
         }
     }

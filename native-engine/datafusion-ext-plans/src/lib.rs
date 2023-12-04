@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #![feature(get_mut_unchecked)]
-#![feature(slice_swap_unchecked)]
 
 pub mod agg;
 pub mod agg_exec;
@@ -30,6 +29,7 @@ pub mod generate_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod limit_exec;
+pub mod memmgr;
 pub mod parquet_exec;
 pub mod parquet_sink_exec;
 pub mod project_exec;

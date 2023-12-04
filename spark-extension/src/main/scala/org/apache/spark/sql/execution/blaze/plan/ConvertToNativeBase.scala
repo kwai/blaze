@@ -81,8 +81,7 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
               new ArrowFFIExportIterator(
                 inputRowIter,
                 renamedSchema,
-                context,
-                recordBatchSize = BlazeConf.batchSize / 4)
+                recordBatchSize = BlazeConf.BATCH_SIZE.intConf() / 4)
             new InterruptibleIterator(context, exportIter)
           })
 

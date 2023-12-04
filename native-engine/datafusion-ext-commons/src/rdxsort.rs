@@ -71,8 +71,9 @@ pub fn radix_sort_u16_by<T>(array: &mut [T], key: impl Fn(&T) -> u16) -> Vec<usi
 
 #[cfg(test)]
 mod test {
-    use crate::common::rdxsort::radix_sort_u16_by;
     use rand::Rng;
+
+    use crate::rdxsort::radix_sort_u16_by;
 
     #[test]
     fn fuzzytest_u16_small() {

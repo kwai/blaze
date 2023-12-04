@@ -12,28 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    sync::Arc,
+};
+
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
-use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
-use datafusion::physical_plan::metrics::MetricsSet;
-use datafusion::physical_plan::metrics::{BaselineMetrics, MetricBuilder};
-use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::Partitioning;
-use datafusion::physical_plan::Partitioning::UnknownPartitioning;
-use datafusion::physical_plan::SendableRecordBatchStream;
-use datafusion::physical_plan::Statistics;
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use datafusion_ext_commons::streams::ipc_stream::{IpcReadMode, IpcReaderStream};
+use datafusion::{
+    error::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_plan::{
+        expressions::PhysicalSortExpr,
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
+        Partitioning::UnknownPartitioning,
+        SendableRecordBatchStream, Statistics,
+    },
+};
+use datafusion_ext_commons::streams::{
+    coalesce_stream::CoalesceInput,
+    ipc_stream::{IpcReadMode, IpcReaderStream},
+};
 use jni::objects::JObject;
-use std::any::Any;
-use std::fmt::Debug;
-use std::fmt::Formatter;
-use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct IpcReaderExec {
@@ -126,13 +129,10 @@ impl ExecutionPlan for IpcReaderExec {
             baseline_metrics,
             size_counter,
         ));
-        Ok(Box::pin(CoalesceStream::new(
+        Ok(context.coalesce_with_default_batch_size(
             ipc_stream,
-            context.session_config().batch_size(),
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        )))
+            &BaselineMetrics::new(&self.metrics, partition),
+        )?)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

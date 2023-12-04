@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::generate::{GeneratedRows, Generator};
-use arrow::array::*;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::physical_expr::PhysicalExpr;
-use itertools::Itertools;
 use std::sync::Arc;
+
+use arrow::{array::*, record_batch::RecordBatch};
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use itertools::Itertools;
+
+use crate::generate::{GeneratedRows, Generator};
 
 #[derive(Debug)]
 pub struct ExplodeArray {

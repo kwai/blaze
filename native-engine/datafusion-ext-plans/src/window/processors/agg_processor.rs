@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AggBuf};
-use crate::agg::Agg;
-use crate::common::slim_bytes::SlimBytes;
-use crate::window::window_context::WindowContext;
-use crate::window::WindowFunctionProcessor;
-use arrow::array::ArrayRef;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{Result, ScalarValue};
 use std::sync::Arc;
+
+use arrow::{array::ArrayRef, record_batch::RecordBatch};
+use datafusion::common::{Result, ScalarValue};
+use datafusion_ext_commons::slim_bytes::SlimBytes;
+
+use crate::{
+    agg::{
+        agg_buf::{create_agg_buf_from_initial_value, AggBuf},
+        Agg,
+    },
+    window::{window_context::WindowContext, WindowFunctionProcessor},
+};
 
 pub struct AggProcessor {
     cur_partition: SlimBytes,

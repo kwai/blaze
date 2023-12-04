@@ -51,8 +51,8 @@ abstract class NativeBroadcastJoinBase(
     "Semi/Anti join with filter is not supported yet")
 
   assert(
-    !BlazeConf.enableBhjFallbacksToSmj() || BlazeConf
-      .enableSmjInequalityJoin() || condition.isEmpty,
+    !BlazeConf.BHJ_FALLBACKS_TO_SMJ_ENABLE.booleanConf() || BlazeConf.SMJ_INEQUALITY_JOIN_ENABLE
+      .booleanConf() || condition.isEmpty,
     "Join filter is not supported when BhjFallbacksToSmj and SmjInequalityJoin both enabled")
 
   override lazy val metrics: Map[String, SQLMetric] = Map(

@@ -36,7 +36,8 @@ impl BytesArena {
         let cur_buf_len = self.cur_buf().len();
         let len = bytes.len();
 
-        // freeze current buf if it's almost full and has no enough space for the given bytes
+        // freeze current buf if it's almost full and has no enough space for the given
+        // bytes
         if cur_buf_len > BUF_CAPACITY_ALMOST_FULL && cur_buf_len + len > BUF_CAPACITY_TARGET {
             self.freeze_cur_buf();
         }
@@ -59,7 +60,7 @@ impl BytesArena {
 
     /// specialized for merging two parts in sort-exec
     /// works like an IntoIterator, free memory of visited items
-    pub(crate) fn specialized_get_and_drop_last(&mut self, addr: u64) -> &[u8] {
+    pub fn specialized_get_and_drop_last(&mut self, addr: u64) -> &[u8] {
         let (id, offset, len) = unapply_arena_addr(addr);
         if id > 0 && !self.bufs[id - 1].is_empty() {
             self.bufs[id - 1].truncate(0); // drop last buf

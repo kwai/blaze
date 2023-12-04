@@ -584,6 +584,7 @@ message AggExecNode {
   repeated string grouping_expr_name = 6;
   repeated string agg_expr_name = 7;
   uint64 initial_input_buffer_offset = 8;
+  bool supports_partial_skipping = 9;
 }
 
 enum AggExecMode {

@@ -12,24 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::common::{DataFusionError, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::Partitioning::UnknownPartitioning;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream,
+use std::{any::Any, fmt::Formatter, sync::Arc};
+
+use arrow::{
+    datatypes::SchemaRef,
+    record_batch::{RecordBatch, RecordBatchOptions},
 };
-use futures::{Stream, StreamExt};
-use std::any::Any;
-use std::fmt::Formatter;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{ready, Context, Poll};
+use datafusion::{
+    common::{DataFusionError, Result, Statistics},
+    execution::context::TaskContext,
+    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
+        Partitioning::UnknownPartitioning,
+        SendableRecordBatchStream,
+    },
+};
+use datafusion_ext_commons::cast::cast;
+use futures::{stream::once, StreamExt, TryStreamExt};
+
+use crate::common::output::TaskOutputter;
 
 #[derive(Debug, Clone)]
 pub struct ExpandExec {
@@ -121,16 +125,18 @@ impl ExecutionPlan for ExpandExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let input = self.input.execute(partition, context)?;
-
-        Ok(Box::pin(ExpandStream {
-            schema: self.schema(),
-            projections: self.projections.clone(),
+        let input = self.input.execute(partition, context.clone())?;
+        let stream = execute_expand(
+            context,
             input,
-            metrics: Arc::new(baseline_metrics),
-            current_batch: None,
-            current_projection_id: 0,
-        }))
+            self.projections.clone(),
+            self.schema(),
+            baseline_metrics,
+        );
+        Ok(Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            once(stream).try_flatten(),
+        )))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -142,74 +148,64 @@ impl ExecutionPlan for ExpandExec {
     }
 }
 
-struct ExpandStream {
-    schema: SchemaRef,
+async fn execute_expand(
+    context: Arc<TaskContext>,
+    mut input: SendableRecordBatchStream,
     projections: Vec<Vec<Arc<dyn PhysicalExpr>>>,
-    input: SendableRecordBatchStream,
-    metrics: Arc<BaselineMetrics>,
-    current_batch: Option<RecordBatch>,
-    current_projection_id: usize,
-}
+    output_schema: SchemaRef,
+    metrics: BaselineMetrics,
+) -> Result<SendableRecordBatchStream> {
+    context.output_with_sender("Expand", output_schema.clone(), move |sender| async move {
+        while let Some(batch) = input.next().await.transpose()? {
+            let mut timer = metrics.elapsed_compute().timer();
+            let num_rows = batch.num_rows();
 
-impl RecordBatchStream for ExpandStream {
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-}
-
-impl Stream for ExpandStream {
-    type Item = Result<RecordBatch>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // continue processing current batch
-        if let Some(batch) = &self.current_batch {
-            let _timer = self.metrics.elapsed_compute();
-            let projections = &self.projections[self.current_projection_id];
-            let arrays = projections
-                .iter()
-                .map(|expr| expr.evaluate(batch))
-                .map(|r| r.map(|v| v.into_array(batch.num_rows())))
-                .collect::<Result<Vec<_>>>()?;
-            let output_batch = RecordBatch::try_new(self.schema.clone(), arrays)?;
-
-            self.current_projection_id += 1;
-            if self.current_projection_id >= self.projections.len() {
-                self.current_batch = None;
-                self.current_projection_id = 0;
-            }
-            return self
-                .metrics
-                .record_poll(Poll::Ready(Some(Ok(output_batch))));
-        }
-
-        // current batch has been consumed, poll next batch
-        match ready!(self.input.poll_next_unpin(cx)).transpose()? {
-            None => Poll::Ready(None),
-            Some(batch) => {
-                self.current_batch = Some(batch);
-                self.poll_next(cx)
+            for projection in &projections {
+                let arrays = projection
+                    .iter()
+                    .zip(output_schema.fields())
+                    .map(|(expr, field)| {
+                        let array = expr.evaluate(&batch).map(|c| c.into_array(num_rows))?;
+                        if array.data_type() != field.data_type() {
+                            return cast(&array, field.data_type());
+                        }
+                        Ok(array)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let output_batch = RecordBatch::try_new_with_options(
+                    output_schema.clone(),
+                    arrays,
+                    &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                )?;
+                metrics.record_output(output_batch.num_rows());
+                sender.send(Ok(output_batch), Some(&mut timer)).await;
             }
         }
-    }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod test {
-    use crate::common::memory_manager::MemManager;
-    use crate::expand_exec::ExpandExec;
-    use arrow::array::{BooleanArray, Float32Array, Int32Array, StringArray};
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::common::{Result, ScalarValue};
-    use datafusion::logical_expr::Operator;
-    use datafusion::physical_expr::expressions::{binary, col, lit};
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::prelude::SessionContext;
     use std::sync::Arc;
 
-    //build i32 table
+    use arrow::{
+        array::{BooleanArray, Float32Array, Int32Array, StringArray},
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::{
+        assert_batches_eq,
+        common::{Result, ScalarValue},
+        logical_expr::Operator,
+        physical_expr::expressions::{binary, col, lit},
+        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        prelude::SessionContext,
+    };
+
+    use crate::{expand_exec::ExpandExec, memmgr::MemManager};
+
+    // build i32 table
     fn build_table_i32(a: (&str, &Vec<i32>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Int32, false)]);
 
@@ -226,7 +222,7 @@ mod test {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    //build f32 table
+    // build f32 table
     fn build_table_f32(a: (&str, &Vec<f32>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Float32, false)]);
 
@@ -243,7 +239,7 @@ mod test {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    //build str table
+    // build str table
     fn build_table_str(a: (&str, &Vec<String>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Utf8, false)]);
 
@@ -260,7 +256,7 @@ mod test {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    //build boolean table
+    // build boolean table
     fn build_table_bool(a: (&str, &Vec<bool>)) -> RecordBatch {
         let schema = Schema::new(vec![Field::new(a.0, DataType::Boolean, false)]);
 
@@ -415,7 +411,12 @@ mod test {
 
         let input = build_table_string((
             "a",
-            &vec!["hello".to_string(), ",".to_string(), "rust".to_string(), "!".to_string()],
+            &vec![
+                "hello".to_string(),
+                ",".to_string(),
+                "rust".to_string(),
+                "!".to_string(),
+            ],
         ));
         let schema = Schema::new(vec![Field::new("test_str", DataType::Utf8, false)]);
 

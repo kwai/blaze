@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{Array, ArrayData, ArrayRef, BooleanArray};
-use arrow::buffer::NullBuffer;
-use arrow::datatypes::DataType;
-use arrow::error::Result;
-use std::any::Any;
-use std::fmt::Debug;
-use std::slice::Iter;
-use std::sync::Arc;
+use std::{any::Any, fmt::Debug, slice::Iter, sync::Arc};
+
+use arrow::{
+    array::{Array, ArrayData, ArrayRef, BooleanArray},
+    buffer::NullBuffer,
+    datatypes::DataType,
+    error::Result,
+};
 
 #[derive(Debug, Clone)]
 pub struct UserDefinedArray {

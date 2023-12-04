@@ -12,17 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::io::{read_bytes_slice, read_len, write_len};
-use arrow::array::*;
-use arrow::buffer::{Buffer, MutableBuffer};
-use arrow::datatypes::*;
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use std::{
+    io::{BufReader, BufWriter, Read, Write},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
+};
+
+use arrow::{
+    array::*,
+    buffer::{Buffer, MutableBuffer},
+    datatypes::*,
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
 use bitvec::prelude::BitVec;
 use datafusion::common::{DataFusionError, Result};
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::Arc;
+
+use crate::io::{read_bytes_slice, read_len, write_len};
 
 pub fn write_batch<W: Write>(
     batch: &RecordBatch,
@@ -182,7 +189,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
         DataType::UInt64 => write_primitive!(UInt64),
         DataType::Float32 => write_primitive!(Float32),
         DataType::Float64 => write_primitive!(Float64),
-        DataType::Decimal128(_, _) => write_primitive!(Decimal128),
+        DataType::Decimal128(..) => write_primitive!(Decimal128),
         DataType::Utf8 => write_bytes_array(as_string_array(array), output)?,
         DataType::Binary => write_bytes_array(as_generic_binary_array::<i32>(array), output)?,
         DataType::Date32 => write_primitive!(Date32),
@@ -192,7 +199,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
         DataType::Timestamp(TimeUnit::Microsecond, _) => write_primitive!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => write_primitive!(TimestampNanosecond),
         DataType::List(_field) => write_list_array(as_list_array(array), output)?,
-        DataType::Map(_, _) => write_map_array(as_map_array(array), output)?,
+        DataType::Map(..) => write_map_array(as_map_array(array), output)?,
         DataType::Struct(_) => write_struct_array(as_struct_array(array), output)?,
         other => {
             return Err(DataFusionError::NotImplemented(format!(
@@ -668,14 +675,15 @@ fn read_bytes_array<R: Read>(
 
 #[cfg(test)]
 mod test {
-    use crate::io::batch_serde::{read_batch, write_batch};
-    use crate::io::name_batch;
-    use arrow::array::*;
-    use arrow::datatypes::*;
-    use arrow::record_batch::RecordBatch;
+    use std::{io::Cursor, sync::Arc};
+
+    use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
     use datafusion::assert_batches_eq;
-    use std::io::Cursor;
-    use std::sync::Arc;
+
+    use crate::io::{
+        batch_serde::{read_batch, write_batch},
+        name_batch,
+    };
 
     #[test]
     fn test_write_and_read_batch() {

@@ -17,50 +17,49 @@
 
 //! Execution plan for reading Parquet files
 
-use fmt::Debug;
-use std::any::Any;
-use std::fmt;
-use std::fmt::Formatter;
-use std::ops::Range;
-use std::sync::Arc;
+use std::{any::Any, fmt, fmt::Formatter, ops::Range, sync::Arc};
 
-use arrow::array::ArrayRef;
-use arrow::datatypes::{DataType, SchemaRef};
-use datafusion::common::DataFusionError;
-use datafusion::datasource::physical_plan::parquet::page_filter::PagePruningPredicate;
-use datafusion::datasource::physical_plan::parquet::ParquetOpener;
-use datafusion::datasource::physical_plan::{
-    FileMeta, FileScanConfig, FileStream, OnError, ParquetFileMetrics, ParquetFileReaderFactory,
+use arrow::{
+    array::ArrayRef,
+    datatypes::{DataType, SchemaRef},
 };
-use datafusion::parquet::arrow::async_reader::{fetch_parquet_metadata, AsyncFileReader};
-use datafusion::parquet::errors::ParquetError;
-use datafusion::parquet::file::metadata::ParquetMetaData;
-use datafusion::physical_optimizer::pruning::PruningPredicate;
-use datafusion::physical_plan::metrics::{BaselineMetrics, MetricValue, Time};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{DisplayAs, Metric, PhysicalExpr, RecordBatchStream};
+use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
+use blaze_jni_bridge::{
+    conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
+};
+use bytes::Bytes;
 use datafusion::{
+    common::DataFusionError,
+    datasource::physical_plan::{
+        parquet::{page_filter::PagePruningPredicate, ParquetOpener},
+        FileMeta, FileScanConfig, FileStream, OnError, ParquetFileMetrics,
+        ParquetFileReaderFactory,
+    },
     error::Result,
     execution::context::TaskContext,
+    parquet::{
+        arrow::async_reader::{fetch_parquet_metadata, AsyncFileReader},
+        errors::ParquetError,
+        file::metadata::ParquetMetaData,
+    },
+    physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
         expressions::PhysicalSortExpr,
-        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
+        metrics::{
+            BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricValue, MetricsSet, Time,
+        },
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Metric, Partitioning, PhysicalExpr,
+        RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
-use futures::future::BoxFuture;
-use futures::stream::once;
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use object_store::ObjectMeta;
-
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
-use base64::Engine;
-use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
-use bytes::Bytes;
 use datafusion_ext_commons::hadoop_fs::{FsDataInputStream, FsProvider};
+use fmt::Debug;
+use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
 
-use crate::common::output::output_with_sender;
+use crate::common::output::TaskOutputter;
 
 #[no_mangle]
 fn schema_adapter_cast_column(
@@ -85,7 +84,8 @@ pub struct ParquetExec {
 }
 
 impl ParquetExec {
-    /// Create a new Parquet reader execution plan provided file list and schema.
+    /// Create a new Parquet reader execution plan provided file list and
+    /// schema.
     pub fn new(
         base_config: FileScanConfig,
         fs_resource_id: String,
@@ -203,7 +203,7 @@ impl ExecutionPlan for ParquetExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
-        let timer = baseline_metrics.elapsed_compute().timer();
+        let _timer = baseline_metrics.elapsed_compute().timer();
 
         let io_time = Time::default();
         let io_time_metric = Arc::new(Metric::new(
@@ -241,23 +241,20 @@ impl ExecutionPlan for ParquetExec {
             reorder_filters: false,
             enable_page_index: false,
         };
-        drop(timer);
 
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
         let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let mut file_stream =
             FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?;
-        if jni_call_static!(BlazeConf.ignoreCorruptedFiles() -> bool)? {
+        if conf::IGNORE_CORRUPTED_FILES.value()? {
             file_stream = file_stream.with_on_error(OnError::Skip);
         }
         let mut stream = Box::pin(file_stream);
-
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(async move {
-                output_with_sender(
+                context.output_with_sender(
                     "ParquetScan",
-                    context,
                     stream.schema(),
                     move |sender| async move {
                         let mut timer = elapsed_compute.timer();
