@@ -1,19 +1,23 @@
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet};
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use datafusion::{
+    common::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+        SendableRecordBatchStream, Statistics,
+    },
 };
 use futures::{Stream, StreamExt};
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct LimitExec {
@@ -133,17 +137,21 @@ impl Stream for LimitStream {
 
 #[cfg(test)]
 mod test {
-    use crate::common::memory_manager::MemManager;
-    use crate::limit_exec::LimitExec;
-    use arrow::array::Int32Array;
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::common::Result;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::prelude::SessionContext;
     use std::sync::Arc;
+
+    use arrow::{
+        array::Int32Array,
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::{
+        assert_batches_eq,
+        common::Result,
+        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        prelude::SessionContext,
+    };
+
+    use crate::{limit_exec::LimitExec, memmgr::MemManager};
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),

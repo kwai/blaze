@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{any::Any, sync::Arc};
+
 use datafusion::physical_expr::PhysicalExpr;
-use std::any::Any;
-use std::sync::Arc;
 
 pub mod cast;
 pub mod get_indexed_field;

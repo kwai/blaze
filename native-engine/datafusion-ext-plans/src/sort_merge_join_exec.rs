@@ -12,38 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::column_pruning::ExecuteWithColumnPruning;
-use crate::common::output::{output_with_sender, WrappedRecordBatchSender};
-use crate::common::{BatchTaker, BatchesInterleaver};
-use arrow::array::*;
-use arrow::buffer::NullBuffer;
-use arrow::compute::{prep_null_mask_filter, SortOptions};
-use arrow::datatypes::{DataType, Schema, SchemaRef};
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use arrow::row::{Row, RowConverter, Rows, SortField};
-use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::TaskContext;
-use datafusion::logical_expr::JoinType;
-use datafusion::logical_expr::JoinType::*;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::joins::utils::{
-    build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter, JoinOn, JoinSide,
+use std::{any::Any, cmp::Ordering, fmt::Formatter, sync::Arc};
+
+use arrow::{
+    array::*,
+    buffer::NullBuffer,
+    compute::{prep_null_mask_filter, SortOptions},
+    datatypes::{DataType, Schema, SchemaRef},
+    record_batch::{RecordBatch, RecordBatchOptions},
+    row::{Row, RowConverter, Rows, SortField},
 };
-use datafusion::physical_plan::metrics::{
-    BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, ScopedTimerGuard,
+use datafusion::{
+    error::{DataFusionError, Result},
+    execution::context::TaskContext,
+    logical_expr::{JoinType, JoinType::*},
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        joins::utils::{
+            build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter, JoinOn, JoinSide,
+        },
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, ScopedTimerGuard},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        Statistics,
+    },
 };
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
-    Statistics,
-};
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
 use futures::{StreamExt, TryStreamExt};
 use parking_lot::Mutex as SyncMutex;
-use std::any::Any;
-use std::cmp::Ordering;
-use std::fmt::Formatter;
-use std::sync::Arc;
+
+use crate::common::{
+    column_pruning::ExecuteWithColumnPruning,
+    output::{TaskOutputter, WrappedRecordBatchSender},
+    BatchTaker, BatchesInterleaver,
+};
 
 #[derive(Debug)]
 pub struct SortMergeJoinExec {
@@ -61,7 +63,8 @@ pub struct SortMergeJoinExec {
     schema: SchemaRef,
     /// Execution metrics
     metrics: ExecutionPlanMetricsSet,
-    /// Sort options of join columns used in sorting left and right execution plans
+    /// Sort options of join columns used in sorting left and right execution
+    /// plans
     sort_options: Vec<SortOptions>,
 }
 
@@ -116,7 +119,8 @@ impl SortMergeJoinExec {
             .collect::<Vec<_>>();
         let sub_batch_size = batch_size / batch_size.ilog2() as usize;
 
-        // use smaller batch size and coalesce batches at the end, to avoid buffer overflowing
+        // use smaller batch size and coalesce batches at the end, to avoid buffer
+        // overflowing
         JoinParams {
             join_type: self.join_type,
             output_schema: self.schema(),
@@ -350,25 +354,19 @@ fn execute_with_join_params(
     right: SendableRecordBatchStream,
     metrics: Arc<BaselineMetrics>,
 ) -> Result<SendableRecordBatchStream> {
-    let batch_size = join_params.batch_size;
     let metrics_cloned = metrics.clone();
+    let context_cloned = context.clone();
     let output_schema = join_params.output_schema.clone();
     let output_stream = Box::pin(RecordBatchStreamAdapter::new(
         join_params.output_schema.clone(),
         futures::stream::once(async move {
-            output_with_sender("SortMergeJoin", context, output_schema, move |sender| {
+            context_cloned.output_with_sender("SortMergeJoin", output_schema, move |sender| {
                 execute_join(left, right, join_params, metrics_cloned, sender)
             })
         })
         .try_flatten(),
     ));
-
-    let output_coalesced = Box::pin(CoalesceStream::new(
-        output_stream,
-        batch_size,
-        metrics.elapsed_compute().clone(),
-    ));
-    Ok(output_coalesced)
+    Ok(context.coalesce_with_default_batch_size(output_stream, &metrics)?)
 }
 
 async fn execute_join(
@@ -753,6 +751,8 @@ impl Joiner {
         self.r_min_reserved_bidx = usize::MAX;
 
         if let Some(join_filter) = &join_params.join_filter {
+            let num_intermediate_rows = std::cmp::max(self.ljoins.len(), self.rjoins.len());
+
             // get intermediate batch
             let intermediate_columns = join_filter
                 .column_indices()
@@ -770,8 +770,12 @@ impl Joiner {
                     Ok(arrow::compute::interleave(&arrays, joins)?)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let intermediate_batch =
-                RecordBatch::try_new(Arc::new(join_filter.schema().clone()), intermediate_columns)?;
+
+            let intermediate_batch = RecordBatch::try_new_with_options(
+                Arc::new(join_filter.schema().clone()),
+                intermediate_columns,
+                &RecordBatchOptions::new().with_row_count(Some(num_intermediate_rows)),
+            )?;
 
             // evalute filter
             let filtered_array = join_filter
@@ -869,23 +873,25 @@ fn compare_cursor(
 
 #[cfg(test)]
 mod tests {
-    use crate::sort_merge_join_exec::SortMergeJoinExec;
-    use arrow;
-    use arrow::array::*;
-    use arrow::compute::SortOptions;
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_sorted_eq;
-    use datafusion::error::Result;
-    use datafusion::logical_expr::JoinType;
-    use datafusion::logical_expr::JoinType::*;
-    use datafusion::physical_expr::expressions::Column;
-    use datafusion::physical_plan::common;
-    use datafusion::physical_plan::joins::utils::*;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::ExecutionPlan;
-    use datafusion::prelude::{SessionConfig, SessionContext};
     use std::sync::Arc;
+
+    use arrow::{
+        self,
+        array::*,
+        compute::SortOptions,
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::{
+        assert_batches_sorted_eq,
+        error::Result,
+        logical_expr::{JoinType, JoinType::*},
+        physical_expr::expressions::Column,
+        physical_plan::{common, joins::utils::*, memory::MemoryExec, ExecutionPlan},
+        prelude::{SessionConfig, SessionContext},
+    };
+
+    use crate::sort_merge_join_exec::SortMergeJoinExec;
 
     fn columns(schema: &Schema) -> Vec<String> {
         schema.fields().iter().map(|f| f.name().clone()).collect()

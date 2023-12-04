@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{cmp::Ordering, sync::Arc};
+
 use arrow::array::*;
-use datafusion::common::Result;
-use datafusion::common::ScalarValue;
-use datafusion::physical_plan::ColumnarValue;
-use std::cmp::Ordering;
-use std::sync::Arc;
+use datafusion::{
+    common::{Result, ScalarValue},
+    physical_plan::ColumnarValue,
+};
 
 /// implements org.apache.spark.sql.catalyst.expressions.CheckOverflow
 pub fn spark_check_overflow(args: &[ColumnarValue]) -> Result<ColumnarValue> {
@@ -105,8 +106,8 @@ fn change_precision_round_half_up(
             }
         }
         Ordering::Greater => {
-            // We might be able to multiply i128_val by a power of 10 and not overflow, but if not,
-            // switch to using a BigDecimal
+            // We might be able to multiply i128_val by a power of 10 and not overflow, but
+            // if not, switch to using a BigDecimal
             let diff = to_scale - scale;
             // Multiplying i128_val by POW_10(diff) will still keep it below max_long_digits
             i128_val *= i128::pow(10, diff as u32);
@@ -123,11 +124,12 @@ fn change_precision_round_half_up(
 }
 #[cfg(test)]
 mod test {
-    use crate::spark_check_overflow::spark_check_overflow;
-    use arrow::array::{ArrayRef, Decimal128Array};
-    use datafusion::common::ScalarValue;
-    use datafusion::logical_expr::ColumnarValue;
     use std::sync::Arc;
+
+    use arrow::array::{ArrayRef, Decimal128Array};
+    use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
+
+    use crate::spark_check_overflow::spark_check_overflow;
 
     #[test]
     fn test_check_overflow() {
@@ -143,8 +145,8 @@ mod test {
 
         let result = spark_check_overflow(&vec![
             ColumnarValue::Array(Arc::new(array)),
-            ColumnarValue::Scalar(ScalarValue::Int32(Some(10))), //precision
-            ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),  //scale
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(10))), // precision
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),  // scale
         ])
         .unwrap()
         .into_array(5);

@@ -12,24 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any::Any;
-use std::fmt::Formatter;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::{
+    any::Any,
+    fmt::Formatter,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
+use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use async_trait::async_trait;
-use datafusion::error::DataFusionError;
-use datafusion::error::Result;
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::MetricsSet;
-use datafusion::physical_plan::Partitioning::UnknownPartitioning;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+use datafusion::{
+    error::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        metrics::MetricsSet, DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
+        Partitioning::UnknownPartitioning, RecordBatchStream, SendableRecordBatchStream,
+        Statistics,
+    },
 };
 use futures::Stream;
 

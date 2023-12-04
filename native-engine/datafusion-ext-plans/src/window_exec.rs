@@ -12,28 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::output::output_with_sender;
-use crate::window::window_context::WindowContext;
-use crate::window::{WindowExpr, WindowFunctionProcessor};
-use arrow::array::ArrayRef;
-use arrow::datatypes::SchemaRef;
-use arrow::error::ArrowError;
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use datafusion::common::{Result, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr,
-    SendableRecordBatchStream,
+use std::{any::Any, fmt::Formatter, sync::Arc};
+
+use arrow::{
+    array::{Array, ArrayRef},
+    datatypes::SchemaRef,
+    error::ArrowError,
+    record_batch::{RecordBatch, RecordBatchOptions},
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::stream::once;
-use futures::{StreamExt, TryFutureExt, TryStreamExt};
-use std::any::Any;
-use std::fmt::Formatter;
-use std::sync::Arc;
+use datafusion::{
+    common::{Result, Statistics},
+    execution::context::TaskContext,
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr,
+        SendableRecordBatchStream,
+    },
+};
+use datafusion_ext_commons::{cast::cast, streams::coalesce_stream::CoalesceInput};
+use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
+
+use crate::{
+    common::output::TaskOutputter,
+    window::{window_context::WindowContext, WindowExpr, WindowFunctionProcessor},
+};
 
 #[derive(Debug)]
 pub struct WindowExec {
@@ -109,13 +113,10 @@ impl ExecutionPlan for WindowExec {
     ) -> Result<SendableRecordBatchStream> {
         // at this moment only supports ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         let input = self.input.execute(partition, context.clone())?;
-        let coalesced = Box::pin(CoalesceStream::new(
+        let coalesced = context.coalesce_with_default_batch_size(
             input,
-            context.session_config().batch_size(),
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        ));
+            &BaselineMetrics::new(&self.metrics, partition),
+        )?;
 
         let stream = execute_window(
             coalesced,
@@ -153,56 +154,65 @@ async fn execute_window(
         .collect::<Result<_>>()?;
 
     // start processing input batches
-    output_with_sender(
-        "Window",
-        task_context,
-        context.output_schema.clone(),
-        |sender| async move {
-            while let Some(batch) = input.next().await.transpose()? {
-                let elapsed_time = metrics.elapsed_compute().clone();
-                let mut timer = elapsed_time.timer();
+    let output_schema = context.output_schema.clone();
+    task_context.output_with_sender("Window", output_schema, |sender| async move {
+        while let Some(batch) = input.next().await.transpose()? {
+            let elapsed_time = metrics.elapsed_compute().clone();
+            let mut timer = elapsed_time.timer();
 
-                let window_cols: Vec<ArrayRef> = processors
-                    .iter_mut()
-                    .map(|processor| {
-                        if context.partition_spec.is_empty() {
-                            processor.process_batch_without_partitions(&context, &batch)
-                        } else {
-                            processor.process_batch(&context, &batch)
-                        }
-                    })
-                    .collect::<Result<_>>()?;
+            let window_cols: Vec<ArrayRef> = processors
+                .iter_mut()
+                .map(|processor| {
+                    if context.partition_spec.is_empty() {
+                        processor.process_batch_without_partitions(&context, &batch)
+                    } else {
+                        processor.process_batch(&context, &batch)
+                    }
+                })
+                .collect::<Result<_>>()?;
 
-                let output_cols = [batch.columns().to_vec(), window_cols].concat();
-                let output_batch = RecordBatch::try_new_with_options(
-                    context.output_schema.clone(),
-                    output_cols,
-                    &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-                )?;
+            let outputs: Vec<ArrayRef> = batch
+                .columns()
+                .iter()
+                .chain(&window_cols)
+                .zip(context.output_schema.fields())
+                .map(|(array, field)| {
+                    if array.data_type() != field.data_type() {
+                        return cast(&array, field.data_type());
+                    }
+                    Ok(array.clone())
+                })
+                .collect::<Result<_>>()?;
+            let output_batch = RecordBatch::try_new_with_options(
+                context.output_schema.clone(),
+                outputs,
+                &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+            )?;
 
-                metrics.record_output(output_batch.num_rows());
-                sender.send(Ok(output_batch), Some(&mut timer)).await;
-            }
-            Ok(())
-        },
-    )
+            metrics.record_output(output_batch.num_rows());
+            sender.send(Ok(output_batch), Some(&mut timer)).await;
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod test {
-    use crate::agg::AggFunction;
-    use crate::window::{WindowExpr, WindowFunction, WindowRankType};
-    use crate::window_exec::WindowExec;
-    use arrow::array::*;
-    use arrow::datatypes::*;
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::physical_expr::expressions::Column;
-    use datafusion::physical_expr::PhysicalSortExpr;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::ExecutionPlan;
-    use datafusion::prelude::SessionContext;
     use std::sync::Arc;
+
+    use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
+    use datafusion::{
+        assert_batches_eq,
+        physical_expr::{expressions::Column, PhysicalSortExpr},
+        physical_plan::{memory::MemoryExec, ExecutionPlan},
+        prelude::SessionContext,
+    };
+
+    use crate::{
+        agg::AggFunction,
+        window::{WindowExpr, WindowFunction, WindowRankType},
+        window_exec::WindowExec,
+    };
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),

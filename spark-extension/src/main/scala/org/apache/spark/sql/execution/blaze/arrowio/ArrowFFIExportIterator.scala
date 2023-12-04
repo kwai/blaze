@@ -24,67 +24,40 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConf
 
 class ArrowFFIExportIterator(
     rowIter: Iterator[InternalRow],
     schema: StructType,
-    taskContext: TaskContext,
-    recordBatchSize: Int = BlazeConf.batchSize)
+    recordBatchSize: Int = BlazeConf.BATCH_SIZE.intConf())
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 
   private val arrowSchema = ArrowUtils.toArrowSchema(schema)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
 
-  private var root: VectorSchemaRoot = _
-  private var arrowWriter: ArrowWriter = _
+  override def hasNext: Boolean = rowIter.hasNext
 
-  taskContext.addTaskCompletionListener[Unit](_ => close())
-  taskContext.addTaskFailureListener((_, _) => close())
+  override def next(): (Long, Long) => Unit = {
+    val root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
+    val arrowWriter = ArrowWriter.create(root)
+    var rowCount = 0
 
-  override def hasNext: Boolean = {
-    val hasNext = rowIter.hasNext
-    if (!hasNext) {
-      close()
+    while (rowIter.hasNext && rowCount < recordBatchSize) {
+      arrowWriter.write(rowIter.next())
+      rowCount += 1
     }
-    hasNext
+    arrowWriter.finish()
+
+    (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) => {
+      Data.exportVectorSchemaRoot(
+        ArrowUtils.rootAllocator,
+        root,
+        emptyDictionaryProvider,
+        ArrowArray.wrap(exportArrowArrayPtr),
+        ArrowSchema.wrap(exportArrowSchemaPtr))
+      root.close()
+    }
   }
-
-  override def next(): (Long, Long) => Unit =
-    synchronized {
-      if (root == null) {
-        root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
-        arrowWriter = ArrowWriter.create(root)
-      } else {
-        root.allocateNew()
-        arrowWriter.reset()
-      }
-      var rowCount = 0
-
-      while (rowIter.hasNext && rowCount < recordBatchSize) {
-        arrowWriter.write(rowIter.next())
-        rowCount += 1
-      }
-      arrowWriter.finish()
-
-      (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) => {
-        Data.exportVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          root,
-          emptyDictionaryProvider,
-          ArrowArray.wrap(exportArrowArrayPtr),
-          ArrowSchema.wrap(exportArrowSchemaPtr))
-        root.close()
-      }
-    }
-
-  private def close(): Unit =
-    synchronized {
-      if (root != null) {
-        root.close()
-      }
-    }
 }

@@ -24,16 +24,17 @@ pub mod first_ignores_null;
 pub mod maxmin;
 pub mod sum;
 
-use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr};
-use arrow::array::*;
-use arrow::datatypes::*;
-use datafusion::common::{DataFusionError, Result, ScalarValue};
-use datafusion::logical_expr::aggregate_function;
-use datafusion::physical_expr::PhysicalExpr;
+use std::{any::Any, fmt::Debug, sync::Arc};
+
+use arrow::{array::*, datatypes::*};
+use datafusion::{
+    common::{DataFusionError, Result, ScalarValue},
+    logical_expr::aggregate_function,
+    physical_expr::PhysicalExpr,
+};
 use datafusion_ext_exprs::cast::TryCastExpr;
-use std::any::Any;
-use std::fmt::Debug;
-use std::sync::Arc;
+
+use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr};
 
 pub const AGG_BUF_COLUMN_NAME: &str = "#9223372036854775807";
 
@@ -344,7 +345,6 @@ pub trait Agg: Send + Sync + Debug {
                     .collect::<BinaryArray>())
             }
             _other => {
-                println!("{:?}", _other);
                 let scalars = agg_bufs
                     .iter_mut()
                     .map(|agg_buf| {

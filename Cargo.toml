@@ -32,7 +32,7 @@ strip = false
 
 [profile.pre]
 inherits = "release"
-incremental = true
+#incremental = true
 opt-level = 1
 lto = false
 codegen-units = 16
@@ -64,26 +64,26 @@ serde_json = { version = "1.0.96" }
 
 [patch.crates-io]
 # datafusion: branch=v30-blaze
-datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "312358e45"}
-datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "312358e45"}
-datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "312358e45"}
-datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "312358e45"}
-datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "312358e45"}
-datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "312358e45"}
+datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "663cd6155"}
+datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "663cd6155"}
+datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "663cd6155"}
+datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "663cd6155"}
+datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "663cd6155"}
+datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "663cd6155"}
 
 # arrow: branch=v45-blaze
-arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-arith = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-array = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-buffer = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-cast = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-data = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-ord = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-row = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-schema = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-select = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-arrow-string = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
-parquet = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1173507b57"}
+arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-arith = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-array = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-buffer = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-cast = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-data = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-ord = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-row = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-schema = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-select = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+arrow-string = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
+parquet = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7706029cfa"}
 
 # serde_json: branch=v1.0.96-blaze
 serde_json = { git = "https://github.com/blaze-init/json", branch = "v1.0.96-blaze" }

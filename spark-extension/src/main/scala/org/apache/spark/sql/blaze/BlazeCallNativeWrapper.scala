@@ -20,19 +20,27 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ArrayBlockingQueue
 
-import org.apache.spark.InterruptibleIterator
+import org.apache.arrow.c.ArrowArray
+import org.apache.arrow.c.ArrowSchema
+import org.apache.arrow.c.CDataDictionaryProvider
+import org.apache.arrow.c.Data
+import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
+import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
+import org.apache.spark.sql.catalyst.expressions.UnsafeRow
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
+import org.apache.spark.util.CompletionIterator
+import org.apache.spark.util.Utils
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.TaskDefinition
-
-import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIStreamImportIterator
-import org.apache.spark.util.CompletionIterator
-import org.apache.spark.util.Utils
 
 case class BlazeCallNativeWrapper(
     nativePlan: PhysicalPlanNode,
@@ -44,15 +52,33 @@ case class BlazeCallNativeWrapper(
   BlazeCallNativeWrapper.initNative()
 
   private val error: AtomicReference[Throwable] = new AtomicReference(null)
-  private var arrowFFIStreamPtr = 0L
+  private val dictionaryProvider = new CDataDictionaryProvider()
+  private val recordsQueue = new ArrayBlockingQueue[Option[UnsafeRow]](256)
+  private var arrowSchema: Schema = _
 
   logInfo(s"Start executing native plan")
-  private var nativeRuntimePtr = JniBridge.callNative(this)
-  private var rowIterator = {
-    val iter = new ArrowFFIStreamImportIterator(context, arrowFFIStreamPtr, checkError)
-    context match {
-      case Some(tc) => new InterruptibleIterator[InternalRow](tc, iter)
-      case None => iter
+  private var nativeRuntimePtr = JniBridge.callNative(NativeHelper.nativeMemory, this)
+
+  private lazy val rowIterator = new Iterator[InternalRow] {
+    private var currentRecord: InternalRow = _
+
+    override def hasNext: Boolean = {
+      if (currentRecord != null) {
+        return true
+      }
+      recordsQueue.take() match {
+        case Some(row) =>
+          currentRecord = row
+          true
+        case None =>
+          false
+      }
+    }
+
+    override def next(): InternalRow = {
+      val nextRecord = currentRecord
+      currentRecord = null
+      nextRecord
     }
   }
 
@@ -66,19 +92,52 @@ case class BlazeCallNativeWrapper(
   protected def getMetrics: MetricNode =
     metrics
 
+  protected def importSchema(ffiSchemaPtr: Long): Unit = {
+    val ffiSchema = ArrowSchema.wrap(ffiSchemaPtr)
+    arrowSchema = Data.importSchema(ArrowUtils.rootAllocator, ffiSchema, dictionaryProvider)
+  }
+
+  protected def importBatch(ffiArrayPtr: Long): Unit = {
+    checkError()
+
+    if (ffiArrayPtr == 0) {
+      recordsQueue.put(None) // finished
+      return
+    }
+    val root: VectorSchemaRoot = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
+    val ffiArray = ArrowArray.wrap(ffiArrayPtr)
+    Utils.tryWithSafeFinally {
+      Data.importIntoVectorSchemaRoot(
+        ArrowUtils.rootAllocator,
+        ffiArray,
+        root,
+        dictionaryProvider)
+
+      val toUnsafe = UnsafeProjection.create(ArrowUtils.fromArrowSchema(root.getSchema))
+      toUnsafe.initialize(Option(TaskContext.get()).map(_.partitionId()).getOrElse(0))
+
+      val batch = ColumnarHelper.rootAsBatch(root)
+      for (row <- ColumnarHelper.batchAsRowIter(batch)) {
+        checkError()
+        recordsQueue.put(Some(toUnsafe(row).copy()))
+      }
+    } {
+      root.close()
+      ffiArray.close()
+    }
+  }
+
   protected def setError(error: Throwable): Unit = {
     this.error.set(error)
+    terminateRecordsQueue()
   }
 
   protected def checkError(): Unit = {
     val throwable = error.getAndSet(null)
     if (throwable != null) {
+      terminateRecordsQueue()
       throw throwable
     }
-  }
-
-  protected def setArrowFFIStreamPtr(ptr: Long): Unit = {
-    this.arrowFFIStreamPtr = ptr
   }
 
   protected def getRawTaskDefinition: Array[Byte] = {
@@ -97,21 +156,18 @@ case class BlazeCallNativeWrapper(
     taskDefinition.toByteArray
   }
 
+  private def terminateRecordsQueue(): Unit = {
+    recordsQueue.clear()
+    recordsQueue.put(None)
+  }
+
   private def close(): Unit = {
     synchronized {
-      if (rowIterator != null) {
-        rowIterator match {
-          case iter: InterruptibleIterator[_] =>
-            iter.delegate.asInstanceOf[ArrowFFIStreamImportIterator].close()
-          case iter: ArrowFFIStreamImportIterator =>
-            iter.close()
-        }
-        rowIterator = null
-      }
       if (nativeRuntimePtr != 0) {
         JniBridge.finalizeNative(nativeRuntimePtr)
         nativeRuntimePtr = 0
       }
+      terminateRecordsQueue()
       checkError()
     }
   }
@@ -125,12 +181,10 @@ object BlazeCallNativeWrapper extends Logging {
   private lazy val lazyInitNative: Unit = {
     logInfo(
       "Initializing native environment (" +
-        s"batchSize=${BlazeConf.batchSize}, " +
+        s"batchSize=${BlazeConf.BATCH_SIZE.intConf()}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
-        s"memoryFraction=${BlazeConf.memoryFraction}")
-
+        s"memoryFraction=${BlazeConf.MEMORY_FRACTION.doubleConf()}")
     BlazeCallNativeWrapper.loadLibBlaze()
-    JniBridge.initNative(NativeHelper.nativeMemory)
   }
 
   private def loadLibBlaze(): Unit = {

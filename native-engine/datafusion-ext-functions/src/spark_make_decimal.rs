@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::*;
-use datafusion::common::Result;
-use datafusion::common::ScalarValue;
-use datafusion::physical_plan::ColumnarValue;
 use std::sync::Arc;
+
+use arrow::array::*;
+use datafusion::{
+    common::{Result, ScalarValue},
+    physical_plan::ColumnarValue,
+};
 
 /// implements org.apache.spark.sql.catalyst.expressions.MakeDecimal
 pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
@@ -59,11 +61,12 @@ pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 }
 #[cfg(test)]
 mod test {
-    use crate::spark_make_decimal::spark_make_decimal;
-    use arrow::array::{ArrayRef, Decimal128Array, Int64Array};
-    use datafusion::common::ScalarValue;
-    use datafusion::physical_plan::ColumnarValue;
     use std::sync::Arc;
+
+    use arrow::array::{ArrayRef, Decimal128Array, Int64Array};
+    use datafusion::{common::ScalarValue, physical_plan::ColumnarValue};
+
+    use crate::spark_make_decimal::spark_make_decimal;
 
     #[test]
     fn test_decimal() {
@@ -76,8 +79,8 @@ mod test {
         ]);
         let result = spark_make_decimal(&vec![
             ColumnarValue::Array(Arc::new(array)),
-            ColumnarValue::Scalar(ScalarValue::Int32(Some(10))), //precision
-            ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),  //scale
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(10))), // precision
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),  // scale
         ])
         .unwrap()
         .into_array(5);

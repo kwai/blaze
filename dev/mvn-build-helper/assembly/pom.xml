@@ -69,6 +69,9 @@
                     <exclude>org/apache/commons/codec/**/*</exclude>
                     <exclude>org/apache/commons/compress/**/*</exclude>
                     <exclude>org/slf4j/**/*</exclude>
+                    <excludes>META-INF/*.SF</excludes>
+                    <excludes>META-INF/*.DSA</excludes>
+                    <excludes>META-INF/*.RSA</excludes>
                   </excludes>
                 </filter>
                 <filter>

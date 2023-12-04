@@ -18,69 +18,92 @@ package org.apache.spark.sql.blaze;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkEnv$;
 
-public class BlazeConf {
+@SuppressWarnings("unused")
+public enum BlazeConf {
     /// suggested batch size for arrow batches.
-    public static int batchSize() {
-        return intConf("spark.blaze.batchSize", 10000);
-    }
+    BATCH_SIZE("spark.blaze.batchSize", 10000),
 
     /// suggested fraction of off-heap memory used in native execution.
     /// actual off-heap memory usage is expected to be spark.executor.memoryOverhead * fraction.
-    public static double memoryFraction() {
-        return doubleConf("spark.blaze.memoryFraction", 0.6);
-    }
+    MEMORY_FRACTION("spark.blaze.memoryFraction", 0.6),
 
     /// translates inequality smj to native. improves performance in most cases, however some
     /// issues are found in special cases, like tpcds q72.
-    public static boolean enableSmjInequalityJoin() {
-        return booleanConf("spark.blaze.enable.smjInequalityJoin", false);
-    }
+    SMJ_INEQUALITY_JOIN_ENABLE("spark.blaze.enable.smjInequalityJoin", false),
 
     /// fallbacks to SortMergeJoin when executing BroadcastHashJoin with big broadcasted table.
-    public static boolean enableBhjFallbacksToSmj() {
-        return booleanConf("spark.blaze.enable.bhjFallbacksToSmj", true);
-    }
+    BHJ_FALLBACKS_TO_SMJ_ENABLE("spark.blaze.enable.bhjFallbacksToSmj", true),
 
     /// fallbacks to SortMergeJoin when BroadcastHashJoin has a broadcasted table with rows more
     /// than this threshold. requires spark.blaze.enable.bhjFallbacksToSmj = true.
-    public static int bhjFallbacksToSmjRowsThreshold() {
-        return intConf("spark.blaze.bhjFallbacksToSmj.rows", 1000000);
-    }
+    BHJ_FALLBACKS_TO_SMJ_ROWS_THRESHOLD("spark.blaze.bhjFallbacksToSmj.rows", 1000000),
 
     /// fallbacks to SortMergeJoin when BroadcastHashJoin has a broadcasted table with memory usage
     /// more than this threshold. requires spark.blaze.enable.bhjFallbacksToSmj = true.
-    public static int bhjFallbacksToSmjMemThreshold() {
-        return intConf("spark.blaze.bhjFallbacksToSmj.mem.bytes", 134217728);
-    }
+    BHJ_FALLBACKS_TO_SMJ_MEM_THRESHOLD("spark.blaze.bhjFallbacksToSmj.mem.bytes", 134217728),
 
     /// enable converting upper/lower functions to native, special cases may provide different
     /// outputs from spark due to different unicode versions.
-    public static boolean enableCaseConvertFunctions() {
-        return booleanConf("spark.blaze.enable.caseconvert.functions", false);
+    CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", false),
+
+    /// number of threads evaluating UDFs
+    /// improves performance for special case that UDF concurrency matters
+    UDF_WRAPPER_NUM_THREADS("spark.blaze.udfWrapperNumThreads", 1),
+
+    /// enable extra metrics of input batch statistics
+    INPUT_BATCH_STATISTICS_ENABLE("spark.blaze.enableInputBatchStatistics", false),
+
+    /// ignore corrupted input files
+    IGNORE_CORRUPTED_FILES("spark.files.ignoreCorruptFiles", false),
+
+    /// enable partial aggregate skipping (see https://github.com/blaze-init/blaze/issues/327)
+    PARTIAL_AGG_SKIPPING_ENABLE("spark.blaze.partialAggSkipping.enable", true),
+
+    /// partial aggregate skipping ratio
+    PARTIAL_AGG_SKIPPING_RATIO("spark.blaze.partialAggSkipping.ratio", 0.8),
+
+    /// mininum number of rows to trigger partial aggregate skipping
+    PARTIAL_AGG_SKIPPING_MIN_ROWS("spark.blaze.partialAggSkipping.minRows", BATCH_SIZE.intConf() * 2),
+    ;
+
+    private String key;
+    private Object defaultValue;
+
+    BlazeConf(String key, Object defaultValue) {
+        this.key = key;
+        this.defaultValue = defaultValue;
     }
 
-    public static int udfWrapperNumThreads() {
-        return intConf("spark.blaze.udfWrapperNumThreads", 1);
+    public boolean booleanConf() {
+        return conf().getBoolean(key, (boolean) defaultValue);
     }
 
-    public static boolean enableInputBatchStatistics() {
-        return booleanConf("spark.blaze.enableInputBatchStatistics", false);
+    public int intConf() {
+        return conf().getInt(key, (int) defaultValue);
     }
 
-    public static boolean ignoreCorruptedFiles() {
-        return booleanConf("spark.files.ignoreCorruptFiles", false);
+    public long longConf() {
+        return conf().getLong(key, (long) defaultValue);
     }
 
-    private static int intConf(String key, int defaultValue) {
-        return conf().getInt(key, defaultValue);
+    public double doubleConf() {
+        return conf().getDouble(key, (double) defaultValue);
     }
 
-    private static double doubleConf(String key, double defaultValue) {
-        return conf().getDouble(key, defaultValue);
+    public static boolean booleanConf(String confName) {
+        return BlazeConf.valueOf(confName).booleanConf();
     }
 
-    private static boolean booleanConf(String key, boolean defaultValue) {
-        return conf().getBoolean(key, defaultValue);
+    public static int intConf(String confName) {
+        return BlazeConf.valueOf(confName).intConf();
+    }
+
+    public static long longConf(String confName) {
+        return BlazeConf.valueOf(confName).longConf();
+    }
+
+    public static double doubleConf(String confName) {
+        return BlazeConf.valueOf(confName).doubleConf();
     }
 
     private static SparkConf conf() {

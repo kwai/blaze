@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::StructArray;
-
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use arrow::datatypes::{DataType, SchemaRef};
-use arrow::record_batch::RecordBatch;
+use arrow::{
+    array::StructArray,
+    datatypes::{DataType, SchemaRef},
+    record_batch::RecordBatch,
+};
 pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
-use datafusion::common::cast::as_struct_array;
-use datafusion::common::Result;
+use datafusion::common::{cast::as_struct_array, Result};
 
 mod batch_serde;
 

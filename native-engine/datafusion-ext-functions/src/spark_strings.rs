@@ -12,12 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{Array, ArrayRef, ListArray, ListBuilder, StringArray, StringBuilder};
-use arrow::datatypes::DataType;
-use datafusion::common::cast::{as_int32_array, as_list_array, as_string_array};
-use datafusion::common::{DataFusionError, Result, ScalarValue};
-use datafusion::physical_plan::ColumnarValue;
 use std::sync::Arc;
+
+use arrow::{
+    array::{Array, ArrayRef, ListArray, ListBuilder, StringArray, StringBuilder},
+    datatypes::DataType,
+};
+use datafusion::{
+    common::{
+        cast::{as_int32_array, as_list_array, as_string_array},
+        DataFusionError, Result, ScalarValue,
+    },
+    physical_plan::ColumnarValue,
+};
 
 pub fn string_lower(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     match &args[0] {
@@ -336,15 +343,21 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
+    use arrow::array::{Int32Array, ListBuilder, StringArray, StringBuilder};
+    use datafusion::{
+        common::{
+            cast::{as_list_array, as_string_array},
+            Result, ScalarValue,
+        },
+        physical_plan::ColumnarValue,
+    };
+
     use crate::spark_strings::{
         string_concat, string_concat_ws, string_lower, string_repeat, string_space, string_split,
         string_upper,
     };
-    use arrow::array::{Int32Array, ListBuilder, StringArray, StringBuilder};
-    use datafusion::common::cast::{as_list_array, as_string_array};
-    use datafusion::common::{Result, ScalarValue};
-    use datafusion::physical_plan::ColumnarValue;
-    use std::sync::Arc;
 
     #[test]
     fn test_string_space() -> Result<()> {

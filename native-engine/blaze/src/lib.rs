@@ -12,23 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{any::Any, error::Error, fmt::Debug, panic::AssertUnwindSafe};
+
 use blaze_jni_bridge::*;
-use datafusion::prelude::SessionContext;
 use jni::objects::{JObject, JThrowable};
-use once_cell::sync::OnceCell;
-use std::any::Any;
-use std::error::Error;
-use std::fmt::Debug;
-use std::panic::AssertUnwindSafe;
 
 mod exec;
+mod logging;
 mod metrics;
 mod rt;
 
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
-
-static SESSION: OnceCell<SessionContext> = OnceCell::new();
 
 fn handle_unwinded(err: Box<dyn Any + Send>) {
     // default handling:

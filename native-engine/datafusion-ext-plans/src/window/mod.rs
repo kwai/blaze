@@ -12,17 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::{create_agg, AggFunction};
-use crate::window::processors::agg_processor::AggProcessor;
-use crate::window::processors::rank_processor::RankProcessor;
-use crate::window::processors::row_number_processor::RowNumberProcessor;
-use crate::window::window_context::WindowContext;
-use arrow::array::ArrayRef;
-use arrow::datatypes::FieldRef;
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::physical_expr::PhysicalExpr;
 use std::sync::Arc;
+
+use arrow::{array::ArrayRef, datatypes::FieldRef, record_batch::RecordBatch};
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
+
+use crate::{
+    agg::{create_agg, AggFunction},
+    window::{
+        processors::{
+            agg_processor::AggProcessor, rank_processor::RankProcessor,
+            row_number_processor::RowNumberProcessor,
+        },
+        window_context::WindowContext,
+    },
+};
 
 pub mod processors;
 pub mod window_context;

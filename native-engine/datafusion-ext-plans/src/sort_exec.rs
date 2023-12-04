@@ -14,51 +14,62 @@
 
 //! Defines the External shuffle repartition plan
 
-use crate::common::batch_statisitcs::{stat_input, InputBatchStatistics};
-use crate::common::bytes_arena::BytesArena;
-use crate::common::column_pruning::ExecuteWithColumnPruning;
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::common::onheap_spill::{try_new_spill, Spill};
-use crate::common::output::{
-    output_bufferable_with_spill, output_with_sender, WrappedRecordBatchSender,
+use std::{
+    any::Any,
+    collections::VecDeque,
+    fmt::Formatter,
+    io::{BufReader, Cursor, Read, Write},
+    mem::size_of,
+    sync::{Arc, Weak},
 };
-use crate::common::slim_bytes::SlimBytes;
-use crate::common::{BatchTaker, BatchesInterleaver};
-use arrow::array::ArrayRef;
-use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
-use arrow::row::{RowConverter, SortField};
+
+use arrow::{
+    array::ArrayRef,
+    datatypes::SchemaRef,
+    record_batch::RecordBatch,
+    row::{RowConverter, SortField},
+};
 use async_trait::async_trait;
-use datafusion::common::{DataFusionError, Result, Statistics};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+use datafusion::{
+    common::{DataFusionError, Result, Statistics},
+    execution::context::TaskContext,
+    physical_expr::PhysicalSortExpr,
+    physical_plan::{
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+    },
 };
-use datafusion_ext_commons::io::{
-    read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch,
+use datafusion_ext_commons::{
+    bytes_arena::BytesArena,
+    io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch},
+    loser_tree::LoserTree,
+    slim_bytes::SlimBytes,
+    streams::coalesce_stream::CoalesceInput,
 };
-use datafusion_ext_commons::loser_tree::LoserTree;
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceStream;
-use futures::lock::Mutex;
-use futures::stream::once;
-use futures::{StreamExt, TryStreamExt};
+use futures::{lock::Mutex, stream::once, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use lz4_flex::frame::FrameDecoder;
 use parking_lot::Mutex as SyncMutex;
-use std::any::Any;
-use std::collections::VecDeque;
-use std::fmt::Formatter;
-use std::io::{BufReader, Cursor, Read, Write};
-use std::mem::size_of;
-use std::sync::{Arc, Weak};
+
+use crate::{
+    common::{
+        batch_statisitcs::{stat_input, InputBatchStatistics},
+        column_pruning::ExecuteWithColumnPruning,
+        output::{TaskOutputter, WrappedRecordBatchSender},
+        BatchTaker, BatchesInterleaver,
+    },
+    memmgr::{
+        onheap_spill::{try_new_spill, Spill},
+        MemConsumer, MemConsumerInfo, MemManager,
+    },
+};
 
 const NUM_LEVELS: usize = 64;
 
 // reserve memory for each spill
-// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB + batches=~100KB
+// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB +
+// batches=~100KB
 const SPILL_OFFHEAP_MEM_COST: usize = 300000;
 
 #[derive(Debug)]
@@ -242,25 +253,19 @@ impl ExecuteWithColumnPruning for SortExec {
             InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
             self.input.execute(partition, context.clone())?,
         )?;
-        let coalesced = Box::pin(CoalesceStream::new(
+        let coalesced = context.coalesce_with_default_batch_size(
             input,
-            batch_size,
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        ));
+            &BaselineMetrics::new(&self.metrics, partition),
+        )?;
 
         let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(external_sort(coalesced, context, external_sorter)).try_flatten(),
+            once(external_sort(coalesced, context.clone(), external_sorter)).try_flatten(),
         ));
-        let coalesced = Box::pin(CoalesceStream::new(
+        let coalesced = context.coalesce_with_default_batch_size(
             output,
-            batch_size,
-            BaselineMetrics::new(&self.metrics, partition)
-                .elapsed_compute()
-                .clone(),
-        ));
+            &BaselineMetrics::new(&self.metrics, partition),
+        )?;
         Ok(coalesced)
     }
 }
@@ -286,19 +291,14 @@ async fn external_sort(
     let has_spill = sorter.spills.lock().await.is_empty();
     let sorter_cloned = sorter.clone();
 
-    let output = output_with_sender(
-        "Sort",
-        context.clone(),
-        input.schema(),
-        |sender| async move {
-            sorter.output(sender).await?;
-            Ok(())
-        },
-    )?;
+    let output = context.output_with_sender("Sort", input.schema(), |sender| async move {
+        sorter.output(sender).await?;
+        Ok(())
+    })?;
 
     // if running in-memory, buffer output when memory usage is high
     if !has_spill {
-        return output_bufferable_with_spill(sorter_cloned, context, output);
+        return context.output_bufferable_with_spill(sorter_cloned, output);
     }
     Ok(output)
 }
@@ -623,7 +623,10 @@ impl SortedBatches {
                     return None;
                 }
 
-                let cur_batch_limit = self.batch_size.min(self.limit - self.num_fetched);
+                let cur_batch_limit = self
+                    .batch_size
+                    .min(self.cursors[0].keys.len() + self.cursors[1].keys.len())
+                    .min(self.limit - self.num_fetched);
                 let mut indices = Vec::with_capacity(cur_batch_limit);
                 let mut keys = Vec::with_capacity(if self.key_data.is_some() {
                     cur_batch_limit
@@ -632,37 +635,58 @@ impl SortedBatches {
                 });
 
                 // merge keys and get indices for interleaving
-                while indices.len() < cur_batch_limit {
-                    let key_a = self.cursors[0].keys.front();
-                    let key_b = self.cursors[1].keys.front();
-                    let min_cursor_id = match (key_a, key_b) {
-                        (Some(a), Some(b)) => {
-                            let key_a = self.cursors[0].key_data.get(*a);
-                            let key_b = self.cursors[1].key_data.get(*b);
-                            (key_b < key_a) as usize
-                        }
-                        (Some(_), None) => 0,
-                        (None, Some(_)) => 1,
-                        (None, None) => break,
-                    };
-                    let min_cursor = &mut self.cursors[min_cursor_id];
+                'outer: loop {
+                    macro_rules! min_cursor {
+                        () => {{
+                            let key_addr0 = self.cursors[0].keys.front().unwrap();
+                            let key_addr1 = self.cursors[1].keys.front().unwrap();
+                            let key0 = self.cursors[0].key_data.get(*key_addr0);
+                            let key1 = self.cursors[1].key_data.get(*key_addr1);
+                            (key1 < key0) as usize
+                        }};
+                    }
+                    macro_rules! forward_cursor {
+                        ($cursor_id:expr) => {{
+                            if indices.len() >= cur_batch_limit {
+                                break 'outer;
+                            }
+                            let cursor = &mut self.cursors[$cursor_id];
 
-                    // append current row idx to indices
-                    indices.push((min_cursor.batch_idx * 2 + min_cursor_id, min_cursor.row_idx));
+                            // append current row idx to indices
+                            indices.push((cursor.batch_idx * 2 + $cursor_id, cursor.row_idx));
 
-                    // append current key
-                    let key_addr = min_cursor.keys.pop_front().unwrap();
-                    let key = min_cursor.key_data.specialized_get_and_drop_last(key_addr);
-                    if let Some(key_data) = self.key_data.as_mut() {
-                        keys.push(key_data.add(key));
+                            // append current key
+                            let key_addr = cursor.keys.pop_front().unwrap();
+                            let key = cursor.key_data.specialized_get_and_drop_last(key_addr);
+                            if let Some(key_data) = self.key_data.as_mut() {
+                                keys.push(key_data.add(key));
+                            }
+
+                            // move to next record
+                            cursor.row_idx += 1;
+                            if cursor.row_idx >= cursor.batches[cursor.batch_idx].num_rows() {
+                                cursor.row_idx = 0;
+                                cursor.batch_idx += 1;
+                            }
+                        }};
+                    }
+                    macro_rules! has {
+                        ($id:expr) => {{
+                            !self.cursors[$id].keys.is_empty()
+                        }};
                     }
 
-                    // move to next record
-                    min_cursor.row_idx += 1;
-                    if min_cursor.row_idx >= min_cursor.batches[min_cursor.batch_idx].num_rows() {
-                        min_cursor.row_idx = 0;
-                        min_cursor.batch_idx += 1;
+                    // forward many 0s and one 1s
+                    while has!(0) && (!has!(1) || min_cursor!() == 0) {
+                        forward_cursor!(0);
                     }
+                    forward_cursor!(1);
+
+                    // forward many 1s and one 0s
+                    while has!(1) && (!has!(0) || min_cursor!() == 1) {
+                        forward_cursor!(1);
+                    }
+                    forward_cursor!(0);
                 }
 
                 // get sorted batches
@@ -853,19 +877,23 @@ fn max_level_id(levels: &[Option<SortedBatches>]) -> Option<usize> {
 
 #[cfg(test)]
 mod test {
-    use crate::sort_exec::SortExec;
-    use arrow::array::Int32Array;
-    use arrow::compute::SortOptions;
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use datafusion::assert_batches_eq;
-    use datafusion::common::Result;
-    use datafusion::physical_expr::expressions::Column;
-    use datafusion::physical_expr::PhysicalSortExpr;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::physical_plan::{common, ExecutionPlan};
-    use datafusion::prelude::SessionContext;
     use std::sync::Arc;
+
+    use arrow::{
+        array::Int32Array,
+        compute::SortOptions,
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::{
+        assert_batches_eq,
+        common::Result,
+        physical_expr::{expressions::Column, PhysicalSortExpr},
+        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        prelude::SessionContext,
+    };
+
+    use crate::sort_exec::SortExec;
 
     fn build_table_i32(
         a: (&str, &Vec<i32>),
@@ -936,19 +964,18 @@ mod test {
 
 #[cfg(test)]
 mod fuzztest {
-    use crate::common::memory_manager::MemManager;
-    use crate::sort_exec::SortExec;
-    use arrow::compute::SortOptions;
-    use arrow::record_batch::RecordBatch;
-    use datafusion::common::{Result, ScalarValue};
-    use datafusion::logical_expr::ColumnarValue;
-    use datafusion::physical_expr::expressions::Column;
-    use datafusion::physical_expr::math_expressions::random;
-    use datafusion::physical_expr::PhysicalSortExpr;
-    use datafusion::physical_plan::memory::MemoryExec;
-    use datafusion::prelude::{SessionConfig, SessionContext};
-    use datafusion_ext_commons::concat_batches;
     use std::sync::Arc;
+
+    use arrow::{compute::SortOptions, record_batch::RecordBatch};
+    use datafusion::{
+        common::{Result, ScalarValue},
+        logical_expr::ColumnarValue,
+        physical_expr::{expressions::Column, math_expressions::random, PhysicalSortExpr},
+        physical_plan::{coalesce_batches::concat_batches, memory::MemoryExec},
+        prelude::{SessionConfig, SessionContext},
+    };
+
+    use crate::{memmgr::MemManager, sort_exec::SortExec};
 
     #[tokio::test]
     async fn fuzztest() -> Result<()> {

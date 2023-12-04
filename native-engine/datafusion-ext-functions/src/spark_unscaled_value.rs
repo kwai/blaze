@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::*;
-use datafusion::common::Result;
-use datafusion::common::ScalarValue;
-use datafusion::physical_plan::ColumnarValue;
 use std::sync::Arc;
+
+use arrow::array::*;
+use datafusion::{
+    common::{Result, ScalarValue},
+    physical_plan::ColumnarValue,
+};
 
 /// implements org.apache.spark.sql.catalyst.expressions.UnscaledValue
 pub fn spark_unscaled_value(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     Ok(match &args[0] {
         ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Decimal128(Some(v), _, _) => {
+            ScalarValue::Decimal128(Some(v), ..) => {
                 ColumnarValue::Scalar(ScalarValue::Int64(Some(*v as i64)))
             }
             _ => ColumnarValue::Scalar(ScalarValue::Int64(None)),
@@ -40,11 +42,12 @@ pub fn spark_unscaled_value(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 }
 #[cfg(test)]
 mod test {
-    use crate::spark_unscaled_value::spark_unscaled_value;
-    use arrow::array::{ArrayRef, Decimal128Array, Int64Array};
-    use datafusion::common::ScalarValue;
-    use datafusion::logical_expr::ColumnarValue;
     use std::sync::Arc;
+
+    use arrow::array::{ArrayRef, Decimal128Array, Int64Array};
+    use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
+
+    use crate::spark_unscaled_value::spark_unscaled_value;
 
     #[test]
     fn test_unscaled_value_array() {

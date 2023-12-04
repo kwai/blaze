@@ -14,23 +14,29 @@
 
 //! Defines the rss bucket shuffle repartitioner
 
-use crate::common::memory_manager::{MemConsumer, MemConsumerInfo, MemManager};
-use crate::shuffle::rss::{rss_flush, rss_write_batch};
-use crate::shuffle::{evaluate_hashes, evaluate_partition_ids, ShuffleRepartitioner};
+use std::sync::{Arc, Weak};
+
+use arrow::record_batch::RecordBatchOptions;
 use async_trait::async_trait;
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::*;
-use datafusion::arrow::error::Result as ArrowResult;
-use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::metrics::Count;
-use datafusion::physical_plan::Partitioning;
+use datafusion::{
+    arrow::{array::*, datatypes::*, error::Result as ArrowResult, record_batch::RecordBatch},
+    common::Result,
+    execution::context::TaskContext,
+    physical_plan::{metrics::Count, Partitioning},
+};
 use datafusion_ext_commons::array_builder::{builder_extend, make_batch, new_array_builders};
 use futures::lock::Mutex;
 use itertools::Itertools;
 use jni::objects::GlobalRef;
-use std::sync::{Arc, Weak};
+
+use crate::{
+    memmgr::{MemConsumer, MemConsumerInfo, MemManager},
+    shuffle::{
+        evaluate_hashes, evaluate_partition_ids,
+        rss::{rss_flush, rss_write_batch},
+        ShuffleRepartitioner,
+    },
+};
 
 pub struct RssBucketShuffleRepartitioner {
     name: String,
@@ -144,13 +150,15 @@ impl ShuffleRepartitioner for RssBucketShuffleRepartitioner {
                         .iter()
                         .map(|&idx| idx as u64),
                 );
-                let batch = RecordBatch::try_new(
+                let num_rows = indices.len();
+                let batch = RecordBatch::try_new_with_options(
                     input.schema(),
                     input
                         .columns()
                         .iter()
                         .map(|c| arrow::compute::take(c, &indices, None))
                         .collect::<ArrowResult<Vec<ArrayRef>>>()?,
+                    &RecordBatchOptions::new().with_row_count(Some(num_rows)),
                 )?;
                 output.append_batch(batch)?;
             }

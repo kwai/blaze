@@ -12,28 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{Array, ArrayRef, BooleanArray};
-use arrow::compute::{filter, filter_record_batch, prep_null_mask_filter};
-use arrow::datatypes::{DataType, Schema, SchemaRef};
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use datafusion::common::cast::as_boolean_array;
-use datafusion::common::tree_node::{Transformed, TreeNode};
-use datafusion::common::{Result, ScalarValue};
-use datafusion::physical_expr::expressions::{
-    CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr,
+use std::{
+    any::Any,
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    fmt::{Debug, Display, Formatter},
+    hash::{Hash, Hasher},
+    rc::Rc,
+    sync::Arc,
 };
-use datafusion::physical_expr::{scatter, PhysicalExpr, PhysicalExprRef};
-use datafusion::physical_plan::ColumnarValue;
-use datafusion_ext_commons::uda::UserDefinedArray;
+
+use arrow::{
+    array::{Array, ArrayRef, BooleanArray},
+    compute::{filter, filter_record_batch, prep_null_mask_filter},
+    datatypes::{DataType, Schema, SchemaRef},
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
+use datafusion::{
+    common::{
+        cast::as_boolean_array,
+        tree_node::{Transformed, TreeNode},
+        Result, ScalarValue,
+    },
+    physical_expr::{
+        expressions::{CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
+        scatter, PhysicalExpr, PhysicalExprRef,
+    },
+    physical_plan::ColumnarValue,
+};
+use datafusion_ext_commons::{cast::cast, uda::UserDefinedArray};
 use itertools::Itertools;
 use parking_lot::Mutex;
-use std::any::Any;
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::rc::Rc;
-use std::sync::Arc;
 
 pub struct CachedExprsEvaluator {
     transformed_projection_exprs: Vec<PhysicalExprRef>,
@@ -140,9 +149,15 @@ impl CachedExprsEvaluator {
         let output_cols = self
             .transformed_projection_exprs
             .iter()
-            .map(|expr| {
-                expr.evaluate(&filtered_batch)
-                    .map(|c| c.into_array(filtered_batch.num_rows()))
+            .zip(output_schema.fields())
+            .map(|(expr, field)| {
+                let array = expr
+                    .evaluate(&filtered_batch)
+                    .map(|c| c.into_array(filtered_batch.num_rows()))?;
+                if array.data_type() != field.data_type() {
+                    return cast(&array, field.data_type());
+                }
+                Ok(array)
             })
             .collect::<Result<Vec<ArrayRef>>>()?;
         Ok(RecordBatch::try_new_with_options(

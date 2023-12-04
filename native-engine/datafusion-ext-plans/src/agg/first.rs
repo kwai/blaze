@@ -12,16 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr};
-use crate::agg::Agg;
-use arrow::array::*;
-use arrow::datatypes::*;
-use datafusion::common::{Result, ScalarValue};
-use datafusion::physical_expr::PhysicalExpr;
+use std::{
+    any::Any,
+    fmt::{Debug, Formatter},
+    sync::Arc,
+};
+
+use arrow::{array::*, datatypes::*};
+use datafusion::{
+    common::{Result, ScalarValue},
+    physical_expr::PhysicalExpr,
+};
 use paste::paste;
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+
+use crate::agg::{
+    agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr},
+    Agg,
+};
 
 pub struct AggFirst {
     child: Arc<dyn PhysicalExpr>,
@@ -168,7 +175,7 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, &[u64], &ArrayRe
         DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(
             |agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
                 let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addrs[0]));
@@ -246,7 +253,7 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(_, _) => fn_fixed!(Decimal128),
+        DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(|agg_buf1, agg_buf2, addrs| {
             if is_touched(agg_buf2, addrs) {
                 let w = AggDynStr::value_mut(agg_buf1.dyn_value_mut(addrs[0]));

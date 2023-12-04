@@ -12,21 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::array::{ArrayRef, PrimitiveArray, UInt32Array};
-use arrow::datatypes::SchemaRef;
-use arrow::error::Result as ArrowResult;
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use arrow::{
+    array::{ArrayRef, PrimitiveArray, UInt32Array},
+    datatypes::SchemaRef,
+    error::Result as ArrowResult,
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
 use datafusion::common::Result;
 
 pub mod batch_statisitcs;
-pub mod bytes_arena;
 pub mod cached_exprs_evaluator;
 pub mod column_pruning;
-pub mod memory_manager;
-pub mod onheap_spill;
 pub mod output;
-pub mod rdxsort;
-pub mod slim_bytes;
 
 pub struct BatchTaker<'a>(pub &'a RecordBatch);
 

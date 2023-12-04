@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::window::window_context::WindowContext;
-use crate::window::WindowFunctionProcessor;
-use arrow::array::{ArrayRef, Int32Builder};
-use arrow::record_batch::RecordBatch;
-use datafusion::common::Result;
 use std::sync::Arc;
+
+use arrow::{
+    array::{ArrayRef, Int32Builder},
+    record_batch::RecordBatch,
+};
+use datafusion::common::Result;
+
+use crate::window::{window_context::WindowContext, WindowFunctionProcessor};
 
 pub struct RowNumberProcessor {
     cur_partition: Box<[u8]>,

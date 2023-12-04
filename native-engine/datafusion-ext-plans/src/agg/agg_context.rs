@@ -12,19 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::agg::agg_buf::{create_agg_buf_from_initial_value, AccumInitialValue, AggBuf};
-use crate::agg::{Agg, AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME};
-use crate::common::cached_exprs_evaluator::CachedExprsEvaluator;
-use arrow::array::{Array, ArrayRef, BinaryArray, BinaryBuilder};
-use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
-use arrow::record_batch::{RecordBatch, RecordBatchOptions};
-use arrow::row::RowConverter;
-use datafusion::common::cast::as_binary_array;
-use datafusion::common::Result;
-use datafusion::physical_expr::PhysicalExprRef;
+use std::{
+    fmt::{Debug, Formatter},
+    sync::Arc,
+};
+
+use arrow::{
+    array::{Array, ArrayRef, BinaryArray, BinaryBuilder},
+    datatypes::{DataType, Field, Fields, Schema, SchemaRef},
+    record_batch::{RecordBatch, RecordBatchOptions},
+    row::{RowConverter, Rows, SortField},
+};
+use blaze_jni_bridge::{
+    conf,
+    conf::{DoubleConf, IntConf},
+};
+use datafusion::{
+    common::{cast::as_binary_array, Result},
+    physical_expr::PhysicalExprRef,
+};
 use once_cell::sync::OnceCell;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use parking_lot::Mutex;
+
+use crate::{
+    agg::{
+        agg_buf::{create_agg_buf_from_initial_value, AccumInitialValue, AggBuf},
+        Agg, AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME,
+    },
+    common::cached_exprs_evaluator::CachedExprsEvaluator,
+};
 
 pub struct AggContext {
     pub exec_mode: AggExecMode,
@@ -37,11 +53,15 @@ pub struct AggContext {
     pub grouping_schema: SchemaRef,
     pub agg_schema: SchemaRef,
     pub output_schema: SchemaRef,
+    pub grouping_row_converter: Arc<Mutex<RowConverter>>,
     pub groupings: Vec<GroupingExpr>,
     pub aggs: Vec<AggExpr>,
     pub initial_agg_buf: AggBuf,
     pub initial_input_agg_buf: AggBuf,
     pub initial_input_buffer_offset: usize,
+    pub supports_partial_skipping: bool,
+    pub partial_skipping_ratio: f64,
+    pub partial_skipping_min_rows: usize,
     pub agg_expr_evaluator: CachedExprsEvaluator,
     pub agg_expr_evaluator_output_schema: SchemaRef,
 
@@ -64,6 +84,7 @@ impl AggContext {
         groupings: Vec<GroupingExpr>,
         aggs: Vec<AggExpr>,
         initial_input_buffer_offset: usize,
+        supports_partial_skipping: bool,
     ) -> Result<Self> {
         let grouping_schema = Arc::new(Schema::new(
             groupings
@@ -77,6 +98,13 @@ impl AggContext {
                 })
                 .collect::<Result<Fields>>()?,
         ));
+        let grouping_row_converter = Arc::new(Mutex::new(RowConverter::new(
+            grouping_schema
+                .fields()
+                .iter()
+                .map(|field| SortField::new(field.data_type().clone()))
+                .collect(),
+        )?));
 
         // final aggregates may not exist along with partial/partial-merge
         let need_partial_update = aggs.iter().any(|agg| agg.mode == AggMode::Partial);
@@ -111,7 +139,11 @@ impl AggContext {
         }
         let agg_schema = Arc::new(Schema::new(agg_fields));
         let output_schema = Arc::new(Schema::new(
-            [grouping_schema.fields().to_vec(), agg_schema.fields().to_vec()].concat(),
+            [
+                grouping_schema.fields().to_vec(),
+                agg_schema.fields().to_vec(),
+            ]
+            .concat(),
         ));
 
         let initial_accums: Box<[AccumInitialValue]> = aggs
@@ -126,8 +158,8 @@ impl AggContext {
         //
         //  Agg [groupings=[], aggs=[
         //      AggExpr { field_name: "#747", mode: PartialMerge, agg: Count(...) },
-        //      AggExpr { field_name: "#748", mode: Partial, agg: Count(Column { name: "#640", index: 0 }) }
-        //  ]]
+        //      AggExpr { field_name: "#748", mode: Partial, agg: Count(Column { name:
+        // "#640", index: 0 }) }  ]]
         //  Agg [groupings=[GroupingExpr { field_name: "#640", ...], aggs=[
         //      AggExpr { field_name: "#747", mode: PartialMerge, agg: Count(...) }
         //  ]]
@@ -173,6 +205,15 @@ impl AggContext {
         ));
         let agg_expr_evaluator = CachedExprsEvaluator::try_new(vec![], agg_exprs_flatten)?;
 
+        let (partial_skipping_ratio, partial_skipping_min_rows) = if supports_partial_skipping {
+            (
+                conf::PARTIAL_AGG_SKIPPING_RATIO.value()?,
+                conf::PARTIAL_AGG_SKIPPING_MIN_ROWS.value()? as usize,
+            )
+        } else {
+            Default::default()
+        };
+
         Ok(Self {
             exec_mode,
             need_partial_update,
@@ -182,6 +223,7 @@ impl AggContext {
             need_partial_merge_aggs,
             output_schema,
             grouping_schema,
+            grouping_row_converter,
             agg_schema,
             groupings,
             aggs,
@@ -191,9 +233,26 @@ impl AggContext {
             agg_expr_evaluator,
             agg_expr_evaluator_output_schema,
             initial_input_buffer_offset,
+            supports_partial_skipping,
+            partial_skipping_ratio,
+            partial_skipping_min_rows,
             agg_buf_addr_offsets: agg_buf_addr_offsets.into(),
             agg_buf_addr_counts: agg_buf_addr_counts.into(),
         })
+    }
+
+    pub fn create_grouping_rows(&self, input_batch: &RecordBatch) -> Result<Rows> {
+        let grouping_arrays: Vec<ArrayRef> = self
+            .groupings
+            .iter()
+            .map(|grouping| grouping.expr.evaluate(&input_batch))
+            .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
+            .collect::<Result<_>>()
+            .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
+        Ok(self
+            .grouping_row_converter
+            .lock()
+            .convert_columns(&grouping_arrays)?)
     }
 
     pub fn create_input_arrays(&self, input_batch: &RecordBatch) -> Result<Vec<Vec<ArrayRef>>> {
@@ -262,10 +321,10 @@ impl AggContext {
 
     pub fn convert_records_to_batch(
         &self,
-        grouping_row_converter: &mut RowConverter,
         records: Vec<(impl AsRef<[u8]>, AggBuf)>,
     ) -> Result<RecordBatch> {
         let row_count = records.len();
+        let grouping_row_converter = self.grouping_row_converter.lock();
         let grouping_row_parser = grouping_row_converter.parser();
         let grouping_columns = grouping_row_converter.convert_rows(
             records
