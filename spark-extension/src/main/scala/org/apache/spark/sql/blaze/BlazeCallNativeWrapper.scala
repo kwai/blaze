@@ -57,7 +57,7 @@ case class BlazeCallNativeWrapper(
   private var arrowSchema: Schema = _
 
   logInfo(s"Start executing native plan")
-  private var nativeRuntimePtr = JniBridge.callNative(this)
+  private var nativeRuntimePtr = JniBridge.callNative(NativeHelper.nativeMemory, this)
 
   private lazy val rowIterator = new Iterator[InternalRow] {
     private var currentRecord: InternalRow = _
@@ -184,9 +184,7 @@ object BlazeCallNativeWrapper extends Logging {
         s"batchSize=${BlazeConf.BATCH_SIZE.intConf()}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
         s"memoryFraction=${BlazeConf.MEMORY_FRACTION.doubleConf()}")
-
     BlazeCallNativeWrapper.loadLibBlaze()
-    JniBridge.initNative(NativeHelper.nativeMemory)
   }
 
   private def loadLibBlaze(): Unit = {

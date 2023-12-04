@@ -40,51 +40,45 @@ use prost::Message;
 
 use crate::{handle_unwinded_scope, logging::init_logging, rt::NativeExecutionRuntime};
 
-static SESSION: OnceCell<SessionContext> = OnceCell::new();
-
-#[allow(non_snake_case)]
-#[allow(clippy::single_match)]
-#[no_mangle]
-pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
-    env: JNIEnv,
-    _: JClass,
-    executor_memory_overhead: i64,
-) {
-    handle_unwinded_scope(|| -> Result<()> {
-        // init logging
-        init_logging();
-
-        // init jni java classes
-        JavaClasses::init(&env);
-
-        // init datafusion session context
-        SESSION.get_or_try_init(|| {
-            let max_memory = executor_memory_overhead as usize;
-            let memory_fraction = conf::MEMORY_FRACTION.value()?;
-            let batch_size = conf::BATCH_SIZE.value()? as usize;
-            MemManager::init((max_memory as f64 * memory_fraction) as usize);
-
-            let session_config = SessionConfig::new().with_batch_size(batch_size);
-            let runtime_config =
-                RuntimeConfig::new().with_disk_manager(DiskManagerConfig::Disabled);
-            let runtime = Arc::new(RuntimeEnv::new(runtime_config)?);
-            let session = SessionContext::with_config_rt(session_config, runtime);
-            Ok::<_, DataFusionError>(session)
-        })?;
-        Ok::<_, DataFusionError>(())
-    });
-}
-
 #[allow(non_snake_case)]
 #[no_mangle]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
-    _: JNIEnv,
+    env: JNIEnv,
     _: JClass,
+    executor_memory_overhead: i64,
     native_wrapper: JObject,
 ) -> i64 {
     handle_unwinded_scope(|| -> Result<i64> {
-        log::info!("Entering blaze callNative()");
-        let native_wrapper = jni_new_global_ref!(native_wrapper).unwrap();
+        static SESSION: OnceCell<SessionContext> = OnceCell::new();
+        static INIT: OnceCell<()> = OnceCell::new();
+
+        INIT.get_or_try_init(|| {
+            // logging is not initialized at this moment
+            eprintln!("------ initializing blaze native environment ------");
+            init_logging();
+
+            // init jni java classes
+            log::info!("initializing JNI bridge");
+            JavaClasses::init(&env);
+
+            // init datafusion session context
+            log::info!("initializing datafusion session");
+            SESSION.get_or_try_init(|| {
+                let max_memory = executor_memory_overhead as usize;
+                let memory_fraction = conf::MEMORY_FRACTION.value()?;
+                let batch_size = conf::BATCH_SIZE.value()? as usize;
+                MemManager::init((max_memory as f64 * memory_fraction) as usize);
+
+                let session_config = SessionConfig::new().with_batch_size(batch_size);
+                let runtime_config =
+                    RuntimeConfig::new().with_disk_manager(DiskManagerConfig::Disabled);
+                let runtime = Arc::new(RuntimeEnv::new(runtime_config)?);
+                let session = SessionContext::with_config_rt(session_config, runtime);
+                Ok::<_, DataFusionError>(session)
+            })?;
+            Ok::<_, DataFusionError>(())
+        })?;
+        let native_wrapper = jni_new_global_ref!(native_wrapper)?;
 
         // decode plan
         let raw_task_definition = jni_call!(

@@ -37,6 +37,8 @@ pub fn cast_impl(
     match_struct_fields: bool,
 ) -> Result<ArrayRef> {
     Ok(match (&array.data_type(), cast_type) {
+        (&t1, t2) if t1 == t2 => make_array(array.to_data()),
+
         (_, &DataType::Null) => Arc::new(NullArray::new(array.len())),
 
         // float to int
@@ -94,14 +96,13 @@ pub fn cast_impl(
         (&DataType::List(_), DataType::List(to_field)) => {
             let list = as_list_array(array);
             let items = cast_impl(list.values(), to_field.data_type(), match_struct_fields)?;
-            make_array(ArrayData::try_new(
-                DataType::List(to_field.clone()),
-                list.len(),
-                list.nulls().map(|nb| nb.buffer().clone()),
-                list.offset(),
-                list.to_data().buffers().to_vec(),
-                vec![items.into_data()],
-            )?)
+            make_array(
+                list.to_data()
+                    .into_builder()
+                    .data_type(DataType::List(to_field.clone()))
+                    .child_data(vec![items.into_data()])
+                    .build()?,
+            )
         }
         (&DataType::Struct(_), DataType::Struct(to_fields)) => {
             let struct_ = as_struct_array(array);
@@ -122,20 +123,22 @@ pub fn cast_impl(
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                make_array(ArrayData::try_new(
-                    DataType::Struct(to_fields.clone()),
-                    struct_.len(),
-                    struct_.nulls().map(|nb| nb.buffer().clone()),
-                    struct_.offset(),
-                    struct_.to_data().buffers().to_vec(),
-                    casted_arrays
-                        .into_iter()
-                        .map(|array| array.into_data())
-                        .collect(),
-                )?)
+                make_array(
+                    struct_
+                        .to_data()
+                        .into_builder()
+                        .data_type(DataType::Struct(to_fields.clone()))
+                        .child_data(
+                            casted_arrays
+                                .into_iter()
+                                .map(|array| array.into_data())
+                                .collect(),
+                        )
+                        .build()?,
+                )
             } else {
                 let mut null_column_name = vec![];
-                let casted_array = to_fields
+                let casted_arrays = to_fields
                     .iter()
                     .map(|field| {
                         let col = struct_.column_by_name(field.name().as_str());
@@ -159,17 +162,19 @@ pub fn cast_impl(
                     })
                     .collect::<Vec<_>>();
 
-                make_array(ArrayData::try_new(
-                    DataType::Struct(Fields::from(casted_fields)),
-                    struct_.len(),
-                    struct_.nulls().map(|nb| nb.buffer().clone()),
-                    struct_.offset(),
-                    struct_.to_data().buffers().to_vec(),
-                    casted_array
-                        .into_iter()
-                        .map(|array| array.into_data())
-                        .collect(),
-                )?)
+                make_array(
+                    struct_
+                        .to_data()
+                        .into_builder()
+                        .data_type(DataType::Struct(Fields::from(casted_fields)))
+                        .child_data(
+                            casted_arrays
+                                .into_iter()
+                                .map(|array| array.into_data())
+                                .collect(),
+                        )
+                        .build()?,
+                )
             }
         }
         (&DataType::Map(..), &DataType::Map(ref to_entries_field, to_sorted)) => {
@@ -179,14 +184,13 @@ pub fn cast_impl(
                 to_entries_field.data_type(),
                 match_struct_fields,
             )?;
-            make_array(ArrayData::try_new(
-                DataType::Map(to_entries_field.clone(), to_sorted),
-                map.len(),
-                map.nulls().map(|nb| nb.buffer().clone()),
-                map.offset(),
-                map.to_data().buffers().to_vec(),
-                vec![entries.into_data()],
-            )?)
+            make_array(
+                map.to_data()
+                    .into_builder()
+                    .data_type(DataType::Map(to_entries_field.clone(), to_sorted))
+                    .child_data(vec![entries.into_data()])
+                    .build()?,
+            )
         }
         _ => {
             // default cast

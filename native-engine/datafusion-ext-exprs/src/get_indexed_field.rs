@@ -78,7 +78,7 @@ impl PhysicalExpr for GetIndexedFieldExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let array = self.arg.evaluate(batch)?.into_array(1);
+        let array = self.arg.evaluate(batch)?.into_array(batch.num_rows());
         match (array.data_type(), &self.key) {
             (DataType::List(_) | DataType::Struct(_), _) if self.key.is_null() => {
                 let scalar_null: ScalarValue = array.data_type().try_into()?;
