@@ -92,7 +92,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_initNative(
 }
 
 pub fn set_log_level() {
-    let log_level = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    let log_level = env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string());
     let level_filter = match log_level.as_str() {
         "off" => LevelFilter::Off,
         "error" => LevelFilter::Error,
