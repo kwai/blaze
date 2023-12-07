@@ -28,8 +28,11 @@ import org.apache.iceberg.spark.SparkFilters;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.Literal;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.execution.datasources.SparkExpressionConverter;
+import org.apache.spark.sql.sources.AlwaysFalse;
+import org.apache.spark.sql.sources.AlwaysTrue;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
@@ -98,8 +101,7 @@ public class IcebergBatchQueryScan implements Serializable {
     public Expression dataFilter(SparkSession spark) {
         try {
             Filter v1Filter = SparkFilters.convertToSparkFilter(dataFilter);
-            String where = FilterToSql.filterToSql(v1Filter);
-            return SparkExpressionConverter.collectResolvedSparkExpression(spark, tableIdent(), where);
+            return FilterToSql.convertFilter(spark, tableIdent(), v1Filter);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -116,6 +118,16 @@ public class IcebergBatchQueryScan implements Serializable {
 }
 
 class FilterToSql {
+    public static Expression convertFilter(SparkSession spark, String tableIdent, Filter filter) throws Exception {
+        if (filter instanceof AlwaysTrue) {
+            return Literal.TrueLiteral();
+        } else if (filter instanceof AlwaysFalse) {
+            return Literal.FalseLiteral();
+        } else {
+            String where = FilterToSql.filterToSql(filter);
+            return SparkExpressionConverter.collectResolvedSparkExpression(spark, tableIdent, where);
+        }
+    }
 
     public static String filterToSql(Filter filter) {
         if (filter instanceof EqualTo) {
@@ -155,6 +167,10 @@ class FilterToSql {
         } else if (filter instanceof Not) {
             Not notFilter = (Not) filter;
             return "NOT (" + filterToSql(notFilter.child()) + ")";
+        } else if (filter instanceof AlwaysTrue) {
+            return "1 = 1";
+        } else if (filter instanceof AlwaysFalse) {
+            return "1 = 0";
         } else {
             throw new UnsupportedOperationException("Unsupported filter: " + filter);
         }
