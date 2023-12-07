@@ -124,7 +124,8 @@ abstract class NativeIcebergScanBase(baseDataSourceScan: BatchScanExec)
     val nativeFileGroups = this.nativeFileGroups
     val nativePartitionSchema = this.nativePartitionSchema
 
-    val projection = schema.map(field => scan.projection().fieldIndex(field.name))
+    val projection = schema.map(field => scan.tableSchema().fieldIndex(field.name))
+
 
     val hadoopConf = scan.getConf();
     val broadcastedHadoopConf =
