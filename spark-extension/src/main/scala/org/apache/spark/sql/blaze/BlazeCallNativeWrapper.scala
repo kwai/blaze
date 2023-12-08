@@ -20,7 +20,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.LinkedBlockingQueue
 
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.ArrowSchema
@@ -53,7 +53,7 @@ case class BlazeCallNativeWrapper(
 
   private val error: AtomicReference[Throwable] = new AtomicReference(null)
   private val dictionaryProvider = new CDataDictionaryProvider()
-  private val recordsQueue = new ArrayBlockingQueue[Option[UnsafeRow]](256)
+  private val recordsQueue = new LinkedBlockingQueue[Option[UnsafeRow]]()
   private var arrowSchema: Schema = _
 
   logInfo(s"Start executing native plan")
