@@ -120,11 +120,22 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
 #[allow(non_snake_case)]
 #[no_mangle]
+pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_nextBatch(
+    _: JNIEnv,
+    _: JClass,
+    raw_ptr: i64,
+) -> bool {
+    let runtime = unsafe { &*(raw_ptr as usize as *const NativeExecutionRuntime) };
+    runtime.next_batch()
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_finalizeNative(
     _: JNIEnv,
     _: JClass,
-    rtw_ptr: i64,
+    raw_ptr: i64,
 ) {
-    let runtime = unsafe { Box::from_raw(rtw_ptr as usize as *mut NativeExecutionRuntime) };
+    let runtime = unsafe { Box::from_raw(raw_ptr as usize as *mut NativeExecutionRuntime) };
     runtime.finalize();
 }
