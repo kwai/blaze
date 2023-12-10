@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{any::Any, borrow::Cow, fmt::Debug, sync::Arc};
 
 use arrow::{
     array::{new_null_array, Array, StringArray},
@@ -23,7 +23,6 @@ use datafusion::{
     physical_plan::ColumnarValue,
 };
 use datafusion_ext_commons::uda::UserDefinedArray;
-use itertools::Either;
 
 /// implement hive/spark's UDFGetJson
 /// get_json_object(str, path) == get_parsed_json_object(parse_json(str), path)
@@ -185,54 +184,36 @@ impl HiveGetJsonObjectEvaluator {
         &mut self,
         json_str: &str,
     ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
-        let mut value: serde_json::Value = serde_json::from_str(json_str)
+        let root_value: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|_| HiveGetJsonObjectError::InvalidInput("invalid json string".to_string()))?;
-
-        for matcher in &self.matchers {
-            if !value.is_null() {
-                value = matcher.evaluate(value);
-            }
-        }
-        let ret = match value {
-            serde_json::Value::Null => Ok(None),
-            serde_json::Value::String(string) => Ok(Some(string)),
-            serde_json::Value::Number(number) => Ok(Some(number.to_string())),
-            serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                serde_json::to_string(&value).map(Some).map_err(|_| {
-                    HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
-                })
-            }
-        };
-        ret
+        self.evaluate_with_value(&root_value)
     }
 
     fn evaluate_with_value(
         &mut self,
-        value: &serde_json::Value,
+        root_value: &serde_json::Value,
     ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
-        let mut base_value;
-        let mut value_ref = value;
+        let mut root_value: Cow<serde_json::Value> = Cow::Borrowed(root_value);
+        let mut value = root_value.as_ref();
         for matcher in &self.matchers {
-            if !value_ref.is_null() {
-                match matcher.evaluate_ref(value_ref) {
-                    Either::Left(v) => {
-                        value_ref = v;
-                    }
-                    Either::Right(v) => {
-                        base_value = v;
-                        value_ref = &base_value;
-                    }
+            match matcher.evaluate(value) {
+                Cow::Borrowed(evaluated) => {
+                    value = evaluated;
+                }
+                Cow::Owned(evaluated) => {
+                    root_value = Cow::Owned(evaluated);
+                    value = root_value.as_ref();
                 }
             }
         }
-        let ret = match value_ref {
+
+        let ret = match value {
             serde_json::Value::Null => Ok(None),
             serde_json::Value::String(string) => Ok(Some(string.to_string())),
             serde_json::Value::Number(number) => Ok(Some(number.to_string())),
             serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                serde_json::to_string(value_ref).map(Some).map_err(|_| {
+                serde_json::to_string(value).map(Some).map_err(|_| {
                     HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
                 })
             }
@@ -320,62 +301,21 @@ impl HiveGetJsonObjectMatcher {
         }
     }
 
-    fn evaluate(&self, value: serde_json::Value) -> serde_json::Value {
+    fn evaluate<'a>(&self, value: &'a serde_json::Value) -> Cow<'a, serde_json::Value> {
         match self {
             HiveGetJsonObjectMatcher::Root => {
-                return value;
-            }
-            HiveGetJsonObjectMatcher::Child(child) => {
-                if let serde_json::Value::Object(mut object) = value {
-                    return object.remove(child).unwrap_or_default();
-                } else if let serde_json::Value::Array(array) = value {
-                    return serde_json::Value::Array(
-                        array
-                            .into_iter()
-                            .map(|item| {
-                                if let serde_json::Value::Object(mut object) = item {
-                                    object.remove(child).unwrap_or_default()
-                                } else {
-                                    serde_json::Value::Null
-                                }
-                            })
-                            .filter(|r| !r.is_null())
-                            .collect(),
-                    );
-                }
-            }
-            HiveGetJsonObjectMatcher::Subscript(index) => {
-                if let serde_json::Value::Array(array) = value {
-                    return array.into_iter().skip(*index).next().unwrap_or_default();
-                }
-            }
-            HiveGetJsonObjectMatcher::SubscriptAll => {
-                if let serde_json::Value::Array(_) = value {
-                    return value;
-                }
-            }
-        }
-        serde_json::Value::Null
-    }
-
-    fn evaluate_ref<'a>(
-        &self,
-        value: &'a serde_json::Value,
-    ) -> Either<&'a serde_json::Value, serde_json::Value> {
-        match self {
-            HiveGetJsonObjectMatcher::Root => {
-                return Either::Left(value);
+                return Cow::Borrowed(value);
             }
             HiveGetJsonObjectMatcher::Child(child) => {
                 if let serde_json::Value::Object(object) = value {
                     return match object.get(child) {
-                        Some(v) => Either::Left(v),
-                        None => Either::Right(serde_json::Value::Null),
+                        Some(child) => Cow::Borrowed(child),
+                        None => Cow::Owned(serde_json::Value::Null),
                     };
                 } else if let serde_json::Value::Array(array) = value {
-                    return Either::Right(serde_json::Value::Array(
+                    return Cow::Owned(serde_json::Value::Array(
                         array
-                            .iter()
+                            .into_iter()
                             .map(|item| {
                                 if let serde_json::Value::Object(object) = item {
                                     match object.get(child) {
@@ -394,18 +334,18 @@ impl HiveGetJsonObjectMatcher {
             HiveGetJsonObjectMatcher::Subscript(index) => {
                 if let serde_json::Value::Array(array) = value {
                     return match array.get(*index) {
-                        Some(v) => Either::Left(v),
-                        None => Either::Right(serde_json::Value::Null),
+                        Some(v) => Cow::Borrowed(v),
+                        None => Cow::Owned(serde_json::Value::Null),
                     };
                 }
             }
             HiveGetJsonObjectMatcher::SubscriptAll => {
                 if let serde_json::Value::Array(_) = value {
-                    return Either::Left(value);
+                    return Cow::Borrowed(value);
                 }
             }
         }
-        Either::Right(serde_json::Value::Null)
+        Cow::Owned(serde_json::Value::Null)
     }
 }
 
