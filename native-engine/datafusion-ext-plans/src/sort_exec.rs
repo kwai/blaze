@@ -31,7 +31,7 @@ use arrow::{
 };
 use async_trait::async_trait;
 use datafusion::{
-    common::{DataFusionError, Result, Statistics},
+    common::{Result, Statistics},
     execution::context::TaskContext,
     physical_expr::PhysicalSortExpr,
     physical_plan::{
@@ -42,6 +42,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     bytes_arena::BytesArena,
+    df_execution_err,
     io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch},
     loser_tree::LoserTree,
     slim_bytes::SlimBytes,
@@ -772,9 +773,7 @@ impl SortedBatches {
                 writer.write_all(key)?;
             }
         }
-        writer
-            .finish()
-            .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
+        writer.finish().or_else(|err| df_execution_err!("{err}"))?;
         spill.complete()?;
         Ok(Some(spill))
     }

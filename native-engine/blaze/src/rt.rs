@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    error::Error,
     panic::AssertUnwindSafe,
     sync::{mpsc::Receiver, Arc},
 };
@@ -35,8 +36,8 @@ use datafusion::{
         ExecutionPlan,
     },
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
-use datafusion_ext_plans::common::output::WrappedRecordBatchSender;
+use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
+use datafusion_ext_plans::common::output::TaskOutputter;
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use tokio::runtime::Runtime;
@@ -48,7 +49,6 @@ pub struct NativeExecutionRuntime {
     plan: Arc<dyn ExecutionPlan>,
     task_context: Arc<TaskContext>,
     partition: usize,
-    ffi_schema: Arc<FFI_ArrowSchema>,
     batch_receiver: Receiver<Result<Option<RecordBatch>>>,
     rt: Runtime,
 }
@@ -71,9 +71,9 @@ impl NativeExecutionRuntime {
         )?;
 
         // init ffi schema
-        let ffi_schema = Arc::new(FFI_ArrowSchema::try_from(schema.as_ref())?);
+        let ffi_schema = FFI_ArrowSchema::try_from(schema.as_ref())?;
         jni_call!(BlazeCallNativeWrapper(native_wrapper.as_obj())
-            .importSchema(ffi_schema.as_ref() as *const FFI_ArrowSchema as i64) -> ()
+            .importSchema(&ffi_schema as *const FFI_ArrowSchema as i64) -> ()
         )?;
 
         // create tokio runtime
@@ -92,60 +92,53 @@ impl NativeExecutionRuntime {
             })
             .build()?;
 
-        let (batch_sender, batch_receiver) = std::sync::mpsc::sync_channel(2);
+        let (batch_sender, batch_receiver) = std::sync::mpsc::sync_channel(1);
         let nrt = Self {
             native_wrapper: native_wrapper.clone(),
             plan,
             partition,
             rt,
-            ffi_schema,
             batch_receiver,
             task_context: context,
         };
 
         // spawn batch producer
-        let batch_sender_cloned = batch_sender.clone();
-        let consume_stream = move || async move {
+        let err_sender = batch_sender.clone();
+        let consume_stream = async move {
             while let Some(batch) = AssertUnwindSafe(stream.next())
                 .catch_unwind()
                 .await
                 .unwrap_or_else(|err| {
                     let panic_message =
                         panic_message::get_panic_message(&err).unwrap_or("unknown error");
-                    Some(Err(DataFusionError::Execution(panic_message.to_owned())))
+                    Some(df_execution_err!("{}", panic_message))
                 })
                 .transpose()
-                .map_err(|err| DataFusionError::Execution(format!("{}", err)))?
+                .or_else(|err| df_execution_err!("{err}"))?
             {
-                batch_sender.send(Ok(Some(batch))).map_err(|err| {
-                    DataFusionError::Execution(format!("send batch error: {err}"))
-                })?;
+                batch_sender
+                    .send(Ok(Some(batch)))
+                    .or_else(|err| df_execution_err!("send batch error: {err}"))?;
             }
             batch_sender
                 .send(Ok(None))
-                .map_err(|err| DataFusionError::Execution(format!("send batch error: {err}")))?;
-
+                .or_else(|err| df_execution_err!("send batch error: {err}"))?;
             log::info!("[partition={partition}] finished");
             Ok::<_, DataFusionError>(())
         };
         nrt.rt.spawn(async move {
-            let result = consume_stream().await;
-            result.unwrap_or_else(|err| handle_unwinded_scope(|| -> Result<()> {
-                batch_sender_cloned.send(
-                    Err(DataFusionError::Execution(format!("execution aborted")))
-                ).map_err(|err| {
-                    DataFusionError::Execution(format!("send batch error: {err}"))
-                })?;
-                let task_running = is_task_running();
-                if !task_running {
-                    log::warn!(
-                        "[partition={partition}] task completed/interrupted before native execution done",
-                    );
-                    return Ok(());
-                }
+            consume_stream.await.unwrap_or_else(|err| {
+                handle_unwinded_scope(|| {
+                    let task_running = is_task_running();
+                    if !task_running {
+                        log::warn!(
+                            "[partition={partition}] task completed before native execution done"
+                        );
+                        return Ok(());
+                    }
 
-                let cause =
-                    if jni_exception_check!()? {
+                    err_sender.send(df_execution_err!("execution aborted"))?;
+                    let cause = if jni_exception_check!()? {
                         log::error!("[partition={partition}] panics with an java exception: {err}");
                         Some(jni_exception_occurred!()?)
                     } else {
@@ -153,23 +146,26 @@ impl NativeExecutionRuntime {
                         None
                     };
 
-                set_error(
-                    &native_wrapper,
-                    &format!("[partition={partition}] panics: {err}"),
-                    cause.map(|e| e.as_obj()),
-                )?;
-                log::info!("[partition={partition}] exited abnormally.");
-                Ok::<_, DataFusionError>(())
-            }));
+                    set_error(
+                        &native_wrapper,
+                        &format!("[partition={partition}] panics: {err}"),
+                        cause.map(|e| e.as_obj()),
+                    )?;
+                    log::info!("[partition={partition}] exited abnormally.");
+                    Ok::<_, Box<dyn Error>>(())
+                })
+            });
         });
         Ok(nrt)
     }
 
     pub fn next_batch(&self) -> bool {
         let next_batch = || -> Result<bool> {
-            match self.batch_receiver.recv().map_err(|err| {
-                DataFusionError::Execution(format!("receive batch error: {err}"))
-            })?? {
+            match self
+                .batch_receiver
+                .recv()
+                .or_else(|err| df_execution_err!("receive batch error: {err}"))??
+            {
                 Some(batch) => {
                     let ffi_array = FFI_ArrowArray::new(&StructArray::from(batch).into_data());
                     jni_call!(BlazeCallNativeWrapper(self.native_wrapper.as_obj())
@@ -197,14 +193,10 @@ impl NativeExecutionRuntime {
 
     pub fn finalize(self) {
         log::info!("native execution [partition={}] finalizing", self.partition);
-        let _ = self.update_metrics();
-        log::info!("native execution [partition={}] 1", self.partition);
-        drop(self.ffi_schema);
-        log::info!("native execution [partition={}] 2", self.partition);
+        self.update_metrics().unwrap_or_default();
         drop(self.plan);
-        log::info!("native execution [partition={}] 3", self.partition);
-        WrappedRecordBatchSender::cancel_task(&self.task_context); // cancel all pending streams
-        log::info!("native execution [partition={}] 4", self.partition);
+
+        self.task_context.cancel_task(); // cancel all pending streams
         self.rt.shutdown_background();
         log::info!("native execution [partition={}] finalized", self.partition);
     }

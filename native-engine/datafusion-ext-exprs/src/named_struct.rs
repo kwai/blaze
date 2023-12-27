@@ -30,11 +30,11 @@ use datafusion::{
         datatypes::{DataType, Schema},
         record_batch::RecordBatch,
     },
-    common::{DataFusionError, Result},
+    common::Result,
     logical_expr::ColumnarValue,
     physical_expr::{expr_list_eq_any_order, PhysicalExpr},
 };
-use datafusion_ext_commons::io::name_batch;
+use datafusion_ext_commons::{df_execution_err, io::name_batch};
 
 use crate::down_cast_any_ref;
 
@@ -51,9 +51,7 @@ impl NamedStructExpr {
         let return_schema = match &return_type {
             DataType::Struct(fields) => Arc::new(Schema::new(fields.clone())),
             other => {
-                return Err(DataFusionError::Execution(format!(
-                    "NamedStruct expects returning struct type, but got {other}"
-                )))
+                df_execution_err!("NamedStruct expects returning struct type, but got {other}")?
             }
         };
         Ok(Self {

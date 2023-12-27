@@ -53,7 +53,11 @@ use datafusion::{
         RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::hadoop_fs::{FsDataInputStream, FsProvider};
+use datafusion_ext_commons::{
+    df_execution_err,
+    hadoop_fs::{FsDataInputStream, FsProvider},
+    streams::coalesce_stream::CoalesceInput,
+};
 use fmt::Debug;
 use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use object_store::ObjectMeta;
@@ -225,10 +229,12 @@ impl ExecutionPlan for ParquetExec {
             None => (0..self.base_config.file_schema.fields().len()).collect(),
         };
 
+        let batch_size = context.session_config().batch_size();
+        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
         let opener = ParquetOpener {
             partition_index,
             projection: Arc::from(projection),
-            batch_size: context.session_config().batch_size(),
+            batch_size: sub_batch_size,
             limit: self.base_config.limit,
             predicate: self.predicate.clone(),
             pruning_predicate: self.pruning_predicate.clone(),
@@ -250,10 +256,11 @@ impl ExecutionPlan for ParquetExec {
             file_stream = file_stream.with_on_error(OnError::Skip);
         }
         let mut stream = Box::pin(file_stream);
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
+        let context_cloned = context.clone();
+        let timed_stream = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(async move {
-                context.output_with_sender(
+                context_cloned.output_with_sender(
                     "ParquetScan",
                     stream.schema(),
                     move |sender| async move {
@@ -266,7 +273,8 @@ impl ExecutionPlan for ParquetExec {
                 )
             })
             .try_flatten(),
-        )))
+        ));
+        context.coalesce_with_default_batch_size(timed_stream, &baseline_metrics)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -339,11 +347,9 @@ impl ParquetFileReader {
                 let path = BASE64_URL_SAFE_NO_PAD
                     .decode(self.meta.location.filename().expect("missing filename"))
                     .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-                    .map_err(|_| {
-                        DataFusionError::Execution(format!(
-                            "cannot decode filename: {:?}",
-                            self.meta.location.filename()
-                        ))
+                    .or_else(|_| {
+                        let filename = self.meta.location.filename();
+                        df_execution_err!("cannot decode filename: {filename:?}")
                     })?;
                 let fs = self.fs_provider.provide(&path)?;
                 Ok(Arc::new(fs.open(&path)?))

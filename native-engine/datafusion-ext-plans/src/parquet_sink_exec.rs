@@ -41,6 +41,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     cast::cast,
+    df_execution_err,
     hadoop_fs::{FsDataOutputStream, FsProvider},
 };
 use futures::{stream::once, StreamExt, TryStreamExt};
@@ -182,16 +183,17 @@ async fn execute_parquet_sink(
     let mut timer = metrics.elapsed_compute().timer();
 
     // parse hive_schema from props
-    let hive_schema = props
+    let hive_schema = match props
         .iter()
         .find(|(key, _)| key == "parquet.hive.schema")
         .map(|(_, value)| value)
         .and_then(|value| parse_message_type(value.as_str()).ok())
         .and_then(|tp| parquet_to_arrow_schema(&SchemaDescriptor::new(Arc::new(tp)), None).ok())
         .map(Arc::new)
-        .ok_or(DataFusionError::Execution(format!(
-            "missing parquet.hive.schema"
-        )))?;
+    {
+        Some(hive_schema) => hive_schema,
+        _ => df_execution_err!("missing parquet.hive.schema")?,
+    };
 
     // parse row group byte size from props
     let block_size = props
@@ -239,8 +241,7 @@ async fn execute_parquet_sink(
             metrics.record_output(num_rows);
             Ok::<_, DataFusionError>(())
         });
-        fut.await
-            .map_err(|err| DataFusionError::Execution(format!("{err}")))??;
+        fut.await.or_else(|err| df_execution_err!("{err}"))??;
         timer.stop();
     }
 
@@ -251,8 +252,7 @@ async fn execute_parquet_sink(
             w.close()?;
             Ok::<_, DataFusionError>(())
         });
-        fut.await
-            .map_err(|err| DataFusionError::Execution(format!("{err}")))??;
+        fut.await.or_else(|err| df_execution_err!("{err}"))??;
     }
 
     // parquet sink does not provide any output records

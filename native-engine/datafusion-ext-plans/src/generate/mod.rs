@@ -21,7 +21,8 @@ use arrow::{
     datatypes::{DataType, SchemaRef},
     record_batch::RecordBatch,
 };
-use datafusion::{common::Result, error::DataFusionError, physical_plan::PhysicalExpr};
+use datafusion::{common::Result, physical_plan::PhysicalExpr};
+use datafusion_ext_commons::df_unimplemented_err;
 
 use crate::generate::explode::{ExplodeArray, ExplodeMap};
 
@@ -54,18 +55,12 @@ pub fn create_generator(
         GenerateFunc::Explode => match children[0].data_type(input_schema)? {
             DataType::List(..) => Ok(Arc::new(ExplodeArray::new(children[0].clone(), false))),
             DataType::Map(..) => Ok(Arc::new(ExplodeMap::new(children[0].clone(), false))),
-            other => Err(DataFusionError::Plan(format!(
-                "unsupported explode type: {}",
-                other
-            ))),
+            other => df_unimplemented_err!("unsupported explode type: {other}"),
         },
         GenerateFunc::PosExplode => match children[0].data_type(input_schema)? {
             DataType::List(..) => Ok(Arc::new(ExplodeArray::new(children[0].clone(), true))),
             DataType::Map(..) => Ok(Arc::new(ExplodeMap::new(children[0].clone(), true))),
-            other => Err(DataFusionError::Plan(format!(
-                "unsupported pos_explode type: {}",
-                other
-            ))),
+            other => df_unimplemented_err!("unsupported pos_explode type: {other}"),
         },
     }
 }

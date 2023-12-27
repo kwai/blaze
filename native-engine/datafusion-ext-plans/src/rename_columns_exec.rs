@@ -26,7 +26,7 @@ use arrow::{
 };
 use async_trait::async_trait;
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     physical_expr::PhysicalSortExpr,
     physical_plan::{
@@ -35,6 +35,7 @@ use datafusion::{
         SendableRecordBatchStream, Statistics,
     },
 };
+use datafusion_ext_commons::df_execution_err;
 use futures::{Stream, StreamExt};
 
 use crate::agg::AGG_BUF_COLUMN_NAME;
@@ -64,11 +65,10 @@ impl RenameColumnsExec {
             }
         }
         if new_names.len() != input_schema.fields().len() {
-            return Err(DataFusionError::Plan(format!(
+            df_execution_err!(
                 "renamed_column_names length not matched with input schema, \
-                    renames: {:?}, input schema: {}",
-                renamed_column_names, input_schema,
-            )));
+                    renames: {renamed_column_names:?}, input schema: {input_schema}",
+            )?;
         }
         let renamed_column_names = new_names;
         let renamed_schema = Arc::new(Schema::new(
@@ -122,11 +122,6 @@ impl ExecutionPlan for RenameColumnsExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "RenameColumnsExec expects one children".to_string(),
-            ));
-        }
         Ok(Arc::new(RenameColumnsExec::try_new(
             children[0].clone(),
             self.renamed_column_names.clone(),

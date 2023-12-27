@@ -8,7 +8,7 @@ use std::{
 
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use datafusion::{
-    common::{DataFusionError, Result},
+    common::Result,
     execution::context::TaskContext,
     physical_expr::PhysicalSortExpr,
     physical_plan::{
@@ -67,12 +67,7 @@ impl ExecutionPlan for LimitExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        match children.len() {
-            1 => Ok(Arc::new(Self::new(children[0].clone(), self.limit))),
-            _ => Err(DataFusionError::Internal(
-                "LimitExec wrong number of children".to_string(),
-            )),
-        }
+        Ok(Arc::new(Self::new(children[0].clone(), self.limit)))
     }
 
     fn execute(

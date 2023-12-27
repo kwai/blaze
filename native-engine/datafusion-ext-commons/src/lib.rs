@@ -27,3 +27,22 @@ pub mod slim_bytes;
 pub mod spark_hash;
 pub mod streams;
 pub mod uda;
+
+#[macro_export]
+macro_rules! df_execution_err {
+    ($($arg:tt)*) => {
+        Err(datafusion::common::DataFusionError::Execution(format!($($arg)*)))
+    }
+}
+#[macro_export]
+macro_rules! df_unimplemented_err {
+    ($($arg:tt)*) => {
+        Err(datafusion::common::DataFusionError::NotImplemented(format!($($arg)*)))
+    }
+}
+#[macro_export]
+macro_rules! df_external_err {
+    ($($arg:tt)*) => {
+        Err(datafusion::common::DataFusionError::External(format!($($arg)*)))
+    }
+}

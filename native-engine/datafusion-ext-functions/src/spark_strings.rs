@@ -21,10 +21,11 @@ use arrow::{
 use datafusion::{
     common::{
         cast::{as_int32_array, as_list_array, as_string_array},
-        DataFusionError, Result, ScalarValue,
+        Result, ScalarValue,
     },
     physical_plan::ColumnarValue,
 };
+use datafusion_ext_commons::df_execution_err;
 
 pub fn string_lower(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     match &args[0] {
@@ -36,11 +37,7 @@ pub fn string_lower(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         ColumnarValue::Scalar(ScalarValue::Utf8(Some(str))) => Ok(ColumnarValue::Scalar(
             ScalarValue::Utf8(Some(str.to_lowercase())),
         )),
-        _ => {
-            return Err(DataFusionError::Execution(format!(
-                "string_lower only supports literal utf8"
-            )));
-        }
+        _ => df_execution_err!("string_lower only supports literal utf8"),
     }
 }
 
@@ -54,11 +51,7 @@ pub fn string_upper(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         ColumnarValue::Scalar(ScalarValue::Utf8(Some(str))) => Ok(ColumnarValue::Scalar(
             ScalarValue::Utf8(Some(str.to_uppercase())),
         )),
-        _ => {
-            return Err(DataFusionError::Execution(format!(
-                "string_lower only supports literal utf8"
-            )));
-        }
+        _ => df_execution_err!("string_lower only supports literal utf8"),
     }
 }
 
@@ -79,11 +72,7 @@ pub fn string_repeat(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         ColumnarValue::Scalar(scalar) if scalar.is_null() => {
             return Ok(ColumnarValue::Scalar(ScalarValue::Utf8(None)));
         }
-        _ => {
-            return Err(DataFusionError::Execution(format!(
-                "string_repeat n only supports literal int32"
-            )));
-        }
+        _ => df_execution_err!("string_repeat n only supports literal int32")?,
     };
 
     let repeated_string_array: ArrayRef = Arc::new(StringArray::from_iter(
@@ -98,11 +87,7 @@ pub fn string_split(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let string_array = args[0].clone().into_array(1);
     let pat = match &args[1] {
         ColumnarValue::Scalar(ScalarValue::Utf8(Some(pat))) if !pat.is_empty() => pat,
-        _ => {
-            return Err(DataFusionError::Execution(format!(
-                "string_split pattern only supports non-empty literal string"
-            )));
-        }
+        _ => df_execution_err!("string_split pattern only supports non-empty literal string")?,
     };
 
     let mut splitted_builder = ListBuilder::new(StringBuilder::new());
@@ -128,10 +113,10 @@ pub fn string_split(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 pub fn string_concat(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     // do not accept 0 arguments.
     if args.is_empty() {
-        return Err(DataFusionError::Internal(format!(
+        df_execution_err!(
             "concat was called with {} arguments. It requires at least 1.",
-            args.len()
-        )));
+            args.len(),
+        )?;
     }
 
     // first, decide whether to return a scalar or a vector.
@@ -206,11 +191,7 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         ColumnarValue::Scalar(ScalarValue::Utf8(None)) => {
             return Ok(ColumnarValue::Scalar(ScalarValue::Utf8(None)));
         }
-        _ => {
-            return Err(DataFusionError::Execution(format!(
-                "string_concat_ws separator only supports literal string"
-            )));
-        }
+        _ => df_execution_err!("string_concat_ws separator only supports literal string")?,
     };
 
     #[derive(Clone)]
@@ -269,9 +250,7 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                     }
                 }
             }
-            Err(DataFusionError::Execution(format!(
-                "concat_ws args must be string or array<string>"
-            )))
+            df_execution_err!("concat_ws args must be string or array<string>")
         })
         .collect::<Result<Vec<_>>>()?;
 

@@ -19,7 +19,6 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.util
 import java.util.concurrent.atomic.AtomicReference
 
 import org.apache.arrow.c.ArrowArray
@@ -35,6 +34,8 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.Utils
 import org.blaze.protobuf.PartitionId
@@ -51,26 +52,48 @@ case class BlazeCallNativeWrapper(
   BlazeCallNativeWrapper.initNative()
 
   private val error: AtomicReference[Throwable] = new AtomicReference(null)
+  private val allocator =
+    ArrowUtils.rootAllocator.newChildAllocator(this.getClass.getName, 0, Long.MaxValue)
   private val dictionaryProvider = new CDataDictionaryProvider()
-  private val recordsQueue = new util.ArrayDeque[InternalRow]()
   private var arrowSchema: Schema = _
+  private var schema: StructType = _
+  private var toUnsafe: UnsafeProjection = _
+  private var root: VectorSchemaRoot = _
+  private var batch: ColumnarBatch = _
+  private var batchCurRowIdx = 0
 
   logInfo(s"Start executing native plan")
   private var nativeRuntimePtr = JniBridge.callNative(NativeHelper.nativeMemory, this)
 
   private lazy val rowIterator = new Iterator[InternalRow] {
-    override def hasNext: Boolean =
-      !recordsQueue.isEmpty || JniBridge.nextBatch(nativeRuntimePtr)
+    override def hasNext: Boolean = {
+      checkError()
+      if (batch != null && batchCurRowIdx < batch.numRows()) {
+        return true
+      }
+      if (root != null) {
+        batch.close()
+        root.close()
+      }
+      if (nativeRuntimePtr != 0 && JniBridge.nextBatch(nativeRuntimePtr)) { // load next batch
+        return hasNext
+      }
+      false
+    }
 
-    override def next(): InternalRow =
-      recordsQueue.poll()
+    override def next(): InternalRow = {
+      checkError()
+      val row = toUnsafe(batch.getRow(batchCurRowIdx)).copy()
+      batchCurRowIdx += 1
+      row
+    }
   }
 
   context.foreach(_.addTaskCompletionListener[Unit]((_: TaskContext) => close()))
   context.foreach(_.addTaskFailureListener((_, _) => close()))
 
   def getRowIterator: Iterator[InternalRow] = {
-    CompletionIterator[InternalRow, Iterator[InternalRow]](rowIterator, this.close())
+    CompletionIterator[InternalRow, Iterator[InternalRow]](rowIterator, close())
   }
 
   protected def getMetrics: MetricNode =
@@ -78,33 +101,17 @@ case class BlazeCallNativeWrapper(
 
   protected def importSchema(ffiSchemaPtr: Long): Unit = {
     val ffiSchema = ArrowSchema.wrap(ffiSchemaPtr)
-    arrowSchema = Data.importSchema(ArrowUtils.rootAllocator, ffiSchema, dictionaryProvider)
+    arrowSchema = Data.importSchema(allocator, ffiSchema, dictionaryProvider)
+    schema = ArrowUtils.fromArrowSchema(arrowSchema)
+    toUnsafe = UnsafeProjection.create(schema)
   }
 
   protected def importBatch(ffiArrayPtr: Long): Unit = {
-    checkError()
-
-    val root: VectorSchemaRoot = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
     val ffiArray = ArrowArray.wrap(ffiArrayPtr)
-    Utils.tryWithSafeFinally {
-      Data.importIntoVectorSchemaRoot(
-        ArrowUtils.rootAllocator,
-        ffiArray,
-        root,
-        dictionaryProvider)
-
-      val toUnsafe = UnsafeProjection.create(ArrowUtils.fromArrowSchema(root.getSchema))
-      toUnsafe.initialize(Option(TaskContext.get()).map(_.partitionId()).getOrElse(0))
-
-      val batch = ColumnarHelper.rootAsBatch(root)
-      for (row <- ColumnarHelper.batchAsRowIter(batch)) {
-        checkError()
-        recordsQueue.offer(toUnsafe(row).copy())
-      }
-    } {
-      root.close()
-      ffiArray.close()
-    }
+    root = VectorSchemaRoot.create(arrowSchema, allocator)
+    Data.importIntoVectorSchemaRoot(allocator, ffiArray, root, dictionaryProvider)
+    batch = ColumnarHelper.rootAsBatch(root)
+    batchCurRowIdx = 0
   }
 
   protected def setError(error: Throwable): Unit = {
@@ -114,6 +121,7 @@ case class BlazeCallNativeWrapper(
   protected def checkError(): Unit = {
     val throwable = error.getAndSet(null)
     if (throwable != null) {
+      close()
       throw throwable
     }
   }
@@ -139,8 +147,14 @@ case class BlazeCallNativeWrapper(
       if (nativeRuntimePtr != 0) {
         JniBridge.finalizeNative(nativeRuntimePtr)
         nativeRuntimePtr = 0
+        if (root != null) {
+          batch.close()
+          root.close()
+        }
+        dictionaryProvider.close()
+        allocator.close()
+        checkError()
       }
-      checkError()
     }
   }
 }

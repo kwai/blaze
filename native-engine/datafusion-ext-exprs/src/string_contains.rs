@@ -25,10 +25,11 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::{
-    common::{DataFusionError, Result, ScalarValue},
+    common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
     physical_plan::PhysicalExpr,
 };
+use datafusion_ext_commons::df_execution_err;
 
 use crate::down_cast_any_ref;
 
@@ -96,10 +97,7 @@ impl PhysicalExpr for StringContainsExpr {
                 let ret = maybe_string.map(|string| string.contains(&self.infix));
                 Ok(ColumnarValue::Scalar(ScalarValue::Boolean(ret)))
             }
-            expr => Err(DataFusionError::Plan(format!(
-                "contains: invalid expr: {:?}",
-                expr
-            ))),
+            expr => df_execution_err!("contains: invalid expr: {expr:?}")?,
         }
     }
 

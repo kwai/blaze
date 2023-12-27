@@ -24,11 +24,12 @@ use arrow::{array::*, compute::*, datatypes::*, record_batch::RecordBatch};
 use datafusion::{
     common::{
         cast::{as_list_array, as_struct_array},
-        DataFusionError, Result, ScalarValue,
+        Result, ScalarValue,
     },
     logical_expr::ColumnarValue,
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::df_execution_err;
 
 use crate::down_cast_any_ref;
 
@@ -117,18 +118,18 @@ impl PhysicalExpr for GetIndexedFieldExpr {
                     as_struct_array.column(*k as usize).clone(),
                 ))
             }
-            (DataType::List(_), key) => Err(DataFusionError::Execution(format!(
+            (DataType::List(_), key) => df_execution_err!(
                 "get indexed field is only possible on lists with int64 indexes. \
                          Tried with {key:?} index"
-            ))),
-            (DataType::Struct(_), key) => Err(DataFusionError::Execution(format!(
+            ),
+            (DataType::Struct(_), key) => df_execution_err!(
                 "get indexed field is only possible on struct with int32 indexes. \
                          Tried with {key:?} index"
-            ))),
-            (dt, key) => Err(DataFusionError::Execution(format!(
+            ),
+            (dt, key) => df_execution_err!(
                 "get indexed field is only possible on lists with int64 indexes or struct \
                          with utf8 indexes. Tried {dt:?} with {key:?} index"
-            ))),
+            ),
         }
     }
 
@@ -169,22 +170,19 @@ fn get_indexed_field(data_type: &DataType, key: &ScalarValue) -> Result<Field> {
         (DataType::Struct(fields), ScalarValue::Int32(Some(k))) => {
             let field = fields.get(*k as usize);
             match field {
-                None => Err(DataFusionError::Plan(format!(
-                    "Field {k} not found in struct"
-                ))),
+                None => df_execution_err!("Field {k} not found in struct"),
                 Some(f) => Ok(f.as_ref().clone()),
             }
         }
-        (DataType::Struct(_), _) => Err(DataFusionError::Plan(
-            "Only ints are valid as an indexed field in a struct".to_string(),
-        )),
-        (DataType::List(_), _) => Err(DataFusionError::Plan(
-            "Only ints are valid as an indexed field in a list".to_string(),
-        )),
-        _ => Err(DataFusionError::Plan(
-            "The expression to get an indexed field is only valid for List or Struct types"
-                .to_string(),
-        )),
+        (DataType::Struct(_), _) => {
+            df_execution_err!("Only ints are valid as an indexed field in a struct",)
+        }
+        (DataType::List(_), _) => {
+            df_execution_err!("Only ints are valid as an indexed field in a list",)
+        }
+        _ => df_execution_err!(
+            "The expression to get an indexed field is only valid for List or Struct types",
+        ),
     }
 }
 
