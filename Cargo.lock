@@ -933,6 +933,7 @@ dependencies = [
  "slimmer_box",
  "tempfile",
  "tokio",
+ "uuid",
  "zstd 0.12.4",
 ]
 

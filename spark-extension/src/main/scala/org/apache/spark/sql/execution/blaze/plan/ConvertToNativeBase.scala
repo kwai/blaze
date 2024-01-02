@@ -38,6 +38,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 
 abstract class ConvertToNativeBase(override val child: SparkPlan)
     extends UnaryExecNode
@@ -45,6 +46,7 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
   override val nodeName: String = "ConvertToNative"
   override def output: Seq[Attribute] = child.output
   override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override lazy val metrics: Map[String, SQLMetric] = Map(
     NativeHelper
