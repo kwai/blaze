@@ -27,9 +27,12 @@ use arrow::{
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use bitvec::prelude::BitVec;
-use datafusion::common::{DataFusionError, Result};
+use datafusion::common::Result;
 
-use crate::io::{read_bytes_slice, read_len, write_len};
+use crate::{
+    df_execution_err, df_unimplemented_err,
+    io::{read_bytes_slice, read_len, write_len},
+};
 
 pub fn write_batch<W: Write>(
     batch: &RecordBatch,
@@ -201,12 +204,7 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
         DataType::List(_field) => write_list_array(as_list_array(array), output)?,
         DataType::Map(..) => write_map_array(as_map_array(array), output)?,
         DataType::Struct(_) => write_struct_array(as_struct_array(array), output)?,
-        other => {
-            return Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type: {}",
-                other
-            )));
-        }
+        other => df_unimplemented_err!("unsupported data type: {other}")?,
     }
     Ok(())
 }
@@ -252,12 +250,7 @@ pub fn read_array<R: Read>(
             read_map_array(num_rows, input, map_field, *is_sorted)?
         }
         DataType::Struct(fields) => read_struct_array(num_rows, input, fields)?,
-        other => {
-            return Err(DataFusionError::NotImplemented(format!(
-                "unsupported data type: {}",
-                other
-            )));
-        }
+        other => df_unimplemented_err!("unsupported data type: {other}")?,
     })
 }
 
@@ -309,7 +302,7 @@ fn nameless_data_type(data_type: &DataType) -> DataType {
 
 pub fn write_data_type<W: Write>(data_type: &DataType, output: &mut W) -> Result<()> {
     let buf = postcard::to_allocvec(&nameless_data_type(data_type))
-        .map_err(|err| DataFusionError::Execution(format!("serialize data type error: {err}")))?;
+        .or_else(|err| df_execution_err!("serialize data type error: {err}"))?;
     write_len(buf.len(), output)?;
     output.write_all(&buf)?;
     Ok(())
@@ -319,7 +312,7 @@ pub fn read_data_type<R: Read>(input: &mut R) -> Result<DataType> {
     let buf_len = read_len(input)?;
     let buf = read_bytes_slice(input, buf_len)?;
     let data_type = postcard::from_bytes(&buf)
-        .map_err(|err| DataFusionError::Execution(format!("deserialize data type error: {err}")))?;
+        .or_else(|err| df_execution_err!("deserialize data type error: {err}"))?;
     Ok(data_type)
 }
 

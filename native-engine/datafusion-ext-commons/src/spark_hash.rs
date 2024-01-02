@@ -23,7 +23,9 @@ use arrow::{
         Int8Type, TimeUnit,
     },
 };
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::Result;
+
+use crate::df_execution_err;
 
 #[inline]
 fn spark_compatible_murmur3_hash<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
@@ -170,14 +172,14 @@ fn create_hashes_dictionary<K: ArrowDictionaryKeyType>(
 
     for (hash, key) in hashes_buffer.iter_mut().zip(dict_array.keys().iter()) {
         if let Some(key) = key {
-            let idx = key.to_usize().ok_or_else(|| {
-                DataFusionError::Internal(format!(
-                    "Can not convert key value {:?} to usize in dictionary of type {:?}",
-                    key,
-                    dict_array.data_type()
-                ))
-            })?;
-            *hash = dict_hashes[idx]
+            if let Some(idx) = key.to_usize() {
+                *hash = dict_hashes[idx];
+            } else {
+                let dt = dict_array.data_type();
+                df_execution_err!(
+                    "Can not convert key value {key:?} to usize in dictionary of type {dt:?}"
+                )?;
+            }
         } // no update for Null, consistent with other hashes
     }
     Ok(())
@@ -269,25 +271,12 @@ fn hash_array(array: &ArrayRef, hashes_buffer: &mut [u32]) -> Result<()> {
         DataType::Decimal128(..) => {
             hash_array_decimal!(Decimal128Array, array, hashes_buffer);
         }
-        DataType::Dictionary(index_type, _) => match **index_type {
-            DataType::Int8 => {
-                create_hashes_dictionary::<Int8Type>(array, hashes_buffer)?;
-            }
-            DataType::Int16 => {
-                create_hashes_dictionary::<Int16Type>(array, hashes_buffer)?;
-            }
-            DataType::Int32 => {
-                create_hashes_dictionary::<Int32Type>(array, hashes_buffer)?;
-            }
-            DataType::Int64 => {
-                create_hashes_dictionary::<Int64Type>(array, hashes_buffer)?;
-            }
-            _ => {
-                return Err(DataFusionError::Internal(format!(
-                    "Unsupported dictionary type in hasher hashing: {}",
-                    array.data_type(),
-                )))
-            }
+        DataType::Dictionary(index_type, _) => match &**index_type {
+            DataType::Int8 => create_hashes_dictionary::<Int8Type>(array, hashes_buffer)?,
+            DataType::Int16 => create_hashes_dictionary::<Int16Type>(array, hashes_buffer)?,
+            DataType::Int32 => create_hashes_dictionary::<Int32Type>(array, hashes_buffer)?,
+            DataType::Int64 => create_hashes_dictionary::<Int64Type>(array, hashes_buffer)?,
+            other => df_execution_err!("Unsupported dictionary type in hasher hashing: {other}")?,
         },
         _ => {
             for idx in 0..array.len() {
@@ -407,13 +396,7 @@ fn hash_one(col: &ArrayRef, idx: usize, hash: &mut u32) -> Result<()> {
                     hash_one(col, idx, hash)?;
                 }
             }
-            _ => {
-                // This is internal because we should have caught this before.
-                return Err(DataFusionError::Internal(format!(
-                    "Unsupported data type in hasher: {}",
-                    col.data_type()
-                )));
-            }
+            other => df_execution_err!("Unsupported data type in hasher: {other}")?,
         }
     }
     Ok(())

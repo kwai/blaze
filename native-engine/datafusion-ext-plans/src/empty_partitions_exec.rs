@@ -23,7 +23,7 @@ use std::{
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use async_trait::async_trait;
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     physical_expr::PhysicalSortExpr,
     physical_plan::{
@@ -83,13 +83,8 @@ impl ExecutionPlan for EmptyPartitionsExec {
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
+        _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if !children.is_empty() {
-            return Err(DataFusionError::Plan(
-                "EmptyPartitionsExec expects no children".to_string(),
-            ));
-        }
         Ok(self)
     }
 

@@ -21,7 +21,7 @@ use std::{
 use arrow::datatypes::SchemaRef;
 use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     physical_expr::PhysicalSortExpr,
     physical_plan::{
@@ -91,14 +91,13 @@ impl ExecutionPlan for FFIReaderExec {
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
+        _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if !children.is_empty() {
-            return Err(DataFusionError::Plan(
-                "Blaze FFIReaderExec expects 0 children".to_owned(),
-            ));
-        }
-        Ok(self)
+        Ok(Arc::new(Self::new(
+            self.num_partitions,
+            self.export_iter_provider_resource_id.clone(),
+            self.schema.clone(),
+        )))
     }
 
     fn execute(

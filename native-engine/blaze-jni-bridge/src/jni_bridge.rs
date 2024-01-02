@@ -358,8 +358,8 @@ macro_rules! jni_throw {
 
 #[macro_export]
 macro_rules! jni_fatal_error {
-    ($value:expr) => {{
-        $crate::jni_bridge::THREAD_JNIENV.with(|env| env.fatal_error($value))
+    ($($arg:tt)*) => {{
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| env.fatal_error(format!($($arg)*)))
     }};
 }
 

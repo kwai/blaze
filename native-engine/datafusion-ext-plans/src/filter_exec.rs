@@ -16,7 +16,7 @@ use std::{any::Any, fmt::Formatter, sync::Arc};
 
 use arrow::datatypes::{DataType, SchemaRef};
 use datafusion::{
-    common::{DataFusionError, Result, Statistics},
+    common::{Result, Statistics},
     execution::context::TaskContext,
     physical_expr::{expressions::Column, PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
@@ -25,7 +25,7 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
+use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, StreamExt, TryStreamExt};
 use itertools::Itertools;
 
@@ -54,17 +54,13 @@ impl FilterExec {
         let schema = input.schema();
 
         if predicates.is_empty() {
-            return Err(DataFusionError::Plan(format!(
-                "Filter requires at least one predicate"
-            )));
+            df_execution_err!("Filter requires at least one predicate")?;
         }
         if !predicates
             .iter()
             .all(|pred| matches!(pred.data_type(&schema), Ok(DataType::Boolean)))
         {
-            return Err(DataFusionError::Plan(format!(
-                "Filter predicate must return boolean values"
-            )));
+            df_execution_err!("Filter predicate must return boolean values")?;
         }
         Ok(Self {
             input,
