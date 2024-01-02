@@ -18,19 +18,21 @@ use std::{
     task::{ready, Context, Poll},
 };
 
-use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use arrow::{
+    datatypes::SchemaRef,
+    record_batch::{RecordBatch, RecordBatchOptions},
+};
 use datafusion::{
     common::Result,
     execution::TaskContext,
     physical_plan::{
-        coalesce_batches::concat_batches,
         metrics::{BaselineMetrics, Time},
         RecordBatchStream, SendableRecordBatchStream,
     },
 };
 use futures::{Stream, StreamExt};
 
-const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 26; // limit output batch size to 64MB
+const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 25; // limit output batch size to 32MB
 
 pub trait CoalesceInput {
     fn coalesce_input(
@@ -92,14 +94,31 @@ impl CoalesceStream {
     }
 
     fn coalesce(&mut self) -> Result<RecordBatch> {
-        let coalesced = concat_batches(
-            &self.schema(),
-            &std::mem::take(&mut self.staging_batches),
-            self.staging_rows,
+        // better concat_batches() implementation that releases old batch columns asap.
+        let schema = self.input.schema();
+
+        // collect all columns
+        let mut all_cols = schema.fields().iter().map(|_| vec![]).collect::<Vec<_>>();
+        for batch in std::mem::take(&mut self.staging_batches) {
+            for i in 0..all_cols.len() {
+                all_cols[i].push(batch.column(i).clone());
+            }
+        }
+
+        // coalesce each column
+        let mut coalesced_cols = vec![];
+        for cols in all_cols {
+            let ref_cols = cols.iter().map(|col| col.as_ref()).collect::<Vec<_>>();
+            coalesced_cols.push(arrow::compute::concat(&ref_cols)?);
+        }
+        let coalesced_batch = RecordBatch::try_new_with_options(
+            schema,
+            coalesced_cols,
+            &RecordBatchOptions::new().with_row_count(Some(self.staging_rows)),
         )?;
         self.staging_rows = 0;
         self.staging_batches_mem_size = 0;
-        Ok(coalesced)
+        Ok(coalesced_batch)
     }
 
     fn should_flush(&self) -> bool {

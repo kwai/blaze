@@ -23,9 +23,9 @@ use std::{
 use arrow::{array::*, datatypes::*};
 use datafusion::{
     common::{Result, ScalarValue},
-    error::DataFusionError,
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::df_unimplemented_err;
 use paste::paste;
 
 use crate::agg::{
@@ -203,12 +203,7 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                     }
                 }
             }
-            other => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "unsupported data type in {}(): {other}",
-                    P::NAME,
-                )));
-            }
+            other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME)?,
         }
         Ok(())
     }
@@ -320,10 +315,7 @@ fn get_partial_updater<P: AggMaxMinParams>(
                 }
             }
         }),
-        other => Err(DataFusionError::NotImplemented(format!(
-            "unsupported data type in {}(): {other}",
-            P::NAME,
-        ))),
+        other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME),
     }
 }
 
@@ -379,10 +371,7 @@ fn get_partial_batch_updater<P: AggMaxMinParams>(
                 }
             }
         }),
-        other => Err(DataFusionError::NotImplemented(format!(
-            "unsupported data type in {}(): {other}",
-            P::NAME,
-        ))),
+        other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME),
     }
 }
 
@@ -436,10 +425,7 @@ fn get_partial_buf_merger<P: AggMaxMinParams>(
                 }
             }
         }),
-        other => Err(DataFusionError::NotImplemented(format!(
-            "unsupported data type in {}(): {other}",
-            P::NAME,
-        ))),
+        other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME),
     }
 }
 

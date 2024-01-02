@@ -19,9 +19,9 @@ use std::sync::Arc;
 use arrow::{array::*, datatypes::DataType};
 use datafusion::{
     common::{Result, ScalarValue},
-    error::DataFusionError,
     logical_expr::ColumnarValue,
 };
+use datafusion_ext_commons::df_execution_err;
 
 macro_rules! downcast_vec {
     ($ARGS:expr, $ARRAY_TYPE:ident) => {{
@@ -29,7 +29,7 @@ macro_rules! downcast_vec {
             .iter()
             .map(|e| match e.as_any().downcast_ref::<$ARRAY_TYPE>() {
                 Some(array) => Ok(array),
-                _ => Err(DataFusionError::Internal("failed to downcast".to_string())),
+                _ => df_execution_err!("failed to downcast"),
             })
     }};
 }
@@ -62,9 +62,7 @@ macro_rules! array {
             .iter()
             .any(|arg| arg.len() != 1 && arg.len() != num_rows)
         {
-            return Err(DataFusionError::Execution(format!(
-                "all columns of array must have the same length"
-            )));
+            df_execution_err!("all columns of array must have the same length")?;
         }
 
         // downcast all arguments to their common format
@@ -91,9 +89,7 @@ macro_rules! array {
 fn array_array(args: &[ArrayRef]) -> Result<ArrayRef> {
     // do not accept 0 arguments.
     if args.is_empty() {
-        return Err(DataFusionError::Internal(
-            "array requires at least one argument".to_string(),
-        ));
+        df_execution_err!("array requires at least one argument")?;
     }
 
     let res = match args[0].data_type() {

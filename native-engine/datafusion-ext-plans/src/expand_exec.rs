@@ -19,7 +19,7 @@ use arrow::{
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use datafusion::{
-    common::{DataFusionError, Result, Statistics},
+    common::{Result, Statistics},
     execution::context::TaskContext,
     physical_expr::{PhysicalExpr, PhysicalSortExpr},
     physical_plan::{
@@ -30,7 +30,7 @@ use datafusion::{
         SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::cast::cast;
+use datafusion_ext_commons::{cast::cast, df_execution_err};
 use futures::{stream::once, StreamExt, TryStreamExt};
 
 use crate::common::output::TaskOutputter;
@@ -59,10 +59,7 @@ impl ExpandExec {
                     .transpose()?;
 
                 if projection_data_type.as_ref() != Some(schema_data_type) {
-                    return Err(DataFusionError::Plan(format!(
-                        "ExpandExec data type not matches: {:?} vs {:?}",
-                        projection_data_type, schema_data_type
-                    )));
+                    df_execution_err!("ExpandExec data type not matches: {projection_data_type:?} vs {schema_data_type:?}")?;
                 }
             }
         }
@@ -106,11 +103,6 @@ impl ExecutionPlan for ExpandExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "ExpandExec expects one children".to_string(),
-            ));
-        }
         Ok(Arc::new(Self {
             schema: self.schema(),
             projections: self.projections.clone(),

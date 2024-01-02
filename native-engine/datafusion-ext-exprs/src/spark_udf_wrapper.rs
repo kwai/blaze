@@ -30,10 +30,10 @@ use blaze_jni_bridge::{
     jni_new_object,
 };
 use datafusion::{
-    common::DataFusionError, error::Result, logical_expr::ColumnarValue,
-    physical_expr::utils::expr_list_eq_any_order, physical_plan::PhysicalExpr,
+    error::Result, logical_expr::ColumnarValue, physical_expr::utils::expr_list_eq_any_order,
+    physical_plan::PhysicalExpr,
 };
-use datafusion_ext_commons::cast::cast;
+use datafusion_ext_commons::{cast::cast, df_execution_err};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
@@ -123,9 +123,7 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         if !is_task_running() {
-            return Err(DataFusionError::Execution(
-                "SparkUDFWrapper: is_task_running=false".to_string(),
-            ));
+            df_execution_err!("SparkUDFWrapper: is_task_running=false")?;
         }
 
         let batch_schema = batch.schema();

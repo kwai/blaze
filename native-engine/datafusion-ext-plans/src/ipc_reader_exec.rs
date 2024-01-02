@@ -22,7 +22,7 @@ use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     physical_plan::{
         expressions::PhysicalSortExpr,
@@ -95,9 +95,12 @@ impl ExecutionPlan for IpcReaderExec {
         self: Arc<Self>,
         _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        Err(DataFusionError::Plan(
-            "Blaze ShuffleReaderExec does not support with_new_children()".to_owned(),
-        ))
+        Ok(Arc::new(Self::new(
+            self.num_partitions,
+            self.ipc_provider_resource_id.clone(),
+            self.schema.clone(),
+            self.mode,
+        )))
     }
 
     fn execute(

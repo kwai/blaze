@@ -34,7 +34,7 @@ use datafusion::{
 use futures::Stream;
 use jni::{
     objects::{GlobalRef, JObject},
-    sys::{jboolean, jint, jlong, JNI_TRUE},
+    sys::{jint, jlong},
 };
 
 use crate::io::read_one_batch;
@@ -80,10 +80,7 @@ impl IpcReaderStream {
     }
 
     fn next_segment(&mut self) -> Result<bool> {
-        let has_next = jni_call!(
-            ScalaIterator(self.segments.as_obj()).hasNext() -> jboolean
-        )?;
-        if has_next != JNI_TRUE {
+        if !jni_call!(ScalaIterator(self.segments.as_obj()).hasNext() -> bool)? {
             self.reader = None;
             return Ok(false);
         }
@@ -204,10 +201,7 @@ impl ReadableByteChannelReader {
         }
         let buf = jni_new_direct_byte_buffer!(buf)?;
 
-        while {
-            let has_remaining = jni_call!(JavaBuffer(buf.as_obj()).hasRemaining() -> jboolean)?;
-            has_remaining == JNI_TRUE
-        } {
+        while jni_call!(JavaBuffer(buf.as_obj()).hasRemaining() -> bool)? {
             let read_bytes = jni_call!(JavaReadableByteChannel(self.channel.as_obj())
                 .read(buf.as_obj()) -> jint
             )?;

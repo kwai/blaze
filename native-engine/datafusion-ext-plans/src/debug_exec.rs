@@ -23,7 +23,7 @@ use std::{
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch, util::pretty::pretty_format_batches};
 use async_trait::async_trait;
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     physical_expr::PhysicalSortExpr,
     physical_plan::{
@@ -81,13 +81,8 @@ impl ExecutionPlan for DebugExec {
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
+        _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "DebugExec expects one children".to_string(),
-            ));
-        }
         Ok(Arc::new(DebugExec::new(
             self.input.clone(),
             self.debug_id.clone(),

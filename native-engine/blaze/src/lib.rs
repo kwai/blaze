@@ -17,13 +17,11 @@ use std::{any::Any, error::Error, fmt::Debug, panic::AssertUnwindSafe};
 use blaze_jni_bridge::*;
 use jni::objects::{JObject, JThrowable};
 
+mod alloc;
 mod exec;
 mod logging;
 mod metrics;
 mod rt;
-
-#[global_allocator]
-static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 fn handle_unwinded(err: Box<dyn Any + Send>) {
     // default handling:
@@ -48,10 +46,7 @@ fn handle_unwinded(err: Box<dyn Any + Send>) {
         Ok(())
     };
     recover().unwrap_or_else(|err: Box<dyn Error>| {
-        jni_fatal_error!(format!(
-            "Error recovering from panic, cannot resume: {:?}",
-            err
-        ));
+        jni_fatal_error!("Error recovering from panic, cannot resume: {err:?}");
     });
 }
 
@@ -70,10 +65,7 @@ fn throw_runtime_exception(msg: &str, cause: JObject) -> datafusion::error::Resu
     let e = jni_new_object!(JavaRuntimeException(msg.as_obj(), cause))?;
 
     if let Err(err) = jni_throw!(JThrowable::from(e.as_obj())) {
-        jni_fatal_error!(format!(
-            "Error throwing RuntimeException, cannot result: {:?}",
-            err
-        ));
+        jni_fatal_error!("Error throwing RuntimeException, cannot result: {err:?}");
     }
     Ok(())
 }

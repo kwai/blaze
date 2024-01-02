@@ -24,9 +24,9 @@ use datafusion::{
         cast::{as_decimal128_array, as_int64_array},
         Result, ScalarValue,
     },
-    error::DataFusionError,
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::df_unimplemented_err;
 
 use crate::agg::{
     agg_buf::{AccumInitialValue, AggBuf},
@@ -265,9 +265,6 @@ fn get_final_merger(dt: &DataType) -> Result<fn(ScalarValue, i64) -> ScalarValue
         DataType::UInt32 => get_fn!(UInt32, f64),
         DataType::UInt64 => get_fn!(UInt64, f64),
         DataType::Decimal128(..) => get_fn!(Decimal128),
-        other => Err(DataFusionError::NotImplemented(format!(
-            "unsupported data type in avg(): {}",
-            other
-        ))),
+        other => df_unimplemented_err!("unsupported data type in avg(): {other}"),
     }
 }

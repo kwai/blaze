@@ -38,6 +38,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_builder::{builder_extend, make_batch, new_array_builders},
+    df_execution_err,
     io::write_one_batch,
 };
 use futures::lock::Mutex;
@@ -244,7 +245,7 @@ impl ShuffleRepartitioner for BucketShuffleRepartitioner {
             Ok::<(), DataFusionError>(())
         })
         .await
-        .map_err(|e| DataFusionError::Execution(format!("shuffle write error: {:?}", e)))??;
+        .or_else(|e| df_execution_err!("shuffle write error: {e:?}"))??;
 
         // update disk spill size
         let spill_disk_usage = raw_spills

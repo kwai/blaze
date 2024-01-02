@@ -30,6 +30,7 @@ use datafusion::{
     physical_plan::{displayable, ExecutionPlan},
     prelude::{SessionConfig, SessionContext},
 };
+use datafusion_ext_commons::df_execution_err;
 use datafusion_ext_plans::memmgr::MemManager;
 use jni::{
     objects::{JClass, JObject},
@@ -87,22 +88,22 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         let task_definition = TaskDefinition::decode(
             jni_convert_byte_array!(raw_task_definition.as_obj())?.as_slice(),
         )
-        .map_err(|err| DataFusionError::Plan(format!("cannot decode execution plan: {:?}", err)))?;
+        .or_else(|err| df_execution_err!("cannot decode execution plan: {err:?}"))?;
 
         let task_id = &task_definition.task_id.expect("task_id is empty");
         let plan = &task_definition.plan.expect("plan is empty");
         drop(raw_task_definition);
 
         // get execution plan
-        let execution_plan: Arc<dyn ExecutionPlan> = plan.try_into().map_err(|err| {
-            DataFusionError::Plan(format!("cannot create execution plan: {:?}", err))
-        })?;
+        let execution_plan: Arc<dyn ExecutionPlan> = plan
+            .try_into()
+            .or_else(|err| df_execution_err!("cannot create execution plan: {err:?}"))?;
         let execution_plan_displayable = displayable(execution_plan.as_ref())
             .indent(true)
             .to_string();
         log::info!("Creating native execution plan succeeded");
-        log::info!("  task_id={:?}", task_id);
-        log::info!("  execution plan:\n{}", execution_plan_displayable);
+        log::info!("  task_id={task_id:?}");
+        log::info!("  execution plan:\n{execution_plan_displayable}");
 
         // execute to stream
         let runtime = Box::new(NativeExecutionRuntime::start(

@@ -32,10 +32,7 @@ use datafusion::{
     },
 };
 use futures::Stream;
-use jni::{
-    objects::{GlobalRef, JObject},
-    sys::{jboolean, JNI_TRUE},
-};
+use jni::objects::{GlobalRef, JObject};
 
 pub struct FFIReaderStream {
     schema: SchemaRef,
@@ -81,10 +78,7 @@ impl Stream for FFIReaderStream {
 
 impl FFIReaderStream {
     fn next_batch(&mut self) -> Result<Option<RecordBatch>> {
-        let has_next = jni_call!(
-            ScalaIterator(self.export_iter.as_obj()).hasNext() -> jboolean
-        )?;
-        if has_next != JNI_TRUE {
+        if !jni_call!(ScalaIterator(self.export_iter.as_obj()).hasNext() -> bool)? {
             return Ok(None);
         }
         let consumer = jni_call!(

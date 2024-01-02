@@ -23,7 +23,7 @@ use arrow::{
     row::{Row, RowConverter, Rows, SortField},
 };
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     logical_expr::{JoinType, JoinType::*},
     physical_expr::PhysicalSortExpr,
@@ -37,7 +37,7 @@ use datafusion::{
         Statistics,
     },
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
+use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
 use futures::{StreamExt, TryStreamExt};
 use parking_lot::Mutex as SyncMutex;
 
@@ -82,19 +82,17 @@ impl SortMergeJoinExec {
 
         if matches!(join_type, LeftSemi | LeftAnti | RightSemi | RightAnti,) {
             if join_filter.is_some() {
-                return Err(DataFusionError::Plan(format!(
-                    "Semi/Anti join with filter is not supported yet"
-                )));
+                df_execution_err!("Semi/Anti join with filter is not supported yet")?;
             }
         }
 
         check_join_is_valid(&left_schema, &right_schema, &on)?;
         if sort_options.len() != on.len() {
-            return Err(DataFusionError::Plan(format!(
+            df_execution_err!(
                 "Expected number of sort options: {}, actual: {}",
                 on.len(),
-                sort_options.len()
-            )));
+                sort_options.len(),
+            )?;
         }
 
         let schema = Arc::new(build_join_schema(&left_schema, &right_schema, &join_type).0);
@@ -176,19 +174,14 @@ impl ExecutionPlan for SortMergeJoinExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        match &children[..] {
-            [left, right] => Ok(Arc::new(SortMergeJoinExec::try_new(
-                left.clone(),
-                right.clone(),
-                self.on.clone(),
-                self.join_type,
-                self.join_filter.clone(),
-                self.sort_options.clone(),
-            )?)),
-            _ => Err(DataFusionError::Internal(
-                "SortMergeJoin wrong number of children".to_string(),
-            )),
-        }
+        Ok(Arc::new(SortMergeJoinExec::try_new(
+            children[0].clone(),
+            children[1].clone(),
+            self.on.clone(),
+            self.join_type,
+            self.join_filter.clone(),
+            self.sort_options.clone(),
+        )?))
     }
 
     fn execute(

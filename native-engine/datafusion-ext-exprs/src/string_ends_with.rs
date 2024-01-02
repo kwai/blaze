@@ -25,10 +25,11 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::{
-    common::{DataFusionError, Result, ScalarValue},
+    common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
     physical_plan::PhysicalExpr,
 };
+use datafusion_ext_commons::df_execution_err;
 
 use crate::down_cast_any_ref;
 
@@ -95,10 +96,7 @@ impl PhysicalExpr for StringEndsWithExpr {
                 let ret = maybe_string.map(|string| string.ends_with(&self.suffix));
                 Ok(ColumnarValue::Scalar(ScalarValue::Boolean(ret)))
             }
-            expr => Err(DataFusionError::Plan(format!(
-                "ends_with: invalid expr: {:?}",
-                expr
-            ))),
+            expr => df_execution_err!("ends_with: invalid expr: {expr:?}"),
         }
     }
 

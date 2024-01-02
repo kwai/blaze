@@ -22,14 +22,17 @@ use std::{
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use blaze_jni_bridge::is_task_running;
 use datafusion::{
-    common::{DataFusionError, Result},
+    common::Result,
     execution::context::TaskContext,
     physical_plan::{
         metrics::ScopedTimerGuard, stream::RecordBatchReceiverStream, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::io::{read_one_batch, write_one_batch};
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use datafusion_ext_commons::{
+    df_execution_err,
+    io::{read_one_batch, write_one_batch},
+};
+use futures::{FutureExt, StreamExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
@@ -63,9 +66,10 @@ impl WrappedRecordBatchSender {
             .into_iter()
             .filter(|wrapped| match wrapped.upgrade() {
                 Some(wrapped) if Arc::ptr_eq(&wrapped.task_context, task_context) => {
-                    let _ = wrapped.sender.send(Err(DataFusionError::Execution(format!(
-                        "task completed/cancelled"
-                    ))));
+                    wrapped
+                        .sender
+                        .try_send(df_execution_err!("task completed/cancelled"))
+                        .unwrap_or_default();
                     false
                 }
                 Some(_) => true, // do not modify senders from other tasks
@@ -81,13 +85,13 @@ impl WrappedRecordBatchSender {
     ) {
         // panic if we meet an error
         let batch = batch_result
-            .unwrap_or_else(|err| panic!("output_with_sender: received an error: {}", err));
+            .unwrap_or_else(|err| panic!("output_with_sender: received an error: {err}"));
 
         stop_timer.iter_mut().for_each(|timer| timer.stop());
         self.sender
             .send(Ok(batch))
             .await
-            .unwrap_or_else(|err| panic!("output_with_sender: send error: {}", err));
+            .unwrap_or_else(|err| panic!("output_with_sender: send error: {err}"));
         stop_timer.iter_mut().for_each(|timer| timer.restart());
     }
 }
@@ -105,6 +109,8 @@ pub trait TaskOutputter {
         mem_consumer: Arc<dyn MemConsumer>,
         stream: SendableRecordBatchStream,
     ) -> Result<SendableRecordBatchStream>;
+
+    fn cancel_task(&self);
 }
 
 impl TaskOutputter for Arc<TaskContext> {
@@ -115,27 +121,15 @@ impl TaskOutputter for Arc<TaskContext> {
         output: impl FnOnce(Arc<WrappedRecordBatchSender>) -> Fut + Send + 'static,
     ) -> Result<SendableRecordBatchStream> {
         let mut stream_builder = RecordBatchReceiverStream::builder(output_schema, 1);
-        let sender = stream_builder.tx().clone();
-        let err_sender = sender.clone();
-        let wrapped_sender = WrappedRecordBatchSender::new(self.clone(), sender);
+        let err_sender = stream_builder.tx().clone();
+        let wrapped_sender =
+            WrappedRecordBatchSender::new(self.clone(), stream_builder.tx().clone());
 
         stream_builder.spawn(async move {
             let result = AssertUnwindSafe(async move {
-                let task_running = is_task_running();
-                if !task_running {
-                    panic!(
-                        "output_with_sender[{}] canceled due to task finished/killed",
-                        desc
-                    );
+                if let Err(err) = output(wrapped_sender).await {
+                    panic!("output_with_sender[{desc}]: output() returns error: {err}");
                 }
-                output(wrapped_sender)
-                    .unwrap_or_else(|err| {
-                        panic!(
-                            "output_with_sender[{}]: output() returns error: {}",
-                            desc, err
-                        );
-                    })
-                    .await
             })
             .catch_unwind()
             .await
@@ -143,22 +137,22 @@ impl TaskOutputter for Arc<TaskContext> {
             .unwrap_or_else(|err| {
                 let panic_message =
                     panic_message::get_panic_message(&err).unwrap_or("unknown error");
-                Err(DataFusionError::Execution(panic_message.to_owned()))
+                df_execution_err!("{panic_message}")
             });
 
             if let Err(err) = result {
                 let err_message = err.to_string();
-                let _ = err_sender.send(Err(err)).await;
+                err_sender
+                    .send(df_execution_err!("{err}"))
+                    .await
+                    .unwrap_or_default();
 
                 // panic current spawn
                 let task_running = is_task_running();
                 if !task_running {
-                    panic!(
-                        "output_with_sender[{}] canceled due to task finished/killed",
-                        desc
-                    );
+                    panic!("output_with_sender[{desc}] canceled due to task finished/killed");
                 } else {
-                    panic!("output_with_sender[{}] error: {}", desc, err_message);
+                    panic!("output_with_sender[{desc}] error: {err_message}");
                 }
             }
         });
@@ -205,5 +199,9 @@ impl TaskOutputter for Arc<TaskContext> {
             }
             Ok(())
         })
+    }
+
+    fn cancel_task(&self) {
+        WrappedRecordBatchSender::cancel_task(self);
     }
 }
