@@ -6,7 +6,7 @@ resolver = "1"
 
 [dependencies]
 arrow = { workspace = true }
-async-trait = "0.1.76"
+async-trait = "0.1.77"
 blaze-jni-bridge = { workspace = true }
 bigdecimal = "0.3.0"
 datafusion = { workspace = true }
