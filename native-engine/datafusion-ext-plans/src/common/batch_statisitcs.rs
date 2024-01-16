@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::task::Poll;
-
 use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::{conf, conf::BooleanConf, is_jni_bridge_inited};
 use datafusion::{
@@ -48,8 +46,7 @@ impl InputBatchStatistics {
                 .counter("input_batch_count", partition),
             input_batch_mem_size: MetricBuilder::new(metrics_set)
                 .counter("input_batch_mem_size", partition),
-            input_row_count: MetricBuilder::new(metrics_set)
-                .counter("input_row_count", partition),
+            input_row_count: MetricBuilder::new(metrics_set).counter("input_row_count", partition),
         }
     }
 

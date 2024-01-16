@@ -28,7 +28,11 @@ use datafusion::{
         Partitioning,
     },
 };
-use datafusion_ext_commons::{df_execution_err, io::write_one_batch, loser_tree::LoserTree};
+use datafusion_ext_commons::{
+    df_execution_err,
+    io::write_one_batch,
+    loser_tree::{ComparableForLoserTree, LoserTree},
+};
 use derivative::Derivative;
 use futures::lock::Mutex;
 
@@ -297,6 +301,18 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             #[derivative(Ord = "ignore")]
             offsets: Vec<u64>,
         }
+
+        impl ComparableForLoserTree for SpillCursor {
+            #[inline(always)]
+            fn lt(&self, other: &Self) -> bool {
+                match (self, other) {
+                    (c1, _) if c1.finished() => false,
+                    (_, c2) if c2.finished() => true,
+                    (c1, c2) => c1 < c2,
+                }
+            }
+        }
+
         impl SpillCursor {
             fn skip_empty_partitions(&mut self) {
                 let offsets = &self.offsets;
@@ -315,7 +331,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         batches.clear();
 
         // use loser tree to select partitions from spills
-        let mut cursors: LoserTree<SpillCursor> = LoserTree::new_by(
+        let mut cursors: LoserTree<SpillCursor> = LoserTree::new(
             spills
                 .iter_mut()
                 .map(|spill| SpillCursor {
@@ -329,11 +345,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 })
                 .filter(|spill| !spill.finished())
                 .collect(),
-            |c1: &SpillCursor, c2: &SpillCursor| match (c1, c2) {
-                (c1, _) if c1.finished() => false,
-                (_, c2) if c2.finished() => true,
-                (c1, c2) => c1 < c2,
-            },
         );
         let raw_spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
 
