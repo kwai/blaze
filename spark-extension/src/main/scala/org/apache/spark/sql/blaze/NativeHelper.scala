@@ -90,15 +90,7 @@ object NativeHelper extends Logging {
       metrics ++= TreeMap(
         "input_batch_count" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
         "input_row_count" -> SQLMetrics.createMetric(sc, "Native.input_rows"),
-        "input_batch_mem_size_total" -> SQLMetrics.createSizeMetric(
-          sc,
-          "Native.input_batch_mem_bytes"),
-        "input_batch_mem_size_avg" -> SQLMetrics.createSizeMetric(
-          sc,
-          "Native.input_batch_mem_bytes_avg"),
-        "input_batch_num_rows_avg" -> SQLMetrics.createAverageMetric(
-          sc,
-          "Native.input_batch_num_rows_avg"))
+        "input_batch_mem_size" -> SQLMetrics.createSizeMetric(sc, "Native.input_mem_bytes"))
     }
     metrics
   }
