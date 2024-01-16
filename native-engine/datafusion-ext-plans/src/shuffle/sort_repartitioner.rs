@@ -28,7 +28,7 @@ use datafusion::{
         Partitioning,
     },
 };
-use datafusion_ext_commons::{io::write_one_batch, loser_tree::LoserTree};
+use datafusion_ext_commons::{df_execution_err, io::write_one_batch, loser_tree::LoserTree};
 use derivative::Derivative;
 use futures::lock::Mutex;
 
@@ -391,7 +391,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             Ok::<(), DataFusionError>(())
         })
         .await
-        .map_err(|e| DataFusionError::Execution(format!("shuffle write error: {:?}", e)))??;
+        .or_else(|e| df_execution_err!("shuffle write error: {e:?}"))??;
 
         // update disk spill size
         let spill_disk_usage = raw_spills

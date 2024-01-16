@@ -16,9 +16,10 @@ use std::sync::Arc;
 
 use arrow::{array::*, compute::*, datatypes::*};
 use datafusion::{
-    common::{DataFusionError, Result, ScalarValue},
+    common::{Result, ScalarValue},
     physical_plan::ColumnarValue,
 };
+use datafusion_ext_commons::df_unimplemented_err;
 
 /// used to avoid DivideByZero error in divide/modulo
 pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
@@ -74,10 +75,7 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                     handle_decimal!(Decimal256, *precision, *scale)
                 }
                 dt => {
-                    return Err(DataFusionError::Execution(format!(
-                        "Unsupported data type: {:?}",
-                        dt
-                    )));
+                    return df_unimplemented_err!("Unsupported data type: {dt:?}");
                 }
             })
         }

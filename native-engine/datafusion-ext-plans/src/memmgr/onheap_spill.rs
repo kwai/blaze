@@ -22,10 +22,7 @@ use blaze_jni_bridge::{
     is_jni_bridge_inited, jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
 use datafusion::{common::Result, parquet::file::reader::Length};
-use jni::{
-    objects::GlobalRef,
-    sys::{jboolean, jlong, JNI_TRUE},
-};
+use jni::{objects::GlobalRef, sys::jlong};
 
 pub trait Spill: Send + Sync {
     fn complete(&self) -> Result<()>;
@@ -35,9 +32,7 @@ pub trait Spill: Send + Sync {
 }
 
 pub fn try_new_spill() -> Result<Box<dyn Spill>> {
-    if !is_jni_bridge_inited()
-        || jni_call_static!(JniBridge.isDriverSide() -> jboolean)? == JNI_TRUE
-    {
+    if !is_jni_bridge_inited() || jni_call_static!(JniBridge.isDriverSide() -> bool)? {
         Ok(Box::new(FileSpill::try_new()?))
     } else {
         Ok(Box::new(OnHeapSpill::try_new()?))

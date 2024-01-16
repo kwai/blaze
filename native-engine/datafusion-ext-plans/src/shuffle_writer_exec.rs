@@ -19,7 +19,7 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     physical_plan::{
         expressions::PhysicalSortExpr,
@@ -29,6 +29,7 @@ use datafusion::{
         Statistics,
     },
 };
+use datafusion_ext_commons::df_execution_err;
 use futures::{stream::once, TryStreamExt};
 
 use crate::{
@@ -99,9 +100,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 self.output_data_file.clone(),
                 self.output_index_file.clone(),
             )?)),
-            _ => Err(DataFusionError::Internal(
-                "ShuffleWriterExec wrong number of children".to_string(),
-            )),
+            _ => df_execution_err!("ShuffleWriterExec wrong number of children"),
         }
     }
 

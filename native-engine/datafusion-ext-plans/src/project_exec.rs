@@ -221,6 +221,8 @@ async fn execute_project_with_filtering(
             let mut timer = baseline_metrics.elapsed_compute().timer();
             let output_batch =
                 cached_expr_evaluator.filter_project(&batch, output_schema.clone())?;
+            drop(batch);
+
             baseline_metrics.record_output(output_batch.num_rows());
             sender.send(Ok(output_batch), Some(&mut timer)).await;
         }

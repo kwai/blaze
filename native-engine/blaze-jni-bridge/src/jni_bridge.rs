@@ -228,8 +228,8 @@ macro_rules! jni_call {
         })
     }};
     ($clsname:ident($obj:expr).$method:ident($($args:expr),* $(,)?) -> bool) => {{
-        use jni::sys::*;
-        Ok(jni_call!($clsname($obj).$method($($args),*) -> jboolean)? == JNI_TRUE)
+        jni_call!($clsname($obj).$method($($args),*) -> jni::sys::jboolean)
+            .map(|v| v == jni::sys::JNI_TRUE)
     }};
     ($clsname:ident($obj:expr).$method:ident($($args:expr),* $(,)?) -> $ret:ty) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
@@ -358,8 +358,8 @@ macro_rules! jni_throw {
 
 #[macro_export]
 macro_rules! jni_fatal_error {
-    ($value:expr) => {{
-        $crate::jni_bridge::THREAD_JNIENV.with(|env| env.fatal_error($value))
+    ($($arg:tt)*) => {{
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| env.fatal_error(format!($($arg)*)))
     }};
 }
 

@@ -26,10 +26,11 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::{
-    common::{DataFusionError, Result, ScalarValue},
+    common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::{df_execution_err, df_unimplemented_err};
 
 use crate::down_cast_any_ref;
 
@@ -87,23 +88,34 @@ impl PhysicalExpr for GetMapValueExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let array = self.arg.evaluate(batch)?.into_array(1);
         match (array.data_type(), &self.key) {
-            (DataType::Map(_, _), _) if self.key.is_null() => {
-                Err(DataFusionError::NotImplemented("map key not support Null Type".to_string()))
+            (DataType::Map(..), _) if self.key.is_null() => {
+                df_unimplemented_err!("map key not support Null Type")
             }
-            (DataType::Map(_, _), _) => {
+            (DataType::Map(..), _) => {
                 let as_map_array = array.as_any().downcast_ref::<MapArray>().unwrap();
-                if !as_map_array.key_type().equals_datatype(&self.key.get_datatype()) {
-                    return Err(DataFusionError::Execution("MapArray key type must equal to GetMapValue key type".to_string()))
+                if !as_map_array
+                    .key_type()
+                    .equals_datatype(&self.key.get_datatype())
+                {
+                    df_execution_err!("MapArray key type must equal to GetMapValue key type")?;
                 }
 
                 macro_rules! get_boolean_value {
                     ($keyarrowty:ident, $scalar:expr) => {{
                         type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array =  as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
+                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
                         let ans_boolean = eq_dyn_bool_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean.iter().enumerate()
-                            .filter(|(_, ans)| if let Some(res) = ans { res.clone() } else { false })
-                            .map(|(idx, _)|idx as i32)
+                        let ans_index = ans_boolean
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, ans)| {
+                                if let Some(res) = ans {
+                                    res.clone()
+                                } else {
+                                    false
+                                }
+                            })
+                            .map(|(idx, _)| idx as i32)
                             .collect::<Vec<_>>();
                         let mut indices = vec![];
                         if ans_index.len() == 0 {
@@ -124,7 +136,8 @@ impl PhysicalExpr for GetMapValueExpr {
                             }
                         }
                         let indice_array = UInt32Array::from(indices);
-                        let ans_array = arrow::compute::take(as_map_array.values(), &indice_array, None)?;
+                        let ans_array =
+                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
                         Ok(ColumnarValue::Array(ans_array))
                     }};
                 }
@@ -132,11 +145,19 @@ impl PhysicalExpr for GetMapValueExpr {
                 macro_rules! get_prim_value {
                     ($keyarrowty:ident, $scalar:expr) => {{
                         type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array =  as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
+                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
                         let ans_boolean = eq_dyn_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean.iter().enumerate()
-                            .filter(|(_, ans)| if let Some(res) = ans { res.clone() } else { false })
-                            .map(|(idx, _)|idx as i32)
+                        let ans_index = ans_boolean
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, ans)| {
+                                if let Some(res) = ans {
+                                    res.clone()
+                                } else {
+                                    false
+                                }
+                            })
+                            .map(|(idx, _)| idx as i32)
                             .collect::<Vec<_>>();
                         let mut indices = vec![];
                         if ans_index.len() == 0 {
@@ -157,7 +178,8 @@ impl PhysicalExpr for GetMapValueExpr {
                             }
                         }
                         let indice_array = UInt32Array::from(indices);
-                        let ans_array = arrow::compute::take(as_map_array.values(), &indice_array, None)?;
+                        let ans_array =
+                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
                         Ok(ColumnarValue::Array(ans_array))
                     }};
                 }
@@ -165,11 +187,19 @@ impl PhysicalExpr for GetMapValueExpr {
                 macro_rules! get_str_value {
                     ($keyarrowty:ident, $scalar:expr) => {{
                         type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array =  as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
+                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
                         let ans_boolean = eq_dyn_utf8_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean.iter().enumerate()
-                            .filter(|(_, ans)| if let Some(res) = ans { res.clone() } else { false })
-                            .map(|(idx, _)|idx as i32)
+                        let ans_index = ans_boolean
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, ans)| {
+                                if let Some(res) = ans {
+                                    res.clone()
+                                } else {
+                                    false
+                                }
+                            })
+                            .map(|(idx, _)| idx as i32)
                             .collect::<Vec<_>>();
                         let mut indices = vec![];
                         if ans_index.len() == 0 {
@@ -190,7 +220,8 @@ impl PhysicalExpr for GetMapValueExpr {
                             }
                         }
                         let indice_array = UInt32Array::from(indices);
-                        let ans_array = arrow::compute::take(as_map_array.values(), &indice_array, None)?;
+                        let ans_array =
+                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
                         Ok(ColumnarValue::Array(ans_array))
                     }};
                 }
@@ -198,11 +229,19 @@ impl PhysicalExpr for GetMapValueExpr {
                 macro_rules! get_binary_value {
                     ($keyarrowty:ident, $scalar:expr) => {{
                         type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array =  as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
+                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
                         let ans_boolean = eq_dyn_binary_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean.iter().enumerate()
-                            .filter(|(_, ans)| if let Some(res) = ans { res.clone() } else { false })
-                            .map(|(idx, _)|idx as i32)
+                        let ans_index = ans_boolean
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, ans)| {
+                                if let Some(res) = ans {
+                                    res.clone()
+                                } else {
+                                    false
+                                }
+                            })
+                            .map(|(idx, _)| idx as i32)
                             .collect::<Vec<_>>();
                         let mut indices = vec![];
                         if ans_index.len() == 0 {
@@ -223,7 +262,8 @@ impl PhysicalExpr for GetMapValueExpr {
                             }
                         }
                         let indice_array = UInt32Array::from(indices);
-                        let ans_array = arrow::compute::take(as_map_array.values(), &indice_array, None)?;
+                        let ans_array =
+                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
                         Ok(ColumnarValue::Array(ans_array))
                     }};
                 }
@@ -243,16 +283,15 @@ impl PhysicalExpr for GetMapValueExpr {
                     ScalarValue::Utf8(Some(i)) => get_str_value!(String, i.as_str()),
                     ScalarValue::LargeUtf8(Some(i)) => get_str_value!(LargeString, i.as_str()),
                     ScalarValue::Binary(Some(i)) => get_binary_value!(Binary, i.as_slice()),
-                    ScalarValue::LargeBinary(Some(i)) => get_binary_value!(LargeBinary, i.as_slice()),
-                    t => {
-                        Err(DataFusionError::Execution(
-                            format!("get map value (Map) not support {} as key type", t)))
-                    },
+                    ScalarValue::LargeBinary(Some(i)) => {
+                        get_binary_value!(LargeBinary, i.as_slice())
+                    }
+                    t => df_execution_err!("get map value (Map) not support {t} as key type"),
                 }
             }
             (dt, key) => {
-                Err(DataFusionError::Execution(format!("get map value (Map) is only possible on map with no-null key. Tried {:?} with {:?} key", dt, key)))
-            },
+                df_execution_err!("get map value (Map) is only possible on map with no-null key. Tried {dt:?} with {key:?} key")
+            }
         }
     }
 
@@ -279,14 +318,10 @@ fn get_data_type_field(data_type: &DataType) -> Result<Field> {
             if let DataType::Struct(fields) = field.data_type() {
                 Ok(fields[1].as_ref().clone()) // values field
             } else {
-                Err(DataFusionError::NotImplemented(
-                    "Map field only support Struct".to_string(),
-                ))
+                df_unimplemented_err!("Map field only support Struct")
             }
         }
-        _ => Err(DataFusionError::Plan(
-            "The expression to get map value is only valid for `Map` types".to_string(),
-        )),
+        _ => df_execution_err!("The expression to get map value is only valid for `Map` types"),
     }
 }
 

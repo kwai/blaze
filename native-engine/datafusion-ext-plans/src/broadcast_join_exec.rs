@@ -26,7 +26,7 @@ use blaze_jni_bridge::{
     conf::{BooleanConf, IntConf},
 };
 use datafusion::{
-    common::{DataFusionError, Result, Statistics},
+    common::{Result, Statistics},
     execution::context::TaskContext,
     logical_expr::JoinType,
     physical_expr::PhysicalSortExpr,
@@ -42,6 +42,7 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
+use datafusion_ext_commons::df_execution_err;
 use futures::{stream::once, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 
@@ -78,9 +79,7 @@ impl BroadcastJoinExec {
             JoinType::LeftSemi | JoinType::LeftAnti | JoinType::RightSemi | JoinType::RightAnti,
         ) {
             if join_filter.is_some() {
-                return Err(DataFusionError::Plan(format!(
-                    "Semi/Anti join with filter is not supported yet"
-                )));
+                df_execution_err!("Semi/Anti join with filter is not supported yet")?;
             }
         }
 

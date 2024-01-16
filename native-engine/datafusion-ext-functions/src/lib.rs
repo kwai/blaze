@@ -14,10 +14,8 @@
 
 use std::sync::Arc;
 
-use datafusion::{
-    common::{DataFusionError, Result},
-    logical_expr::ScalarFunctionImplementation,
-};
+use datafusion::{common::Result, logical_expr::ScalarFunctionImplementation};
+use datafusion_ext_commons::df_unimplemented_err;
 
 mod spark_check_overflow;
 mod spark_get_json_object;
@@ -47,10 +45,6 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "StringConcatWs" => Arc::new(spark_strings::string_concat_ws),
         "StringLower" => Arc::new(spark_strings::string_lower),
         "StringUpper" => Arc::new(spark_strings::string_upper),
-
-        _ => Err(DataFusionError::NotImplemented(format!(
-            "spark ext function not implemented: {}",
-            name
-        )))?,
+        _ => df_unimplemented_err!("spark ext function not implemented: {name}")?,
     })
 }

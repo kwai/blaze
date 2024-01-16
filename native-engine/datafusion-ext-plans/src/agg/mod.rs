@@ -28,10 +28,11 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow::{array::*, datatypes::*};
 use datafusion::{
-    common::{DataFusionError, Result, ScalarValue},
+    common::{Result, ScalarValue},
     logical_expr::aggregate_function,
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::df_unimplemented_err;
 use datafusion_ext_exprs::cast::TryCastExpr;
 
 use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr};
@@ -244,9 +245,7 @@ pub trait Agg: Send + Sync + Debug {
                 {
                     s.value.clone()
                 } else {
-                    return Err(DataFusionError::NotImplemented(format!(
-                        "unsupported data type: {other}"
-                    )));
+                    return df_unimplemented_err!("unsupported data type: {other}");
                 }
             }
         })

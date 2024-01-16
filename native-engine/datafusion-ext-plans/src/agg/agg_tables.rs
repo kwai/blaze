@@ -23,11 +23,11 @@ use ahash::RandomState;
 use arrow::{record_batch::RecordBatch, row::Rows};
 use async_trait::async_trait;
 use datafusion::{
-    common::Result, error::DataFusionError, execution::context::TaskContext,
-    physical_plan::metrics::BaselineMetrics,
+    common::Result, execution::context::TaskContext, physical_plan::metrics::BaselineMetrics,
 };
 use datafusion_ext_commons::{
     bytes_arena::BytesArena,
+    df_execution_err,
     io::{read_bytes_slice, read_len, write_len},
     loser_tree::LoserTree,
     rdxsort,
@@ -553,9 +553,7 @@ impl InMemTable {
             }
             write_len(65536, &mut writer)?; // EOF
             write_len(0, &mut writer)?;
-            writer
-                .finish()
-                .map_err(|err| DataFusionError::Execution(format!("{}", err)))?;
+            writer.finish().or_else(|err| df_execution_err!("{err}"))?;
             spill.complete()?;
             Ok(spill)
         }

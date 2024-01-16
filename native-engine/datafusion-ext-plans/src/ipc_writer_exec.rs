@@ -20,7 +20,7 @@ use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
 use datafusion::{
-    error::{DataFusionError, Result},
+    error::Result,
     execution::context::TaskContext,
     physical_expr::PhysicalSortExpr,
     physical_plan::{
@@ -83,13 +83,8 @@ impl ExecutionPlan for IpcWriterExec {
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
+        _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "IpcWriterExec expects one children".to_string(),
-            ));
-        }
         Ok(Arc::new(IpcWriterExec::new(
             self.input.clone(),
             self.ipc_consumer_resource_id.clone(),

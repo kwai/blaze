@@ -18,10 +18,12 @@ use arrow::{array::*, datatypes::*};
 use bigdecimal::{FromPrimitive, ToPrimitive};
 use datafusion::common::{
     cast::{as_float32_array, as_float64_array},
-    DataFusionError, Result,
+    Result,
 };
 use num::{cast::AsPrimitive, Bounded, Integer, Signed};
 use paste::paste;
+
+use crate::df_execution_err;
 
 pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
     return cast_impl(array, cast_type, false);
@@ -109,9 +111,7 @@ pub fn cast_impl(
 
             if !match_struct_fields {
                 if to_fields.len() != struct_.num_columns() {
-                    return Err(DataFusionError::Execution(
-                        "cannot cast structs with different numbers of fields".to_string(),
-                    ));
+                    df_execution_err!("cannot cast structs with different numbers of fields")?;
                 }
 
                 let casted_arrays = struct_
