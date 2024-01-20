@@ -35,18 +35,19 @@ use datafusion::{
         Result, ScalarValue,
     },
     physical_expr::{
-        expressions::{CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
+        expressions::{CaseExpr, CastExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
         scatter, PhysicalExpr, PhysicalExprRef,
     },
     physical_plan::ColumnarValue,
 };
-use datafusion_ext_commons::{cast::cast, uda::UserDefinedArray};
+use datafusion_ext_commons::uda::UserDefinedArray;
 use itertools::Itertools;
 use parking_lot::Mutex;
 
 pub struct CachedExprsEvaluator {
     transformed_projection_exprs: Vec<PhysicalExprRef>,
     transformed_pruned_filter_exprs: Vec<(PhysicalExprRef, Vec<usize>)>,
+    output_schema: SchemaRef,
     cache: Cache,
 }
 
@@ -54,7 +55,24 @@ impl CachedExprsEvaluator {
     pub fn try_new(
         filter_exprs: Vec<PhysicalExprRef>,
         projection_exprs: Vec<PhysicalExprRef>,
+        input_schema: SchemaRef,
+        output_schema: SchemaRef,
     ) -> Result<Self> {
+        // add cast if data type not matches
+        let projection_exprs: Vec<PhysicalExprRef> = projection_exprs
+            .into_iter()
+            .zip(output_schema.fields())
+            .map(|(expr, field)| {
+                Ok({
+                    if expr.data_type(&input_schema)?.ne(field.data_type()) {
+                        Arc::new(CastExpr::new(expr, field.data_type().clone(), None))
+                    } else {
+                        expr
+                    }
+                })
+            })
+            .collect::<Result<_>>()?;
+
         let (transformed_exprs, cache) =
             transform_to_cached_exprs(&[filter_exprs.clone(), projection_exprs.clone()].concat())?;
         let (transformed_filter_exprs, transformed_projection_exprs) =
@@ -69,6 +87,7 @@ impl CachedExprsEvaluator {
         Ok(Self {
             transformed_projection_exprs,
             transformed_pruned_filter_exprs,
+            output_schema,
             cache,
         })
     }
@@ -77,13 +96,8 @@ impl CachedExprsEvaluator {
         self.cache.with(|_| self.filter_impl(batch))
     }
 
-    pub fn filter_project(
-        &self,
-        batch: &RecordBatch,
-        output_schema: SchemaRef,
-    ) -> Result<RecordBatch> {
-        self.cache
-            .with(|_| self.filter_project_impl(batch, output_schema.clone()))
+    pub fn filter_project(&self, batch: &RecordBatch) -> Result<RecordBatch> {
+        self.cache.with(|_| self.filter_project_impl(batch))
     }
 
     fn filter_impl(&self, batch: &RecordBatch) -> Result<RecordBatch> {
@@ -134,34 +148,25 @@ impl CachedExprsEvaluator {
         Ok(batch)
     }
 
-    fn filter_project_impl(
-        &self,
-        batch: &RecordBatch,
-        output_schema: SchemaRef,
-    ) -> Result<RecordBatch> {
+    fn filter_project_impl(&self, batch: &RecordBatch) -> Result<RecordBatch> {
         // execute filters, cache are retained for later projection
         let filtered_batch = self.filter_impl(batch)?;
         if filtered_batch.num_rows() == 0 {
-            return Ok(RecordBatch::new_empty(output_schema));
+            return Ok(RecordBatch::new_empty(self.output_schema.clone()));
         }
 
         // project
         let output_cols = self
             .transformed_projection_exprs
             .iter()
-            .zip(output_schema.fields())
-            .map(|(expr, field)| {
-                let array = expr
-                    .evaluate(&filtered_batch)
-                    .map(|c| c.into_array(filtered_batch.num_rows()))?;
-                if array.data_type() != field.data_type() {
-                    return cast(&array, field.data_type());
-                }
-                Ok(array)
+            .map(|expr| {
+                Ok(expr
+                    .evaluate(&filtered_batch)?
+                    .into_array(filtered_batch.num_rows()))
             })
             .collect::<Result<Vec<ArrayRef>>>()?;
         Ok(RecordBatch::try_new_with_options(
-            output_schema,
+            self.output_schema.clone(),
             output_cols,
             &RecordBatchOptions::new().with_row_count(Some(filtered_batch.num_rows())),
         )?)
@@ -212,7 +217,11 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
             || expr.as_any().downcast_ref::<SCOrExpr>().is_some()
         {
             // short circuiting expression - only first child can be cached
+            // first `when` expr can also be cached
             collect_dups(&expr.children()[0], current_count, expr_counts, dups);
+            if expr.as_any().downcast_ref::<CaseExpr>().is_some() {
+                collect_dups(&expr.children()[1], current_count, expr_counts, dups);
+            }
         } else {
             expr.children().iter().for_each(|child| {
                 collect_dups(child, current_count, expr_counts, dups);
@@ -255,8 +264,12 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
             || expr.as_any().downcast_ref::<SCOrExpr>().is_some()
         {
             // short circuiting expression - only first child can be cached
-            let mut children = expr.children().clone();
+            // first `when` expr can also be cached
+            let mut children = expr.children();
             children[0] = transform(children[0].clone(), cached_expr_ids, cache)?;
+            if expr.as_any().downcast_ref::<CaseExpr>().is_some() && children.len() >= 2 {
+                children[1] = transform(children[1].clone(), cached_expr_ids, cache)?;
+            }
             expr.clone().with_new_children(children)?
         } else {
             expr.clone().with_new_children(
