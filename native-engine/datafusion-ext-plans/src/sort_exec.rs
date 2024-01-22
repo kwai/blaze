@@ -449,19 +449,19 @@ impl ExternalSorter {
         let sorted_keys;
         let sorted_batch;
         if !self.prune_sort_keys_from_batch.is_all_pruned() {
-            let (cur_sorted_keys, cur_sorted_indices): (Vec<KeyRef>, Vec<usize>) = key_rows
+            let (cur_sorted_keys, cur_sorted_indices): (Vec<KeyRef>, Vec<u32>) = key_rows
                 .iter()
                 .map(|key| unsafe {
                     // safety: keys have the same lifetime with key_rows
                     std::mem::transmute::<_, &'static [u8]>(key.as_ref())
                 })
-                .enumerate()
-                .sorted_unstable_by_key(|(_idx, key)| unsafe {
+                .zip(0..batch.num_rows() as u32)
+                .sorted_unstable_by_key(|(key, _idx)| unsafe {
                     // safety: keys have the same lifetime with key_rows
                     std::mem::transmute::<_, &'static [u8]>(key.as_ref())
                 })
                 .take(self.limit)
-                .map(|(idx, key)| {
+                .map(|(key, idx)| {
                     let key_ref = KeyRef::new_from_key_store(&mut key_store, key);
                     (key_ref, idx)
                 })

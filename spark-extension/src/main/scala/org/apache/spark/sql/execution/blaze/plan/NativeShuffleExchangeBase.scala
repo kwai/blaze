@@ -175,7 +175,7 @@ abstract class NativeShuffleExchangeBase(
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incRecordsWritten(v)
-        case ("compute_elapsed", v) =>
+        case ("elapsed_compute", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
         case ("spilled_bytes", v) => metrics("spilled_bytes").add(v)

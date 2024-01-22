@@ -35,7 +35,6 @@ use futures::{stream::once, TryStreamExt};
 use crate::{
     memmgr::MemManager,
     shuffle::{
-        can_use_bucket_repartitioner, rss_bucket_repartitioner::RssBucketShuffleRepartitioner,
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
         rss_sort_repartitioner::RssSortShuffleRepartitioner, ShuffleRepartitioner,
     },
@@ -126,26 +125,10 @@ impl ExecutionPlan for RssShuffleWriterExec {
                 rss_partition_writer,
                 data_size_metric,
             )),
-            p @ Partitioning::Hash(..)
-                if can_use_bucket_repartitioner(&self.input.schema())
-                    && p.partition_count() < 200 =>
-            {
-                let partitioner = Arc::new(RssBucketShuffleRepartitioner::new(
-                    partition,
-                    rss_partition_writer,
-                    self.schema(),
-                    self.partitioning.clone(),
-                    data_size_metric,
-                    context.clone(),
-                ));
-                MemManager::register_consumer(partitioner.clone(), true);
-                partitioner
-            }
             Partitioning::Hash(..) => {
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
-                    self.schema(),
                     self.partitioning.clone(),
                     data_size_metric,
                     context.clone(),

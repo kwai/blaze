@@ -16,7 +16,6 @@
 #![feature(io_error_other)]
 #![feature(slice_swap_unchecked)]
 
-pub mod array_builder;
 pub mod bytes_arena;
 pub mod cast;
 pub mod hadoop_fs;
