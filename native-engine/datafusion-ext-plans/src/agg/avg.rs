@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use arrow::{array::*, datatypes::*};
@@ -29,10 +29,10 @@ use datafusion::{
 use datafusion_ext_commons::df_unimplemented_err;
 
 use crate::agg::{
-    agg_buf::{AccumInitialValue, AggBuf},
+    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr},
     count::AggCount,
     sum::AggSum,
-    Agg,
+    Agg, WithAggBufAddrs, WithMemTracking,
 };
 
 pub struct AggAvg {
@@ -42,6 +42,22 @@ pub struct AggAvg {
     agg_count: AggCount,
     accums_initial: Vec<AccumInitialValue>,
     final_merger: fn(ScalarValue, i64) -> ScalarValue,
+    mem_used_tracker: AtomicUsize,
+}
+
+impl WithAggBufAddrs for AggAvg {
+    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
+        self.agg_sum
+            .set_accum_state_val_addrs(accum_state_val_addrs);
+        self.agg_count
+            .set_accum_state_val_addrs(&accum_state_val_addrs[1..]);
+    }
+}
+
+impl WithMemTracking for AggAvg {
+    fn mem_used_tracker(&self) -> &AtomicUsize {
+        &self.mem_used_tracker
+    }
 }
 
 impl AggAvg {
@@ -58,6 +74,7 @@ impl AggAvg {
             agg_count,
             accums_initial,
             final_merger,
+            mem_used_tracker: AtomicUsize::new(0),
         })
     }
 }
@@ -106,79 +123,46 @@ impl Agg for AggAvg {
 
     fn partial_update(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
+        acc: &mut AccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-        self.agg_sum
-            .partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
-        self.agg_count
-            .partial_update(agg_buf, &agg_buf_addrs[1..], values, row_idx)?;
+        self.agg_sum.partial_update(acc, values, row_idx)?;
+        self.agg_count.partial_update(acc, values, row_idx)?;
         Ok(())
     }
 
-    fn partial_batch_update(
-        &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<usize> {
-        let mut mem_diff = 0;
-        mem_diff += self
-            .agg_sum
-            .partial_batch_update(agg_bufs, agg_buf_addrs, values)?;
-        mem_diff += self
-            .agg_count
-            .partial_batch_update(agg_bufs, &agg_buf_addrs[1..], values)?;
-        Ok(mem_diff)
-    }
-
-    fn partial_update_all(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        self.agg_sum
-            .partial_update_all(agg_buf, agg_buf_addrs, values)?;
-        self.agg_count
-            .partial_update_all(agg_buf, &agg_buf_addrs[1..], values)?;
+    fn partial_batch_update(&self, accs: &mut [AccumStateRow], values: &[ArrayRef]) -> Result<()> {
+        self.agg_sum.partial_batch_update(accs, values)?;
+        self.agg_count.partial_batch_update(accs, values)?;
         Ok(())
     }
 
-    fn partial_merge(
-        &self,
-        agg_buf1: &mut AggBuf,
-        agg_buf2: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<()> {
-        self.agg_sum
-            .partial_merge(agg_buf1, agg_buf2, agg_buf_addrs)?;
-        self.agg_count
-            .partial_merge(agg_buf1, agg_buf2, &agg_buf_addrs[1..])?;
+    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+        self.agg_sum.partial_update_all(acc, values)?;
+        self.agg_count.partial_update_all(acc, values)?;
+        Ok(())
+    }
+
+    fn partial_merge(&self, acc1: &mut AccumStateRow, acc2: &mut AccumStateRow) -> Result<()> {
+        self.agg_sum.partial_merge(acc1, acc2)?;
+        self.agg_count.partial_merge(acc1, acc2)?;
         Ok(())
     }
 
     fn partial_batch_merge(
         &self,
-        agg_bufs: &mut [AggBuf],
-        merging_agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-    ) -> Result<usize> {
-        let mut mem_diff = 0;
-        mem_diff += self
-            .agg_sum
-            .partial_batch_merge(agg_bufs, merging_agg_bufs, agg_buf_addrs)?;
-        mem_diff +=
-            self.agg_count
-                .partial_batch_merge(agg_bufs, merging_agg_bufs, &agg_buf_addrs[1..])?;
-        Ok(mem_diff)
+        accs: &mut [AccumStateRow],
+        merging_accs: &mut [AccumStateRow],
+    ) -> Result<()> {
+        self.agg_sum.partial_batch_merge(accs, merging_accs)?;
+        self.agg_count.partial_batch_merge(accs, merging_accs)?;
+        Ok(())
     }
 
-    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
-        let sum = self.agg_sum.final_merge(agg_buf, agg_buf_addrs)?;
-        let count = match self.agg_count.final_merge(agg_buf, &agg_buf_addrs[1..])? {
+    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+        let sum = self.agg_sum.final_merge(acc)?;
+        let count = match self.agg_count.final_merge(acc)? {
             ScalarValue::Int64(Some(count)) => count,
             _ => unreachable!(),
         };
@@ -186,15 +170,9 @@ impl Agg for AggAvg {
         Ok(final_merger(sum, count))
     }
 
-    fn final_batch_merge(
-        &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-    ) -> Result<ArrayRef> {
-        let sums = self.agg_sum.final_batch_merge(agg_bufs, agg_buf_addrs)?;
-        let counts = self
-            .agg_count
-            .final_batch_merge(agg_bufs, &agg_buf_addrs[1..])?;
+    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+        let sums = self.agg_sum.final_batch_merge(accs)?;
+        let counts = self.agg_count.final_batch_merge(accs)?;
 
         let counts_zero_free: Int64Array = as_int64_array(&counts)?.unary_opt(|count| {
             let not_zero = !count.is_zero();

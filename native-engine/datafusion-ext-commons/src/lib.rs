@@ -45,3 +45,19 @@ macro_rules! df_external_err {
         Err(datafusion::common::DataFusionError::External(format!($($arg)*)))
     }
 }
+
+#[macro_export]
+macro_rules! downcast_any {
+    ($value:expr,mut $ty:ty) => {{
+        match $value.as_any_mut().downcast_mut::<$ty>() {
+            Some(v) => Ok(v),
+            None => $crate::df_execution_err!("error downcasting to {}", stringify!($ty)),
+        }
+    }};
+    ($value:expr, $ty:ty) => {{
+        match $value.as_any().downcast_ref::<$ty>() {
+            Some(v) => Ok(v),
+            None => $crate::df_execution_err!("error downcasting to {}", stringify!($ty)),
+        }
+    }};
+}

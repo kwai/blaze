@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use arrow::{array::*, datatypes::*};
@@ -23,16 +23,32 @@ use datafusion::{
     common::{Result, ScalarValue},
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::{df_execution_err, downcast_any};
 
 use crate::agg::{
-    agg_buf::{AccumInitialValue, AggBuf, AggDynSet},
-    Agg,
+    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynSet, AggDynValue},
+    Agg, WithAggBufAddrs, WithMemTracking,
 };
 
 pub struct AggCollectSet {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     arg_type: DataType,
+    accum_initial: [AccumInitialValue; 1],
+    accum_state_val_addr: AccumStateValAddr,
+    mem_used_tracker: AtomicUsize,
+}
+
+impl WithAggBufAddrs for AggCollectSet {
+    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
+        self.accum_state_val_addr = accum_state_val_addrs[0];
+    }
+}
+
+impl WithMemTracking for AggCollectSet {
+    fn mem_used_tracker(&self) -> &AtomicUsize {
+        &self.mem_used_tracker
+    }
 }
 
 impl AggCollectSet {
@@ -44,7 +60,10 @@ impl AggCollectSet {
         Ok(Self {
             child,
             data_type,
+            accum_initial: [AccumInitialValue::DynSet(arg_type.clone())],
             arg_type,
+            accum_state_val_addr: AccumStateValAddr::default(),
+            mem_used_tracker: AtomicUsize::new(0),
         })
     }
 }
@@ -81,92 +100,102 @@ impl Agg for AggCollectSet {
     }
 
     fn accums_initial(&self) -> &[AccumInitialValue] {
-        &[AccumInitialValue::DynSet]
+        &self.accum_initial
     }
 
     fn partial_update(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
+        acc: &mut AccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-        let dyn_set = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynSet>()
-            .unwrap();
-        let values = &values[0];
-
-        if values.is_valid(row_idx) {
-            dyn_set.append(ScalarValue::try_from_array(&values, row_idx)?);
+        if values[0].is_valid(row_idx) {
+            let dyn_set = match acc.dyn_value_mut(self.accum_state_val_addr) {
+                Some(dyn_set) => dyn_set,
+                w => {
+                    *w = Some(Box::new(AggDynSet::default()));
+                    w.as_mut().unwrap()
+                }
+            };
+            let set = downcast_any!(dyn_set, mut AggDynSet)?;
+            let mem_used_old = set.mem_size();
+            set.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+            self.add_mem_used(set.mem_size() - mem_used_old);
         }
         Ok(())
     }
 
-    fn partial_update_all(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let dyn_set = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynSet>()
-            .unwrap();
-        let values = &values[0];
+    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+        let dyn_set = match acc.dyn_value_mut(self.accum_state_val_addr) {
+            Some(dyn_set) => dyn_set,
+            w => {
+                *w = Some(Box::new(AggDynSet::default()));
+                w.as_mut().unwrap()
+            }
+        };
+        let set = downcast_any!(dyn_set, mut AggDynSet)?;
+        let mem_used_old = set.mem_size();
 
-        for i in 0..values.len() {
-            if values.is_valid(i) {
-                dyn_set.append(ScalarValue::try_from_array(&values, i)?);
+        for i in 0..values[0].len() {
+            if values[0].is_valid(i) {
+                set.append(ScalarValue::try_from_array(&values[0], i)?);
             }
         }
+        self.add_mem_used(set.mem_size() - mem_used_old);
         Ok(())
     }
 
     fn partial_merge(
         &self,
-        agg_buf: &mut AggBuf,
-        merging_agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
+        acc: &mut AccumStateRow,
+        merging_acc: &mut AccumStateRow,
     ) -> Result<()> {
-        let dyn_set1 = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynSet>()
-            .unwrap();
-        let dyn_set2 = merging_agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynSet>()
-            .unwrap();
-
-        dyn_set1.merge(dyn_set2);
+        match (
+            acc.dyn_value_mut(self.accum_state_val_addr),
+            merging_acc.dyn_value_mut(self.accum_state_val_addr),
+        ) {
+            (Some(w), Some(v)) => {
+                let w = downcast_any!(w, mut AggDynSet)?;
+                let v = downcast_any!(v, mut AggDynSet)?;
+                let mem_used_w = w.mem_size();
+                let mem_used_v = v.mem_size();
+                w.merge(v);
+                self.add_mem_used(w.mem_size() - (mem_used_w + mem_used_v));
+            }
+            (w, v) => *w = std::mem::take(v),
+        }
         Ok(())
     }
 
-    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
-        let dyn_set = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynSet>()
-            .unwrap();
-        Ok(ScalarValue::new_list(
-            Some(std::mem::take(&mut dyn_set.values).into_iter().collect()),
-            self.arg_type.clone(),
-        ))
+    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+        Ok(
+            match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
+                Some(w) => ScalarValue::new_list(
+                    Some({
+                        self.sub_mem_used(w.mem_size());
+                        w.as_any_boxed()
+                            .downcast::<AggDynSet>()
+                            .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?
+                            .into_values()
+                            .into_iter()
+                            .collect()
+                    }),
+                    self.arg_type.clone(),
+                ),
+                None => ScalarValue::new_list(None, self.arg_type.clone()),
+            },
+        )
     }
 
-    fn final_batch_merge(
-        &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-    ) -> Result<ArrayRef> {
-        let values: Vec<ScalarValue> = agg_bufs
+    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+        let values: Vec<ScalarValue> = accs
             .iter_mut()
-            .map(|agg_buf| self.final_merge(agg_buf, agg_buf_addrs))
+            .map(|acc| self.final_merge(acc))
             .collect::<Result<_>>()?;
+
+        if values.is_empty() {
+            return Ok(new_empty_array(self.data_type()));
+        }
         Ok(ScalarValue::iter_to_array(values)?)
     }
 }

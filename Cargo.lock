@@ -908,7 +908,6 @@ dependencies = [
 name = "datafusion-ext-plans"
 version = "0.1.0"
 dependencies = [
- "ahash",
  "arrow",
  "async-trait",
  "base64",
@@ -920,6 +919,7 @@ dependencies = [
  "datafusion-ext-exprs",
  "derivative",
  "futures",
+ "gxhash",
  "hashbrown",
  "itertools 0.10.5",
  "jni",
@@ -1226,6 +1226,16 @@ name = "glob"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
+
+[[package]]
+name = "gxhash"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "370b2ac6cb58eb38e600bf6a783f8cca3f164d5fe5e501ad274d5dc8e94c7212"
+dependencies = [
+ "rand",
+ "rustc_version",
+]
 
 [[package]]
 name = "half"
