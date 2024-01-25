@@ -465,7 +465,7 @@ dependencies = [
  "datafusion-ext-functions",
  "datafusion-ext-plans",
  "log",
- "object_store",
+ "object_store 0.9.0",
  "prost 0.12.3",
  "tonic-build",
 ]
@@ -767,7 +767,7 @@ dependencies = [
  "lazy_static",
  "log",
  "num_cpus",
- "object_store",
+ "object_store 0.6.1",
  "parking_lot",
  "parquet",
  "percent-encoding",
@@ -798,7 +798,7 @@ dependencies = [
  "flate2",
  "futures",
  "num_cpus",
- "object_store",
+ "object_store 0.6.1",
  "parquet",
  "sqlparser",
  "tokio",
@@ -819,7 +819,7 @@ dependencies = [
  "futures",
  "hashbrown",
  "log",
- "object_store",
+ "object_store 0.6.1",
  "parking_lot",
  "rand",
  "tempfile",
@@ -925,7 +925,7 @@ dependencies = [
  "log",
  "lz4_flex",
  "num",
- "object_store",
+ "object_store 0.9.0",
  "once_cell",
  "panic-message",
  "parking_lot",
@@ -1371,6 +1371,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25db6b064527c5d482d0423354fcd07a89a2dfe07b67892e62411946db7f07b0"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1733,6 +1742,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "object_store"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d139f545f64630e2e3688fd9f81c470888ab01edeb72d13b4e86c566f1130000"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures",
+ "humantime",
+ "itertools 0.12.0",
+ "parking_lot",
+ "percent-encoding",
+ "snafu",
+ "tokio",
+ "tracing",
+ "url",
+ "walkdir",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1809,7 +1839,7 @@ dependencies = [
  "lz4",
  "num",
  "num-bigint",
- "object_store",
+ "object_store 0.6.1",
  "paste",
  "seq-macro",
  "snap",
