@@ -14,20 +14,22 @@
 
 use std::ops::{Deref, DerefMut};
 
+pub trait ComparableForLoserTree {
+    fn lt(&self, other: &Self) -> bool;
+}
+
 /// An implementation of the tournament loser tree data structure.
 pub struct LoserTree<T> {
     nodes: Vec<usize>,
     values: Vec<T>,
-    lt: fn(&T, &T) -> bool,
 }
 
 #[allow(clippy::len_without_is_empty)]
-impl<T> LoserTree<T> {
-    pub fn new_by(values: Vec<T>, lt: fn(&T, &T) -> bool) -> Self {
+impl<T: ComparableForLoserTree> LoserTree<T> {
+    pub fn new(values: Vec<T>) -> Self {
         let mut tree = Self {
             nodes: vec![],
             values,
-            lt,
         };
         tree.init_tree();
         tree
@@ -60,7 +62,7 @@ impl<T> LoserTree<T> {
             let mut cmp_node = (self.values.len() + i) / 2;
             while cmp_node != 0 && self.nodes[cmp_node] != usize::MAX {
                 let challenger = self.nodes[cmp_node];
-                if (self.lt)(&self.values[challenger], &self.values[winner]) {
+                if self.values[challenger].lt(&self.values[winner]) {
                     self.nodes[cmp_node] = winner;
                     winner = challenger;
                 } else {
@@ -77,7 +79,7 @@ impl<T> LoserTree<T> {
         let mut cmp_node = (self.values.len() + winner) / 2;
         while cmp_node != 0 {
             let challenger = self.nodes[cmp_node];
-            if (self.lt)(&self.values[challenger], &self.values[winner]) {
+            if self.values[challenger].lt(&self.values[winner]) {
                 self.nodes[cmp_node] = winner;
                 winner = challenger;
             }
@@ -89,12 +91,12 @@ impl<T> LoserTree<T> {
 
 /// A PeekMut structure to the loser tree, used to get smallest value and auto
 /// adjusting after dropped.
-pub struct LoserTreePeekMut<'a, T> {
+pub struct LoserTreePeekMut<'a, T: ComparableForLoserTree> {
     tree: &'a mut LoserTree<T>,
     dirty: bool,
 }
 
-impl<T> Deref for LoserTreePeekMut<'_, T> {
+impl<T: ComparableForLoserTree> Deref for LoserTreePeekMut<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -102,14 +104,14 @@ impl<T> Deref for LoserTreePeekMut<'_, T> {
     }
 }
 
-impl<T> DerefMut for LoserTreePeekMut<'_, T> {
+impl<T: ComparableForLoserTree> DerefMut for LoserTreePeekMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
         &mut self.tree.values[self.tree.nodes[0]]
     }
 }
 
-impl<T> Drop for LoserTreePeekMut<'_, T> {
+impl<T: ComparableForLoserTree> Drop for LoserTreePeekMut<'_, T> {
     fn drop(&mut self) {
         if self.dirty {
             self.tree.adjust_tree();

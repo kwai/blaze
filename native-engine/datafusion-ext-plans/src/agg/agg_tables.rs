@@ -29,7 +29,7 @@ use datafusion_ext_commons::{
     bytes_arena::BytesArena,
     df_execution_err,
     io::{read_bytes_slice, read_len, write_len},
-    loser_tree::LoserTree,
+    loser_tree::{ComparableForLoserTree, LoserTree},
     rdxsort,
     slim_bytes::SlimBytes,
 };
@@ -236,8 +236,7 @@ impl AggTables {
 
         // create a tournament loser tree to do the merging
         // the mem-table and at least one spill should be in the tree
-        let mut cursors: LoserTree<SpillCursor> =
-            LoserTree::new_by(cursors, |c1, c2| c1.cur_bucket_idx < c2.cur_bucket_idx);
+        let mut cursors: LoserTree<SpillCursor> = LoserTree::new(cursors);
         assert!(cursors.len() > 0);
 
         loop {
@@ -592,6 +591,13 @@ struct SpillCursor {
     pub cur_bucket_idx: usize,
     pub cur_bucket_count: usize,
 }
+
+impl ComparableForLoserTree for SpillCursor {
+    fn lt(&self, other: &Self) -> bool {
+        self.cur_bucket_idx < other.cur_bucket_idx
+    }
+}
+
 impl SpillCursor {
     fn try_from_spill(spill: &Box<dyn Spill>, agg_ctx: &Arc<AggContext>) -> Result<Self> {
         let input = FrameDecoder::new(spill.get_buf_reader());
