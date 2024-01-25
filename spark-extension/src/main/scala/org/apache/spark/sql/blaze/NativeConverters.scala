@@ -203,7 +203,12 @@ object NativeConverters extends Logging {
       case LongType => scalarValueBuilder.setInt64Value(sparkValue.asInstanceOf[Long])
       case FloatType => scalarValueBuilder.setFloat32Value(sparkValue.asInstanceOf[Float])
       case DoubleType => scalarValueBuilder.setFloat64Value(sparkValue.asInstanceOf[Double])
-      case StringType => scalarValueBuilder.setUtf8Value(sparkValue.toString)
+      case StringType =>
+        scalarValueBuilder.setUtf8Value(if (sparkValue != null) {
+          sparkValue.toString
+        } else {
+          null
+        })
       case DateType => scalarValueBuilder.setDate32Value(sparkValue.asInstanceOf[Int])
       case TimestampType =>
         scalarValueBuilder.setTimestampMicrosecondValue(sparkValue.asInstanceOf[Long])

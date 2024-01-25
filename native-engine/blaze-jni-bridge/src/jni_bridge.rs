@@ -402,6 +402,7 @@ pub struct JavaClasses<'a> {
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
+    pub cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -465,6 +466,7 @@ impl JavaClasses<'static> {
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env).unwrap(),
+                cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils::new(env).unwrap(),
             };
             log::info!("Initializing JavaClasses finished");
             java_classes
@@ -974,6 +976,8 @@ impl<'a> ScalaFunction2<'a> {
 #[allow(non_snake_case)]
 pub struct HadoopFileSystem<'a> {
     pub class: JClass<'a>,
+    pub method_mkdirs: JMethodID,
+    pub method_mkdirs_ret: ReturnType,
     pub method_open: JMethodID,
     pub method_open_ret: ReturnType,
     pub method_create: JMethodID,
@@ -986,6 +990,8 @@ impl<'a> HadoopFileSystem<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(HadoopFileSystem {
             class,
+            method_mkdirs: env.get_method_id(class, "mkdirs", "(Lorg/apache/hadoop/fs/Path;)Z")?,
+            method_mkdirs_ret: ReturnType::Primitive(Primitive::Boolean),
             method_open: env.get_method_id(
                 class,
                 "open",
@@ -1293,6 +1299,34 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
             method_getSpillDiskUsage_ret: ReturnType::Primitive(Primitive::Long),
             method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V").unwrap(),
             method_releaseSpill_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeNativeParquetSinkUtils<'a> {
+    pub class: JClass<'a>,
+    pub method_getTaskOutputPath: JStaticMethodID,
+    pub method_getTaskOutputPath_ret: ReturnType,
+    pub method_completeOutput: JStaticMethodID,
+    pub method_completeOutput_ret: ReturnType,
+}
+impl<'a> BlazeNativeParquetSinkUtils<'a> {
+    pub const SIG_TYPE: &'static str =
+        "org/apache/spark/sql/execution/blaze/plan/NativeParquetSinkUtils";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeNativeParquetSinkUtils<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeNativeParquetSinkUtils {
+            class,
+            method_getTaskOutputPath: env
+                .get_static_method_id(class, "getTaskOutputPath", "()Ljava/lang/String;")
+                .unwrap(),
+            method_getTaskOutputPath_ret: ReturnType::Object,
+            method_completeOutput: env
+                .get_static_method_id(class, "completeOutput", "(Ljava/lang/String;JJ)V")
+                .unwrap(),
+            method_completeOutput_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

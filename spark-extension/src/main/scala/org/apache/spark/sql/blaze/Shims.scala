@@ -33,7 +33,6 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
-import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -43,13 +42,14 @@ import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinBase
-import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
-import org.apache.spark.util.SerializableConfiguration
 
 abstract class Shims {
 
@@ -156,6 +156,13 @@ abstract class Shims {
       orderSpec: Seq[SortOrder],
       child: SparkPlan): NativeWindowBase
 
+  def createNativeParquetSinkExec(
+      sparkSession: SparkSession,
+      table: CatalogTable,
+      partition: Map[String, Option[String]],
+      child: SparkPlan,
+      metrics: Map[String, SQLMetric]): NativeParquetSinkBase
+
   def isNative(plan: SparkPlan): Boolean
 
   def getUnderlyingNativePlan(plan: SparkPlan): NativeSupports
@@ -173,8 +180,6 @@ abstract class Shims {
   def simpleStringWithNodeId(plan: SparkPlan): String
 
   def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan
-
-  def createBasicWriteTaskStats(params: Map[String, Any]): BasicWriteTaskStats
 
   def getRDDShuffleReadFull(rdd: RDD[_]): Boolean
 
@@ -219,10 +224,6 @@ abstract class Shims {
   def convertMoreSparkPlan(exec: SparkPlan): Option[SparkPlan]
 
   def getSqlContext(sparkPlan: SparkPlan): SQLContext
-
-  def createBasicWriteJobStatsTrackerForNativeParquetSink(
-      serializableHadoopConf: SerializableConfiguration,
-      metrics: Map[String, SQLMetric]): BasicWriteJobStatsTracker
 
   def createNativeExprWrapper(
       nativeExpr: pb.PhysicalExprNode,

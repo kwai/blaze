@@ -790,7 +790,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(ParquetSinkExec::new(
                     convert_box_required!(parquet_sink.input)?,
                     parquet_sink.fs_resource_id.clone(),
-                    parquet_sink.path.clone(),
+                    parquet_sink.num_dyn_parts as usize,
                     props,
                 )))
             }

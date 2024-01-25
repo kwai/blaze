@@ -516,7 +516,7 @@ enum GenerateFunction {
 message ParquetSinkExecNode {
   PhysicalPlanNode input = 1;
   string fs_resource_id = 2;
-  string path = 3;
+  int32 num_dyn_parts = 3;
   repeated ParquetProp prop = 4;
 }
 
