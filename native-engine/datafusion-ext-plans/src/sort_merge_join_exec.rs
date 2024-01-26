@@ -388,18 +388,25 @@ async fn execute_join(
         on_row_converter.clone(),
         join_params.on_left.clone(),
         join_params.left_output_projection.clone(),
-        &mut timer,
-    )
-    .await?;
-
+    )?;
     let mut rcur = StreamCursor::try_new(
         rstream,
         on_row_converter.clone(),
         join_params.on_right.clone(),
         join_params.right_output_projection.clone(),
-        &mut timer,
-    )
-    .await?;
+    )?;
+
+    macro_rules! forward {
+        ($cur:expr) => {{
+            if $cur.next() == NextAction::LoadNextBatch {
+                $cur.next_batch(&mut timer).await?;
+            }
+        }};
+    }
+
+    // load first record
+    forward!(lcur);
+    forward!(rcur);
 
     let join_type = join_params.join_type;
     let mut joiner = Joiner::new();
@@ -426,14 +433,14 @@ async fn execute_join(
                 if matches!(join_type, Left | LeftAnti | Full) {
                     joiner_accept_pair!(Some(lcur.cur_idx), None);
                 }
-                lcur.next(&mut timer).await?;
+                forward!(lcur);
                 lcur.clear_outdated(joiner.l_min_reserved_bidx);
             }
             Ordering::Greater => {
                 if matches!(join_type, Right | RightAnti | Full) {
                     joiner_accept_pair!(None, Some(rcur.cur_idx));
                 }
-                rcur.next(&mut timer).await?;
+                forward!(rcur);
                 rcur.clear_outdated(joiner.r_min_reserved_bidx);
             }
             Ordering::Equal => {
@@ -441,21 +448,21 @@ async fn execute_join(
                 let ridx0 = rcur.cur_idx;
                 leqs.push(lidx0);
                 reqs.push(ridx0);
-                lcur.next(&mut timer).await?;
-                rcur.next(&mut timer).await?;
+                forward!(lcur);
+                forward!(rcur);
 
                 let mut leq = true;
                 let mut req = true;
                 while leq && req {
                     if leq && !lcur.finished && lcur.row(lcur.cur_idx) == lcur.row(lidx0) {
                         leqs.push(lcur.cur_idx);
-                        lcur.next(&mut timer).await?;
+                        forward!(lcur);
                     } else {
                         leq = false;
                     }
                     if req && !rcur.finished && rcur.row(rcur.cur_idx) == rcur.row(ridx0) {
                         reqs.push(rcur.cur_idx);
-                        rcur.next(&mut timer).await?;
+                        forward!(rcur);
                     } else {
                         req = false;
                     }
@@ -495,7 +502,7 @@ async fn execute_join(
                             }
                             RightSemi | LeftAnti | RightAnti => {}
                         }
-                        lcur.next(&mut timer).await?;
+                        forward!(lcur);
                         lcur.clear_outdated(joiner.l_min_reserved_bidx);
                     }
                 }
@@ -512,7 +519,7 @@ async fn execute_join(
                             }
                             LeftSemi | LeftAnti | RightAnti => {}
                         }
-                        rcur.next(&mut timer).await?;
+                        forward!(rcur);
                         rcur.clear_outdated(joiner.r_min_reserved_bidx);
                     }
                 }
@@ -536,14 +543,14 @@ async fn execute_join(
     if matches!(join_type, Left | LeftAnti | Full) {
         while !lcur.finished {
             joiner_accept_pair!(Some(lcur.cur_idx), None);
-            lcur.next(&mut timer).await?;
+            forward!(lcur);
             lcur.clear_outdated(joiner.l_min_reserved_bidx);
         }
     }
     if matches!(join_type, Right | RightAnti | Full) {
         while !rcur.finished {
             joiner_accept_pair!(None, Some(rcur.cur_idx));
-            rcur.next(&mut timer).await?;
+            forward!(rcur);
             rcur.clear_outdated(joiner.r_min_reserved_bidx);
         }
     }
@@ -575,13 +582,18 @@ struct StreamCursor {
     finished: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NextAction {
+    None,
+    LoadNextBatch,
+}
+
 impl StreamCursor {
-    async fn try_new(
+    fn try_new(
         stream: SendableRecordBatchStream,
         on_row_converter: Arc<SyncMutex<RowConverter>>,
         on_columns: Vec<usize>,
         projection: Vec<usize>,
-        stop_timer: &mut ScopedTimerGuard<'_>,
     ) -> Result<Self> {
         let empty_batch = RecordBatch::new_empty(Arc::new(Schema::new(
             stream
@@ -599,7 +611,7 @@ impl StreamCursor {
         );
         let null_nb = NullBuffer::new_null(1);
 
-        let mut cursor = Self {
+        Ok(Self {
             stream,
             on_row_converter,
             on_columns,
@@ -608,17 +620,14 @@ impl StreamCursor {
             projection,
             on_rows: vec![null_on_rows],
             on_row_null_buffers: vec![Some(null_nb)],
-            cur_idx: (1, 0),
+            cur_idx: (0, 0),
             num_null_batches: 1,
             finished: false,
-        };
-        if !cursor.next_batch(stop_timer).await? {
-            cursor.finished = true;
-        }
-        Ok(cursor)
+        })
     }
 
-    async fn next(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<()> {
+    fn next(&mut self) -> NextAction {
+        let mut next_action = NextAction::None;
         let mut cur_idx = self.cur_idx;
 
         if cur_idx.1 + 1 < self.batches[cur_idx.0].num_rows() {
@@ -626,12 +635,10 @@ impl StreamCursor {
         } else {
             cur_idx.0 += 1;
             cur_idx.1 = 0;
-            if !self.next_batch(stop_timer).await? {
-                self.finished = true;
-            }
+            next_action = NextAction::LoadNextBatch;
         }
         self.cur_idx = cur_idx;
-        Ok(())
+        next_action
     }
 
     async fn next_batch(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<bool> {
@@ -655,6 +662,7 @@ impl StreamCursor {
         } else {
             stop_timer.restart();
         }
+        self.finished = true;
         Ok(false)
     }
 
