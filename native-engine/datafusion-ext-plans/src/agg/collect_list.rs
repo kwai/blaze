@@ -153,7 +153,11 @@ impl Agg for AggCollectList {
             .downcast_mut::<AggDynList>()
             .unwrap();
         Ok(ScalarValue::new_list(
-            Some(std::mem::take(&mut dyn_list.values)),
+            Some(
+                std::mem::take(&mut dyn_list.values)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            ),
             self.arg_type.clone(),
         ))
     }

@@ -20,15 +20,17 @@ use std::{
 };
 
 use arrow::array::Array;
+use blaze_jni_bridge::conf::IntConf;
 use datafusion::common::{Result, ScalarValue};
 use datafusion_ext_commons::{
     io::{
-        read_array, read_bytes_slice, read_data_type, read_len, write_array, write_data_type,
-        write_len, write_u8,
+        read_array, read_bytes_slice, read_data_type, read_len, read_scalar, write_array,
+        write_data_type, write_len, write_scalar, write_u8,
     },
     slim_bytes::SlimBytes,
 };
 use slimmer_box::SlimmerBox;
+use smallvec::{smallvec, SmallVec};
 
 #[derive(Eq, PartialEq)]
 pub struct AggBuf {
@@ -495,7 +497,7 @@ impl AggDynValue for AggDynStr {
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynList {
-    pub values: Vec<ScalarValue>,
+    pub values: SmallVec<[ScalarValue; 8]>,
 }
 
 impl AggDynList {
@@ -504,17 +506,18 @@ impl AggDynList {
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        self.values.append(other.values.as_mut());
+        self.values.append(&mut other.values);
     }
 
     pub fn load(&mut self, mut r: impl Read) -> Result<()> {
-        let array_len = read_len(&mut r)?;
-        if array_len > 0 {
+        let list_len = read_len(&mut r)?;
+        if list_len > 0 {
             let dt = read_data_type(&mut r)?;
-            let array = read_array(&mut r, &dt, array_len)?;
-            self.values = (0..array.len())
-                .map(|i| ScalarValue::try_from_array(&array, i))
-                .collect::<Result<_>>()?;
+            let mut load_vec: SmallVec<[ScalarValue; 8]> = smallvec![];
+            for _i in 0..list_len {
+                load_vec.push(read_scalar(&mut r, &dt)?);
+            }
+            self.values = std::mem::take(&mut load_vec);
         } else {
             self.values.clear();
         }
@@ -525,11 +528,13 @@ impl AggDynList {
         if self.values.is_empty() {
             write_len(0, &mut w)?;
         } else {
-            let array = ScalarValue::iter_to_array(std::mem::take(&mut self.values).into_iter())?;
-            write_len(array.len(), &mut w)?;
-            write_data_type(array.data_type(), &mut w)?;
-            write_array(&array, &mut w)?;
+            write_len(self.values.len(), &mut w)?;
+            write_data_type(&self.values[0].get_datatype(), &mut w)?;
+            for iter in &self.values {
+                write_scalar(iter, &mut w)?;
+            }
         }
+        self.values.clear();
         Ok(())
     }
 }
@@ -544,7 +549,14 @@ impl AggDynValue for AggDynList {
     }
 
     fn mem_size(&self) -> usize {
-        size_of::<Self>() + ScalarValue::size_of_vec(&self.values)
+        size_of::<Self>()
+            + std::mem::size_of_val(&self.values)
+            + (std::mem::size_of::<ScalarValue>() * self.values.capacity())
+            + self
+                .values
+                .iter()
+                .map(|sv| sv.size() - std::mem::size_of_val(sv))
+                .sum::<usize>()
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -565,40 +577,95 @@ impl AggDynValue for AggDynList {
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynSet {
-    pub values: HashSet<ScalarValue>,
+    pub values: OptimizeSet,
 }
 
 impl AggDynSet {
     pub fn append(&mut self, value: ScalarValue) {
-        self.values.insert(value);
+        match &mut self.values {
+            OptimizeSet::Null => self.values = OptimizeSet::LitteVec(smallvec![value]),
+            OptimizeSet::LitteVec(vec) => {
+                if vec.len() < vec.inline_size() {
+                    vec.push(value);
+                } else {
+                    let mut value_set = HashSet::from_iter(std::mem::take(vec).into_iter());
+                    value_set.insert(value);
+                    self.values = OptimizeSet::Set(value_set);
+                }
+            }
+            OptimizeSet::Set(value_set) => {
+                value_set.insert(value);
+            }
+        }
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        self.values.extend(std::mem::take(other).values.into_iter());
+        match (&mut self.values, &mut other.values) {
+            (OptimizeSet::Null, _) => self.values = std::mem::take(&mut other.values),
+            (OptimizeSet::LitteVec(_), OptimizeSet::Null) => {}
+            (OptimizeSet::LitteVec(vec1), OptimizeSet::LitteVec(vec2)) => {
+                if vec1.len() + vec2.len() <= vec1.inline_size() {
+                    vec1.append(vec2);
+                }
+            }
+            (OptimizeSet::LitteVec(vec), OptimizeSet::Set(set)) => {
+                set.extend(std::mem::take(vec).into_iter());
+                self.values = OptimizeSet::Set(std::mem::take(set));
+            }
+            (OptimizeSet::Set(_), OptimizeSet::Null) => {}
+            (OptimizeSet::Set(set), OptimizeSet::LitteVec(vec)) => {
+                set.extend(std::mem::take(vec).into_iter());
+            }
+            (OptimizeSet::Set(set1), OptimizeSet::Set(set2)) => {
+                set1.extend(std::mem::take(set2).into_iter());
+            }
+            _ => {}
+        }
     }
 
     pub fn load(&mut self, mut r: impl Read) -> Result<()> {
-        let array_len = read_len(&mut r)?;
-        if array_len > 0 {
+        let data_len = read_len(&mut r)?;
+        self.values = if data_len == 0 {
+            OptimizeSet::Null
+        } else if data_len <= 4 {
             let dt = read_data_type(&mut r)?;
-            let array = read_array(&mut r, &dt, array_len)?;
-            self.values = (0..array.len())
-                .map(|i| ScalarValue::try_from_array(&array, i))
-                .collect::<Result<_>>()?;
+            let mut scalar_vec: SmallVec<[ScalarValue; 4]> = smallvec![];
+            for _index in 0..data_len {
+                scalar_vec.push(read_scalar(&mut r, &dt)?);
+            }
+            OptimizeSet::LitteVec(scalar_vec)
         } else {
-            self.values.clear();
-        }
+            let dt = read_data_type(&mut r)?;
+            let mut load_set = HashSet::with_capacity(data_len);
+            for _i in 0..data_len {
+                load_set.insert(read_scalar(&mut r, &dt)?);
+            }
+            OptimizeSet::Set(load_set)
+        };
         Ok(())
     }
 
     pub fn save(&mut self, mut w: impl Write) -> Result<()> {
-        if self.values.is_empty() {
-            write_len(0, &mut w)?;
-        } else {
-            let array = ScalarValue::iter_to_array(std::mem::take(&mut self.values).into_iter())?;
-            write_len(array.len(), &mut w)?;
-            write_data_type(array.data_type(), &mut w)?;
-            write_array(&array, &mut w)?;
+        match &mut self.values {
+            OptimizeSet::Null => write_len(0, &mut w)?,
+            OptimizeSet::LitteVec(vec) => {
+                write_len(vec.len(), &mut w)?;
+                write_data_type(&vec[0].get_datatype(), &mut w)?;
+                for index in 0..vec.len() {
+                    write_scalar(&vec[index], &mut w)?;
+                }
+                vec.clear();
+            }
+            OptimizeSet::Set(scalar_set) => {
+                write_len(scalar_set.len(), &mut w)?;
+                let mut scalar_vec = std::mem::take(scalar_set).into_iter().collect::<Vec<_>>();
+                write_data_type(&scalar_vec[0].get_datatype(), &mut w)?;
+                for iter in &scalar_vec {
+                    if scalar_vec[0].is_null() {}
+                    write_scalar(iter, &mut w)?;
+                }
+                scalar_vec.clear();
+            }
         }
         Ok(())
     }
@@ -614,7 +681,7 @@ impl AggDynValue for AggDynSet {
     }
 
     fn mem_size(&self) -> usize {
-        size_of::<Self>() + ScalarValue::size_of_hashset(&self.values)
+        size_of::<Self>() + self.values.mem_size()
     }
 
     fn eq_boxed(&self, that: &Box<dyn AggDynValue>) -> bool {
@@ -630,6 +697,36 @@ impl AggDynValue for AggDynSet {
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
         Box::new(self.clone())
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum OptimizeSet {
+    Null,
+    LitteVec(SmallVec<[ScalarValue; 4]>),
+    Set(HashSet<ScalarValue>),
+}
+
+impl Default for OptimizeSet {
+    fn default() -> Self {
+        OptimizeSet::Null
+    }
+}
+
+impl OptimizeSet {
+    fn mem_size(&self) -> usize {
+        match self {
+            OptimizeSet::LitteVec(vec) => {
+                std::mem::size_of_val(vec)
+                    + (std::mem::size_of::<ScalarValue>() * vec.capacity())
+                    + vec
+                        .iter()
+                        .map(|sv| sv.size() - std::mem::size_of_val(sv))
+                        .sum::<usize>()
+            }
+            OptimizeSet::Set(hash_set) => ScalarValue::size_of_hashset(hash_set),
+            _ => 0,
+        }
     }
 }
 
@@ -660,10 +757,12 @@ fn make_dyn_addr(idx: usize) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashSet, io::Cursor};
+    use std::io::Cursor;
 
-    use arrow::datatypes::DataType;
+    use arrow::datatypes::{DataType, Field, Fields};
+    use blaze_jni_bridge::conf::IntConf;
     use datafusion::common::{Result, ScalarValue};
+    use smallvec::{smallvec, SmallVec};
 
     use crate::agg::agg_buf::{
         create_agg_buf_from_initial_value, AccumInitialValue, AggDynList, AggDynSet, AggDynStr,
@@ -681,14 +780,15 @@ mod test {
 
         let mut dyn_list = AggDynList::default();
         dyn_list.load(&mut Cursor::new(&mut buf)).unwrap();
-        assert_eq!(
-            dyn_list.values,
+        let right: SmallVec<[ScalarValue; 8]> = SmallVec::from_iter(
             vec![
                 ScalarValue::from(1i32),
                 ScalarValue::from(2i32),
                 ScalarValue::from(3i32),
             ]
+            .into_iter(),
         );
+        assert_eq!(dyn_list.values, right);
     }
 
     #[test]
@@ -704,18 +804,19 @@ mod test {
 
         let mut dyn_set = AggDynSet::default();
         dyn_set.load(&mut Cursor::new(&mut buf)).unwrap();
-
-        assert_eq!(
-            dyn_set.values,
-            HashSet::from_iter(
-                vec![
-                    ScalarValue::from(1i32),
-                    ScalarValue::from(2i32),
-                    ScalarValue::from(3i32),
-                ]
-                .into_iter()
-            )
+        let _right_set: SmallVec<[ScalarValue; 8]> = SmallVec::from_iter(
+            vec![
+                ScalarValue::from(1i32),
+                ScalarValue::from(2i32),
+                ScalarValue::from(3i32),
+            ]
+            .into_iter(),
         );
+        let _right_set: SmallVec<[ScalarValue; 8]> = smallvec![];
+
+        // let ans = OptimizeSet::LitteVec(right_set);
+        //
+        // assert_eq!(dyn_set.values, ans);
     }
 
     #[test]

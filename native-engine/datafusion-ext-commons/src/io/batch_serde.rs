@@ -27,7 +27,12 @@ use arrow::{
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use bitvec::prelude::BitVec;
-use datafusion::common::Result;
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use datafusion::{
+    common::{DataFusionError, Result},
+    parquet::data_type::AsBytes,
+    scalar::ScalarValue,
+};
 
 use crate::{
     df_execution_err, df_unimplemented_err,
@@ -207,6 +212,129 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
         other => df_unimplemented_err!("unsupported data type: {other}")?,
     }
     Ok(())
+}
+
+pub fn write_scalar<W: Write>(value: &ScalarValue, output: &mut W) -> Result<()> {
+    match value {
+        ScalarValue::Null => {}
+        ScalarValue::Boolean(Some(value)) => output.write_i8(*value as i8)?,
+        ScalarValue::Int8(Some(value)) => output.write_i8(*value)?,
+        ScalarValue::Int16(Some(value)) => output.write_i16::<BigEndian>(*value)?,
+        ScalarValue::Int32(Some(value)) => output.write_i32::<BigEndian>(*value)?,
+        ScalarValue::Int64(Some(value)) => output.write_i64::<BigEndian>(*value)?,
+        ScalarValue::UInt8(Some(value)) => output.write_u8(*value)?,
+        ScalarValue::UInt16(Some(value)) => output.write_u16::<BigEndian>(*value)?,
+        ScalarValue::UInt32(Some(value)) => output.write_u32::<BigEndian>(*value)?,
+        ScalarValue::UInt64(Some(value)) => output.write_u64::<BigEndian>(*value)?,
+        ScalarValue::Float32(Some(value)) => output.write_f32::<BigEndian>(*value)?,
+        ScalarValue::Float64(Some(value)) => output.write_f64::<BigEndian>(*value)?,
+        ScalarValue::Decimal128(Some(value), ..) => output.write_i128::<BigEndian>(*value)?,
+        ScalarValue::Utf8(Some(value)) => {
+            let value_bytes = value.as_bytes();
+            write_len(value_bytes.len(), output)?;
+            output.write_all(value_bytes)?;
+        }
+        ScalarValue::Binary(Some(value)) => {
+            let value_byte = value.as_bytes();
+            write_len(value_byte.len(), output)?;
+            output.write_all(value_byte)?;
+        }
+        ScalarValue::Date32(Some(value)) => output.write_i32::<BigEndian>(*value)?,
+        ScalarValue::Date64(Some(value)) => output.write_i64::<BigEndian>(*value)?,
+        ScalarValue::List(Some(value), _) => {
+            write_len(value.len(), output)?;
+            if value.len() != 0 {
+                for element in value {
+                    write_scalar(element, output)?;
+                }
+            }
+        }
+        ScalarValue::Struct(Some(value), _fields) => {
+            write_len(value.len(), output)?;
+            if value.len() != 0 {
+                for element in value {
+                    write_scalar(element, output)?;
+                }
+            }
+        }
+        ScalarValue::Map(value, _bool) => {
+            write_scalar(value, output)?;
+        }
+        other => {
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type: {}",
+                other.get_datatype()
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub fn read_scalar<R: Read>(input: &mut R, data_type: &DataType) -> Result<ScalarValue> {
+    Ok(match data_type {
+        DataType::Null => ScalarValue::Null,
+        DataType::Boolean => {
+            let mark = input.read_i8()?;
+            ScalarValue::Boolean(Some(mark != 0))
+        }
+        DataType::Int8 => ScalarValue::Int8(Some(input.read_i8()?)),
+        DataType::Int16 => ScalarValue::Int16(Some(input.read_i16::<BigEndian>()?)),
+        DataType::Int32 => ScalarValue::Int32(Some(input.read_i32::<BigEndian>()?)),
+        DataType::Int64 => ScalarValue::Int64(Some(input.read_i64::<BigEndian>()?)),
+        DataType::UInt8 => ScalarValue::UInt8(Some(input.read_u8()?)),
+        DataType::UInt16 => ScalarValue::UInt16(Some(input.read_u16::<BigEndian>()?)),
+        DataType::UInt32 => ScalarValue::UInt32(Some(input.read_u32::<BigEndian>()?)),
+        DataType::UInt64 => ScalarValue::UInt64(Some(input.read_u64::<BigEndian>()?)),
+        DataType::Float32 => ScalarValue::Float32(Some(input.read_f32::<BigEndian>()?)),
+        DataType::Float64 => ScalarValue::Float64(Some(input.read_f64::<BigEndian>()?)),
+        DataType::Decimal128(precision, scale) => {
+            ScalarValue::Decimal128(Some(input.read_i128::<BigEndian>()?), *precision, *scale)
+        }
+        DataType::Date32 => ScalarValue::Date32(Some(input.read_i32::<BigEndian>()?)),
+        DataType::Date64 => ScalarValue::Date64(Some(input.read_i64::<BigEndian>()?)),
+        DataType::Binary => {
+            let data_len = read_len(input)?;
+            let value_buf = read_bytes_slice(input, data_len)?;
+            ScalarValue::Binary(Some(value_buf.to_vec()))
+        }
+        DataType::Utf8 => {
+            let data_len = read_len(input)?;
+            let value_buf = read_bytes_slice(input, data_len)?;
+            ScalarValue::Utf8(Some(String::from_utf8_lossy(&value_buf).to_string()))
+        }
+        DataType::List(field) => {
+            let data_len = read_len(input)?;
+            let mut list_data: Vec<ScalarValue> = Vec::with_capacity(data_len);
+            if data_len != 0 {
+                for _i in 0..data_len {
+                    let child_value = read_scalar(input, field.data_type())?;
+                    list_data.push(child_value);
+                }
+            }
+            ScalarValue::List(Some(list_data), field.clone())
+        }
+        DataType::Struct(fields) => {
+            let data_len = read_len(input)?;
+            let mut struct_data: Vec<ScalarValue> = Vec::with_capacity(data_len);
+            if data_len != 0 {
+                for i in 0..data_len {
+                    let child_value = read_scalar(input, fields[i].data_type())?;
+                    struct_data.push(child_value);
+                }
+            }
+            ScalarValue::Struct(Some(struct_data), fields.clone())
+        }
+        DataType::Map(field, bool) => {
+            let map_value = read_scalar(input, field.data_type())?;
+            ScalarValue::Map(Box::new(map_value), *bool)
+        }
+        other => {
+            return Err(DataFusionError::NotImplemented(format!(
+                "unsupported data type: {}",
+                other
+            )));
+        }
+    })
 }
 
 pub fn read_array<R: Read>(

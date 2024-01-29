@@ -14,6 +14,7 @@
 
 use std::{
     any::Any,
+    collections::HashSet,
     fmt::{Debug, Formatter},
     sync::Arc,
 };
@@ -25,7 +26,7 @@ use datafusion::{
 };
 
 use crate::agg::{
-    agg_buf::{AccumInitialValue, AggBuf, AggDynSet},
+    agg_buf::{AccumInitialValue, AggBuf, AggDynSet, OptimizeSet},
     Agg,
 };
 
@@ -152,10 +153,20 @@ impl Agg for AggCollectSet {
             .as_any_mut()
             .downcast_mut::<AggDynSet>()
             .unwrap();
-        Ok(ScalarValue::new_list(
-            Some(std::mem::take(&mut dyn_set.values).into_iter().collect()),
-            self.arg_type.clone(),
-        ))
+        let scalar_list = match &mut dyn_set.values {
+            OptimizeSet::Null => None,
+            OptimizeSet::LitteVec(vec) => {
+                let convert_set: HashSet<ScalarValue> =
+                    HashSet::from_iter(std::mem::take(vec).into_iter());
+                Some(convert_set.into_iter().collect::<Vec<ScalarValue>>())
+            }
+            OptimizeSet::Set(set) => Some(
+                std::mem::take(set)
+                    .into_iter()
+                    .collect::<Vec<ScalarValue>>(),
+            ),
+        };
+        Ok(ScalarValue::new_list(scalar_list, self.arg_type.clone()))
     }
 
     fn final_batch_merge(
