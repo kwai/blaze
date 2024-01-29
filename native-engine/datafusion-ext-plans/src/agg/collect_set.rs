@@ -154,7 +154,7 @@ impl Agg for AggCollectSet {
             .downcast_mut::<AggDynSet>()
             .unwrap();
         let scalar_list = match &mut dyn_set.values {
-            OptimizeSet::Null => None,
+            OptimizeSet::Empty => Some(vec![]),
             OptimizeSet::LitteVec(vec) => {
                 let convert_set: HashSet<ScalarValue> =
                     HashSet::from_iter(std::mem::take(vec).into_iter());

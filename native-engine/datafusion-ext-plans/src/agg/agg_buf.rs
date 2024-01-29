@@ -583,7 +583,7 @@ pub struct AggDynSet {
 impl AggDynSet {
     pub fn append(&mut self, value: ScalarValue) {
         match &mut self.values {
-            OptimizeSet::Null => self.values = OptimizeSet::LitteVec(smallvec![value]),
+            OptimizeSet::Empty => self.values = OptimizeSet::LitteVec(smallvec![value]),
             OptimizeSet::LitteVec(vec) => {
                 if vec.len() < vec.inline_size() {
                     vec.push(value);
@@ -601,8 +601,8 @@ impl AggDynSet {
 
     pub fn merge(&mut self, other: &mut Self) {
         match (&mut self.values, &mut other.values) {
-            (OptimizeSet::Null, _) => self.values = std::mem::take(&mut other.values),
-            (OptimizeSet::LitteVec(_), OptimizeSet::Null) => {}
+            (OptimizeSet::Empty, _) => self.values = std::mem::take(&mut other.values),
+            (OptimizeSet::LitteVec(_), OptimizeSet::Empty) => {}
             (OptimizeSet::LitteVec(vec1), OptimizeSet::LitteVec(vec2)) => {
                 if vec1.len() + vec2.len() <= vec1.inline_size() {
                     vec1.append(vec2);
@@ -612,7 +612,7 @@ impl AggDynSet {
                 set.extend(std::mem::take(vec).into_iter());
                 self.values = OptimizeSet::Set(std::mem::take(set));
             }
-            (OptimizeSet::Set(_), OptimizeSet::Null) => {}
+            (OptimizeSet::Set(_), OptimizeSet::Empty) => {}
             (OptimizeSet::Set(set), OptimizeSet::LitteVec(vec)) => {
                 set.extend(std::mem::take(vec).into_iter());
             }
@@ -626,7 +626,7 @@ impl AggDynSet {
     pub fn load(&mut self, mut r: impl Read) -> Result<()> {
         let data_len = read_len(&mut r)?;
         self.values = if data_len == 0 {
-            OptimizeSet::Null
+            OptimizeSet::Empty
         } else if data_len <= 4 {
             let dt = read_data_type(&mut r)?;
             let mut scalar_vec: SmallVec<[ScalarValue; 4]> = smallvec![];
@@ -647,7 +647,7 @@ impl AggDynSet {
 
     pub fn save(&mut self, mut w: impl Write) -> Result<()> {
         match &mut self.values {
-            OptimizeSet::Null => write_len(0, &mut w)?,
+            OptimizeSet::Empty => write_len(0, &mut w)?,
             OptimizeSet::LitteVec(vec) => {
                 write_len(vec.len(), &mut w)?;
                 write_data_type(&vec[0].get_datatype(), &mut w)?;
@@ -702,14 +702,14 @@ impl AggDynValue for AggDynSet {
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum OptimizeSet {
-    Null,
+    Empty,
     LitteVec(SmallVec<[ScalarValue; 4]>),
     Set(HashSet<ScalarValue>),
 }
 
 impl Default for OptimizeSet {
     fn default() -> Self {
-        OptimizeSet::Null
+        OptimizeSet::Empty
     }
 }
 
