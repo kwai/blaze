@@ -254,22 +254,49 @@ impl BufferedData {
         batch_size: usize,
         limit: usize,
     ) -> impl Iterator<Item = (Vec<&'a [u8]>, RecordBatch)> {
-        struct Cursor {
+        struct Cursor<'a> {
             idx: usize,
             row_idx: usize,
             keys: Vec<KeyRef>,
             key_store: Box<[u8]>,
+            cur_key: Option<&'a [u8]>,
         }
 
-        impl ComparableForLoserTree for Cursor {
+        impl Cursor<'_> {
+            fn new(idx: usize, keys: Vec<KeyRef>, key_store: Box<[u8]>) -> Self {
+                let mut new = Self {
+                    idx,
+                    row_idx: 0,
+                    keys,
+                    key_store,
+                    cur_key: None,
+                };
+                new.update_cur_key();
+                new
+            }
+
+            fn forward(&mut self) {
+                self.row_idx += 1;
+                self.update_cur_key();
+            }
+
+            fn update_cur_key(&mut self) {
+                self.cur_key = unsafe {
+                    // safety: cur_key has the same lifetime with key_store
+                    std::mem::transmute(
+                        self.keys
+                            .get(self.row_idx)
+                            .map(|key_ref| key_ref.ref_key(&self.key_store)),
+                    )
+                };
+            }
+        }
+
+        impl ComparableForLoserTree for Cursor<'_> {
             #[inline(always)]
             fn lt(&self, other: &Self) -> bool {
-                match (self.keys.get(self.row_idx), other.keys.get(other.row_idx)) {
-                    (Some(k1), Some(k2)) => {
-                        let key1 = k1.ref_key(&self.key_store);
-                        let key2 = k2.ref_key(&other.key_store);
-                        key1 < key2
-                    }
+                match (&self.cur_key, &other.cur_key) {
+                    (Some(k1), Some(k2)) => k1 < k2,
                     (None, _) => false,
                     (_, None) => true,
                 }
@@ -277,7 +304,7 @@ impl BufferedData {
         }
 
         struct SortedBatchesIterator<'a> {
-            cursors: LoserTree<Cursor>,
+            cursors: LoserTree<Cursor<'a>>,
             batches: Vec<RecordBatch>,
             batch_size: usize,
             num_output_rows: usize,
@@ -303,7 +330,7 @@ impl BufferedData {
                     let mut min_cursor = self.cursors.peek_mut();
                     key_refs.push(min_cursor.keys[min_cursor.row_idx]);
                     indices.push((min_cursor.idx, min_cursor.row_idx));
-                    min_cursor.row_idx += 1;
+                    min_cursor.forward();
                 }
                 let batch = if !is_all_pruned {
                     BatchesInterleaver::new(batch_schema, &self.batches)
@@ -333,12 +360,7 @@ impl BufferedData {
             self.sorted_keys
                 .into_iter()
                 .enumerate()
-                .map(|(idx, keys)| Cursor {
-                    idx,
-                    keys,
-                    key_store: std::mem::take(&mut key_stores[idx]),
-                    row_idx: 0,
-                })
+                .map(|(idx, keys)| Cursor::new(idx, keys, std::mem::take(&mut key_stores[idx])))
                 .collect(),
         );
 
