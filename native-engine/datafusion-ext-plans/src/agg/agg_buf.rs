@@ -497,7 +497,7 @@ impl AggDynValue for AggDynStr {
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynList {
-    pub values: SmallVec<[ScalarValue; 8]>,
+    pub values: SmallVec<[ScalarValue; 4]>,
 }
 
 impl AggDynList {
@@ -513,7 +513,7 @@ impl AggDynList {
         let list_len = read_len(&mut r)?;
         if list_len > 0 {
             let dt = read_data_type(&mut r)?;
-            let mut load_vec: SmallVec<[ScalarValue; 8]> = smallvec![];
+            let mut load_vec: SmallVec<[ScalarValue; 4]> = smallvec![];
             for _i in 0..list_len {
                 load_vec.push(read_scalar(&mut r, &dt)?);
             }
@@ -780,7 +780,7 @@ mod test {
 
         let mut dyn_list = AggDynList::default();
         dyn_list.load(&mut Cursor::new(&mut buf)).unwrap();
-        let right: SmallVec<[ScalarValue; 8]> = SmallVec::from_iter(
+        let right: SmallVec<[ScalarValue; 4]> = SmallVec::from_iter(
             vec![
                 ScalarValue::from(1i32),
                 ScalarValue::from(2i32),
@@ -804,7 +804,7 @@ mod test {
 
         let mut dyn_set = AggDynSet::default();
         dyn_set.load(&mut Cursor::new(&mut buf)).unwrap();
-        let _right_set: SmallVec<[ScalarValue; 8]> = SmallVec::from_iter(
+        let _right_set: SmallVec<[ScalarValue; 4]> = SmallVec::from_iter(
             vec![
                 ScalarValue::from(1i32),
                 ScalarValue::from(2i32),
@@ -812,7 +812,7 @@ mod test {
             ]
             .into_iter(),
         );
-        let _right_set: SmallVec<[ScalarValue; 8]> = smallvec![];
+        let _right_set: SmallVec<[ScalarValue; 4]> = smallvec![];
 
         // let ans = OptimizeSet::LitteVec(right_set);
         //
