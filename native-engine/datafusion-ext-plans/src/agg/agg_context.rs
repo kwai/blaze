@@ -63,7 +63,6 @@ pub struct AggContext {
     pub partial_skipping_ratio: f64,
     pub partial_skipping_min_rows: usize,
     pub agg_expr_evaluator: CachedExprsEvaluator,
-    pub agg_expr_evaluator_output_schema: SchemaRef,
 
     // agg buf addr offsets/lens of every aggs
     pub agg_buf_addrs: Box<[u64]>,
@@ -203,7 +202,12 @@ impl AggContext {
                 })
                 .collect::<Result<Fields>>()?,
         ));
-        let agg_expr_evaluator = CachedExprsEvaluator::try_new(vec![], agg_exprs_flatten)?;
+        let agg_expr_evaluator = CachedExprsEvaluator::try_new(
+            vec![],
+            agg_exprs_flatten,
+            input_schema.clone(),
+            agg_expr_evaluator_output_schema,
+        )?;
 
         let (partial_skipping_ratio, partial_skipping_min_rows) = if supports_partial_skipping {
             (
@@ -231,7 +235,6 @@ impl AggContext {
             initial_input_agg_buf,
             agg_buf_addrs,
             agg_expr_evaluator,
-            agg_expr_evaluator_output_schema,
             initial_input_buffer_offset,
             supports_partial_skipping,
             partial_skipping_ratio,
@@ -259,9 +262,7 @@ impl AggContext {
         if !self.need_partial_update {
             return Ok(vec![]);
         }
-        let agg_exprs_batch = self
-            .agg_expr_evaluator
-            .filter_project(input_batch, self.agg_expr_evaluator_output_schema.clone())?;
+        let agg_exprs_batch = self.agg_expr_evaluator.filter_project(input_batch)?;
 
         let mut input_arrays = Vec::with_capacity(self.aggs.len());
         let mut offset = 0;
