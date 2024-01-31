@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use arrow::{array::*, datatypes::*};
@@ -23,19 +23,40 @@ use datafusion::{
     common::{Result, ScalarValue},
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::downcast_any;
 use paste::paste;
 
 use crate::agg::{
-    agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr},
-    Agg,
+    acc::{
+        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
+        AggDynValue,
+    },
+    default_final_batch_merge_with_addr, default_final_merge_with_addr, Agg, WithAggBufAddrs,
+    WithMemTracking,
 };
 
 pub struct AggFirst {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     accums_initial: Vec<AccumInitialValue>,
-    partial_updater: fn(&mut AggBuf, &[u64], &ArrayRef, usize),
-    partial_buf_merger: fn(&mut AggBuf, &mut AggBuf, &[u64]),
+    accum_state_val_addr_value: AccumStateValAddr,
+    accum_state_val_addr_valid: AccumStateValAddr,
+    partial_updater: fn(&Self, &mut AccumStateRow, &ArrayRef, usize),
+    partial_buf_merger: fn(&Self, &mut AccumStateRow, &mut AccumStateRow),
+    mem_used_tracker: AtomicUsize,
+}
+
+impl WithAggBufAddrs for AggFirst {
+    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
+        self.accum_state_val_addr_value = accum_state_val_addrs[0];
+        self.accum_state_val_addr_valid = accum_state_val_addrs[1];
+    }
+}
+
+impl WithMemTracking for AggFirst {
+    fn mem_used_tracker(&self) -> &AtomicUsize {
+        &self.mem_used_tracker
+    }
 }
 
 impl AggFirst {
@@ -50,9 +71,20 @@ impl AggFirst {
             child,
             data_type,
             accums_initial,
+            accum_state_val_addr_value: AccumStateValAddr::default(),
+            accum_state_val_addr_valid: AccumStateValAddr::default(),
             partial_updater,
             partial_buf_merger,
+            mem_used_tracker: AtomicUsize::new(0),
         })
+    }
+
+    fn is_touched(&self, acc: &AccumStateRow) -> bool {
+        acc.is_fixed_valid(self.accum_state_val_addr_valid)
+    }
+
+    fn set_touched(&self, acc: &mut AccumStateRow) {
+        acc.set_fixed_valid(self.accum_state_val_addr_valid, true)
     }
 }
 
@@ -92,67 +124,58 @@ impl Agg for AggFirst {
 
     fn partial_update(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
+        acc: &mut AccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-        if !is_touched(agg_buf, agg_buf_addrs) {
+        if !self.is_touched(acc) {
             let partial_updater = self.partial_updater;
-            partial_updater(agg_buf, agg_buf_addrs, &values[0], row_idx);
+            partial_updater(self, acc, &values[0], row_idx);
         }
         Ok(())
     }
 
-    fn partial_update_all(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        if !is_touched(agg_buf, agg_buf_addrs) {
+    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+        if !self.is_touched(acc) {
             let value = &values[0];
             if !value.is_empty() {
                 let partial_updater = self.partial_updater;
-                partial_updater(agg_buf, &agg_buf_addrs, value, 0);
+                partial_updater(self, acc, value, 0);
             }
         }
         Ok(())
     }
 
-    fn partial_merge(
-        &self,
-        agg_buf1: &mut AggBuf,
-        agg_buf2: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<()> {
+    fn partial_merge(&self, acc1: &mut AccumStateRow, acc2: &mut AccumStateRow) -> Result<()> {
         let partial_buf_merger = self.partial_buf_merger;
-        partial_buf_merger(agg_buf1, agg_buf2, agg_buf_addrs);
+        partial_buf_merger(self, acc1, acc2);
         Ok(())
+    }
+
+    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+        default_final_merge_with_addr(self, acc, self.accum_state_val_addr_value)
+    }
+
+    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+        default_final_batch_merge_with_addr(self, accs, self.accum_state_val_addr_value)
     }
 }
 
-fn is_touched(agg_buf: &AggBuf, agg_buf_addrs: &[u64]) -> bool {
-    agg_buf.is_fixed_valid(agg_buf_addrs[1])
-}
-
-fn set_touched(agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) {
-    agg_buf.set_fixed_valid(agg_buf_addrs[1], true)
-}
-
-fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, &[u64], &ArrayRef, usize)> {
-    // assert!(!is_touched(agg_buf, addrs))
+fn get_partial_updater(
+    dt: &DataType,
+) -> Result<fn(&AggFirst, &mut AccumStateRow, &ArrayRef, usize)> {
+    // assert!(!is_touched(acc, addrs))
 
     macro_rules! fn_fixed {
         ($ty:ident) => {{
-            Ok(|agg_buf, addrs, v, i| {
+            Ok(|this, acc, v, i| {
                 type TArray = paste! {[<$ty Array>]};
                 if v.is_valid(i) {
                     let value = v.as_any().downcast_ref::<TArray>().unwrap();
-                    agg_buf.set_fixed_value(addrs[0], value.value(i));
-                    agg_buf.set_fixed_valid(addrs[0], true);
+                    acc.set_fixed_value(this.accum_state_val_addr_value, value.value(i));
+                    acc.set_fixed_valid(this.accum_state_val_addr_value, true);
                 }
-                set_touched(agg_buf, addrs);
+                this.set_touched(acc);
             })
         }};
     }
@@ -177,64 +200,77 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, &[u64], &ArrayRe
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
         DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(
-            |agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
-                let w = AggDynStr::value_mut(agg_buf.dyn_value_mut(addrs[0]));
+            |this: &AggFirst, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
-                    let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-                    *w = Some(value.value(i).to_owned().into());
+                    let value = downcast_any!(v, StringArray).unwrap();
+                    let v = value.value(i);
+                    let new = AggDynStr::from_str(v);
+                    this.add_mem_used(new.mem_size());
+                    *acc.dyn_value_mut(this.accum_state_val_addr_value) = Some(Box::new(new));
                 }
-                set_touched(agg_buf, addrs);
+                this.set_touched(acc);
             },
         ),
         DataType::Binary => Ok(
-            |agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
-                let w = AggDynBinary::value_mut(agg_buf.dyn_value_mut(addrs[0]));
+            |this: &AggFirst, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
-                    let value = v.as_any().downcast_ref::<BinaryArray>().unwrap();
-                    *w = Some(value.value(i).to_owned().into());
+                    let value = downcast_any!(v, BinaryArray).unwrap();
+                    let v = value.value(i);
+                    let new = AggDynBinary::from_slice(v);
+                    this.add_mem_used(new.mem_size());
+                    *acc.dyn_value_mut(this.accum_state_val_addr_value) = Some(Box::new(new));
                 }
-                set_touched(agg_buf, addrs);
+                this.set_touched(acc);
             },
         ),
         _other => Ok(
-            |agg_buf: &mut AggBuf, addrs: &[u64], v: &ArrayRef, i: usize| {
-                let w = AggDynScalar::value_mut(agg_buf.dyn_value_mut(addrs[0]));
-                *w = ScalarValue::try_from_array(v, i)
-                    .expect("First::partial_update error creating ScalarValue");
-                set_touched(agg_buf, addrs);
+            |this: &AggFirst, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
+                if v.is_valid(i) {
+                    let v = ScalarValue::try_from_array(v, i)
+                        .expect("First::partial_update error creating ScalarValue");
+                    let new = AggDynScalar::new(v);
+                    this.add_mem_used(new.mem_size());
+                    *acc.dyn_value_mut(this.accum_state_val_addr_value) = Some(Box::new(new));
+                }
+                this.set_touched(acc);
             },
         ),
     }
 }
 
-fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, &[u64])> {
-    // assert!(!is_touched(agg_buf, addrs))
+fn get_partial_buf_merger(
+    dt: &DataType,
+) -> Result<fn(&AggFirst, &mut AccumStateRow, &mut AccumStateRow)> {
+    // assert!(!is_touched(acc, addrs))
 
     macro_rules! fn_fixed {
         ($ty:ident) => {{
-            Ok(|agg_buf1, agg_buf2, addrs| {
+            Ok(|this, acc1, acc2| {
                 type TType = paste! {[<$ty Type>]};
                 type TNative = <TType as ArrowPrimitiveType>::Native;
-                if is_touched(agg_buf2, addrs) {
-                    if agg_buf2.is_fixed_valid(addrs[0]) {
-                        let value2 = agg_buf2.fixed_value::<TNative>(addrs[0]);
-                        agg_buf1.set_fixed_value(addrs[0], value2);
-                        agg_buf1.set_fixed_valid(addrs[0], true);
+                if this.is_touched(acc2) {
+                    if acc2.is_fixed_valid(this.accum_state_val_addr_value) {
+                        let value2 = acc2.fixed_value::<TNative>(this.accum_state_val_addr_value);
+                        acc1.set_fixed_value(this.accum_state_val_addr_value, value2);
+                        acc1.set_fixed_valid(this.accum_state_val_addr_value, true);
                     }
-                    set_touched(agg_buf1, addrs);
+                    this.set_touched(acc1);
                 }
             })
         }};
     }
     match dt {
         DataType::Null => Ok(|_, _, _| ()),
-        DataType::Boolean => Ok(|agg_buf1, agg_buf2, addrs| {
-            if is_touched(agg_buf2, addrs) {
-                if agg_buf2.is_fixed_valid(addrs[0]) {
-                    agg_buf1.set_fixed_value(addrs[0], agg_buf2.fixed_value::<bool>(addrs[0]));
-                    agg_buf1.set_fixed_valid(addrs[0], true);
+        DataType::Boolean => Ok(|this, acc1, acc2| {
+            if this.is_touched(acc2) {
+                if acc2.is_fixed_valid(this.accum_state_val_addr_value) {
+                    acc1.set_fixed_value(
+                        this.accum_state_val_addr_value,
+                        acc2.fixed_value::<bool>(this.accum_state_val_addr_value),
+                    );
+                    acc1.set_fixed_valid(this.accum_state_val_addr_value, true);
                 }
-                set_touched(agg_buf1, addrs);
+                this.set_touched(acc1);
             }
         }),
         DataType::Float32 => fn_fixed!(Float32),
@@ -254,28 +290,17 @@ fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, 
         DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
         DataType::Decimal128(..) => fn_fixed!(Decimal128),
-        DataType::Utf8 => Ok(|agg_buf1, agg_buf2, addrs| {
-            if is_touched(agg_buf2, addrs) {
-                let w = AggDynStr::value_mut(agg_buf1.dyn_value_mut(addrs[0]));
-                *w = std::mem::take(AggDynStr::value_mut(agg_buf2.dyn_value_mut(addrs[0])));
-                set_touched(agg_buf1, addrs);
-            }
-        }),
-        DataType::Binary => Ok(|agg_buf1, agg_buf2, addrs| {
-            if is_touched(agg_buf2, addrs) {
-                let w = AggDynBinary::value_mut(agg_buf1.dyn_value_mut(addrs[0]));
-                *w = std::mem::take(AggDynBinary::value_mut(agg_buf2.dyn_value_mut(addrs[0])));
-                set_touched(agg_buf1, addrs);
-            }
-        }),
-        _other => Ok(|agg_buf1, agg_buf2, addrs| {
-            if is_touched(agg_buf2, addrs) {
-                let w = AggDynScalar::value_mut(agg_buf1.dyn_value_mut(addrs[0]));
-                *w = std::mem::replace(
-                    AggDynScalar::value_mut(agg_buf2.dyn_value_mut(addrs[0])),
-                    ScalarValue::Null,
-                );
-                set_touched(agg_buf1, addrs);
+        DataType::Utf8 | DataType::Binary | _ => Ok(|this, acc1, acc2| {
+            if this.is_touched(acc2) && !this.is_touched(acc1) {
+                let w = acc1.dyn_value_mut(this.accum_state_val_addr_value);
+                let v = acc2.dyn_value_mut(this.accum_state_val_addr_value);
+                *w = std::mem::take(v);
+            } else {
+                if this.is_touched(acc2) {
+                    if let Some(v) = acc2.dyn_value_mut(this.accum_state_val_addr_value) {
+                        this.sub_mem_used(v.mem_size()); // v will be dropped
+                    }
+                }
             }
         }),
     }

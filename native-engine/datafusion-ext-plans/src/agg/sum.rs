@@ -16,7 +16,7 @@ use std::{
     any::Any,
     fmt::{Debug, Formatter},
     ops::Add,
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use arrow::{array::*, datatypes::*};
@@ -28,17 +28,32 @@ use datafusion_ext_commons::df_unimplemented_err;
 use paste::paste;
 
 use crate::agg::{
-    agg_buf::{AccumInitialValue, AggBuf},
-    Agg,
+    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr},
+    default_final_batch_merge_with_addr, default_final_merge_with_addr, Agg, WithAggBufAddrs,
+    WithMemTracking,
 };
 
 pub struct AggSum {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     accums_initial: Vec<AccumInitialValue>,
-    partial_updater: fn(&mut AggBuf, u64, &ArrayRef, usize),
-    partial_batch_updater: fn(&mut [AggBuf], u64, &ArrayRef),
-    partial_buf_merger: fn(&mut AggBuf, &mut AggBuf, u64),
+    accum_state_val_addr: AccumStateValAddr,
+    partial_updater: fn(&Self, &mut AccumStateRow, &ArrayRef, usize),
+    partial_batch_updater: fn(&Self, &mut [AccumStateRow], &ArrayRef),
+    partial_buf_merger: fn(&Self, &mut AccumStateRow, &mut AccumStateRow),
+    mem_used_tracker: AtomicUsize,
+}
+
+impl WithAggBufAddrs for AggSum {
+    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
+        self.accum_state_val_addr = accum_state_val_addrs[0];
+    }
+}
+
+impl WithMemTracking for AggSum {
+    fn mem_used_tracker(&self) -> &AtomicUsize {
+        &self.mem_used_tracker
+    }
 }
 
 impl AggSum {
@@ -53,9 +68,11 @@ impl AggSum {
             child,
             data_type,
             accums_initial,
+            accum_state_val_addr: AccumStateValAddr::default(),
             partial_updater,
             partial_batch_updater,
             partial_buf_merger,
+            mem_used_tracker: AtomicUsize::new(0),
         })
     }
 }
@@ -104,43 +121,28 @@ impl Agg for AggSum {
 
     fn partial_update(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
+        acc: &mut AccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
         let partial_updater = self.partial_updater;
-        let addr = agg_buf_addrs[0];
-        partial_updater(agg_buf, addr, &values[0], row_idx);
+        partial_updater(self, acc, &values[0], row_idx);
         Ok(())
     }
 
-    fn partial_batch_update(
-        &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<usize> {
+    fn partial_batch_update(&self, accs: &mut [AccumStateRow], values: &[ArrayRef]) -> Result<()> {
         let partial_batch_updater = self.partial_batch_updater;
-        let addr = agg_buf_addrs[0];
-        partial_batch_updater(agg_bufs, addr, &values[0]);
-        Ok(0)
+        partial_batch_updater(self, accs, &values[0]);
+        Ok(())
     }
 
-    fn partial_update_all(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let addr = agg_buf_addrs[0];
-
+    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
         macro_rules! handle {
             ($ty:ident) => {{
                 type TArray = paste! {[<$ty Array>]};
                 let value = values[0].as_any().downcast_ref::<TArray>().unwrap();
                 if let Some(sum) = arrow::compute::sum(value) {
-                    partial_update_prim(agg_buf, addr, sum);
+                    partial_update_prim(acc, self.accum_state_val_addr, sum);
                 }
             }};
         }
@@ -162,50 +164,54 @@ impl Agg for AggSum {
         Ok(())
     }
 
-    fn partial_merge(
-        &self,
-        agg_buf1: &mut AggBuf,
-        agg_buf2: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<()> {
+    fn partial_merge(&self, acc1: &mut AccumStateRow, acc2: &mut AccumStateRow) -> Result<()> {
         let partial_buf_merger = self.partial_buf_merger;
-        let addr = agg_buf_addrs[0];
-        partial_buf_merger(agg_buf1, agg_buf2, addr);
+        partial_buf_merger(self, acc1, acc2);
         Ok(())
     }
 
     fn partial_batch_merge(
         &self,
-        agg_bufs: &mut [AggBuf],
-        merging_agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-    ) -> Result<usize> {
+        accs: &mut [AccumStateRow],
+        merging_accs: &mut [AccumStateRow],
+    ) -> Result<()> {
         let partial_buf_merger = self.partial_buf_merger;
-        let addr = agg_buf_addrs[0];
-        for (agg_buf, merging_agg_buf) in agg_bufs.iter_mut().zip(merging_agg_bufs) {
-            partial_buf_merger(agg_buf, merging_agg_buf, addr);
+        for (acc, merging_acc) in accs.iter_mut().zip(merging_accs) {
+            partial_buf_merger(self, acc, merging_acc);
         }
-        Ok(0)
+        Ok(())
+    }
+
+    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+        default_final_merge_with_addr(self, acc, self.accum_state_val_addr)
+    }
+
+    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+        default_final_batch_merge_with_addr(self, accs, self.accum_state_val_addr)
     }
 }
 
-fn partial_update_prim<T: Copy + Add<Output = T>>(agg_buf: &mut AggBuf, addr: u64, v: T) {
-    if agg_buf.is_fixed_valid(addr) {
-        agg_buf.update_fixed_value::<T>(addr, |w| w + v);
+fn partial_update_prim<T: Copy + Add<Output = T>>(
+    acc: &mut AccumStateRow,
+    addr: AccumStateValAddr,
+    v: T,
+) {
+    if acc.is_fixed_valid(addr) {
+        acc.update_fixed_value::<T>(addr, |w| w + v);
     } else {
-        agg_buf.set_fixed_value::<T>(addr, v);
-        agg_buf.set_fixed_valid(addr, true);
+        acc.set_fixed_value::<T>(addr, v);
+        acc.set_fixed_valid(addr, true);
     }
 }
 
-fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, usize)> {
+fn get_partial_updater(dt: &DataType) -> Result<fn(&AggSum, &mut AccumStateRow, &ArrayRef, usize)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{
-            Ok(|agg_buf, addr, v, i| {
+            Ok(|this, acc, v, i| {
                 type TArray = paste! {[<$ty Array>]};
                 let value = v.as_any().downcast_ref::<TArray>().unwrap();
                 if value.is_valid(i) {
-                    partial_update_prim(agg_buf, addr, value.value(i));
+                    partial_update_prim(acc, this.accum_state_val_addr, value.value(i));
                 }
             })
         }};
@@ -227,15 +233,17 @@ fn get_partial_updater(dt: &DataType) -> Result<fn(&mut AggBuf, u64, &ArrayRef, 
     }
 }
 
-fn get_partial_batch_updater(dt: &DataType) -> Result<fn(&mut [AggBuf], u64, &ArrayRef)> {
+fn get_partial_batch_updater(
+    dt: &DataType,
+) -> Result<fn(&AggSum, &mut [AccumStateRow], &ArrayRef)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{
-            Ok(|agg_bufs, addr, v| {
+            Ok(|this, accs, v| {
                 type TArray = paste! {[<$ty Array>]};
                 let value = v.as_any().downcast_ref::<TArray>().unwrap();
-                for (agg_buf, value) in agg_bufs.iter_mut().zip(value.iter()) {
+                for (acc, value) in accs.iter_mut().zip(value.iter()) {
                     if let Some(value) = value {
-                        partial_update_prim(agg_buf, addr, value);
+                        partial_update_prim(acc, this.accum_state_val_addr, value);
                     }
                 }
             })
@@ -258,15 +266,17 @@ fn get_partial_batch_updater(dt: &DataType) -> Result<fn(&mut [AggBuf], u64, &Ar
     }
 }
 
-fn get_partial_buf_merger(dt: &DataType) -> Result<fn(&mut AggBuf, &mut AggBuf, u64)> {
+fn get_partial_buf_merger(
+    dt: &DataType,
+) -> Result<fn(&AggSum, &mut AccumStateRow, &mut AccumStateRow)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{
-            Ok(|agg_buf1, agg_buf2, addr| {
+            Ok(|this, acc1, acc2| {
                 type TType = paste! {[<$ty Type>]};
                 type TNative = <TType as ArrowPrimitiveType>::Native;
-                if agg_buf2.is_fixed_valid(addr) {
-                    let v = agg_buf2.fixed_value::<TNative>(addr);
-                    partial_update_prim(agg_buf1, addr, v);
+                if acc2.is_fixed_valid(this.accum_state_val_addr) {
+                    let v = acc2.fixed_value::<TNative>(this.accum_state_val_addr);
+                    partial_update_prim(acc1, this.accum_state_val_addr, v);
                 }
             })
         }};

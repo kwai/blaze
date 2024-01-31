@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod agg_buf;
+pub mod acc;
 pub mod agg_context;
-pub mod agg_tables;
+pub mod agg_table;
 pub mod avg;
 pub mod collect_list;
 pub mod collect_set;
@@ -24,7 +24,14 @@ pub mod first_ignores_null;
 pub mod maxmin;
 pub mod sum;
 
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{
+    any::Any,
+    fmt::Debug,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
+};
 
 use arrow::{array::*, datatypes::*};
 use datafusion::{
@@ -32,10 +39,13 @@ use datafusion::{
     logical_expr::aggregate_function,
     physical_expr::PhysicalExpr,
 };
-use datafusion_ext_commons::df_unimplemented_err;
+use datafusion_ext_commons::df_execution_err;
 use datafusion_ext_exprs::cast::TryCastExpr;
+use slimmer_box::SlimmerBox;
 
-use crate::agg::agg_buf::{AccumInitialValue, AggBuf, AggDynBinary, AggDynScalar, AggDynStr};
+use crate::agg::acc::{
+    AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
+};
 
 pub const AGG_BUF_COLUMN_NAME: &str = "#9223372036854775807";
 
@@ -91,7 +101,33 @@ pub struct AggExpr {
     pub agg: Arc<dyn Agg>,
 }
 
-pub trait Agg: Send + Sync + Debug {
+pub trait WithAggBufAddrs {
+    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]);
+}
+
+pub trait WithMemTracking {
+    fn mem_used_tracker(&self) -> &AtomicUsize;
+
+    fn mem_used(&self) -> usize {
+        self.mem_used_tracker().load(SeqCst)
+    }
+
+    fn add_mem_used(&self, mem_used: usize) {
+        self.mem_used_tracker().fetch_add(mem_used, SeqCst);
+    }
+
+    fn sub_mem_used(&self, mem_used: usize) {
+        let _ = self
+            .mem_used_tracker()
+            .fetch_update(SeqCst, SeqCst, |v| Some(v.saturating_sub(mem_used)));
+    }
+
+    fn reset_mem_used(&self) {
+        self.mem_used_tracker().store(0, SeqCst);
+    }
+}
+
+pub trait Agg: WithAggBufAddrs + WithMemTracking + Send + Sync + Debug {
     fn as_any(&self) -> &dyn Any;
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;
     fn data_type(&self) -> &DataType;
@@ -106,263 +142,38 @@ pub trait Agg: Send + Sync + Debug {
 
     fn partial_update(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
+        acc: &mut AccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()>;
 
-    fn partial_batch_update(
-        &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<usize> {
-        let mut mem_diff = 0;
-        for row_idx in 0..agg_bufs.len() {
-            let agg_buf = &mut agg_bufs[row_idx];
-            mem_diff -= agg_buf.mem_size();
-            self.partial_update(agg_buf, agg_buf_addrs, values, row_idx)?;
-            mem_diff += agg_buf.mem_size();
+    fn partial_batch_update(&self, accs: &mut [AccumStateRow], values: &[ArrayRef]) -> Result<()> {
+        for row_idx in 0..accs.len() {
+            let acc = &mut accs[row_idx];
+            self.partial_update(acc, values, row_idx)?;
         }
-        Ok(mem_diff)
+        Ok(())
     }
 
-    fn partial_update_all(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<()>;
-
-    fn partial_merge(
-        &self,
-        agg_buf: &mut AggBuf,
-        merging_agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<()>;
+    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()>;
+    fn partial_merge(&self, acc: &mut AccumStateRow, merging_acc: &mut AccumStateRow)
+        -> Result<()>;
 
     fn partial_batch_merge(
         &self,
-        agg_bufs: &mut [AggBuf],
-        merging_agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-    ) -> Result<usize> {
-        let mut mem_diff = 0;
-        for row_idx in 0..agg_bufs.len() {
-            let agg_buf = &mut agg_bufs[row_idx];
-            let merging_agg_buf = &mut merging_agg_bufs[row_idx];
-            mem_diff -= agg_buf.mem_size();
-            self.partial_merge(agg_buf, merging_agg_buf, agg_buf_addrs)?;
-            mem_diff += agg_buf.mem_size();
+        accs: &mut [AccumStateRow],
+        merging_accs: &mut [AccumStateRow],
+    ) -> Result<()> {
+        for row_idx in 0..accs.len() {
+            let acc = &mut accs[row_idx];
+            let merging_acc = &mut merging_accs[row_idx];
+            self.partial_merge(acc, merging_acc)?;
         }
-        Ok(mem_diff)
+        Ok(())
     }
 
-    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
-        // default implementation:
-        // extract the only one values from agg_buf and convert to ScalarValue
-        // this works for sum/min/max/first
-        let addr = agg_buf_addrs[0];
-
-        macro_rules! handle_fixed {
-            ($ty:ident) => {{
-                if agg_buf.is_fixed_valid(addr) {
-                    ScalarValue::$ty(Some(agg_buf.fixed_value(addr)))
-                } else {
-                    ScalarValue::$ty(None)
-                }
-            }};
-        }
-        macro_rules! handle_timestamp {
-            ($ty:ident, $tz:expr) => {{
-                let v = if agg_buf.is_fixed_valid(addr) {
-                    Some(agg_buf.fixed_value(addr))
-                } else {
-                    None
-                };
-                ScalarValue::$ty(v, $tz.clone())
-            }};
-        }
-        Ok(match self.data_type() {
-            DataType::Null => ScalarValue::Null,
-            DataType::Boolean => handle_fixed!(Boolean),
-            DataType::Float32 => handle_fixed!(Float32),
-            DataType::Float64 => handle_fixed!(Float64),
-            DataType::Int8 => handle_fixed!(Int8),
-            DataType::Int16 => handle_fixed!(Int16),
-            DataType::Int32 => handle_fixed!(Int32),
-            DataType::Int64 => handle_fixed!(Int64),
-            DataType::UInt8 => handle_fixed!(UInt8),
-            DataType::UInt16 => handle_fixed!(UInt16),
-            DataType::UInt32 => handle_fixed!(UInt32),
-            DataType::UInt64 => handle_fixed!(UInt64),
-            DataType::Decimal128(prec, scale) => {
-                let v = if agg_buf.is_fixed_valid(addr) {
-                    Some(agg_buf.fixed_value(addr))
-                } else {
-                    None
-                };
-                ScalarValue::Decimal128(v, *prec, *scale)
-            }
-            DataType::Date32 => handle_fixed!(Date32),
-            DataType::Date64 => handle_fixed!(Date64),
-            DataType::Timestamp(TimeUnit::Second, tz) => handle_timestamp!(TimestampSecond, tz),
-            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
-                handle_timestamp!(TimestampMillisecond, tz)
-            }
-            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
-                handle_timestamp!(TimestampMicrosecond, tz)
-            }
-            DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
-                handle_timestamp!(TimestampNanosecond, tz)
-            }
-            DataType::Utf8 => ScalarValue::Utf8(
-                agg_buf
-                    .dyn_value(addr)
-                    .as_any()
-                    .downcast_ref::<AggDynStr>()
-                    .unwrap()
-                    .value
-                    .as_ref()
-                    .map(|s| s.as_ref().to_owned()),
-            ),
-            DataType::Binary => ScalarValue::Binary(
-                agg_buf
-                    .dyn_value(addr)
-                    .as_any()
-                    .downcast_ref::<AggDynBinary>()
-                    .unwrap()
-                    .value
-                    .as_ref()
-                    .map(|s| s.as_ref().to_owned()),
-            ),
-            other => {
-                if let Some(s) = agg_buf
-                    .dyn_value(addr)
-                    .as_any()
-                    .downcast_ref::<AggDynScalar>()
-                {
-                    s.value.clone()
-                } else {
-                    return df_unimplemented_err!("unsupported data type: {other}");
-                }
-            }
-        })
-    }
-
-    fn final_batch_merge(
-        &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-    ) -> Result<ArrayRef> {
-        // default implementation:
-        // extract the only one values from agg_buf and convert to ScalarValue
-        // this works for sum/min/max/first
-        let addr = agg_buf_addrs[0];
-
-        macro_rules! handle_fixed {
-            ($ty:ident) => {{
-                type B = paste::paste! {[< $ty Builder >]};
-                let mut builder = B::with_capacity(agg_bufs.len());
-                for agg_buf in agg_bufs {
-                    if agg_buf.is_fixed_valid(addr) {
-                        builder.append_value(agg_buf.fixed_value(addr));
-                    } else {
-                        builder.append_null();
-                    };
-                }
-                builder.finish()
-            }};
-        }
-        macro_rules! mkarray {
-            ($a:expr) => {{
-                let array: Arc<dyn Array + 'static> = Arc::new($a);
-                array
-            }};
-        }
-        Ok(match self.data_type() {
-            DataType::Null => mkarray!(NullArray::new(agg_bufs.len())),
-            DataType::Boolean => mkarray!(handle_fixed!(Boolean)),
-            DataType::Float32 => mkarray!(handle_fixed!(Float32)),
-            DataType::Float64 => mkarray!(handle_fixed!(Float64)),
-            DataType::Int8 => mkarray!(handle_fixed!(Int8)),
-            DataType::Int16 => mkarray!(handle_fixed!(Int16)),
-            DataType::Int32 => mkarray!(handle_fixed!(Int32)),
-            DataType::Int64 => mkarray!(handle_fixed!(Int64)),
-            DataType::UInt8 => mkarray!(handle_fixed!(UInt8)),
-            DataType::UInt16 => mkarray!(handle_fixed!(UInt16)),
-            DataType::UInt32 => mkarray!(handle_fixed!(UInt32)),
-            DataType::UInt64 => mkarray!(handle_fixed!(UInt64)),
-            DataType::Decimal128(prec, scale) => {
-                mkarray!(handle_fixed!(Decimal128).with_precision_and_scale(*prec, *scale)?)
-            }
-            DataType::Date32 => mkarray!(handle_fixed!(Date32)),
-            DataType::Date64 => mkarray!(handle_fixed!(Date64)),
-            DataType::Timestamp(TimeUnit::Second, tz) => {
-                mkarray!(handle_fixed!(TimestampSecond).with_timezone_opt(tz.clone()))
-            }
-            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
-                mkarray!(handle_fixed!(TimestampMillisecond).with_timezone_opt(tz.clone()))
-            }
-            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
-                mkarray!(handle_fixed!(TimestampMicrosecond).with_timezone_opt(tz.clone()))
-            }
-            DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
-                mkarray!(handle_fixed!(TimestampNanosecond).with_timezone_opt(tz.clone()))
-            }
-            DataType::Utf8 => {
-                mkarray!(agg_bufs
-                    .iter_mut()
-                    .map(|agg_buf| {
-                        let value = std::mem::take(
-                            &mut agg_buf
-                                .dyn_value_mut(addr)
-                                .as_any_mut()
-                                .downcast_mut::<AggDynStr>()
-                                .unwrap()
-                                .value,
-                        );
-                        value.map(|v| v.into_string())
-                    })
-                    .collect::<StringArray>())
-            }
-            DataType::Binary => {
-                mkarray!(agg_bufs
-                    .iter_mut()
-                    .map(|agg_buf| {
-                        let value = std::mem::take(
-                            &mut agg_buf
-                                .dyn_value_mut(addr)
-                                .as_any_mut()
-                                .downcast_mut::<AggDynBinary>()
-                                .unwrap()
-                                .value,
-                        );
-                        value.map(|v| v.into_vec())
-                    })
-                    .collect::<BinaryArray>())
-            }
-            _other => {
-                let scalars = agg_bufs
-                    .iter_mut()
-                    .map(|agg_buf| {
-                        let value = std::mem::replace(
-                            &mut agg_buf
-                                .dyn_value_mut(addr)
-                                .as_any_mut()
-                                .downcast_mut::<AggDynScalar>()
-                                .unwrap()
-                                .value,
-                            ScalarValue::Null,
-                        );
-                        value
-                    })
-                    .collect::<Vec<_>>();
-                ScalarValue::iter_to_array(scalars)?
-            }
-        })
-    }
+    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue>;
+    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef>;
 }
 
 pub fn create_agg(
@@ -433,6 +244,223 @@ pub fn create_agg(
                 return_type,
                 arg_type,
             )?)
+        }
+    })
+}
+
+fn default_final_merge_with_addr(
+    agg: &impl Agg,
+    acc: &mut AccumStateRow,
+    addr: AccumStateValAddr,
+) -> Result<ScalarValue> {
+    // default implementation:
+    // extract the only one values from acc and convert to ScalarValue
+    // this works for sum/min/max/first
+    macro_rules! handle_fixed {
+        ($ty:ident) => {{
+            if acc.is_fixed_valid(addr) {
+                ScalarValue::$ty(Some(acc.fixed_value(addr)))
+            } else {
+                ScalarValue::$ty(None)
+            }
+        }};
+    }
+    macro_rules! handle_timestamp {
+        ($ty:ident, $tz:expr) => {{
+            let v = if acc.is_fixed_valid(addr) {
+                Some(acc.fixed_value(addr))
+            } else {
+                None
+            };
+            ScalarValue::$ty(v, $tz.clone())
+        }};
+    }
+    Ok(match agg.data_type() {
+        DataType::Null => ScalarValue::Null,
+        DataType::Boolean => handle_fixed!(Boolean),
+        DataType::Float32 => handle_fixed!(Float32),
+        DataType::Float64 => handle_fixed!(Float64),
+        DataType::Int8 => handle_fixed!(Int8),
+        DataType::Int16 => handle_fixed!(Int16),
+        DataType::Int32 => handle_fixed!(Int32),
+        DataType::Int64 => handle_fixed!(Int64),
+        DataType::UInt8 => handle_fixed!(UInt8),
+        DataType::UInt16 => handle_fixed!(UInt16),
+        DataType::UInt32 => handle_fixed!(UInt32),
+        DataType::UInt64 => handle_fixed!(UInt64),
+        DataType::Decimal128(prec, scale) => {
+            let v = if acc.is_fixed_valid(addr) {
+                Some(acc.fixed_value(addr))
+            } else {
+                None
+            };
+            ScalarValue::Decimal128(v, *prec, *scale)
+        }
+        DataType::Date32 => handle_fixed!(Date32),
+        DataType::Date64 => handle_fixed!(Date64),
+        DataType::Timestamp(TimeUnit::Second, tz) => handle_timestamp!(TimestampSecond, tz),
+        DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+            handle_timestamp!(TimestampMillisecond, tz)
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+            handle_timestamp!(TimestampMicrosecond, tz)
+        }
+        DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+            handle_timestamp!(TimestampNanosecond, tz)
+        }
+        DataType::Utf8 => ScalarValue::Utf8(match std::mem::take(acc.dyn_value_mut(addr)) {
+            Some(v) => Some({
+                agg.sub_mem_used(v.mem_size());
+                let boxed = SlimmerBox::into_box(
+                    v.as_any_boxed()
+                        .downcast::<AggDynStr>()
+                        .or_else(|_| df_execution_err!("error downcasting to AggDynStr"))?
+                        .into_value(),
+                );
+                boxed.into_string()
+            }),
+            None => None,
+        }),
+        DataType::Binary => ScalarValue::Binary(match std::mem::take(acc.dyn_value_mut(addr)) {
+            Some(v) => Some({
+                agg.sub_mem_used(v.mem_size());
+                v.as_any_boxed()
+                    .downcast::<AggDynBinary>()
+                    .or_else(|_| df_execution_err!("error downcasting to AggDynStr"))?
+                    .into_value()
+                    .into_vec()
+            }),
+            None => None,
+        }),
+        other => match std::mem::take(acc.dyn_value_mut(addr)) {
+            Some(v) => {
+                agg.sub_mem_used(v.mem_size());
+                v.as_any_boxed()
+                    .downcast::<AggDynScalar>()
+                    .or_else(|_| df_execution_err!("error downcasting to AggDynScalar"))?
+                    .into_value()
+            }
+            None => ScalarValue::try_from(other)?,
+        },
+    })
+}
+
+fn default_final_batch_merge_with_addr(
+    agg: &impl Agg,
+    accs: &mut [AccumStateRow],
+    addr: AccumStateValAddr,
+) -> Result<ArrayRef> {
+    // default implementation:
+    // extract the only one values from acc and convert to ScalarValue
+    // this works for sum/min/max/first
+    macro_rules! handle_fixed {
+        ($ty:ident) => {{
+            type B = paste::paste! {[< $ty Builder >]};
+            let mut builder = B::with_capacity(accs.len());
+            for acc in accs {
+                if acc.is_fixed_valid(addr) {
+                    builder.append_value(acc.fixed_value(addr));
+                } else {
+                    builder.append_null();
+                };
+            }
+            builder.finish()
+        }};
+    }
+    macro_rules! mkarray {
+        ($a:expr) => {{
+            let array: Arc<dyn Array + 'static> = Arc::new($a);
+            array
+        }};
+    }
+    Ok(match agg.data_type() {
+        DataType::Null => mkarray!(NullArray::new(accs.len())),
+        DataType::Boolean => mkarray!(handle_fixed!(Boolean)),
+        DataType::Float32 => mkarray!(handle_fixed!(Float32)),
+        DataType::Float64 => mkarray!(handle_fixed!(Float64)),
+        DataType::Int8 => mkarray!(handle_fixed!(Int8)),
+        DataType::Int16 => mkarray!(handle_fixed!(Int16)),
+        DataType::Int32 => mkarray!(handle_fixed!(Int32)),
+        DataType::Int64 => mkarray!(handle_fixed!(Int64)),
+        DataType::UInt8 => mkarray!(handle_fixed!(UInt8)),
+        DataType::UInt16 => mkarray!(handle_fixed!(UInt16)),
+        DataType::UInt32 => mkarray!(handle_fixed!(UInt32)),
+        DataType::UInt64 => mkarray!(handle_fixed!(UInt64)),
+        DataType::Decimal128(prec, scale) => {
+            mkarray!(handle_fixed!(Decimal128).with_precision_and_scale(*prec, *scale)?)
+        }
+        DataType::Date32 => mkarray!(handle_fixed!(Date32)),
+        DataType::Date64 => mkarray!(handle_fixed!(Date64)),
+        DataType::Timestamp(TimeUnit::Second, tz) => {
+            mkarray!(handle_fixed!(TimestampSecond).with_timezone_opt(tz.clone()))
+        }
+        DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+            mkarray!(handle_fixed!(TimestampMillisecond).with_timezone_opt(tz.clone()))
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+            mkarray!(handle_fixed!(TimestampMicrosecond).with_timezone_opt(tz.clone()))
+        }
+        DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+            mkarray!(handle_fixed!(TimestampNanosecond).with_timezone_opt(tz.clone()))
+        }
+        DataType::Utf8 => {
+            mkarray!(accs
+                .iter_mut()
+                .map(|acc| {
+                    let dyn_str = std::mem::take(acc.dyn_value_mut(addr));
+                    match dyn_str {
+                        Some(s) => {
+                            agg.sub_mem_used(s.mem_size());
+                            let boxed = SlimmerBox::into_box(
+                                s.as_any_boxed()
+                                    .downcast::<AggDynStr>()
+                                    .unwrap()
+                                    .into_value(),
+                            );
+                            Some(boxed.into_string())
+                        }
+                        None => None,
+                    }
+                })
+                .collect::<StringArray>())
+        }
+        DataType::Binary => {
+            mkarray!(accs
+                .iter_mut()
+                .map(|acc| {
+                    let dyn_binary = std::mem::take(acc.dyn_value_mut(addr));
+                    match dyn_binary {
+                        Some(s) => Some({
+                            agg.sub_mem_used(s.mem_size());
+                            s.as_any_boxed()
+                                .downcast::<AggDynBinary>()
+                                .unwrap()
+                                .into_value()
+                                .into_vec()
+                        }),
+                        None => None,
+                    }
+                })
+                .collect::<BinaryArray>())
+        }
+        other => {
+            let scalars = accs
+                .iter_mut()
+                .map(|acc| {
+                    let dyn_scalar = std::mem::take(acc.dyn_value_mut(addr));
+                    match dyn_scalar {
+                        Some(s) => {
+                            agg.sub_mem_used(s.mem_size());
+                            s.as_any_boxed()
+                                .downcast::<AggDynScalar>()
+                                .unwrap()
+                                .into_value()
+                        }
+                        None => ScalarValue::try_from(other).unwrap(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            ScalarValue::iter_to_array(scalars)?
         }
     })
 }
