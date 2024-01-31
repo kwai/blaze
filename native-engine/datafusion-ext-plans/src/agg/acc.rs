@@ -317,9 +317,8 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                 Box::new(move |r: &mut LoadReader| {
                     Ok(match read_len(&mut r.0)? {
                         0 => None,
-                        1 => Some(Box::new(AggDynList::default())),
                         n => {
-                            let data_len = n - 2;
+                            let data_len = n - 1;
                             let mut load_vec: SmallVec<[ScalarValue; 4]> = SmallVec::new();
                             for _i in 0..data_len {
                                 load_vec.push(read_scalar(&mut r.0, &dt)?);
@@ -334,16 +333,16 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                 Box::new(move |r: &mut LoadReader| {
                     Ok(match read_len(&mut r.0)? {
                         0 => None,
-                        1 => {
-                            let vec_len = read_len(&mut r.0)?;
+                        n @ 1..=5 => {
+                            let vec_len = n - 1;
                             let mut scalar_vec: SmallVec<[ScalarValue; 4]> = SmallVec::new();
                             for _index in 0..vec_len {
                                 scalar_vec.push(read_scalar(&mut r.0, &dt)?);
                             }
                             Some(Box::new(AggDynSet{ values: OptimizedSet::SmallVec(scalar_vec) }))
                         },
-                        n => {
-                            let set_len = read_len(&mut r.0)?;
+                        n  => {
+                            let set_len = n - 6;
                             let mut load_set = HashSet::with_capacity(set_len);
                             for _i in 0..set_len {
                                 load_set.insert(read_scalar(&mut r.0, &dt)?);
@@ -438,15 +437,11 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                                 .downcast::<AggDynList>()
                                 .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
                                 .into_values();
-                            if list.is_empty() {
-                                write_len(1, &mut w.0)?;
-                            } else {
-                                write_len(list.len() + 2, &mut w.0)?;
-                                for iter in &list {
-                                    write_scalar(iter, &mut w.0)?;
-                                }
-                                list.clear()
+                            write_len(list.len() + 1, &mut w.0)?;
+                            for iter in &list {
+                                write_scalar(iter, &mut w.0)?;
                             }
+                            list.clear()
                         }
                     }
                     Ok(())
@@ -467,16 +462,14 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
 
                             match &mut set {
                                 OptimizedSet::SmallVec(vec) => {
-                                    write_len(1, &mut w.0)?;
-                                    write_len(vec.len(), &mut w.0)?;
+                                    write_len(vec.len() + 1, &mut w.0)?;
                                     for index in 0..vec.len() {
                                         write_scalar(&vec[index], &mut w.0)?;
                                     }
                                     vec.clear();
                                 }
                                 OptimizedSet::Set(set) => {
-                                    write_len(2, &mut w.0)?;
-                                    write_len(set.len(), &mut w.0)?;
+                                    write_len(set.len() + 6, &mut w.0)?;
                                     let mut scalar_vec = std::mem::take(set).into_iter().collect::<Vec<_>>();
                                     for iter in &scalar_vec {
                                         write_scalar(iter, &mut w.0)?;
