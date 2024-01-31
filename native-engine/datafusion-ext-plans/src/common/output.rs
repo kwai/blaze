@@ -25,7 +25,9 @@ use datafusion::{
     common::Result,
     execution::context::TaskContext,
     physical_plan::{
-        metrics::ScopedTimerGuard, stream::RecordBatchReceiverStream, SendableRecordBatchStream,
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, ScopedTimerGuard},
+        stream::RecordBatchReceiverStream,
+        SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{
@@ -37,7 +39,7 @@ use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
 
-use crate::memmgr::{onheap_spill::try_new_spill, MemConsumer, MemManager};
+use crate::memmgr::{metrics::SpillMetrics, onheap_spill::try_new_spill, MemConsumer, MemManager};
 
 fn working_senders() -> &'static Mutex<Vec<Weak<WrappedRecordBatchSender>>> {
     static WORKING_SENDERS: OnceCell<Mutex<Vec<Weak<WrappedRecordBatchSender>>>> = OnceCell::new();
@@ -106,8 +108,10 @@ pub trait TaskOutputter {
 
     fn output_bufferable_with_spill(
         &self,
+        partition: usize,
         mem_consumer: Arc<dyn MemConsumer>,
         stream: SendableRecordBatchStream,
+        metrics: ExecutionPlanMetricsSet,
     ) -> Result<SendableRecordBatchStream>;
 
     fn cancel_task(&self);
@@ -161,26 +165,33 @@ impl TaskOutputter for Arc<TaskContext> {
 
     fn output_bufferable_with_spill(
         &self,
+        partition: usize,
         mem_consumer: Arc<dyn MemConsumer>,
         mut stream: SendableRecordBatchStream,
+        metrics: ExecutionPlanMetricsSet,
     ) -> Result<SendableRecordBatchStream> {
         let schema = stream.schema();
         let desc = "OutputBufferableWithSpill";
+        let baseline_metrics = BaselineMetrics::new(&metrics, partition);
+        let spill_metrics = SpillMetrics::new(&metrics, partition);
+
         self.output_with_sender(desc, schema.clone(), move |sender| async move {
             while let Some(batch) = {
                 // if consumer is holding too much memory, we will create a spill
                 // to receive all of its outputs and release all memory.
                 // outputs can be read from spill later.
                 if MemManager::get().num_consumers() > 1 && mem_consumer.mem_used_percent() > 0.8 {
-                    let spill = try_new_spill()?;
+                    let spill = try_new_spill(&spill_metrics)?;
                     let mut spill_writer = spill.get_buf_writer();
 
                     // write all batches to spill
                     while let Some(batch) = stream.next().await.transpose()? {
+                        let _timer = baseline_metrics.elapsed_compute().timer();
                         let mut buf = vec![];
                         write_one_batch(&batch, &mut Cursor::new(&mut buf), true, None)?;
                         spill_writer.write_all(&buf)?;
                     }
+                    let mut timer = baseline_metrics.elapsed_compute().timer();
                     spill_writer.flush()?;
                     spill.complete()?;
 
@@ -189,7 +200,7 @@ impl TaskOutputter for Arc<TaskContext> {
                     while let Some(batch) =
                         read_one_batch(&mut spill_reader, Some(schema.clone()), true)?
                     {
-                        sender.send(Ok(batch), None).await;
+                        sender.send(Ok(batch), Some(&mut timer)).await;
                     }
                     return Ok(());
                 }

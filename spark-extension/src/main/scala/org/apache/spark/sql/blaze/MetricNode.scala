@@ -28,7 +28,9 @@ case class MetricNode(
     children(i)
 
   def add(metricName: String, v: Long): Unit = {
-    metrics.get(metricName).foreach(_.add(v))
     metricValueHandler.foreach(_.apply(metricName, v))
+    if (v > 0) {
+      metrics.get(metricName).foreach(_.add(v))
+    }
   }
 }

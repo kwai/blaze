@@ -17,6 +17,8 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
 
+import scala.collection.immutable.SortedMap
+
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -48,7 +50,7 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
   override def outputPartitioning: Partitioning = child.outputPartitioning
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))

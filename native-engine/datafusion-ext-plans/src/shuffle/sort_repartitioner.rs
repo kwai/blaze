@@ -24,7 +24,7 @@ use datafusion::{
     common::{DataFusionError, Result},
     execution::context::TaskContext,
     physical_plan::{
-        metrics::{BaselineMetrics, Count},
+        metrics::{Count, ExecutionPlanMetricsSet},
         Partitioning,
     },
 };
@@ -36,6 +36,7 @@ use futures::lock::Mutex;
 
 use crate::{
     memmgr::{
+        metrics::SpillMetrics,
         onheap_spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
@@ -53,8 +54,8 @@ pub struct SortShuffleRepartitioner {
     partitioning: Partitioning,
     num_output_partitions: usize,
     batch_size: usize,
-    metrics: BaselineMetrics,
     data_size_metric: Count,
+    spill_metrics: SpillMetrics,
 }
 
 impl SortShuffleRepartitioner {
@@ -63,7 +64,7 @@ impl SortShuffleRepartitioner {
         output_data_file: String,
         output_index_file: String,
         partitioning: Partitioning,
-        metrics: BaselineMetrics,
+        metrics: &ExecutionPlanMetricsSet,
         data_size_metric: Count,
         context: Arc<TaskContext>,
     ) -> Self {
@@ -80,8 +81,8 @@ impl SortShuffleRepartitioner {
             partitioning,
             num_output_partitions,
             batch_size,
-            metrics,
             data_size_metric,
+            spill_metrics: SpillMetrics::new(metrics, partition_id),
         }
     }
 }
@@ -104,7 +105,7 @@ impl MemConsumer for SortShuffleRepartitioner {
 
     async fn spill(&self) -> Result<()> {
         let data = std::mem::take(&mut *self.data.lock().await);
-        let spill = try_new_spill()?;
+        let spill = try_new_spill(&self.spill_metrics)?;
         let mut uncompressed_size = 0;
 
         let offsets = data.write(
@@ -232,7 +233,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // add rest data to spills
         if data.num_rows > 0 {
-            let spill = try_new_spill()?;
+            let spill = try_new_spill(&self.spill_metrics)?;
             let mut uncompressed_size = 0;
             let offsets = data.write(
                 spill.get_buf_writer(),
@@ -261,7 +262,8 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 .filter(|spill| !spill.finished())
                 .collect(),
         );
-        let raw_spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
+        let _raw_spills: Vec<Box<dyn Spill>> =
+            spills.into_iter().map(|spill| spill.spill).collect();
         let num_output_partitions = self.num_output_partitions;
         let mut offsets = vec![0];
 
@@ -316,12 +318,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         .await
         .or_else(|e| df_execution_err!("shuffle write error: {e:?}"))??;
 
-        // update disk spill size
-        let spill_disk_usage = raw_spills
-            .iter()
-            .map(|spill| spill.get_disk_usage().unwrap_or(0))
-            .sum::<u64>();
-        self.metrics.record_spill(spill_disk_usage as usize);
         self.update_mem_used(0).await?;
         Ok(())
     }

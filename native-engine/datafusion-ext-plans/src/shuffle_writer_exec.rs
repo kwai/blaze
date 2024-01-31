@@ -124,7 +124,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                     self.output_data_file.clone(),
                     self.output_index_file.clone(),
                     self.partitioning.clone(),
-                    BaselineMetrics::new(&self.metrics, partition),
+                    &self.metrics,
                     data_size_metric,
                     context.clone(),
                 ));

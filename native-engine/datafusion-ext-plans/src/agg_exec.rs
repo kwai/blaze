@@ -191,8 +191,8 @@ async fn execute_agg_with_grouping_hash(
     let tables = Arc::new(AggTable::new(
         partition_id,
         agg_ctx.clone(),
-        BaselineMetrics::new(&metrics, partition_id),
         context.clone(),
+        &metrics,
     ));
     MemManager::register_consumer(tables.clone(), true);
     drop(timer);
@@ -248,7 +248,7 @@ async fn execute_agg_with_grouping_hash(
 
     // if running in-memory, buffer output when memory usage is high
     if !has_spill {
-        return context.output_bufferable_with_spill(tables_cloned, output);
+        return context.output_bufferable_with_spill(partition_id, tables_cloned, output, metrics);
     }
     Ok(output)
 }

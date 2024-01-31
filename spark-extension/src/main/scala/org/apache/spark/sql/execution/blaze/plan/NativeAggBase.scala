@@ -17,6 +17,7 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 import scala.collection.mutable
 
 import org.apache.spark.OneToOneDependency
@@ -66,20 +67,21 @@ abstract class NativeAggBase(
     with NativeSupports
     with Logging {
 
-  override lazy val metrics: Map[String, SQLMetric] = mutable
-    .LinkedHashMap(
-      NativeHelper
-        .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(
-          Set(
-            "output_rows",
-            "elapsed_compute",
-            "spilled_bytes",
-            "input_batch_count",
-            "input_batch_mem_size",
-            "input_row_count"))
-        .toSeq: _*)
-    .toMap
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
+    NativeHelper
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set(
+        "output_rows",
+        "elapsed_compute",
+        "mem_spill_count",
+        "mem_spill_size",
+        "mem_spill_iotime",
+        "disk_spill_size",
+        "disk_spill_iotime",
+        "input_batch_count",
+        "input_batch_mem_size",
+        "input_row_count"))
+      .toSeq: _*)
 
   override def requiredChildDistribution: List[Distribution] = {
     requiredChildDistributionExpressions match {

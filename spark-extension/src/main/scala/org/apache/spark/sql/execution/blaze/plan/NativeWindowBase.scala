@@ -16,9 +16,9 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 
 import org.apache.spark.OneToOneDependency
-
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
@@ -39,7 +39,6 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.blaze.{protobuf => pb}
-
 import org.apache.spark.sql.catalyst.expressions.DenseRank
 import org.apache.spark.sql.catalyst.expressions.RowNumber
 import org.apache.spark.sql.catalyst.expressions.WindowExpression
@@ -57,7 +56,7 @@ abstract class NativeWindowBase(
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))

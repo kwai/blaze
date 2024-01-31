@@ -61,6 +61,7 @@ use crate::{
         BatchTaker, BatchesInterleaver,
     },
     memmgr::{
+        metrics::SpillMetrics,
         onheap_spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
@@ -167,6 +168,7 @@ struct ExternalSorter {
     data: Arc<Mutex<BufferedData>>,
     spills: Mutex<Vec<Box<dyn Spill>>>,
     baseline_metrics: BaselineMetrics,
+    spill_metrics: SpillMetrics,
 }
 
 #[async_trait]
@@ -186,8 +188,11 @@ impl MemConsumer for ExternalSorter {
     }
 
     async fn spill(&self) -> Result<()> {
-        let spill = std::mem::take(&mut *self.data.lock().await)
-            .try_into_spill(self.sub_batch_size, self.limit)?;
+        let spill = std::mem::take(&mut *self.data.lock().await).try_into_spill(
+            &self.spill_metrics,
+            self.sub_batch_size,
+            self.limit,
+        )?;
         self.spills.lock().await.push(spill);
         self.update_mem_used(0).await?;
         Ok(())
@@ -226,8 +231,13 @@ struct BufferedData {
 }
 
 impl BufferedData {
-    fn try_into_spill(self, sub_batch_size: usize, limit: usize) -> Result<Box<dyn Spill>> {
-        let spill = try_new_spill()?;
+    fn try_into_spill(
+        self,
+        spill_metrics: &SpillMetrics,
+        sub_batch_size: usize,
+        limit: usize,
+    ) -> Result<Box<dyn Spill>> {
+        let spill = try_new_spill(spill_metrics)?;
         let mut writer = lz4_flex::frame::FrameEncoder::new(spill.get_buf_writer());
 
         for (keys, batch) in self.into_sorted_batches(sub_batch_size, limit) {
@@ -401,6 +411,7 @@ impl ExecuteWithColumnPruning for SortExec {
             data: Default::default(),
             spills: Default::default(),
             baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
+            spill_metrics: SpillMetrics::new(&self.metrics, partition),
         });
         MemManager::register_consumer(external_sorter.clone(), true);
 
@@ -415,7 +426,14 @@ impl ExecuteWithColumnPruning for SortExec {
 
         let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(external_sort(coalesced, context.clone(), external_sorter)).try_flatten(),
+            once(external_sort(
+                coalesced,
+                partition,
+                context.clone(),
+                external_sorter,
+                self.metrics.clone(),
+            ))
+            .try_flatten(),
         ));
         let coalesced = context.coalesce_with_default_batch_size(
             output,
@@ -433,8 +451,10 @@ impl Drop for ExternalSorter {
 
 async fn external_sort(
     mut input: SendableRecordBatchStream,
+    partition_id: usize,
     context: Arc<TaskContext>,
     sorter: Arc<ExternalSorter>,
+    metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     // insert and sort
     while let Some(batch) = input.next().await.transpose()? {
@@ -453,7 +473,7 @@ async fn external_sort(
 
     // if running in-memory, buffer output when memory usage is high
     if !has_spill {
-        return context.output_bufferable_with_spill(sorter_cloned, output);
+        return context.output_bufferable_with_spill(partition_id, sorter_cloned, output, metrics);
     }
     Ok(output)
 }
@@ -545,7 +565,7 @@ impl ExternalSorter {
         }
 
         // move in-mem batches into spill, so we can free memory as soon as possible
-        spills.push(data.try_into_spill(self.sub_batch_size, self.limit)?);
+        spills.push(data.try_into_spill(&self.spill_metrics, self.sub_batch_size, self.limit)?);
 
         // adjust mem usage
         self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
@@ -638,14 +658,6 @@ impl ExternalSorter {
         if !staging_keys.is_empty() {
             flush_staging!();
         }
-
-        // update disk spill size
-        let spill_disk_usage = spills
-            .iter()
-            .map(|spill| spill.get_disk_usage().unwrap_or(0))
-            .sum::<u64>();
-        self.baseline_metrics
-            .record_spill(spill_disk_usage as usize);
         self.update_mem_used(0).await?;
         Ok(())
     }

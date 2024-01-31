@@ -16,6 +16,8 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
+
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
@@ -39,7 +41,7 @@ abstract class NativeExpandBase(
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(

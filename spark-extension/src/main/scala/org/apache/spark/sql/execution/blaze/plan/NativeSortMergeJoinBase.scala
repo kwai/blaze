@@ -16,6 +16,7 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.SparkPlan
@@ -57,7 +58,7 @@ abstract class NativeSortMergeJoinBase(
     BlazeConf.SMJ_INEQUALITY_JOIN_ENABLE.booleanConf() || condition.isEmpty,
     "inequality sort-merge join is not enabled")
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
