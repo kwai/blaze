@@ -168,7 +168,8 @@ impl Agg for AggCollectList {
                         w.as_any_boxed()
                             .downcast::<AggDynList>()
                             .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
-                            .into_values(),
+                            .into_values()
+                            .into_vec(),
                     ),
                     self.arg_type.clone(),
                 ),

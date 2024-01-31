@@ -24,9 +24,12 @@ use datafusion::{
     physical_expr::PhysicalExpr,
 };
 use datafusion_ext_commons::{df_execution_err, downcast_any};
+use hashbrown::HashSet;
 
 use crate::agg::{
-    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynSet, AggDynValue},
+    acc::{
+        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynSet, AggDynValue, OptimizedSet,
+    },
     Agg, WithAggBufAddrs, WithMemTracking,
 };
 
@@ -170,18 +173,27 @@ impl Agg for AggCollectSet {
     fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
         Ok(
             match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
-                Some(w) => ScalarValue::new_list(
-                    Some({
-                        self.sub_mem_used(w.mem_size());
-                        w.as_any_boxed()
-                            .downcast::<AggDynSet>()
-                            .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?
-                            .into_values()
-                            .into_iter()
-                            .collect()
-                    }),
-                    self.arg_type.clone(),
-                ),
+                Some(w) => {
+                    self.sub_mem_used(w.mem_size());
+                    let mut dyn_set = w
+                        .as_any_boxed()
+                        .downcast::<AggDynSet>()
+                        .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?
+                        .into_values();
+                    let scalar_list = match &mut dyn_set {
+                        OptimizedSet::SmallVec(vec) => {
+                            let convert_set: HashSet<ScalarValue> =
+                                HashSet::from_iter(std::mem::take(vec).into_iter());
+                            Some(convert_set.into_iter().collect::<Vec<ScalarValue>>())
+                        }
+                        OptimizedSet::Set(set) => Some(
+                            std::mem::take(set)
+                                .into_iter()
+                                .collect::<Vec<ScalarValue>>(),
+                        ),
+                    };
+                    ScalarValue::new_list(scalar_list, self.arg_type.clone())
+                }
                 None => ScalarValue::new_list(None, self.arg_type.clone()),
             },
         )

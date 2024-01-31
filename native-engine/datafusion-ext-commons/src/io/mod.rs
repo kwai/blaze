@@ -21,8 +21,10 @@ use arrow::{
 };
 pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
 use datafusion::common::{cast::as_struct_array, Result};
+pub use scalar_serde::{read_scalar, write_scalar};
 
 mod batch_serde;
+mod scalar_serde;
 
 pub fn write_one_batch<W: Write + Seek>(
     batch: &RecordBatch,

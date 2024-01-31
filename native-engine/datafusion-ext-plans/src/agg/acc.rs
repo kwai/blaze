@@ -14,7 +14,6 @@
 
 use std::{
     any::Any,
-    collections::HashSet,
     io::{Cursor, Read, Write},
     mem::{size_of, size_of_val},
 };
@@ -29,10 +28,14 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     df_execution_err, downcast_any,
-    io::{read_array, read_bytes_slice, read_len, write_array, write_len},
+    io::{
+        read_array, read_bytes_slice, read_len, read_scalar, write_array, write_len, write_scalar,
+    },
     slim_bytes::SlimBytes,
 };
+use hashbrown::HashSet;
 use slimmer_box::SlimmerBox;
+use smallvec::SmallVec;
 
 pub type DynVal = Option<Box<dyn AggDynValue>>;
 
@@ -315,14 +318,13 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                 Box::new(move |r: &mut LoadReader| {
                     Ok(match read_len(&mut r.0)? {
                         0 => None,
-                        1 => Some(Box::new(AggDynList::default())),
                         n => {
-                            let array = read_array(&mut r.0, &dt, n - 2)?;
-                            let mut dyn_list = AggDynList::default();
-                            dyn_list.values = (0..array.len())
-                                .map(|i| ScalarValue::try_from_array(&array, i))
-                                .collect::<Result<_>>()?;
-                            Some(Box::new(dyn_list))
+                            let data_len = n - 1;
+                            let mut load_vec: SmallVec<[ScalarValue; 4]> = SmallVec::new();
+                            for _i in 0..data_len {
+                                load_vec.push(read_scalar(&mut r.0, &dt)?);
+                            }
+                            Some(Box::new(AggDynList { values: load_vec }))
                         }
                     })
                 })
@@ -332,14 +334,25 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                 Box::new(move |r: &mut LoadReader| {
                     Ok(match read_len(&mut r.0)? {
                         0 => None,
-                        1 => Some(Box::new(AggDynSet::default())),
+                        n @ 1..=5 => {
+                            let vec_len = n - 1;
+                            let mut scalar_vec: SmallVec<[ScalarValue; 4]> = SmallVec::new();
+                            for _index in 0..vec_len {
+                                scalar_vec.push(read_scalar(&mut r.0, &dt)?);
+                            }
+                            Some(Box::new(AggDynSet {
+                                values: OptimizedSet::SmallVec(scalar_vec),
+                            }))
+                        }
                         n => {
-                            let array = read_array(&mut r.0, &dt, n - 2)?;
-                            let mut dyn_set = AggDynSet::default();
-                            dyn_set.values = (0..array.len())
-                                .map(|i| ScalarValue::try_from_array(&array, i))
-                                .collect::<Result<_>>()?;
-                            Some(Box::new(dyn_set))
+                            let set_len = n - 6;
+                            let mut load_set = HashSet::with_capacity(set_len);
+                            for _i in 0..set_len {
+                                load_set.insert(read_scalar(&mut r.0, &dt)?);
+                            }
+                            Some(Box::new(AggDynSet {
+                                values: OptimizedSet::Set(load_set),
+                            }))
                         }
                     })
                 })
@@ -424,18 +437,16 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                     match v {
                         None => write_len(0, &mut w.0)?,
                         Some(v) => {
-                            let list = v
+                            let mut list = v
                                 .as_any_boxed()
                                 .downcast::<AggDynList>()
                                 .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
                                 .into_values();
-                            if list.is_empty() {
-                                write_len(1, &mut w.0)?;
-                            } else {
-                                let array = ScalarValue::iter_to_array(list.into_iter())?;
-                                write_len(array.len() + 2, &mut w.0)?;
-                                write_array(&array, &mut w.0)?;
+                            write_len(list.len() + 1, &mut w.0)?;
+                            for iter in &list {
+                                write_scalar(iter, &mut w.0)?;
                             }
+                            list.clear()
                         }
                     }
                     Ok(())
@@ -448,17 +459,29 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                     match v {
                         None => write_len(0, &mut w.0)?,
                         Some(v) => {
-                            let set = v
+                            let mut set = v
                                 .as_any_boxed()
                                 .downcast::<AggDynSet>()
                                 .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
                                 .into_values();
-                            if set.is_empty() {
-                                write_len(1, &mut w.0)?;
-                            } else {
-                                let array = ScalarValue::iter_to_array(set.into_iter())?;
-                                write_len(array.len() + 2, &mut w.0)?;
-                                write_array(&array, &mut w.0)?;
+
+                            match &mut set {
+                                OptimizedSet::SmallVec(vec) => {
+                                    write_len(vec.len() + 1, &mut w.0)?;
+                                    for index in 0..vec.len() {
+                                        write_scalar(&vec[index], &mut w.0)?;
+                                    }
+                                    vec.clear();
+                                }
+                                OptimizedSet::Set(set) => {
+                                    write_len(set.len() + 6, &mut w.0)?;
+                                    let mut scalar_vec =
+                                        std::mem::take(set).into_iter().collect::<Vec<_>>();
+                                    for iter in &scalar_vec {
+                                        write_scalar(iter, &mut w.0)?;
+                                    }
+                                    scalar_vec.clear();
+                                }
                             }
                         }
                     }
@@ -618,7 +641,7 @@ impl AggDynValue for AggDynStr {
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynList {
-    pub values: Vec<ScalarValue>,
+    pub values: SmallVec<[ScalarValue; 4]>,
 }
 
 impl AggDynList {
@@ -627,14 +650,14 @@ impl AggDynList {
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        self.values.append(other.values.as_mut());
+        self.values.append(&mut other.values);
     }
 
     pub fn values(&self) -> &[ScalarValue] {
         self.values.as_slice()
     }
 
-    pub fn into_values(self) -> Vec<ScalarValue> {
+    pub fn into_values(self) -> SmallVec<[ScalarValue; 4]> {
         self.values
     }
 }
@@ -653,7 +676,9 @@ impl AggDynValue for AggDynList {
     }
 
     fn mem_size(&self) -> usize {
-        size_of::<Self>() + ScalarValue::size_of_vec(&self.values)
+        size_of::<Self>()
+            + std::mem::size_of_val(&self.values)
+            + self.values.iter().map(|sv| sv.size()).sum::<usize>()
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -663,23 +688,57 @@ impl AggDynValue for AggDynList {
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct AggDynSet {
-    pub values: HashSet<ScalarValue>,
+    pub values: OptimizedSet,
 }
 
 impl AggDynSet {
     pub fn append(&mut self, value: ScalarValue) {
-        self.values.insert(value);
+        match &mut self.values {
+            OptimizedSet::SmallVec(vec) => {
+                if vec.len() < vec.inline_size() {
+                    vec.push(value);
+                } else {
+                    let mut value_set = HashSet::from_iter(std::mem::take(vec).into_iter());
+                    value_set.insert(value);
+                    self.values = OptimizedSet::Set(value_set);
+                }
+            }
+            OptimizedSet::Set(value_set) => {
+                value_set.insert(value);
+            }
+        }
     }
 
     pub fn merge(&mut self, other: &mut Self) {
-        self.values.extend(std::mem::take(other).values.into_iter());
+        match (&mut self.values, &mut other.values) {
+            (OptimizedSet::SmallVec(vec1), OptimizedSet::SmallVec(vec2)) => {
+                if vec1.len() + vec2.len() <= vec1.inline_size() {
+                    vec1.append(vec2);
+                } else {
+                    let mut new_set = HashSet::with_capacity(vec1.len() + vec2.len());
+                    new_set.extend(std::mem::take(vec1).into_iter());
+                    new_set.extend(std::mem::take(vec2).into_iter());
+                    self.values = OptimizedSet::Set(new_set);
+                }
+            }
+            (OptimizedSet::SmallVec(vec), OptimizedSet::Set(set)) => {
+                set.extend(std::mem::take(vec).into_iter());
+                self.values = OptimizedSet::Set(std::mem::take(set));
+            }
+            (OptimizedSet::Set(set), OptimizedSet::SmallVec(vec)) => {
+                set.extend(std::mem::take(vec).into_iter());
+            }
+            (OptimizedSet::Set(set1), OptimizedSet::Set(set2)) => {
+                set1.extend(std::mem::take(set2).into_iter());
+            }
+        }
     }
 
-    pub fn values(&self) -> &HashSet<ScalarValue> {
+    pub fn values(&self) -> &OptimizedSet {
         &self.values
     }
 
-    pub fn into_values(self) -> HashSet<ScalarValue> {
+    pub fn into_values(self) -> OptimizedSet {
         self.values
     }
 }
@@ -698,11 +757,36 @@ impl AggDynValue for AggDynSet {
     }
 
     fn mem_size(&self) -> usize {
-        size_of::<Self>() + ScalarValue::size_of_hashset(&self.values)
+        size_of::<Self>() + self.values.mem_size()
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
         Box::new(self.clone())
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum OptimizedSet {
+    SmallVec(SmallVec<[ScalarValue; 4]>),
+    Set(HashSet<ScalarValue>),
+}
+
+impl Default for OptimizedSet {
+    fn default() -> Self {
+        OptimizedSet::SmallVec(SmallVec::default())
+    }
+}
+
+impl OptimizedSet {
+    fn mem_size(&self) -> usize {
+        match self {
+            OptimizedSet::SmallVec(vec) => {
+                std::mem::size_of_val(vec) + vec.iter().map(|sv| sv.size()).sum::<usize>()
+            }
+            OptimizedSet::Set(hash_set) => {
+                std::mem::size_of_val(hash_set) + hash_set.iter().map(|sv| sv.size()).sum::<usize>()
+            }
+        }
     }
 }
 
@@ -737,30 +821,51 @@ impl AccumStateValAddr {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashSet, io::Cursor};
+    use std::{io::Cursor, sync::Arc};
 
-    use arrow::datatypes::DataType;
+    use arrow::datatypes::{DataType, Field, Fields};
     use datafusion::common::{Result, ScalarValue};
     use datafusion_ext_commons::downcast_any;
+    use hashbrown::HashSet;
+    use smallvec::SmallVec;
 
     use crate::agg::acc::{
         create_acc_from_initial_value, create_dyn_loaders_from_initial_value,
         create_dyn_savers_from_initial_value, AccumInitialValue, AggDynList, AggDynSet, AggDynStr,
-        LoadReader, SaveWriter,
+        LoadReader, OptimizedSet, SaveWriter,
     };
 
     #[test]
     fn test_dyn_list() {
-        let loaders =
-            create_dyn_loaders_from_initial_value(&[AccumInitialValue::DynList(DataType::Int32)])
-                .unwrap();
-        let savers =
-            create_dyn_savers_from_initial_value(&[AccumInitialValue::DynList(DataType::Int32)])
-                .unwrap();
+        let list_field = Arc::new(Field::new("item", DataType::Int32, true));
+        let l0 = ScalarValue::List(
+            Some(vec![
+                ScalarValue::from(1i32),
+                ScalarValue::from(2i32),
+                ScalarValue::from(3i32),
+            ]),
+            Arc::new(Field::new("item", DataType::Int32, true)),
+        );
+
+        let l1 = ScalarValue::List(
+            Some(vec![ScalarValue::from(4i32), ScalarValue::Int32(None)]),
+            Arc::new(Field::new("item", DataType::Int32, true)),
+        );
+
+        let l2 = ScalarValue::List(None, Arc::new(Field::new("item", DataType::Int32, true)));
+
+        let loaders = create_dyn_loaders_from_initial_value(&[AccumInitialValue::DynList(
+            DataType::List(list_field.clone()),
+        )])
+        .unwrap();
+        let savers = create_dyn_savers_from_initial_value(&[AccumInitialValue::DynList(
+            DataType::List(list_field.clone()),
+        )])
+        .unwrap();
         let mut dyn_list = AggDynList::default();
-        dyn_list.append(ScalarValue::from(1i32));
-        dyn_list.append(ScalarValue::from(2i32));
-        dyn_list.append(ScalarValue::from(3i32));
+        dyn_list.append(l0.clone());
+        dyn_list.append(l1.clone());
+        dyn_list.append(l2.clone());
 
         let mut buf = vec![];
         savers[0](
@@ -774,42 +879,79 @@ mod test {
             downcast_any!(dyn_list.unwrap(), AggDynList)
                 .unwrap()
                 .values(),
-            &[
-                ScalarValue::from(1i32),
-                ScalarValue::from(2i32),
-                ScalarValue::from(3i32),
-            ]
+            &[l0.clone(), l1.clone(), l2.clone(),]
         );
     }
 
     #[test]
     fn test_dyn_set() {
-        let loaders =
-            create_dyn_loaders_from_initial_value(&[AccumInitialValue::DynSet(DataType::Int32)])
-                .unwrap();
-        let savers =
-            create_dyn_savers_from_initial_value(&[AccumInitialValue::DynSet(DataType::Int32)])
-                .unwrap();
+        let fields_b = Fields::from(vec![
+            Field::new("ba", DataType::UInt64, true),
+            Field::new("bb", DataType::UInt64, true),
+        ]);
+        let fields = Fields::from(vec![
+            Field::new("a", DataType::UInt64, true),
+            Field::new("b", DataType::Struct(fields_b.clone()), true),
+        ]);
+        let scalars = vec![
+            ScalarValue::Struct(None, fields.clone()),
+            ScalarValue::Struct(
+                Some(vec![
+                    ScalarValue::UInt64(None),
+                    ScalarValue::Struct(None, fields_b.clone()),
+                ]),
+                fields.clone(),
+            ),
+            ScalarValue::Struct(
+                Some(vec![
+                    ScalarValue::UInt64(None),
+                    ScalarValue::Struct(
+                        Some(vec![ScalarValue::UInt64(None), ScalarValue::UInt64(None)]),
+                        fields_b.clone(),
+                    ),
+                ]),
+                fields.clone(),
+            ),
+            ScalarValue::Struct(
+                Some(vec![
+                    ScalarValue::UInt64(Some(1)),
+                    ScalarValue::Struct(
+                        Some(vec![
+                            ScalarValue::UInt64(Some(2)),
+                            ScalarValue::UInt64(Some(3)),
+                        ]),
+                        fields_b,
+                    ),
+                ]),
+                fields.clone(),
+            ),
+        ];
+
+        let loaders = create_dyn_loaders_from_initial_value(&[AccumInitialValue::DynSet(
+            DataType::Struct(fields.clone()),
+        )])
+        .unwrap();
+        let savers = create_dyn_savers_from_initial_value(&[AccumInitialValue::DynSet(
+            DataType::Struct(fields.clone()),
+        )])
+        .unwrap();
         let mut dyn_set = AggDynSet::default();
-        dyn_set.append(ScalarValue::from(1i32));
-        dyn_set.append(ScalarValue::from(2i32));
-        dyn_set.append(ScalarValue::from(3i32));
-        dyn_set.append(ScalarValue::from(2i32));
+        dyn_set.append(scalars[0].clone());
+        dyn_set.append(scalars[1].clone());
+        dyn_set.append(scalars[3].clone());
 
         let mut buf = vec![];
         savers[0](&mut SaveWriter(Box::new(&mut buf)), Some(Box::new(dyn_set))).unwrap();
 
         let dyn_set = loaders[0](&mut LoadReader(Box::new(Cursor::new(&buf)))).unwrap();
+
+        let right_set: SmallVec<[ScalarValue; 4]> = SmallVec::from_iter(
+            vec![scalars[0].clone(), scalars[1].clone(), scalars[3].clone()].into_iter(),
+        );
+        let right = OptimizedSet::SmallVec(right_set);
         assert_eq!(
             downcast_any!(dyn_set.unwrap(), AggDynSet).unwrap().values(),
-            &HashSet::from_iter(
-                vec![
-                    ScalarValue::from(1i32),
-                    ScalarValue::from(2i32),
-                    ScalarValue::from(3i32),
-                ]
-                .into_iter()
-            )
+            &right
         );
     }
 
