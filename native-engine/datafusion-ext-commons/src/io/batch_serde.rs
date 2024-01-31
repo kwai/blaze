@@ -27,15 +27,12 @@ use arrow::{
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use bitvec::prelude::BitVec;
-use datafusion::common::Result;
-use datafusion::parquet::data_type::AsBytes;
-use datafusion::scalar::ScalarValue;
+use datafusion::{common::Result, parquet::data_type::AsBytes, scalar::ScalarValue};
 
 use crate::{
     df_execution_err, df_unimplemented_err,
-    io::{read_bytes_slice, read_len, write_len},
+    io::{read_bytes_slice, read_len, read_u8, write_len, write_u8},
 };
-use crate::io::{read_u8, write_u8};
 
 pub fn write_batch<W: Write>(
     batch: &RecordBatch,

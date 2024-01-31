@@ -164,15 +164,15 @@ impl Agg for AggCollectList {
         Ok(
             match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
                 Some(w) => ScalarValue::new_list(
-                        Some(
-                            w.as_any_boxed()
-                                .downcast::<AggDynList>()
-                                .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
-                                .into_values()
-                                .into_vec(),
-                        ),
-                        self.arg_type.clone(),
+                    Some(
+                        w.as_any_boxed()
+                            .downcast::<AggDynList>()
+                            .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
+                            .into_values()
+                            .into_vec(),
                     ),
+                    self.arg_type.clone(),
+                ),
                 None => ScalarValue::new_list(None, self.arg_type.clone()),
             },
         )
