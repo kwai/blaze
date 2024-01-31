@@ -178,7 +178,11 @@ abstract class NativeShuffleExchangeBase(
         case ("elapsed_compute", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
-        case ("spilled_bytes", v) => metrics("spilled_bytes").add(v)
+        case ("mem_spill_count", v) if v > 0 => metrics("mem_spill_count").add(v)
+        case ("mem_spill_size", v) if v > 0 => metrics("mem_spill_size").add(v)
+        case ("mem_spill_iotime", v) if v > 0 => metrics("mem_spill_iotime").add(v)
+        case ("disk_spill_size", v) if v > 0 => metrics("disk_spill_size").add(v)
+        case ("disk_spill_iotime", v) if v > 0 => metrics("disk_spill_iotime").add(v)
         case _ =>
       }))
     val nativeHashExprs = this.nativeHashExprs

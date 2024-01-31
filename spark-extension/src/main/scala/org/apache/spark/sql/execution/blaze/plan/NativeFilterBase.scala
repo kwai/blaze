@@ -17,6 +17,7 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -43,7 +44,7 @@ abstract class NativeFilterBase(condition: Expression, override val child: Spark
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(

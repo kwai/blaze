@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 import scala.concurrent.Promise
 
 import org.apache.spark.OneToOneDependency
@@ -76,7 +77,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
 
   def getRunId: UUID
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .toSeq :+

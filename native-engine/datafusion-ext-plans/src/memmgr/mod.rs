@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod metrics;
 pub mod onheap_spill;
 
 use std::{

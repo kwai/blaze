@@ -84,7 +84,11 @@ object NativeHelper extends Logging {
       "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
       "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"),
-      "spilled_bytes" -> SQLMetrics.createSizeMetric(sc, "Native.spilled_bytes"))
+      "mem_spill_count" -> SQLMetrics.createMetric(sc, "Native.mem_spill_count"),
+      "mem_spill_size" -> SQLMetrics.createSizeMetric(sc, "Native.mem_spill_size"),
+      "mem_spill_iotime" -> SQLMetrics.createNanoTimingMetric(sc, "Native.mem_spill_iotime"),
+      "disk_spill_size" -> SQLMetrics.createSizeMetric(sc, "Native.disk_spill_size"),
+      "disk_spill_iotime" -> SQLMetrics.createNanoTimingMetric(sc, "Native.disk_spill_iotime"))
 
     if (BlazeConf.INPUT_BATCH_STATISTICS_ENABLE.booleanConf()) {
       metrics ++= TreeMap(

@@ -20,6 +20,8 @@ import java.util.Locale
 import java.util.Properties
 import java.util.concurrent.LinkedBlockingDeque
 
+import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 import scala.collection.mutable
 
 import org.apache.hadoop.fs.FileSystem
@@ -59,17 +61,14 @@ abstract class NativeParquetInsertIntoHiveTableBase(
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] =
-    BasicWriteJobStatsTracker.metrics ++ mutable
-      .LinkedHashMap(
-        NativeHelper
-          .getDefaultNativeMetrics(sparkContext)
-          .filterKeys(Set("output_rows", "elapsed_compute"))
-          .toSeq
-          :+ ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time"))
-          :+ ("bytes_written", SQLMetrics
-            .createSizeMetric(sparkContext, "Native.bytes_written")): _*)
-      .toMap
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
+    NativeHelper
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq
+      :+ ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time"))
+      :+ ("bytes_written", SQLMetrics
+        .createSizeMetric(sparkContext, "Native.bytes_written")): _*)
 
   def check(): Unit = {
     val hadoopConf = sparkContext.hadoopConfiguration

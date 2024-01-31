@@ -1271,6 +1271,8 @@ pub struct BlazeOnHeapSpillManager<'a> {
     pub method_readSpill_ret: ReturnType,
     pub method_getSpillDiskUsage: JMethodID,
     pub method_getSpillDiskUsage_ret: ReturnType,
+    pub method_getSpillDiskIOTime: JMethodID,
+    pub method_getSpillDiskIOTime_ret: ReturnType,
     pub method_releaseSpill: JMethodID,
     pub method_releaseSpill_ret: ReturnType,
 }
@@ -1297,6 +1299,10 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
                 .get_method_id(class, "getSpillDiskUsage", "(I)J")
                 .unwrap(),
             method_getSpillDiskUsage_ret: ReturnType::Primitive(Primitive::Long),
+            method_getSpillDiskIOTime: env
+                .get_method_id(class, "getSpillDiskIOTime", "(I)J")
+                .unwrap(),
+            method_getSpillDiskIOTime_ret: ReturnType::Primitive(Primitive::Long),
             method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V").unwrap(),
             method_releaseSpill_ret: ReturnType::Primitive(Primitive::Void),
         })

@@ -22,7 +22,9 @@ use std::{
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use async_trait::async_trait;
 use datafusion::{
-    common::Result, execution::context::TaskContext, physical_plan::metrics::BaselineMetrics,
+    common::Result,
+    execution::context::TaskContext,
+    physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet},
 };
 use datafusion_ext_commons::{
     bytes_arena::BytesArena,
@@ -41,6 +43,7 @@ use crate::{
     agg::{acc::AccumStateRow, agg_context::AggContext},
     common::{output::WrappedRecordBatchSender, BatchTaker, BatchesInterleaver},
     memmgr::{
+        metrics::SpillMetrics,
         onheap_spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
@@ -60,16 +63,17 @@ pub struct AggTable {
     spills: Mutex<Vec<AggSpill>>,
     agg_ctx: Arc<AggContext>,
     context: Arc<TaskContext>,
-    metrics: BaselineMetrics,
+    spill_metrics: SpillMetrics,
 }
 
 impl AggTable {
     pub fn new(
         partition_id: usize,
         agg_ctx: Arc<AggContext>,
-        metrics: BaselineMetrics,
         context: Arc<TaskContext>,
+        metrics: &ExecutionPlanMetricsSet,
     ) -> Self {
+        let spill_metrics = SpillMetrics::new(&metrics, partition_id);
         Self {
             name: format!("AggTable[partition={}]", partition_id),
             mem_consumer_info: None,
@@ -78,11 +82,12 @@ impl AggTable {
                 agg_ctx.clone(),
                 context.clone(),
                 InMemMode::Hashing,
+                spill_metrics.clone(),
             )),
             spills: Mutex::default(),
             agg_ctx,
             context,
-            metrics,
+            spill_metrics: spill_metrics.clone(),
         }
     }
 
@@ -231,7 +236,11 @@ impl AggTable {
             cursors.push(AggSpillCursor::try_from_spill(&spill, &self.agg_ctx)?);
         }
         let mut current_bucket_idx = 0;
-        let mut hashing = HashingData::new(self.agg_ctx.clone(), self.context.clone());
+        let mut hashing = HashingData::new(
+            self.agg_ctx.clone(),
+            self.context.clone(),
+            &self.spill_metrics,
+        );
 
         macro_rules! flush_staging {
             ($staging_records:expr) => {{
@@ -323,13 +332,6 @@ impl AggTable {
             .values()
             .iter()
             .all(|c| c.cur_bucket_idx() == NUM_SPILL_BUCKETS));
-
-        // update disk spill size
-        let spill_disk_usage = spills
-            .iter()
-            .map(|spill| spill.as_spill().get_disk_usage().unwrap_or(0))
-            .sum::<u64>();
-        self.metrics.record_spill(spill_disk_usage as usize);
         self.update_mem_used(0).await?;
         Ok(())
     }
@@ -410,11 +412,12 @@ impl InMemTable {
         agg_ctx: Arc<AggContext>,
         task_ctx: Arc<TaskContext>,
         mode: InMemMode,
+        spill_metrics: SpillMetrics,
     ) -> Self {
         Self {
             id,
-            hashing_data: HashingData::new(agg_ctx.clone(), task_ctx.clone()),
-            merging_data: MergingData::new(agg_ctx.clone(), task_ctx.clone()),
+            hashing_data: HashingData::new(agg_ctx.clone(), task_ctx.clone(), &spill_metrics),
+            merging_data: MergingData::new(agg_ctx.clone(), task_ctx.clone(), &spill_metrics),
             agg_ctx,
             task_ctx,
             mode,
@@ -424,8 +427,9 @@ impl InMemTable {
     fn renew(&mut self, mode: InMemMode) -> Self {
         let agg_ctx = self.agg_ctx.clone();
         let task_ctx = self.task_ctx.clone();
+        let spill_metrics = self.hashing_data.spill_metrics.clone();
         let id = self.id + 1;
-        std::mem::replace(self, Self::new(id, agg_ctx, task_ctx, mode))
+        std::mem::replace(self, Self::new(id, agg_ctx, task_ctx, mode, spill_metrics))
     }
 
     pub fn mem_used(&self) -> usize {
@@ -474,15 +478,6 @@ impl InMemTable {
 enum AggSpill {
     BucketedRecords(Box<dyn Spill>), // from spilled hashmap
     BucketedBatches(Box<dyn Spill>), // from sorted merging batches
-}
-
-impl AggSpill {
-    fn as_spill(&self) -> &Box<dyn Spill> {
-        match self {
-            AggSpill::BucketedRecords(s) => s,
-            AggSpill::BucketedBatches(s) => s,
-        }
-    }
 }
 
 enum AggSpillCursor {
@@ -542,23 +537,30 @@ pub struct HashingData {
     map_keys: BytesArena,
     map: RawTable<(u64, AccumStateRow)>,
     num_input_records: usize,
+    spill_metrics: SpillMetrics,
 }
 
 impl HashingData {
-    fn new(agg_ctx: Arc<AggContext>, task_ctx: Arc<TaskContext>) -> Self {
+    fn new(
+        agg_ctx: Arc<AggContext>,
+        task_ctx: Arc<TaskContext>,
+        spill_metrics: &SpillMetrics,
+    ) -> Self {
         Self {
             agg_ctx,
             task_ctx,
             map_keys: Default::default(),
             map: Default::default(),
             num_input_records: 0,
+            spill_metrics: spill_metrics.clone(),
         }
     }
 
     fn renew(&mut self) -> Self {
         let agg_ctx = self.agg_ctx.clone();
         let task_ctx = self.task_ctx.clone();
-        std::mem::replace(self, Self::new(agg_ctx, task_ctx))
+        let spill_metrics = self.spill_metrics.clone();
+        std::mem::replace(self, Self::new(agg_ctx, task_ctx, &spill_metrics))
     }
 
     fn num_records(&self) -> usize {
@@ -645,7 +647,7 @@ impl HashingData {
             |v| v.0,
         );
 
-        let spill = try_new_spill()?;
+        let spill = try_new_spill(&self.spill_metrics)?;
         let mut writer = FrameEncoder::new(spill.get_buf_writer());
         let mut beg = 0;
 
@@ -726,10 +728,15 @@ pub struct MergingData {
     sorted_batches: Vec<RecordBatch>,
     sorted_batches_mem_used: usize,
     num_rows: usize,
+    spill_metrics: SpillMetrics,
 }
 
 impl MergingData {
-    fn new(agg_ctx: Arc<AggContext>, task_ctx: Arc<TaskContext>) -> Self {
+    fn new(
+        agg_ctx: Arc<AggContext>,
+        task_ctx: Arc<TaskContext>,
+        spill_metrics: &SpillMetrics,
+    ) -> Self {
         Self {
             agg_ctx,
             task_ctx,
@@ -737,6 +744,7 @@ impl MergingData {
             sorted_batches: Default::default(),
             sorted_batches_mem_used: 0,
             num_rows: 0,
+            spill_metrics: spill_metrics.clone(),
         }
     }
 
@@ -744,7 +752,8 @@ impl MergingData {
     fn renew(&mut self) -> Self {
         let agg_ctx = self.agg_ctx.clone();
         let task_ctx = self.task_ctx.clone();
-        std::mem::replace(self, Self::new(agg_ctx, task_ctx))
+        let spill_metrics = self.spill_metrics.clone();
+        std::mem::replace(self, Self::new(agg_ctx, task_ctx, &spill_metrics))
     }
 
     fn num_records(&self) -> usize {
@@ -773,7 +782,7 @@ impl MergingData {
     }
 
     fn try_into_spill(self) -> Result<AggSpill> {
-        let spill = try_new_spill()?;
+        let spill = try_new_spill(&self.spill_metrics)?;
         let mut writer = FrameEncoder::new(spill.get_buf_writer());
 
         let batch_size = self.task_ctx.session_config().batch_size();
