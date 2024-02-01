@@ -170,6 +170,10 @@ pub trait MemConsumer: Send + Sync {
             .expect("consumer deregistered")
     }
 
+    fn mem_used(&self) -> usize {
+        self.consumer_info().status.lock().mem_used
+    }
+
     fn mem_used_percent(&self) -> f64 {
         let mm = MemManager::get();
         let total = mm.total;

@@ -18,7 +18,6 @@ package org.apache.spark.sql.execution.blaze.plan
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
-import scala.collection.mutable
 
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.internal.Logging

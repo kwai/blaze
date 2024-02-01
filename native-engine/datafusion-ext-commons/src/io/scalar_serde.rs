@@ -92,7 +92,7 @@ pub fn write_scalar<W: Write>(value: &ScalarValue, output: &mut W) -> Result<()>
         ScalarValue::TimestampNanosecond(Some(value), _) => {
             write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
         }
-        ScalarValue::List(Some(value), field) => {
+        ScalarValue::List(Some(value), _field) => {
             write_len(value.len() + 1, output)?;
             if value.len() != 0 {
                 for element in value {

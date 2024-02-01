@@ -21,7 +21,6 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
-import scala.collection.mutable
 
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.Partition

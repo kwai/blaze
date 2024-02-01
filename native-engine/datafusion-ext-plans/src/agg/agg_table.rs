@@ -37,6 +37,7 @@ use datafusion_ext_commons::{
 use futures::lock::Mutex;
 use gxhash::GxHasher;
 use hashbrown::raw::RawTable;
+use itertools::Itertools;
 use lz4_flex::frame::{FrameDecoder, FrameEncoder};
 
 use crate::{
@@ -164,11 +165,20 @@ impl AggTable {
             .partial_batch_merge_input(&mut accs, acc_array)?;
 
         // create output batch
-        let records = grouping_rows.iter().zip(accs).collect();
-        let batch = self.agg_ctx.convert_records_to_batch(records)?;
+        let batch_size = self.context.session_config().batch_size();
+        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
+        let sub_batches = grouping_rows
+            .iter()
+            .zip(accs)
+            .chunks(sub_batch_size)
+            .into_iter()
+            .map(|chunk| self.agg_ctx.convert_records_to_batch(chunk.collect()))
+            .collect::<Result<Vec<_>>>()?;
 
-        baseline_metrics.record_output(batch.num_rows());
-        sender.send(Ok(batch), Some(&mut timer)).await;
+        for batch in sub_batches {
+            baseline_metrics.record_output(batch.num_rows());
+            sender.send(Ok(batch), Some(&mut timer)).await;
+        }
         self.update_mem_used(0).await?;
         return Ok(());
     }
@@ -206,6 +216,7 @@ impl AggTable {
                 .map(|(key_addr, value)| (in_mem.hashing_data.map_keys.get(key_addr), value))
                 .collect::<Vec<_>>();
 
+            let mut cur_mem_used = self.mem_used();
             while !records.is_empty() {
                 let chunk = records.split_off(records.len().saturating_sub(sub_batch_size));
                 records.shrink_to_fit();
@@ -217,8 +228,11 @@ impl AggTable {
                 sender.send(Ok(batch), Some(&mut timer)).await;
 
                 // free memory of the output batch
-                self.update_mem_used_with_diff(-(batch_mem_size as isize))
-                    .await?;
+                // this is not precise because the used memory is accounted by records and
+                // not freed by batches.
+                let estimated_mem_used = cur_mem_used.saturating_sub(batch_mem_size / 2);
+                cur_mem_used = estimated_mem_used;
+                self.update_mem_used(estimated_mem_used).await?;
             }
             self.update_mem_used(0).await?;
             return Ok(());
