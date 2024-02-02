@@ -24,7 +24,7 @@ impl BufferedData {
         mut w: W,
         batch_size: usize,
         num_partitions: usize,
-        uncompressed_size: &mut usize,
+        num_bytes_written_uncompressed: &mut usize,
     ) -> common::Result<Vec<u64>> {
         let mut cur_partition_id = 0;
         let mut offsets = vec![0];
@@ -36,12 +36,14 @@ impl BufferedData {
                 cur_partition_id += 1;
             }
             let mut buf = vec![];
+            let mut uncompressed_size = 0;
             write_one_batch(
                 &batch,
                 &mut Cursor::new(&mut buf),
                 true,
-                Some(uncompressed_size),
+                Some(&mut uncompressed_size),
             )?;
+            *num_bytes_written_uncompressed += uncompressed_size;
             w.write_all(&buf)?;
             cur_offset += buf.len() as u64;
         }

@@ -30,7 +30,7 @@ pub fn write_one_batch<W: Write + Seek>(
     batch: &RecordBatch,
     output: &mut W,
     compress: bool,
-    uncompressed_size: Option<&mut usize>,
+    mut uncompressed_size: Option<&mut usize>,
 ) -> Result<usize> {
     if batch.num_rows() == 0 {
         return Ok(0);
@@ -38,6 +38,7 @@ pub fn write_one_batch<W: Write + Seek>(
     // write ipc_length placeholder
     let start_pos = output.stream_position()?;
     output.write_all(&[0u8; 8])?;
+    uncompressed_size.iter_mut().for_each(|v| **v += 8);
 
     // write
     batch_serde::write_batch(batch, output, compress, uncompressed_size)?;

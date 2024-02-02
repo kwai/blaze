@@ -106,15 +106,15 @@ impl MemConsumer for SortShuffleRepartitioner {
     async fn spill(&self) -> Result<()> {
         let data = std::mem::take(&mut *self.data.lock().await);
         let spill = try_new_spill(&self.spill_metrics)?;
-        let mut uncompressed_size = 0;
+        let mut num_bytes_written_uncompressed = 0;
 
         let offsets = data.write(
             spill.get_buf_writer(),
             self.batch_size,
             self.partitioning.partition_count(),
-            &mut uncompressed_size,
+            &mut num_bytes_written_uncompressed,
         )?;
-        self.data_size_metric.add(uncompressed_size);
+        self.data_size_metric.add(num_bytes_written_uncompressed);
         spill.complete()?;
 
         self.spills
@@ -176,14 +176,14 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     .truncate(true)
                     .open(&data_file)?;
 
-                let mut uncompressed_size = 0;
+                let mut num_bytes_written_compressed = 0;
                 let offsets = data.write(
                     &mut output_data,
                     batch_size,
                     partitioning.partition_count(),
-                    &mut uncompressed_size,
+                    &mut num_bytes_written_compressed,
                 )?;
-                data_size_metric.add(uncompressed_size);
+                data_size_metric.add(num_bytes_written_compressed);
                 output_data.sync_data()?;
                 output_data.flush()?;
 
@@ -234,14 +234,14 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         // add rest data to spills
         if data.num_rows > 0 {
             let spill = try_new_spill(&self.spill_metrics)?;
-            let mut uncompressed_size = 0;
+            let mut num_bytes_written_uncompressed = 0;
             let offsets = data.write(
                 spill.get_buf_writer(),
                 batch_size,
                 partitioning.partition_count(),
-                &mut uncompressed_size,
+                &mut num_bytes_written_uncompressed,
             )?;
-            self.data_size_metric.add(uncompressed_size);
+            self.data_size_metric.add(num_bytes_written_uncompressed);
             spill.complete()?;
             spills.push(ShuffleSpill { spill, offsets });
         }
