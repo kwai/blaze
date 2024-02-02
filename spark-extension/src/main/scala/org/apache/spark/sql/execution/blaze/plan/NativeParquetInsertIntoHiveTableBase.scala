@@ -22,6 +22,7 @@ import java.util.concurrent.LinkedBlockingDeque
 
 import scala.collection.immutable.SortedMap
 import scala.collection.mutable
+import scala.collection.mutable
 
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -49,6 +50,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
@@ -59,14 +61,16 @@ abstract class NativeParquetInsertIntoHiveTableBase(
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
-    NativeHelper
-      .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
-      .toSeq
-      :+ ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time"))
-      :+ ("bytes_written", SQLMetrics
-        .createSizeMetric(sparkContext, "Native.bytes_written")): _*)
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++
+    BasicWriteJobStatsTracker.metrics ++
+    Map(
+      NativeHelper
+        .getDefaultNativeMetrics(sparkContext)
+        .filterKeys(Set("output_rows", "elapsed_compute"))
+        .toSeq
+        :+ ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time"))
+        :+ ("bytes_written", SQLMetrics
+          .createSizeMetric(sparkContext, "Native.bytes_written")): _*)
 
   def check(): Unit = {
     val hadoopConf = sparkContext.hadoopConfiguration

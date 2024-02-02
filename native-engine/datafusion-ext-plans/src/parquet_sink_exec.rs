@@ -146,7 +146,6 @@ impl ExecutionPlan for ParquetSinkExec {
         self.metrics.register(bytes_written_metric);
 
         let parquet_sink_context = Arc::new(ParquetSinkContext::try_new(
-            partition,
             &self.fs_resource_id,
             self.num_dyn_parts,
             &io_time,
@@ -178,7 +177,6 @@ impl ExecutionPlan for ParquetSinkExec {
 }
 
 struct ParquetSinkContext {
-    partition_id: usize,
     fs_provider: FsProvider,
     hive_schema: SchemaRef,
     num_dyn_parts: usize,
@@ -188,7 +186,6 @@ struct ParquetSinkContext {
 
 impl ParquetSinkContext {
     fn try_new(
-        partition_id: usize,
         fs_resource_id: &str,
         num_dyn_parts: usize,
         io_time: &Time,
@@ -221,7 +218,6 @@ impl ParquetSinkContext {
             .unwrap_or(128 * 1024 * 1024);
 
         Ok(Self {
-            partition_id,
             fs_provider,
             hive_schema,
             num_dyn_parts,
