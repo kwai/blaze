@@ -22,6 +22,7 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.hive.ql.io.parquet.convert.HiveSchemaConverter
 import org.apache.hadoop.hive.ql.io.IOConstants
@@ -70,14 +71,13 @@ abstract class NativeParquetSinkBase(
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override def doExecuteNative(): NativeRDD = {
-    val hadoopConf = sparkSession.sessionState.newHadoopConf()
     val hiveQlTable = HiveClientHelper.toHiveTable(table)
     val tableDesc = new TableDesc(
       hiveQlTable.getInputFormatClass,
       hiveQlTable.getOutputFormatClass,
       hiveQlTable.getMetadata)
     val tableSchema = table.schema
-
+    val hadoopConf = newHadoopConf(tableDesc)
     val job = new Job(hadoopConf)
     val parquetFileFormat = new ParquetFileFormat()
     parquetFileFormat.prepareWrite(sparkSession, job, Map(), tableSchema)
@@ -150,4 +150,7 @@ abstract class NativeParquetSinkBase(
       },
       "ParquetSink")
   }
+
+  protected def newHadoopConf(tableDesc: TableDesc): Configuration =
+    sparkSession.sessionState.newHadoopConf()
 }

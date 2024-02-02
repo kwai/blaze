@@ -26,7 +26,7 @@ use datafusion::{
 use datafusion_ext_commons::{df_execution_err, downcast_any};
 
 use crate::agg::{
-    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynList},
+    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynList, AggDynValue},
     Agg, WithAggBufAddrs, WithMemTracking,
 };
 
@@ -110,15 +110,21 @@ impl Agg for AggCollectList {
         row_idx: usize,
     ) -> Result<()> {
         if values[0].is_valid(row_idx) {
-            let dyn_list = match acc.dyn_value_mut(self.accum_state_val_addr) {
-                Some(dyn_list) => dyn_list,
-                w => {
-                    *w = Some(Box::new(AggDynList::default()));
-                    w.as_mut().unwrap()
+            match acc.dyn_value_mut(self.accum_state_val_addr) {
+                Some(dyn_list) => {
+                    let list = downcast_any!(dyn_list, mut AggDynList)?;
+                    self.sub_mem_used(list.mem_size());
+
+                    list.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    self.add_mem_used(list.mem_size());
                 }
-            };
-            downcast_any!(dyn_list, mut AggDynList)?
-                .append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                w => {
+                    let mut new_list = AggDynList::default();
+                    new_list.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    self.add_mem_used(new_list.mem_size());
+                    *w = Some(Box::new(new_list));
+                }
+            }
         }
         Ok(())
     }
@@ -127,17 +133,21 @@ impl Agg for AggCollectList {
         let dyn_list = match acc.dyn_value_mut(self.accum_state_val_addr) {
             Some(dyn_list) => dyn_list,
             w => {
-                *w = Some(Box::new(AggDynList::default()));
+                let new_list = AggDynList::default();
+                self.add_mem_used(new_list.mem_size());
+                *w = Some(Box::new(new_list));
                 w.as_mut().unwrap()
             }
         };
         let list = downcast_any!(dyn_list, mut AggDynList)?;
+        self.sub_mem_used(list.mem_size());
 
         for i in 0..values[0].len() {
             if values[0].is_valid(i) {
                 list.append(ScalarValue::try_from_array(&values[0], i)?);
             }
         }
+        self.add_mem_used(list.mem_size());
         Ok(())
     }
 
@@ -153,9 +163,15 @@ impl Agg for AggCollectList {
             (Some(w), Some(v)) => {
                 let w = downcast_any!(w, mut AggDynList)?;
                 let v = downcast_any!(v, mut AggDynList)?;
+                self.sub_mem_used(w.mem_size());
+                self.sub_mem_used(v.mem_size());
+
                 w.merge(v);
+                self.add_mem_used(w.mem_size());
             }
-            (w, v) => *w = std::mem::take(v),
+            (w_none, v @ Some(_)) => *w_none = std::mem::take(v),
+            (None, _) => {}
+            (_, None) => {}
         }
         Ok(())
     }
@@ -163,16 +179,17 @@ impl Agg for AggCollectList {
     fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
         Ok(
             match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
-                Some(w) => ScalarValue::new_list(
-                    Some(
-                        w.as_any_boxed()
-                            .downcast::<AggDynList>()
-                            .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
-                            .into_values()
-                            .into_vec(),
-                    ),
-                    self.arg_type.clone(),
-                ),
+                Some(w) => {
+                    let list = w
+                        .as_any_boxed()
+                        .downcast::<AggDynList>()
+                        .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?;
+                    self.sub_mem_used(list.mem_size());
+                    ScalarValue::new_list(
+                        Some(list.into_values().into_vec()),
+                        self.arg_type.clone(),
+                    )
+                }
                 None => ScalarValue::new_list(None, self.arg_type.clone()),
             },
         )

@@ -47,7 +47,6 @@ use datafusion::{
         ColumnStatistics, ExecutionPlan, Partitioning, PhysicalExpr, Statistics,
     },
 };
-use datafusion_ext_commons::streams::ipc_stream::IpcReadMode;
 use datafusion_ext_exprs::{
     cast::TryCastExpr, get_indexed_field::GetIndexedFieldExpr, get_map_value::GetMapValueExpr,
     named_struct::NamedStructExpr, spark_scalar_subquery_wrapper::SparkScalarSubqueryWrapperExpr,
@@ -66,7 +65,7 @@ use datafusion_ext_plans::{
     filter_exec::FilterExec,
     generate::create_generator,
     generate_exec::GenerateExec,
-    ipc_reader_exec::IpcReaderExec,
+    ipc_reader_exec::{IpcReadMode, IpcReaderExec},
     ipc_writer_exec::IpcWriterExec,
     limit_exec::LimitExec,
     parquet_exec::ParquetExec,

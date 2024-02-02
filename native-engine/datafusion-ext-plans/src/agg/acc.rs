@@ -18,10 +18,7 @@ use std::{
     mem::{size_of, size_of_val},
 };
 
-use arrow::{
-    array::{Array, NullArray},
-    datatypes::DataType,
-};
+use arrow::{array::NullArray, datatypes::DataType};
 use datafusion::{
     common::{Result, ScalarValue},
     parquet::data_type::AsBytes,
@@ -539,7 +536,7 @@ impl AggDynValue for AggDynScalar {
     }
 
     fn mem_size(&self) -> usize {
-        size_of::<Self>() + self.value.size()
+        size_of::<Self>() + self.value.size() - size_of_val(&self.value)
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -676,9 +673,19 @@ impl AggDynValue for AggDynList {
     }
 
     fn mem_size(&self) -> usize {
-        size_of::<Self>()
-            + std::mem::size_of_val(&self.values)
-            + self.values.iter().map(|sv| sv.size()).sum::<usize>()
+        let spilled_size = if self.values.spilled() {
+            self.values.capacity() * (1 + size_of::<ScalarValue>())
+        } else {
+            0
+        };
+        let mem_size = size_of::<Self>()
+            + self
+                .values
+                .iter()
+                .map(|sv| sv.size() - size_of_val(sv))
+                .sum::<usize>()
+            + spilled_size;
+        mem_size
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -715,9 +722,9 @@ impl AggDynSet {
                 if vec1.len() + vec2.len() <= vec1.inline_size() {
                     vec1.append(vec2);
                 } else {
-                    let mut new_set = HashSet::with_capacity(vec1.len() + vec2.len());
-                    new_set.extend(std::mem::take(vec1).into_iter());
-                    new_set.extend(std::mem::take(vec2).into_iter());
+                    let new_set = HashSet::from_iter(
+                        std::mem::take(vec1).into_iter().chain(std::mem::take(vec2)),
+                    );
                     self.values = OptimizedSet::Set(new_set);
                 }
             }
@@ -757,7 +764,7 @@ impl AggDynValue for AggDynSet {
     }
 
     fn mem_size(&self) -> usize {
-        size_of::<Self>() + self.values.mem_size()
+        size_of::<Self>() + self.values.mem_size() - size_of_val(&self.values)
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {
@@ -781,10 +788,19 @@ impl OptimizedSet {
     fn mem_size(&self) -> usize {
         match self {
             OptimizedSet::SmallVec(vec) => {
-                std::mem::size_of_val(vec) + vec.iter().map(|sv| sv.size()).sum::<usize>()
+                size_of::<Self>()
+                    + vec
+                        .iter()
+                        .map(|sv| sv.size() - size_of_val(sv))
+                        .sum::<usize>()
             }
             OptimizedSet::Set(hash_set) => {
-                std::mem::size_of_val(hash_set) + hash_set.iter().map(|sv| sv.size()).sum::<usize>()
+                size_of::<Self>()
+                    + hash_set.capacity() * size_of::<ScalarValue>()
+                    + hash_set
+                        .iter()
+                        .map(|sv| sv.size() - size_of_val(sv))
+                        .sum::<usize>()
             }
         }
     }
@@ -826,7 +842,6 @@ mod test {
     use arrow::datatypes::{DataType, Field, Fields};
     use datafusion::common::{Result, ScalarValue};
     use datafusion_ext_commons::downcast_any;
-    use hashbrown::HashSet;
     use smallvec::SmallVec;
 
     use crate::agg::acc::{

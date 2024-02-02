@@ -113,17 +113,21 @@ impl Agg for AggCollectSet {
         row_idx: usize,
     ) -> Result<()> {
         if values[0].is_valid(row_idx) {
-            let dyn_set = match acc.dyn_value_mut(self.accum_state_val_addr) {
-                Some(dyn_set) => dyn_set,
-                w => {
-                    *w = Some(Box::new(AggDynSet::default()));
-                    w.as_mut().unwrap()
+            match acc.dyn_value_mut(self.accum_state_val_addr) {
+                Some(dyn_set) => {
+                    let set = downcast_any!(dyn_set, mut AggDynSet)?;
+                    self.sub_mem_used(set.mem_size());
+
+                    set.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    self.add_mem_used(set.mem_size());
                 }
-            };
-            let set = downcast_any!(dyn_set, mut AggDynSet)?;
-            let mem_used_old = set.mem_size();
-            set.append(ScalarValue::try_from_array(&values[0], row_idx)?);
-            self.add_mem_used(set.mem_size() - mem_used_old);
+                w => {
+                    let mut new_set = AggDynSet::default();
+                    new_set.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    self.add_mem_used(new_set.mem_size());
+                    *w = Some(Box::new(new_set));
+                }
+            }
         }
         Ok(())
     }
@@ -132,19 +136,21 @@ impl Agg for AggCollectSet {
         let dyn_set = match acc.dyn_value_mut(self.accum_state_val_addr) {
             Some(dyn_set) => dyn_set,
             w => {
-                *w = Some(Box::new(AggDynSet::default()));
+                let new_set = AggDynSet::default();
+                self.add_mem_used(new_set.mem_size());
+                *w = Some(Box::new(new_set));
                 w.as_mut().unwrap()
             }
         };
         let set = downcast_any!(dyn_set, mut AggDynSet)?;
-        let mem_used_old = set.mem_size();
+        self.sub_mem_used(set.mem_size());
 
         for i in 0..values[0].len() {
             if values[0].is_valid(i) {
                 set.append(ScalarValue::try_from_array(&values[0], i)?);
             }
         }
-        self.add_mem_used(set.mem_size() - mem_used_old);
+        self.add_mem_used(set.mem_size());
         Ok(())
     }
 
@@ -160,12 +166,14 @@ impl Agg for AggCollectSet {
             (Some(w), Some(v)) => {
                 let w = downcast_any!(w, mut AggDynSet)?;
                 let v = downcast_any!(v, mut AggDynSet)?;
-                let mem_used_w = w.mem_size();
-                let mem_used_v = v.mem_size();
+                self.sub_mem_used(w.mem_size());
+                self.sub_mem_used(v.mem_size());
                 w.merge(v);
-                self.add_mem_used(w.mem_size() - (mem_used_w + mem_used_v));
+                self.add_mem_used(w.mem_size());
             }
-            (w, v) => *w = std::mem::take(v),
+            (w_none, v @ Some(_)) => *w_none = std::mem::take(v),
+            (None, _) => {}
+            (_, None) => {}
         }
         Ok(())
     }
