@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use arrow::{array::*, datatypes::*};
@@ -23,16 +23,32 @@ use datafusion::{
     common::{Result, ScalarValue},
     physical_expr::PhysicalExpr,
 };
+use datafusion_ext_commons::{df_execution_err, downcast_any};
 
 use crate::agg::{
-    agg_buf::{AccumInitialValue, AggBuf, AggDynList},
-    Agg,
+    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynList, AggDynValue},
+    Agg, WithAggBufAddrs, WithMemTracking,
 };
 
 pub struct AggCollectList {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     arg_type: DataType,
+    accum_initial: [AccumInitialValue; 1],
+    accum_state_val_addr: AccumStateValAddr,
+    mem_used_tracker: AtomicUsize,
+}
+
+impl WithAggBufAddrs for AggCollectList {
+    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
+        self.accum_state_val_addr = accum_state_val_addrs[0];
+    }
+}
+
+impl WithMemTracking for AggCollectList {
+    fn mem_used_tracker(&self) -> &AtomicUsize {
+        &self.mem_used_tracker
+    }
 }
 
 impl AggCollectList {
@@ -44,7 +60,10 @@ impl AggCollectList {
         Ok(Self {
             child,
             data_type,
+            accum_initial: [AccumInitialValue::DynList(arg_type.clone())],
             arg_type,
+            accum_state_val_addr: AccumStateValAddr::default(),
+            mem_used_tracker: AtomicUsize::new(0),
         })
     }
 }
@@ -81,92 +100,110 @@ impl Agg for AggCollectList {
     }
 
     fn accums_initial(&self) -> &[AccumInitialValue] {
-        &[AccumInitialValue::DynList]
+        &self.accum_initial
     }
 
     fn partial_update(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
+        acc: &mut AccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
-        let dyn_list = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynList>()
-            .unwrap();
-        let values = &values[0];
+        if values[0].is_valid(row_idx) {
+            match acc.dyn_value_mut(self.accum_state_val_addr) {
+                Some(dyn_list) => {
+                    let list = downcast_any!(dyn_list, mut AggDynList)?;
+                    self.sub_mem_used(list.mem_size());
 
-        if values.is_valid(row_idx) {
-            dyn_list.append(ScalarValue::try_from_array(&values, row_idx)?);
-        }
-        Ok(())
-    }
-
-    fn partial_update_all(
-        &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let dyn_list = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynList>()
-            .unwrap();
-        let values = &values[0];
-
-        for i in 0..values.len() {
-            if values.is_valid(i) {
-                dyn_list.append(ScalarValue::try_from_array(&values, i)?);
+                    list.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    self.add_mem_used(list.mem_size());
+                }
+                w => {
+                    let mut new_list = AggDynList::default();
+                    new_list.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    self.add_mem_used(new_list.mem_size());
+                    *w = Some(Box::new(new_list));
+                }
             }
         }
         Ok(())
     }
 
-    fn partial_merge(
-        &self,
-        agg_buf: &mut AggBuf,
-        merging_agg_buf: &mut AggBuf,
-        agg_buf_addrs: &[u64],
-    ) -> Result<()> {
-        let dyn_list1 = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynList>()
-            .unwrap();
-        let dyn_list2 = merging_agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynList>()
-            .unwrap();
+    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+        let dyn_list = match acc.dyn_value_mut(self.accum_state_val_addr) {
+            Some(dyn_list) => dyn_list,
+            w => {
+                let new_list = AggDynList::default();
+                self.add_mem_used(new_list.mem_size());
+                *w = Some(Box::new(new_list));
+                w.as_mut().unwrap()
+            }
+        };
+        let list = downcast_any!(dyn_list, mut AggDynList)?;
+        self.sub_mem_used(list.mem_size());
 
-        dyn_list1.merge(dyn_list2);
+        for i in 0..values[0].len() {
+            if values[0].is_valid(i) {
+                list.append(ScalarValue::try_from_array(&values[0], i)?);
+            }
+        }
+        self.add_mem_used(list.mem_size());
         Ok(())
     }
 
-    fn final_merge(&self, agg_buf: &mut AggBuf, agg_buf_addrs: &[u64]) -> Result<ScalarValue> {
-        let dyn_list = agg_buf
-            .dyn_value_mut(agg_buf_addrs[0])
-            .as_any_mut()
-            .downcast_mut::<AggDynList>()
-            .unwrap();
-        Ok(ScalarValue::new_list(
-            Some(std::mem::take(&mut dyn_list.values)),
-            self.arg_type.clone(),
-        ))
+    fn partial_merge(
+        &self,
+        acc: &mut AccumStateRow,
+        merging_acc: &mut AccumStateRow,
+    ) -> Result<()> {
+        match (
+            acc.dyn_value_mut(self.accum_state_val_addr),
+            merging_acc.dyn_value_mut(self.accum_state_val_addr),
+        ) {
+            (Some(w), Some(v)) => {
+                let w = downcast_any!(w, mut AggDynList)?;
+                let v = downcast_any!(v, mut AggDynList)?;
+                self.sub_mem_used(w.mem_size());
+                self.sub_mem_used(v.mem_size());
+
+                w.merge(v);
+                self.add_mem_used(w.mem_size());
+            }
+            (w_none, v @ Some(_)) => *w_none = std::mem::take(v),
+            (None, _) => {}
+            (_, None) => {}
+        }
+        Ok(())
     }
 
-    fn final_batch_merge(
-        &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_addrs: &[u64],
-    ) -> Result<ArrayRef> {
-        let values: Vec<ScalarValue> = agg_bufs
+    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+        Ok(
+            match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
+                Some(w) => {
+                    let list = w
+                        .as_any_boxed()
+                        .downcast::<AggDynList>()
+                        .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?;
+                    self.sub_mem_used(list.mem_size());
+                    ScalarValue::new_list(
+                        Some(list.into_values().into_vec()),
+                        self.arg_type.clone(),
+                    )
+                }
+                None => ScalarValue::new_list(None, self.arg_type.clone()),
+            },
+        )
+    }
+
+    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+        let values: Vec<ScalarValue> = accs
             .iter_mut()
-            .map(|agg_buf| self.final_merge(agg_buf, agg_buf_addrs))
+            .map(|acc| self.final_merge(acc))
             .collect::<Result<_>>()?;
+
+        if values.is_empty() {
+            return Ok(new_empty_array(self.data_type()));
+        }
         Ok(ScalarValue::iter_to_array(values)?)
     }
 }

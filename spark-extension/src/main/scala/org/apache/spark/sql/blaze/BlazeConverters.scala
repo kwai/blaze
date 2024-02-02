@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
+import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -777,7 +778,19 @@ object BlazeConverters extends Logging {
       case DataWritingCommandExec(cmd: InsertIntoHiveTable, child)
           if cmd.table.storage.outputFormat.contains(
             classOf[MapredParquetOutputFormat].getName) =>
-        Shims.get.createNativeParquetInsertIntoHiveTableExec(cmd, child)
+        // add an extra SortExec to sort child with dynamic columns
+        var sortedChild = convertToNative(child)
+        val numDynParts = cmd.partition.count(_._2.isEmpty)
+        val requiredOrdering =
+          child.output.slice(child.output.length - numDynParts, child.output.length)
+        if (child.outputOrdering.map(_.child) != requiredOrdering) {
+          sortedChild = Shims.get.createNativeSortExec(
+            requiredOrdering.map(SortOrder(_, Ascending)),
+            global = false,
+            sortedChild)
+        }
+        Shims.get.createNativeParquetInsertIntoHiveTableExec(cmd, sortedChild)
+
       case _ =>
         throw new NotImplementedError("unsupported DataWritingCommandExec")
     }

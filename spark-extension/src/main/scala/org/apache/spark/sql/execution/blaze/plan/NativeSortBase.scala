@@ -16,6 +16,7 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -37,7 +38,6 @@ import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.PhysicalSortExprNode
 import org.blaze.protobuf.SortExecNode
-
 import org.apache.spark.sql.blaze.NativeSupports
 
 abstract class NativeSortBase(
@@ -47,17 +47,19 @@ abstract class NativeSortBase(
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set(
         "output_rows",
         "elapsed_compute",
-        "spilled_bytes",
+        "mem_spill_count",
+        "mem_spill_size",
+        "mem_spill_iotime",
+        "disk_spill_size",
+        "disk_spill_iotime",
         "input_batch_count",
-        "input_batch_mem_size_total",
-        "input_batch_mem_size_avg",
-        "input_batch_num_rows_avg",
+        "input_batch_mem_size",
         "input_row_count"))
       .toSeq: _*)
 

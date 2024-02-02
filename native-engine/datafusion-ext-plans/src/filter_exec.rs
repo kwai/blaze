@@ -180,9 +180,15 @@ async fn execute_filter(
     predicates: Vec<PhysicalExprRef>,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-    let cached_exprs_evaluator = CachedExprsEvaluator::try_new(predicates, vec![])?;
+    let input_schema = input.schema();
+    let cached_exprs_evaluator = CachedExprsEvaluator::try_new(
+        predicates,
+        vec![],
+        input_schema.clone(),
+        input_schema.clone(),
+    )?;
 
-    context.output_with_sender("Filter", input.schema(), move |sender| async move {
+    context.output_with_sender("Filter", input_schema, move |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {
             let mut timer = metrics.elapsed_compute().timer();
             let filtered_batch = cached_exprs_evaluator.filter(&batch)?;

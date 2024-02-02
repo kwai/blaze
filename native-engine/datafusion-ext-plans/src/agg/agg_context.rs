@@ -31,12 +31,16 @@ use datafusion::{
     common::{cast::as_binary_array, Result},
     physical_expr::PhysicalExprRef,
 };
+use datafusion_ext_commons::df_execution_err;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::{
     agg::{
-        agg_buf::{create_agg_buf_from_initial_value, AccumInitialValue, AggBuf},
+        acc::{
+            create_acc_from_initial_value, create_dyn_loaders_from_initial_value,
+            create_dyn_savers_from_initial_value, AccumInitialValue, AccumStateRow, LoadFn, SaveFn,
+        },
         Agg, AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME,
     },
     common::cached_exprs_evaluator::CachedExprsEvaluator,
@@ -50,25 +54,22 @@ pub struct AggContext {
     pub need_partial_update_aggs: Vec<(usize, Arc<dyn Agg>)>,
     pub need_partial_merge_aggs: Vec<(usize, Arc<dyn Agg>)>,
 
+    pub input_schema: SchemaRef,
     pub grouping_schema: SchemaRef,
     pub agg_schema: SchemaRef,
     pub output_schema: SchemaRef,
     pub grouping_row_converter: Arc<Mutex<RowConverter>>,
     pub groupings: Vec<GroupingExpr>,
     pub aggs: Vec<AggExpr>,
-    pub initial_agg_buf: AggBuf,
-    pub initial_input_agg_buf: AggBuf,
+    pub initial_acc: AccumStateRow,
+    pub initial_input_acc: AccumStateRow,
     pub initial_input_buffer_offset: usize,
     pub supports_partial_skipping: bool,
     pub partial_skipping_ratio: f64,
     pub partial_skipping_min_rows: usize,
     pub agg_expr_evaluator: CachedExprsEvaluator,
-    pub agg_expr_evaluator_output_schema: SchemaRef,
-
-    // agg buf addr offsets/lens of every aggs
-    pub agg_buf_addrs: Box<[u64]>,
-    pub agg_buf_addr_offsets: Box<[usize]>,
-    pub agg_buf_addr_counts: Box<[usize]>,
+    pub acc_dyn_loaders: Vec<LoadFn>,
+    pub acc_dyn_savers: Vec<SaveFn>,
 }
 
 impl Debug for AggContext {
@@ -82,7 +83,7 @@ impl AggContext {
         exec_mode: AggExecMode,
         input_schema: SchemaRef,
         groupings: Vec<GroupingExpr>,
-        aggs: Vec<AggExpr>,
+        mut aggs: Vec<AggExpr>,
         initial_input_buffer_offset: usize,
         supports_partial_skipping: bool,
     ) -> Result<Self> {
@@ -151,7 +152,9 @@ impl AggContext {
             .flat_map(|agg: &AggExpr| agg.agg.accums_initial())
             .cloned()
             .collect();
-        let (initial_agg_buf, agg_buf_addrs) = create_agg_buf_from_initial_value(&initial_accums)?;
+        let (initial_acc, accum_state_val_addrs) = create_acc_from_initial_value(&initial_accums)?;
+        let acc_dyn_loaders = create_dyn_loaders_from_initial_value(&initial_accums)?;
+        let acc_dyn_savers = create_dyn_savers_from_initial_value(&initial_accums)?;
 
         // in distinct aggregrations, partial and partial-merge may happen at the same
         // time, i.e:
@@ -164,8 +167,8 @@ impl AggContext {
         //      AggExpr { field_name: "#747", mode: PartialMerge, agg: Count(...) }
         //  ]]
         //
-        // in this situation, the processing agg_buf has more fields than input. so we
-        // need to maintain a standalone agg_buf for the input.
+        // in this situation, the processing acc has more fields than input. so we
+        // need to maintain a standalone acc for the input.
         // the addrs is not used because the extra fields are always in the last. the
         // processing addrs can be reused.
         let initial_input_accums: Box<[AccumInitialValue]> = need_partial_merge_aggs
@@ -173,16 +176,17 @@ impl AggContext {
             .flat_map(|(_, agg)| agg.accums_initial())
             .cloned()
             .collect();
-        let (initial_input_agg_buf, _input_agg_buf_addrs) =
-            create_agg_buf_from_initial_value(&initial_input_accums)?;
+        let (initial_input_acc, _input_accum_state_val_addrs) =
+            create_acc_from_initial_value(&initial_input_accums)?;
 
-        let mut agg_buf_addr_offsets = Vec::with_capacity(aggs.len());
-        let mut agg_buf_addr_counts = Vec::with_capacity(aggs.len());
         let mut offset = 0;
-        for agg in &aggs {
+        for agg in &mut aggs {
             let len = agg.agg.accums_initial().len();
-            agg_buf_addr_offsets.push(offset);
-            agg_buf_addr_counts.push(len);
+            unsafe {
+                // safety: accum_state_val_addrs is guaranteed not to be used at this time
+                Arc::get_mut_unchecked(&mut agg.agg)
+                    .set_accum_state_val_addrs(&accum_state_val_addrs[offset..][..len]);
+            }
             offset += len;
         }
 
@@ -203,7 +207,12 @@ impl AggContext {
                 })
                 .collect::<Result<Fields>>()?,
         ));
-        let agg_expr_evaluator = CachedExprsEvaluator::try_new(vec![], agg_exprs_flatten)?;
+        let agg_expr_evaluator = CachedExprsEvaluator::try_new(
+            vec![],
+            agg_exprs_flatten,
+            input_schema.clone(),
+            agg_expr_evaluator_output_schema,
+        )?;
 
         let (partial_skipping_ratio, partial_skipping_min_rows) = if supports_partial_skipping {
             (
@@ -221,23 +230,22 @@ impl AggContext {
             need_final_merge,
             need_partial_update_aggs,
             need_partial_merge_aggs,
+            input_schema,
             output_schema,
             grouping_schema,
             grouping_row_converter,
             agg_schema,
             groupings,
             aggs,
-            initial_agg_buf,
-            initial_input_agg_buf,
-            agg_buf_addrs,
+            initial_acc,
+            initial_input_acc,
+            acc_dyn_loaders,
+            acc_dyn_savers,
             agg_expr_evaluator,
-            agg_expr_evaluator_output_schema,
             initial_input_buffer_offset,
             supports_partial_skipping,
             partial_skipping_ratio,
             partial_skipping_min_rows,
-            agg_buf_addr_offsets: agg_buf_addr_offsets.into(),
-            agg_buf_addr_counts: agg_buf_addr_counts.into(),
         })
     }
 
@@ -259,9 +267,7 @@ impl AggContext {
         if !self.need_partial_update {
             return Ok(vec![]);
         }
-        let agg_exprs_batch = self
-            .agg_expr_evaluator
-            .filter_project(input_batch, self.agg_expr_evaluator_output_schema.clone())?;
+        let agg_exprs_batch = self.agg_expr_evaluator.filter_project(input_batch)?;
 
         let mut input_arrays = Vec::with_capacity(self.aggs.len());
         let mut offset = 0;
@@ -280,10 +286,7 @@ impl AggContext {
         Ok(input_arrays)
     }
 
-    pub fn get_input_agg_buf_array<'a>(
-        &self,
-        input_batch: &'a RecordBatch,
-    ) -> Result<&'a BinaryArray> {
+    pub fn get_input_acc_array<'a>(&self, input_batch: &'a RecordBatch) -> Result<&'a BinaryArray> {
         if self.need_partial_merge {
             as_binary_array(input_batch.columns().last().unwrap())
         } else {
@@ -294,25 +297,23 @@ impl AggContext {
 
     pub fn build_agg_columns(
         &self,
-        mut records: Vec<(impl AsRef<[u8]>, AggBuf)>,
+        mut records: Vec<(impl AsRef<[u8]>, AccumStateRow)>,
     ) -> Result<Vec<ArrayRef>> {
         let mut agg_columns = vec![];
 
         if self.need_final_merge {
             // output final merged value
-            let mut agg_bufs: Vec<AggBuf> =
-                records.into_iter().map(|(_, agg_buf)| agg_buf).collect();
-            for (idx, agg) in self.aggs.iter().enumerate() {
-                let addrs = &self.agg_buf_addrs[self.agg_buf_addr_offsets[idx]..];
-                let values = agg.agg.final_batch_merge(&mut agg_bufs, addrs)?;
+            let mut accs: Vec<AccumStateRow> = records.into_iter().map(|(_, acc)| acc).collect();
+            for agg in self.aggs.iter() {
+                let values = agg.agg.final_batch_merge(&mut accs)?;
                 agg_columns.push(values);
             }
         } else {
-            // output agg_buf as a binary column
+            // output acc as a binary column
             let mut binary_array = BinaryBuilder::with_capacity(records.len(), 0);
-            for (_, agg_buf) in &mut records {
-                let agg_buf_bytes = agg_buf.save_to_bytes()?;
-                binary_array.append_value(agg_buf_bytes);
+            for (_, acc) in &mut records {
+                let acc_bytes = acc.save_to_bytes(&self.acc_dyn_savers)?;
+                binary_array.append_value(acc_bytes);
             }
             agg_columns.push(Arc::new(binary_array.finish()));
         }
@@ -321,7 +322,7 @@ impl AggContext {
 
     pub fn convert_records_to_batch(
         &self,
-        records: Vec<(impl AsRef<[u8]>, AggBuf)>,
+        records: Vec<(impl AsRef<[u8]>, AccumStateRow)>,
     ) -> Result<RecordBatch> {
         let row_count = records.len();
         let grouping_row_converter = self.grouping_row_converter.lock();
@@ -340,20 +341,15 @@ impl AggContext {
         )?)
     }
 
-    pub fn agg_addrs(&self, agg_idx: usize) -> &[u64] {
-        let addr_offset = self.agg_buf_addr_offsets[agg_idx];
-        &self.agg_buf_addrs[addr_offset..]
-    }
-
     pub fn partial_update_input(
         &self,
-        agg_buf: &mut AggBuf,
+        acc: &mut AccumStateRow,
         input_arrays: &[Vec<ArrayRef>],
         row_idx: usize,
     ) -> Result<()> {
         if self.need_partial_update {
             for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_update(agg_buf, self.agg_addrs(*idx), &input_arrays[*idx], row_idx)?;
+                agg.partial_update(acc, &input_arrays[*idx], row_idx)?;
             }
         }
         Ok(())
@@ -361,27 +357,25 @@ impl AggContext {
 
     pub fn partial_batch_update_input(
         &self,
-        agg_bufs: &mut [AggBuf],
-        input_arrays: &[Vec<ArrayRef>],
-    ) -> Result<usize> {
-        let mut mem_diff = 0;
-        if self.need_partial_update {
-            for (idx, agg) in &self.need_partial_update_aggs {
-                mem_diff +=
-                    agg.partial_batch_update(agg_bufs, self.agg_addrs(*idx), &input_arrays[*idx])?;
-            }
-        }
-        Ok(mem_diff)
-    }
-
-    pub fn partial_update_input_all(
-        &self,
-        agg_buf: &mut AggBuf,
+        accs: &mut [AccumStateRow],
         input_arrays: &[Vec<ArrayRef>],
     ) -> Result<()> {
         if self.need_partial_update {
             for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_update_all(agg_buf, self.agg_addrs(*idx), &input_arrays[*idx])?;
+                agg.partial_batch_update(accs, &input_arrays[*idx])?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn partial_update_input_all(
+        &self,
+        acc: &mut AccumStateRow,
+        input_arrays: &[Vec<ArrayRef>],
+    ) -> Result<()> {
+        if self.need_partial_update {
+            for (idx, agg) in &self.need_partial_update_aggs {
+                agg.partial_update_all(acc, &input_arrays[*idx])?;
             }
         }
         Ok(())
@@ -389,15 +383,15 @@ impl AggContext {
 
     pub fn partial_merge_input(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_array: &BinaryArray,
+        acc: &mut AccumStateRow,
+        acc_array: &BinaryArray,
         row_idx: usize,
     ) -> Result<()> {
         if self.need_partial_merge {
-            let mut input_agg_buf = self.initial_input_agg_buf.clone();
-            input_agg_buf.load_from_bytes(agg_buf_array.value(row_idx))?;
-            for (idx, agg) in &self.need_partial_merge_aggs {
-                agg.partial_merge(agg_buf, &mut input_agg_buf, self.agg_addrs(*idx))?;
+            let mut input_acc = self.initial_input_acc.clone();
+            input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
+            for (_, agg) in &self.need_partial_merge_aggs {
+                agg.partial_merge(acc, &mut input_acc)?;
             }
         }
         Ok(())
@@ -405,40 +399,51 @@ impl AggContext {
 
     pub fn partial_batch_merge_input(
         &self,
-        agg_bufs: &mut [AggBuf],
-        agg_buf_array: &BinaryArray,
-    ) -> Result<usize> {
-        let mut mem_diff = 0;
+        accs: &mut [AccumStateRow],
+        acc_array: &BinaryArray,
+    ) -> Result<()> {
         if self.need_partial_merge {
-            let mut input_agg_bufs = agg_buf_array
+            let mut input_accs = acc_array
                 .iter()
                 .map(|value| {
-                    let mut input_agg_buf = self.initial_input_agg_buf.clone();
-                    input_agg_buf.load_from_bytes(value.unwrap())?;
-                    Ok(input_agg_buf)
+                    let mut input_acc = self.initial_input_acc.clone();
+                    input_acc.load_from_bytes(value.unwrap(), &self.acc_dyn_loaders)?;
+                    Ok(input_acc)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            for (idx, agg) in &self.need_partial_merge_aggs {
-                mem_diff +=
-                    agg.partial_batch_merge(agg_bufs, &mut input_agg_bufs, self.agg_addrs(*idx))?;
+            for (_, agg) in &self.need_partial_merge_aggs {
+                agg.partial_batch_merge(accs, &mut input_accs)?;
             }
         }
-        Ok(mem_diff)
+        Ok(())
     }
 
     pub fn partial_merge_input_all(
         &self,
-        agg_buf: &mut AggBuf,
-        agg_buf_array: &BinaryArray,
+        acc: &mut AccumStateRow,
+        acc_array: &BinaryArray,
     ) -> Result<()> {
         if self.need_partial_merge {
-            let mut input_agg_buf = self.initial_input_agg_buf.clone();
-            for row_idx in 0..agg_buf_array.len() {
-                input_agg_buf.load_from_bytes(agg_buf_array.value(row_idx))?;
-                for (idx, agg) in &self.need_partial_merge_aggs {
-                    agg.partial_merge(agg_buf, &mut input_agg_buf, self.agg_addrs(*idx))?;
+            let mut input_acc = self.initial_input_acc.clone();
+            for row_idx in 0..acc_array.len() {
+                input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
+                for (_, agg) in &self.need_partial_merge_aggs {
+                    agg.partial_merge(acc, &mut input_acc)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub fn partial_merge(
+        &self,
+        acc: &mut AccumStateRow,
+        merging_acc: &mut AccumStateRow,
+    ) -> Result<()> {
+        for agg in &self.aggs {
+            agg.agg
+                .partial_merge(acc, merging_acc)
+                .or_else(|err| df_execution_err!("agg: executing partial_merge() error: {err}"))?;
         }
         Ok(())
     }

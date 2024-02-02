@@ -12,11 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[inline]
 pub fn radix_sort_u16_by<T>(array: &mut [T], key: impl Fn(&T) -> u16) -> Vec<usize> {
+    radix_sort_u16_with_max_key_by(array, 65535, key)
+}
+
+#[inline]
+pub fn radix_sort_u16_with_max_key_by<T>(
+    array: &mut [T],
+    max_key: u16,
+    key: impl Fn(&T) -> u16,
+) -> Vec<usize> {
+    let num_keys = max_key as usize + 1;
+
     // performance critical
     unsafe {
         // count
-        let mut counts = vec![0; 65536];
+        let mut counts = vec![0; num_keys];
         for item in array.iter() {
             *counts.get_unchecked_mut(key(item) as usize) += 1;
         }
@@ -27,7 +39,7 @@ pub fn radix_sort_u16_by<T>(array: &mut [T], key: impl Fn(&T) -> u16) -> Vec<usi
             cur: usize,
             end: usize,
         }
-        let mut parts = vec![Part::default(); 65536];
+        let mut parts = vec![Part::default(); num_keys];
         let mut beg = 0;
         for (idx, count) in counts.iter().enumerate() {
             if *count > 0 {
@@ -40,8 +52,8 @@ pub fn radix_sort_u16_by<T>(array: &mut [T], key: impl Fn(&T) -> u16) -> Vec<usi
         }
 
         // reorganize each partition
-        let mut inexhausted_part_indices = vec![0; 65536];
-        for i in 0..65536 {
+        let mut inexhausted_part_indices = vec![0; num_keys];
+        for i in 0..num_keys {
             inexhausted_part_indices[i] = i;
         }
         while {

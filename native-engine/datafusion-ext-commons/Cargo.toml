@@ -10,7 +10,7 @@ default = ["tokio/rt-multi-thread"]
 [dependencies]
 arrow = { workspace = true }
 arrow-schema = { workspace = true }
-async-trait = "0.1.75"
+async-trait = "0.1.77"
 bitvec = "1.0.1"
 blaze-jni-bridge = { workspace = true }
 bigdecimal = "0.3.0"
@@ -28,6 +28,7 @@ slimmer_box = "0.6.5"
 tempfile = "3"
 thrift = "0.17.0"
 tokio = "1.35"
+unchecked-index = "0.2.2"
 zstd = "0.12.3"
 
 [dev-dependencies]

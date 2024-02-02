@@ -209,18 +209,18 @@ async fn execute_project_with_filtering(
         .skip(num_exprs)
         .cloned()
         .collect::<Vec<PhysicalExprRef>>();
-    let cached_expr_evaluator = CachedExprsEvaluator::try_new(filters, exprs)?;
+    let cached_expr_evaluator =
+        CachedExprsEvaluator::try_new(filters, exprs, input.schema(), output_schema.clone())?;
 
     let mut input = stat_input(
         InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition)?,
         input.execute_projected(partition, context.clone(), &projection)?,
     )?;
 
-    context.output_with_sender("Project", output_schema.clone(), move |sender| async move {
+    context.output_with_sender("Project", output_schema, move |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {
             let mut timer = baseline_metrics.elapsed_compute().timer();
-            let output_batch =
-                cached_expr_evaluator.filter_project(&batch, output_schema.clone())?;
+            let output_batch = cached_expr_evaluator.filter_project(&batch)?;
             drop(batch);
 
             baseline_metrics.record_output(output_batch.num_rows());

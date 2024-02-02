@@ -21,9 +21,9 @@ use arrow::{
     datatypes::SchemaRef,
     record_batch::{RecordBatch, RecordBatchOptions},
 };
-use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
+use blaze_jni_bridge::{jni_call_static, jni_get_string, jni_new_global_ref, jni_new_string};
 use datafusion::{
-    common::{DataFusionError, Result, Statistics},
+    common::{Result, ScalarValue, Statistics},
     execution::context::TaskContext,
     parquet::{
         arrow::{parquet_to_arrow_schema, ArrowWriter},
@@ -35,7 +35,7 @@ use datafusion::{
     physical_plan::{
         metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, Metric, Partitioning,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Metric, Partitioning,
         SendableRecordBatchStream,
     },
 };
@@ -45,14 +45,15 @@ use datafusion_ext_commons::{
     hadoop_fs::{FsDataOutputStream, FsProvider},
 };
 use futures::{stream::once, StreamExt, TryStreamExt};
-use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
+
+use crate::common::output::TaskOutputter;
 
 #[derive(Debug)]
 pub struct ParquetSinkExec {
     fs_resource_id: String,
-    path: String,
     input: Arc<dyn ExecutionPlan>,
+    num_dyn_parts: usize,
     props: Vec<(String, String)>,
     metrics: ExecutionPlanMetricsSet,
 }
@@ -61,13 +62,13 @@ impl ParquetSinkExec {
     pub fn new(
         input: Arc<dyn ExecutionPlan>,
         fs_resource_id: String,
-        path: String,
+        num_dyn_parts: usize,
         props: Vec<(String, String)>,
     ) -> Self {
         Self {
             input,
             fs_resource_id,
-            path,
+            num_dyn_parts,
             props,
             metrics: ExecutionPlanMetricsSet::new(),
         }
@@ -76,7 +77,7 @@ impl ParquetSinkExec {
 
 impl DisplayAs for ParquetSinkExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ParquetSink [path={}]", self.path)
+        write!(f, "ParquetSink")
     }
 }
 
@@ -108,7 +109,7 @@ impl ExecutionPlan for ParquetSinkExec {
         Ok(Arc::new(Self::new(
             children[0].clone(),
             self.fs_resource_id.clone(),
-            self.path.clone(),
+            self.num_dyn_parts,
             self.props.clone(),
         )))
     }
@@ -118,10 +119,9 @@ impl ExecutionPlan for ParquetSinkExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let fs_resource_id = self.fs_resource_id.clone();
-        let path = self.path.clone();
-        let props = self.props.clone();
         let metrics = BaselineMetrics::new(&self.metrics, partition);
+        let elapsed_compute = metrics.elapsed_compute().clone();
+        let _timer = elapsed_compute.timer();
 
         // register io_time metric
         let io_time = Time::default();
@@ -145,16 +145,21 @@ impl ExecutionPlan for ParquetSinkExec {
         ));
         self.metrics.register(bytes_written_metric);
 
+        let parquet_sink_context = Arc::new(ParquetSinkContext::try_new(
+            &self.fs_resource_id,
+            self.num_dyn_parts,
+            &io_time,
+            &self.props,
+        )?);
+
         let input = self.input.execute(partition, context.clone())?;
         let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(execute_parquet_sink(
-                fs_resource_id,
-                path,
+                context,
+                parquet_sink_context,
                 input,
-                props,
                 metrics,
-                io_time,
                 bytes_written,
             ))
             .try_flatten(),
@@ -171,107 +176,168 @@ impl ExecutionPlan for ParquetSinkExec {
     }
 }
 
-async fn execute_parquet_sink(
-    fs_resource_id: String,
-    path: String,
-    mut input: SendableRecordBatchStream,
-    props: Vec<(String, String)>,
-    metrics: BaselineMetrics,
-    io_time: Time,
-    bytes_written: Count,
-) -> Result<SendableRecordBatchStream> {
-    let mut timer = metrics.elapsed_compute().timer();
-
-    // parse hive_schema from props
-    let hive_schema = match props
-        .iter()
-        .find(|(key, _)| key == "parquet.hive.schema")
-        .map(|(_, value)| value)
-        .and_then(|value| parse_message_type(value.as_str()).ok())
-        .and_then(|tp| parquet_to_arrow_schema(&SchemaDescriptor::new(Arc::new(tp)), None).ok())
-        .map(Arc::new)
-    {
-        Some(hive_schema) => hive_schema,
-        _ => df_execution_err!("missing parquet.hive.schema")?,
-    };
-
-    // parse row group byte size from props
-    let block_size = props
-        .iter()
-        .find(|(key, _)| key == "parquet.block.size")
-        .and_then(|(_, value)| value.parse::<usize>().ok())
-        .unwrap_or(128 * 1024 * 1024);
-
-    let schema = input.schema();
-    let props = parse_writer_props(&props);
-    let parquet_writer: Arc<Mutex<OnceCell<ArrowWriter<FSDataWriter>>>> = Arc::default();
-    timer.stop();
-
-    // write parquet data
-    while let Some(batch) = input.next().await.transpose()? {
-        timer.restart();
-
-        // adapt batch to output schema
-        let batch = adapt_schema(batch, &hive_schema)?;
-
-        // init parquet writer after first batch is received
-        // to avoid creating empty file
-        parquet_writer.lock().get_or_try_init(|| {
-            create_parquet_writer(
-                &fs_resource_id,
-                &path,
-                &hive_schema,
-                &props,
-                &io_time,
-                &bytes_written,
-            )
-        })?;
-
-        let parquet_writer = parquet_writer.clone();
-        let metrics = metrics.clone();
-        let fut = tokio::task::spawn_blocking(move || {
-            let num_rows = batch.num_rows();
-            let mut parquet_writer_locked = parquet_writer.lock();
-            let parquet_writer = parquet_writer_locked.get_mut().unwrap();
-
-            parquet_writer.write(&batch)?;
-            if parquet_writer.in_progress_size() >= block_size {
-                parquet_writer.flush()?;
-            }
-            metrics.record_output(num_rows);
-            Ok::<_, DataFusionError>(())
-        });
-        fut.await.or_else(|err| df_execution_err!("{err}"))??;
-        timer.stop();
-    }
-
-    timer.restart();
-    let maybe_writer: Option<ArrowWriter<FSDataWriter>> = parquet_writer.lock().take();
-    if let Some(w) = maybe_writer {
-        let fut = tokio::task::spawn_blocking(move || {
-            w.close()?;
-            Ok::<_, DataFusionError>(())
-        });
-        fut.await.or_else(|err| df_execution_err!("{err}"))??;
-    }
-
-    // parquet sink does not provide any output records
-    Ok(Box::pin(EmptyRecordBatchStream::new(schema)))
+struct ParquetSinkContext {
+    fs_provider: FsProvider,
+    hive_schema: SchemaRef,
+    num_dyn_parts: usize,
+    row_group_block_size: usize,
+    props: WriterProperties,
 }
 
-fn adapt_schema(batch: RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
+impl ParquetSinkContext {
+    fn try_new(
+        fs_resource_id: &str,
+        num_dyn_parts: usize,
+        io_time: &Time,
+        props: &[(String, String)],
+    ) -> Result<Self> {
+        let fs_provider = {
+            let resource_id = jni_new_string!(&fs_resource_id)?;
+            let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
+            FsProvider::new(jni_new_global_ref!(fs.as_obj())?, io_time)
+        };
+
+        // parse hive schema from props
+        let hive_schema = match props
+            .iter()
+            .find(|(key, _)| key == "parquet.hive.schema")
+            .map(|(_, value)| value)
+            .and_then(|value| parse_message_type(value.as_str()).ok())
+            .and_then(|tp| parquet_to_arrow_schema(&SchemaDescriptor::new(Arc::new(tp)), None).ok())
+            .map(Arc::new)
+        {
+            Some(hive_schema) => hive_schema,
+            _ => df_execution_err!("missing parquet.hive.schema")?,
+        };
+
+        // parse row group byte size from props
+        let row_group_block_size = props
+            .iter()
+            .find(|(key, _)| key == "parquet.block.size")
+            .and_then(|(_, value)| value.parse::<usize>().ok())
+            .unwrap_or(128 * 1024 * 1024);
+
+        Ok(Self {
+            fs_provider,
+            hive_schema,
+            num_dyn_parts,
+            row_group_block_size,
+            props: parse_writer_props(props),
+        })
+    }
+}
+
+async fn execute_parquet_sink(
+    context: Arc<TaskContext>,
+    parquet_sink_context: Arc<ParquetSinkContext>,
+    mut input: SendableRecordBatchStream,
+    metrics: BaselineMetrics,
+    bytes_written: Count,
+) -> Result<SendableRecordBatchStream> {
+    let schema = input.schema();
+    let part_writer: Arc<Mutex<Option<PartWriter>>> = Arc::default();
+
+    context.output_with_sender("ParquetSink", schema.clone(), move |sender| async move {
+        macro_rules! part_writer_init {
+            ($batch:expr, $part_values:expr) => {{
+                let parquet_sink_context_cloned = parquet_sink_context.clone();
+                *part_writer.lock() = Some({
+                    // send identity batch, after that we can achieve a new output file
+                    sender.send(Ok($batch.slice(0, 1)), None).await;
+                    tokio::task::spawn_blocking(move || {
+                        PartWriter::try_new(parquet_sink_context_cloned, $part_values)
+                    })
+                    .await
+                    .or_else(|e| df_execution_err!("closing parquet file error: {e}"))??
+                });
+            }};
+        }
+        macro_rules! part_writer_output {
+            ($batch:expr) => {{
+                let part_writer = part_writer.clone();
+                let batch = adapt_schema($batch, &parquet_sink_context.hive_schema)?;
+                tokio::task::spawn_blocking(move || {
+                    let mut part_writer = part_writer.lock();
+                    let w = part_writer.as_mut().unwrap();
+                    w.write(&batch)
+                })
+                .await
+                .or_else(|e| df_execution_err!("writing parquet file error: {e}"))??;
+            }};
+        }
+        macro_rules! part_writer_close {
+            () => {{
+                let maybe_writer = part_writer.lock().take();
+                if let Some(w) = maybe_writer {
+                    let file_stat = tokio::task::spawn_blocking(move || w.close())
+                        .await
+                        .or_else(|e| df_execution_err!("closing parquet file error: {e}"))??;
+
+                    jni_call_static!(
+                        BlazeNativeParquetSinkUtils.completeOutput(
+                            jni_new_string!(&file_stat.path)?.as_obj(),
+                            file_stat.num_rows as i64,
+                            file_stat.num_bytes as i64,
+                        ) -> ()
+                    )?;
+                    metrics.output_rows().add(file_stat.num_rows);
+                    bytes_written.add(file_stat.num_bytes);
+                }
+            }}
+        }
+
+        // write parquet data
+        while let Some(mut batch) = input.next().await.transpose()? {
+            let _timer = metrics.elapsed_compute().timer();
+            if batch.num_rows() == 0 {
+                continue;
+            }
+
+            while batch.num_rows() > 0 {
+                let part_values =
+                    get_dyn_part_values(&batch, parquet_sink_context.num_dyn_parts, 0)?;
+                let part_writer_outdated =
+                    part_writer.lock().as_ref().map(|w| &w.part_values) != Some(&part_values);
+
+                if part_writer_outdated {
+                    part_writer_close!();
+                    part_writer_init!(batch, &part_values);
+                    continue;
+                }
+
+                // split batch into current part and rest parts, then write current part
+                let m = rfind_part_values(&batch, &part_values)?;
+                let cur_batch = batch.slice(0, m);
+                batch = batch.slice(m, batch.num_rows() - m);
+                part_writer_output!(&cur_batch);
+            }
+        }
+        part_writer_close!();
+        Ok(())
+    })
+}
+
+fn adapt_schema(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
     let num_rows = batch.num_rows();
-    let casted_cols = batch
-        .columns()
-        .iter()
-        .zip(&schema.fields)
-        .map(|(col, to_field)| cast(col, to_field.data_type()))
-        .collect::<Result<_>>()?;
+    let mut casted_cols = vec![];
+
+    for (col_idx, casted_field) in schema.fields().iter().enumerate() {
+        casted_cols.push(cast(batch.column(col_idx), casted_field.data_type())?);
+    }
     Ok(RecordBatch::try_new_with_options(
         schema.clone(),
         casted_cols,
         &RecordBatchOptions::new().with_row_count(Some(num_rows)),
     )?)
+}
+
+fn rfind_part_values(batch: &RecordBatch, part_values: &[ScalarValue]) -> Result<usize> {
+    for row_idx in (0..batch.num_rows()).rev() {
+        if get_dyn_part_values(batch, part_values.len(), row_idx)? == part_values {
+            return Ok(row_idx + 1);
+        }
+    }
+    Ok(0)
 }
 
 fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
@@ -329,44 +395,105 @@ fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
     builder.build()
 }
 
-fn create_parquet_writer(
-    fs_resource_id: &str,
-    path: &str,
-    schema: &SchemaRef,
-    props: &WriterProperties,
-    io_time: &Time,
-    bytes_written: &Count,
-) -> Result<ArrowWriter<FSDataWriter>> {
-    // get fs object from jni bridge resource
-    let fs_provider = {
-        let resource_id = jni_new_string!(&fs_resource_id)?;
-        let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
-        Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, io_time))
-    };
-
-    // create FSDataOutputStream
-    let fs = fs_provider.provide(&path)?;
-    let fout = fs.create(&path)?;
-    let parquet_writer = ArrowWriter::try_new(
-        FSDataWriter::new(fout, bytes_written),
-        schema.clone(),
-        Some(props.clone()),
-    )?;
-    Ok(parquet_writer)
+struct PartFileStat {
+    path: String,
+    num_rows: usize,
+    num_bytes: usize,
 }
 
-// AsyncWrite wrapper for FSDataOutputStream
+struct PartWriter {
+    path: String,
+    parquet_sink_context: Arc<ParquetSinkContext>,
+    parquet_writer: ArrowWriter<FSDataWriter>,
+    part_values: Vec<ScalarValue>,
+    rows_written: Count,
+    bytes_written: Count,
+}
+
+impl PartWriter {
+    fn try_new(
+        parquet_sink_context: Arc<ParquetSinkContext>,
+        part_values: &[ScalarValue],
+    ) -> Result<Self> {
+        if !part_values.is_empty() {
+            log::info!("start outputting dynamic partition: {part_values:?}");
+        }
+        let part_file = jni_get_string!(
+            jni_call_static!(BlazeNativeParquetSinkUtils.getTaskOutputPath() -> JObject)?
+                .as_obj()
+                .into()
+        )?;
+        log::info!("start writing parquet file: {part_file}");
+
+        let fs = parquet_sink_context.fs_provider.provide(&part_file)?;
+        let bytes_written = Count::new();
+        let rows_written = Count::new();
+        let fout = fs.create(&part_file)?;
+        let data_writer = FSDataWriter::new(fout, &bytes_written);
+        let parquet_writer = ArrowWriter::try_new(
+            data_writer,
+            parquet_sink_context.hive_schema.clone(),
+            Some(parquet_sink_context.props.clone()),
+        )?;
+        Ok(Self {
+            path: part_file,
+            parquet_sink_context,
+            parquet_writer,
+            part_values: part_values.to_vec(),
+            rows_written,
+            bytes_written,
+        })
+    }
+
+    fn write(&mut self, batch: &RecordBatch) -> Result<()> {
+        let row_group_block_size = self.parquet_sink_context.row_group_block_size;
+        self.parquet_writer.write(&batch)?;
+        if self.parquet_writer.in_progress_size() >= row_group_block_size {
+            self.parquet_writer.flush()?;
+        }
+        self.rows_written.add(batch.num_rows());
+        Ok(())
+    }
+
+    fn close(self) -> Result<PartFileStat> {
+        self.parquet_writer.into_inner()?.close()?;
+        Ok(PartFileStat {
+            path: self.path,
+            num_rows: self.rows_written.value(),
+            num_bytes: self.bytes_written.value(),
+        })
+    }
+}
+
+fn get_dyn_part_values(
+    batch: &RecordBatch,
+    num_dyn_parts: usize,
+    row_idx: usize,
+) -> Result<Vec<ScalarValue>> {
+    batch
+        .columns()
+        .iter()
+        .skip(batch.num_columns() - num_dyn_parts)
+        .map(|part_col| ScalarValue::try_from_array(part_col, row_idx))
+        .collect()
+}
+
+// Write wrapper for FSDataOutputStream
 struct FSDataWriter {
-    inner: Arc<FsDataOutputStream>,
+    inner: FsDataOutputStream,
     bytes_written: Count,
 }
 
 impl FSDataWriter {
     pub fn new(inner: FsDataOutputStream, bytes_written: &Count) -> Self {
         Self {
-            inner: Arc::new(inner),
+            inner,
             bytes_written: bytes_written.clone(),
         }
+    }
+
+    pub fn close(self) -> Result<()> {
+        self.inner.close()
     }
 }
 impl Write for FSDataWriter {

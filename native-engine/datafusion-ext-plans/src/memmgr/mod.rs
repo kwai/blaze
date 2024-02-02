@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod metrics;
 pub mod onheap_spill;
 
 use std::{
@@ -167,6 +168,10 @@ pub trait MemConsumer: Send + Sync {
         self.get_consumer_info()
             .upgrade()
             .expect("consumer deregistered")
+    }
+
+    fn mem_used(&self) -> usize {
+        self.consumer_info().status.lock().mem_used
     }
 
     fn mem_used_percent(&self) -> f64 {

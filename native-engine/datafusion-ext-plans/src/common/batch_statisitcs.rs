@@ -27,9 +27,7 @@ use futures::StreamExt;
 #[derive(Clone)]
 pub struct InputBatchStatistics {
     input_batch_count: Count,
-    input_batch_mem_size_total: Count,
-    input_batch_mem_size_avg: Count,
-    input_batch_num_rows_avg: Count,
+    input_batch_mem_size: Count,
     input_row_count: Count,
 }
 
@@ -46,12 +44,8 @@ impl InputBatchStatistics {
         Self {
             input_batch_count: MetricBuilder::new(metrics_set)
                 .counter("input_batch_count", partition),
-            input_batch_mem_size_total: MetricBuilder::new(metrics_set)
-                .counter("input_batch_mem_size_total", partition),
-            input_batch_mem_size_avg: MetricBuilder::new(metrics_set)
-                .counter("input_batch_mem_size_avg", partition),
-            input_batch_num_rows_avg: MetricBuilder::new(metrics_set)
-                .counter("input_batch_num_rows_avg", partition),
+            input_batch_mem_size: MetricBuilder::new(metrics_set)
+                .counter("input_batch_mem_size", partition),
             input_row_count: MetricBuilder::new(metrics_set).counter("input_row_count", partition),
         }
     }
@@ -59,18 +53,9 @@ impl InputBatchStatistics {
     pub fn record_input_batch(&self, input_batch: &RecordBatch) {
         let mem_size = input_batch.get_array_memory_size();
         let num_rows = input_batch.num_rows();
-
         self.input_batch_count.add(1);
-        self.input_batch_mem_size_total.add(mem_size);
+        self.input_batch_mem_size.add(mem_size);
         self.input_row_count.add(num_rows);
-
-        let input_batch_count = self.input_batch_count.value();
-        let num_rows_avg = self.input_row_count.value() / input_batch_count;
-        let mem_size_avg = self.input_batch_mem_size_total.value() / input_batch_count;
-        self.input_batch_num_rows_avg
-            .add(num_rows_avg - self.input_batch_num_rows_avg.value());
-        self.input_batch_mem_size_avg
-            .add(mem_size_avg - self.input_batch_mem_size_avg.value());
     }
 }
 
@@ -79,14 +64,16 @@ pub fn stat_input(
     input: SendableRecordBatchStream,
 ) -> Result<SendableRecordBatchStream> {
     if let Some(input_batch_statistics) = input_batch_statistics {
-        return Ok(Box::pin(RecordBatchStreamAdapter::new(
+        let input_batch_statistics_cloned = input_batch_statistics.clone();
+        let stat_input: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
             input.schema(),
             input.inspect(move |batch_result| {
                 if let Ok(batch) = &batch_result {
-                    input_batch_statistics.record_input_batch(batch);
+                    input_batch_statistics_cloned.record_input_batch(batch);
                 }
             }),
-        )));
+        ));
+        return Ok(stat_input);
     }
     Ok(input)
 }

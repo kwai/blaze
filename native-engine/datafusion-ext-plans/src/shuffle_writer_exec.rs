@@ -36,7 +36,6 @@ use crate::{
     common::batch_statisitcs::{stat_input, InputBatchStatistics},
     memmgr::MemManager,
     shuffle::{
-        bucket_repartitioner::BucketShuffleRepartitioner, can_use_bucket_repartitioner,
         single_repartitioner::SingleShuffleRepartitioner,
         sort_repartitioner::SortShuffleRepartitioner, ShuffleRepartitioner,
     },
@@ -119,31 +118,13 @@ impl ExecutionPlan for ShuffleWriterExec {
                 BaselineMetrics::new(&self.metrics, partition),
                 data_size_metric,
             )),
-            p @ Partitioning::Hash(..)
-                if can_use_bucket_repartitioner(&self.input.schema())
-                    && p.partition_count() < 200 =>
-            {
-                let partitioner = Arc::new(BucketShuffleRepartitioner::new(
-                    partition,
-                    self.output_data_file.clone(),
-                    self.output_index_file.clone(),
-                    self.schema(),
-                    self.partitioning.clone(),
-                    BaselineMetrics::new(&self.metrics, partition),
-                    data_size_metric,
-                    context.clone(),
-                ));
-                MemManager::register_consumer(partitioner.clone(), true);
-                partitioner
-            }
             Partitioning::Hash(..) => {
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     partition,
                     self.output_data_file.clone(),
                     self.output_index_file.clone(),
-                    self.schema(),
                     self.partitioning.clone(),
-                    BaselineMetrics::new(&self.metrics, partition),
+                    &self.metrics,
                     data_size_metric,
                     context.clone(),
                 ));

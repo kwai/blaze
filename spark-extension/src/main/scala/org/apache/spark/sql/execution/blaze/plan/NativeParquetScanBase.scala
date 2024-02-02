@@ -20,7 +20,7 @@ import java.security.PrivilegedExceptionAction
 import java.util.UUID
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable
+import scala.collection.immutable.SortedMap
 
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.Partition
@@ -53,21 +53,19 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
     extends LeafExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = mutable
-    .LinkedHashMap(
-      NativeHelper
-        .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(Set("output_rows", "elapsed_compute"))
-        .toSeq :+
-        ("predicate_evaluation_errors", SQLMetrics
-          .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
-        ("row_groups_pruned", SQLMetrics
-          .createMetric(sparkContext, "Native.row_groups_pruned")) :+
-        ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) :+
-        ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time")) :+
-        ("io_time_getfs", SQLMetrics
-          .createNanoTimingMetric(sparkContext, "Native.io_time_getfs")): _*)
-    .toMap
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
+    NativeHelper
+      .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .toSeq :+
+      ("predicate_evaluation_errors", SQLMetrics
+        .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
+      ("row_groups_pruned", SQLMetrics
+        .createMetric(sparkContext, "Native.row_groups_pruned")) :+
+      ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) :+
+      ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time")) :+
+      ("io_time_getfs", SQLMetrics
+        .createNanoTimingMetric(sparkContext, "Native.io_time_getfs")): _*)
 
   override val output: Seq[Attribute] = basedFileScan.output
   override val outputPartitioning: Partitioning = basedFileScan.outputPartitioning

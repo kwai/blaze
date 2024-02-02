@@ -14,4 +14,3 @@
 
 pub mod coalesce_stream;
 pub mod ffi_stream;
-pub mod ipc_stream;

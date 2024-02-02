@@ -19,7 +19,6 @@ import java.io.File
 import java.util.UUID
 
 import org.apache.commons.lang3.reflect.FieldUtils
-import org.apache.hadoop.conf.Configuration
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.SparkException
@@ -38,7 +37,6 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.expressions.StringSplit
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
 import org.apache.spark.sql.execution.adaptive.QueryStageExec
@@ -76,7 +74,6 @@ import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeBase
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeExec
-import org.apache.spark.sql.execution.blaze.plan.Helper.getTaskResourceId
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.AggExecMode
 import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
@@ -112,14 +109,13 @@ import org.apache.spark.sql.execution.blaze.plan.NativeUnionBase
 import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowBase
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
-import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
-import org.apache.spark.sql.execution.datasources.BasicWriteTaskStatsTracker
-import org.apache.spark.sql.execution.datasources.WriteTaskStats
-import org.apache.spark.sql.execution.datasources.WriteTaskStatsTracker
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
-import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetSinkBase
+import org.apache.spark.sql.execution.blaze.plan.NativeParquetSinkExec
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalExprNode
 
@@ -260,6 +256,14 @@ class ShimsImpl extends Shims with Logging {
       child: SparkPlan): NativeWindowBase =
     NativeWindowExec(windowExpression, partitionSpec, orderSpec, child)
 
+  override def createNativeParquetSinkExec(
+      sparkSession: SparkSession,
+      table: CatalogTable,
+      partition: Map[String, Option[String]],
+      child: SparkPlan,
+      metrics: Map[String, SQLMetric]): NativeParquetSinkBase =
+    NativeParquetSinkExec(sparkSession, table, partition, child, metrics)
+
   override def getUnderlyingBroadcast(plan: SparkPlan): BroadcastExchangeLike = {
     plan match {
       case exec: BroadcastExchangeLike => exec
@@ -314,14 +318,6 @@ class ShimsImpl extends Shims with Logging {
   override def setLogicalLink(exec: SparkPlan, basedExec: SparkPlan): SparkPlan = {
     basedExec.logicalLink.foreach(logicalLink => exec.setLogicalLink(logicalLink))
     exec
-  }
-
-  override def createBasicWriteTaskStats(params: Map[String, Any]): BasicWriteTaskStats = {
-    BasicWriteTaskStats(
-      params.get("numPartitions").map(_.asInstanceOf[Int]).getOrElse(0),
-      params.get("numFiles").map(_.asInstanceOf[Int]).getOrElse(0),
-      params.get("numBytes").map(_.asInstanceOf[Long]).getOrElse(0),
-      params.get("numRows").map(_.asInstanceOf[Long]).getOrElse(0))
   }
 
   override def getRDDShuffleReadFull(rdd: RDD[_]): Boolean = true
@@ -519,24 +515,6 @@ class ShimsImpl extends Shims with Logging {
   }
 
   override def getSqlContext(sparkPlan: SparkPlan): SQLContext = sparkPlan.sqlContext
-
-  override def createBasicWriteJobStatsTrackerForNativeParquetSink(
-      serializableHadoopConf: SerializableConfiguration,
-      metrics: Map[String, SQLMetric]): BasicWriteJobStatsTracker = {
-    new BasicWriteJobStatsTracker(serializableHadoopConf, metrics) {
-      // read task stats from resources, the value should be set
-      // in BlazeParquetRecordWriter.close()
-      override def newTaskInstance(): WriteTaskStatsTracker = {
-        class StatsTracker(hadoopConf: Configuration)
-            extends BasicWriteTaskStatsTracker(hadoopConf) {
-          override def getFinalStats(): WriteTaskStats = {
-            JniBridge.getResource(getTaskResourceId("taskStats")).asInstanceOf[WriteTaskStats]
-          }
-        }
-        new StatsTracker(serializableHadoopConf.value)
-      }
-    }
-  }
 
   override def createNativeExprWrapper(
       nativeExpr: PhysicalExprNode,
