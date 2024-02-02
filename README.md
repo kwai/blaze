@@ -108,7 +108,7 @@ spark-sql -f tpcds/q01.sql
 
 ## Performance
 
-Check [Benchmark Results](./benchmark-results/20230925.md) with the latest date for the performance
+Check [Benchmark Results](./benchmark-results/20231108.md) with the latest date for the performance
 comparison with vanilla Spark on TPC-DS 1TB dataset. The benchmark result shows that Blaze saved
 ~40% query time and ~45% cluster resources in average. ~5x performance achieved for the best case (q06).
 Stay tuned and join us for more upcoming thrilling numbers.
