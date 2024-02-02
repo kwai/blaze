@@ -47,6 +47,7 @@ import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 
