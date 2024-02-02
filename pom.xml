@@ -13,7 +13,7 @@
   </modules>
 
   <properties>
-    <revision>2.0.7-SNAPSHOT</revision>
+    <revision>2.0.8-SNAPSHOT</revision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>14.0.1</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
