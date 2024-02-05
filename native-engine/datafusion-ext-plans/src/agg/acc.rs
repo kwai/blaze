@@ -36,109 +36,254 @@ use smallvec::SmallVec;
 
 pub type DynVal = Option<Box<dyn AggDynValue>>;
 
-pub struct AccumStateRow {
-    fixed: SlimBytes,
-    dyns: Option<Box<[DynVal]>>,
+const ACC_STORE_BLOCK_SIZE: usize = 65536;
+
+pub struct AccStore {
+    initial: OwnedAccumStateRow,
+    num_accs: usize,
+    fixed_store: Vec<Vec<u8>>,
+    dyn_store: Vec<Vec<DynVal>>,
 }
 
-impl Clone for AccumStateRow {
-    fn clone(&self) -> Self {
+impl AccStore {
+    pub fn new(initial: OwnedAccumStateRow) -> Self {
         Self {
-            fixed: self.fixed.clone(),
-            dyns: self.dyns.as_ref().map(|dyns| {
-                dyns.iter()
-                    .map(|v| v.as_ref().map(|x| x.clone_boxed()))
-                    .collect::<Box<[DynVal]>>()
-            }),
+            initial,
+            num_accs: 0,
+            fixed_store: vec![],
+            dyn_store: vec![],
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.num_accs = 0;
+        self.fixed_store.iter_mut().for_each(|s| s.clear());
+        self.dyn_store.iter_mut().for_each(|s| s.clear());
+    }
+
+    pub fn clear_and_free(&mut self) {
+        self.num_accs = 0;
+        self.fixed_store = vec![];
+        self.dyn_store = vec![];
+    }
+
+    pub fn mem_size(&self) -> usize {
+        self.fixed_store.len() * self.fixed_len()
+            + self.dyn_store.len() * self.dyns_len() * size_of::<DynVal>()
+    }
+
+    pub fn new_acc(&mut self) -> u32 {
+        let initial = unsafe {
+            // safety: ignore borrow checker
+            std::mem::transmute::<_, &OwnedAccumStateRow>(&self.initial)
+        };
+        self.new_acc_from(initial)
+    }
+
+    pub fn new_acc_from(&mut self, acc: &impl AccumStateRow) -> u32 {
+        let idx = self.num_accs;
+        self.num_accs += 1;
+        if self.num_required_blocks() >= self.fixed_store.len() {
+            // add a new block
+            // reserve a whole block to avoid reallocation
+            self.fixed_store
+                .push(Vec::with_capacity(ACC_STORE_BLOCK_SIZE * self.fixed_len()));
+            self.dyn_store
+                .push(Vec::with_capacity(ACC_STORE_BLOCK_SIZE * self.dyns_len()));
+        }
+        let idx1 = idx / ACC_STORE_BLOCK_SIZE;
+        self.fixed_store[idx1].extend_from_slice(acc.fixed());
+        self.dyn_store[idx1].extend(
+            acc.dyns()
+                .iter()
+                .map(|v| v.as_ref().map(|v| v.clone_boxed())),
+        );
+        idx as u32
+    }
+
+    pub fn get(&self, idx: u32) -> RefAccumStateRow {
+        let idx1 = idx as usize / ACC_STORE_BLOCK_SIZE;
+        let idx2 = idx as usize % ACC_STORE_BLOCK_SIZE;
+        let fixed_ptr = self.fixed_store[idx1][idx2 * self.fixed_len()..].as_ptr() as *mut u8;
+        let dyns_ptr = self.dyn_store[idx1][idx2 * self.dyns_len()..].as_ptr() as *mut DynVal;
+        unsafe {
+            // safety: skip borrow/mutable checking
+            RefAccumStateRow {
+                fixed: std::slice::from_raw_parts_mut(fixed_ptr, self.fixed_len()),
+                dyns: std::slice::from_raw_parts_mut(dyns_ptr, self.dyns_len()),
+            }
+        }
+    }
+
+    fn num_required_blocks(&self) -> usize {
+        (self.num_accs + ACC_STORE_BLOCK_SIZE - 1) / ACC_STORE_BLOCK_SIZE
+    }
+
+    fn fixed_len(&self) -> usize {
+        self.initial.fixed.len()
+    }
+
+    fn dyns_len(&self) -> usize {
+        self.initial.dyns.len()
+    }
+}
+
+pub struct OwnedAccumStateRow {
+    fixed: SlimBytes,
+    dyns: SlimmerBox<[DynVal]>,
+}
+
+impl OwnedAccumStateRow {
+    pub fn as_mut<'a>(&'a mut self) -> RefAccumStateRow<'a> {
+        RefAccumStateRow {
+            fixed: &mut self.fixed,
+            dyns: &mut self.dyns,
         }
     }
 }
 
-#[allow(clippy::borrowed_box)]
-impl AccumStateRow {
-    pub fn mem_size(&self) -> usize {
+impl Clone for OwnedAccumStateRow {
+    fn clone(&self) -> Self {
+        Self {
+            fixed: self.fixed.clone(),
+            dyns: SlimmerBox::from_box(
+                self.dyns
+                    .iter()
+                    .map(|v| v.as_ref().map(|x| x.clone_boxed()))
+                    .collect::<Box<[DynVal]>>(),
+            ),
+        }
+    }
+}
+
+impl AccumStateRow for OwnedAccumStateRow {
+    fn fixed(&self) -> &[u8] {
+        &self.fixed
+    }
+
+    fn fixed_mut(&mut self) -> &mut [u8] {
+        &mut self.fixed
+    }
+
+    fn dyns(&self) -> &[DynVal] {
+        &self.dyns
+    }
+
+    fn dyns_mut(&mut self) -> &mut [DynVal] {
+        &mut self.dyns
+    }
+}
+
+pub struct RefAccumStateRow<'a> {
+    fixed: &'a mut [u8],
+    dyns: &'a mut [DynVal],
+}
+
+impl<'a> AccumStateRow for RefAccumStateRow<'a> {
+    fn fixed(&self) -> &[u8] {
+        self.fixed
+    }
+
+    fn fixed_mut(&mut self) -> &mut [u8] {
+        self.fixed
+    }
+
+    fn dyns(&self) -> &[DynVal] {
+        self.dyns
+    }
+
+    fn dyns_mut(&mut self) -> &mut [DynVal] {
+        self.dyns
+    }
+}
+
+pub trait AccumStateRow {
+    fn fixed(&self) -> &[u8];
+    fn fixed_mut(&mut self) -> &mut [u8];
+    fn dyns(&self) -> &[DynVal];
+    fn dyns_mut(&mut self) -> &mut [DynVal];
+
+    fn mem_size(&self) -> usize {
         let dyns_mem_size = self
-            .dyns
-            .as_ref()
-            .map(|dyns| {
-                dyns.iter()
-                    .map(|v| size_of_val(v) + v.as_ref().map(|x| x.mem_size()).unwrap_or_default())
-                    .sum::<usize>()
-            })
-            .unwrap_or_default();
-        size_of::<Self>() + self.fixed.len() + dyns_mem_size
+            .dyns()
+            .iter()
+            .map(|v| size_of_val(v) + v.as_ref().map(|x| x.mem_size()).unwrap_or_default())
+            .sum::<usize>();
+        self.fixed().len() + dyns_mem_size
     }
 
-    pub fn is_fixed_valid(&self, addr: AccumStateValAddr) -> bool {
+    fn is_fixed_valid(&self, addr: AccumStateValAddr) -> bool {
         let idx = addr.fixed_valid_idx();
-        self.fixed[self.fixed.len() - 1 - idx / 8] & (1 << (idx % 8)) != 0
+        self.fixed()[self.fixed().len() - 1 - idx / 8] & (1 << (idx % 8)) != 0
     }
 
-    pub fn set_fixed_valid(&mut self, addr: AccumStateValAddr, valid: bool) {
+    fn set_fixed_valid(&mut self, addr: AccumStateValAddr, valid: bool) {
         let idx = addr.fixed_valid_idx();
-        let fixed_len = self.fixed.len();
-        self.fixed[fixed_len - 1 - idx / 8] |= (valid as u8) << (idx % 8);
+        let fixed_len = self.fixed().len();
+        self.fixed_mut()[fixed_len - 1 - idx / 8] |= (valid as u8) << (idx % 8);
     }
 
-    pub fn fixed_value<T: Sized + Copy>(&self, addr: AccumStateValAddr) -> T {
+    fn fixed_value<T: Sized + Copy>(&self, addr: AccumStateValAddr) -> T {
         let offset = addr.fixed_offset();
-        let tptr = self.fixed[offset..][..size_of::<T>()].as_ptr() as *const T;
+        let tptr = self.fixed()[offset..][..size_of::<T>()].as_ptr() as *const T;
         unsafe { std::ptr::read_unaligned(tptr) }
     }
 
-    pub fn set_fixed_value<T: Sized + Copy>(&mut self, addr: AccumStateValAddr, v: T) {
+    fn set_fixed_value<T: Sized + Copy>(&mut self, addr: AccumStateValAddr, v: T) {
         let offset = addr.fixed_offset();
-        let tptr = self.fixed[offset..][..size_of::<T>()].as_ptr() as *mut T;
+        let tptr = self.fixed_mut()[offset..][..size_of::<T>()].as_ptr() as *mut T;
         unsafe {
             std::ptr::write_unaligned(tptr, v);
         }
     }
 
-    pub fn update_fixed_value<T: Sized + Copy>(
+    fn update_fixed_value<T: Sized + Copy>(
         &mut self,
         addr: AccumStateValAddr,
         updater: impl Fn(T) -> T,
     ) {
         let offset = addr.fixed_offset();
-        let tptr = self.fixed[offset..][..size_of::<T>()].as_ptr() as *mut T;
+        let tptr = self.fixed_mut()[offset..][..size_of::<T>()].as_ptr() as *mut T;
         unsafe { std::ptr::write_unaligned(tptr, updater(std::ptr::read_unaligned(tptr))) }
     }
 
-    pub fn dyn_value(&mut self, addr: AccumStateValAddr) -> &DynVal {
-        &self.dyns.as_ref().unwrap()[addr.dyn_idx()]
+    fn dyn_value(&mut self, addr: AccumStateValAddr) -> &DynVal {
+        &self.dyns_mut()[addr.dyn_idx()]
     }
 
-    pub fn dyn_value_mut(&mut self, addr: AccumStateValAddr) -> &mut DynVal {
-        &mut self.dyns.as_mut().unwrap()[addr.dyn_idx()]
+    fn dyn_value_mut(&mut self, addr: AccumStateValAddr) -> &mut DynVal {
+        &mut self.dyns_mut()[addr.dyn_idx()]
     }
 
-    pub fn load(&mut self, mut r: impl Read, dyn_laders: &[LoadFn]) -> Result<()> {
-        r.read_exact(&mut self.fixed)?;
-        if self.dyns.is_some() {
+    fn load(&mut self, mut r: impl Read, dyn_loders: &[LoadFn]) -> Result<()> {
+        r.read_exact(&mut self.fixed_mut())?;
+        let dyns = self.dyns_mut();
+        if !dyns.is_empty() {
             let mut reader = LoadReader(Box::new(r));
-            for (v, load) in self.dyns.as_mut().unwrap().iter_mut().zip(dyn_laders) {
+            for (v, load) in dyns.iter_mut().zip(dyn_loders) {
                 *v = load(&mut reader)?;
             }
         }
         Ok(())
     }
 
-    pub fn load_from_bytes(&mut self, bytes: &[u8], dyn_loaders: &[LoadFn]) -> Result<()> {
+    fn load_from_bytes(&mut self, bytes: &[u8], dyn_loaders: &[LoadFn]) -> Result<()> {
         self.load(Cursor::new(bytes), dyn_loaders)
     }
 
-    pub fn save(&mut self, mut w: impl Write, dyn_savers: &[SaveFn]) -> Result<()> {
-        w.write_all(&self.fixed)?;
-        if self.dyns.is_some() {
+    fn save(&mut self, mut w: impl Write, dyn_savers: &[SaveFn]) -> Result<()> {
+        w.write_all(&self.fixed())?;
+        let dyns = self.dyns_mut();
+        if !dyns.is_empty() {
             let mut writer = SaveWriter(Box::new(&mut w));
-            for (v, save) in self.dyns.as_mut().unwrap().iter_mut().zip(dyn_savers) {
+            for (v, save) in dyns.iter_mut().zip(dyn_savers) {
                 save(&mut writer, std::mem::take(v))?;
             }
         }
         Ok(())
     }
 
-    pub fn save_to_bytes(&mut self, dyn_savers: &[SaveFn]) -> Result<SlimBytes> {
+    fn save_to_bytes(&mut self, dyn_savers: &[SaveFn]) -> Result<SlimBytes> {
         let mut bytes = vec![];
         self.save(&mut bytes, dyn_savers)?;
         Ok(bytes.into())
@@ -154,7 +299,7 @@ pub enum AccumInitialValue {
 
 pub fn create_acc_from_initial_value(
     values: &[AccumInitialValue],
-) -> Result<(AccumStateRow, Box<[AccumStateValAddr]>)> {
+) -> Result<(OwnedAccumStateRow, Box<[AccumStateValAddr]>)> {
     let mut fixed_count = 0;
     let mut fixed_valids = vec![];
     let mut fixed: Vec<u8> = vec![];
@@ -240,13 +385,9 @@ pub fn create_acc_from_initial_value(
     fixed_valids.reverse();
     fixed.extend(fixed_valids);
 
-    let acc = AccumStateRow {
+    let acc = OwnedAccumStateRow {
         fixed: fixed.into(),
-        dyns: if !dyns.is_empty() {
-            Some(dyns.into())
-        } else {
-            None
-        },
+        dyns: SlimmerBox::from_box(dyns.into()),
     };
     Ok((acc, addrs.into()))
 }
@@ -846,8 +987,8 @@ mod test {
 
     use crate::agg::acc::{
         create_acc_from_initial_value, create_dyn_loaders_from_initial_value,
-        create_dyn_savers_from_initial_value, AccumInitialValue, AggDynList, AggDynSet, AggDynStr,
-        LoadReader, OptimizedSet, SaveWriter,
+        create_dyn_savers_from_initial_value, AccumInitialValue, AccumStateRow, AggDynList,
+        AggDynSet, AggDynStr, LoadReader, OptimizedSet, SaveWriter,
     };
 
     #[test]

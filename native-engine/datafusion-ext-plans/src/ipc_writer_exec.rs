@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{any::Any, fmt::Formatter, io::Cursor, sync::Arc};
+use std::{any::Any, fmt::Formatter, io::Write, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
@@ -30,11 +30,11 @@ use datafusion::{
         Statistics,
     },
 };
-use datafusion_ext_commons::{io::write_one_batch, streams::coalesce_stream::CoalesceInput};
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
 use futures::{stream::once, StreamExt, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
 
-use crate::common::output::TaskOutputter;
+use crate::common::{ipc_compression::IpcCompressionWriter, output::TaskOutputter};
 
 #[derive(Debug)]
 pub struct IpcWriterExec {
@@ -134,20 +134,31 @@ pub async fn write_ipc(
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
     context.output_with_sender("IpcWrite", schema.clone(), move |_sender| async move {
-        while let Some(batch) = input.next().await.transpose()? {
-            let timer = metrics.elapsed_compute().timer();
-            let num_rows = batch.num_rows();
+        struct IpcConsumerWrite(GlobalRef);
+        impl Write for IpcConsumerWrite {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let buf_len = buf.len();
+                let buf = jni_new_direct_byte_buffer!(&buf).map_err(std::io::Error::other)?;
+                jni_call!(ScalaFunction1(self.0.as_obj()).apply(buf.as_obj()) -> JObject)
+                    .map_err(std::io::Error::other)?;
+                Ok(buf_len)
+            }
 
-            let mut buffer = vec![];
-            write_one_batch(&batch, &mut Cursor::new(&mut buffer), true, None)?;
-            drop(timer);
-            metrics.record_output(num_rows);
-
-            let buf = jni_new_direct_byte_buffer!(&buffer)?;
-            let _consumed = jni_call!(
-                ScalaFunction1(ipc_consumer.as_obj()).apply(buf.as_obj()) -> JObject
-            )?;
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
+
+        let mut writer = IpcCompressionWriter::new(IpcConsumerWrite(ipc_consumer), true);
+        while let Some(batch) = input.next().await.transpose()? {
+            let _timer = metrics.elapsed_compute().timer();
+            let num_rows = batch.num_rows();
+            writer.write_batch(batch)?;
+            metrics.record_output(num_rows);
+        }
+
+        let _timer = metrics.elapsed_compute().timer();
+        writer.finish_into_inner()?;
         Ok(())
     })
 }

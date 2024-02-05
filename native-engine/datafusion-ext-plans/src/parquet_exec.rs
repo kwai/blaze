@@ -54,7 +54,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    df_execution_err,
+    batch_size, df_execution_err,
     hadoop_fs::{FsDataInputStream, FsProvider},
     streams::coalesce_stream::CoalesceInput,
 };
@@ -229,7 +229,7 @@ impl ExecutionPlan for ParquetExec {
             None => (0..self.base_config.file_schema.fields().len()).collect(),
         };
 
-        let batch_size = context.session_config().batch_size();
+        let batch_size = batch_size();
         let sub_batch_size = batch_size / batch_size.ilog2() as usize;
         let opener = ParquetOpener {
             partition_index,

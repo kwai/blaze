@@ -39,7 +39,8 @@ use crate::{
     agg::{
         acc::{
             create_acc_from_initial_value, create_dyn_loaders_from_initial_value,
-            create_dyn_savers_from_initial_value, AccumInitialValue, AccumStateRow, LoadFn, SaveFn,
+            create_dyn_savers_from_initial_value, AccumInitialValue, AccumStateRow, LoadFn,
+            OwnedAccumStateRow, RefAccumStateRow, SaveFn,
         },
         Agg, AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME,
     },
@@ -61,8 +62,8 @@ pub struct AggContext {
     pub grouping_row_converter: Arc<Mutex<RowConverter>>,
     pub groupings: Vec<GroupingExpr>,
     pub aggs: Vec<AggExpr>,
-    pub initial_acc: AccumStateRow,
-    pub initial_input_acc: AccumStateRow,
+    pub initial_acc: OwnedAccumStateRow,
+    pub initial_input_acc: OwnedAccumStateRow,
     pub initial_input_buffer_offset: usize,
     pub supports_partial_skipping: bool,
     pub partial_skipping_ratio: f64,
@@ -210,7 +211,6 @@ impl AggContext {
         let agg_expr_evaluator = CachedExprsEvaluator::try_new(
             vec![],
             agg_exprs_flatten,
-            input_schema.clone(),
             agg_expr_evaluator_output_schema,
         )?;
 
@@ -297,13 +297,13 @@ impl AggContext {
 
     pub fn build_agg_columns(
         &self,
-        mut records: Vec<(impl AsRef<[u8]>, AccumStateRow)>,
+        mut records: Vec<(impl AsRef<[u8]>, RefAccumStateRow)>,
     ) -> Result<Vec<ArrayRef>> {
         let mut agg_columns = vec![];
 
         if self.need_final_merge {
             // output final merged value
-            let mut accs: Vec<AccumStateRow> = records.into_iter().map(|(_, acc)| acc).collect();
+            let mut accs = records.into_iter().map(|(_, acc)| acc).collect::<Vec<_>>();
             for agg in self.aggs.iter() {
                 let values = agg.agg.final_batch_merge(&mut accs)?;
                 agg_columns.push(values);
@@ -322,7 +322,7 @@ impl AggContext {
 
     pub fn convert_records_to_batch(
         &self,
-        records: Vec<(impl AsRef<[u8]>, AccumStateRow)>,
+        records: Vec<(impl AsRef<[u8]>, RefAccumStateRow)>,
     ) -> Result<RecordBatch> {
         let row_count = records.len();
         let grouping_row_converter = self.grouping_row_converter.lock();
@@ -343,7 +343,7 @@ impl AggContext {
 
     pub fn partial_update_input(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         input_arrays: &[Vec<ArrayRef>],
         row_idx: usize,
     ) -> Result<()> {
@@ -357,7 +357,7 @@ impl AggContext {
 
     pub fn partial_batch_update_input(
         &self,
-        accs: &mut [AccumStateRow],
+        accs: &mut [RefAccumStateRow],
         input_arrays: &[Vec<ArrayRef>],
     ) -> Result<()> {
         if self.need_partial_update {
@@ -370,7 +370,7 @@ impl AggContext {
 
     pub fn partial_update_input_all(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         input_arrays: &[Vec<ArrayRef>],
     ) -> Result<()> {
         if self.need_partial_update {
@@ -383,7 +383,7 @@ impl AggContext {
 
     pub fn partial_merge_input(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         acc_array: &BinaryArray,
         row_idx: usize,
     ) -> Result<()> {
@@ -391,7 +391,7 @@ impl AggContext {
             let mut input_acc = self.initial_input_acc.clone();
             input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
             for (_, agg) in &self.need_partial_merge_aggs {
-                agg.partial_merge(acc, &mut input_acc)?;
+                agg.partial_merge(acc, &mut input_acc.as_mut())?;
             }
         }
         Ok(())
@@ -399,7 +399,7 @@ impl AggContext {
 
     pub fn partial_batch_merge_input(
         &self,
-        accs: &mut [AccumStateRow],
+        accs: &mut [RefAccumStateRow],
         acc_array: &BinaryArray,
     ) -> Result<()> {
         if self.need_partial_merge {
@@ -411,8 +411,12 @@ impl AggContext {
                     Ok(input_acc)
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let mut input_ref_accs = input_accs
+                .iter_mut()
+                .map(|acc| acc.as_mut())
+                .collect::<Vec<_>>();
             for (_, agg) in &self.need_partial_merge_aggs {
-                agg.partial_batch_merge(accs, &mut input_accs)?;
+                agg.partial_batch_merge(accs, &mut input_ref_accs)?;
             }
         }
         Ok(())
@@ -420,7 +424,7 @@ impl AggContext {
 
     pub fn partial_merge_input_all(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         acc_array: &BinaryArray,
     ) -> Result<()> {
         if self.need_partial_merge {
@@ -428,7 +432,7 @@ impl AggContext {
             for row_idx in 0..acc_array.len() {
                 input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
                 for (_, agg) in &self.need_partial_merge_aggs {
-                    agg.partial_merge(acc, &mut input_acc)?;
+                    agg.partial_merge(acc, &mut input_acc.as_mut())?;
                 }
             }
         }
@@ -437,8 +441,8 @@ impl AggContext {
 
     pub fn partial_merge(
         &self,
-        acc: &mut AccumStateRow,
-        merging_acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
+        merging_acc: &mut RefAccumStateRow,
     ) -> Result<()> {
         for agg in &self.aggs {
             agg.agg

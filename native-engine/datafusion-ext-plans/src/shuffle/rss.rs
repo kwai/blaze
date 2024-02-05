@@ -12,38 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Cursor;
+use std::io::Write;
 
-use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
-use datafusion::common::Result;
-use datafusion_ext_commons::io::write_one_batch;
 use jni::objects::GlobalRef;
 
-pub fn rss_write_batch(
-    rss_partition_writer: &GlobalRef,
+pub struct RssWriter {
+    rss_partition_writer: GlobalRef,
     partition_id: usize,
-    batch: RecordBatch,
-    uncompressed_size: &mut usize,
-) -> Result<()> {
-    let mut data = vec![];
-
-    write_one_batch(
-        &batch,
-        &mut Cursor::new(&mut data),
-        true,
-        Some(uncompressed_size),
-    )?;
-    let data_len = data.len();
-    let buf = jni_new_direct_byte_buffer!(&data)?;
-    jni_call!(
-        BlazeRssPartitionWriterBase(rss_partition_writer.as_obj())
-        .write(partition_id as i32, buf.as_obj(), data_len as i32) -> ()
-    )?;
-    Ok(())
 }
 
-pub fn rss_flush(rss_partition_writer: &GlobalRef) -> Result<()> {
-    jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ())?;
-    Ok(())
+impl RssWriter {
+    pub fn new(rss_partition_writer: GlobalRef, partition_id: usize) -> Self {
+        Self {
+            rss_partition_writer,
+            partition_id,
+        }
+    }
+}
+
+impl Write for RssWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let buf_len = buf.len();
+        let buf = jni_new_direct_byte_buffer!(&buf)?;
+        jni_call!(
+            BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj())
+                .write(self.partition_id as i32, buf.as_obj(), buf_len as i32) -> ()
+        )?;
+        Ok(buf_len)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

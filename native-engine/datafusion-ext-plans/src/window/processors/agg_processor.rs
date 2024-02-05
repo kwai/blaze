@@ -20,7 +20,7 @@ use datafusion_ext_commons::slim_bytes::SlimBytes;
 
 use crate::{
     agg::{
-        acc::{create_acc_from_initial_value, AccumStateRow},
+        acc::{create_acc_from_initial_value, OwnedAccumStateRow},
         Agg,
     },
     window::{window_context::WindowContext, WindowFunctionProcessor},
@@ -29,8 +29,8 @@ use crate::{
 pub struct AggProcessor {
     cur_partition: SlimBytes,
     agg: Arc<dyn Agg>,
-    acc_init: AccumStateRow,
-    acc: AccumStateRow,
+    acc_init: OwnedAccumStateRow,
+    acc: OwnedAccumStateRow,
 }
 
 impl AggProcessor {
@@ -79,9 +79,9 @@ impl WindowFunctionProcessor for AggProcessor {
                 self.acc = self.acc_init.clone();
             }
             self.agg
-                .partial_update(&mut self.acc, &children_cols, row_idx)
+                .partial_update(&mut self.acc.as_mut(), &children_cols, row_idx)
                 .map_err(|err| err.context("window: agg_processor partial_update() error"))?;
-            output.push(self.agg.final_merge(&mut self.acc.clone())?);
+            output.push(self.agg.final_merge(&mut self.acc.clone().as_mut())?);
         }
         Ok(Arc::new(ScalarValue::iter_to_array(output.into_iter())?))
     }
@@ -102,9 +102,9 @@ impl WindowFunctionProcessor for AggProcessor {
 
         for row_idx in 0..batch.num_rows() {
             self.agg
-                .partial_update(&mut self.acc, &children_cols, row_idx)
+                .partial_update(&mut self.acc.as_mut(), &children_cols, row_idx)
                 .map_err(|err| err.context("window: agg_processor partial_update() error"))?;
-            output.push(self.agg.final_merge(&mut self.acc.clone())?);
+            output.push(self.agg.final_merge(&mut self.acc.clone().as_mut())?);
         }
         Ok(Arc::new(ScalarValue::iter_to_array(output.into_iter())?))
     }

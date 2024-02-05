@@ -131,7 +131,6 @@ impl ExecutionPlan for RssShuffleWriterExec {
                     rss_partition_writer,
                     self.partitioning.clone(),
                     data_size_metric,
-                    context.clone(),
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner

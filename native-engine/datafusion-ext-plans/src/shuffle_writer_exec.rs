@@ -126,7 +126,6 @@ impl ExecutionPlan for ShuffleWriterExec {
                     self.partitioning.clone(),
                     &self.metrics,
                     data_size_metric,
-                    context.clone(),
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner

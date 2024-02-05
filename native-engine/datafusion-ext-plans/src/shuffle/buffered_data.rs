@@ -1,66 +1,140 @@
-use std::io::{Cursor, Write};
+// Copyright 2022 The Blaze Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::{io::Write, mem::size_of};
 
 use arrow::record_batch::RecordBatch;
-use datafusion::common;
+use blaze_jni_bridge::jni_call;
+use count_write::CountWrite;
+use datafusion::{common::Result, physical_plan::Partitioning};
 use datafusion_ext_commons::{
-    io::write_one_batch,
-    loser_tree::{ComparableForLoserTree, LoserTree},
+    ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
+    rdxsort::radix_sort_u16_ranged_by,
 };
+use jni::objects::GlobalRef;
 
-use crate::common::BatchesInterleaver;
+use crate::{
+    common::{
+        batch_selection::interleave_batches,
+        compute_suggested_batch_size_for_output,
+        ipc_compression::{IpcCompressionWriter, DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE},
+        staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
+    },
+    shuffle::{evaluate_hashes, evaluate_partition_ids, rss::RssWriter},
+};
 
 #[derive(Default)]
 pub struct BufferedData {
-    pub sorted_batches: Vec<RecordBatch>,
-    pub sorted_partition_indices: Vec<Vec<u32>>,
-    pub num_rows: usize,
-    pub batch_mem_size: usize,
+    staging_batches: Vec<RecordBatch>,
+    sorted_batches: Vec<RecordBatch>,
+    sorted_partition_indices: Vec<Vec<u32>>,
+    num_rows: usize,
+    staging_mem_used: usize,
+    sorted_mem_used: usize,
 }
 
 impl BufferedData {
-    // write batch to spill/target file, returns offsets to each partition
+    pub fn add_batch(&mut self, batch: RecordBatch, partitioning: &Partitioning) -> Result<()> {
+        self.num_rows += batch.num_rows();
+        self.staging_mem_used += batch.get_array_memory_size();
+        self.staging_batches.push(batch);
+        if self.staging_mem_used >= staging_mem_size_for_partial_sort() {
+            self.flush_staging_batches(partitioning)?;
+        }
+        Ok(())
+    }
+
+    fn flush_staging_batches(&mut self, partitioning: &Partitioning) -> Result<()> {
+        let staging_batches = std::mem::take(&mut self.staging_batches);
+        self.staging_mem_used = 0;
+
+        let (partition_indices, sorted_batch) =
+            sort_batches_by_partition_id(staging_batches, partitioning)?;
+
+        self.sorted_mem_used +=
+            sorted_batch.get_array_memory_size() + partition_indices.len() * size_of::<u32>();
+        self.sorted_batches.push(sorted_batch);
+        self.sorted_partition_indices.push(partition_indices);
+        Ok(())
+    }
+
+    // write buffered data to spill/target file, returns uncompressed size and
+    // offsets to each partition
     pub fn write<W: Write>(
         self,
         mut w: W,
-        batch_size: usize,
-        num_partitions: usize,
-        num_bytes_written_uncompressed: &mut usize,
-    ) -> common::Result<Vec<u64>> {
-        let mut cur_partition_id = 0;
-        let mut offsets = vec![0];
-        let mut cur_offset = 0;
+        partitioning: &Partitioning,
+    ) -> Result<(usize, Vec<u64>)> {
+        let mut offsets = vec![];
+        let mut offset = 0;
+        let mut iter = self.into_sorted_batches(partitioning)?.peekable();
+        let mut uncompressed_size = 0;
 
-        for (partition_id, batch) in self.into_sorted_batches(batch_size) {
-            while cur_partition_id < partition_id {
-                offsets.push(cur_offset);
-                cur_partition_id += 1;
+        while let Some(&part_id) = iter.peek().map(|(part_id, _)| part_id) {
+            while offsets.len() <= part_id as usize {
+                offsets.push(offset); // fill offsets of empty partitions
             }
-            let mut buf = vec![];
-            let mut uncompressed_size = 0;
-            write_one_batch(
-                &batch,
-                &mut Cursor::new(&mut buf),
+
+            // write all batches with this part id
+            let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w), true);
+            while matches!(iter.peek(), Some((id, _)) if *id == part_id) {
+                uncompressed_size += writer.write_batch(iter.next().unwrap().1)?;
+            }
+            offset += writer.finish_into_inner()?.count();
+            offsets.push(offset);
+        }
+        while offsets.len() <= partitioning.partition_count() {
+            offsets.push(offset); // fill offsets of empty partitions
+        }
+        Ok((uncompressed_size, offsets))
+    }
+
+    // write buffered data to rss, returns uncompressed size
+    pub fn write_rss(
+        self,
+        rss_partition_writer: GlobalRef,
+        partitioning: &Partitioning,
+    ) -> Result<usize> {
+        let mut iter = self.into_sorted_batches(partitioning)?.peekable();
+        let mut uncompressed_size = 0;
+
+        while let Some(&part_id) = iter.peek().map(|(part_id, _)| part_id) {
+            let mut writer = IpcCompressionWriter::new(
+                RssWriter::new(rss_partition_writer.clone(), part_id as usize),
                 true,
-                Some(&mut uncompressed_size),
-            )?;
-            *num_bytes_written_uncompressed += uncompressed_size;
-            w.write_all(&buf)?;
-            cur_offset += buf.len() as u64;
+            );
+
+            // write all batches with this part id
+            while matches!(iter.peek(), Some((id, _)) if *id == part_id) {
+                uncompressed_size += writer.write_batch(iter.next().unwrap().1)?;
+            }
+            writer.finish_into_inner()?;
         }
-        while cur_partition_id < num_partitions as u32 {
-            offsets.push(cur_offset);
-            cur_partition_id += 1;
-        }
-        Ok(offsets)
+        jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ())?;
+        Ok(uncompressed_size)
     }
 
     pub fn into_sorted_batches(
-        self,
-        batch_size: usize,
-    ) -> impl Iterator<Item = (u32, RecordBatch)> {
+        mut self,
+        partitioning: &Partitioning,
+    ) -> Result<impl Iterator<Item = (u32, RecordBatch)>> {
+        if !self.staging_batches.is_empty() {
+            self.flush_staging_batches(partitioning)?;
+        }
         if self.num_rows == 0 {
             let empty: Box<dyn Iterator<Item = (u32, RecordBatch)>> = Box::new(std::iter::empty());
-            return empty;
+            return Ok(empty);
         }
 
         struct Cursor {
@@ -78,15 +152,15 @@ impl BufferedData {
             }
         }
 
-        impl ComparableForLoserTree for Cursor {
-            fn lt(&self, other: &Self) -> bool {
-                self.cur_partition_id() < other.cur_partition_id()
+        impl KeyForRadixTournamentTree for Cursor {
+            fn rdx(&self) -> usize {
+                self.cur_partition_id() as usize
             }
         }
 
         struct PartitionedBatchesIterator {
             batches: Vec<RecordBatch>,
-            cursors: LoserTree<Cursor>,
+            cursors: RadixTournamentTree<Cursor>,
             num_output_rows: usize,
             num_rows: usize,
             batch_size: usize,
@@ -124,20 +198,20 @@ impl BufferedData {
                         min_cursor.row_idx += 1;
                     }
                 }
-                let output_batch = BatchesInterleaver::new(self.batches[0].schema(), &self.batches)
-                    .interleave(&indices)
-                    .expect("error merging sorted batches: interleaving error");
+                let output_batch =
+                    interleave_batches(self.batches[0].schema(), &self.batches, &indices)
+                        .expect("error merging sorted batches: interleaving error");
                 self.num_output_rows += output_batch.num_rows();
                 Some((cur_partition_id, output_batch))
             }
         }
 
-        let suggested_batch_size = (1 << 25) / (self.batch_mem_size / self.num_rows + 1);
-        let batch_size = batch_size.min(suggested_batch_size);
+        let sub_batch_size =
+            compute_suggested_batch_size_for_output(self.sorted_mem_used, self.num_rows);
 
-        Box::new(PartitionedBatchesIterator {
+        Ok(Box::new(PartitionedBatchesIterator {
             batches: self.sorted_batches.clone(),
-            cursors: LoserTree::new(
+            cursors: RadixTournamentTree::new(
                 self.sorted_partition_indices
                     .into_iter()
                     .enumerate()
@@ -147,14 +221,61 @@ impl BufferedData {
                         row_idx: 0,
                     })
                     .collect(),
+                partitioning.partition_count(),
             ),
             num_output_rows: 0,
             num_rows: self.num_rows,
-            batch_size,
-        })
+            batch_size: sub_batch_size,
+        }))
     }
 
     pub fn mem_used(&self) -> usize {
-        self.batch_mem_size + 4 * self.num_rows
+        self.staging_mem_used
+            + self.sorted_mem_used
+            + self.num_rows * size_of::<u32>()
+
+            // in k-way merging, there will be one output batch in memory before written out
+            + suggested_output_batch_mem_size()
+
+            // the ipc compression buffer
+            + DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE * 2
     }
+}
+
+fn sort_batches_by_partition_id(
+    batches: Vec<RecordBatch>,
+    partitioning: &Partitioning,
+) -> Result<(Vec<u32>, RecordBatch)> {
+    let num_rows = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
+    let num_partitions = partitioning.partition_count();
+    let schema = batches[0].schema();
+
+    let mut indices = batches // partition_id, batch_idx, row_idx
+        .iter()
+        .enumerate()
+        .flat_map(|(batch_idx, batch)| {
+            let hashes = evaluate_hashes(partitioning, batch)
+                .expect(&format!("error evaluating hashes with {partitioning}"));
+            evaluate_partition_ids(&hashes, partitioning.partition_count())
+                .into_iter()
+                .enumerate()
+                .map(move |(row_idx, part_id)| (part_id, batch_idx as u32, row_idx as u32))
+        })
+        .collect::<Vec<_>>();
+
+    // use quick sort if there are too many partitions or too few rows, otherwise
+    // use radix sort
+    if num_partitions < 65536 && num_rows >= num_partitions {
+        radix_sort_u16_ranged_by(&mut indices, num_partitions, |v| v.0 as u16);
+    } else {
+        indices.sort_unstable_by_key(|v| v.0);
+    }
+
+    // get sorted batches
+    let (sorted_partition_indices, sorted_row_indices): (Vec<u32>, Vec<_>) = indices
+        .into_iter()
+        .map(|(part_id, batch_idx, row_idx)| (part_id, (batch_idx as usize, row_idx as usize)))
+        .unzip();
+    let sorted_batch = interleave_batches(schema, &batches, &sorted_row_indices)?;
+    return Ok((sorted_partition_indices, sorted_batch));
 }

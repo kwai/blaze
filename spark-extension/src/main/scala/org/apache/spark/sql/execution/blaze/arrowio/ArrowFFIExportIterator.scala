@@ -27,24 +27,31 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConf
 
-class ArrowFFIExportIterator(
-    rowIter: Iterator[InternalRow],
-    schema: StructType,
-    recordBatchSize: Int = BlazeConf.BATCH_SIZE.intConf())
+class ArrowFFIExportIterator(rowIter: Iterator[InternalRow], schema: StructType)
     extends Iterator[(Long, Long) => Unit]
     with Logging {
 
+  // NOTE:
+  //  arrow-rs batch.get_array_memory_size() cannot work on ffi
+  //  batches. so we use a smaller batch size to force batch coalesce
+  //  in native side
+  private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf() / 3
+  private val maxBatchMemorySize = 1 << 24 // 16MB
+
+  private val allocator =
+    ArrowUtils.rootAllocator.newChildAllocator(this.getClass.getName, 0, Long.MaxValue)
   private val arrowSchema = ArrowUtils.toArrowSchema(schema)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
-
   override def hasNext: Boolean = rowIter.hasNext
 
   override def next(): (Long, Long) => Unit = {
-    val root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
+    val root = VectorSchemaRoot.create(arrowSchema, allocator)
     val arrowWriter = ArrowWriter.create(root)
     var rowCount = 0
 
-    while (rowIter.hasNext && rowCount < recordBatchSize) {
+    while (rowIter.hasNext
+      && rowCount < maxBatchNumRows
+      && allocator.getAllocatedMemory < maxBatchMemorySize) {
       arrowWriter.write(rowIter.next())
       rowCount += 1
     }

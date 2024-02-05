@@ -27,10 +27,22 @@ use jni::{objects::GlobalRef, sys::jlong};
 
 use crate::memmgr::metrics::SpillMetrics;
 
+pub type SpillCompressedReader = lz4_flex::frame::FrameDecoder<BufReader<Box<dyn Read + Send>>>;
+pub type SpillCompressedWriter =
+    lz4_flex::frame::AutoFinishEncoder<BufWriter<Box<dyn Write + Send>>>;
+
 pub trait Spill: Send + Sync {
     fn complete(&self) -> Result<()>;
     fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>>;
     fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>>;
+
+    fn get_compressed_reader(&self) -> SpillCompressedReader {
+        lz4_flex::frame::FrameDecoder::new(self.get_buf_reader())
+    }
+
+    fn get_compressed_writer(&self) -> SpillCompressedWriter {
+        lz4_flex::frame::FrameEncoder::new(self.get_buf_writer()).auto_finish()
+    }
 }
 
 pub fn try_new_spill(spill_metrics: &SpillMetrics) -> Result<Box<dyn Spill>> {

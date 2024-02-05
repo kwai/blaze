@@ -30,6 +30,7 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan,
     },
 };
+use datafusion_ext_commons::batch_size;
 use futures::{stream::once, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 
@@ -173,7 +174,7 @@ async fn execute_join(
         .max()
         .unwrap_or(0);
 
-    let target_output_num_rows = context.session_config().batch_size();
+    let target_output_num_rows = batch_size();
     let target_output_mem_size = 1 << 26; // 64MB
     let inner_exec: Arc<dyn ExecutionPlan> =
         Arc::new(MemoryExec::try_new(&[inner_batches], inner_schema, None)?);
