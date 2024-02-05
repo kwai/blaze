@@ -35,12 +35,12 @@ use datafusion::{
         Result, ScalarValue,
     },
     physical_expr::{
-        expressions::{CaseExpr, CastExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
+        expressions::{CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
         scatter, PhysicalExpr, PhysicalExprRef,
     },
     physical_plan::ColumnarValue,
 };
-use datafusion_ext_commons::uda::UserDefinedArray;
+use datafusion_ext_commons::{cast::cast, uda::UserDefinedArray};
 use itertools::Itertools;
 use parking_lot::Mutex;
 
@@ -55,24 +55,8 @@ impl CachedExprsEvaluator {
     pub fn try_new(
         filter_exprs: Vec<PhysicalExprRef>,
         projection_exprs: Vec<PhysicalExprRef>,
-        input_schema: SchemaRef,
         output_schema: SchemaRef,
     ) -> Result<Self> {
-        // add cast if data type not matches
-        let projection_exprs: Vec<PhysicalExprRef> = projection_exprs
-            .into_iter()
-            .zip(output_schema.fields())
-            .map(|(expr, field)| {
-                Ok({
-                    if expr.data_type(&input_schema)?.ne(field.data_type()) {
-                        Arc::new(CastExpr::new(expr, field.data_type().clone(), None))
-                    } else {
-                        expr
-                    }
-                })
-            })
-            .collect::<Result<_>>()?;
-
         let (transformed_exprs, cache) =
             transform_to_cached_exprs(&[filter_exprs.clone(), projection_exprs.clone()].concat())?;
         let (transformed_filter_exprs, transformed_projection_exprs) =
@@ -159,10 +143,15 @@ impl CachedExprsEvaluator {
         let output_cols = self
             .transformed_projection_exprs
             .iter()
-            .map(|expr| {
-                Ok(expr
+            .zip(self.output_schema.fields())
+            .map(|(expr, field)| {
+                let col = expr
                     .evaluate(&filtered_batch)?
-                    .into_array(filtered_batch.num_rows()))
+                    .into_array(filtered_batch.num_rows());
+                if col.data_type() != field.data_type() {
+                    return cast(col.as_ref(), field.data_type());
+                }
+                Ok(col)
             })
             .collect::<Result<Vec<ArrayRef>>>()?;
         Ok(RecordBatch::try_new_with_options(

@@ -18,10 +18,10 @@ use std::{
 };
 
 use arrow::{
-    array::StructArray,
+    array::{Array, StructArray},
     datatypes::SchemaRef,
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
-    record_batch::RecordBatch,
+    record_batch::{RecordBatch, RecordBatchOptions},
 };
 use blaze_jni_bridge::{jni_call, jni_new_object};
 use datafusion::{
@@ -94,14 +94,18 @@ impl FFIReaderStream {
         ))?;
         let ffi_arrow_array_ptr =
             jni_new_object!(JavaLong(&mut ffi_arrow_array as *mut FFI_ArrowArray as i64))?;
-        let _unit = jni_call!(ScalaFunction2(consumer.as_obj()).apply(
+        jni_call!(ScalaFunction2(consumer.as_obj()).apply(
             ffi_arrow_schema_ptr.as_obj(),
             ffi_arrow_array_ptr.as_obj(),
         ) -> JObject)?;
 
         let imported = from_ffi(ffi_arrow_array, &ffi_arrow_schema)?;
         let struct_array = StructArray::from(imported);
-        let batch = RecordBatch::from(struct_array);
+        let batch = RecordBatch::try_new_with_options(
+            self.schema(), // reuse the shared schema
+            struct_array.columns().to_vec(),
+            &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
+        )?;
 
         self.size_counter.add(batch.get_array_memory_size());
         Ok(Some(batch))

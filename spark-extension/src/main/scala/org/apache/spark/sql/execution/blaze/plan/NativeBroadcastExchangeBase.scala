@@ -150,7 +150,6 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
               .setSchema(nativeSchema)
               .setNumPartitions(1)
               .setIpcProviderResourceId(resourceId)
-              .setMode(pb.IpcReadMode.CHANNEL)
               .build())
           .build()
       },
@@ -174,13 +173,13 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
 
         override def compute(split: Partition, context: TaskContext): Iterator[Array[Byte]] = {
           val resourceId = s"ArrowBroadcastExchangeExec.input:${UUID.randomUUID()}"
-          val ipcs = ArrayBuffer[Array[Byte]]()
+          val bos = new ByteArrayOutputStream()
           JniBridge.resourcesMap.put(
             resourceId,
             (byteBuffer: ByteBuffer) => {
               val byteArray = new Array[Byte](byteBuffer.capacity())
               byteBuffer.get(byteArray)
-              ipcs += byteArray
+              bos.write(byteArray)
               metrics("dataSize") += byteArray.length
             })
 
@@ -205,7 +204,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
           assert(iter.isEmpty)
 
           // return ipcs as iterator
-          ipcs.iterator
+          Iterator.single(bos.toByteArray)
         }
       }
 
@@ -275,7 +274,6 @@ object NativeBroadcastExchangeBase {
       .newBuilder()
       .setSchema(nativeSchema)
       .setIpcProviderResourceId(readerIpcProviderResourceId)
-      .setMode(pb.IpcReadMode.CHANNEL)
 
     val sortExec = pb.SortExecNode
       .newBuilder()

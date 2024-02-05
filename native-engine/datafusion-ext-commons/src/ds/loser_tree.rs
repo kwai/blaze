@@ -14,7 +14,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use unchecked_index::{unchecked_index, UncheckedIndex};
+use unchecked_index::UncheckedIndex;
 
 pub trait ComparableForLoserTree {
     fn lt(&self, other: &Self) -> bool;
@@ -34,8 +34,8 @@ impl<T: ComparableForLoserTree> LoserTree<T> {
             // this component is performance critical,  use unchecked index
             // to avoid boundary checking.
             Self {
-                losers: unchecked_index(vec![]),
-                values: unchecked_index(values),
+                losers: unchecked_index::unchecked_index(vec![]),
+                values: unchecked_index::unchecked_index(values),
             }
         };
         tree.init_tree();
@@ -52,6 +52,10 @@ impl<T: ComparableForLoserTree> LoserTree<T> {
 
     pub fn len(&self) -> usize {
         self.values.len()
+    }
+
+    pub fn peek(&self) -> &T {
+        &self.values[0]
     }
 
     pub fn peek_mut(&mut self) -> LoserTreePeekMut<T> {
@@ -130,7 +134,7 @@ mod test {
     use itertools::Itertools;
     use rand::Rng;
 
-    use crate::loser_tree::{ComparableForLoserTree, LoserTree};
+    use crate::ds::loser_tree::{ComparableForLoserTree, LoserTree};
 
     #[test]
     fn fuzztest() {

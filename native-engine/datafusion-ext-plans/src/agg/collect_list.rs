@@ -26,7 +26,10 @@ use datafusion::{
 use datafusion_ext_commons::{df_execution_err, downcast_any};
 
 use crate::agg::{
-    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynList, AggDynValue},
+    acc::{
+        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynList, AggDynValue,
+        RefAccumStateRow,
+    },
     Agg, WithAggBufAddrs, WithMemTracking,
 };
 
@@ -105,7 +108,7 @@ impl Agg for AggCollectList {
 
     fn partial_update(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
@@ -129,7 +132,7 @@ impl Agg for AggCollectList {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
         let dyn_list = match acc.dyn_value_mut(self.accum_state_val_addr) {
             Some(dyn_list) => dyn_list,
             w => {
@@ -153,8 +156,8 @@ impl Agg for AggCollectList {
 
     fn partial_merge(
         &self,
-        acc: &mut AccumStateRow,
-        merging_acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
+        merging_acc: &mut RefAccumStateRow,
     ) -> Result<()> {
         match (
             acc.dyn_value_mut(self.accum_state_val_addr),
@@ -176,7 +179,7 @@ impl Agg for AggCollectList {
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
         Ok(
             match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
                 Some(w) => {
@@ -195,7 +198,7 @@ impl Agg for AggCollectList {
         )
     }
 
-    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
         let values: Vec<ScalarValue> = accs
             .iter_mut()
             .map(|acc| self.final_merge(acc))

@@ -663,6 +663,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 
 [[package]]
+name = "count-write"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ced507ab50aa0123e2c54db8b5f44fdfee04b1c93744d69e924307945fe57a85"
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -866,7 +872,6 @@ dependencies = [
  "thrift",
  "tokio",
  "unchecked-index",
- "zstd 0.12.4",
 ]
 
 [[package]]
@@ -912,8 +917,10 @@ dependencies = [
  "async-trait",
  "base64",
  "blaze-jni-bridge",
+ "byteorder",
  "bytes",
  "bytesize",
+ "count-write",
  "datafusion",
  "datafusion-ext-commons",
  "datafusion-ext-exprs",

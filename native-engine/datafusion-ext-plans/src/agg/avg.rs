@@ -29,7 +29,7 @@ use datafusion::{
 use datafusion_ext_commons::df_unimplemented_err;
 
 use crate::agg::{
-    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr},
+    acc::{AccumInitialValue, AccumStateValAddr, RefAccumStateRow},
     count::AggCount,
     sum::AggSum,
     Agg, WithAggBufAddrs, WithMemTracking,
@@ -123,7 +123,7 @@ impl Agg for AggAvg {
 
     fn partial_update(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
@@ -132,19 +132,27 @@ impl Agg for AggAvg {
         Ok(())
     }
 
-    fn partial_batch_update(&self, accs: &mut [AccumStateRow], values: &[ArrayRef]) -> Result<()> {
+    fn partial_batch_update(
+        &self,
+        accs: &mut [RefAccumStateRow],
+        values: &[ArrayRef],
+    ) -> Result<()> {
         self.agg_sum.partial_batch_update(accs, values)?;
         self.agg_count.partial_batch_update(accs, values)?;
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
         self.agg_sum.partial_update_all(acc, values)?;
         self.agg_count.partial_update_all(acc, values)?;
         Ok(())
     }
 
-    fn partial_merge(&self, acc1: &mut AccumStateRow, acc2: &mut AccumStateRow) -> Result<()> {
+    fn partial_merge(
+        &self,
+        acc1: &mut RefAccumStateRow,
+        acc2: &mut RefAccumStateRow,
+    ) -> Result<()> {
         self.agg_sum.partial_merge(acc1, acc2)?;
         self.agg_count.partial_merge(acc1, acc2)?;
         Ok(())
@@ -152,15 +160,15 @@ impl Agg for AggAvg {
 
     fn partial_batch_merge(
         &self,
-        accs: &mut [AccumStateRow],
-        merging_accs: &mut [AccumStateRow],
+        accs: &mut [RefAccumStateRow],
+        merging_accs: &mut [RefAccumStateRow],
     ) -> Result<()> {
         self.agg_sum.partial_batch_merge(accs, merging_accs)?;
         self.agg_count.partial_batch_merge(accs, merging_accs)?;
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
         let sum = self.agg_sum.final_merge(acc)?;
         let count = match self.agg_count.final_merge(acc)? {
             ScalarValue::Int64(Some(count)) => count,
@@ -170,7 +178,7 @@ impl Agg for AggAvg {
         Ok(final_merger(sum, count))
     }
 
-    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
         let sums = self.agg_sum.final_batch_merge(accs)?;
         let counts = self.agg_count.final_batch_merge(accs)?;
 

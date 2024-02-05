@@ -180,26 +180,31 @@ impl TaskOutputter for Arc<TaskContext> {
                 // if consumer is holding too much memory, we will create a spill
                 // to receive all of its outputs and release all memory.
                 // outputs can be read from spill later.
-                if MemManager::get().num_consumers() > 1 && mem_consumer.mem_used_percent() > 0.8 {
+                if mem_consumer.mem_used_percent() > 0.5
+                    && MemManager::get().num_consumers() > 1
+                    && MemManager::get().mem_used_percent() > 0.8
+                {
+                    log::info!(
+                        "spilling output result of {}[partition={partition}",
+                        mem_consumer.name(),
+                    );
                     let spill = try_new_spill(&spill_metrics)?;
-                    let mut spill_writer = spill.get_buf_writer();
+                    let mut spill_writer = spill.get_compressed_writer();
 
-                    // write all batches to spill
+                    // write all batches to spill, releasing all holding memory
                     while let Some(batch) = stream.next().await.transpose()? {
                         let _timer = baseline_metrics.elapsed_compute().timer();
                         let mut buf = vec![];
-                        write_one_batch(&batch, &mut Cursor::new(&mut buf), true, None)?;
+                        write_one_batch(&batch, &mut Cursor::new(&mut buf))?;
                         spill_writer.write_all(&buf)?;
                     }
                     let mut timer = baseline_metrics.elapsed_compute().timer();
-                    spill_writer.flush()?;
+                    drop(spill_writer);
                     spill.complete()?;
 
                     // read all batches from spill and output
-                    let mut spill_reader = spill.get_buf_reader();
-                    while let Some(batch) =
-                        read_one_batch(&mut spill_reader, Some(schema.clone()), true)?
-                    {
+                    let mut spill_reader = spill.get_compressed_reader();
+                    while let Some(batch) = read_one_batch(&mut spill_reader, &schema)? {
                         sender.send(Ok(batch), Some(&mut timer)).await;
                     }
                     return Ok(());

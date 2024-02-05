@@ -29,7 +29,7 @@ use paste::paste;
 use crate::agg::{
     acc::{
         AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
-        AggDynValue,
+        AggDynValue, RefAccumStateRow,
     },
     default_final_batch_merge_with_addr, default_final_merge_with_addr, Agg, WithAggBufAddrs,
     WithMemTracking,
@@ -41,8 +41,8 @@ pub struct AggFirst {
     accums_initial: Vec<AccumInitialValue>,
     accum_state_val_addr_value: AccumStateValAddr,
     accum_state_val_addr_valid: AccumStateValAddr,
-    partial_updater: fn(&Self, &mut AccumStateRow, &ArrayRef, usize),
-    partial_buf_merger: fn(&Self, &mut AccumStateRow, &mut AccumStateRow),
+    partial_updater: fn(&Self, &mut RefAccumStateRow, &ArrayRef, usize),
+    partial_buf_merger: fn(&Self, &mut RefAccumStateRow, &mut RefAccumStateRow),
     mem_used_tracker: AtomicUsize,
 }
 
@@ -79,11 +79,11 @@ impl AggFirst {
         })
     }
 
-    fn is_touched(&self, acc: &AccumStateRow) -> bool {
+    fn is_touched(&self, acc: &RefAccumStateRow) -> bool {
         acc.is_fixed_valid(self.accum_state_val_addr_valid)
     }
 
-    fn set_touched(&self, acc: &mut AccumStateRow) {
+    fn set_touched(&self, acc: &mut RefAccumStateRow) {
         acc.set_fixed_valid(self.accum_state_val_addr_valid, true)
     }
 }
@@ -124,7 +124,7 @@ impl Agg for AggFirst {
 
     fn partial_update(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
@@ -135,7 +135,7 @@ impl Agg for AggFirst {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
         if !self.is_touched(acc) {
             let value = &values[0];
             if !value.is_empty() {
@@ -146,24 +146,28 @@ impl Agg for AggFirst {
         Ok(())
     }
 
-    fn partial_merge(&self, acc1: &mut AccumStateRow, acc2: &mut AccumStateRow) -> Result<()> {
+    fn partial_merge(
+        &self,
+        acc1: &mut RefAccumStateRow,
+        acc2: &mut RefAccumStateRow,
+    ) -> Result<()> {
         let partial_buf_merger = self.partial_buf_merger;
         partial_buf_merger(self, acc1, acc2);
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
         default_final_merge_with_addr(self, acc, self.accum_state_val_addr_value)
     }
 
-    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
         default_final_batch_merge_with_addr(self, accs, self.accum_state_val_addr_value)
     }
 }
 
 fn get_partial_updater(
     dt: &DataType,
-) -> Result<fn(&AggFirst, &mut AccumStateRow, &ArrayRef, usize)> {
+) -> Result<fn(&AggFirst, &mut RefAccumStateRow, &ArrayRef, usize)> {
     // assert!(!is_touched(acc, addrs))
 
     macro_rules! fn_fixed {
@@ -200,7 +204,7 @@ fn get_partial_updater(
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
         DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(
-            |this: &AggFirst, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
+            |this: &AggFirst, acc: &mut RefAccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
                     let value = downcast_any!(v, StringArray).unwrap();
                     let v = value.value(i);
@@ -212,7 +216,7 @@ fn get_partial_updater(
             },
         ),
         DataType::Binary => Ok(
-            |this: &AggFirst, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
+            |this: &AggFirst, acc: &mut RefAccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
                     let value = downcast_any!(v, BinaryArray).unwrap();
                     let v = value.value(i);
@@ -224,7 +228,7 @@ fn get_partial_updater(
             },
         ),
         _other => Ok(
-            |this: &AggFirst, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
+            |this: &AggFirst, acc: &mut RefAccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
                     let v = ScalarValue::try_from_array(v, i)
                         .expect("First::partial_update error creating ScalarValue");
@@ -240,7 +244,7 @@ fn get_partial_updater(
 
 fn get_partial_buf_merger(
     dt: &DataType,
-) -> Result<fn(&AggFirst, &mut AccumStateRow, &mut AccumStateRow)> {
+) -> Result<fn(&AggFirst, &mut RefAccumStateRow, &mut RefAccumStateRow)> {
     // assert!(!is_touched(acc, addrs))
 
     macro_rules! fn_fixed {
