@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_get_object_class, jni_get_string, jni_new_direct_byte_buffer,
@@ -38,21 +38,18 @@ use datafusion::{
         SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::{
-    df_execution_err, io::read_one_batch, streams::coalesce_stream::CoalesceInput,
-};
+use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
 use parking_lot::Mutex;
 
-use crate::common::output::TaskOutputter;
+use crate::common::{ipc_compression::IpcCompressionReader, output::TaskOutputter};
 
 #[derive(Debug, Clone)]
 pub struct IpcReaderExec {
     pub num_partitions: usize,
     pub ipc_provider_resource_id: String,
     pub schema: SchemaRef,
-    pub mode: IpcReadMode,
     pub metrics: ExecutionPlanMetricsSet,
 }
 impl IpcReaderExec {
@@ -60,13 +57,11 @@ impl IpcReaderExec {
         num_partitions: usize,
         ipc_provider_resource_id: String,
         schema: SchemaRef,
-        mode: IpcReadMode,
     ) -> IpcReaderExec {
         IpcReaderExec {
             num_partitions,
             ipc_provider_resource_id,
             schema,
-            mode,
             metrics: ExecutionPlanMetricsSet::new(),
         }
     }
@@ -108,7 +103,6 @@ impl ExecutionPlan for IpcReaderExec {
             self.num_partitions,
             self.ipc_provider_resource_id.clone(),
             self.schema.clone(),
-            self.mode,
         )))
     }
 
@@ -137,7 +131,6 @@ impl ExecutionPlan for IpcReaderExec {
             once(read_ipc(
                 context.clone(),
                 self.schema(),
-                self.mode,
                 segments,
                 baseline_metrics.clone(),
                 size_counter,
@@ -156,17 +149,9 @@ impl ExecutionPlan for IpcReaderExec {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum IpcReadMode {
-    ChannelUncompressed,
-    Channel,
-    ChannelAndFileSegment,
-}
-
 pub async fn read_ipc(
     context: Arc<TaskContext>,
     schema: SchemaRef,
-    mode: IpcReadMode,
     segments: GlobalRef,
     baseline_metrics: BaselineMetrics,
     size_counter: Count,
@@ -174,55 +159,45 @@ pub async fn read_ipc(
     context.output_with_sender("IpcReader", schema.clone(), move |sender| async move {
         let mut timer = baseline_metrics.elapsed_compute().timer();
         loop {
+            // get next segment
             let segments = segments.clone();
-            let schema = schema.clone();
-            let reader = tokio::task::spawn_blocking(move || {
+            let next = tokio::task::spawn_blocking(move || {
                 if !jni_call!(ScalaIterator(segments.as_obj()).hasNext() -> bool)? {
                     return Ok::<_, DataFusionError>(None);
                 }
                 let segment = jni_new_global_ref!(
                     jni_call!(ScalaIterator(segments.as_obj()).next() -> JObject)?.as_obj()
                 )?;
-                let schema = schema.clone();
-                let reader = Arc::new(Mutex::new(match mode {
-                    IpcReadMode::ChannelUncompressed => {
-                        get_channel_reader(Some(schema), segment.as_obj(), false)?
-                    }
-                    IpcReadMode::Channel => {
-                        get_channel_reader(Some(schema), segment.as_obj(), true)?
-                    }
-                    IpcReadMode::ChannelAndFileSegment => {
-                        let segment_class = jni_get_object_class!(segment.as_obj())?;
-                        let segment_classname_obj =
-                            jni_call!(Class(segment_class.as_obj()).getName() -> JObject)?;
-                        let segment_classname =
-                            jni_get_string!(segment_classname_obj.as_obj().into())?;
-
-                        if segment_classname == "org.apache.spark.storage.FileSegment" {
-                            get_file_segment_reader(Some(schema), segment.as_obj())?
-                        } else {
-                            get_channel_reader(Some(schema), segment.as_obj(), true)?
-                        }
-                    }
-                }));
-                Ok(Some(reader))
+                let segment_class = jni_get_object_class!(segment.as_obj())?;
+                let segment_classname_obj =
+                    jni_call!(Class(segment_class.as_obj()).getName() -> JObject)?;
+                let segment_classname = jni_get_string!(segment_classname_obj.as_obj().into())?;
+                Ok(Some((segment_classname, segment)))
             })
             .await
             .or_else(|err| df_execution_err!("{err}"))??;
 
-            if let Some(reader) = reader {
-                while let Some(batch) = {
-                    let reader_cloned = reader.clone();
-                    tokio::task::spawn_blocking(move || reader_cloned.clone().lock().next_batch())
-                        .await
-                        .or_else(|err| df_execution_err!("{err}"))??
-                } {
-                    size_counter.add(batch.get_array_memory_size());
-                    baseline_metrics.record_output(batch.num_rows());
-                    sender.send(Ok(batch), Some(&mut timer)).await;
+            // get ipc reader
+            let reader = Arc::new(Mutex::new(match next {
+                Some((segment_classname, segment)) => {
+                    if segment_classname == "org.apache.spark.storage.FileSegment" {
+                        get_file_segment_reader(schema.clone(), segment.as_obj())?
+                    } else {
+                        get_channel_reader(schema.clone(), segment.as_obj())?
+                    }
                 }
-            } else {
-                break; // finished
+                None => break,
+            }));
+
+            while let Some(batch) = {
+                let reader_cloned = reader.clone();
+                tokio::task::spawn_blocking(move || reader_cloned.clone().lock().read_batch())
+                    .await
+                    .or_else(|err| df_execution_err!("{err}"))??
+            } {
+                size_counter.add(batch.get_array_memory_size());
+                baseline_metrics.record_output(batch.num_rows());
+                sender.send(Ok(batch), Some(&mut timer)).await;
             }
         }
         Ok(())
@@ -230,24 +205,22 @@ pub async fn read_ipc(
 }
 
 fn get_channel_reader(
-    schema: Option<SchemaRef>,
+    schema: SchemaRef,
     channel: JObject,
-    compressed: bool,
-) -> Result<RecordBatchReader> {
+) -> Result<IpcCompressionReader<Box<dyn Read + Send>>> {
     let global_ref = jni_new_global_ref!(channel)?;
     let channel_reader = ReadableByteChannelReader::new(global_ref);
 
-    Ok(RecordBatchReader::new(
+    Ok(IpcCompressionReader::new(
         Box::new(BufReader::with_capacity(65536, channel_reader)),
         schema,
-        compressed,
     ))
 }
 
 fn get_file_segment_reader(
-    schema: Option<SchemaRef>,
+    schema: SchemaRef,
     file_segment: JObject,
-) -> Result<RecordBatchReader> {
+) -> Result<IpcCompressionReader<Box<dyn Read + Send>>> {
     let file = jni_call!(SparkFileSegment(file_segment).file() -> JObject)?;
     let path = jni_call!(JavaFile(file.as_obj()).getPath() -> JObject)?;
     let path = jni_get_string!(path.as_obj().into())?;
@@ -256,11 +229,9 @@ fn get_file_segment_reader(
 
     let mut file = File::open(path)?;
     file.seek(SeekFrom::Start(offset as u64))?;
-
-    Ok(RecordBatchReader::new(
-        Box::new(file.take(length as u64)),
+    Ok(IpcCompressionReader::new(
+        Box::new(BufReader::with_capacity(65536, file.take(length as u64))),
         schema,
-        true,
     ))
 }
 
@@ -288,6 +259,7 @@ impl ReadableByteChannelReader {
         if self.closed {
             return Ok(0);
         }
+        let mut total_read_bytes = 0;
         let buf = jni_new_direct_byte_buffer!(buf)?;
 
         while jni_call!(JavaBuffer(buf.as_obj()).hasRemaining() -> bool)? {
@@ -299,9 +271,9 @@ impl ReadableByteChannelReader {
                 self.close()?;
                 break;
             }
+            total_read_bytes += read_bytes as usize;
         }
-        let position = jni_call!(JavaBuffer(buf.as_obj()).position() -> i32)?;
-        Ok(position as usize)
+        Ok(total_read_bytes)
     }
 }
 
@@ -315,25 +287,5 @@ impl Drop for ReadableByteChannelReader {
     fn drop(&mut self) {
         // ensure the channel is closed
         let _ = self.close();
-    }
-}
-
-pub struct RecordBatchReader {
-    input: Box<dyn Read + Send>,
-    schema: Option<SchemaRef>,
-    compress: bool,
-}
-
-impl RecordBatchReader {
-    pub fn new(input: Box<dyn Read + Send>, schema: Option<SchemaRef>, compress: bool) -> Self {
-        Self {
-            input,
-            schema,
-            compress,
-        }
-    }
-
-    pub fn next_batch(&mut self) -> Result<Option<RecordBatch>> {
-        read_one_batch(&mut self.input, self.schema.clone(), self.compress)
     }
 }

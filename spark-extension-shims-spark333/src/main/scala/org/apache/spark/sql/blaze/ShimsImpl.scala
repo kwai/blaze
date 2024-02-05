@@ -508,7 +508,6 @@ class ShimsImpl extends Shims with Logging {
                   .setSchema(nativeSchema)
                   .setNumPartitions(shuffledRDD.getNumPartitions)
                   .setIpcProviderResourceId(jniResourceId)
-                  .setMode(pb.IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
                   .build())
               .build()
           })

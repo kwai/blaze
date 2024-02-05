@@ -42,9 +42,9 @@ use futures::{StreamExt, TryStreamExt};
 use parking_lot::Mutex as SyncMutex;
 
 use crate::common::{
+    batch_selection::{interleave_batches, take_batch_opt},
     column_pruning::ExecuteWithColumnPruning,
     output::{TaskOutputter, WrappedRecordBatchSender},
-    BatchTaker, BatchesInterleaver,
 };
 
 #[derive(Debug)]
@@ -115,7 +115,7 @@ impl SortMergeJoinExec {
             .iter()
             .map(|&i| self.left.schema().field(i).data_type().clone())
             .collect::<Vec<_>>();
-        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
+        let sub_batch_size = batch_size / batch_size.ilog10() as usize;
 
         // use smaller batch size and coalesce batches at the end, to avoid buffer
         // overflowing
@@ -603,7 +603,7 @@ impl StreamCursor {
                 .map(|f| f.as_ref().clone().with_nullable(true))
                 .collect::<Vec<_>>(),
         )));
-        let null_batch = BatchTaker(&empty_batch).take_opt([Option::<usize>::None])?;
+        let null_batch = take_batch_opt(empty_batch, [Option::<usize>::None])?;
         let null_on_rows = Arc::new(
             on_row_converter
                 .lock()
@@ -808,20 +808,26 @@ impl Joiner {
 
         let lcols = || -> Result<Vec<ArrayRef>> {
             Ok(if !lcur.projection.is_empty() {
-                BatchesInterleaver::new(lcur.projected_batches[0].schema(), &lcur.projected_batches)
-                    .interleave(&self.ljoins)?
-                    .columns()
-                    .to_vec()
+                interleave_batches(
+                    lcur.projected_batches[0].schema(),
+                    &lcur.projected_batches,
+                    &self.ljoins,
+                )?
+                .columns()
+                .to_vec()
             } else {
                 vec![]
             })
         };
         let rcols = || -> Result<Vec<ArrayRef>> {
             Ok(if !rcur.projection.is_empty() {
-                BatchesInterleaver::new(rcur.projected_batches[0].schema(), &rcur.projected_batches)
-                    .interleave(&self.rjoins)?
-                    .columns()
-                    .to_vec()
+                interleave_batches(
+                    rcur.projected_batches[0].schema(),
+                    &rcur.projected_batches,
+                    &self.rjoins,
+                )?
+                .columns()
+                .to_vec()
             } else {
                 vec![]
             })

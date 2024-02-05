@@ -181,12 +181,8 @@ async fn execute_filter(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     let input_schema = input.schema();
-    let cached_exprs_evaluator = CachedExprsEvaluator::try_new(
-        predicates,
-        vec![],
-        input_schema.clone(),
-        input_schema.clone(),
-    )?;
+    let cached_exprs_evaluator =
+        CachedExprsEvaluator::try_new(predicates, vec![], input_schema.clone())?;
 
     context.output_with_sender("Filter", input_schema, move |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {

@@ -12,99 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::{
-    array::{ArrayRef, PrimitiveArray, UInt32Array},
-    datatypes::SchemaRef,
-    error::Result as ArrowResult,
-    record_batch::{RecordBatch, RecordBatchOptions},
-};
-use datafusion::common::Result;
+use blaze_jni_bridge::conf::{IntConf, BATCH_SIZE};
+use once_cell::sync::OnceCell;
 
+pub mod batch_selection;
 pub mod batch_statisitcs;
 pub mod cached_exprs_evaluator;
 pub mod column_pruning;
+pub mod ipc_compression;
 pub mod output;
 
-pub struct BatchTaker<'a>(pub &'a RecordBatch);
-
-impl BatchTaker<'_> {
-    pub fn take<T: num::PrimInt>(
-        &self,
-        indices: impl IntoIterator<Item = T>,
-    ) -> Result<RecordBatch> {
-        let indices: UInt32Array =
-            PrimitiveArray::from_iter(indices.into_iter().map(|idx| idx.to_u32().unwrap()));
-        self.take_impl(&indices)
-    }
-
-    pub fn take_opt<T: num::PrimInt>(
-        &self,
-        indices: impl IntoIterator<Item = Option<T>>,
-    ) -> Result<RecordBatch> {
-        let indices: UInt32Array = PrimitiveArray::from_iter(
-            indices
-                .into_iter()
-                .map(|opt| opt.map(|idx| idx.to_u32().unwrap())),
-        );
-        self.take_impl(&indices)
-    }
-
-    fn take_impl(&self, indices: &UInt32Array) -> Result<RecordBatch> {
-        let cols = self
-            .0
-            .columns()
-            .iter()
-            .map(|c| Ok(arrow::compute::take(c, indices, None)?))
-            .collect::<Result<_>>()?;
-        let taken = RecordBatch::try_new_with_options(
-            self.0.schema(),
-            cols,
-            &RecordBatchOptions::new().with_row_count(Some(indices.len())),
-        )?;
-        Ok(taken)
-    }
+// for better cache usage
+pub const fn staging_mem_size_for_partial_sort() -> usize {
+    4194304 * 8 / 10
 }
 
-pub struct BatchesInterleaver {
-    schema: SchemaRef,
-    batches_arrays: Vec<Vec<ArrayRef>>,
+// use bigger batch memory size writing shuffling data
+pub const fn suggested_output_batch_mem_size() -> usize {
+    33554432
 }
 
-impl BatchesInterleaver {
-    pub fn new(schema: SchemaRef, batches: &[RecordBatch]) -> Self {
-        let mut batches_arrays: Vec<Vec<ArrayRef>> = schema
-            .fields()
-            .iter()
-            .map(|_| Vec::with_capacity(batches.len()))
-            .collect();
-        for batch in batches {
-            for (col_idx, column) in batch.columns().iter().enumerate() {
-                batches_arrays[col_idx].push(column.clone());
-            }
-        }
+// use smaller batch memory size for kway merging since there will be multiple
+// batches in memory at the same time
+pub const fn suggested_kway_merge_batch_mem_size() -> usize {
+    1048576
+}
 
-        Self {
-            schema,
-            batches_arrays,
-        }
-    }
+pub fn compute_suggested_batch_size_for_output(mem_size: usize, num_rows: usize) -> usize {
+    let suggested_batch_mem_size = suggested_output_batch_mem_size();
+    compute_batch_size_with_target_mem_size(mem_size, num_rows, suggested_batch_mem_size)
+}
 
-    pub fn interleave(&self, indices: &[(usize, usize)]) -> Result<RecordBatch> {
-        Ok(RecordBatch::try_new_with_options(
-            self.schema.clone(),
-            self.batches_arrays
-                .iter()
-                .map(|arrays| {
-                    arrow::compute::interleave(
-                        &arrays
-                            .iter()
-                            .map(|array| array.as_ref())
-                            .collect::<Vec<_>>(),
-                        indices,
-                    )
-                })
-                .collect::<ArrowResult<Vec<_>>>()?,
-            &RecordBatchOptions::new().with_row_count(Some(indices.len())),
-        )?)
-    }
+pub fn compute_suggested_batch_size_for_kway_merge(mem_size: usize, num_rows: usize) -> usize {
+    let suggested_batch_mem_size = suggested_kway_merge_batch_mem_size();
+    compute_batch_size_with_target_mem_size(mem_size, num_rows, suggested_batch_mem_size)
+}
+
+fn compute_batch_size_with_target_mem_size(
+    mem_size: usize,
+    num_rows: usize,
+    target_mem_size: usize,
+) -> usize {
+    const CACHED_BATCH_SIZE: OnceCell<i32> = OnceCell::new();
+    let batch_size = *CACHED_BATCH_SIZE
+        .get_or_try_init(|| BATCH_SIZE.value())
+        .expect("error getting configured batch size") as usize;
+
+    let mem_size_est_max = 4096 * batch_size;
+    let est_mem_size_per_row = (mem_size + mem_size_est_max) / (num_rows + batch_size);
+    let est_sub_batch_size = target_mem_size / est_mem_size_per_row;
+    est_sub_batch_size.min(batch_size)
 }

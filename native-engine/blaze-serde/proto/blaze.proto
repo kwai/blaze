@@ -533,14 +533,7 @@ message IpcWriterExecNode {
 message IpcReaderExecNode {
   uint32 num_partitions = 1;
   Schema schema = 2;
-  IpcReadMode mode = 3;
-  string ipc_provider_resource_id = 4;
-}
-
-enum IpcReadMode {
-  CHANNEL_UNCOMPRESSED = 0;
-  CHANNEL = 1;
-  CHANNEL_AND_FILE_SEGMENT = 2;
+  string ipc_provider_resource_id = 3;
 }
 
 message DebugExecNode {

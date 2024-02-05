@@ -45,6 +45,7 @@ use slimmer_box::SlimmerBox;
 
 use crate::agg::acc::{
     AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
+    RefAccumStateRow,
 };
 
 pub const AGG_BUF_COLUMN_NAME: &str = "#9223372036854775807";
@@ -142,12 +143,16 @@ pub trait Agg: WithAggBufAddrs + WithMemTracking + Send + Sync + Debug {
 
     fn partial_update(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()>;
 
-    fn partial_batch_update(&self, accs: &mut [AccumStateRow], values: &[ArrayRef]) -> Result<()> {
+    fn partial_batch_update(
+        &self,
+        accs: &mut [RefAccumStateRow],
+        values: &[ArrayRef],
+    ) -> Result<()> {
         for row_idx in 0..accs.len() {
             let acc = &mut accs[row_idx];
             self.partial_update(acc, values, row_idx)?;
@@ -155,14 +160,17 @@ pub trait Agg: WithAggBufAddrs + WithMemTracking + Send + Sync + Debug {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()>;
-    fn partial_merge(&self, acc: &mut AccumStateRow, merging_acc: &mut AccumStateRow)
-        -> Result<()>;
+    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()>;
+    fn partial_merge(
+        &self,
+        acc: &mut RefAccumStateRow,
+        merging_acc: &mut RefAccumStateRow,
+    ) -> Result<()>;
 
     fn partial_batch_merge(
         &self,
-        accs: &mut [AccumStateRow],
-        merging_accs: &mut [AccumStateRow],
+        accs: &mut [RefAccumStateRow],
+        merging_accs: &mut [RefAccumStateRow],
     ) -> Result<()> {
         for row_idx in 0..accs.len() {
             let acc = &mut accs[row_idx];
@@ -172,8 +180,8 @@ pub trait Agg: WithAggBufAddrs + WithMemTracking + Send + Sync + Debug {
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue>;
-    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef>;
+    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue>;
+    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef>;
 }
 
 pub fn create_agg(
@@ -250,7 +258,7 @@ pub fn create_agg(
 
 fn default_final_merge_with_addr(
     agg: &impl Agg,
-    acc: &mut AccumStateRow,
+    acc: &mut RefAccumStateRow,
     addr: AccumStateValAddr,
 ) -> Result<ScalarValue> {
     // default implementation:
@@ -347,7 +355,7 @@ fn default_final_merge_with_addr(
 
 fn default_final_batch_merge_with_addr(
     agg: &impl Agg,
-    accs: &mut [AccumStateRow],
+    accs: &mut [RefAccumStateRow],
     addr: AccumStateValAddr,
 ) -> Result<ArrayRef> {
     // default implementation:

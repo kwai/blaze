@@ -25,7 +25,7 @@ use datafusion::{
 };
 
 use crate::agg::{
-    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr},
+    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, RefAccumStateRow},
     Agg, WithAggBufAddrs, WithMemTracking,
 };
 
@@ -96,7 +96,7 @@ impl Agg for AggCount {
 
     fn partial_update(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
@@ -107,7 +107,11 @@ impl Agg for AggCount {
         Ok(())
     }
 
-    fn partial_batch_update(&self, accs: &mut [AccumStateRow], values: &[ArrayRef]) -> Result<()> {
+    fn partial_batch_update(
+        &self,
+        accs: &mut [RefAccumStateRow],
+        values: &[ArrayRef],
+    ) -> Result<()> {
         let addr = self.accum_state_val_addr;
         let value = &values[0];
         for (row_idx, acc) in accs.iter_mut().enumerate() {
@@ -118,14 +122,18 @@ impl Agg for AggCount {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
         let addr = self.accum_state_val_addr;
         let num_valids = values[0].len() - values[0].null_count();
         acc.update_fixed_value::<i64>(addr, |v| v + num_valids as i64);
         Ok(())
     }
 
-    fn partial_merge(&self, acc1: &mut AccumStateRow, acc2: &mut AccumStateRow) -> Result<()> {
+    fn partial_merge(
+        &self,
+        acc1: &mut RefAccumStateRow,
+        acc2: &mut RefAccumStateRow,
+    ) -> Result<()> {
         let addr = self.accum_state_val_addr;
         let num_valids2 = acc2.fixed_value::<i64>(addr);
         acc1.update_fixed_value::<i64>(addr, |v| v + num_valids2);
@@ -134,8 +142,8 @@ impl Agg for AggCount {
 
     fn partial_batch_merge(
         &self,
-        accs: &mut [AccumStateRow],
-        merging_accs: &mut [AccumStateRow],
+        accs: &mut [RefAccumStateRow],
+        merging_accs: &mut [RefAccumStateRow],
     ) -> Result<()> {
         let addr = self.accum_state_val_addr;
         for (acc, merging_acc) in accs.iter_mut().zip(merging_accs) {
@@ -144,12 +152,12 @@ impl Agg for AggCount {
         }
         Ok(())
     }
-    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
         let addr = self.accum_state_val_addr;
         Ok(ScalarValue::from(acc.fixed_value::<i64>(addr)))
     }
 
-    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
         let addr = self.accum_state_val_addr;
         Ok(Arc::new(
             accs.iter()

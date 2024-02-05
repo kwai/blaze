@@ -15,12 +15,13 @@
 #![feature(new_uninit)]
 #![feature(io_error_other)]
 #![feature(slice_swap_unchecked)]
+#![feature(vec_into_raw_parts)]
 
 pub mod bytes_arena;
 pub mod cast;
+pub mod ds;
 pub mod hadoop_fs;
 pub mod io;
-pub mod loser_tree;
 pub mod rdxsort;
 pub mod slim_bytes;
 pub mod spark_hash;
