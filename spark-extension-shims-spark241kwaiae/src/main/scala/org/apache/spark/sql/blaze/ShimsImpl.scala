@@ -17,16 +17,11 @@ package org.apache.spark.sql.blaze
 
 import java.io.File
 import java.util.UUID
-
 import com.kuaishou.dataarch.shuffle.proto.dto.common.PartitionStatistics
 import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.commons.lang3.reflect.MethodUtils
-import org.apache.spark.OneToOneDependency
-import org.apache.spark.Partition
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.SparkEnv
-import org.apache.spark.SparkException
-import org.apache.spark.TaskContext
+import org.apache.hadoop.conf.Configuration
+import org.apache.spark.{OneToOneDependency, Partition, ShuffleDependency, SparkContext, SparkEnv, SparkException, TaskContext}
 import org.blaze.{protobuf => pb}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.OptionalConfigEntry
@@ -40,7 +35,7 @@ import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.UnifiedShuffleManager
 import org.apache.spark.shuffle.sort.MapInfo
-import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector
+import org.apache.spark.sql.blaze.kwai.{BlazeNullPlaceholderListener, BlazeOperatorMetricsCollector, OperatorMetricsListener}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.First
@@ -434,10 +429,7 @@ class ShimsImpl extends Shims with Logging {
 
   override def executeNative(plan: SparkPlan): NativeRDD =
     plan match {
-      case plan: NativeSupports =>
-        BlazeOperatorMetricsCollector.instance.foreach(
-          _.createListener(plan, plan.sqlContext.sparkContext))
-        plan.executeNative()
+      case plan: NativeSupports => plan.executeNative()
       case plan: ShuffleQueryStageInput => executeNativeCustomShuffleReader(plan)
       case plan: SkewedShuffleQueryStageInput => executeNativeCustomShuffleReader(plan)
       case plan: BroadcastQueryStageInput => executeNative(plan.childStage)
@@ -678,6 +670,14 @@ class ShimsImpl extends Shims with Logging {
         override val nullable: Boolean)
         extends NativeExprWrapperBase(nativeExpr, dataType, nullable)
     NativeExprWrapper(nativeExpr, dataType, nullable)
+  }
+
+  override def postTransform(plan: SparkPlan, sc: SparkContext): Unit = {
+    if (!sc.conf.getBoolean("spark.blaze.enable.queueNullPlaceholderSet", defaultValue = false)) {
+      sc.conf.set("spark.blaze.enable.queueNullPlaceholderSet", "true")
+      sc.listenerBus.addToQueue(new BlazeNullPlaceholderListener, "BlazeOperatorMetrics")
+    }
+    sc.listenerBus.addToQueue(new OperatorMetricsListener(sc, plan), "BlazeOperatorMetrics")
   }
 }
 
