@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use arrow::{datatypes::SchemaRef, error::Result as ArrowResult, record_batch::RecordBatch};
+use arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
 use async_trait::async_trait;
 use datafusion::{
     common::Result,
@@ -23,7 +23,6 @@ use datafusion::{
     physical_plan::{metrics::BaselineMetrics, Partitioning, SendableRecordBatchStream},
 };
 use datafusion_ext_commons::{
-    array_builder::has_array_builder_supported,
     spark_hash::{create_hashes, pmod},
     streams::coalesce_stream::CoalesceInput,
 };
@@ -31,21 +30,13 @@ use futures::StreamExt;
 
 use crate::{common::output::TaskOutputter, memmgr::onheap_spill::Spill};
 
-pub mod bucket_repartitioner;
 pub mod single_repartitioner;
 pub mod sort_repartitioner;
 
+mod buffered_data;
 mod rss;
-pub mod rss_bucket_repartitioner;
 pub mod rss_single_repartitioner;
 pub mod rss_sort_repartitioner;
-
-pub fn can_use_bucket_repartitioner(schema: &SchemaRef) -> bool {
-    schema
-        .fields()
-        .iter()
-        .all(|field| has_array_builder_supported(field.data_type()))
-}
 
 #[async_trait]
 pub trait ShuffleRepartitioner: Send + Sync {

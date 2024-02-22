@@ -37,14 +37,16 @@ use datafusion::{
         Statistics,
     },
 };
-use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
+use datafusion_ext_commons::{
+    batch_size, df_execution_err, streams::coalesce_stream::CoalesceInput,
+};
 use futures::{StreamExt, TryStreamExt};
 use parking_lot::Mutex as SyncMutex;
 
 use crate::common::{
+    batch_selection::{interleave_batches, take_batch_opt},
     column_pruning::ExecuteWithColumnPruning,
     output::{TaskOutputter, WrappedRecordBatchSender},
-    BatchTaker, BatchesInterleaver,
 };
 
 #[derive(Debug)]
@@ -115,7 +117,7 @@ impl SortMergeJoinExec {
             .iter()
             .map(|&i| self.left.schema().field(i).data_type().clone())
             .collect::<Vec<_>>();
-        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
+        let sub_batch_size = batch_size / batch_size.ilog10() as usize;
 
         // use smaller batch size and coalesce batches at the end, to avoid buffer
         // overflowing
@@ -190,7 +192,7 @@ impl ExecutionPlan for SortMergeJoinExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
-        let batch_size = context.session_config().batch_size();
+        let batch_size = batch_size();
         let join_params = self.create_join_params(batch_size);
         let left = self.left.execute(partition, context.clone())?;
         let right = self.right.execute(partition, context.clone())?;
@@ -214,7 +216,7 @@ impl ExecuteWithColumnPruning for SortMergeJoinExec {
         projection: &[usize],
     ) -> Result<SendableRecordBatchStream> {
         let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
-        let batch_size = context.session_config().batch_size();
+        let batch_size = batch_size();
 
         let (join_params, left_projection, right_projection) =
             self.create_join_params(batch_size).project(projection)?;
@@ -388,18 +390,25 @@ async fn execute_join(
         on_row_converter.clone(),
         join_params.on_left.clone(),
         join_params.left_output_projection.clone(),
-        &mut timer,
-    )
-    .await?;
-
+    )?;
     let mut rcur = StreamCursor::try_new(
         rstream,
         on_row_converter.clone(),
         join_params.on_right.clone(),
         join_params.right_output_projection.clone(),
-        &mut timer,
-    )
-    .await?;
+    )?;
+
+    macro_rules! forward {
+        ($cur:expr) => {{
+            if $cur.next() == NextAction::LoadNextBatch {
+                $cur.next_batch(&mut timer).await?;
+            }
+        }};
+    }
+
+    // load first record
+    forward!(lcur);
+    forward!(rcur);
 
     let join_type = join_params.join_type;
     let mut joiner = Joiner::new();
@@ -426,14 +435,14 @@ async fn execute_join(
                 if matches!(join_type, Left | LeftAnti | Full) {
                     joiner_accept_pair!(Some(lcur.cur_idx), None);
                 }
-                lcur.next(&mut timer).await?;
+                forward!(lcur);
                 lcur.clear_outdated(joiner.l_min_reserved_bidx);
             }
             Ordering::Greater => {
                 if matches!(join_type, Right | RightAnti | Full) {
                     joiner_accept_pair!(None, Some(rcur.cur_idx));
                 }
-                rcur.next(&mut timer).await?;
+                forward!(rcur);
                 rcur.clear_outdated(joiner.r_min_reserved_bidx);
             }
             Ordering::Equal => {
@@ -441,21 +450,21 @@ async fn execute_join(
                 let ridx0 = rcur.cur_idx;
                 leqs.push(lidx0);
                 reqs.push(ridx0);
-                lcur.next(&mut timer).await?;
-                rcur.next(&mut timer).await?;
+                forward!(lcur);
+                forward!(rcur);
 
                 let mut leq = true;
                 let mut req = true;
                 while leq && req {
                     if leq && !lcur.finished && lcur.row(lcur.cur_idx) == lcur.row(lidx0) {
                         leqs.push(lcur.cur_idx);
-                        lcur.next(&mut timer).await?;
+                        forward!(lcur);
                     } else {
                         leq = false;
                     }
                     if req && !rcur.finished && rcur.row(rcur.cur_idx) == rcur.row(ridx0) {
                         reqs.push(rcur.cur_idx);
-                        rcur.next(&mut timer).await?;
+                        forward!(rcur);
                     } else {
                         req = false;
                     }
@@ -495,7 +504,7 @@ async fn execute_join(
                             }
                             RightSemi | LeftAnti | RightAnti => {}
                         }
-                        lcur.next(&mut timer).await?;
+                        forward!(lcur);
                         lcur.clear_outdated(joiner.l_min_reserved_bidx);
                     }
                 }
@@ -512,7 +521,7 @@ async fn execute_join(
                             }
                             LeftSemi | LeftAnti | RightAnti => {}
                         }
-                        rcur.next(&mut timer).await?;
+                        forward!(rcur);
                         rcur.clear_outdated(joiner.r_min_reserved_bidx);
                     }
                 }
@@ -536,14 +545,14 @@ async fn execute_join(
     if matches!(join_type, Left | LeftAnti | Full) {
         while !lcur.finished {
             joiner_accept_pair!(Some(lcur.cur_idx), None);
-            lcur.next(&mut timer).await?;
+            forward!(lcur);
             lcur.clear_outdated(joiner.l_min_reserved_bidx);
         }
     }
     if matches!(join_type, Right | RightAnti | Full) {
         while !rcur.finished {
             joiner_accept_pair!(None, Some(rcur.cur_idx));
-            rcur.next(&mut timer).await?;
+            forward!(rcur);
             rcur.clear_outdated(joiner.r_min_reserved_bidx);
         }
     }
@@ -575,13 +584,18 @@ struct StreamCursor {
     finished: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NextAction {
+    None,
+    LoadNextBatch,
+}
+
 impl StreamCursor {
-    async fn try_new(
+    fn try_new(
         stream: SendableRecordBatchStream,
         on_row_converter: Arc<SyncMutex<RowConverter>>,
         on_columns: Vec<usize>,
         projection: Vec<usize>,
-        stop_timer: &mut ScopedTimerGuard<'_>,
     ) -> Result<Self> {
         let empty_batch = RecordBatch::new_empty(Arc::new(Schema::new(
             stream
@@ -591,7 +605,7 @@ impl StreamCursor {
                 .map(|f| f.as_ref().clone().with_nullable(true))
                 .collect::<Vec<_>>(),
         )));
-        let null_batch = BatchTaker(&empty_batch).take_opt([Option::<usize>::None])?;
+        let null_batch = take_batch_opt(empty_batch, [Option::<usize>::None])?;
         let null_on_rows = Arc::new(
             on_row_converter
                 .lock()
@@ -599,7 +613,7 @@ impl StreamCursor {
         );
         let null_nb = NullBuffer::new_null(1);
 
-        let mut cursor = Self {
+        Ok(Self {
             stream,
             on_row_converter,
             on_columns,
@@ -608,17 +622,14 @@ impl StreamCursor {
             projection,
             on_rows: vec![null_on_rows],
             on_row_null_buffers: vec![Some(null_nb)],
-            cur_idx: (1, 0),
+            cur_idx: (0, 0),
             num_null_batches: 1,
             finished: false,
-        };
-        if !cursor.next_batch(stop_timer).await? {
-            cursor.finished = true;
-        }
-        Ok(cursor)
+        })
     }
 
-    async fn next(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<()> {
+    fn next(&mut self) -> NextAction {
+        let mut next_action = NextAction::None;
         let mut cur_idx = self.cur_idx;
 
         if cur_idx.1 + 1 < self.batches[cur_idx.0].num_rows() {
@@ -626,12 +637,10 @@ impl StreamCursor {
         } else {
             cur_idx.0 += 1;
             cur_idx.1 = 0;
-            if !self.next_batch(stop_timer).await? {
-                self.finished = true;
-            }
+            next_action = NextAction::LoadNextBatch;
         }
         self.cur_idx = cur_idx;
-        Ok(())
+        next_action
     }
 
     async fn next_batch(&mut self, stop_timer: &mut ScopedTimerGuard<'_>) -> Result<bool> {
@@ -655,6 +664,7 @@ impl StreamCursor {
         } else {
             stop_timer.restart();
         }
+        self.finished = true;
         Ok(false)
     }
 
@@ -800,20 +810,26 @@ impl Joiner {
 
         let lcols = || -> Result<Vec<ArrayRef>> {
             Ok(if !lcur.projection.is_empty() {
-                BatchesInterleaver::new(lcur.projected_batches[0].schema(), &lcur.projected_batches)
-                    .interleave(&self.ljoins)?
-                    .columns()
-                    .to_vec()
+                interleave_batches(
+                    lcur.projected_batches[0].schema(),
+                    &lcur.projected_batches,
+                    &self.ljoins,
+                )?
+                .columns()
+                .to_vec()
             } else {
                 vec![]
             })
         };
         let rcols = || -> Result<Vec<ArrayRef>> {
             Ok(if !rcur.projection.is_empty() {
-                BatchesInterleaver::new(rcur.projected_batches[0].schema(), &rcur.projected_batches)
-                    .interleave(&self.rjoins)?
-                    .columns()
-                    .to_vec()
+                interleave_batches(
+                    rcur.projected_batches[0].schema(),
+                    &rcur.projected_batches,
+                    &self.rjoins,
+                )?
+                .columns()
+                .to_vec()
             } else {
                 vec![]
             })
@@ -881,7 +897,7 @@ mod tests {
         logical_expr::{JoinType, JoinType::*},
         physical_expr::expressions::Column,
         physical_plan::{common, joins::utils::*, memory::MemoryExec, ExecutionPlan},
-        prelude::{SessionConfig, SessionContext},
+        prelude::SessionContext,
     };
 
     use crate::sort_merge_join_exec::SortMergeJoinExec;
@@ -1000,16 +1016,6 @@ mod tests {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    fn join(
-        left: Arc<dyn ExecutionPlan>,
-        right: Arc<dyn ExecutionPlan>,
-        on: JoinOn,
-        join_type: JoinType,
-    ) -> Result<SortMergeJoinExec> {
-        let sort_options = vec![SortOptions::default(); on.len()];
-        SortMergeJoinExec::try_new(left, right, on, join_type, None, sort_options)
-    }
-
     fn join_with_options(
         left: Arc<dyn ExecutionPlan>,
         right: Arc<dyn ExecutionPlan>,
@@ -1040,22 +1046,6 @@ mod tests {
         let session_ctx = SessionContext::new();
         let task_ctx = session_ctx.task_ctx();
         let join = join_with_options(left, right, on, join_type, sort_options)?;
-        let columns = columns(&join.schema());
-
-        let stream = join.execute(0, task_ctx)?;
-        let batches = common::collect(stream).await?;
-        Ok((columns, batches))
-    }
-
-    async fn join_collect_batch_size_equals_two(
-        left: Arc<dyn ExecutionPlan>,
-        right: Arc<dyn ExecutionPlan>,
-        on: JoinOn,
-        join_type: JoinType,
-    ) -> Result<(Vec<String>, Vec<RecordBatch>)> {
-        let session_ctx = SessionContext::with_config(SessionConfig::new().with_batch_size(2));
-        let task_ctx = session_ctx.task_ctx();
-        let join = join(left, right, on, join_type)?;
         let columns = columns(&join.schema());
 
         let stream = join.execute(0, task_ctx)?;
@@ -1258,47 +1248,6 @@ mod tests {
             "| 1  | 1  |    | 1  | 1  | 70 |",
             "+----+----+----+----+----+----+",
         ];
-        // The output order is important as SMJ preserves sortedness
-        assert_batches_sorted_eq!(expected, &batches);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn join_inner_output_two_batches() -> Result<()> {
-        let left = build_table(
-            ("a1", &vec![1, 2, 2]),
-            ("b2", &vec![1, 2, 2]),
-            ("c1", &vec![7, 8, 9]),
-        );
-        let right = build_table(
-            ("a1", &vec![1, 2, 3]),
-            ("b2", &vec![1, 2, 2]),
-            ("c2", &vec![70, 80, 90]),
-        );
-        let on = vec![
-            (
-                Column::new_with_schema("a1", &left.schema())?,
-                Column::new_with_schema("a1", &right.schema())?,
-            ),
-            (
-                Column::new_with_schema("b2", &left.schema())?,
-                Column::new_with_schema("b2", &right.schema())?,
-            ),
-        ];
-
-        let (_, batches) = join_collect_batch_size_equals_two(left, right, on, Inner).await?;
-        let expected = vec![
-            "+----+----+----+----+----+----+",
-            "| a1 | b2 | c1 | a1 | b2 | c2 |",
-            "+----+----+----+----+----+----+",
-            "| 1  | 1  | 7  | 1  | 1  | 70 |",
-            "| 2  | 2  | 8  | 2  | 2  | 80 |",
-            "| 2  | 2  | 9  | 2  | 2  | 80 |",
-            "+----+----+----+----+----+----+",
-        ];
-        assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0].num_rows(), 2);
-        assert_eq!(batches[1].num_rows(), 1);
         // The output order is important as SMJ preserves sortedness
         assert_batches_sorted_eq!(expected, &batches);
         Ok(())

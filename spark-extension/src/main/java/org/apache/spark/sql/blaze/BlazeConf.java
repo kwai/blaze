@@ -51,7 +51,7 @@ public enum BlazeConf {
     UDF_WRAPPER_NUM_THREADS("spark.blaze.udfWrapperNumThreads", 1),
 
     /// enable extra metrics of input batch statistics
-    INPUT_BATCH_STATISTICS_ENABLE("spark.blaze.enableInputBatchStatistics", false),
+    INPUT_BATCH_STATISTICS_ENABLE("spark.blaze.enableInputBatchStatistics", true),
 
     /// ignore corrupted input files
     IGNORE_CORRUPTED_FILES("spark.files.ignoreCorruptFiles", false),

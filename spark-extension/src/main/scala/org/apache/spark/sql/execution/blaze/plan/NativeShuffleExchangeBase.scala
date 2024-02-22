@@ -23,7 +23,7 @@ import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.blaze.protobuf.{IpcReaderExecNode, IpcReadMode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
+import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleWriteProcessor
@@ -49,6 +49,7 @@ import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReader
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
+import org.apache.spark.OneToOneDependency
 
 abstract class NativeShuffleExchangeBase(
     override val outputPartitioning: Partitioning,
@@ -147,7 +148,6 @@ abstract class NativeShuffleExchangeBase(
               .setSchema(nativeSchema)
               .setNumPartitions(rdd.getNumPartitions)
               .setIpcProviderResourceId(jniResourceId)
-              .setMode(IpcReadMode.CHANNEL_AND_FILE_SEGMENT)
               .build())
           .build()
       },
@@ -175,10 +175,14 @@ abstract class NativeShuffleExchangeBase(
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incRecordsWritten(v)
-        case ("compute_elapsed", v) =>
+        case ("elapsed_compute", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
-        case ("spilled_bytes", v) => metrics("spilled_bytes").add(v)
+        case ("mem_spill_count", v) if v > 0 => metrics("mem_spill_count").add(v)
+        case ("mem_spill_size", v) if v > 0 => metrics("mem_spill_size").add(v)
+        case ("mem_spill_iotime", v) if v > 0 => metrics("mem_spill_iotime").add(v)
+        case ("disk_spill_size", v) if v > 0 => metrics("disk_spill_size").add(v)
+        case ("disk_spill_iotime", v) if v > 0 => metrics("disk_spill_iotime").add(v)
         case _ =>
       }))
     val nativeHashExprs = this.nativeHashExprs
@@ -187,7 +191,7 @@ abstract class NativeShuffleExchangeBase(
       nativeInputRDD.sparkContext,
       nativeMetrics,
       nativeInputRDD.partitions,
-      nativeInputRDD.dependencies,
+      new OneToOneDependency(nativeInputRDD) :: Nil,
       nativeInputRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val nativeInputPartition = nativeInputRDD.partitions(partition.index)

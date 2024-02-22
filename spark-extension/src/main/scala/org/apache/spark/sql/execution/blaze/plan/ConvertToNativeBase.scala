@@ -17,6 +17,8 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
 
+import scala.collection.immutable.SortedMap
+
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -38,6 +40,7 @@ import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 
 abstract class ConvertToNativeBase(override val child: SparkPlan)
     extends UnaryExecNode
@@ -45,8 +48,9 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
   override val nodeName: String = "ConvertToNative"
   override def output: Seq[Attribute] = child.output
   override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows", "elapsed_compute"))
@@ -73,15 +77,7 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
         JniBridge.resourcesMap.put(
           resourceId,
           () => {
-            // FIXME:
-            //  arrow-rs batch.get_array_memory_size() cannot work on ffi
-            //  batches. so we use a smaller batch size to force batch coalesce
-            //  in native side
-            val exportIter =
-              new ArrowFFIExportIterator(
-                inputRowIter,
-                renamedSchema,
-                recordBatchSize = BlazeConf.BATCH_SIZE.intConf() / 4)
+            val exportIter = new ArrowFFIExportIterator(inputRowIter, renamedSchema)
             new InterruptibleIterator(context, exportIter)
           })
 

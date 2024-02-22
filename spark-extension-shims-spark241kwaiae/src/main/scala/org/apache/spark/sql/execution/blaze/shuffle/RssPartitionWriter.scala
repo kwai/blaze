@@ -23,8 +23,6 @@ import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter}
 
 import java.nio.ByteBuffer
 
-import scala.collection.mutable
-
 class RssPartitionWriter(
     handle: ShuffleHandle,
     mapId: Int,
@@ -40,6 +38,9 @@ class RssPartitionWriter(
     .getWriter(handle, mapId, TaskContext.get(), metrics)
     .asInstanceOf[StreamShuffleWriter[_, _]]
   var partitionLengthMap = new Array[Long](numPartitions)
+
+  TaskContext.get.addTaskCompletionListener(_ => this.close())
+  TaskContext.get.addTaskFailureListener((_, _) => this.close())
 
   override def write(partitionId: Int, buffer: ByteBuffer, length: Int): Unit = {
     val currentTimeMillis = System.nanoTime()
@@ -81,7 +82,6 @@ class RssPartitionWriter(
 
     partitionLengthMap(partitionId) = length
     metrics.incBytesWritten(length)
-    metrics.incWriteTime(System.nanoTime() - currentTimeMillis)
   }
 
   override def flush(): Unit = {
@@ -90,7 +90,6 @@ class RssPartitionWriter(
       .getDeclaredField("realWriter")
     realWriter.setAccessible(true)
     realWriter.get(streamWriter).asInstanceOf[StreamWriterWrapper[_, _]].spill()
-    metrics.incWriteTime(System.nanoTime() - currentTimeMillis)
   }
 
   override def close(): Unit = {
@@ -99,7 +98,6 @@ class RssPartitionWriter(
       .getDeclaredField("realWriter")
     realWriter.setAccessible(true)
     realWriter.get(streamWriter).asInstanceOf[StreamWriterWrapper[_, _]].close()
-    metrics.incWriteTime(System.nanoTime() - currentTimeMillis)
   }
 
   override def getPartitionLengthMap: Array[Long] = partitionLengthMap

@@ -34,7 +34,7 @@ jobs:
         with: {version: "21.7"}
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with: {rustflags: --allow warnings}
+        with: {rustflags: --allow warnings -C target-cpu=native}
 
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1

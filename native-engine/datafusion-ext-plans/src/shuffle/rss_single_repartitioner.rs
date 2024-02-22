@@ -12,25 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Cursor;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
+use blaze_jni_bridge::jni_call;
 use datafusion::{arrow::record_batch::RecordBatch, common::Result, physical_plan::metrics::Count};
-use datafusion_ext_commons::io::write_one_batch;
+use datafusion_ext_commons::df_execution_err;
 use jni::objects::GlobalRef;
+use parking_lot::Mutex;
 
-use crate::shuffle::ShuffleRepartitioner;
+use crate::{
+    common::ipc_compression::IpcCompressionWriter,
+    shuffle::{rss::RssWriter, ShuffleRepartitioner},
+};
 
 pub struct RssSingleShuffleRepartitioner {
-    rss_partition_writer: GlobalRef,
+    rss: GlobalRef,
+    rss_partition_writer: Arc<Mutex<IpcCompressionWriter<RssWriter>>>,
     data_size_metric: Count,
 }
 
 impl RssSingleShuffleRepartitioner {
     pub fn new(rss_partition_writer: GlobalRef, data_size_metric: Count) -> Self {
         Self {
-            rss_partition_writer,
+            rss: rss_partition_writer.clone(),
+            rss_partition_writer: Arc::new(Mutex::new(IpcCompressionWriter::new(
+                RssWriter::new(rss_partition_writer, 0),
+                true,
+            ))),
             data_size_metric,
         }
     }
@@ -39,28 +48,23 @@ impl RssSingleShuffleRepartitioner {
 #[async_trait]
 impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let mut cursor = Cursor::new(Vec::<u8>::new());
-        let mut num_bytes_written_uncompressed = 0;
-        write_one_batch(
-            &input,
-            &mut cursor,
-            true,
-            Some(&mut num_bytes_written_uncompressed),
-        )?;
-        self.data_size_metric.add(num_bytes_written_uncompressed);
-
-        let rss_data = cursor.into_inner();
-        let length = rss_data.len();
-        let rss_buffer = jni_new_direct_byte_buffer!(&rss_data)?;
-
-        if length != 0 {
-            jni_call!(BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj())
-                .write(0_i32, rss_buffer.as_obj(), length as i32) -> ())?;
-        }
+        let rss_partition_writer = self.rss_partition_writer.clone();
+        let uncompressed_size =
+            tokio::task::spawn_blocking(move || rss_partition_writer.lock().write_batch(input))
+                .await
+                .or_else(|err| df_execution_err!("{err}"))??;
+        self.data_size_metric.add(uncompressed_size);
         Ok(())
     }
 
     async fn shuffle_write(&self) -> Result<()> {
+        self.rss_partition_writer.lock().flush()?;
+
+        let rss = self.rss.clone();
+        let fut = tokio::task::spawn_blocking(
+            move || jni_call!(BlazeRssPartitionWriterBase(rss.as_obj()).close() -> ()),
+        );
+        fut.await.or_else(|err| df_execution_err!("{err}"))??;
         Ok(())
     }
 }

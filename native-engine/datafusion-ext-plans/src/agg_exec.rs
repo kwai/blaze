@@ -33,14 +33,16 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{slim_bytes::SlimBytes, streams::coalesce_stream::CoalesceInput};
+use datafusion_ext_commons::{
+    batch_size, slim_bytes::SlimBytes, streams::coalesce_stream::CoalesceInput,
+};
 use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
 
 use crate::{
     agg::{
-        agg_buf::AggBuf,
+        acc::OwnedAccumStateRow,
         agg_context::AggContext,
-        agg_tables::{AggTables, InMemMode},
+        agg_table::{AggTable, InMemMode},
         AggExecMode, AggExpr, GroupingExpr,
     },
     common::{
@@ -122,17 +124,20 @@ impl ExecutionPlan for AggExec {
     ) -> Result<SendableRecordBatchStream> {
         let stream = execute_agg(
             self.input.clone(),
-            context,
+            context.clone(),
             self.agg_ctx.clone(),
             partition,
             self.metrics.clone(),
         )
         .map_err(|e| ArrowError::ExternalError(Box::new(e)));
 
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
+        let output = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(stream).try_flatten(),
-        )))
+        ));
+
+        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
+        context.coalesce_with_default_batch_size(output, &baseline_metrics)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -181,18 +186,14 @@ async fn execute_agg_with_grouping_hash(
     partition_id: usize,
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
-    let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
-    let timer = baseline_metrics.elapsed_compute().timer();
-
     // create tables
-    let tables = Arc::new(AggTables::new(
+    let tables = Arc::new(AggTable::new(
         partition_id,
         agg_ctx.clone(),
-        BaselineMetrics::new(&metrics, partition_id),
         context.clone(),
+        &metrics,
     ));
     MemManager::register_consumer(tables.clone(), true);
-    drop(timer);
 
     // start processing input batches
     let input = stat_input(
@@ -208,8 +209,6 @@ async fn execute_agg_with_grouping_hash(
         .transpose()
         .map_err(|err| err.context("agg: polling batches from input error"))?
     {
-        let _timer = baseline_metrics.elapsed_compute().timer();
-
         // insert or update rows into in-mem table
         tables.process_input_batch(input_batch).await?;
 
@@ -225,9 +224,7 @@ async fn execute_agg_with_grouping_hash(
     let output_schema = agg_ctx.output_schema.clone();
     let output = context.output_with_sender("Agg", output_schema, |sender| async move {
         // output all aggregated records in table
-        tables
-            .output(baseline_metrics.clone(), sender.clone())
-            .await?;
+        tables.output(sender.clone()).await?;
 
         // in partial skipping mode, there might be unconsumed records in input stream
         while let Some(input_batch) = coalesced
@@ -237,7 +234,7 @@ async fn execute_agg_with_grouping_hash(
             .map_err(|err| err.context("agg: polling batches from input error"))?
         {
             tables
-                .process_partial_skipped(input_batch, baseline_metrics.clone(), sender.clone())
+                .process_partial_skipped(input_batch, sender.clone())
                 .await?;
         }
         Ok(())
@@ -245,7 +242,7 @@ async fn execute_agg_with_grouping_hash(
 
     // if running in-memory, buffer output when memory usage is high
     if !has_spill {
-        return context.output_bufferable_with_spill(tables_cloned, output);
+        return context.output_bufferable_with_spill(partition_id, tables_cloned, output, metrics);
     }
     Ok(output)
 }
@@ -258,7 +255,7 @@ async fn execute_agg_no_grouping(
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
-    let mut agg_buf = agg_ctx.initial_agg_buf.clone();
+    let mut acc = agg_ctx.initial_acc.clone();
 
     // start processing input batches
     let input = stat_input(
@@ -268,13 +265,11 @@ async fn execute_agg_no_grouping(
     let mut coalesced = context.coalesce_with_default_batch_size(input, &baseline_metrics)?;
 
     while let Some(input_batch) = coalesced.next().await.transpose()? {
-        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-        let _timer = elapsed_compute.timer();
-
+        let _timer = baseline_metrics.elapsed_compute().timer();
         let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
-        let agg_buf_array = agg_ctx.get_input_agg_buf_array(&input_batch)?;
-        agg_ctx.partial_update_input_all(&mut agg_buf, &input_arrays)?;
-        agg_ctx.partial_merge_input_all(&mut agg_buf, agg_buf_array)?;
+        let acc_array = agg_ctx.get_input_acc_array(&input_batch)?;
+        agg_ctx.partial_update_input_all(&mut acc.as_mut(), &input_arrays)?;
+        agg_ctx.partial_merge_input_all(&mut acc.as_mut(), acc_array)?;
     }
 
     // output
@@ -282,10 +277,8 @@ async fn execute_agg_no_grouping(
     // necessary to record elapsed computed time.
     let output_schema = agg_ctx.output_schema.clone();
     context.output_with_sender("Agg", output_schema, move |sender| async move {
-        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-        let mut timer = elapsed_compute.timer();
-
-        let agg_columns = agg_ctx.build_agg_columns(vec![(&[], agg_buf)])?;
+        let mut timer = baseline_metrics.elapsed_compute().timer();
+        let agg_columns = agg_ctx.build_agg_columns(vec![(&[], acc.as_mut())])?;
         let batch = RecordBatch::try_new_with_options(
             agg_ctx.output_schema.clone(),
             agg_columns,
@@ -306,8 +299,7 @@ async fn execute_agg_sorted(
     metrics: ExecutionPlanMetricsSet,
 ) -> Result<SendableRecordBatchStream> {
     let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
-    let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-    let batch_size = context.session_config().batch_size();
+    let batch_size = batch_size();
 
     // start processing input batches
     let input = stat_input(
@@ -319,14 +311,19 @@ async fn execute_agg_sorted(
     let output_schema = agg_ctx.output_schema.clone();
     context.output_with_sender("Agg", output_schema, move |sender| async move {
         let mut staging_records = vec![];
-        let mut current_record: Option<(SlimBytes, AggBuf)> = None;
-        let mut timer = elapsed_compute.timer();
+        let mut current_record: Option<(SlimBytes, OwnedAccumStateRow)> = None;
+        let mut timer = baseline_metrics.elapsed_compute().timer();
         timer.stop();
 
         macro_rules! flush_staging {
             () => {{
-                let batch =
-                    agg_ctx.convert_records_to_batch(std::mem::take(&mut staging_records))?;
+                let mut staging_records = std::mem::take(&mut staging_records);
+                let batch = agg_ctx.convert_records_to_batch(
+                    staging_records
+                        .iter_mut()
+                        .map(|(key, acc)| (key, acc.as_mut()))
+                        .collect(),
+                )?;
                 let num_rows = batch.num_rows();
                 log::info!("aggregate exec (sorted) outputting one batch: num_rows={num_rows}");
                 baseline_metrics.record_output(num_rows);
@@ -341,16 +338,14 @@ async fn execute_agg_sorted(
 
             // compute input arrays
             let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
-            let agg_buf_array = agg_ctx.get_input_agg_buf_array(&input_batch)?;
+            let acc_array = agg_ctx.get_input_acc_array(&input_batch)?;
 
             // update to current record
             for (row_idx, grouping_row) in grouping_rows.into_iter().enumerate() {
                 // if group key differs, renew one and move the old record to staging
                 if Some(grouping_row.as_ref()) != current_record.as_ref().map(|r| r.0.as_ref()) {
-                    let finished_record = current_record.replace((
-                        grouping_row.as_ref().into(),
-                        agg_ctx.initial_agg_buf.clone(),
-                    ));
+                    let finished_record = current_record
+                        .replace((grouping_row.as_ref().into(), agg_ctx.initial_acc.clone()));
                     if let Some(record) = finished_record {
                         staging_records.push(record);
                         if staging_records.len() >= batch_size {
@@ -358,13 +353,14 @@ async fn execute_agg_sorted(
                         }
                     }
                 }
-                let agg_buf = &mut current_record.as_mut().unwrap().1;
-                agg_ctx.partial_update_input(agg_buf, &input_arrays, row_idx)?;
-                agg_ctx.partial_merge_input(agg_buf, agg_buf_array, row_idx)?;
+                let acc = &mut current_record.as_mut().unwrap().1.as_mut();
+                agg_ctx.partial_update_input(acc, &input_arrays, row_idx)?;
+                agg_ctx.partial_merge_input(acc, acc_array, row_idx)?;
             }
             timer.stop();
         }
 
+        timer.restart();
         if let Some(record) = current_record {
             staging_records.push(record);
         }

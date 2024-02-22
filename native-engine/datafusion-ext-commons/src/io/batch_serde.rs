@@ -14,10 +14,8 @@
 
 use std::{
     io::{BufReader, BufWriter, Read, Write},
-    sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
-    },
+    mem::size_of,
+    sync::Arc,
 };
 
 use arrow::{
@@ -28,57 +26,15 @@ use arrow::{
 };
 use bitvec::prelude::BitVec;
 use datafusion::common::Result;
+use unchecked_index::unchecked_index;
 
 use crate::{
     df_execution_err, df_unimplemented_err,
     io::{read_bytes_slice, read_len, write_len},
 };
 
-pub fn write_batch<W: Write>(
-    batch: &RecordBatch,
-    output: &mut W,
-    compress: bool,
-    uncompressed_size: Option<&mut usize>,
-) -> Result<()> {
-    struct CountWriter<W: Write> {
-        num_bytes_written: Arc<AtomicUsize>,
-        inner: W,
-    }
-    impl<W: Write> Write for CountWriter<W> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let bytes_written = self.inner.write(buf)?;
-            self.num_bytes_written.fetch_add(bytes_written, SeqCst);
-            Ok(bytes_written)
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let num_bytes_written_uncompressed = Arc::new(AtomicUsize::new(0));
-    let mut output: Box<dyn Write> = if compress {
-        let w = zstd::Encoder::new(output, 1)?.auto_finish();
-        if uncompressed_size.is_some() {
-            Box::new(CountWriter {
-                num_bytes_written: num_bytes_written_uncompressed.clone(),
-                inner: w,
-            })
-        } else {
-            Box::new(w)
-        }
-    } else {
-        let w = BufWriter::new(output);
-        if uncompressed_size.is_some() {
-            Box::new(CountWriter {
-                num_bytes_written: num_bytes_written_uncompressed.clone(),
-                inner: w,
-            })
-        } else {
-            Box::new(w)
-        }
-    };
-
+pub fn write_batch<W: Write>(batch: &RecordBatch, output: &mut W) -> Result<()> {
+    let mut output = BufWriter::new(output);
     let schema = batch.schema();
 
     // write number of columns and rows
@@ -111,18 +67,11 @@ pub fn write_batch<W: Write>(
             ))
         })?;
     }
-    if let Some(uncompressed_size) = uncompressed_size {
-        *uncompressed_size = num_bytes_written_uncompressed.load(SeqCst);
-    }
     Ok(())
 }
 
-pub fn read_batch<R: Read>(input: &mut R, compress: bool) -> Result<RecordBatch> {
-    let mut input: Box<dyn Read> = if compress {
-        Box::new(BufReader::new(zstd::Decoder::new(input)?))
-    } else {
-        Box::new(BufReader::new(input))
-    };
+pub fn read_batch<R: Read>(input: &mut R) -> Result<RecordBatch> {
+    let mut input: Box<dyn Read> = Box::new(BufReader::new(input));
 
     // read number of columns and rows
     let num_columns = read_len(&mut input)?;
@@ -320,7 +269,7 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     array: &PrimitiveArray<PT>,
     output: &mut W,
 ) -> Result<()> {
-    let item_size = PT::get_byte_width();
+    let _item_size = PT::get_byte_width();
     let offset = array.offset();
     let len = array.len();
     let array_data = array.to_data();
@@ -335,8 +284,7 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     } else {
         write_len(0, output)?;
     }
-    output
-        .write_all(&array_data.buffers()[0].as_slice()[item_size * offset..][..item_size * len])?;
+    write_primitive_raw_array(&array_data.buffer::<PT::Native>(0)[offset..][..len], output)?;
     Ok(())
 }
 
@@ -352,8 +300,8 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
     };
 
     let data_buffers: Vec<Buffer> = {
-        let data_buffer_len = num_rows * PT::get_byte_width();
-        let data_buffer = Buffer::from(read_bytes_slice(input, data_buffer_len)?);
+        let data_buffer =
+            Buffer::from_vec(read_primitive_raw_array::<PT::Native, R>(input, num_rows)?);
         vec![data_buffer]
     };
 
@@ -619,13 +567,16 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
         write_len(0, output)?;
     }
 
+    // transform offsets to lengths for better compression
     let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
     let mut cur_offset = first_offset;
+    let mut lens = vec![];
     for &offset in array.value_offsets().iter().skip(1) {
         let len = offset - cur_offset;
-        write_len(len as usize, output)?;
         cur_offset = offset;
+        lens.push(len);
     }
+    write_primitive_raw_array(&lens, output)?;
     output.write_all(&array.value_data()[first_offset as usize..cur_offset as usize])?;
     Ok(())
 }
@@ -642,18 +593,18 @@ fn read_bytes_array<R: Read>(
         None
     };
 
+    let lens = read_primitive_raw_array::<i32, R>(input, num_rows)?;
     let mut cur_offset = 0;
     let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
     offsets_buffer.push(0u32);
-    for _ in 0..num_rows {
-        let len = read_len(input)?;
+    for len in lens {
         let offset = cur_offset + len;
-        offsets_buffer.push(offset as u32);
         cur_offset = offset;
+        offsets_buffer.push(offset as u32);
     }
     let offsets_buffer: Buffer = offsets_buffer.into();
 
-    let data_len = cur_offset;
+    let data_len = cur_offset as usize;
     let data_buffer = Buffer::from(read_bytes_slice(input, data_len)?);
     let array_data = ArrayData::try_new(
         data_type,
@@ -666,6 +617,56 @@ fn read_bytes_array<R: Read>(
     Ok(make_array(array_data))
 }
 
+fn write_primitive_raw_array<T: Default + Copy + Sized, W: Write>(
+    array: &[T],
+    output: &mut W,
+) -> Result<()> {
+    let num_item_bytes = size_of::<T>();
+    let num_items = array.len();
+    let raw = unsafe {
+        // safety: transmute to raw bytes is safe for primitive arrays
+        std::slice::from_raw_parts(array.as_ptr() as *const u8, num_item_bytes * num_items)
+    };
+    let mut raw_out = vec![0u8; raw.len()];
+
+    // write byte-transposed data for better compression ratio
+    // for example uint32 array [1,2,3,4,5,6] is stored as raw bytes:
+    //  [0,0,0,1,0,0,0,2,0,0,0,3,0,0,0,4,0,0,0,5,0,0,0,6]
+    // after transpose it becomes:
+    //  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,3,4,5,6]
+    // which should have better compression ratio.
+    transpose_raw_bytes(&raw, &mut raw_out, num_items, num_item_bytes);
+    output.write_all(&mut raw_out)?;
+    Ok(())
+}
+
+fn read_primitive_raw_array<T: Default + Copy + Sized, R: Read>(
+    input: &mut R,
+    num_items: usize,
+) -> Result<Vec<T>> {
+    let mut out = vec![T::default(); num_items];
+    let num_item_bytes = size_of::<T>();
+    let raw = read_bytes_slice(input, num_item_bytes * num_items)?;
+    let mut raw_out =
+        unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, raw.len()) };
+    transpose_raw_bytes(&raw, &mut raw_out, num_item_bytes, num_items);
+    Ok(out)
+}
+
+fn transpose_raw_bytes(src: &[u8], dest: &mut [u8], num_items: usize, num_item_bytes: usize) {
+    unsafe {
+        // safety: ignore boundary checking
+        let mut buf = unchecked_index(dest);
+        let src = unchecked_index(src);
+
+        for byte_idx in 0..num_item_bytes {
+            for i in 0..num_items {
+                buf[num_items * byte_idx + i] = src[num_item_bytes * i + byte_idx];
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::{io::Cursor, sync::Arc};
@@ -674,9 +675,20 @@ mod test {
     use datafusion::assert_batches_eq;
 
     use crate::io::{
-        batch_serde::{read_batch, write_batch},
+        batch_serde::{
+            read_batch, read_primitive_raw_array, write_batch, write_primitive_raw_array,
+        },
         name_batch,
     };
+
+    #[test]
+    fn test_primitive_raw_bytes() {
+        let src = vec![1, 2, 3, 4, 5, 6];
+        let mut buf = vec![];
+        write_primitive_raw_array(&src, &mut buf).unwrap();
+        let out = read_primitive_raw_array::<i32, _>(&mut Cursor::new(&buf), src.len()).unwrap();
+        assert_eq!(out, src)
+    }
 
     #[test]
     fn test_write_and_read_batch() {
@@ -707,17 +719,17 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf, true, None).unwrap();
+        write_batch(&batch, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf, true, None).unwrap();
+        write_batch(&sliced, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
     }
 
@@ -753,9 +765,9 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf, true, None).unwrap();
+        write_batch(&batch, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_batches_eq!(
             vec![
                 "+-----------+-----------+",
@@ -773,9 +785,9 @@ mod test {
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf, true, None).unwrap();
+        write_batch(&sliced, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_batches_eq!(
             vec![
                 "+----------+----------+",
@@ -817,17 +829,17 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf, true, None).unwrap();
+        write_batch(&batch, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf, true, None).unwrap();
+        write_batch(&sliced, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
     }
 
@@ -849,17 +861,17 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf, true, None).unwrap();
+        write_batch(&batch, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf, true, None).unwrap();
+        write_batch(&sliced, &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor, true).unwrap();
+        let decoded_batch = read_batch(&mut cursor).unwrap();
         assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
     }
 }

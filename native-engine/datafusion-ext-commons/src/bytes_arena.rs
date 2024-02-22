@@ -58,6 +58,10 @@ impl BytesArena {
         }
     }
 
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
     /// specialized for merging two parts in sort-exec
     /// works like an IntoIterator, free memory of visited items
     pub fn specialized_get_and_drop_last(&mut self, addr: u64) -> &[u8] {

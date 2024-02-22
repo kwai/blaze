@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #![feature(get_mut_unchecked)]
+#![feature(io_error_other)]
 
 pub mod agg;
 pub mod agg_exec;

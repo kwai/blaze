@@ -21,15 +21,12 @@ use arrow::{
 };
 pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
 use datafusion::common::{cast::as_struct_array, Result};
+pub use scalar_serde::{read_scalar, write_scalar};
 
 mod batch_serde;
+mod scalar_serde;
 
-pub fn write_one_batch<W: Write + Seek>(
-    batch: &RecordBatch,
-    output: &mut W,
-    compress: bool,
-    uncompressed_size: Option<&mut usize>,
-) -> Result<usize> {
+pub fn write_one_batch<W: Write + Seek>(batch: &RecordBatch, output: &mut W) -> Result<usize> {
     if batch.num_rows() == 0 {
         return Ok(0);
     }
@@ -38,7 +35,7 @@ pub fn write_one_batch<W: Write + Seek>(
     output.write_all(&[0u8; 8])?;
 
     // write
-    batch_serde::write_batch(batch, output, compress, uncompressed_size)?;
+    batch_serde::write_batch(batch, output)?;
     let end_pos = output.stream_position()?;
     let ipc_length = end_pos - start_pos - 8;
 
@@ -49,11 +46,7 @@ pub fn write_one_batch<W: Write + Seek>(
     Ok((end_pos - start_pos) as usize)
 }
 
-pub fn read_one_batch<R: Read>(
-    input: &mut R,
-    schema: Option<SchemaRef>,
-    compress: bool,
-) -> Result<Option<RecordBatch>> {
+pub fn read_one_batch<R: Read>(input: &mut R, schema: &SchemaRef) -> Result<Option<RecordBatch>> {
     // read ipc length
     let mut ipc_length_buf = [0u8; 8];
     if let Err(e) = input.read_exact(&mut ipc_length_buf) {
@@ -66,16 +59,13 @@ pub fn read_one_batch<R: Read>(
     let mut input = Box::new(input.take(ipc_length));
 
     // read
-    let nameless_batch = batch_serde::read_batch(&mut input, compress)?;
+    let nameless_batch = batch_serde::read_batch(&mut input)?;
 
     // consume trailing bytes
     std::io::copy(&mut input, &mut std::io::sink())?;
 
     // recover schema name
-    if let Some(schema) = schema.as_ref() {
-        return Ok(Some(name_batch(nameless_batch, schema)?));
-    }
-    Ok(Some(nameless_batch))
+    return Ok(Some(name_batch(nameless_batch, schema)?));
 }
 
 pub fn name_batch(batch: RecordBatch, name_schema: &SchemaRef) -> Result<RecordBatch> {

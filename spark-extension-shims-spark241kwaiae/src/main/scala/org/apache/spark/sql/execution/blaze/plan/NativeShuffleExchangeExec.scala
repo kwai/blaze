@@ -52,7 +52,13 @@ case class NativeShuffleExchangeExec(
     mutable.LinkedHashMap(
       NativeHelper
         .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(Set("spilled_bytes"))
+        .filterKeys(
+          Set(
+            "mem_spill_count",
+            "mem_spill_size",
+            "mem_spill_iotime",
+            "disk_spill_size",
+            "disk_spill_iotime"))
         .toSeq: _*)).toMap
 
   lazy val readMetrics: Map[String, SQLMetric] =

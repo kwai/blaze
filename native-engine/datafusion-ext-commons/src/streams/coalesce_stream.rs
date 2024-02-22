@@ -32,6 +32,8 @@ use datafusion::{
 };
 use futures::{Stream, StreamExt};
 
+use crate::batch_size;
+
 const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 25; // limit output batch size to 32MB
 
 pub trait CoalesceInput {
@@ -68,7 +70,7 @@ impl CoalesceInput for Arc<TaskContext> {
         input: SendableRecordBatchStream,
         metrics: &BaselineMetrics,
     ) -> Result<SendableRecordBatchStream> {
-        self.coalesce_input(input, self.session_config().batch_size(), metrics)
+        self.coalesce_input(input, batch_size(), metrics)
     }
 }
 

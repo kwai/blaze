@@ -34,7 +34,7 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{cast::cast, streams::coalesce_stream::CoalesceInput};
+use datafusion_ext_commons::{batch_size, cast::cast, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
 use num::integer::Roots;
 
@@ -202,7 +202,7 @@ async fn execute_generate(
     child_output_cols: Vec<Column>,
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-    let batch_size = context.session_config().batch_size();
+    let batch_size = batch_size();
     context.output_with_sender(
         "Generate",
         output_schema.clone(),

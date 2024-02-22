@@ -105,6 +105,10 @@ class OnHeapSpillManager(taskContext: TaskContext)
     spills(spillId).map(_.diskUsed).getOrElse(0)
   }
 
+  def getSpillDiskIOTime(spillId: Int): Long = {
+    spills(spillId).map(_.diskIOTime).getOrElse(0) // time unit: ns
+  }
+
   def releaseSpill(spillId: Int): Unit = {
     spills(spillId) match {
       case Some(spill) =>

@@ -15,13 +15,19 @@
 #![feature(new_uninit)]
 #![feature(io_error_other)]
 #![feature(slice_swap_unchecked)]
+#![feature(vec_into_raw_parts)]
 
-pub mod array_builder;
+use blaze_jni_bridge::{
+    conf::{IntConf, BATCH_SIZE},
+    is_jni_bridge_inited,
+};
+use once_cell::sync::OnceCell;
+
 pub mod bytes_arena;
 pub mod cast;
+pub mod ds;
 pub mod hadoop_fs;
 pub mod io;
-pub mod loser_tree;
 pub mod rdxsort;
 pub mod slim_bytes;
 pub mod spark_hash;
@@ -45,4 +51,34 @@ macro_rules! df_external_err {
     ($($arg:tt)*) => {
         Err(datafusion::common::DataFusionError::External(format!($($arg)*)))
     }
+}
+
+#[macro_export]
+macro_rules! downcast_any {
+    ($value:expr,mut $ty:ty) => {{
+        match $value.as_any_mut().downcast_mut::<$ty>() {
+            Some(v) => Ok(v),
+            None => $crate::df_execution_err!("error downcasting to {}", stringify!($ty)),
+        }
+    }};
+    ($value:expr, $ty:ty) => {{
+        match $value.as_any().downcast_ref::<$ty>() {
+            Some(v) => Ok(v),
+            None => $crate::df_execution_err!("error downcasting to {}", stringify!($ty)),
+        }
+    }};
+}
+
+pub fn batch_size() -> usize {
+    const CACHED_BATCH_SIZE: OnceCell<i32> = OnceCell::new();
+    let batch_size = *CACHED_BATCH_SIZE
+        .get_or_try_init(|| {
+            if is_jni_bridge_inited() {
+                BATCH_SIZE.value()
+            } else {
+                Ok(10000) // for testing
+            }
+        })
+        .expect("error getting configured batch size") as usize;
+    batch_size
 }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod metrics;
 pub mod onheap_spill;
 
 use std::{
@@ -60,6 +61,14 @@ impl MemManager {
 
     pub fn num_consumers(&self) -> usize {
         self.consumers.lock().len()
+    }
+
+    pub fn total_used(&self) -> usize {
+        self.status.lock().total_used
+    }
+
+    pub fn mem_used_percent(&self) -> f64 {
+        self.total_used() as f64 / self.total as f64
     }
 
     pub fn register_consumer(mut consumer: Arc<dyn MemConsumer>, spillable: bool) {
@@ -234,6 +243,7 @@ async fn update_consumer_mem_used_with_custom_updater(
     consumer: &dyn MemConsumer,
     updater: impl Fn(&mut MemConsumerStatus) -> (usize, usize),
 ) -> Result<()> {
+    let consumer_name = consumer.name();
     let mm = MemManager::get();
     let consumer_info = consumer.consumer_info();
     let total = mm.total;
@@ -274,7 +284,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         drop(consumer_status);
         drop(mm_status);
 
-        let consumer_mem_max = (total - (total_used - mem_spillables)) / num_spillables;
+        let consumer_mem_max = total.saturating_sub(total_used - mem_spillables) / num_spillables;
         let consumer_mem_min = consumer_mem_max / 8;
 
         let total_overflowed = total_used > total;
@@ -305,10 +315,7 @@ async fn update_consumer_mem_used_with_custom_updater(
             .wait_while_for(&mut mm_status, |s| total < s.total_used, WAIT_TIME);
 
         if wait.timed_out() {
-            log::warn!(
-                "mem manager: consumer {} timeout waiting for resources",
-                consumer.name(),
-            );
+            log::warn!("mem manager: consumer {consumer_name} timeout waiting for resources");
             operation = Operation::Spill;
         }
     }
@@ -316,8 +323,7 @@ async fn update_consumer_mem_used_with_custom_updater(
     // trigger spilling
     if operation == Operation::Spill {
         log::info!(
-            "mem manager spilling {} (mem_used: {}), total: {}/{}",
-            consumer.name(),
+            "mem manager spilling {consumer_name} (mem_used: {}), total: {}/{}",
             ByteSize(mem_used as u64),
             ByteSize(total_used as u64),
             ByteSize(mm.total as u64),

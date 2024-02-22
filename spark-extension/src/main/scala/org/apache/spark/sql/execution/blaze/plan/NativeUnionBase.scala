@@ -17,11 +17,11 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
-
 import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeRDD
@@ -36,14 +36,13 @@ import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.UnionExecNode
-
 import org.apache.spark.sql.blaze.NativeSupports
 
 abstract class NativeUnionBase(override val children: Seq[SparkPlan])
     extends SparkPlan
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows"))

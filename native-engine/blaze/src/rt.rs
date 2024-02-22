@@ -37,7 +37,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
-use datafusion_ext_plans::common::output::TaskOutputter;
+use datafusion_ext_plans::{common::output::TaskOutputter, parquet_sink_exec::ParquetSinkExec};
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use tokio::runtime::Runtime;
@@ -65,10 +65,14 @@ impl NativeExecutionRuntime {
         let schema = stream.schema();
 
         // coalesce
-        let mut stream = context.coalesce_with_default_batch_size(
-            stream,
-            &BaselineMetrics::new(&ExecutionPlanMetricsSet::new(), partition),
-        )?;
+        let mut stream = if plan.as_any().downcast_ref::<ParquetSinkExec>().is_some() {
+            stream // cannot coalesce parquet sink output
+        } else {
+            context.coalesce_with_default_batch_size(
+                stream,
+                &BaselineMetrics::new(&ExecutionPlanMetricsSet::new(), partition),
+            )?
+        };
 
         // init ffi schema
         let ffi_schema = FFI_ArrowSchema::try_from(schema.as_ref())?;

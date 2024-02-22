@@ -19,6 +19,8 @@ use blaze_jni_bridge::{
 use datafusion::{error::Result, physical_plan::metrics::Time};
 use jni::objects::{GlobalRef, JObject};
 
+use crate::df_execution_err;
+
 pub struct Fs {
     fs: GlobalRef,
     io_time: Time,
@@ -30,6 +32,20 @@ impl Fs {
             fs,
             io_time: io_time_metric.clone(),
         }
+    }
+
+    pub fn mkdirs(&self, path: &str) -> Result<()> {
+        let _timer = self.io_time.timer();
+        let path_str = jni_new_string!(path)?;
+        let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
+        let path = jni_new_object!(HadoopPath(path_uri.as_obj()))?;
+        let succeeded = jni_call!(
+            HadoopFileSystem(self.fs.as_obj()).mkdirs(path.as_obj()) -> bool
+        )?;
+        if !succeeded {
+            df_execution_err!("fs.mkdirs not succeeded")?;
+        }
+        Ok(())
     }
 
     pub fn open(&self, path: &str) -> Result<FsDataInputStream> {
@@ -104,8 +120,19 @@ impl FsDataOutputStream {
         )?;
         Ok(())
     }
+
+    pub fn close(self) -> Result<()> {
+        jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ())
+    }
 }
 
+impl Drop for FsDataOutputStream {
+    fn drop(&mut self) {
+        let _ = jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ());
+    }
+}
+
+#[derive(Clone)]
 pub struct FsProvider {
     fs_provider: GlobalRef,
     io_time: Time,

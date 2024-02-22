@@ -28,6 +28,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
   private var status: OnHeapSpill.Status = OnHeapSpill.Writing
   private var diskSpilledFile: Option[FileChannel] = None
   private var diskSpilledReadOffset = 0L
+  private var diskIOTimeNs = 0L
   private var writtenSize = 0L
   private var readSize = 0L
   private val dataBlockQueue = mutable.Queue[ByteBuffer]()
@@ -42,6 +43,8 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
       case Some(channel) => channel.size()
       case None => 0
     }
+
+  def diskIOTime: Long = diskIOTimeNs
 
   def write(buf: ByteBuffer): Unit = {
     // reserve memory before writing
@@ -89,8 +92,10 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
       diskSpilledFile match {
         case Some(channel) =>
           // read from file
+          val readTimeStartNs = System.nanoTime()
           channel.position(readSize - diskSpilledReadOffset)
           while (buf.hasRemaining && channel.read(buf) >= 0) {}
+          diskIOTimeNs += System.nanoTime() - readTimeStartNs
 
         case None =>
           // read from in-mem data queue
@@ -192,11 +197,13 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
     }
 
     // write all blocks to file
+    val writeTimeStartNs = System.nanoTime() // count disk io time
     while (dataBlockQueue.nonEmpty) {
       val buf = dataBlockQueue.dequeue()
       while (buf.hasRemaining && channel.write(buf) >= 0) {}
     }
     channel.force(false)
+    diskIOTimeNs += System.nanoTime() - writeTimeStartNs
     freeMemory(memAllocated)
   }
 

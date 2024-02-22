@@ -17,6 +17,7 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
+import scala.collection.immutable.SortedMap
 
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -36,6 +37,7 @@ import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.ProjectionExecNode
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 
 abstract class NativeProjectBase(
@@ -45,21 +47,21 @@ abstract class NativeProjectBase(
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set(
-        "output_rows",
-        "elapsed_compute",
-        "input_batch_count",
-        "input_batch_mem_size_total",
-        "input_batch_mem_size_avg",
-        "input_batch_num_rows_avg",
-        "input_row_count"))
+      .filterKeys(
+        Set(
+          "output_rows",
+          "elapsed_compute",
+          "input_batch_count",
+          "input_batch_mem_size",
+          "input_row_count"))
       .toSeq: _*)
 
   override def output: Seq[Attribute] = projectList.map(_.toAttribute)
   override def outputPartitioning: Partitioning = child.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   private def nativeProject = getNativeProjectBuilder(projectList, addTypeCast).buildPartial()
 

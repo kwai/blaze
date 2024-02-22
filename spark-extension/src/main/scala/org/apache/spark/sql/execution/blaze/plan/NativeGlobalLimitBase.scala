@@ -15,6 +15,8 @@
  */
 package org.apache.spark.sql.execution.blaze.plan
 
+import scala.collection.immutable.SortedMap
+
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeHelper
@@ -29,14 +31,13 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.LimitExecNode
 import org.blaze.protobuf.PhysicalPlanNode
-
 import org.apache.spark.sql.blaze.NativeSupports
 
 abstract class NativeGlobalLimitBase(limit: Long, override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = Map(
+  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("output_rows"))
