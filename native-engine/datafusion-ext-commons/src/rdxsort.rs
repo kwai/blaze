@@ -14,17 +14,15 @@
 
 #[inline]
 pub fn radix_sort_u16_by<T>(array: &mut [T], key: impl Fn(&T) -> u16) -> Vec<usize> {
-    radix_sort_u16_with_max_key_by(array, 65535, key)
+    radix_sort_u16_ranged_by(array, 65536, key)
 }
 
 #[inline]
-pub fn radix_sort_u16_with_max_key_by<T>(
+pub fn radix_sort_u16_ranged_by<T>(
     array: &mut [T],
-    max_key: u16,
+    num_keys: usize,
     key: impl Fn(&T) -> u16,
 ) -> Vec<usize> {
-    let num_keys = max_key as usize + 1;
-
     // performance critical
     unsafe {
         // count

@@ -29,6 +29,7 @@ use hashbrown::HashSet;
 use crate::agg::{
     acc::{
         AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynSet, AggDynValue, OptimizedSet,
+        RefAccumStateRow,
     },
     Agg, WithAggBufAddrs, WithMemTracking,
 };
@@ -108,7 +109,7 @@ impl Agg for AggCollectSet {
 
     fn partial_update(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
@@ -132,7 +133,7 @@ impl Agg for AggCollectSet {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
         let dyn_set = match acc.dyn_value_mut(self.accum_state_val_addr) {
             Some(dyn_set) => dyn_set,
             w => {
@@ -156,8 +157,8 @@ impl Agg for AggCollectSet {
 
     fn partial_merge(
         &self,
-        acc: &mut AccumStateRow,
-        merging_acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
+        merging_acc: &mut RefAccumStateRow,
     ) -> Result<()> {
         match (
             acc.dyn_value_mut(self.accum_state_val_addr),
@@ -178,7 +179,7 @@ impl Agg for AggCollectSet {
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
         Ok(
             match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
                 Some(w) => {
@@ -207,7 +208,7 @@ impl Agg for AggCollectSet {
         )
     }
 
-    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
         let values: Vec<ScalarValue> = accs
             .iter_mut()
             .map(|acc| self.final_merge(acc))

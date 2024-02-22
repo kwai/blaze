@@ -15,24 +15,23 @@
 use std::{
     fs::{File, OpenOptions},
     io::{Seek, Write},
+    sync::Arc,
 };
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::{
     common::Result,
-    error::DataFusionError,
     physical_plan::metrics::{BaselineMetrics, Count},
 };
-use datafusion_ext_commons::io::write_one_batch;
-use once_cell::sync::OnceCell;
+use tokio::sync::Mutex;
 
-use crate::shuffle::ShuffleRepartitioner;
+use crate::{common::ipc_compression::IpcCompressionWriter, shuffle::ShuffleRepartitioner};
 
 pub struct SingleShuffleRepartitioner {
     output_data_file: String,
     output_index_file: String,
-    output_data: OnceCell<File>,
+    output_data: Arc<Mutex<Option<IpcCompressionWriter<File>>>>,
     metrics: BaselineMetrics,
     data_size_metric: Count,
 }
@@ -47,22 +46,27 @@ impl SingleShuffleRepartitioner {
         Self {
             output_data_file,
             output_index_file,
-            output_data: OnceCell::new(),
+            output_data: Arc::new(Mutex::default()),
             metrics,
             data_size_metric,
         }
     }
 
-    fn get_output_data(&self) -> Result<&File> {
-        self.output_data
-            .get_or_try_init(|| {
+    fn get_output_writer<'a>(
+        &self,
+        output_data: &'a mut Option<IpcCompressionWriter<File>>,
+    ) -> Result<&'a mut IpcCompressionWriter<File>> {
+        if output_data.is_none() {
+            *output_data = Some(IpcCompressionWriter::new(
                 OpenOptions::new()
                     .write(true)
                     .create(true)
                     .truncate(true)
-                    .open(&self.output_data_file)
-            })
-            .map_err(DataFusionError::IoError)
+                    .open(&self.output_data_file)?,
+                true,
+            ));
+        }
+        Ok(output_data.as_mut().unwrap())
     }
 }
 
@@ -70,25 +74,33 @@ impl SingleShuffleRepartitioner {
 impl ShuffleRepartitioner for SingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let _timer = self.metrics.elapsed_compute().timer();
-        let mut num_bytes_written_uncompressed = 0;
-        write_one_batch(
-            &input,
-            &mut self.get_output_data()?.try_clone()?,
-            true,
-            Some(&mut num_bytes_written_uncompressed),
-        )?;
-        self.data_size_metric.add(num_bytes_written_uncompressed);
+        let mut output_data = self.output_data.lock().await;
+        let output_writer = self.get_output_writer(&mut *output_data)?;
+        let uncompressed_size = output_writer.write_batch(input)?;
+        self.data_size_metric.add(uncompressed_size);
         Ok(())
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        self.get_output_data()?.sync_data()?;
+        let _timer = self.metrics.elapsed_compute().timer();
+        let output_data = std::mem::take(&mut *self.output_data.lock().await);
 
-        let offset = self.get_output_data()?.stream_position()?;
-        let mut output_index = File::create(&self.output_index_file)?;
-        output_index.write_all(&[0u8; 8])?;
-        output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
-        output_index.sync_data()?;
+        // write index file
+        if let Some(output_writer) = output_data {
+            let mut output_file = output_writer.finish_into_inner()?;
+            let offset = output_file.stream_position()?;
+            let mut output_index = File::create(&self.output_index_file)?;
+            output_index.write_all(&[0u8; 8])?;
+            output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+            output_index.sync_data()?;
+        } else {
+            // write empty data file and index file
+            let output_data = File::create(&self.output_data_file)?;
+            output_data.set_len(0)?;
+            let mut output_index = File::create(&self.output_index_file)?;
+            output_index.write_all(&[0u8; 16])?;
+            output_index.sync_data()?;
+        }
         Ok(())
     }
 }

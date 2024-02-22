@@ -29,7 +29,7 @@ use paste::paste;
 use crate::agg::{
     acc::{
         AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
-        AggDynValue,
+        AggDynValue, RefAccumStateRow,
     },
     default_final_batch_merge_with_addr, default_final_merge_with_addr, Agg, WithAggBufAddrs,
     WithMemTracking,
@@ -40,8 +40,8 @@ pub struct AggFirstIgnoresNull {
     data_type: DataType,
     accums_initial: Vec<AccumInitialValue>,
     accum_state_val_addr: AccumStateValAddr,
-    partial_updater: fn(&AggFirstIgnoresNull, &mut AccumStateRow, &ArrayRef, usize),
-    partial_buf_merger: fn(&AggFirstIgnoresNull, &mut AccumStateRow, &mut AccumStateRow),
+    partial_updater: fn(&AggFirstIgnoresNull, &mut RefAccumStateRow, &ArrayRef, usize),
+    partial_buf_merger: fn(&AggFirstIgnoresNull, &mut RefAccumStateRow, &mut RefAccumStateRow),
     mem_used_tracker: AtomicUsize,
 }
 
@@ -112,7 +112,7 @@ impl Agg for AggFirstIgnoresNull {
 
     fn partial_update(
         &self,
-        acc: &mut AccumStateRow,
+        acc: &mut RefAccumStateRow,
         values: &[ArrayRef],
         row_idx: usize,
     ) -> Result<()> {
@@ -122,7 +122,7 @@ impl Agg for AggFirstIgnoresNull {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut AccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
         let partial_updater = self.partial_updater;
         let value = &values[0];
 
@@ -134,24 +134,28 @@ impl Agg for AggFirstIgnoresNull {
         Ok(())
     }
 
-    fn partial_merge(&self, acc1: &mut AccumStateRow, acc2: &mut AccumStateRow) -> Result<()> {
+    fn partial_merge(
+        &self,
+        acc1: &mut RefAccumStateRow,
+        acc2: &mut RefAccumStateRow,
+    ) -> Result<()> {
         let partial_buf_merger = self.partial_buf_merger;
         partial_buf_merger(self, acc1, acc2);
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut AccumStateRow) -> Result<ScalarValue> {
+    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
         default_final_merge_with_addr(self, acc, self.accum_state_val_addr)
     }
 
-    fn final_batch_merge(&self, accs: &mut [AccumStateRow]) -> Result<ArrayRef> {
+    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
         default_final_batch_merge_with_addr(self, accs, self.accum_state_val_addr)
     }
 }
 
 fn get_partial_updater(
     dt: &DataType,
-) -> Result<fn(&AggFirstIgnoresNull, &mut AccumStateRow, &ArrayRef, usize)> {
+) -> Result<fn(&AggFirstIgnoresNull, &mut RefAccumStateRow, &ArrayRef, usize)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{
             Ok(|this, acc, v, i| {
@@ -184,7 +188,7 @@ fn get_partial_updater(
         DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
         DataType::Decimal128(..) => fn_fixed!(Decimal128),
         DataType::Utf8 => Ok(
-            |this: &AggFirstIgnoresNull, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
+            |this: &AggFirstIgnoresNull, acc: &mut RefAccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
                     let v = downcast_any!(v, StringArray).unwrap().value(i);
                     let w = acc.dyn_value_mut(this.accum_state_val_addr);
@@ -197,7 +201,7 @@ fn get_partial_updater(
             },
         ),
         DataType::Binary => Ok(
-            |this: &AggFirstIgnoresNull, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
+            |this: &AggFirstIgnoresNull, acc: &mut RefAccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
                     let v = downcast_any!(v, BinaryArray).unwrap().value(i);
                     let w = acc.dyn_value_mut(this.accum_state_val_addr);
@@ -210,7 +214,7 @@ fn get_partial_updater(
             },
         ),
         _other => Ok(
-            |this: &AggFirstIgnoresNull, acc: &mut AccumStateRow, v: &ArrayRef, i: usize| {
+            |this: &AggFirstIgnoresNull, acc: &mut RefAccumStateRow, v: &ArrayRef, i: usize| {
                 if v.is_valid(i) {
                     let w = acc.dyn_value_mut(this.accum_state_val_addr);
                     if w.is_none() {
@@ -229,7 +233,7 @@ fn get_partial_updater(
 
 fn get_partial_buf_merger(
     dt: &DataType,
-) -> Result<fn(&AggFirstIgnoresNull, &mut AccumStateRow, &mut AccumStateRow)> {
+) -> Result<fn(&AggFirstIgnoresNull, &mut RefAccumStateRow, &mut RefAccumStateRow)> {
     macro_rules! fn_fixed {
         ($ty:ident) => {{
             Ok(|this, acc1, acc2| {

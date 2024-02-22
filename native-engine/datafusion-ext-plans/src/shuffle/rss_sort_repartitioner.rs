@@ -12,25 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use blaze_jni_bridge::jni_call;
 use datafusion::{
     common::Result,
-    execution::context::TaskContext,
     physical_plan::{metrics::Count, Partitioning},
 };
+use datafusion_ext_commons::df_execution_err;
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
 
 use crate::{
     memmgr::{MemConsumer, MemConsumerInfo, MemManager},
-    shuffle::{
-        buffered_data::BufferedData,
-        rss::{rss_flush, rss_write_batch},
-        sort_batch_by_partition_id, ShuffleRepartitioner,
-    },
+    shuffle::{buffered_data::BufferedData, ShuffleRepartitioner},
 };
 
 pub struct RssSortShuffleRepartitioner {
@@ -38,8 +35,7 @@ pub struct RssSortShuffleRepartitioner {
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     data: Mutex<BufferedData>,
     partitioning: Partitioning,
-    rss_partition_writer: GlobalRef,
-    batch_size: usize,
+    rss: GlobalRef,
     data_size_metric: Count,
 }
 
@@ -49,16 +45,13 @@ impl RssSortShuffleRepartitioner {
         rss_partition_writer: GlobalRef,
         partitioning: Partitioning,
         data_size_metric: Count,
-        context: Arc<TaskContext>,
     ) -> Self {
-        let batch_size = context.session_config().batch_size();
         Self {
             name: format!("RssSortShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
             data: Mutex::default(),
             partitioning,
-            rss_partition_writer,
-            batch_size,
+            rss: rss_partition_writer,
             data_size_metric,
         }
     }
@@ -82,18 +75,13 @@ impl MemConsumer for RssSortShuffleRepartitioner {
 
     async fn spill(&self) -> Result<()> {
         let data = std::mem::take(&mut *self.data.lock().await);
-
-        for (partition_id, batch) in data.into_sorted_batches(self.batch_size) {
-            let mut uncompressed_size = 0;
-            rss_write_batch(
-                &self.rss_partition_writer,
-                partition_id as usize,
-                batch,
-                &mut uncompressed_size,
-            )?;
-            self.data_size_metric.add(uncompressed_size);
-        }
-        rss_flush(&self.rss_partition_writer)?;
+        let rss = self.rss.clone();
+        let partitioning = self.partitioning.clone();
+        let uncompressed_size =
+            tokio::task::spawn_blocking(move || data.write_rss(rss, &partitioning))
+                .await
+                .or_else(|err| df_execution_err!("{err}"))??;
+        self.data_size_metric.add(uncompressed_size);
         self.update_mem_used(0).await?;
         Ok(())
     }
@@ -108,22 +96,34 @@ impl Drop for RssSortShuffleRepartitioner {
 #[async_trait]
 impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let (partition_indices, sorted_batch) =
-            sort_batch_by_partition_id(input, &self.partitioning)?;
-
         let mut data = self.data.lock().await;
-        data.num_rows += sorted_batch.num_rows();
-        data.batch_mem_size += sorted_batch.get_array_memory_size();
-        data.sorted_partition_indices.push(partition_indices);
-        data.sorted_batches.push(sorted_batch);
+        data.add_batch(input, &self.partitioning)?;
         let mem_used = data.mem_used();
         drop(data);
 
         self.update_mem_used(mem_used).await?;
+
+        // we are likely to spill more frequently because the cost of spilling a shuffle
+        // repartition is lower than other consumers.
+        // rss shuffle spill has even lower cost than normal shuffle
+        if self.mem_used_percent() > 0.25 {
+            self.spill().await?;
+        }
         Ok(())
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        self.spill().await
+        self.set_spillable(false);
+        let has_data = self.data.lock().await.mem_used() > 0;
+        if has_data {
+            self.spill().await?;
+        }
+
+        let rss = self.rss.clone();
+        let fut = tokio::task::spawn_blocking(
+            move || jni_call!(BlazeRssPartitionWriterBase(rss.as_obj()).close() -> ()),
+        );
+        fut.await.or_else(|err| df_execution_err!("{err}"))??;
+        Ok(())
     }
 }

@@ -150,19 +150,14 @@ impl protobuf::TimeUnit {
             TimeUnit::Nanosecond => protobuf::TimeUnit::Nanosecond,
         }
     }
-    pub fn from_i32_to_arrow(time_unit_i32: i32) -> Result<TimeUnit, PlanSerDeError> {
-        let pb_time_unit = protobuf::TimeUnit::from_i32(time_unit_i32);
-        match pb_time_unit {
-            Some(time_unit) => Ok(match time_unit {
-                protobuf::TimeUnit::Second => TimeUnit::Second,
-                protobuf::TimeUnit::Millisecond => TimeUnit::Millisecond,
-                protobuf::TimeUnit::Microsecond => TimeUnit::Microsecond,
-                protobuf::TimeUnit::Nanosecond => TimeUnit::Nanosecond,
-            }),
-            None => Err(proto_error(
-                "Error converting i32 to TimeUnit: Passed invalid variant",
-            )),
-        }
+    pub fn try_from_to_arrow(time_unit_i32: i32) -> Result<TimeUnit, PlanSerDeError> {
+        let pb_time_unit = protobuf::TimeUnit::try_from(time_unit_i32).expect("invalid TimeUnit");
+        Ok(match pb_time_unit {
+            protobuf::TimeUnit::Second => TimeUnit::Second,
+            protobuf::TimeUnit::Millisecond => TimeUnit::Millisecond,
+            protobuf::TimeUnit::Microsecond => TimeUnit::Microsecond,
+            protobuf::TimeUnit::Nanosecond => TimeUnit::Nanosecond,
+        })
     }
 }
 
@@ -175,18 +170,14 @@ impl protobuf::IntervalUnit {
         }
     }
 
-    pub fn from_i32_to_arrow(interval_unit_i32: i32) -> Result<IntervalUnit, PlanSerDeError> {
-        let pb_interval_unit = protobuf::IntervalUnit::from_i32(interval_unit_i32);
-        match pb_interval_unit {
-            Some(interval_unit) => Ok(match interval_unit {
-                protobuf::IntervalUnit::YearMonth => IntervalUnit::YearMonth,
-                protobuf::IntervalUnit::DayTime => IntervalUnit::DayTime,
-                protobuf::IntervalUnit::MonthDayNano => IntervalUnit::MonthDayNano,
-            }),
-            None => Err(proto_error(
-                "Error converting i32 to DateUnit: Passed invalid variant",
-            )),
-        }
+    pub fn try_from_to_arrow(interval_unit_i32: i32) -> Result<IntervalUnit, PlanSerDeError> {
+        let pb_interval_unit =
+            protobuf::IntervalUnit::try_from(interval_unit_i32).expect("invalid IntervalUnit");
+        Ok(match pb_interval_unit {
+            protobuf::IntervalUnit::YearMonth => IntervalUnit::YearMonth,
+            protobuf::IntervalUnit::DayTime => IntervalUnit::DayTime,
+            protobuf::IntervalUnit::MonthDayNano => IntervalUnit::MonthDayNano,
+        })
     }
 }
 
@@ -216,26 +207,26 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
             arrow_type::ArrowTypeEnum::Date32(_) => DataType::Date32,
             arrow_type::ArrowTypeEnum::Date64(_) => DataType::Date64,
             arrow_type::ArrowTypeEnum::Duration(time_unit) => {
-                DataType::Duration(protobuf::TimeUnit::from_i32_to_arrow(*time_unit)?)
+                DataType::Duration(protobuf::TimeUnit::try_from_to_arrow(*time_unit)?)
             }
             arrow_type::ArrowTypeEnum::Timestamp(protobuf::Timestamp {
                 time_unit,
                 timezone,
             }) => DataType::Timestamp(
-                protobuf::TimeUnit::from_i32_to_arrow(*time_unit)?,
+                protobuf::TimeUnit::try_from_to_arrow(*time_unit)?,
                 match timezone.len() {
                     0 => None,
                     _ => Some(timezone.to_owned().into()),
                 },
             ),
             arrow_type::ArrowTypeEnum::Time32(time_unit) => {
-                DataType::Time32(protobuf::TimeUnit::from_i32_to_arrow(*time_unit)?)
+                DataType::Time32(protobuf::TimeUnit::try_from_to_arrow(*time_unit)?)
             }
             arrow_type::ArrowTypeEnum::Time64(time_unit) => {
-                DataType::Time64(protobuf::TimeUnit::from_i32_to_arrow(*time_unit)?)
+                DataType::Time64(protobuf::TimeUnit::try_from_to_arrow(*time_unit)?)
             }
             arrow_type::ArrowTypeEnum::Interval(interval_unit) => {
-                DataType::Interval(protobuf::IntervalUnit::from_i32_to_arrow(*interval_unit)?)
+                DataType::Interval(protobuf::IntervalUnit::try_from_to_arrow(*interval_unit)?)
             }
             arrow_type::ArrowTypeEnum::Decimal(protobuf::Decimal { whole, fractional }) => {
                 DataType::Decimal128(*whole as u8, *fractional as i8)
@@ -276,7 +267,7 @@ impl TryInto<arrow::datatypes::DataType> for &protobuf::arrow_type::ArrowTypeEnu
                     .collect::<Result<Fields, Self::Error>>()?,
             ),
             arrow_type::ArrowTypeEnum::Union(_union) => {
-                // let union_mode = protobuf::UnionMode::from_i32(union.union_mode)
+                // let union_mode = protobuf::UnionMode::try_from(union.union_mode)
                 //     .ok_or_else(|| {
                 //         proto_error(
                 //             "Protobuf deserialization error: Unknown union mode type",
@@ -512,21 +503,17 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                 )
             }
             protobuf::scalar_value::Value::NullValue(v) => {
-                let datatype = v
-                    .datatype
-                    .as_ref()
-                    .ok_or_else(|| proto_error("missing ScalarType.datatype"))?;
-                match datatype {
+                match v.datatype.as_ref().expect("missing scalar data type") {
                     protobuf::scalar_type::Datatype::Scalar(scalar) => {
-                        let null_type_enum = protobuf::PrimitiveScalarType::from_i32(*scalar)
-                            .ok_or_else(|| proto_error("Protobuf deserialization error found invalid enum variant for DatafusionScalar"))?;
+                        let null_type_enum = protobuf::PrimitiveScalarType::try_from(*scalar)
+                            .expect("invalid PrimitiveScalarType");
                         null_type_enum.try_into()?
                     }
                     protobuf::scalar_type::Datatype::List(list) => {
                         let pb_scalar_type = list
                             .element_type
                             .as_ref()
-                            .ok_or_else(|| proto_error("missing list.element_type"))?;
+                            .expect("missing list element type");
                         let scalar_type: DataType = pb_scalar_type.as_ref().try_into()?;
                         ScalarValue::List(None, Arc::new(Field::new("items", scalar_type, true)))
                     }
@@ -539,10 +526,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
 impl TryInto<DataType> for &protobuf::ScalarType {
     type Error = PlanSerDeError;
     fn try_into(self) -> Result<DataType, Self::Error> {
-        let pb_scalartype = self
-            .datatype
-            .as_ref()
-            .ok_or_else(|| proto_error("ScalarType message missing required field 'datatype'"))?;
+        let pb_scalartype = self.datatype.as_ref().expect("missing data type");
         pb_scalartype.try_into()
     }
 }
@@ -553,19 +537,15 @@ impl TryInto<DataType> for &protobuf::scalar_type::Datatype {
         use protobuf::scalar_type::Datatype;
         Ok(match self {
             Datatype::Scalar(scalar_type) => {
-                let pb_scalar_enum = protobuf::PrimitiveScalarType::from_i32(*scalar_type).ok_or_else(|| {
-                    proto_error(format!(
-                        "Protobuf deserialization error, scalar_type::Datatype missing was provided invalid enum variant: {}",
-                        *scalar_type
-                    ))
-                })?;
+                let pb_scalar_enum = protobuf::PrimitiveScalarType::try_from(*scalar_type)
+                    .expect("invalid PrimitiveScalarType");
                 pb_scalar_enum.into()
             }
             Datatype::List(list_type) => {
                 let element_scalar_type: DataType = list_type
                     .element_type
                     .as_ref()
-                    .ok_or_else(|| proto_error("missing element type"))?
+                    .expect("missing element type")
                     .as_ref()
                     .try_into()?;
                 DataType::List(Arc::new(Field::new("items", element_scalar_type, true)))
@@ -609,21 +589,17 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
             }
             protobuf::scalar_value::Value::ListValue(v) => v.try_into()?,
             protobuf::scalar_value::Value::NullValue(v) => {
-                match v
-                    .datatype
-                    .as_ref()
-                    .ok_or_else(|| proto_error("missing null value type"))?
-                {
+                match v.datatype.as_ref().expect("missing null value type") {
                     protobuf::scalar_type::Datatype::Scalar(scalar) => {
-                        PrimitiveScalarType::from_i32(*scalar)
-                            .ok_or_else(|| proto_error("Invalid scalar type"))?
+                        PrimitiveScalarType::try_from(*scalar)
+                            .expect("invalid PrimitiveScalarType")
                             .try_into()?
                     }
                     protobuf::scalar_type::Datatype::List(list) => {
                         let element_scalar_type: DataType = list
                             .element_type
                             .as_ref()
-                            .ok_or_else(|| proto_error("missing list element type"))?
+                            .expect("missing list element type")
                             .as_ref()
                             .try_into()?;
                         ScalarValue::List(
@@ -652,7 +628,7 @@ impl TryInto<ScalarValue> for &protobuf::ScalarListValue {
         let element_scalar_type: DataType = self
             .datatype
             .as_ref()
-            .ok_or_else(|| proto_error("missing list element type"))?
+            .expect("missing list data type")
             .try_into()?;
         let values: Vec<ScalarValue> = self
             .values
@@ -672,7 +648,7 @@ impl TryInto<DataType> for &protobuf::ScalarListType {
         let element_scalar_type: DataType = self
             .element_type
             .as_ref()
-            .ok_or_else(|| proto_error("missing list element type"))?
+            .expect("missing list element type")
             .as_ref()
             .try_into()?;
         Ok(DataType::List(Arc::new(Field::new(

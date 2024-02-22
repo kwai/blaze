@@ -210,7 +210,7 @@ async fn execute_project_with_filtering(
         .cloned()
         .collect::<Vec<PhysicalExprRef>>();
     let cached_expr_evaluator =
-        CachedExprsEvaluator::try_new(filters, exprs, input.schema(), output_schema.clone())?;
+        CachedExprsEvaluator::try_new(filters, exprs, output_schema.clone())?;
 
     let mut input = stat_input(
         InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition)?,
