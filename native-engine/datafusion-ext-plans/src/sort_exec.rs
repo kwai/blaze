@@ -42,6 +42,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
+    downcast_any,
     ds::loser_tree::{ComparableForLoserTree, LoserTree},
     io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch},
     slim_bytes::SlimBytes,
@@ -59,11 +60,11 @@ use crate::{
         column_pruning::ExecuteWithColumnPruning,
         compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
         output::{TaskOutputter, WrappedRecordBatchSender},
-        staging_mem_size_for_partial_sort, suggested_kway_merge_batch_mem_size,
+        staging_mem_size_for_partial_sort,
     },
     memmgr::{
         metrics::SpillMetrics,
-        onheap_spill::{try_new_spill, Spill, SpillCompressedReader},
+        spill::{try_new_spill, Spill, SpillCompressedReader},
         MemConsumer, MemConsumerInfo, MemManager,
     },
 };
@@ -188,7 +189,9 @@ impl MemConsumer for ExternalSorter {
     }
 
     async fn spill(&self) -> Result<()> {
-        let spill = std::mem::take(&mut *self.data.lock().await).try_into_spill(self)?;
+        let mut spill = try_new_spill(&self.spill_metrics)?;
+        std::mem::take(&mut *self.data.lock().await).try_into_spill(self, &mut spill)?;
+
         self.spills.lock().await.push(spill);
         self.update_mem_used(0).await?;
         Ok(())
@@ -229,10 +232,8 @@ struct BufferedData {
 }
 
 impl BufferedData {
-    fn try_into_spill(self, sorter: &ExternalSorter) -> Result<Box<dyn Spill>> {
-        let spill = try_new_spill(&sorter.spill_metrics)?;
+    fn try_into_spill(self, sorter: &ExternalSorter, spill: &mut Box<dyn Spill>) -> Result<()> {
         let mut writer = spill.get_compressed_writer();
-
         let sub_batch_size =
             compute_suggested_batch_size_for_kway_merge(self.mem_used(), self.num_rows);
         for (keys, batch) in self.into_sorted_batches(sub_batch_size, sorter)? {
@@ -247,7 +248,7 @@ impl BufferedData {
         }
         drop(writer);
         spill.complete()?;
-        Ok(spill)
+        Ok(())
     }
 
     fn mem_used(&self) -> usize {
@@ -255,7 +256,6 @@ impl BufferedData {
             + self.sorted_batches_mem_used
             + self.key_stores_mem_used
             + self.num_rows * size_of::<KeyRef>()
-            + suggested_kway_merge_batch_mem_size()
     }
 
     fn add_batch(&mut self, batch: RecordBatch, sorter: &ExternalSorter) -> Result<()> {
@@ -601,18 +601,19 @@ impl ExternalSorter {
         }
 
         // move in-mem batches into spill, so we can free memory as soon as possible
-        spills.push(data.try_into_spill(&self)?);
-
-        // adjust mem usage
-        self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
+        let mut spill: Box<dyn Spill> = Box::new(vec![]);
+        data.try_into_spill(&self, &mut spill)?;
+        let spill_size = downcast_any!(spill, Vec<u8>)?.len();
+        self.update_mem_used(spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
             .await?;
+        spills.push(spill);
 
         // use loser tree to merge all spills
         let mut cursors: LoserTree<SpillCursor> = LoserTree::new(
             spills
-                .iter()
+                .iter_mut()
                 .enumerate()
-                .map(|(id, spill)| SpillCursor::try_from_spill(id, self.clone(), &spill))
+                .map(|(id, spill)| SpillCursor::try_from_spill(id, self.clone(), spill))
                 .collect::<Result<_>>()?,
         );
 
@@ -698,10 +699,10 @@ impl ExternalSorter {
     }
 }
 
-struct SpillCursor {
+struct SpillCursor<'a> {
     id: usize,
     sorter: Arc<ExternalSorter>,
-    input: SpillCompressedReader,
+    input: SpillCompressedReader<'a>,
     cur_batch_num_rows: usize,
     cur_loaded_num_rows: usize,
     cur_batches: Vec<RecordBatch>,
@@ -711,7 +712,7 @@ struct SpillCursor {
     finished: bool,
 }
 
-impl ComparableForLoserTree for SpillCursor {
+impl<'a> ComparableForLoserTree for SpillCursor<'a> {
     #[inline(always)]
     fn lt(&self, other: &Self) -> bool {
         let key1 = (self.finished, &self.cur_key);
@@ -720,11 +721,11 @@ impl ComparableForLoserTree for SpillCursor {
     }
 }
 
-impl SpillCursor {
+impl<'a> SpillCursor<'a> {
     fn try_from_spill(
         id: usize,
         sorter: Arc<ExternalSorter>,
-        spill: &Box<dyn Spill>,
+        spill: &'a mut Box<dyn Spill>,
     ) -> Result<Self> {
         let mut iter = SpillCursor {
             id,

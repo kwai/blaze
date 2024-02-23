@@ -29,14 +29,14 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     df_execution_err,
-    ds::loser_tree::{ComparableForLoserTree, LoserTree},
+    ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
 };
 use futures::lock::Mutex;
 
 use crate::{
     memmgr::{
         metrics::SpillMetrics,
-        onheap_spill::{try_new_spill, Spill},
+        spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
     shuffle::{buffered_data::BufferedData, ShuffleRepartitioner, ShuffleSpill},
@@ -98,7 +98,7 @@ impl MemConsumer for SortShuffleRepartitioner {
 
     async fn spill(&self) -> Result<()> {
         let data = std::mem::take(&mut *self.data.lock().await);
-        let spill = try_new_spill(&self.spill_metrics)?;
+        let mut spill = try_new_spill(&self.spill_metrics)?;
 
         let (uncompressed_size, offsets) =
             data.write(spill.get_buf_writer(), &self.partitioning)?;
@@ -129,6 +129,12 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         drop(data);
 
         self.update_mem_used(mem_used).await?;
+
+        // we are likely to spill more frequently because the cost of spilling a shuffle
+        // repartition is lower than other consumers.
+        if self.mem_used_percent() > 0.8 {
+            self.spill().await?;
+        }
         Ok(())
     }
 
@@ -176,20 +182,19 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             return Ok(());
         }
 
-        struct SpillCursor {
+        struct SpillCursor<'a> {
             cur: usize,
-            reader: BufReader<Box<dyn Read + Send>>,
+            reader: BufReader<Box<dyn Read + Send + 'a>>,
             offsets: Vec<u64>,
         }
 
-        impl ComparableForLoserTree for SpillCursor {
-            #[inline(always)]
-            fn lt(&self, other: &Self) -> bool {
-                self.cur < other.cur
+        impl<'a> KeyForRadixTournamentTree for SpillCursor<'a> {
+            fn rdx(&self) -> usize {
+                self.cur
             }
         }
 
-        impl SpillCursor {
+        impl<'a> SpillCursor<'a> {
             fn skip_empty_partitions(&mut self) {
                 let offsets = &self.offsets;
                 while self.cur + 1 < offsets.len() && offsets[self.cur + 1] == offsets[self.cur] {
@@ -198,34 +203,18 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             }
         }
 
-        // add rest data to spills
+        // write rest data into an in-memory buffer
         if data.mem_used() > 0 {
-            let spill = try_new_spill(&self.spill_metrics)?;
-            let (uncompressed_size, offsets) =
-                data.write(spill.get_buf_writer(), &self.partitioning)?;
+            let mut spill = Box::new(vec![]);
+            let writer = spill.get_buf_writer();
+            let (uncompressed_size, offsets) = data.write(writer, &self.partitioning)?;
             self.data_size_metric.add(uncompressed_size);
+
             spill.complete()?;
+            self.update_mem_used(spill.len()).await?;
             spills.push(ShuffleSpill { spill, offsets });
         }
 
-        // use loser tree to select partitions from spills
-        let mut cursors: LoserTree<SpillCursor> = LoserTree::new(
-            spills
-                .iter_mut()
-                .map(|spill| SpillCursor {
-                    cur: 0,
-                    reader: spill.spill.get_buf_reader(),
-                    offsets: std::mem::take(&mut spill.offsets),
-                })
-                .map(|mut spill| {
-                    spill.skip_empty_partitions();
-                    spill
-                })
-                .filter(|spill| spill.cur < spill.offsets.len())
-                .collect(),
-        );
-        let _raw_spills: Vec<Box<dyn Spill>> =
-            spills.into_iter().map(|spill| spill.spill).collect();
         let num_output_partitions = self.num_output_partitions;
         let mut offsets = vec![0];
 
@@ -238,7 +227,25 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 .open(data_file)?;
             let mut cur_partition_id = 0;
 
-            if cursors.len() > 0 {
+            if !spills.is_empty() {
+                // select partitions from spills
+                let mut cursors = RadixTournamentTree::new(
+                    spills
+                        .iter_mut()
+                        .map(|spill| SpillCursor {
+                            cur: 0,
+                            reader: spill.spill.get_buf_reader(),
+                            offsets: std::mem::take(&mut spill.offsets),
+                        })
+                        .map(|mut spill| {
+                            spill.skip_empty_partitions();
+                            spill
+                        })
+                        .filter(|spill| spill.cur < spill.offsets.len())
+                        .collect(),
+                    num_output_partitions,
+                );
+
                 loop {
                     let mut min_spill = cursors.peek_mut();
                     if min_spill.cur + 1 >= min_spill.offsets.len() {

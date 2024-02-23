@@ -28,7 +28,7 @@ pub const fn staging_mem_size_for_partial_sort() -> usize {
 
 // use bigger batch memory size writing shuffling data
 pub const fn suggested_output_batch_mem_size() -> usize {
-    33554432
+    25165824
 }
 
 // use smaller batch memory size for kway merging since there will be multiple

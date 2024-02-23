@@ -25,7 +25,7 @@ use datafusion_ext_commons::{
     io::{read_one_batch, write_one_batch},
 };
 
-pub const DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE: usize = 8388608;
+pub const DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE: usize = 4194304;
 const ZSTD_LEVEL: i32 = 1;
 
 pub struct IpcCompressionWriter<W: Write> {

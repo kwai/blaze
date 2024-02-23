@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use std::{
+    any::Any,
     fs::File,
-    io::{BufReader, BufWriter, Read, Seek, Write},
+    io::{BufReader, BufWriter, Cursor, Read, Seek, Write},
     sync::Arc,
     time::Duration,
 };
@@ -27,21 +28,42 @@ use jni::{objects::GlobalRef, sys::jlong};
 
 use crate::memmgr::metrics::SpillMetrics;
 
-pub type SpillCompressedReader = lz4_flex::frame::FrameDecoder<BufReader<Box<dyn Read + Send>>>;
-pub type SpillCompressedWriter =
-    lz4_flex::frame::AutoFinishEncoder<BufWriter<Box<dyn Write + Send>>>;
+pub type SpillCompressedReader<'a> =
+    lz4_flex::frame::FrameDecoder<BufReader<Box<dyn Read + Send + 'a>>>;
+pub type SpillCompressedWriter<'a> =
+    lz4_flex::frame::AutoFinishEncoder<BufWriter<Box<dyn Write + Send + 'a>>>;
 
 pub trait Spill: Send + Sync {
-    fn complete(&self) -> Result<()>;
-    fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>>;
-    fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>>;
+    fn as_any(&self) -> &dyn Any;
+    fn complete(&mut self) -> Result<()>;
+    fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>>;
+    fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>>;
 
-    fn get_compressed_reader(&self) -> SpillCompressedReader {
+    fn get_compressed_reader<'a>(&'a self) -> SpillCompressedReader<'a> {
         lz4_flex::frame::FrameDecoder::new(self.get_buf_reader())
     }
 
-    fn get_compressed_writer(&self) -> SpillCompressedWriter {
+    fn get_compressed_writer<'a>(&'a mut self) -> SpillCompressedWriter<'a> {
         lz4_flex::frame::FrameEncoder::new(self.get_buf_writer()).auto_finish()
+    }
+}
+
+impl Spill for Vec<u8> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn complete(&mut self) -> Result<()> {
+        self.shrink_to_fit();
+        Ok(())
+    }
+
+    fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>> {
+        BufReader::new(Box::new(Cursor::new(self)))
+    }
+
+    fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>> {
+        BufWriter::new(Box::new(self))
     }
 }
 
@@ -64,14 +86,18 @@ impl FileSpill {
 }
 
 impl Spill for FileSpill {
-    fn complete(&self) -> Result<()> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn complete(&mut self) -> Result<()> {
         let mut file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
         file_cloned.sync_data()?;
         file_cloned.rewind()?;
         Ok(())
     }
 
-    fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>> {
+    fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>> {
         let file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
         BufReader::with_capacity(
             65536,
@@ -82,7 +108,7 @@ impl Spill for FileSpill {
         )
     }
 
-    fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>> {
+    fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>> {
         let file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
         BufWriter::with_capacity(
             65536,
@@ -136,18 +162,22 @@ impl OnHeapSpill {
 }
 
 impl Spill for OnHeapSpill {
-    fn complete(&self) -> Result<()> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn complete(&mut self) -> Result<()> {
         jni_call!(BlazeOnHeapSpillManager(self.0.hsm.as_obj())
             .completeSpill(self.0.spill_id) -> ())?;
         Ok(())
     }
 
-    fn get_buf_reader(&self) -> BufReader<Box<dyn Read + Send>> {
+    fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>> {
         let cloned = Self(self.0.clone(), self.1.clone());
         BufReader::with_capacity(65536, Box::new(cloned))
     }
 
-    fn get_buf_writer(&self) -> BufWriter<Box<dyn Write + Send>> {
+    fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>> {
         let cloned = Self(self.0.clone(), self.1.clone());
         BufWriter::with_capacity(65536, Box::new(cloned))
     }

@@ -16,7 +16,6 @@ use std::sync::Weak;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use blaze_jni_bridge::jni_call;
 use datafusion::{
     common::Result,
     physical_plan::{metrics::Count, Partitioning},
@@ -106,7 +105,7 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
         // we are likely to spill more frequently because the cost of spilling a shuffle
         // repartition is lower than other consumers.
         // rss shuffle spill has even lower cost than normal shuffle
-        if self.mem_used_percent() > 0.25 {
+        if self.mem_used_percent() > 0.6 {
             self.spill().await?;
         }
         Ok(())
@@ -118,12 +117,6 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
         if has_data {
             self.spill().await?;
         }
-
-        let rss = self.rss.clone();
-        let fut = tokio::task::spawn_blocking(
-            move || jni_call!(BlazeRssPartitionWriterBase(rss.as_obj()).close() -> ()),
-        );
-        fut.await.or_else(|err| df_execution_err!("{err}"))??;
         Ok(())
     }
 }

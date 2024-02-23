@@ -28,7 +28,7 @@ use datafusion_ext_commons::{
 };
 use futures::StreamExt;
 
-use crate::{common::output::TaskOutputter, memmgr::onheap_spill::Spill};
+use crate::{common::output::TaskOutputter, memmgr::spill::Spill};
 
 pub mod single_repartitioner;
 pub mod sort_repartitioner;
