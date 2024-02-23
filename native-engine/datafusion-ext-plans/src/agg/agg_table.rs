@@ -15,7 +15,6 @@
 use std::{
     hash::Hasher,
     io::{Cursor, Write},
-    mem::ManuallyDrop,
     sync::{Arc, Weak},
 };
 
@@ -36,6 +35,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     bytes_arena::BytesArena,
+    downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     io::{read_bytes_slice, read_len, write_len},
     rdxsort::radix_sort_u16_ranged_by,
@@ -56,7 +56,7 @@ use crate::{
     },
     memmgr::{
         metrics::SpillMetrics,
-        onheap_spill::{try_new_spill, Spill, SpillCompressedReader},
+        spill::{try_new_spill, Spill, SpillCompressedReader},
         MemConsumer, MemConsumerInfo, MemManager,
     },
 };
@@ -201,7 +201,6 @@ impl AggTable {
 
         self.baseline_metrics.record_output(output_batch.num_rows());
         sender.send(Ok(output_batch), Some(&mut timer)).await;
-        self.update_mem_used(0).await?;
         return Ok(());
     }
 
@@ -276,12 +275,15 @@ impl AggTable {
         let mut spills = spills;
         let mut cursors = vec![];
         if in_mem.num_records() > 0 {
-            spills.push(in_mem.try_into_spill()?); // spill staging records
-            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
+            let mut spill: Box<dyn Spill> = Box::new(vec![]);
+            in_mem.try_into_spill(&mut spill)?; // spill staging records
+            let spill_size = downcast_any!(spill, Vec<u8>)?.len();
+            self.update_mem_used(spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
                 .await?;
+            spills.push(spill);
         }
-        for spill in &spills {
-            cursors.push(RecordsSpillCursor::try_from_spill(&spill, &self.agg_ctx)?);
+        for spill in &mut spills {
+            cursors.push(RecordsSpillCursor::try_from_spill(spill, &self.agg_ctx)?);
         }
         let mut current_bucket_idx = 0;
         let mut hashing = HashingData::new(
@@ -404,7 +406,9 @@ impl MemConsumer for AggTable {
                     next_in_mem_mode = InMemMode::Hashing
                 }
             }
-            spills.push(in_mem.renew(next_in_mem_mode).try_into_spill()?);
+            let mut spill = try_new_spill(&self.spill_metrics)?;
+            in_mem.renew(next_in_mem_mode).try_into_spill(&mut spill)?;
+            spills.push(spill);
             drop(spills);
             drop(in_mem);
 
@@ -501,10 +505,10 @@ impl InMemTable {
         }
     }
 
-    fn try_into_spill(self) -> Result<Box<dyn Spill>> {
+    fn try_into_spill(self, spill: &mut Box<dyn Spill>) -> Result<()> {
         match self.mode {
-            InMemMode::Hashing => Ok(self.hashing_data.try_into_spill()?),
-            InMemMode::Merging => Ok(self.merging_data.try_into_spill()?),
+            InMemMode::Hashing => self.hashing_data.try_into_spill(spill),
+            InMemMode::Merging => self.merging_data.try_into_spill(spill),
             InMemMode::PartialSkipped => {
                 unreachable!("in_mem.mode cannot be PartialSkipped")
             }
@@ -626,15 +630,10 @@ impl HashingData {
         let acc_array = self.agg_ctx.get_input_acc_array(&batch)?;
         self.agg_ctx
             .partial_batch_merge_input(&mut accs, acc_array)?;
-
-        // manually drop these agg bufs because they still live in the hashmap
-        for unsafe_acc in accs {
-            let _ = ManuallyDrop::new(unsafe_acc);
-        }
         Ok(())
     }
 
-    fn try_into_spill(self) -> Result<Box<dyn Spill>> {
+    fn try_into_spill(self, spill: &mut Box<dyn Spill>) -> Result<()> {
         // sort all records using radix sort on hashcodes of keys
         let mut bucketed_records = self
             .map
@@ -650,7 +649,6 @@ impl HashingData {
         let bucket_counts =
             radix_sort_u16_ranged_by(&mut bucketed_records, NUM_SPILL_BUCKETS, |v| v.2);
 
-        let spill = try_new_spill(&self.spill_metrics)?;
         let mut writer = spill.get_compressed_writer();
         let mut beg = 0;
 
@@ -677,7 +675,7 @@ impl HashingData {
         write_len(0, &mut writer)?;
         drop(writer);
         spill.complete()?;
-        Ok(spill)
+        Ok(())
     }
 }
 
@@ -826,14 +824,11 @@ impl MergingData {
         Ok(())
     }
 
-    fn try_into_spill(mut self) -> Result<Box<dyn Spill>> {
+    fn try_into_spill(mut self, spill: &mut Box<dyn Spill>) -> Result<()> {
         if !self.staging_batches.is_empty() {
             self.flush_staging_batches()?;
         }
         self.staging_acc_store.clear_and_free();
-
-        let spill = try_new_spill(&self.spill_metrics)?;
-        let mut writer = spill.get_compressed_writer();
 
         struct RawRecordsCursor {
             cur_bucket_id: usize,
@@ -860,6 +855,7 @@ impl MergingData {
             NUM_SPILL_BUCKETS,
         );
 
+        let mut writer = spill.get_compressed_writer();
         for bucket_id in 0..NUM_SPILL_BUCKETS {
             let bucket_count = self.bucket_counts[bucket_id];
             if bucket_count == 0 {
@@ -885,20 +881,20 @@ impl MergingData {
         write_len(0, &mut writer)?;
         drop(writer);
         spill.complete()?;
-        Ok(spill)
+        Ok(())
     }
 }
 
-pub struct RecordsSpillCursor {
-    input: SpillCompressedReader,
+pub struct RecordsSpillCursor<'a> {
+    input: SpillCompressedReader<'a>,
     agg_ctx: Arc<AggContext>,
     cur_bucket_idx: usize,
     cur_bucket_count: usize,
     cur_row_idx: usize,
 }
 
-impl RecordsSpillCursor {
-    fn try_from_spill(spill: &Box<dyn Spill>, agg_ctx: &Arc<AggContext>) -> Result<Self> {
+impl<'a> RecordsSpillCursor<'a> {
+    fn try_from_spill(spill: &'a mut Box<dyn Spill>, agg_ctx: &Arc<AggContext>) -> Result<Self> {
         let mut input = spill.get_compressed_reader();
         Ok(Self {
             agg_ctx: agg_ctx.clone(),
@@ -932,7 +928,7 @@ impl RecordsSpillCursor {
     }
 }
 
-impl KeyForRadixTournamentTree for RecordsSpillCursor {
+impl<'a> KeyForRadixTournamentTree for RecordsSpillCursor<'a> {
     fn rdx(&self) -> usize {
         self.cur_bucket_idx
     }

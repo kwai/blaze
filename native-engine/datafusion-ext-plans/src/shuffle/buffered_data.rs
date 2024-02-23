@@ -26,10 +26,8 @@ use jni::objects::GlobalRef;
 
 use crate::{
     common::{
-        batch_selection::interleave_batches,
-        compute_suggested_batch_size_for_output,
-        ipc_compression::{IpcCompressionWriter, DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE},
-        staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
+        batch_selection::interleave_batches, compute_suggested_batch_size_for_output,
+        ipc_compression::IpcCompressionWriter, staging_mem_size_for_partial_sort,
     },
     shuffle::{evaluate_hashes, evaluate_partition_ids, rss::RssWriter},
 };
@@ -76,6 +74,9 @@ impl BufferedData {
         mut w: W,
         partitioning: &Partitioning,
     ) -> Result<(usize, Vec<u64>)> {
+        if self.num_rows == 0 {
+            return Ok((0, vec![0; partitioning.partition_count() + 1]));
+        }
         let mut offsets = vec![];
         let mut offset = 0;
         let mut iter = self.into_sorted_batches(partitioning)?.peekable();
@@ -106,6 +107,9 @@ impl BufferedData {
         rss_partition_writer: GlobalRef,
         partitioning: &Partitioning,
     ) -> Result<usize> {
+        if self.num_rows == 0 {
+            return Ok(0);
+        }
         let mut iter = self.into_sorted_batches(partitioning)?.peekable();
         let mut uncompressed_size = 0;
 
@@ -125,36 +129,24 @@ impl BufferedData {
         Ok(uncompressed_size)
     }
 
-    pub fn into_sorted_batches(
+    fn into_sorted_batches(
         mut self,
         partitioning: &Partitioning,
     ) -> Result<impl Iterator<Item = (u32, RecordBatch)>> {
         if !self.staging_batches.is_empty() {
             self.flush_staging_batches(partitioning)?;
         }
-        if self.num_rows == 0 {
-            let empty: Box<dyn Iterator<Item = (u32, RecordBatch)>> = Box::new(std::iter::empty());
-            return Ok(empty);
-        }
 
         struct Cursor {
             idx: usize,
             partition_indices: Vec<u32>,
             row_idx: usize,
-        }
-
-        impl Cursor {
-            fn cur_partition_id(&self) -> u32 {
-                *self
-                    .partition_indices
-                    .get(self.row_idx)
-                    .unwrap_or(&u32::MAX)
-            }
+            part_id: u32,
         }
 
         impl KeyForRadixTournamentTree for Cursor {
             fn rdx(&self) -> usize {
-                self.cur_partition_id() as usize
+                self.part_id as usize
             }
         }
 
@@ -174,42 +166,36 @@ impl BufferedData {
                     return None;
                 }
                 let cur_batch_size = self.batch_size.min(self.num_rows - self.num_output_rows);
+                let cur_part_id = self.cursors.peek().part_id;
                 let mut indices = Vec::with_capacity(cur_batch_size);
 
-                // first row
-                let mut min_cursor = self.cursors.peek_mut();
-                let cur_partition_id = min_cursor.cur_partition_id();
-                indices.push((min_cursor.idx, min_cursor.row_idx));
-                min_cursor.row_idx += 1;
-                drop(min_cursor);
-
-                // rest rows
+                // add rows with same parition id under this cursor
                 while indices.len() < cur_batch_size {
                     let mut min_cursor = self.cursors.peek_mut();
-                    if min_cursor.cur_partition_id() != cur_partition_id {
+                    if min_cursor.part_id != cur_part_id {
                         break;
                     }
-
-                    // add rows with same parition id under this cursor
-                    while indices.len() < cur_batch_size
-                        && min_cursor.cur_partition_id() == cur_partition_id
-                    {
+                    while indices.len() < cur_batch_size && min_cursor.part_id == cur_part_id {
                         indices.push((min_cursor.idx, min_cursor.row_idx));
                         min_cursor.row_idx += 1;
+                        min_cursor.part_id = *min_cursor
+                            .partition_indices
+                            .get(min_cursor.row_idx)
+                            .unwrap_or(&u32::MAX);
                     }
                 }
                 let output_batch =
                     interleave_batches(self.batches[0].schema(), &self.batches, &indices)
                         .expect("error merging sorted batches: interleaving error");
                 self.num_output_rows += output_batch.num_rows();
-                Some((cur_partition_id, output_batch))
+                Some((cur_part_id, output_batch))
             }
         }
 
         let sub_batch_size =
             compute_suggested_batch_size_for_output(self.sorted_mem_used, self.num_rows);
 
-        Ok(Box::new(PartitionedBatchesIterator {
+        Ok(PartitionedBatchesIterator {
             batches: self.sorted_batches.clone(),
             cursors: RadixTournamentTree::new(
                 self.sorted_partition_indices
@@ -217,8 +203,9 @@ impl BufferedData {
                     .enumerate()
                     .map(|(idx, partition_indices)| Cursor {
                         idx,
-                        partition_indices,
+                        part_id: partition_indices[0],
                         row_idx: 0,
+                        partition_indices,
                     })
                     .collect(),
                 partitioning.partition_count(),
@@ -226,19 +213,11 @@ impl BufferedData {
             num_output_rows: 0,
             num_rows: self.num_rows,
             batch_size: sub_batch_size,
-        }))
+        })
     }
 
     pub fn mem_used(&self) -> usize {
-        self.staging_mem_used
-            + self.sorted_mem_used
-            + self.num_rows * size_of::<u32>()
-
-            // in k-way merging, there will be one output batch in memory before written out
-            + suggested_output_batch_mem_size()
-
-            // the ipc compression buffer
-            + DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE * 2
+        self.staging_mem_used + self.sorted_mem_used
     }
 }
 
