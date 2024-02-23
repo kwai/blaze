@@ -20,7 +20,7 @@ use std::{
 
 use arrow::{
     array::*,
-    buffer::{Buffer, MutableBuffer},
+    buffer::Buffer,
     datatypes::*,
     record_batch::{RecordBatch, RecordBatchOptions},
 };
@@ -330,10 +330,8 @@ fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> Result<()> {
     }
 
     let value_offsets = array.value_offsets();
-    for (beg, end) in value_offsets.iter().zip(&value_offsets[1..]) {
-        let len = end - beg;
-        write_len(len as usize, output)?;
-    }
+    write_offsets_raw_array(value_offsets, output)?;
+
     let values = array.values().slice(
         value_offsets[0] as usize,
         value_offsets[array.len()] as usize - value_offsets[0] as usize,
@@ -354,19 +352,11 @@ fn read_list_array<R: Read>(
         None
     };
 
-    let mut cur_offset = 0;
-    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
-    offsets_buffer.push(0u32);
-    for _ in 0..num_rows {
-        let len = read_len(input)?;
-        let offset = cur_offset + len;
-        offsets_buffer.push(offset as u32);
-        cur_offset = offset;
-    }
-    let offsets_buffer: Buffer = offsets_buffer.into();
-    let values_len = cur_offset;
-    let values = read_array(input, list_field.data_type(), values_len)?;
+    let offsets = read_offsets_raw_array(input, num_rows)?;
+    let values_len = *offsets.last().unwrap() as usize;
+    let offsets_buffer = Buffer::from_vec(offsets);
 
+    let values = read_array(input, list_field.data_type(), values_len)?;
     let array_data = ArrayData::try_new(
         DataType::List(list_field.clone()),
         num_rows,
@@ -392,14 +382,12 @@ fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> Result<()> {
         write_len(0, output)?;
     }
 
-    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
-    let mut cur_offset = first_offset;
-    for &offset in array.value_offsets().iter().skip(1) {
-        let len = offset - cur_offset;
-        write_len(len as usize, output)?;
-        cur_offset = offset;
-    }
-    let entries_len = cur_offset - first_offset;
+    let value_offsets = array.value_offsets();
+    let first_offset = *value_offsets.first().unwrap();
+    let last_offset = *value_offsets.last().unwrap();
+    write_offsets_raw_array(value_offsets, output)?;
+
+    let entries_len = last_offset - first_offset;
     let keys = array
         .keys()
         .slice(first_offset as usize, entries_len as usize);
@@ -424,17 +412,9 @@ fn read_map_array<R: Read>(
         None
     };
 
-    let mut cur_offset = 0;
-    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
-    offsets_buffer.push(0u32);
-    for _ in 0..num_rows {
-        let len = read_len(input)?;
-        let offset = cur_offset + len;
-        offsets_buffer.push(offset as u32);
-        cur_offset = offset;
-    }
-    let offsets_buffer: Buffer = offsets_buffer.into();
-    let values_len = cur_offset;
+    let offsets = read_offsets_raw_array(input, num_rows)?;
+    let values_len = *offsets.last().unwrap() as usize;
+    let offsets_buffer = Buffer::from_vec(offsets);
 
     // build inner struct
     let kv_fields = match map_field.data_type() {
@@ -567,17 +547,10 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
         write_len(0, output)?;
     }
 
-    // transform offsets to lengths for better compression
-    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
-    let mut cur_offset = first_offset;
-    let mut lens = vec![];
-    for &offset in array.value_offsets().iter().skip(1) {
-        let len = offset - cur_offset;
-        cur_offset = offset;
-        lens.push(len);
-    }
-    write_primitive_raw_array(&lens, output)?;
-    output.write_all(&array.value_data()[first_offset as usize..cur_offset as usize])?;
+    let first_offset = *array.value_offsets().first().unwrap();
+    let last_offset = *array.value_offsets().last().unwrap();
+    write_offsets_raw_array(array.value_offsets(), output)?;
+    output.write_all(&array.value_data()[first_offset as usize..last_offset as usize])?;
     Ok(())
 }
 
@@ -593,18 +566,9 @@ fn read_bytes_array<R: Read>(
         None
     };
 
-    let lens = read_primitive_raw_array::<i32, R>(input, num_rows)?;
-    let mut cur_offset = 0;
-    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
-    offsets_buffer.push(0u32);
-    for len in lens {
-        let offset = cur_offset + len;
-        cur_offset = offset;
-        offsets_buffer.push(offset as u32);
-    }
-    let offsets_buffer: Buffer = offsets_buffer.into();
-
-    let data_len = cur_offset as usize;
+    let offsets = read_offsets_raw_array(input, num_rows)?;
+    let data_len = *offsets.last().unwrap() as usize;
+    let offsets_buffer = Buffer::from_vec(offsets);
     let data_buffer = Buffer::from(read_bytes_slice(input, data_len)?);
     let array_data = ArrayData::try_new(
         data_type,
@@ -615,6 +579,31 @@ fn read_bytes_array<R: Read>(
         vec![],
     )?;
     Ok(make_array(array_data))
+}
+
+fn write_offsets_raw_array<W: Write>(offsets: &[i32], output: &mut W) -> Result<()> {
+    if !offsets.is_empty() {
+        let mut cur = offsets[0];
+        for &offset in &offsets[1..] {
+            let len = offset - cur;
+            cur = offset;
+            write_len(len as usize, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_offsets_raw_array<R: Read>(input: &mut R, num_rows: usize) -> Result<Vec<i32>> {
+    let mut offsets = Vec::with_capacity(num_rows + 1);
+    let mut cur = 0;
+
+    offsets.push(0);
+    for _i in 0..num_rows {
+        let len = read_len(input)? as i32;
+        cur += len;
+        offsets.push(cur);
+    }
+    Ok(offsets)
 }
 
 fn write_primitive_raw_array<T: Default + Copy + Sized, W: Write>(
