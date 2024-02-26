@@ -718,6 +718,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     GenerateFunction::PosExplode => {
                         datafusion_ext_plans::generate::GenerateFunc::PosExplode
                     }
+                    GenerateFunction::JsonTuple => {
+                        datafusion_ext_plans::generate::GenerateFunc::JsonTuple
+                    }
                 };
                 let children = pb_generator_children
                     .iter()

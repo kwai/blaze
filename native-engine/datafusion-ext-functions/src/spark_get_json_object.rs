@@ -15,14 +15,15 @@
 use std::{any::Any, borrow::Cow, fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{new_null_array, Array, StringArray},
+    array::{new_null_array, Array, ArrayRef, StringArray},
     datatypes::DataType,
 };
 use datafusion::{
     common::{Result, ScalarValue},
     physical_plan::ColumnarValue,
 };
-use datafusion_ext_commons::uda::UserDefinedArray;
+use datafusion_ext_commons::{downcast_any, uda::UserDefinedArray};
+use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait};
 
 /// implement hive/spark's UDFGetJson
 /// get_json_object(str, path) == get_parsed_json_object(parse_json(str), path)
@@ -86,12 +87,16 @@ pub fn spark_parse_json(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         .iter()
         .map(|s| {
             s.and_then(|s| {
-                serde_json::from_str::<serde_json::Value>(s)
-                    .map(|v| {
-                        let any: Arc<dyn Any + Send + Sync + 'static> = Arc::new(v);
-                        any
-                    })
-                    .ok()
+                // first try parsing with sonic-rs and fail-backing to serde-json
+                if let Ok(v) = sonic_rs::from_str::<sonic_rs::Value>(s) {
+                    let v: Arc<dyn Any + Send + Sync> = Arc::new(ParsedJsonValue::Sonic(v));
+                    Some(v)
+                } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+                    let v: Arc<dyn Any + Send + Sync> = Arc::new(ParsedJsonValue::SerdeJson(v));
+                    Some(v)
+                } else {
+                    None
+                }
             })
         })
         .collect();
@@ -135,16 +140,56 @@ pub fn spark_get_parsed_json_object(args: &[ColumnarValue]) -> Result<ColumnarVa
             .iter()
             .map(|value| {
                 value.as_ref().and_then(|value| {
-                    let json_value = value.downcast_ref::<serde_json::Value>().unwrap();
-                    evaluator
-                        .evaluate_with_value(json_value)
-                        .ok()
-                        .unwrap_or(None)
+                    let json_value = value.downcast_ref::<ParsedJsonValue>().unwrap();
+                    match json_value {
+                        ParsedJsonValue::SerdeJson(v) => evaluator
+                            .evaluate_with_value_serde_json(v)
+                            .ok()
+                            .unwrap_or(None),
+                        ParsedJsonValue::Sonic(v) => {
+                            evaluator.evaluate_with_value_sonic(v).ok().unwrap_or(None)
+                        }
+                    }
                 })
             })
             .collect::<Vec<_>>(),
     );
     Ok(ColumnarValue::Array(Arc::new(output)))
+}
+
+// this function is for json_tuple() usage, which can parse only top-level json
+// fields
+pub fn spark_get_parsed_json_simple_field(
+    parsed_json_array: &ArrayRef,
+    field: &String,
+) -> Result<ArrayRef> {
+    let output = StringArray::from(
+        downcast_any!(parsed_json_array, UserDefinedArray)?
+            .iter()
+            .map(|value| {
+                value.as_ref().and_then(|value| {
+                    let json_value = value.downcast_ref::<ParsedJsonValue>().unwrap();
+                    match json_value {
+                        ParsedJsonValue::SerdeJson(v) => v
+                            .as_object()
+                            .and_then(|object| object.get(field))
+                            .map(|v| v.to_string()),
+                        ParsedJsonValue::Sonic(v) => v
+                            .as_object()
+                            .and_then(|object| object.get(field))
+                            .map(|v| v.to_string()),
+                    }
+                })
+            })
+            .collect::<Vec<_>>(),
+    );
+    Ok(Arc::new(output))
+}
+
+#[derive(Debug)]
+enum ParsedJsonValue {
+    SerdeJson(serde_json::Value),
+    Sonic(sonic_rs::Value),
 }
 
 #[derive(Debug)]
@@ -184,19 +229,30 @@ impl HiveGetJsonObjectEvaluator {
         &mut self,
         json_str: &str,
     ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
-        let root_value: serde_json::Value = serde_json::from_str(json_str)
-            .map_err(|_| HiveGetJsonObjectError::InvalidInput("invalid json string".to_string()))?;
-        self.evaluate_with_value(&root_value)
+        // first try parsing with sonic-rs and fail-backing to serde-json
+        if let Ok(root_value) = sonic_rs::from_str::<sonic_rs::Value>(json_str) {
+            if let Ok(v) = self.evaluate_with_value_sonic(&root_value) {
+                return Ok(v);
+            }
+        }
+        if let Ok(root_value) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Ok(v) = self.evaluate_with_value_serde_json(&root_value) {
+                return Ok(v);
+            }
+        }
+        Err(HiveGetJsonObjectError::InvalidInput(
+            "invalid json string".to_string(),
+        ))
     }
 
-    fn evaluate_with_value(
+    fn evaluate_with_value_serde_json(
         &mut self,
         root_value: &serde_json::Value,
     ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
         let mut root_value: Cow<serde_json::Value> = Cow::Borrowed(root_value);
         let mut value = root_value.as_ref();
         for matcher in &self.matchers {
-            match matcher.evaluate(value) {
+            match matcher.evaluate_serde_json(value) {
                 Cow::Borrowed(evaluated) => {
                     value = evaluated;
                 }
@@ -217,6 +273,36 @@ impl HiveGetJsonObjectEvaluator {
                     HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
                 })
             }
+        };
+        ret
+    }
+
+    fn evaluate_with_value_sonic(
+        &mut self,
+        root_value: &sonic_rs::Value,
+    ) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
+        let mut root_value: Cow<sonic_rs::Value> = Cow::Borrowed(root_value);
+        let mut value = root_value.as_ref();
+        for matcher in &self.matchers {
+            match matcher.evaluate_sonic(value) {
+                Cow::Borrowed(evaluated) => {
+                    value = evaluated;
+                }
+                Cow::Owned(evaluated) => {
+                    root_value = Cow::Owned(evaluated);
+                    value = root_value.as_ref();
+                }
+            }
+        }
+
+        let ret = match value.get_type() {
+            JsonType::Null => Ok(None),
+            JsonType::String => Ok(value.as_str().map(|v| v.to_string())),
+            JsonType::Number => Ok(value.as_number().map(|v| v.to_string())),
+            JsonType::Boolean => Ok(value.as_bool().map(|v| v.to_string())),
+            _ => sonic_rs::to_string(value).map(Some).map_err(|_| {
+                HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
+            }),
         };
         ret
     }
@@ -301,7 +387,7 @@ impl HiveGetJsonObjectMatcher {
         }
     }
 
-    fn evaluate<'a>(&self, value: &'a serde_json::Value) -> Cow<'a, serde_json::Value> {
+    fn evaluate_serde_json<'a>(&self, value: &'a serde_json::Value) -> Cow<'a, serde_json::Value> {
         match self {
             HiveGetJsonObjectMatcher::Root => {
                 return Cow::Borrowed(value);
@@ -327,6 +413,14 @@ impl HiveGetJsonObjectMatcher {
                                 }
                             })
                             .filter(|r| !r.is_null())
+                            .flat_map(|r| {
+                                // keep consistent with hive UDFJson
+                                let iter: Box<dyn Iterator<Item = serde_json::Value>> = match r {
+                                    serde_json::Value::Array(array) => Box::new(array.into_iter()),
+                                    other => Box::new(std::iter::once(other)),
+                                };
+                                iter
+                            })
                             .collect(),
                     ));
                 }
@@ -346,6 +440,63 @@ impl HiveGetJsonObjectMatcher {
             }
         }
         Cow::Owned(serde_json::Value::Null)
+    }
+
+    fn evaluate_sonic<'a>(&self, value: &'a sonic_rs::Value) -> Cow<'a, sonic_rs::Value> {
+        match self {
+            HiveGetJsonObjectMatcher::Root => {
+                return Cow::Borrowed(value);
+            }
+            HiveGetJsonObjectMatcher::Child(child) => {
+                if let Some(object) = value.as_object() {
+                    return match object.get(child) {
+                        Some(child) => Cow::Borrowed(child),
+                        None => Cow::Owned(sonic_rs::Value::default()),
+                    };
+                } else if let Some(array) = value.as_array() {
+                    return Cow::Owned(sonic_rs::Value::from(
+                        array
+                            .into_iter()
+                            .map(|item| {
+                                if let Some(object) = item.as_object() {
+                                    match object.get(child) {
+                                        Some(v) => v.clone(),
+                                        None => sonic_rs::Value::default(),
+                                    }
+                                } else {
+                                    sonic_rs::Value::default()
+                                }
+                            })
+                            .filter(|r| !r.is_null())
+                            .flat_map(|r| {
+                                // keep consistent with hive UDFJson
+                                let iter: Box<dyn Iterator<Item = sonic_rs::Value>> = match r {
+                                    v if v.is_array() => {
+                                        Box::new(v.into_array().unwrap().into_iter())
+                                    }
+                                    other => Box::new(std::iter::once(other)),
+                                };
+                                iter
+                            })
+                            .collect::<Vec<_>>(),
+                    ));
+                }
+            }
+            HiveGetJsonObjectMatcher::Subscript(index) => {
+                if let Some(array) = value.as_array() {
+                    return match array.get(*index) {
+                        Some(v) => Cow::Borrowed(v),
+                        None => Cow::Owned(sonic_rs::Value::default()),
+                    };
+                }
+            }
+            HiveGetJsonObjectMatcher::SubscriptAll => {
+                if let Some(_array) = value.as_array() {
+                    return Cow::Borrowed(value);
+                }
+            }
+        }
+        Cow::Owned(sonic_rs::Value::default())
     }
 }
 
@@ -408,7 +559,7 @@ mod test {
                 .unwrap()
                 .evaluate(input)
                 .unwrap(),
-            Some(r#"{"type":"apple","weight":8}"#.to_owned())
+            Some(r#"{"weight":8,"type":"apple"}"#.to_owned())
         );
 
         let path = "$.store.fruit[1].weight";
@@ -426,7 +577,7 @@ mod test {
                 .unwrap()
                 .evaluate(input)
                 .unwrap(),
-            Some(r#"[{"type":"apple","weight":8},{"type":"pear","weight":9}]"#.to_owned())
+            Some(r#"[{"weight":8,"type":"apple"},{"weight":9,"type":"pear"}]"#.to_owned())
         );
 
         let path = "$.store.fruit.[1].type";
@@ -478,11 +629,6 @@ mod test {
         let input_array = Arc::new(StringArray::from(vec![input]));
         let parsed = spark_parse_json(&[ColumnarValue::Array(input_array)]).unwrap();
 
-        // let path = ColumnarValue::Scalar(ScalarValue::from("$.NOT_EXISTED"));
-        // let r = spark_get_parsed_json_object(&[parsed.clone(),
-        // path]).unwrap().into_array(1); let v = r.as_string::<i32>().iter().
-        // next().unwrap(); assert_eq!(v, None);
-
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.county"));
         let r = spark_get_parsed_json_object(&[parsed.clone(), path])
             .unwrap()
@@ -517,5 +663,47 @@ mod test {
             .into_array(1);
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"{"city":"1.234","county":"浦东"}"#));
+    }
+
+    #[test]
+    fn test_3() {
+        let input = r#"
+            {
+                "i1": [
+                    {
+                        "j1": 100,
+                        "j2": [
+                            200,
+                            300
+                        ]
+                    }, {
+                        "j1": 300,
+                        "j2": [
+                            400,
+                            500
+                        ]
+                    }, {
+                        "j1": 300,
+                        "j2": null
+                    }, {
+                        "j1": 300,
+                        "j2": "other"
+                    }
+                ]
+            }
+        "#;
+        let input_array = Arc::new(StringArray::from(vec![input]));
+        let parsed = spark_parse_json(&[ColumnarValue::Array(input_array)]).unwrap();
+
+        let path = ColumnarValue::Scalar(ScalarValue::from("$.i1.j2"));
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
+            .unwrap()
+            .into_array(1);
+        let v = r.as_string::<i32>().iter().next().unwrap();
+
+        // NOTE:
+        // standard jsonpath should output [[200,300],[400, 500],null,"other"]
+        // but we have to keep consistent with hive UDFJson
+        assert_eq!(v, Some(r#"[200,300,400,500,"other"]"#));
     }
 }

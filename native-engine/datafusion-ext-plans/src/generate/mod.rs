@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod explode;
+mod explode;
+mod json_tuple;
 
 use std::{fmt::Debug, sync::Arc};
 
@@ -21,10 +22,17 @@ use arrow::{
     datatypes::{DataType, SchemaRef},
     record_batch::RecordBatch,
 };
-use datafusion::{common::Result, physical_plan::PhysicalExpr};
-use datafusion_ext_commons::df_unimplemented_err;
+use datafusion::{
+    common::{Result, ScalarValue},
+    physical_expr::expressions::Literal,
+    physical_plan::PhysicalExpr,
+};
+use datafusion_ext_commons::{df_execution_err, df_unimplemented_err, downcast_any};
 
-use crate::generate::explode::{ExplodeArray, ExplodeMap};
+use crate::generate::{
+    explode::{ExplodeArray, ExplodeMap},
+    json_tuple::JsonTuple,
+};
 
 pub trait Generator: Debug + Send + Sync {
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;
@@ -44,6 +52,7 @@ pub struct GeneratedRows {
 pub enum GenerateFunc {
     Explode,
     PosExplode,
+    JsonTuple,
 }
 
 pub fn create_generator(
@@ -62,5 +71,18 @@ pub fn create_generator(
             DataType::Map(..) => Ok(Arc::new(ExplodeMap::new(children[0].clone(), true))),
             other => df_unimplemented_err!("unsupported pos_explode type: {other}"),
         },
+        GenerateFunc::JsonTuple => Ok(Arc::new(JsonTuple::new(
+            children[0].clone(),
+            children[1..]
+                .iter()
+                .map(|child| {
+                    if let ScalarValue::Utf8(Some(s)) = downcast_any!(child, Literal)?.value() {
+                        Ok(s.clone())
+                    } else {
+                        df_execution_err!("json_tuple() accepts only literal string params")
+                    }
+                })
+                .collect::<Result<_>>()?,
+        ))),
     }
 }
