@@ -18,7 +18,7 @@ use datafusion::{common::Result, logical_expr::ScalarFunctionImplementation};
 use datafusion_ext_commons::df_unimplemented_err;
 
 mod spark_check_overflow;
-mod spark_get_json_object;
+pub mod spark_get_json_object;
 mod spark_make_array;
 mod spark_make_decimal;
 mod spark_murmur3_hash;
