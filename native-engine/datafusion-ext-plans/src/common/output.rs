@@ -39,7 +39,7 @@ use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
 
-use crate::memmgr::{metrics::SpillMetrics, onheap_spill::try_new_spill, MemConsumer, MemManager};
+use crate::memmgr::{metrics::SpillMetrics, spill::try_new_spill, MemConsumer, MemManager};
 
 fn working_senders() -> &'static Mutex<Vec<Weak<WrappedRecordBatchSender>>> {
     static WORKING_SENDERS: OnceCell<Mutex<Vec<Weak<WrappedRecordBatchSender>>>> = OnceCell::new();
@@ -188,7 +188,7 @@ impl TaskOutputter for Arc<TaskContext> {
                         "spilling output result of {}[partition={partition}",
                         mem_consumer.name(),
                     );
-                    let spill = try_new_spill(&spill_metrics)?;
+                    let mut spill = try_new_spill(&spill_metrics)?;
                     let mut spill_writer = spill.get_compressed_writer();
 
                     // write all batches to spill, releasing all holding memory

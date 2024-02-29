@@ -13,7 +13,7 @@
 // limitations under the License.
 
 pub mod metrics;
-pub mod onheap_spill;
+pub mod spill;
 
 use std::{
     sync::{Arc, Weak},
