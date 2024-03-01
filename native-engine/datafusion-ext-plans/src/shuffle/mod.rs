@@ -12,10 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering::SeqCst},
+    Arc,
+};
 
 use arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use datafusion::{
     common::Result,
     error::DataFusionError,
@@ -23,6 +27,7 @@ use datafusion::{
     physical_plan::{metrics::BaselineMetrics, Partitioning, SendableRecordBatchStream},
 };
 use datafusion_ext_commons::{
+    array_size::ArraySize,
     spark_hash::{create_hashes, pmod},
     streams::coalesce_stream::CoalesceInput,
 };
@@ -48,6 +53,7 @@ impl dyn ShuffleRepartitioner {
     pub async fn execute(
         self: Arc<Self>,
         context: Arc<TaskContext>,
+        partition: usize,
         input: SendableRecordBatchStream,
         metrics: BaselineMetrics,
     ) -> Result<SendableRecordBatchStream> {
@@ -57,18 +63,38 @@ impl dyn ShuffleRepartitioner {
         let mut coalesced = context.coalesce_with_default_batch_size(input, &metrics)?;
 
         // process all input batches
-        context.output_with_sender("Shuffle", input_schema, |_| async move {
+        context.output_with_sender("Shuffle", input_schema, move |_| async move {
+            let batches_num_rows = AtomicUsize::default();
+            let batches_mem_size = AtomicUsize::default();
             while let Some(batch) = coalesced.next().await.transpose()? {
                 let _timer = metrics.elapsed_compute().timer();
+                let batch_num_rows = batch.num_rows();
+                let batch_mem_size = batch.get_array_mem_size();
+                if batches_num_rows.load(SeqCst) == 0 {
+                    log::info!(
+                        "[partition={partition}] start shuffle writing, first batch num_rows={}, mem_size={}",
+                        batch_num_rows,
+                        ByteSize(batch_mem_size as u64),
+                    );
+                }
+                batches_num_rows.fetch_add(batch_num_rows, SeqCst);
+                batches_mem_size.fetch_add(batch_mem_size, SeqCst);
                 metrics.record_output(batch.num_rows());
                 self.insert_batch(batch)
                     .await
                     .map_err(|err| err.context("shuffle: executing insert_batch() error"))?;
             }
+
             let _timer = metrics.elapsed_compute().timer();
+            log::info!(
+                "[partition={partition}] finishing shuffle writing, num_rows={}, mem_size={}",
+                batches_num_rows.load(SeqCst),
+                ByteSize(batches_mem_size.load(SeqCst) as u64),
+            );
             self.shuffle_write()
                 .await
                 .map_err(|err| err.context("shuffle: executing shuffle_write() error"))?;
+            log::info!("[partition={partition}] finishing shuffle writing");
             Ok::<_, DataFusionError>(())
         })
     }

@@ -15,6 +15,9 @@
  */
 package org.apache.spark.sql.blaze;
 
+import java.lang.management.BufferPoolMXBean;
+import java.lang.management.ManagementFactory;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
@@ -66,5 +69,14 @@ public class JniBridge {
     public static boolean isDriverSide() {
         TaskContext tc = getTaskContext();
         return tc == null;
+    }
+
+    private static final List<BufferPoolMXBean> directMXBeans =
+            ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class);
+
+    public static long getDirectMemoryUsed() {
+        return directMXBeans.stream()
+                .mapToLong(BufferPoolMXBean::getTotalCapacity)
+                .sum();
     }
 }

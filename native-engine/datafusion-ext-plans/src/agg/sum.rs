@@ -111,6 +111,10 @@ impl Agg for AggSum {
         &self.accums_initial
     }
 
+    fn increase_acc_mem_used(&self, _acc: &mut RefAccumStateRow) {
+        // do nothing
+    }
+
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // cast arg1 to target data type
         Ok(vec![datafusion_ext_commons::cast::cast(

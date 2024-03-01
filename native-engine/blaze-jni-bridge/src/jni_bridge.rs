@@ -504,6 +504,8 @@ pub struct JniBridge<'a> {
     pub method_isTaskRunning_ret: ReturnType,
     pub method_isDriverSide: JStaticMethodID,
     pub method_isDriverSide_ret: ReturnType,
+    pub method_getDirectMemoryUsed: JStaticMethodID,
+    pub method_getDirectMemoryUsed_ret: ReturnType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniBridge";
@@ -552,6 +554,12 @@ impl<'a> JniBridge<'a> {
             method_isTaskRunning_ret: ReturnType::Primitive(Primitive::Boolean),
             method_isDriverSide: env.get_static_method_id(class, "isDriverSide", "()Z")?,
             method_isDriverSide_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_getDirectMemoryUsed: env.get_static_method_id(
+                class,
+                "getDirectMemoryUsed",
+                "()J",
+            )?,
+            method_getDirectMemoryUsed_ret: ReturnType::Primitive(Primitive::Long),
         })
     }
 }

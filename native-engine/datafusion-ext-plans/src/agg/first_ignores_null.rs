@@ -110,6 +110,17 @@ impl Agg for AggFirstIgnoresNull {
         &self.accums_initial
     }
 
+    fn increase_acc_mem_used(&self, acc: &mut RefAccumStateRow) {
+        if self.data_type.is_primitive()
+            || matches!(self.data_type, DataType::Null | DataType::Boolean)
+        {
+            return;
+        }
+        if let Some(v) = acc.dyn_value(self.accum_state_val_addr) {
+            self.add_mem_used(v.mem_size());
+        }
+    }
+
     fn partial_update(
         &self,
         acc: &mut RefAccumStateRow,
