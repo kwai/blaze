@@ -32,7 +32,7 @@ use datafusion::{
 };
 use futures::{Stream, StreamExt};
 
-use crate::batch_size;
+use crate::{array_size::ArraySize, batch_size};
 
 const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 25; // limit output batch size to 32MB
 
@@ -151,7 +151,7 @@ impl Stream for CoalesceStream {
                     let num_rows = batch.num_rows();
                     if num_rows > 0 {
                         self.staging_rows += batch.num_rows();
-                        self.staging_batches_mem_size += batch.get_array_memory_size();
+                        self.staging_batches_mem_size += batch.get_array_mem_size();
                         self.staging_batches.push(batch);
                         if self.should_flush() {
                             let coalesced = self.coalesce()?;

@@ -34,6 +34,8 @@ use datafusion::{
 use futures::Stream;
 use jni::objects::{GlobalRef, JObject};
 
+use crate::array_size::ArraySize;
+
 pub struct FFIReaderStream {
     schema: SchemaRef,
     export_iter: GlobalRef,
@@ -107,7 +109,7 @@ impl FFIReaderStream {
             &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
         )?;
 
-        self.size_counter.add(batch.get_array_memory_size());
+        self.size_counter.add(batch.get_array_mem_size());
         Ok(Some(batch))
     }
 }

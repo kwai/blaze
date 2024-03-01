@@ -38,7 +38,9 @@ use datafusion::{
         SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
+use datafusion_ext_commons::{
+    array_size::ArraySize, df_execution_err, streams::coalesce_stream::CoalesceInput,
+};
 use futures::{stream::once, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
 use parking_lot::Mutex;
@@ -195,7 +197,7 @@ pub async fn read_ipc(
                     .await
                     .or_else(|err| df_execution_err!("{err}"))??
             } {
-                size_counter.add(batch.get_array_memory_size());
+                size_counter.add(batch.get_array_mem_size());
                 baseline_metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }

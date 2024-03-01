@@ -22,6 +22,7 @@ use datafusion::{
         stream::RecordBatchStreamAdapter,
     },
 };
+use datafusion_ext_commons::array_size::ArraySize;
 use futures::StreamExt;
 
 #[derive(Clone)]
@@ -51,7 +52,7 @@ impl InputBatchStatistics {
     }
 
     pub fn record_input_batch(&self, input_batch: &RecordBatch) {
-        let mem_size = input_batch.get_array_memory_size();
+        let mem_size = input_batch.get_array_mem_size();
         let num_rows = input_batch.num_rows();
         self.input_batch_count.add(1);
         self.input_batch_mem_size.add(mem_size);

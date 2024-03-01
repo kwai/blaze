@@ -16,9 +16,11 @@ use std::{io::Write, mem::size_of};
 
 use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::jni_call;
+use bytesize::ByteSize;
 use count_write::CountWrite;
 use datafusion::{common::Result, physical_plan::Partitioning};
 use datafusion_ext_commons::{
+    array_size::ArraySize,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     rdxsort::radix_sort_u16_ranged_by,
 };
@@ -45,7 +47,7 @@ pub struct BufferedData {
 impl BufferedData {
     pub fn add_batch(&mut self, batch: RecordBatch, partitioning: &Partitioning) -> Result<()> {
         self.num_rows += batch.num_rows();
-        self.staging_mem_used += batch.get_array_memory_size();
+        self.staging_mem_used += batch.get_array_mem_size();
         self.staging_batches.push(batch);
         if self.staging_mem_used >= staging_mem_size_for_partial_sort() {
             self.flush_staging_batches(partitioning)?;
@@ -54,6 +56,12 @@ impl BufferedData {
     }
 
     fn flush_staging_batches(&mut self, partitioning: &Partitioning) -> Result<()> {
+        log::info!(
+            "shuffle buffered data starts partial sort, staging: {}, total: {}, total rows: {}",
+            ByteSize(self.staging_mem_used as u64),
+            ByteSize(self.mem_used() as u64),
+            self.num_rows,
+        );
         let staging_batches = std::mem::take(&mut self.staging_batches);
         self.staging_mem_used = 0;
 
@@ -61,7 +69,7 @@ impl BufferedData {
             sort_batches_by_partition_id(staging_batches, partitioning)?;
 
         self.sorted_mem_used +=
-            sorted_batch.get_array_memory_size() + partition_indices.len() * size_of::<u32>();
+            sorted_batch.get_array_mem_size() + partition_indices.len() * size_of::<u32>();
         self.sorted_batches.push(sorted_batch);
         self.sorted_partition_indices.push(partition_indices);
         Ok(())
@@ -193,7 +201,7 @@ impl BufferedData {
         }
 
         let sub_batch_size =
-            compute_suggested_batch_size_for_output(self.sorted_mem_used, self.num_rows);
+            compute_suggested_batch_size_for_output(self.mem_used(), self.num_rows);
 
         Ok(PartitionedBatchesIterator {
             batches: self.sorted_batches.clone(),

@@ -21,6 +21,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use blaze_jni_bridge::{is_jni_bridge_inited, jni_call_static};
 use bytesize::ByteSize;
 use datafusion::common::Result;
 use once_cell::sync::OnceCell;
@@ -181,10 +182,15 @@ pub trait MemConsumer: Send + Sync {
     fn mem_used_percent(&self) -> f64 {
         let mm = MemManager::get();
         let total = mm.total;
-        let num_consumers = mm.consumers.lock().len();
-        let mem_used = self.consumer_info().status.lock().mem_used;
+        let mm_status = *mm.status.lock();
 
-        mem_used as f64 / (total as f64 / num_consumers as f64)
+        let mem_unspillable = mm_status.total_used - mm_status.mem_spillables;
+        let total_managed = total
+            .saturating_sub(get_mem_jvm_direct_used())
+            .saturating_sub(mem_unspillable);
+        let mem_used = self.consumer_info().status.lock().mem_used;
+        let consumer_mem_max = total_managed / mm_status.num_spillables.max(1);
+        mem_used as f64 / consumer_mem_max as f64
     }
 
     fn set_spillable(&self, spillable: bool) {
@@ -255,6 +261,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         Nothing, // do nothing
     }
 
+    let (mem_unspillable, mem_jvm_direct_used);
     let (mem_used, total_used, operation) = {
         let mut mm_status = mm.status.lock();
         let mut consumer_status = consumer_info.status.lock();
@@ -284,10 +291,19 @@ async fn update_consumer_mem_used_with_custom_updater(
         drop(consumer_status);
         drop(mm_status);
 
-        let consumer_mem_max = total.saturating_sub(total_used - mem_spillables) / num_spillables;
+        // get unspillable memory
+        mem_unspillable = total_used - mem_spillables;
+
+        // get jvm direct memory used
+        mem_jvm_direct_used = get_mem_jvm_direct_used();
+
+        let total_managed = total
+            .saturating_sub(mem_jvm_direct_used) // jvm direct memory
+            .saturating_sub(mem_unspillable); // unspillable memory
+        let consumer_mem_max = total_managed / num_spillables;
         let consumer_mem_min = consumer_mem_max / 8;
 
-        let total_overflowed = total_used > total;
+        let total_overflowed = total_used > total_managed;
         let consumer_overflowed = new_used > consumer_mem_max;
         let operation = if (total_overflowed || consumer_overflowed)
             && new_used > MIN_TRIGGER_SIZE
@@ -323,10 +339,12 @@ async fn update_consumer_mem_used_with_custom_updater(
     // trigger spilling
     if operation == Operation::Spill {
         log::info!(
-            "mem manager spilling {consumer_name} (mem_used: {}), total: {}/{}",
+            "mem manager spilling {consumer_name} (mem_used: {}), total: {}/{}, unspillable: {}, jvm_direct: {}",
             ByteSize(mem_used as u64),
             ByteSize(total_used as u64),
             ByteSize(mm.total as u64),
+            ByteSize(mem_unspillable as u64),
+            ByteSize(mem_jvm_direct_used as u64),
         );
         consumer.spill().await?;
         return Ok(());
@@ -334,14 +352,10 @@ async fn update_consumer_mem_used_with_custom_updater(
     Ok(())
 }
 
-#[allow(unused)]
-fn print_stats(by: &dyn MemConsumer, old_used: usize, new_used: usize) {
-    // print log per every 100MBs
-    if new_used / 104857600 != old_used / 104857600 {
-        log::info!(
-            "mem manager total used: {} (updated by consumer {})",
-            ByteSize(new_used as u64),
-            by.name(),
-        );
+fn get_mem_jvm_direct_used() -> usize {
+    if is_jni_bridge_inited() {
+        jni_call_static!(JniBridge.getDirectMemoryUsed() -> i64).unwrap_or_default() as usize
+    } else {
+        0
     }
 }

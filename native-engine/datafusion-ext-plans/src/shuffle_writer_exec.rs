@@ -141,6 +141,7 @@ impl ExecutionPlan for ShuffleWriterExec {
             self.schema(),
             once(repartitioner.execute(
                 context.clone(),
+                partition,
                 input,
                 BaselineMetrics::new(&self.metrics, partition),
             ))

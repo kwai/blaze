@@ -23,6 +23,7 @@ use blaze_jni_bridge::{
 };
 use once_cell::sync::OnceCell;
 
+pub mod array_size;
 pub mod bytes_arena;
 pub mod cast;
 pub mod ds;
