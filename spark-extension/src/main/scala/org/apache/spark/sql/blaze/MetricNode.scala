@@ -33,4 +33,9 @@ case class MetricNode(
       metrics.get(metricName).foreach(_.add(v))
     }
   }
+
+  def foreach(fn: MetricNode => Unit): Unit = {
+    fn(this)
+    this.children.foreach(_.foreach(fn))
+  }
 }

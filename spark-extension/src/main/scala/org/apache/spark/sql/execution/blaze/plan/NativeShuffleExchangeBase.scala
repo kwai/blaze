@@ -171,6 +171,7 @@ abstract class NativeShuffleExchangeBase(
       Map(),
       nativeInputRDD.metrics :: Nil,
       Some({
+        case ("stage_id", v) => metrics("stage_id") += v
         case ("data_size", v) => metrics("dataSize") += v
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
