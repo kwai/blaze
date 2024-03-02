@@ -59,7 +59,7 @@ abstract class NativeWindowBase(
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .filterKeys(Set("stage_id", "output_rows", "elapsed_compute"))
       .toSeq: _*)
 
   override def output: Seq[Attribute] = child.output ++ windowExpression.map(_.toAttribute)

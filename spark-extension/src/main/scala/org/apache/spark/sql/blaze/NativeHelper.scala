@@ -72,6 +72,10 @@ object NativeHelper extends Logging {
       metrics: MetricNode,
       partition: Partition,
       context: Option[TaskContext]): Iterator[InternalRow] = {
+
+    if (partition.index == 0 && metrics != null && context.nonEmpty) {
+      metrics.foreach(_.add("stage_id", context.get.stageId()))
+    }
     if (nativePlan == null) {
       return Iterator.empty
     }
@@ -80,6 +84,7 @@ object NativeHelper extends Logging {
 
   def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] = {
     var metrics = TreeMap(
+      "stage_id" -> SQLMetrics.createMetric(sc, "stageId"),
       "output_rows" -> SQLMetrics.createMetric(sc, "Native.output_rows"),
       "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),

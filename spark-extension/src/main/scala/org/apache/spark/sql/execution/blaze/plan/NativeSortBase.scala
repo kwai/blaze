@@ -51,6 +51,7 @@ abstract class NativeSortBase(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set(
+        "stage_id",
         "output_rows",
         "elapsed_compute",
         "mem_spill_count",

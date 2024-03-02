@@ -61,7 +61,14 @@ abstract class NativeSortMergeJoinBase(
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .filterKeys(
+        Set(
+          "stage_id",
+          "output_rows",
+          "elapsed_compute",
+          "input_batch_count",
+          "input_batch_mem_size",
+          "input_row_count"))
       .toSeq: _*)
 
   private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>

@@ -59,7 +59,6 @@ abstract class NativeBroadcastJoinBase(
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
       .toSeq: _*)
 
   private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
