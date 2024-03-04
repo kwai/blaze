@@ -27,6 +27,8 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Explode
 import org.apache.spark.sql.catalyst.expressions.Generator
+import org.apache.spark.sql.catalyst.expressions.JsonTuple
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.expressions.PosExplode
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -73,6 +75,12 @@ abstract class NativeGenerateBase(
         .newBuilder()
         .setFunc(pb.GenerateFunction.PosExplode)
         .addChild(NativeConverters.convertExpr(child))
+        .build()
+    case JsonTuple(children) if children.drop(1).forall(_.isInstanceOf[Literal]) =>
+      pb.Generator
+        .newBuilder()
+        .setFunc(pb.GenerateFunction.JsonTuple)
+        .addAllChild(children.map(NativeConverters.convertExpr).asJava)
         .build()
     case other =>
       throw new NotImplementedError(s"generator not supported: $other")

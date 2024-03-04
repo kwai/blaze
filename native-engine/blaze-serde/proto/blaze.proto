@@ -511,6 +511,7 @@ message Generator {
 enum GenerateFunction {
   Explode = 0;
   PosExplode = 1;
+  JsonTuple = 2;
 }
 
 message ParquetSinkExecNode {
