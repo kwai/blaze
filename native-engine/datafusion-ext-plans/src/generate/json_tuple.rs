@@ -30,18 +30,7 @@ pub struct JsonTuple {
 
 impl JsonTuple {
     pub fn new(child: Arc<dyn PhysicalExpr>, json_paths: Vec<String>) -> Self {
-        Self {
-            child,
-            json_paths: json_paths
-                .into_iter()
-                .map(|json_path| {
-                    if !json_path.starts_with("$") {
-                        return format!("$.{json_path}");
-                    }
-                    json_path
-                })
-                .collect(),
-        }
+        Self { child, json_paths }
     }
 }
 
