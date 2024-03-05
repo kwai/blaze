@@ -15,7 +15,7 @@ datafusion-ext-commons = { workspace = true }
 datafusion-ext-exprs = { workspace = true }
 datafusion-ext-functions = { workspace = true }
 datafusion-ext-plans = { workspace = true }
-log = "0.4.14"
+log = "0.4.21"
 object_store = "0.6.1"
 prost = "0.12.3"
 
