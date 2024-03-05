@@ -23,7 +23,7 @@ use datafusion::{
     physical_plan::ColumnarValue,
 };
 use datafusion_ext_commons::{downcast_any, uda::UserDefinedArray};
-use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
 /// implement hive/spark's UDFGetJson
 /// get_json_object(str, path) == get_parsed_json_object(parse_json(str), path)
@@ -173,11 +173,11 @@ pub fn spark_get_parsed_json_simple_field(
                         ParsedJsonValue::SerdeJson(v) => v
                             .as_object()
                             .and_then(|object| object.get(field))
-                            .map(|v| v.to_string()),
+                            .and_then(|v| serde_json_value_to_string(v).unwrap_or_default()),
                         ParsedJsonValue::Sonic(v) => v
                             .as_object()
                             .and_then(|object| object.get(field))
-                            .map(|v| v.to_string()),
+                            .and_then(|v| sonic_value_to_string(v).unwrap_or_default()),
                     }
                 })
             })
@@ -262,19 +262,7 @@ impl HiveGetJsonObjectEvaluator {
                 }
             }
         }
-
-        let ret = match value {
-            serde_json::Value::Null => Ok(None),
-            serde_json::Value::String(string) => Ok(Some(string.to_string())),
-            serde_json::Value::Number(number) => Ok(Some(number.to_string())),
-            serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                serde_json::to_string(value).map(Some).map_err(|_| {
-                    HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
-                })
-            }
-        };
-        ret
+        serde_json_value_to_string(value)
     }
 
     fn evaluate_with_value_sonic(
@@ -294,17 +282,35 @@ impl HiveGetJsonObjectEvaluator {
                 }
             }
         }
+        sonic_value_to_string(value)
+    }
+}
 
-        let ret = match value.get_type() {
-            JsonType::Null => Ok(None),
-            JsonType::String => Ok(value.as_str().map(|v| v.to_string())),
-            JsonType::Number => Ok(value.as_number().map(|v| v.to_string())),
-            JsonType::Boolean => Ok(value.as_bool().map(|v| v.to_string())),
-            _ => sonic_rs::to_string(value).map(Some).map_err(|_| {
-                HiveGetJsonObjectError::InvalidInput("array to json error".to_string())
-            }),
-        };
-        ret
+fn serde_json_value_to_string(
+    value: &serde_json::Value,
+) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(string) => Ok(Some(string.to_string())),
+        serde_json::Value::Number(number) => Ok(Some(number.to_string())),
+        serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => serde_json::to_string(value)
+            .map(Some)
+            .map_err(|_| HiveGetJsonObjectError::InvalidInput("array to json error".to_string())),
+    }
+}
+
+fn sonic_value_to_string(
+    value: &sonic_rs::Value,
+) -> std::result::Result<Option<String>, HiveGetJsonObjectError> {
+    match value.get_type() {
+        sonic_rs::JsonType::Null => Ok(None),
+        sonic_rs::JsonType::String => Ok(value.as_str().map(|v| v.to_string())),
+        sonic_rs::JsonType::Number => Ok(value.as_number().map(|v| v.to_string())),
+        sonic_rs::JsonType::Boolean => Ok(value.as_bool().map(|v| v.to_string())),
+        _ => sonic_rs::to_string(value)
+            .map(Some)
+            .map_err(|_| HiveGetJsonObjectError::InvalidInput("array to json error".to_string())),
     }
 }
 
