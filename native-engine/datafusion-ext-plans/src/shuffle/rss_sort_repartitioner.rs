@@ -105,7 +105,7 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
         // we are likely to spill more frequently because the cost of spilling a shuffle
         // repartition is lower than other consumers.
         // rss shuffle spill has even lower cost than normal shuffle
-        if self.mem_used_percent() > 0.6 {
+        if self.mem_used_percent() > 0.4 {
             self.spill().await?;
         }
         Ok(())

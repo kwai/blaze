@@ -42,6 +42,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
+    array_size::ArraySize,
     downcast_any,
     ds::loser_tree::{ComparableForLoserTree, LoserTree},
     io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch},
@@ -260,7 +261,7 @@ impl BufferedData {
 
     fn add_batch(&mut self, batch: RecordBatch, sorter: &ExternalSorter) -> Result<()> {
         self.num_rows += batch.num_rows();
-        self.staging_mem_used += batch.get_array_memory_size();
+        self.staging_mem_used += batch.get_array_mem_size();
         self.staging_batches.push(batch);
         if self.staging_mem_used >= staging_mem_size_for_partial_sort() {
             self.flush_staging_batches(sorter)?;
@@ -324,7 +325,7 @@ impl BufferedData {
                 .collect();
             sorted_batch = create_zero_column_batch(sorted_keys.len());
         }
-        self.sorted_batches_mem_used += sorted_batch.get_array_memory_size();
+        self.sorted_batches_mem_used += sorted_batch.get_array_mem_size();
         self.key_stores_mem_used += key_store.len();
 
         self.key_stores.push(key_store.into());

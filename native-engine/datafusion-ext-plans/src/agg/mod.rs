@@ -141,6 +141,8 @@ pub trait Agg: WithAggBufAddrs + WithMemTracking + Send + Sync + Debug {
         Ok(partial_inputs.iter().map(Clone::clone).collect())
     }
 
+    fn increase_acc_mem_used(&self, acc: &mut RefAccumStateRow);
+
     fn partial_update(
         &self,
         acc: &mut RefAccumStateRow,

@@ -391,6 +391,7 @@ impl AggContext {
             let mut input_acc = self.initial_input_acc.clone();
             input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
             for (_, agg) in &self.need_partial_merge_aggs {
+                agg.increase_acc_mem_used(&mut input_acc.as_mut());
                 agg.partial_merge(acc, &mut input_acc.as_mut())?;
             }
         }
@@ -416,6 +417,9 @@ impl AggContext {
                 .map(|acc| acc.as_mut())
                 .collect::<Vec<_>>();
             for (_, agg) in &self.need_partial_merge_aggs {
+                for input_acc in &mut input_ref_accs {
+                    agg.increase_acc_mem_used(input_acc);
+                }
                 agg.partial_batch_merge(accs, &mut input_ref_accs)?;
             }
         }
@@ -432,6 +436,7 @@ impl AggContext {
             for row_idx in 0..acc_array.len() {
                 input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
                 for (_, agg) in &self.need_partial_merge_aggs {
+                    agg.increase_acc_mem_used(&mut input_acc.as_mut());
                     agg.partial_merge(acc, &mut input_acc.as_mut())?;
                 }
             }
@@ -450,5 +455,12 @@ impl AggContext {
                 .or_else(|err| df_execution_err!("agg: executing partial_merge() error: {err}"))?;
         }
         Ok(())
+    }
+
+    pub fn acc_dyn_mem_used(&self) -> usize {
+        self.aggs
+            .iter()
+            .map(|agg| agg.agg.mem_used())
+            .sum::<usize>()
     }
 }

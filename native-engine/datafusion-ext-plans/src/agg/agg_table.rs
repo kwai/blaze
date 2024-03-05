@@ -34,6 +34,7 @@ use datafusion::{
     physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet},
 };
 use datafusion_ext_commons::{
+    array_size::ArraySize,
     bytes_arena::BytesArena,
     downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
@@ -255,7 +256,7 @@ impl AggTable {
                 records.shrink_to_fit();
 
                 let batch = self.agg_ctx.convert_records_to_batch(chunk)?;
-                let batch_mem_size = batch.get_array_memory_size();
+                let batch_mem_size = batch.get_array_mem_size();
 
                 self.baseline_metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
@@ -327,7 +328,7 @@ impl AggTable {
             // meets next bucket -- flush records of current bucket
             if min_cursor.cur_bucket_idx > current_bucket_idx {
                 if hashing.num_records() >= batch_size
-                    && hashing.mem_used() >= target_batch_mem_size
+                    || hashing.mem_used() + self.agg_ctx.acc_dyn_mem_used() >= target_batch_mem_size
                 {
                     flush_staging!();
                 }
@@ -474,16 +475,10 @@ impl InMemTable {
     }
 
     pub fn mem_used(&self) -> usize {
-        let acc_used = self.num_records() * self.agg_ctx.initial_acc.mem_size()
-            + self
-                .agg_ctx
-                .aggs
-                .iter()
-                .map(|agg| agg.agg.mem_used())
-                .sum::<usize>();
         let hashing_used = self.hashing_data.mem_used();
         let merging_used = self.merging_data.mem_used();
-        acc_used + hashing_used + merging_used
+        let acc_dyn_mem_used = self.agg_ctx.acc_dyn_mem_used();
+        hashing_used + merging_used + acc_dyn_mem_used
     }
 
     pub fn num_records(&self) -> usize {
@@ -730,7 +725,7 @@ impl MergingData {
 
     fn add_batch(&mut self, batch: RecordBatch) -> Result<()> {
         self.num_rows += batch.num_rows();
-        self.staging_mem_used += batch.get_array_memory_size();
+        self.staging_mem_used += batch.get_array_mem_size();
         self.staging_batches.push(batch);
         if self.staging_mem_used >= staging_mem_size_for_partial_sort() {
             self.flush_staging_batches()?;

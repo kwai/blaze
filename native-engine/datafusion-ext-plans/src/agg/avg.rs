@@ -121,6 +121,10 @@ impl Agg for AggAvg {
         )?])
     }
 
+    fn increase_acc_mem_used(&self, _acc: &mut RefAccumStateRow) {
+        // do nothing
+    }
+
     fn partial_update(
         &self,
         acc: &mut RefAccumStateRow,

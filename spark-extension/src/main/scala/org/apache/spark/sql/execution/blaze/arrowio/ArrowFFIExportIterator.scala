@@ -32,10 +32,7 @@ class ArrowFFIExportIterator(rowIter: Iterator[InternalRow], schema: StructType)
     with Logging {
 
   // NOTE:
-  //  arrow-rs batch.get_array_memory_size() cannot work on ffi
-  //  batches. so we use a smaller batch size to force batch coalesce
-  //  in native side
-  private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf() / 3
+  private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf()
   private val maxBatchMemorySize = 1 << 24 // 16MB
 
   private val allocator =

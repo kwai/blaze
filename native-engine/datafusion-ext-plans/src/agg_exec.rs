@@ -325,7 +325,6 @@ async fn execute_agg_sorted(
                         .collect(),
                 )?;
                 let num_rows = batch.num_rows();
-                log::info!("aggregate exec (sorted) outputting one batch: num_rows={num_rows}");
                 baseline_metrics.record_output(num_rows);
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }};

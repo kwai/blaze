@@ -68,8 +68,7 @@ impl AccStore {
     }
 
     pub fn mem_size(&self) -> usize {
-        self.fixed_store.len() * self.fixed_len()
-            + self.dyn_store.len() * self.dyns_len() * size_of::<DynVal>()
+        self.num_accs * (self.fixed_len() + self.dyns_len() * size_of::<DynVal>() + 32)
     }
 
     pub fn new_acc(&mut self) -> u32 {

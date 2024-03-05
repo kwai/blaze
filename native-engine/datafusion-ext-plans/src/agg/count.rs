@@ -94,6 +94,10 @@ impl Agg for AggCount {
         &[AccumInitialValue::Scalar(ScalarValue::Int64(Some(0)))]
     }
 
+    fn increase_acc_mem_used(&self, _acc: &mut RefAccumStateRow) {
+        // do nothing
+    }
+
     fn partial_update(
         &self,
         acc: &mut RefAccumStateRow,
