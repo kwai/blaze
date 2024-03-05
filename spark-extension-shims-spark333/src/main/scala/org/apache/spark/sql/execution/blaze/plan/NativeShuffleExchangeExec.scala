@@ -52,6 +52,7 @@ case class NativeShuffleExchangeExec(
         .getDefaultNativeMetrics(sparkContext)
         .filterKeys(
           Set(
+            "stage_id",
             "mem_spill_count",
             "mem_spill_size",
             "mem_spill_iotime",

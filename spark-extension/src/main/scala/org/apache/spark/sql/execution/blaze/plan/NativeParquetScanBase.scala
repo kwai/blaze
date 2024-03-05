@@ -56,7 +56,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("output_rows", "elapsed_compute"))
+      .filterKeys(Set("stage_id", "output_rows", "elapsed_compute"))
       .toSeq :+
       ("predicate_evaluation_errors", SQLMetrics
         .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
