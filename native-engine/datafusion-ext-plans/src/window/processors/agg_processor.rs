@@ -61,7 +61,10 @@ impl WindowFunctionProcessor for AggProcessor {
             .agg
             .exprs()
             .iter()
-            .map(|expr| expr.evaluate(batch).map(|v| v.into_array(batch.num_rows())))
+            .map(|expr| {
+                expr.evaluate(batch)
+                    .and_then(|v| v.into_array(batch.num_rows()))
+            })
             .collect::<Result<_>>()?;
 
         for row_idx in 0..batch.num_rows() {
@@ -97,7 +100,10 @@ impl WindowFunctionProcessor for AggProcessor {
             .agg
             .exprs()
             .iter()
-            .map(|expr| expr.evaluate(batch).map(|v| v.into_array(batch.num_rows())))
+            .map(|expr| {
+                expr.evaluate(batch)
+                    .and_then(|v| v.into_array(batch.num_rows()))
+            })
             .collect::<Result<_>>()?;
 
         for row_idx in 0..batch.num_rows() {

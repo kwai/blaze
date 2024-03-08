@@ -159,6 +159,7 @@ impl TaskOutputter for Arc<TaskContext> {
                     panic!("output_with_sender[{desc}] error: {err_message}");
                 }
             }
+            Ok(())
         });
         Ok(stream_builder.build())
     }

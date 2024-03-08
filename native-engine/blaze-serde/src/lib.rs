@@ -16,8 +16,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields, IntervalUnit, Schema, TimeUnit};
 use datafusion::{
-    logical_expr::Operator, physical_plan::joins::utils::JoinSide, prelude::JoinType,
-    scalar::ScalarValue,
+    common::JoinSide, logical_expr::Operator, prelude::JoinType, scalar::ScalarValue,
 };
 use datafusion_ext_plans::agg::AggFunction;
 
@@ -497,10 +496,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                     .map(|val| val.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
                 let scalar_type: DataType = pb_scalar_type.try_into()?;
-                ScalarValue::List(
-                    Some(typechecked_values),
-                    Arc::new(Field::new("items", scalar_type, true)),
-                )
+                ScalarValue::List(ScalarValue::new_list(&typechecked_values, &scalar_type))
             }
             protobuf::scalar_value::Value::NullValue(v) => {
                 match v.datatype.as_ref().expect("missing scalar data type") {
@@ -515,7 +511,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                             .as_ref()
                             .expect("missing list element type");
                         let scalar_type: DataType = pb_scalar_type.as_ref().try_into()?;
-                        ScalarValue::List(None, Arc::new(Field::new("items", scalar_type, true)))
+                        ScalarValue::try_from(DataType::new_list(scalar_type, true))?
                     }
                 }
             }
@@ -548,7 +544,7 @@ impl TryInto<DataType> for &protobuf::scalar_type::Datatype {
                     .expect("missing element type")
                     .as_ref()
                     .try_into()?;
-                DataType::List(Arc::new(Field::new("items", element_scalar_type, true)))
+                DataType::new_list(element_scalar_type, true)
             }
         })
     }
@@ -602,10 +598,7 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::scalar_value::Value
                             .expect("missing list element type")
                             .as_ref()
                             .try_into()?;
-                        ScalarValue::List(
-                            None,
-                            Arc::new(Field::new("items", element_scalar_type, true)),
-                        )
+                        ScalarValue::try_from(DataType::new_list(element_scalar_type, true))?
                     }
                 }
             }
@@ -635,10 +628,10 @@ impl TryInto<ScalarValue> for &protobuf::ScalarListValue {
             .iter()
             .map(|value| Ok(value.try_into()?))
             .collect::<Result<_, Self::Error>>()?;
-        Ok(ScalarValue::List(
-            Some(values),
-            Arc::new(Field::new("items", element_scalar_type, true)),
-        ))
+        Ok(ScalarValue::List(ScalarValue::new_list(
+            &values,
+            &element_scalar_type,
+        )))
     }
 }
 
@@ -651,11 +644,7 @@ impl TryInto<DataType> for &protobuf::ScalarListType {
             .expect("missing list element type")
             .as_ref()
             .try_into()?;
-        Ok(DataType::List(Arc::new(Field::new(
-            "items",
-            element_scalar_type,
-            true,
-        ))))
+        Ok(DataType::new_list(element_scalar_type, true))
     }
 }
 

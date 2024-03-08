@@ -146,8 +146,8 @@ impl ExecutionPlan for IpcReaderExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Statistics {
-        Statistics::default()
+    fn statistics(&self) -> Result<Statistics> {
+        todo!()
     }
 }
 

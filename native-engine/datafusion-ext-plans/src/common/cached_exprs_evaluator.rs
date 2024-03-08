@@ -147,7 +147,7 @@ impl CachedExprsEvaluator {
             .map(|(expr, field)| {
                 let col = expr
                     .evaluate(&filtered_batch)?
-                    .into_array(filtered_batch.num_rows());
+                    .into_array(filtered_batch.num_rows())?;
                 if col.data_type() != field.data_type() {
                     return cast(col.as_ref(), field.data_type());
                 }

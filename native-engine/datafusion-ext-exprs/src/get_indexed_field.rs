@@ -79,7 +79,7 @@ impl PhysicalExpr for GetIndexedFieldExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let array = self.arg.evaluate(batch)?.into_array(batch.num_rows());
+        let array = self.arg.evaluate(batch)?.into_array(batch.num_rows())?;
         match (array.data_type(), &self.key) {
             (DataType::List(_) | DataType::Struct(_), _) if self.key.is_null() => {
                 let scalar_null: ScalarValue = array.data_type().try_into()?;
@@ -214,7 +214,7 @@ mod test {
             Arc::new(Column::new("cccccc1", 0)),
             ScalarValue::from(2_i64),
         ));
-        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0)?;
         let output_batch =
             RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", output_array, true)])?;
 

@@ -19,10 +19,14 @@ use std::{
     sync::Arc,
 };
 
-use arrow::datatypes::{FieldRef, SchemaRef};
+use arrow::{
+    compute::SortOptions,
+    datatypes::{Field, FieldRef, SchemaRef},
+};
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use chrono::DateTime;
 use datafusion::{
+    common::stats::Precision,
     datasource::{
         listing::{FileRange, PartitionedFile},
         object_store::ObjectStoreUrl,
@@ -42,7 +46,6 @@ use datafusion::{
             NegativeExpr, NotExpr, PhysicalSortExpr,
         },
         joins::utils::{ColumnIndex, JoinFilter},
-        sorts::sort::SortOptions,
         union::UnionExec,
         ColumnStatistics, ExecutionPlan, Partitioning, PhysicalExpr, Statistics,
     },
@@ -179,16 +182,16 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(sort_merge_join.left)?;
                 let right: Arc<dyn ExecutionPlan> = convert_box_required!(sort_merge_join.right)?;
-                let on: Vec<(Column, Column)> = sort_merge_join
+                let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = sort_merge_join
                     .on
                     .iter()
                     .map(|col| {
                         let left_col: Column = into_required!(col.left)?;
-                        let left_col_binded: Column =
-                            Column::new_with_schema(left_col.name(), &left.schema())?;
+                        let left_col_binded: Arc<dyn PhysicalExpr> =
+                            Arc::new(Column::new_with_schema(left_col.name(), &left.schema())?);
                         let right_col: Column = into_required!(col.right)?;
-                        let right_col_binded: Column =
-                            Column::new_with_schema(right_col.name(), &right.schema())?;
+                        let right_col_binded: Arc<dyn PhysicalExpr> =
+                            Arc::new(Column::new_with_schema(right_col.name(), &right.schema())?);
                         Ok((left_col_binded, right_col_binded))
                     })
                     .collect::<Result<_, Self::Error>>()?;
@@ -340,16 +343,16 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             PhysicalPlanType::BroadcastJoin(broadcast_join) => {
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.left)?;
                 let right: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.right)?;
-                let on: Vec<(Column, Column)> = broadcast_join
+                let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = broadcast_join
                     .on
                     .iter()
                     .map(|col| {
                         let left_col: Column = into_required!(col.left)?;
-                        let left_col_binded: Column =
-                            Column::new_with_schema(left_col.name(), &left.schema())?;
+                        let left_col_binded: Arc<dyn PhysicalExpr> =
+                            Arc::new(Column::new_with_schema(left_col.name(), &left.schema())?);
                         let right_col: Column = into_required!(col.right)?;
-                        let right_col_binded: Column =
-                            Column::new_with_schema(right_col.name(), &right.schema())?;
+                        let right_col_binded: Arc<dyn PhysicalExpr> =
+                            Arc::new(Column::new_with_schema(right_col.name(), &right.schema())?);
                         Ok((left_col_binded, right_col_binded))
                     })
                     .collect::<Result<_, Self::Error>>()?;
@@ -811,7 +814,7 @@ impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
             ScalarFunction::Rtrim => Self::Rtrim,
             ScalarFunction::ToTimestamp => Self::ToTimestamp,
             ScalarFunction::Array => Self::MakeArray,
-            ScalarFunction::NullIf => Self::NullIf,
+            // ScalarFunction::NullIf => todo!(),
             ScalarFunction::DatePart => Self::DatePart,
             ScalarFunction::DateTrunc => Self::DateTrunc,
             ScalarFunction::Md5 => Self::MD5,
@@ -963,7 +966,9 @@ fn try_parse_physical_expr(
                     &e.name,
                     fun_expr,
                     args,
-                    &convert_required!(e.return_type)?,
+                    convert_required!(e.return_type)?,
+                    None,
+                    false,
                 ))
             }
             ExprType::SparkUdfWrapperExpr(e) => Arc::new(SparkUDFWrapperExpr::try_new(
@@ -1092,6 +1097,7 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
                 size: val.size as usize,
                 last_modified: DateTime::default(),
                 e_tag: None,
+                version: None,
             },
             partition_values: val
                 .partition_values
@@ -1129,10 +1135,18 @@ impl TryFrom<&protobuf::FileGroup> for Vec<PartitionedFile> {
 impl From<&protobuf::ColumnStats> for ColumnStatistics {
     fn from(cs: &protobuf::ColumnStats) -> ColumnStatistics {
         ColumnStatistics {
-            null_count: Some(cs.null_count as usize),
-            max_value: cs.max_value.as_ref().map(|m| m.try_into().unwrap()),
-            min_value: cs.min_value.as_ref().map(|m| m.try_into().unwrap()),
-            distinct_count: Some(cs.distinct_count as usize),
+            null_count: Precision::Exact(cs.null_count as usize),
+            max_value: cs
+                .max_value
+                .as_ref()
+                .map(|m| Precision::Exact(m.try_into().unwrap()))
+                .unwrap_or(Precision::Absent),
+            min_value: cs
+                .min_value
+                .as_ref()
+                .map(|m| Precision::Exact(m.try_into().unwrap()))
+                .unwrap_or(Precision::Absent),
+            distinct_count: Precision::Exact(cs.distinct_count as usize),
         }
     }
 }
@@ -1147,15 +1161,10 @@ impl TryInto<Statistics> for &protobuf::Statistics {
             .map(|s| s.into())
             .collect::<Vec<_>>();
         Ok(Statistics {
-            num_rows: Some(self.num_rows as usize),
-            total_byte_size: Some(self.total_byte_size as usize),
+            num_rows: Precision::Exact(self.num_rows as usize),
+            total_byte_size: Precision::Exact(self.total_byte_size as usize),
             // No column statistic (None) is encoded with empty array
-            column_statistics: if column_statistics.is_empty() {
-                None
-            } else {
-                Some(column_statistics)
-            },
-            is_exact: self.is_exact,
+            column_statistics,
         })
     }
 }
@@ -1175,8 +1184,15 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
         } else {
             Some(projection)
         };
-        let statistics = convert_required!(self.statistics)?;
         let partition_schema: SchemaRef = Arc::new(convert_required!(self.partition_schema)?);
+        let mut statistics: Statistics = convert_required!(self.statistics)?;
+        if statistics.column_statistics.is_empty() {
+            statistics.column_statistics = schema
+                .fields()
+                .iter()
+                .map(|_| ColumnStatistics::new_unknown())
+                .collect();
+        }
 
         let file_groups = (0..self.num_partitions)
             .map(|i| {
@@ -1202,10 +1218,9 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
             table_partition_cols: partition_schema
                 .fields()
                 .iter()
-                .map(|field| (field.name().clone(), field.data_type().clone()))
+                .map(|field| Field::new(field.name().clone(), field.data_type().clone(), true))
                 .collect(),
             output_ordering: vec![],
-            infinite_source: false,
         })
     }
 }

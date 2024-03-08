@@ -132,6 +132,7 @@ jobs:
       - name: Run with BHJ
         run: |
           export RUST_LOG=ERROR
+          export RUST_BACKTRACE=1
           SPARK_HOME=spark-bin-${{ matrix.sparkver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
             --conf spark.driver.memory=3g \
@@ -141,6 +142,7 @@ jobs:
       - name: Run without BHJ
         run: |
           export RUST_LOG=ERROR
+          export RUST_BACKTRACE=1
           SPARK_HOME=spark-bin-${{ matrix.sparkver }} dev/run-tpcds-test \
             --conf spark.sql.autoBroadcastJoinThreshold=-1 \
             --conf spark.driver.memory=3g \
