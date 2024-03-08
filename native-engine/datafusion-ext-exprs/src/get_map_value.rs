@@ -86,7 +86,7 @@ impl PhysicalExpr for GetMapValueExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let array = self.arg.evaluate(batch)?.into_array(1);
+        let array = self.arg.evaluate(batch)?.into_array(1)?;
         match (array.data_type(), &self.key) {
             (DataType::Map(..), _) if self.key.is_null() => {
                 df_unimplemented_err!("map key not support Null Type")
@@ -95,7 +95,7 @@ impl PhysicalExpr for GetMapValueExpr {
                 let as_map_array = array.as_any().downcast_ref::<MapArray>().unwrap();
                 if !as_map_array
                     .key_type()
-                    .equals_datatype(&self.key.get_datatype())
+                    .equals_datatype(&self.key.data_type())
                 {
                     df_execution_err!("MapArray key type must equal to GetMapValue key type")?;
                 }
@@ -392,7 +392,7 @@ mod test {
             Arc::new(Column::new("test col", 0)),
             ScalarValue::from(7_i32),
         ));
-        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0)?;
         let output_batch =
             RecordBatch::try_from_iter_with_nullable(vec![("test col", output_array, true)])?;
 
@@ -428,7 +428,7 @@ mod test {
             Arc::new(Column::new("test col", 0)),
             ScalarValue::from("e"),
         ));
-        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0);
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0)?;
         let output_batch =
             RecordBatch::try_from_iter_with_nullable(vec![("test col", output_array, true)])?;
 

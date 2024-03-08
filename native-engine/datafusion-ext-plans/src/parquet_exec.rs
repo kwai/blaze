@@ -246,6 +246,7 @@ impl ExecutionPlan for ParquetExec {
             pushdown_filters: false, // still buggy
             reorder_filters: false,
             enable_page_index: false,
+            enable_bloom_filter: false,
         };
 
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
@@ -281,8 +282,8 @@ impl ExecutionPlan for ParquetExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Statistics {
-        self.projected_statistics.clone()
+    fn statistics(&self) -> Result<Statistics> {
+        Ok(self.projected_statistics.clone())
     }
 }
 

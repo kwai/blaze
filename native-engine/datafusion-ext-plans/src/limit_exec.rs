@@ -84,7 +84,7 @@ impl ExecutionPlan for LimitExec {
         }))
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         todo!()
     }
 }

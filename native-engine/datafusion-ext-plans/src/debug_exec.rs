@@ -109,7 +109,7 @@ impl ExecutionPlan for DebugExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         todo!()
     }
 }

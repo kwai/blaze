@@ -797,7 +797,7 @@ object NativeConverters extends Logging {
       case e: StringTrimRight =>
         buildScalarFunction(pb.ScalarFunction.Rtrim, e.srcStr +: e.trimStr.toSeq, e.dataType)
       case e @ NullIf(left, right, _) =>
-        buildScalarFunction(pb.ScalarFunction.NullIf, left :: right :: Nil, e.dataType)
+        buildExtScalarFunction("NullIf", left :: right :: Nil, e.dataType)
       case e: TruncDate =>
         buildScalarFunction(pb.ScalarFunction.DateTrunc, e.children, e.dataType)
       case Md5(_1) =>

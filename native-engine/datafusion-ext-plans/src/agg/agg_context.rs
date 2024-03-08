@@ -254,7 +254,7 @@ impl AggContext {
             .groupings
             .iter()
             .map(|grouping| grouping.expr.evaluate(&input_batch))
-            .map(|r| r.map(|columnar| columnar.into_array(input_batch.num_rows())))
+            .map(|r| r.and_then(|columnar| columnar.into_array(input_batch.num_rows())))
             .collect::<Result<_>>()
             .map_err(|err| err.context("agg: evaluating grouping arrays error"))?;
         Ok(self

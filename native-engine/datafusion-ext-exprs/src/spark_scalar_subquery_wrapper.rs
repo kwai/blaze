@@ -105,7 +105,7 @@ impl PhysicalExpr for SparkScalarSubqueryWrapperExpr {
                 vec![],
                 &RecordBatchOptions::new().with_row_count(Some(1)),
             )?;
-            let result = expr.evaluate(&stub_batch)?.into_array(1);
+            let result = expr.evaluate(&stub_batch)?.into_array(1)?;
             Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
                 &result, 0,
             )?))

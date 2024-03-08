@@ -189,7 +189,7 @@ impl AggTable {
             .groupings
             .iter()
             .map(|grouping| grouping.expr.evaluate(&input_batch))
-            .map(|r| r.map(|columnar| columnar.into_array(batch_num_rows)))
+            .map(|r| r.and_then(|columnar| columnar.into_array(batch_num_rows)))
             .collect::<Result<Vec<ArrayRef>>>()?;
         let agg_columns = self
             .agg_ctx

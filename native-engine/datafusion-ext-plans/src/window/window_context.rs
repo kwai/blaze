@@ -132,7 +132,8 @@ impl WindowContext {
                     .partition_spec
                     .iter()
                     .map(|expr: &Arc<dyn PhysicalExpr>| {
-                        expr.evaluate(batch).map(|v| v.into_array(batch.num_rows()))
+                        expr.evaluate(batch)
+                            .and_then(|v| v.into_array(batch.num_rows()))
                     })
                     .collect::<Result<Vec<_>>>()?,
             )?)
@@ -146,7 +147,7 @@ impl WindowContext {
                 .map(|expr: &PhysicalSortExpr| {
                     expr.expr
                         .evaluate(batch)
-                        .map(|v| v.into_array(batch.num_rows()))
+                        .and_then(|v| v.into_array(batch.num_rows()))
                 })
                 .collect::<Result<Vec<_>>>()?,
         )?)

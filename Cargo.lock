@@ -96,10 +96,9 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 
 [[package]]
 name = "arrow"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
- "ahash",
  "arrow-arith",
  "arrow-array",
  "arrow-buffer",
@@ -117,8 +116,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-arith"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -131,8 +130,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-array"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "ahash",
  "arrow-buffer",
@@ -143,28 +142,29 @@ dependencies = [
  "half",
  "hashbrown",
  "num",
- "packed_simd_2",
 ]
 
 [[package]]
 name = "arrow-buffer"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
+ "bytes",
  "half",
  "num",
 ]
 
 [[package]]
 name = "arrow-cast"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
  "arrow-schema",
  "arrow-select",
+ "base64",
  "chrono",
  "comfy-table",
  "half",
@@ -174,8 +174,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-csv"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -192,8 +192,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-data"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -203,8 +203,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-ipc"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -212,12 +212,13 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "flatbuffers",
+ "lz4_flex",
 ]
 
 [[package]]
 name = "arrow-json"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -235,8 +236,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-ord"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -249,8 +250,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-row"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -263,8 +264,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-schema"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "bitflags 2.4.1",
  "serde",
@@ -272,9 +273,10 @@ dependencies = [
 
 [[package]]
 name = "arrow-select"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
+ "ahash",
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
@@ -284,8 +286,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-string"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -294,7 +296,7 @@ dependencies = [
  "arrow-select",
  "num",
  "regex",
- "regex-syntax 0.7.5",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -569,9 +571,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chrono"
-version = "0.4.33"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f13690e35a5e4ace198e7beea2895d29f3a9cc55015fcebe6336bd2010af9eb"
+checksum = "8eaf5903dcbc0a39312feb77df2ff4c76387d591b9fc7b04a238dcf8bb62639a"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -625,8 +627,8 @@ version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c64043d6c7b7a4c58e39e7efccfdea7b93d885a795d0c054a69dbbf4dd52686"
 dependencies = [
- "strum",
- "strum_macros",
+ "strum 0.25.0",
+ "strum_macros 0.25.3",
  "unicode-width",
 ]
 
@@ -744,12 +746,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion"
-version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=663cd6155#663cd615586db5623931d96dfec9ae62fd151ece"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
 dependencies = [
  "ahash",
  "arrow",
  "arrow-array",
+ "arrow-ipc",
  "arrow-schema",
  "async-compression",
  "async-trait",
@@ -760,8 +763,11 @@ dependencies = [
  "datafusion-common",
  "datafusion-execution",
  "datafusion-expr",
+ "datafusion-functions",
+ "datafusion-functions-array",
  "datafusion-optimizer",
  "datafusion-physical-expr",
+ "datafusion-physical-plan",
  "datafusion-sql",
  "flate2",
  "futures",
@@ -769,17 +775,14 @@ dependencies = [
  "half",
  "hashbrown",
  "indexmap",
- "itertools 0.11.0",
- "lazy_static",
+ "itertools 0.12.1",
  "log",
  "num_cpus",
  "object_store",
  "parking_lot",
  "parquet",
- "percent-encoding",
  "pin-project-lite",
  "rand",
- "smallvec",
  "sqlparser",
  "tempfile",
  "tokio",
@@ -787,38 +790,35 @@ dependencies = [
  "url",
  "uuid",
  "xz2",
- "zstd 0.12.4",
+ "zstd 0.13.0",
 ]
 
 [[package]]
 name = "datafusion-common"
-version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=663cd6155#663cd615586db5623931d96dfec9ae62fd151ece"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
 dependencies = [
+ "ahash",
  "arrow",
  "arrow-array",
- "async-compression",
- "bytes",
- "bzip2",
+ "arrow-buffer",
+ "arrow-schema",
  "chrono",
- "flate2",
- "futures",
+ "half",
+ "libc",
  "num_cpus",
  "object_store",
  "parquet",
  "sqlparser",
- "tokio",
- "tokio-util",
- "xz2",
- "zstd 0.12.4",
 ]
 
 [[package]]
 name = "datafusion-execution"
-version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=663cd6155#663cd615586db5623931d96dfec9ae62fd151ece"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
 dependencies = [
  "arrow",
+ "chrono",
  "dashmap",
  "datafusion-common",
  "datafusion-expr",
@@ -834,16 +834,17 @@ dependencies = [
 
 [[package]]
 name = "datafusion-expr"
-version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=663cd6155#663cd615586db5623931d96dfec9ae62fd151ece"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
 dependencies = [
  "ahash",
  "arrow",
+ "arrow-array",
  "datafusion-common",
- "lazy_static",
+ "paste",
  "sqlparser",
- "strum",
- "strum_macros",
+ "strum 0.26.1",
+ "strum_macros 0.26.1",
 ]
 
 [[package]]
@@ -949,9 +950,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-functions"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
+dependencies = [
+ "arrow",
+ "base64",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-expr",
+ "hex",
+ "log",
+]
+
+[[package]]
+name = "datafusion-functions-array"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
+dependencies = [
+ "arrow",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-expr",
+ "log",
+ "paste",
+]
+
+[[package]]
 name = "datafusion-optimizer"
-version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=663cd6155#663cd615586db5623931d96dfec9ae62fd151ece"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
 dependencies = [
  "arrow",
  "async-trait",
@@ -960,34 +988,35 @@ dependencies = [
  "datafusion-expr",
  "datafusion-physical-expr",
  "hashbrown",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "log",
- "regex-syntax 0.7.5",
+ "regex-syntax",
 ]
 
 [[package]]
 name = "datafusion-physical-expr"
-version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=663cd6155#663cd615586db5623931d96dfec9ae62fd151ece"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
 dependencies = [
  "ahash",
  "arrow",
  "arrow-array",
  "arrow-buffer",
+ "arrow-ord",
  "arrow-schema",
+ "arrow-string",
  "base64",
  "blake2",
  "blake3",
  "chrono",
  "datafusion-common",
+ "datafusion-execution",
  "datafusion-expr",
  "half",
  "hashbrown",
  "hex",
  "indexmap",
- "itertools 0.11.0",
- "lazy_static",
- "libc",
+ "itertools 0.12.1",
  "log",
  "md-5",
  "paste",
@@ -1000,9 +1029,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-physical-plan"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
+dependencies = [
+ "ahash",
+ "arrow",
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-schema",
+ "async-trait",
+ "chrono",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "futures",
+ "half",
+ "hashbrown",
+ "indexmap",
+ "itertools 0.12.1",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "pin-project-lite",
+ "rand",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "datafusion-sql"
-version = "30.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=663cd6155#663cd615586db5623931d96dfec9ae62fd151ece"
+version = "36.0.0"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=1565cd3e9#1565cd3e9ece581f45ddefb2f68eda09cc0db8a9"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -1403,6 +1462,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1544,12 +1612,6 @@ checksum = "89d92a4743f9a61002fae18374ed11e7973f530cb3a3255fb354818118b2203c"
 
 [[package]]
 name = "libm"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fc7aa29613bd6a620df431842069224d8bc9011086b1db4c0e0cd47fa03ec9a"
-
-[[package]]
-name = "libm"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
@@ -1575,26 +1637,6 @@ name = "log"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
-
-[[package]]
-name = "lz4"
-version = "1.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e9e2dd86df36ce760a60f6ff6ad526f7ba1f14ba0356f8254fb6905e6494df1"
-dependencies = [
- "libc",
- "lz4-sys",
-]
-
-[[package]]
-name = "lz4-sys"
-version = "1.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57d27b317e207b10f69f5e75494119e391a96f48861ae870d1da6edac98ca900"
-dependencies = [
- "cc",
- "libc",
-]
 
 [[package]]
 name = "lz4_flex"
@@ -1721,7 +1763,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39e3200413f237f41ab11ad6d161bc7239c84dcb631773ccd7de3dfe4b5c267c"
 dependencies = [
  "autocfg",
- "libm 0.2.8",
+ "libm",
 ]
 
 [[package]]
@@ -1745,16 +1787,16 @@ dependencies = [
 
 [[package]]
 name = "object_store"
-version = "0.6.1"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27c776db4f332b571958444982ff641d2531417a326ca368995073b639205d58"
+checksum = "b8718f8b65fdf67a45108d1548347d4af7d71fb81ce727bbf9e3b2535e079db3"
 dependencies = [
  "async-trait",
  "bytes",
  "chrono",
  "futures",
  "humantime",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "parking_lot",
  "percent-encoding",
  "snafu",
@@ -1777,16 +1819,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "packed_simd_2"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1914cd452d8fccd6f9db48147b29fd4ae05bea9dc5d9ad578509f72415de282"
-dependencies = [
- "cfg-if",
- "libm 0.1.4",
 ]
 
 [[package]]
@@ -1830,8 +1862,8 @@ dependencies = [
 
 [[package]]
 name = "parquet"
-version = "45.0.0"
-source = "git+https://github.com/blaze-init/arrow-rs.git?rev=7706029cfa#7706029cfa5a130e0285bfe489c23f94c0d0635c"
+version = "50.0.0"
+source = "git+https://github.com/blaze-init/arrow-rs.git?rev=4d46e9e1f0#4d46e9e1f06e46731e5196cb94595830c10d1e06"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -1847,8 +1879,9 @@ dependencies = [
  "chrono",
  "flate2",
  "futures",
+ "half",
  "hashbrown",
- "lz4",
+ "lz4_flex",
  "num",
  "num-bigint",
  "object_store",
@@ -1858,7 +1891,7 @@ dependencies = [
  "thrift",
  "tokio",
  "twox-hash",
- "zstd 0.12.4",
+ "zstd 0.13.0",
 ]
 
 [[package]]
@@ -2145,7 +2178,7 @@ dependencies = [
  "aho-corasick",
  "memchr",
  "regex-automata",
- "regex-syntax 0.8.2",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -2156,14 +2189,8 @@ checksum = "5f804c7828047e88b2d32e2d7fe5a105da8ee3264f01902f796c8e067dc2483f"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax 0.8.2",
+ "regex-syntax",
 ]
-
-[[package]]
-name = "regex-syntax"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbb5fb1acd8a1a18b3dd5be62d25485eb770e05afb408a9627d14d451bae12da"
 
 [[package]]
 name = "regex-syntax"
@@ -2375,9 +2402,9 @@ dependencies = [
 
 [[package]]
 name = "sqlparser"
-version = "0.35.0"
+version = "0.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca597d77c98894be1f965f2e4e2d2a61575d4998088e655476c73715c54b2b43"
+checksum = "f95c4bae5aba7cd30bd506f7140026ade63cff5afd778af8854026f9606bf5d4"
 dependencies = [
  "log",
  "sqlparser_derive",
@@ -2385,13 +2412,13 @@ dependencies = [
 
 [[package]]
 name = "sqlparser_derive"
-version = "0.1.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55fe75cb4a364c7f7ae06c7dbbc8d84bddd85d6cdf9975963c3935bc1991761e"
+checksum = "01b2e185515564f15375f593fb966b5718bc624ba77fe49fa4616ad619690554"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.46",
 ]
 
 [[package]]
@@ -2411,8 +2438,14 @@ name = "strum"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
+
+[[package]]
+name = "strum"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "723b93e8addf9aa965ebe2d11da6d7540fa2283fcea14b3371ff055f7ba13f5f"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.1",
 ]
 
 [[package]]
@@ -2420,6 +2453,19 @@ name = "strum_macros"
 version = "0.25.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23dc1fa9ac9c169a78ba62f0b841814b7abae11bdd047b9c58f893439e309ea0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.46",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a3417fc93d76740d974a01654a09777cb500428cc874ca9f45edfe0c4d4cd18"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2543,14 +2589,13 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.35.1"
+version = "1.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89b4efa943be685f629b149f53829423f8f5531ea21249408e8e2f8671ec104"
+checksum = "61285f6515fa018fb2d1e46eb21223fff441ee8db5d0f1435e8ab4f5cdb80931"
 dependencies = [
  "backtrace",
  "bytes",
  "num_cpus",
- "parking_lot",
  "pin-project-lite",
  "tokio-macros",
 ]

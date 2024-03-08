@@ -100,7 +100,7 @@ impl ExecutionPlan for EmptyPartitionsExec {
         None
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         todo!()
     }
 }

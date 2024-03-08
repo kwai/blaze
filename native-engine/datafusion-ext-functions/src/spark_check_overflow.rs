@@ -124,7 +124,7 @@ fn change_precision_round_half_up(
 }
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
 
     use arrow::array::{ArrayRef, Decimal128Array};
     use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
@@ -132,7 +132,7 @@ mod test {
     use crate::spark_check_overflow::spark_check_overflow;
 
     #[test]
-    fn test_check_overflow() {
+    fn test_check_overflow() -> Result<(), Box<dyn Error>> {
         let array = Decimal128Array::from(vec![
             Some(12342132145623),
             Some(13245),
@@ -140,20 +140,19 @@ mod test {
             Some(1234567890),
             None,
         ])
-        .with_precision_and_scale(20, 8)
-        .unwrap();
+        .with_precision_and_scale(20, 8)?;
 
         let result = spark_check_overflow(&vec![
             ColumnarValue::Array(Arc::new(array)),
             ColumnarValue::Scalar(ScalarValue::Int32(Some(10))), // precision
             ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),  // scale
-        ])
-        .unwrap()
-        .into_array(5);
+        ])?
+        .into_array(5)?;
+
         let expected = Decimal128Array::from(vec![None, Some(13), None, Some(1234568), None])
-            .with_precision_and_scale(10, 5)
-            .unwrap();
+            .with_precision_and_scale(10, 5)?;
         let expected: ArrayRef = Arc::new(expected);
         assert_eq!(&result, &expected);
+        Ok(())
     }
 }

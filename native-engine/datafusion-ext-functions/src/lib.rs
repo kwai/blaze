@@ -1,3 +1,4 @@
+#![feature(let_chains)]
 // Copyright 2022 The Blaze Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,14 +23,15 @@ pub mod spark_get_json_object;
 mod spark_make_array;
 mod spark_make_decimal;
 mod spark_murmur3_hash;
-mod spark_null_if_zero;
+mod spark_null_if;
 mod spark_strings;
 mod spark_unscaled_value;
 
 pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementation> {
     Ok(match name {
         "Placeholder" => Arc::new(|_| panic!("placeholder() should never be called")),
-        "NullIfZero" => Arc::new(spark_null_if_zero::spark_null_if_zero),
+        "NullIf" => Arc::new(spark_null_if::spark_null_if),
+        "NullIfZero" => Arc::new(spark_null_if::spark_null_if_zero),
         "UnscaledValue" => Arc::new(spark_unscaled_value::spark_unscaled_value),
         "MakeDecimal" => Arc::new(spark_make_decimal::spark_make_decimal),
         "CheckOverflow" => Arc::new(spark_check_overflow::spark_check_overflow),

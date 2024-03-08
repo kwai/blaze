@@ -31,11 +31,13 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
     let arrays = args
         .iter()
-        .map(|arg| match arg {
-            ColumnarValue::Array(array) => array.clone(),
-            ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(len),
+        .map(|arg| {
+            Ok(match arg {
+                ColumnarValue::Array(array) => array.clone(),
+                ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(len)?,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
 
     // use identical seed as spark hash partition
     let spark_murmur3_default_seed = 42u32;
@@ -49,7 +51,7 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
 
     use arrow::array::{ArrayRef, Int32Array, Int64Array, StringArray};
     use datafusion::logical_expr::ColumnarValue;
@@ -57,12 +59,11 @@ mod test {
     use crate::spark_murmur3_hash::spark_murmur3_hash;
 
     #[test]
-    fn test_murmur3_hash_int64() {
+    fn test_murmur3_hash_int64() -> Result<(), Box<dyn Error>> {
         let result = spark_murmur3_hash(&vec![ColumnarValue::Array(Arc::new(Int64Array::from(
             vec![Some(1), Some(0), Some(-1), Some(i64::MAX), Some(i64::MIN)],
-        )))])
-        .unwrap()
-        .into_array(5);
+        )))])?
+        .into_array(5)?;
 
         let expected = Int32Array::from(vec![
             Some(-1712319331),
@@ -74,15 +75,15 @@ mod test {
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 
     #[test]
-    fn test_murmur3_hash_string() {
+    fn test_murmur3_hash_string() -> Result<(), Box<dyn Error>> {
         let result = spark_murmur3_hash(&vec![ColumnarValue::Array(Arc::new(
             StringArray::from_iter_values(["hello", "bar", "", "😁", "天地"]),
-        ))])
-        .unwrap()
-        .into_array(5);
+        ))])?
+        .into_array(5)?;
 
         let expected = Int32Array::from(vec![
             Some(-1008564952),
@@ -94,5 +95,6 @@ mod test {
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 }

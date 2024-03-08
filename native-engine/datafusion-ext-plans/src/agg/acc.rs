@@ -441,7 +441,7 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                     })
                 }),
                 other => {
-                    let dt = other.get_datatype();
+                    let dt = other.data_type();
                     Box::new(move |r: &mut LoadReader| {
                         let valid = read_u8(&mut r.0)? != 0;
                         if valid {

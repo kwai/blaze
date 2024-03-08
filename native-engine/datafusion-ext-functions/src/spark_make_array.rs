@@ -115,7 +115,10 @@ fn array_array(args: &[ArrayRef]) -> Result<ArrayRef> {
                     .iter()
                     .map(|arg| ScalarValue::try_from_array(arg, i))
                     .collect::<Result<_>>()?;
-                output_scalars.push(ScalarValue::new_list(Some(row_scalars), data_type.clone()));
+                output_scalars.push(ScalarValue::List(ScalarValue::new_list(
+                    &row_scalars,
+                    data_type,
+                )));
             }
             ScalarValue::iter_to_array(output_scalars)?
         }
@@ -127,16 +130,18 @@ fn array_array(args: &[ArrayRef]) -> Result<ArrayRef> {
 pub fn array(values: &[ColumnarValue]) -> Result<ColumnarValue> {
     let arrays: Vec<ArrayRef> = values
         .iter()
-        .map(|x| match x {
-            ColumnarValue::Array(array) => array.clone(),
-            ColumnarValue::Scalar(scalar) => scalar.to_array().clone(),
+        .map(|x| {
+            Ok(match x {
+                ColumnarValue::Array(array) => array.clone(),
+                ColumnarValue::Scalar(scalar) => scalar.to_array()?.clone(),
+            })
         })
-        .collect();
+        .collect::<Result<_>>()?;
     Ok(ColumnarValue::Array(array_array(arrays.as_slice())?))
 }
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
 
     use arrow::{
         array::{ArrayRef, Int32Array, ListArray},
@@ -147,12 +152,11 @@ mod test {
     use crate::spark_make_array::array;
 
     #[test]
-    fn test_make_array_int() {
+    fn test_make_array_int() -> Result<(), Box<dyn Error>> {
         let result = array(&vec![ColumnarValue::Array(Arc::new(Int32Array::from(
             vec![Some(12), Some(-123), Some(0), Some(9), None],
-        )))])
-        .unwrap()
-        .into_array(5);
+        )))])?
+        .into_array(5)?;
 
         let expected = vec![
             Some(vec![Some(12)]),
@@ -165,10 +169,11 @@ mod test {
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 
     #[test]
-    fn test_make_array_int_mixed_params() {
+    fn test_make_array_int_mixed_params() -> Result<(), Box<dyn Error>> {
         let result = array(&vec![
             ColumnarValue::Scalar(ScalarValue::from(123456)),
             ColumnarValue::Array(Arc::new(Int32Array::from(vec![
@@ -178,9 +183,8 @@ mod test {
                 Some(9),
                 None,
             ]))),
-        ])
-        .unwrap()
-        .into_array(5);
+        ])?
+        .into_array(5)?;
 
         let expected = vec![
             Some(vec![Some(123456), Some(12)]),
@@ -193,21 +197,22 @@ mod test {
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 
     #[test]
-    fn test_make_array_float() {
+    fn test_make_array_float() -> Result<(), Box<dyn Error>> {
         let result = array(&vec![
             ColumnarValue::Scalar(ScalarValue::Float32(Some(2.2))),
             ColumnarValue::Scalar(ScalarValue::Float32(Some(-2.3))),
-        ])
-        .unwrap()
-        .into_array(2);
+        ])?
+        .into_array(2)?;
 
         let expected = vec![Some(vec![Some(2.2), Some(-2.3)])];
         let expected = ListArray::from_iter_primitive::<Float32Type, _, _>(expected);
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 }

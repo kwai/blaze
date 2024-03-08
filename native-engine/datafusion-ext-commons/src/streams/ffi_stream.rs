@@ -101,7 +101,7 @@ impl FFIReaderStream {
             ffi_arrow_array_ptr.as_obj(),
         ) -> JObject)?;
 
-        let imported = from_ffi(ffi_arrow_array, &ffi_arrow_schema)?;
+        let imported = unsafe { from_ffi(ffi_arrow_array, &ffi_arrow_schema)? };
         let struct_array = StructArray::from(imported);
         let batch = RecordBatch::try_new_with_options(
             self.schema(), // reuse the shared schema

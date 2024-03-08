@@ -73,7 +73,7 @@ impl PhysicalExpr for TryCastExpr {
                 ColumnarValue::Array(datafusion_ext_commons::cast::cast(&array, &self.cast_type)?)
             }
             ColumnarValue::Scalar(scalar) => {
-                let array = scalar.to_array();
+                let array = scalar.to_array()?;
                 ColumnarValue::Scalar(ScalarValue::try_from_array(
                     &datafusion_ext_commons::cast::cast(&array, &self.cast_type)?,
                     0,
@@ -146,7 +146,8 @@ mod test {
         let ret = expr
             .evaluate(&batch)
             .expect("Error evaluating expr")
-            .into_array(batch.num_rows());
+            .into_array(batch.num_rows())
+            .unwrap();
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             Some(7),
@@ -186,7 +187,8 @@ mod test {
         let ret = expr
             .evaluate(&batch)
             .expect("Error evaluating expr")
-            .into_array(batch.num_rows());
+            .into_array(batch.num_rows())
+            .unwrap();
 
         let expected: ArrayRef = Arc::new(Float32Array::from(vec![
             Some(123.0),
@@ -222,7 +224,8 @@ mod test {
         let ret = expr
             .evaluate(&batch)
             .expect("Error evaluating expr")
-            .into_array(batch.num_rows());
+            .into_array(batch.num_rows())
+            .unwrap();
 
         let expected: ArrayRef = Arc::new(Float32Array::from(vec![
             Some(123.4),

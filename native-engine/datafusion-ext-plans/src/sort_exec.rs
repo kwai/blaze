@@ -157,7 +157,7 @@ impl ExecutionPlan for SortExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         todo!()
     }
 }
@@ -913,7 +913,7 @@ impl PruneSortKeysFromBatch {
             .map(|expr| {
                 expr.expr
                     .evaluate(&batch)
-                    .map(|cv| cv.into_array(batch.num_rows()))
+                    .and_then(|cv| cv.into_array(batch.num_rows()))
             })
             .collect::<Result<_>>()?;
         let key_rows = self.sort_row_converter.lock().convert_columns(&key_cols)?;
@@ -1074,7 +1074,8 @@ mod fuzztest {
     #[tokio::test]
     async fn fuzztest() -> Result<()> {
         MemManager::init(10000);
-        let session_ctx = SessionContext::with_config(SessionConfig::new().with_batch_size(10000));
+        let session_ctx =
+            SessionContext::new_with_config(SessionConfig::new().with_batch_size(10000));
         let task_ctx = session_ctx.task_ctx();
         let n = 1234567;
 
@@ -1082,11 +1083,13 @@ mod fuzztest {
         let mut batches = vec![];
         let mut num_rows = 0;
         while num_rows < n {
-            let nulls = ScalarValue::Null.to_array_of_size((n - num_rows).min(10000));
-            let rand_key1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0);
-            let rand_key2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0);
-            let rand_val1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0);
-            let rand_val2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0);
+            let nulls = ScalarValue::Null
+                .to_array_of_size((n - num_rows).min(10000))
+                .unwrap();
+            let rand_key1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
+            let rand_key2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
+            let rand_val1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
+            let rand_val2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
             let batch = RecordBatch::try_from_iter_with_nullable(vec![
                 ("k1", rand_key1, false),
                 ("k2", rand_key2, false),

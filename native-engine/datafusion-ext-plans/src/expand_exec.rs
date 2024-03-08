@@ -135,7 +135,7 @@ impl ExecutionPlan for ExpandExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         todo!()
     }
 }
@@ -157,7 +157,7 @@ async fn execute_expand(
                     .iter()
                     .zip(output_schema.fields())
                     .map(|(expr, field)| {
-                        let array = expr.evaluate(&batch).map(|c| c.into_array(num_rows))?;
+                        let array = expr.evaluate(&batch).and_then(|c| c.into_array(num_rows))?;
                         if array.data_type() != field.data_type() {
                             return cast(&array, field.data_type());
                         }

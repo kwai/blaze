@@ -111,7 +111,7 @@ fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowRes
             let mut hashes_buf = vec![];
             let arrays = exprs
                 .iter()
-                .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())))
+                .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())?))
                 .collect::<Result<Vec<_>>>()?;
 
             // use identical seed as spark hash partition
