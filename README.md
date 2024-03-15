@@ -128,7 +128,7 @@ of our community. We hope that you:
 - Ask questions you're wondering about.
 - Share ideas.
 - Engage with other community members.
-- Welcome others and are open-minded. Remember that this is a community we build together 💪 .
+- Welcome others who are open-minded. Remember that this is a community we build together 💪 .
 
 
 ## License
