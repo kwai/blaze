@@ -334,7 +334,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 Ok(Arc::new(SortExec::new(
                     input,
                     exprs,
-                    sort.fetch_limit.map(|limit| limit as usize),
+                    sort.fetch_limit.as_ref().map(|limit| limit.limit as usize),
                 )))
             }
             PhysicalPlanType::BroadcastJoin(broadcast_join) => {
