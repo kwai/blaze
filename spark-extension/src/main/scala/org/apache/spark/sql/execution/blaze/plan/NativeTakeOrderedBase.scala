@@ -38,6 +38,7 @@ import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning
+import org.blaze.protobuf.FetchLimit
 import org.blaze.protobuf.PhysicalExprNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.PhysicalSortExprNode
@@ -137,7 +138,7 @@ abstract class NativeTakeOrderedBase(
           .newBuilder()
           .setInput(shuffledRDD.nativePlan(inputPartition, taskContext))
           .addAllExpr(nativeSortExprs.asJava)
-          .setFetchLimit(limit)
+          .setFetchLimit(FetchLimit.newBuilder().setLimit(limit))
           .build()
         PhysicalPlanNode.newBuilder().setSort(nativeTakeOrderedExec).build()
       },
@@ -188,7 +189,7 @@ abstract class NativePartialTakeOrderedBase(
           .newBuilder()
           .setInput(inputRDD.nativePlan(inputPartition, taskContext))
           .addAllExpr(nativeSortExprs.asJava)
-          .setFetchLimit(limit)
+          .setFetchLimit(FetchLimit.newBuilder().setLimit(limit))
           .build()
         PhysicalPlanNode.newBuilder().setSort(nativeTakeOrderedExec).build()
       },

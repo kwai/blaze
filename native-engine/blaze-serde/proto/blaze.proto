@@ -545,7 +545,12 @@ message DebugExecNode {
 message SortExecNode {
   PhysicalPlanNode input = 1;
   repeated PhysicalExprNode expr = 2;
-  optional uint64 fetch_limit = 3;
+  FetchLimit fetch_limit = 3;
+}
+
+message FetchLimit {
+  // wrap into a message to make it optional
+  uint64 limit = 1;
 }
 
 message PhysicalHashRepartition {
