@@ -1007,10 +1007,10 @@ object NativeConverters extends Logging {
     val aggBuilder = pb.PhysicalAggExprNode.newBuilder()
 
     e.aggregateFunction match {
-      case e: Max if e.dataType.isInstanceOf[AtomicType] =>
+      case e: Max =>
         aggBuilder.setAggFunction(pb.AggFunction.MAX)
         aggBuilder.addChildren(convertExpr(e.child))
-      case e: Min if e.dataType.isInstanceOf[AtomicType] =>
+      case e: Min =>
         aggBuilder.setAggFunction(pb.AggFunction.MIN)
         aggBuilder.addChildren(convertExpr(e.child))
       case e: Sum if e.dataType.isInstanceOf[AtomicType] =>
