@@ -18,16 +18,14 @@ use std::{
     mem::{size_of, size_of_val},
 };
 
-use arrow::{array::NullArray, datatypes::DataType};
+use arrow::datatypes::DataType;
 use datafusion::{
     common::{Result, ScalarValue},
     parquet::data_type::AsBytes,
 };
 use datafusion_ext_commons::{
     df_execution_err, downcast_any,
-    io::{
-        read_array, read_bytes_slice, read_len, read_scalar, write_array, write_len, write_scalar,
-    },
+    io::{read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
     slim_bytes::SlimBytes,
 };
 use hashbrown::HashSet;
@@ -442,11 +440,9 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                 other => {
                     let dt = other.get_datatype();
                     Box::new(move |r: &mut LoadReader| {
-                        let col = read_array(&mut r.0, &dt, 1)?;
-                        Ok(match ScalarValue::try_from_array(&col, 0)? {
-                            v if v.is_null() => None,
-                            v => Some(Box::new(AggDynScalar::new(v))),
-                        })
+                        Ok(Some(Box::new(AggDynScalar::new(read_scalar(
+                            &mut r.0, &dt,
+                        )?))))
                     })
                 }
             },
@@ -471,24 +467,14 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                 Box::new(move |r: &mut LoadReader| {
                     Ok(match read_len(&mut r.0)? {
                         0 => None,
-                        n @ 1..=5 => {
+                        n => {
                             let vec_len = n - 1;
                             let mut scalar_vec: SmallVec<[ScalarValue; 4]> = SmallVec::new();
-                            for _index in 0..vec_len {
+                            for _i in 0..vec_len {
                                 scalar_vec.push(read_scalar(&mut r.0, &dt)?);
                             }
                             Some(Box::new(AggDynSet {
                                 values: OptimizedSet::SmallVec(scalar_vec),
-                            }))
-                        }
-                        n => {
-                            let set_len = n - 6;
-                            let mut load_set = HashSet::with_capacity(set_len);
-                            for _i in 0..set_len {
-                                load_set.insert(read_scalar(&mut r.0, &dt)?);
-                            }
-                            Some(Box::new(AggDynSet {
-                                values: OptimizedSet::Set(load_set),
                             }))
                         }
                     })
@@ -556,14 +542,11 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                 }
                 _other => {
                     fn f(w: &mut SaveWriter, v: DynVal) -> Result<()> {
-                        match v {
-                            None => write_array(&NullArray::new(1), &mut w.0)?,
-                            Some(v) => {
-                                let v = downcast_any!(v, AggDynScalar)?.value();
-                                write_array(&v.to_array(), &mut w.0)?;
-                            }
-                        };
-                        Ok(())
+                        if let Some(v) = v {
+                            write_scalar(&downcast_any!(v, AggDynScalar)?.value, &mut w.0)
+                        } else {
+                            write_scalar(&ScalarValue::Int32(None), &mut w.0)
+                        }
                     }
                     let f: SaveFn = Box::new(f);
                     f
@@ -574,16 +557,15 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                     match v {
                         None => write_len(0, &mut w.0)?,
                         Some(v) => {
-                            let mut list = v
+                            let list = v
                                 .as_any_boxed()
                                 .downcast::<AggDynList>()
                                 .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
                                 .into_values();
                             write_len(list.len() + 1, &mut w.0)?;
-                            for iter in &list {
-                                write_scalar(iter, &mut w.0)?;
+                            for v in list {
+                                write_scalar(&v, &mut w.0)?;
                             }
-                            list.clear()
                         }
                     }
                     Ok(())
@@ -596,28 +578,24 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                     match v {
                         None => write_len(0, &mut w.0)?,
                         Some(v) => {
-                            let mut set = v
+                            let set = v
                                 .as_any_boxed()
                                 .downcast::<AggDynSet>()
-                                .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?
+                                .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?
                                 .into_values();
 
-                            match &mut set {
+                            match set {
                                 OptimizedSet::SmallVec(vec) => {
                                     write_len(vec.len() + 1, &mut w.0)?;
-                                    for index in 0..vec.len() {
-                                        write_scalar(&vec[index], &mut w.0)?;
+                                    for v in vec {
+                                        write_scalar(&v, &mut w.0)?;
                                     }
-                                    vec.clear();
                                 }
                                 OptimizedSet::Set(set) => {
-                                    write_len(set.len() + 6, &mut w.0)?;
-                                    let mut scalar_vec =
-                                        std::mem::take(set).into_iter().collect::<Vec<_>>();
-                                    for iter in &scalar_vec {
-                                        write_scalar(iter, &mut w.0)?;
+                                    write_len(set.len() + 1, &mut w.0)?;
+                                    for v in set {
+                                        write_scalar(&v, &mut w.0)?;
                                     }
-                                    scalar_vec.clear();
                                 }
                             }
                         }
