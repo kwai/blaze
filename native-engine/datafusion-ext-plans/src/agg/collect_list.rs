@@ -124,12 +124,12 @@ impl Agg for AggCollectList {
                     let list = downcast_any!(dyn_list, mut AggDynList)?;
                     self.sub_mem_used(list.mem_size());
 
-                    list.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    list.append(&ScalarValue::try_from_array(&values[0], row_idx)?, false);
                     self.add_mem_used(list.mem_size());
                 }
                 w => {
                     let mut new_list = AggDynList::default();
-                    new_list.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    new_list.append(&ScalarValue::try_from_array(&values[0], row_idx)?, false);
                     self.add_mem_used(new_list.mem_size());
                     *w = Some(Box::new(new_list));
                 }
@@ -153,7 +153,7 @@ impl Agg for AggCollectList {
 
         for i in 0..values[0].len() {
             if values[0].is_valid(i) {
-                list.append(ScalarValue::try_from_array(&values[0], i)?);
+                list.append(&ScalarValue::try_from_array(&values[0], i)?, false);
             }
         }
         self.add_mem_used(list.mem_size());
@@ -195,7 +195,7 @@ impl Agg for AggCollectList {
                         .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?;
                     self.sub_mem_used(list.mem_size());
                     ScalarValue::new_list(
-                        Some(list.into_values().into_vec()),
+                        Some(list.into_values(self.arg_type.clone(), false).collect()),
                         self.arg_type.clone(),
                     )
                 }
