@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use arrow::datatypes::*;
 use datafusion::{common::Result, parquet::data_type::AsBytes, scalar::ScalarValue};
@@ -29,7 +29,7 @@ pub fn write_scalar<W: Write>(value: &ScalarValue, output: &mut W) -> Result<()>
         Ok(())
     }
     match value {
-        ScalarValue::Null => {}
+        ScalarValue::Null => write_u8(0, output)?,
         ScalarValue::Boolean(Some(value)) => write_u8((*value as u8) + 1u8, output)?,
         ScalarValue::Int8(Some(value)) => {
             write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
@@ -153,7 +153,10 @@ pub fn read_scalar<R: Read>(input: &mut R, data_type: &DataType) -> Result<Scala
     }
 
     Ok(match data_type {
-        DataType::Null => ScalarValue::Null,
+        DataType::Null => {
+            read_u8(input)?;
+            ScalarValue::Null
+        },
         DataType::Boolean => match read_u8(input)? {
             0u8 => ScalarValue::Boolean(None),
             1u8 => ScalarValue::Boolean(Some(false)),
@@ -240,4 +243,68 @@ pub fn read_scalar<R: Read>(input: &mut R, data_type: &DataType) -> Result<Scala
         }
         other => df_unimplemented_err!("unsupported data type: {other}")?,
     })
+}
+
+pub fn skip_read_scalar<R: Read + Seek>(input: &mut R, data_type: &DataType) -> Result<usize> {
+    let start_pos = input.stream_position()?;
+
+    macro_rules! skip_primitive_scalar {
+        ($input:ident, $len:expr) => {{
+            let valid = read_len(input)?;
+            if valid != 0 {
+                input.seek(SeekFrom::Current($len as i64))?;
+            }
+        }};
+    }
+
+    match data_type {
+        DataType::Null | DataType::Boolean => {
+            input.seek(SeekFrom::Current(1))?;
+        },
+        DataType::Int8 => (skip_primitive_scalar!(input, 1)),
+        DataType::Int16 => (skip_primitive_scalar!(input, 2)),
+        DataType::Int32 => (skip_primitive_scalar!(input, 4)),
+        DataType::Int64 => (skip_primitive_scalar!(input, 8)),
+        DataType::UInt8 => (skip_primitive_scalar!(input, 1)),
+        DataType::UInt16 => (skip_primitive_scalar!(input, 2)),
+        DataType::UInt32 => (skip_primitive_scalar!(input, 4)),
+        DataType::UInt64 => (skip_primitive_scalar!(input, 8)),
+        DataType::Float32 => (skip_primitive_scalar!(input, 4)),
+        DataType::Float64 => (skip_primitive_scalar!(input, 8)),
+        DataType::Decimal128(..) => (skip_primitive_scalar!(input, 16)),
+        DataType::Date32 => (skip_primitive_scalar!(input, 4)),
+        DataType::Date64 => (skip_primitive_scalar!(input, 8)),
+        DataType::Timestamp(..) => (skip_primitive_scalar!(input, 8)),
+        DataType::Binary | DataType::Utf8 => {
+            let data_len = read_len(input)?;
+            if data_len > 0 {
+                let data_len = data_len - 1;
+                input.seek(SeekFrom::Current(data_len as i64))?;
+            }
+        }
+        DataType::List(field) => {
+            let data_len = read_len(input)?;
+            if data_len > 0 {
+                let data_len = data_len - 1;
+                for _i in 0..data_len {
+                    skip_read_scalar(input, field.data_type())?;
+                }
+            }
+        }
+        DataType::Struct(fields) => {
+            let data_len = read_len(input)?;
+            if data_len > 0 {
+                let data_len = data_len - 1;
+                for i in 0..data_len {
+                    skip_read_scalar(input, fields[i].data_type())?;
+                }
+            }
+        }
+        DataType::Map(field, _) => {
+            skip_read_scalar(input, field.data_type())?;
+        }
+        other => df_unimplemented_err!("unsupported data type: {other}")?,
+    }
+    let end_pos = input.stream_position()?;
+    Ok((end_pos - start_pos) as usize)
 }

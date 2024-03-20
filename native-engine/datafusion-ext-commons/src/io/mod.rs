@@ -20,8 +20,8 @@ use arrow::{
     record_batch::RecordBatch,
 };
 pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
+pub use scalar_serde::{read_scalar, write_scalar, skip_read_scalar};
 use datafusion::common::{cast::as_struct_array, Result};
-pub use scalar_serde::{read_scalar, write_scalar};
 
 mod batch_serde;
 mod scalar_serde;

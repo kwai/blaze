@@ -195,7 +195,7 @@ impl Agg for AggCollectList {
                         .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?;
                     self.sub_mem_used(list.mem_size());
                     ScalarValue::new_list(
-                        Some(list.into_values().into_vec()),
+                        Some(list.into_values(self.arg_type.clone()).collect()),
                         self.arg_type.clone(),
                     )
                 }
