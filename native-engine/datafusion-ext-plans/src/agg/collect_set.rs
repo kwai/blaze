@@ -24,11 +24,10 @@ use datafusion::{
     physical_expr::PhysicalExpr,
 };
 use datafusion_ext_commons::{df_execution_err, downcast_any};
-use hashbrown::HashSet;
 
 use crate::agg::{
     acc::{
-        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynSet, AggDynValue, OptimizedSet,
+        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynSet, AggDynValue,
         RefAccumStateRow,
     },
     Agg, WithAggBufAddrs, WithMemTracking,
@@ -125,12 +124,12 @@ impl Agg for AggCollectSet {
                     let set = downcast_any!(dyn_set, mut AggDynSet)?;
                     self.sub_mem_used(set.mem_size());
 
-                    set.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    set.append(&ScalarValue::try_from_array(&values[0], row_idx)?, false);
                     self.add_mem_used(set.mem_size());
                 }
                 w => {
                     let mut new_set = AggDynSet::default();
-                    new_set.append(ScalarValue::try_from_array(&values[0], row_idx)?);
+                    new_set.append(&ScalarValue::try_from_array(&values[0], row_idx)?, false);
                     self.add_mem_used(new_set.mem_size());
                     *w = Some(Box::new(new_set));
                 }
@@ -154,7 +153,7 @@ impl Agg for AggCollectSet {
 
         for i in 0..values[0].len() {
             if values[0].is_valid(i) {
-                set.append(ScalarValue::try_from_array(&values[0], i)?);
+                set.append(&ScalarValue::try_from_array(&values[0], i)?, false);
             }
         }
         self.add_mem_used(set.mem_size());
@@ -190,24 +189,12 @@ impl Agg for AggCollectSet {
             match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
                 Some(w) => {
                     self.sub_mem_used(w.mem_size());
-                    let mut dyn_set = w
+                    let set = w
                         .as_any_boxed()
                         .downcast::<AggDynSet>()
                         .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?
-                        .into_values();
-                    let scalar_list = match &mut dyn_set {
-                        OptimizedSet::SmallVec(vec) => {
-                            let convert_set: HashSet<ScalarValue> =
-                                HashSet::from_iter(std::mem::take(vec).into_iter());
-                            Some(convert_set.into_iter().collect::<Vec<ScalarValue>>())
-                        }
-                        OptimizedSet::Set(set) => Some(
-                            std::mem::take(set)
-                                .into_iter()
-                                .collect::<Vec<ScalarValue>>(),
-                        ),
-                    };
-                    ScalarValue::new_list(scalar_list, self.arg_type.clone())
+                        .into_values(self.arg_type.clone(), false);
+                    ScalarValue::new_list(Some(set.into_iter().collect()), self.arg_type.clone())
                 }
                 None => ScalarValue::new_list(None, self.arg_type.clone()),
             },

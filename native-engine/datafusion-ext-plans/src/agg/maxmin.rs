@@ -30,13 +30,12 @@ use paste::paste;
 
 use crate::agg::{
     acc::{
-        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynStr, AggDynValue,
-        RefAccumStateRow,
+        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
+        AggDynValue, RefAccumStateRow,
     },
     default_final_batch_merge_with_addr, default_final_merge_with_addr, Agg, WithAggBufAddrs,
     WithMemTracking,
 };
-use crate::agg::acc::{AggDynBinary, AggDynScalar};
 
 pub type AggMax = AggMaxMin<AggMaxParams>;
 pub type AggMin = AggMaxMin<AggMinParams>;
@@ -684,8 +683,8 @@ impl AggMaxMinParams for AggMinParams {
     }
 
     fn maxmin_binary<T>(array: &GenericByteArray<GenericBinaryType<T>>) -> Option<&[u8]>
-        where
-            T: OffsetSizeTrait,
+    where
+        T: OffsetSizeTrait,
     {
         arrow::compute::min_binary(array)
     }
