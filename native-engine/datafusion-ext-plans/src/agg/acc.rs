@@ -463,48 +463,44 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                     }
                 })
             }),
-            AccumInitialValue::DynSet(_dt) => {
-                Box::new(move |r: &mut LoadReader| {
-                    Ok(match read_len(&mut r.0)? {
-                        0 => None,
-                        n => {
-                            let data_len = n - 1;
-                            let raw = read_bytes_slice(&mut r.0, data_len)?.into_vec();
-                            let num_items = read_len(&mut r.0)?;
+            AccumInitialValue::DynSet(_dt) => Box::new(move |r: &mut LoadReader| {
+                Ok(match read_len(&mut r.0)? {
+                    0 => None,
+                    n => {
+                        let data_len = n - 1;
+                        let raw = read_bytes_slice(&mut r.0, data_len)?.into_vec();
+                        let num_items = read_len(&mut r.0)?;
 
-                            let list = AggDynList { raw };
-                            let mut internal_set = if num_items <= 4 {
-                                InternalSet::Small(SmallVec::new())
-                            } else {
-                                InternalSet::Huge(RawTable::with_capacity(num_items))
-                            };
+                        let list = AggDynList { raw };
+                        let mut internal_set = if num_items <= 4 {
+                            InternalSet::Small(SmallVec::new())
+                        } else {
+                            InternalSet::Huge(RawTable::with_capacity(num_items))
+                        };
 
-                            let mut pos = 0;
-                            for _ in 0..num_items {
-                                let pos_len = (pos, read_len(&mut r.0)? as u32);
-                                pos += pos_len.1;
+                        let mut pos = 0;
+                        for _ in 0..num_items {
+                            let pos_len = (pos, read_len(&mut r.0)? as u32);
+                            pos += pos_len.1;
 
-                                match &mut internal_set {
-                                    InternalSet::Small(s) => s.push(pos_len),
-                                    InternalSet::Huge(s) => {
-                                        let raw = list.ref_raw(pos_len);
-                                        let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
-                                        s.insert(
-                                            hash,
-                                            pos_len,
-                                            |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len)),
-                                        );
-                                    }
+                            match &mut internal_set {
+                                InternalSet::Small(s) => s.push(pos_len),
+                                InternalSet::Huge(s) => {
+                                    let raw = list.ref_raw(pos_len);
+                                    let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                                    s.insert(hash, pos_len, |&pos_len| {
+                                        gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
+                                    });
                                 }
                             }
-                            Some(Box::new(AggDynSet {
-                                list,
-                                set: internal_set,
-                            }))
                         }
-                    })
+                        Some(Box::new(AggDynSet {
+                            list,
+                            set: internal_set,
+                        }))
+                    }
                 })
-            }
+            }),
         };
         loaders.push(loader);
     }
@@ -909,11 +905,9 @@ impl InternalSet {
             for &mut pos_len in s {
                 let raw = list.ref_raw(pos_len);
                 let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
-                huge.insert(
-                    hash,
-                    pos_len,
-                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len)),
-                );
+                huge.insert(hash, pos_len, |&pos_len| {
+                    gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
+                });
             }
             *self = Self::Huge(huge);
         }
@@ -940,7 +934,8 @@ impl AggDynSet {
     }
 
     fn append_raw(&mut self, raw_value: &[u8]) {
-        let self_set = unsafe { // safety: bypass borrow checking
+        let self_set = unsafe {
+            // safety: bypass borrow checking
             std::mem::transmute::<_, &mut InternalSet>(&mut self.set)
         };
         self_set.insert(&mut self.list, raw_value)

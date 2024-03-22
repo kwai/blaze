@@ -240,6 +240,7 @@ async fn execute_parquet_sink(
     context.output_with_sender("ParquetSink", schema.clone(), move |sender| async move {
         macro_rules! part_writer_init {
             ($batch:expr, $part_values:expr) => {{
+                log::info!("start writing partition: {:?}", $part_values);
                 let parquet_sink_context_cloned = parquet_sink_context.clone();
                 *part_writer.lock() = Some({
                     // send identity batch, after that we can achieve a new output file
@@ -273,6 +274,12 @@ async fn execute_parquet_sink(
                         .await
                         .or_else(|e| df_execution_err!("closing parquet file error: {e}"))??;
 
+                    log::info!(
+                        "finished writing partition: num_rows={}, num_bytes={}, path={}",
+                        file_stat.num_rows,
+                        file_stat.num_bytes,
+                        file_stat.path,
+                    );
                     jni_call_static!(
                         BlazeNativeParquetSinkUtils.completeOutput(
                             jni_new_string!(&file_stat.path)?.as_obj(),

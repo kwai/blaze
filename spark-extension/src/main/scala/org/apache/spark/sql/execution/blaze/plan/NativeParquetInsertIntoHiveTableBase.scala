@@ -29,6 +29,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator
 import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.hadoop.io.NullWritable
 import org.apache.hadoop.io.Writable
 import org.apache.hadoop.mapred.FileOutputFormat
@@ -153,12 +154,22 @@ class BlazeMapredParquetOutputFormat
       tableProperties: Properties,
       progress: Progressable): FileSinkOperator.RecordWriter = {
 
-    new FileSinkOperator.RecordWriter {
-      override def write(w: Writable): Unit = {
-        ParquetSinkTaskContext.get.processingOutputFiles.offer(finalOutPath.toString)
-      }
+    if (ParquetSinkTaskContext.get.isNative) {
+      new FileSinkOperator.RecordWriter {
+        override def write(w: Writable): Unit = {
+          ParquetSinkTaskContext.get.processingOutputFiles.offer(finalOutPath.toString)
+        }
 
-      override def close(abort: Boolean): Unit = {}
+        override def close(abort: Boolean): Unit = {}
+      }
+    } else {
+      new MapredParquetOutputFormat().getHiveRecordWriter(
+        jobConf,
+        finalOutPath,
+        valueClass,
+        isCompressed,
+        tableProperties,
+        progress)
     }
   }
 }
@@ -168,6 +179,7 @@ case class OutputFileStat(path: String, numRows: Long, numBytes: Long)
 class ParquetSinkTaskContext {
   val processingOutputFiles = new LinkedBlockingDeque[String]()
   val processedOutputFiles = new util.ArrayDeque[OutputFileStat]()
+  var isNative = false
 }
 
 object ParquetSinkTaskContext {

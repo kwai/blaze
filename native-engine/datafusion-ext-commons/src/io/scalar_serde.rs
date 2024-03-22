@@ -12,18 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Read, Write};
-use std::sync::Arc;
-use arrow::array::{AsArray, StructArray};
+use std::{
+    io::{Read, Write},
+    sync::Arc,
+};
 
-use arrow::datatypes::*;
+use arrow::{
+    array::{AsArray, StructArray},
+    datatypes::*,
+};
 use datafusion::{common::Result, parquet::data_type::AsBytes, scalar::ScalarValue};
 
 use crate::{
     df_unimplemented_err,
-    io::{read_bytes_slice, read_len, read_u8, write_len, write_u8},
+    io::{read_array, read_bytes_slice, read_len, read_u8, write_array, write_len, write_u8},
 };
-use crate::io::{read_array, write_array};
 
 pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut W) -> Result<()> {
     assert!(nullable || !value.is_null());

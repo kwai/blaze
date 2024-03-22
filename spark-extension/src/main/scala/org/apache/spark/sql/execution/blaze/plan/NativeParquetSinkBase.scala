@@ -95,6 +95,7 @@ abstract class NativeParquetSinkBase(
       nativeDependencies,
       inputRDD.isShuffleReadFull,
       (partition, context) => {
+        ParquetSinkTaskContext.get.isNative = true
 
         // init hadoop fs
         val resourceId = s"NativeParquetSinkExec:${UUID.randomUUID().toString}"

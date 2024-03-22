@@ -35,6 +35,11 @@ case class NativeParquetInsertIntoHiveTableExec(
     override val child: SparkPlan)
     extends NativeParquetInsertIntoHiveTableBase(cmd, child) {
 
+  logWarning(
+    "DataWritingCommand of blaze-spark333 has not been well tested, " +
+      "uggest setting spark.blaze.enable.data.writing=false to disable " +
+      "this feature")
+
   override protected def getInsertIntoHiveTableCommand(
       table: CatalogTable,
       partition: Map[String, Option[String]],

@@ -16,10 +16,9 @@ use std::sync::Arc;
 
 use arrow::{
     array::*,
-    compute::*,
-    compute::kernels::{
-        cmp::eq,
-        nullif::nullif,
+    compute::{
+        kernels::{cmp::eq, nullif::nullif},
+        *,
     },
     datatypes::*,
 };

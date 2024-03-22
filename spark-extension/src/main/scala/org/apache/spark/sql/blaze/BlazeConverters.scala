@@ -783,7 +783,7 @@ object BlazeConverters extends Logging {
         val numDynParts = cmd.partition.count(_._2.isEmpty)
         val requiredOrdering =
           child.output.slice(child.output.length - numDynParts, child.output.length)
-        if (child.outputOrdering.map(_.child) != requiredOrdering) {
+        if (requiredOrdering.nonEmpty && child.outputOrdering.map(_.child) != requiredOrdering) {
           sortedChild = Shims.get.createNativeSortExec(
             requiredOrdering.map(SortOrder(_, Ascending)),
             global = false,

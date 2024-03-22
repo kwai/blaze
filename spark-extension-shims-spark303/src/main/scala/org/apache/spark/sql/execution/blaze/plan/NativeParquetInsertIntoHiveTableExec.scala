@@ -15,19 +15,18 @@
  */
 package org.apache.spark.sql.execution.blaze.plan
 
+import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.Shims
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
 import org.apache.spark.sql.execution.datasources.BasicWriteTaskStatsTracker
 import org.apache.spark.sql.execution.datasources.WriteTaskStatsTracker
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
 import org.apache.spark.sql.execution.datasources.WriteTaskStats
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.util.SerializableConfiguration
@@ -36,6 +35,11 @@ case class NativeParquetInsertIntoHiveTableExec(
     cmd: InsertIntoHiveTable,
     override val child: SparkPlan)
     extends NativeParquetInsertIntoHiveTableBase(cmd, child) {
+
+  logWarning(
+    "DataWritingCommand of blaze-spark303 has not been well tested, " +
+      "uggest setting spark.blaze.enable.data.writing=false to disable " +
+      "this feature")
 
   override protected def getInsertIntoHiveTableCommand(
       table: CatalogTable,
@@ -86,14 +90,19 @@ class BlazeInsertIntoHiveTable(
     new BasicWriteJobStatsTracker(serializableHadoopConf, metrics) {
       override def newTaskInstance(): WriteTaskStatsTracker = {
         new BasicWriteTaskStatsTracker(serializableHadoopConf.value) {
-          override def newRow(_row: InternalRow): Unit = {}
           override def getFinalStats(): WriteTaskStats = {
-            val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.remove()
-            BasicWriteTaskStats(
-              numPartitions = 1,
-              numFiles = 1,
-              numBytes = outputFileStat.numBytes,
-              numRows = outputFileStat.numRows)
+            if (!ParquetSinkTaskContext.get.processedOutputFiles.isEmpty) {
+              val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.remove()
+              super.newFile(outputFileStat.path)
+              FieldUtils
+                .getField(super.getClass, "numRows", true)
+                .setLong(this, outputFileStat.numRows)
+              FieldUtils
+                .getField(super.getClass, "numBytes", true)
+                .setLong(this, outputFileStat.numBytes)
+              FieldUtils.getField(super.getClass, "numPartitions", true).setLong(this, 1)
+            }
+            super.getFinalStats()
           }
         }
       }

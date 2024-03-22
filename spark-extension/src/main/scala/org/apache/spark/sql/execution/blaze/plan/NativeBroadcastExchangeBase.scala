@@ -24,7 +24,6 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 import scala.concurrent.Promise

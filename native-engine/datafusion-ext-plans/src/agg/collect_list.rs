@@ -195,7 +195,9 @@ impl Agg for AggCollectList {
                 self.sub_mem_used(list.mem_size());
 
                 Ok(ScalarValue::List(ScalarValue::new_list(
-                    &list.into_values(self.arg_type.clone(), false).collect::<Vec<_>>(),
+                    &list
+                        .into_values(self.arg_type.clone(), false)
+                        .collect::<Vec<_>>(),
                     &self.arg_type,
                 )))
             }

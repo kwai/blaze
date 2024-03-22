@@ -21,7 +21,6 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
-import org.apache.spark.sql.execution.datasources.BasicWriteTaskStats
 import org.apache.spark.sql.execution.datasources.PartitionWriteJobStatsTracker
 import org.apache.spark.sql.execution.datasources.WriteTaskStats
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -97,16 +96,15 @@ class BlazeInsertIntoHiveTable(
     new BasicWriteJobStatsTracker(serializableHadoopConf, metrics) {
       override def newTaskInstance(): WriteTaskStatsTracker = {
         new BasicWriteTaskStatsTracker(serializableHadoopConf.value) {
-          override def newRow(row: InternalRow): Unit = {}
           override def getFinalStats(): WriteTaskStats = {
-            val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.remove()
-            new BasicWriteTaskStats(
-              numPartitions = 1,
-              numFiles = 1,
-              numBytes = outputFileStat.numBytes,
-              numRows = outputFileStat.numRows,
-              mergeV1 = 0,
-              mergeV2 = 0)
+            if (!ParquetSinkTaskContext.get.processedOutputFiles.isEmpty) {
+              val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.remove()
+              super.newFile(outputFileStat.path)
+              this.numRows = outputFileStat.numRows
+              this.numBytes = outputFileStat.numBytes
+              this.numPartitions = 1
+            }
+            super.getFinalStats()
           }
         }
       }
@@ -134,15 +132,17 @@ class BlazeInsertIntoHiveTable(
           staticPartition,
           partitionSchema) {
 
-          override def newRow(row: InternalRow): Unit = {}
-
           override def newPartition(partitionValues: InternalRow): Unit = {
-            fillPartitionNumRowsIfExists()
+            if (ParquetSinkTaskContext.get.isNative) {
+              fillPartitionNumRowsIfExists()
+            }
             super.newPartition(partitionValues)
           }
 
           override def getFinalStats(): WriteTaskStats = {
-            fillPartitionNumRowsIfExists()
+            if (ParquetSinkTaskContext.get.isNative) {
+              fillPartitionNumRowsIfExists()
+            }
             super.getFinalStats()
           }
 
@@ -152,7 +152,9 @@ class BlazeInsertIntoHiveTable(
             if (!firstPartition) {
               // set correct value of numRows of previous partition
               val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.pop()
-              super.newRows(outputFileStat.numRows)
+
+              // exclude the first row which has already be encountered
+              super.newRows(outputFileStat.numRows - 1)
             }
             firstPartition = false
           }
