@@ -35,7 +35,6 @@ pub type SpillCompressedWriter<'a> =
 
 pub trait Spill: Send + Sync {
     fn as_any(&self) -> &dyn Any;
-    fn complete(&mut self) -> Result<()>;
     fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>>;
     fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>>;
 
@@ -51,11 +50,6 @@ pub trait Spill: Send + Sync {
 impl Spill for Vec<u8> {
     fn as_any(&self) -> &dyn Any {
         self
-    }
-
-    fn complete(&mut self) -> Result<()> {
-        self.shrink_to_fit();
-        Ok(())
     }
 
     fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>> {
@@ -90,15 +84,10 @@ impl Spill for FileSpill {
         self
     }
 
-    fn complete(&mut self) -> Result<()> {
-        let mut file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
-        file_cloned.sync_data()?;
-        file_cloned.rewind()?;
-        Ok(())
-    }
-
     fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>> {
-        let file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
+        let mut file_cloned = self.0.try_clone().expect("File.try_clone() returns error");
+        file_cloned.sync_data().expect("error synchronizing data");
+        file_cloned.rewind().expect("error rewinding");
         BufReader::with_capacity(
             65536,
             Box::new(IoTimeReadWrapper(
@@ -166,12 +155,6 @@ impl Spill for OnHeapSpill {
         self
     }
 
-    fn complete(&mut self) -> Result<()> {
-        jni_call!(BlazeOnHeapSpillManager(self.0.hsm.as_obj())
-            .completeSpill(self.0.spill_id) -> ())?;
-        Ok(())
-    }
-
     fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>> {
         let cloned = Self(self.0.clone(), self.1.clone());
         BufReader::with_capacity(65536, Box::new(cloned))
@@ -179,7 +162,7 @@ impl Spill for OnHeapSpill {
 
     fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>> {
         let cloned = Self(self.0.clone(), self.1.clone());
-        BufWriter::with_capacity(65536, Box::new(cloned))
+        BufWriter::with_capacity(1048576, Box::new(cloned))
     }
 }
 

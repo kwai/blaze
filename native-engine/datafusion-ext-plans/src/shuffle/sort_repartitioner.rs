@@ -103,7 +103,6 @@ impl MemConsumer for SortShuffleRepartitioner {
         let (uncompressed_size, offsets) =
             data.write(spill.get_buf_writer(), &self.partitioning)?;
         self.data_size_metric.add(uncompressed_size);
-        spill.complete()?;
 
         self.spills
             .lock()
@@ -210,7 +209,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             let (uncompressed_size, offsets) = data.write(writer, &self.partitioning)?;
             self.data_size_metric.add(uncompressed_size);
 
-            spill.complete()?;
             self.update_mem_used(spill.len()).await?;
             spills.push(ShuffleSpill { spill, offsets });
         }

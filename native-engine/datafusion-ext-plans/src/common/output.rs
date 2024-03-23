@@ -200,7 +200,6 @@ impl TaskOutputter for Arc<TaskContext> {
                     }
                     let mut timer = baseline_metrics.elapsed_compute().timer();
                     drop(spill_writer);
-                    spill.complete()?;
 
                     // read all batches from spill and output
                     let mut spill_reader = spill.get_compressed_reader();

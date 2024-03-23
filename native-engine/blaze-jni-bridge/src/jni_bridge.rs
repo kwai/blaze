@@ -1273,8 +1273,6 @@ pub struct BlazeOnHeapSpillManager<'a> {
     pub method_newSpill_ret: ReturnType,
     pub method_writeSpill: JMethodID,
     pub method_writeSpill_ret: ReturnType,
-    pub method_completeSpill: JMethodID,
-    pub method_completeSpill_ret: ReturnType,
     pub method_readSpill: JMethodID,
     pub method_readSpill_ret: ReturnType,
     pub method_getSpillDiskUsage: JMethodID,
@@ -1297,8 +1295,6 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
                 .get_method_id(class, "writeSpill", "(ILjava/nio/ByteBuffer;)V")
                 .unwrap(),
             method_writeSpill_ret: ReturnType::Primitive(Primitive::Void),
-            method_completeSpill: env.get_method_id(class, "completeSpill", "(I)V").unwrap(),
-            method_completeSpill_ret: ReturnType::Primitive(Primitive::Void),
             method_readSpill: env
                 .get_method_id(class, "readSpill", "(ILjava/nio/ByteBuffer;)I")
                 .unwrap(),

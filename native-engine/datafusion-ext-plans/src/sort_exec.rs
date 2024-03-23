@@ -247,8 +247,6 @@ impl BufferedData {
                 writer.write_all(key)?;
             }
         }
-        drop(writer);
-        spill.complete()?;
         Ok(())
     }
 
