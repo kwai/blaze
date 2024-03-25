@@ -274,17 +274,14 @@ pub fn string_concat_ws(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         ))));
     }
 
-    let array_len = args
-        .iter()
-        .map(|arg| match arg {
-            Arg::Literal(_) => 1,
-            Arg::LiteralList(_) => 1,
-            Arg::Array(strings) => strings.len(),
-            Arg::List(list) => list.len(),
-            _ => unreachable!(),
-        })
-        .max()
-        .unwrap_or(1);
+    let mut array_len = 1;
+    for arg in &args {
+        match arg {
+            Arg::Array(strings) => array_len = strings.len(),
+            Arg::List(list) => array_len = list.len(),
+            _ => continue,
+        }
+    }
 
     let mut segments = vec![];
     let concatenated_string_array: ArrayRef =
