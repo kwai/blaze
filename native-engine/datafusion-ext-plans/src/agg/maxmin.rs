@@ -25,13 +25,13 @@ use datafusion::{
     common::{Result, ScalarValue},
     physical_expr::PhysicalExpr,
 };
-use datafusion_ext_commons::{df_execution_err, df_unimplemented_err, downcast_any};
+use datafusion_ext_commons::{df_execution_err, downcast_any};
 use paste::paste;
 
 use crate::agg::{
     acc::{
-        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynStr, AggDynValue,
-        RefAccumStateRow,
+        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
+        AggDynValue, RefAccumStateRow,
     },
     default_final_batch_merge_with_addr, default_final_merge_with_addr, Agg, WithAggBufAddrs,
     WithMemTracking,
@@ -197,7 +197,7 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                     match acc.dyn_value_mut(self.accum_state_val_addr) {
                         Some(w) => {
                             let w = downcast_any!(w.as_mut(), mut AggDynStr)?;
-                            if w.value() < max {
+                            if max.partial_cmp(w.value()) == Some(P::ORD) {
                                 *w = AggDynStr::from_str(max);
                             }
                         }
@@ -207,7 +207,51 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                     }
                 }
             }
-            other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME)?,
+            DataType::Binary => {
+                let value = downcast_any!(values[0], BinaryArray)?;
+                if let Some(max) = P::maxmin_binary(value) {
+                    match acc.dyn_value_mut(self.accum_state_val_addr) {
+                        Some(w) => {
+                            let w = downcast_any!(w.as_mut(), mut AggDynBinary)?;
+                            if max.partial_cmp(w.value()) == Some(P::ORD) {
+                                *w = AggDynBinary::from_slice(max);
+                            }
+                        }
+                        w @ None => {
+                            *w = Some(Box::new(AggDynBinary::from_slice(max)));
+                        }
+                    }
+                }
+            }
+            _ => {
+                let scalars = (0..values[0].len())
+                    .into_iter()
+                    .map(|i| ScalarValue::try_from_array(&values[0], i))
+                    .collect::<Result<Vec<_>>>()?;
+                let max_scalar = if P::ORD == Ordering::Greater {
+                    scalars
+                        .into_iter()
+                        .max_by(|v1, v2| v1.partial_cmp(v2).unwrap_or(Ordering::Equal))
+                } else {
+                    scalars
+                        .into_iter()
+                        .min_by(|v1, v2| v1.partial_cmp(v2).unwrap_or(Ordering::Equal))
+                };
+
+                if let Some(max_scalar) = max_scalar {
+                    match acc.dyn_value_mut(self.accum_state_val_addr) {
+                        Some(w) => {
+                            let w = downcast_any!(w.as_mut(), mut AggDynScalar)?;
+                            if max_scalar.partial_cmp(w.value()) == Some(P::ORD) {
+                                *w = AggDynScalar::new(max_scalar);
+                            }
+                        }
+                        w @ None => {
+                            *w = Some(Box::new(AggDynScalar::new(max_scalar)));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -315,7 +359,44 @@ fn get_partial_updater<P: AggMaxMinParams>(
                 }
             }
         }),
-        other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME),
+        DataType::Binary => Ok(|this, acc, v, i| {
+            let value = downcast_any!(v, BinaryArray).unwrap();
+            if value.is_valid(i) {
+                let v = value.value(i);
+                match acc.dyn_value_mut(this.accum_state_val_addr) {
+                    Some(wv) => {
+                        let wv = downcast_any!(wv, mut AggDynBinary).unwrap();
+                        if v.partial_cmp(wv.value()) == Some(P::ORD) {
+                            this.add_mem_used(v.len());
+                            *wv = AggDynBinary::from_slice(v);
+                        }
+                    }
+                    w @ None => {
+                        this.add_mem_used(v.len());
+                        *w = Some(Box::new(AggDynBinary::from_slice(v)));
+                    }
+                }
+            }
+        }),
+        _ => Ok(|this, acc, v, i| {
+            if v.is_valid(i) {
+                let v = ScalarValue::try_from_array(v, i)
+                    .expect(&format!("error cast to ScalarValue, dt={}", v.data_type()));
+                match acc.dyn_value_mut(this.accum_state_val_addr) {
+                    Some(wv) => {
+                        let wv = downcast_any!(wv, mut AggDynScalar).unwrap();
+                        if v.partial_cmp(wv.value()) == Some(P::ORD) {
+                            this.add_mem_used(v.size());
+                            *wv = AggDynScalar::new(v);
+                        }
+                    }
+                    w @ None => {
+                        this.add_mem_used(v.size());
+                        *w = Some(Box::new(AggDynScalar::new(v)));
+                    }
+                }
+            }
+        }),
     }
 }
 
@@ -374,7 +455,45 @@ fn get_partial_batch_updater<P: AggMaxMinParams>(
                 }
             }
         }),
-        other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME),
+        DataType::Binary => Ok(|this, accs, v| {
+            let value = v.as_any().downcast_ref::<BinaryArray>().unwrap();
+            for (acc, v) in accs.iter_mut().zip(value.iter()) {
+                if let Some(v) = v {
+                    match acc.dyn_value_mut(this.accum_state_val_addr) {
+                        Some(wv) => {
+                            let wv = downcast_any!(wv, mut AggDynBinary).unwrap();
+                            if v.partial_cmp(wv.value()) == Some(P::ORD) {
+                                this.add_mem_used(v.len());
+                                *wv = AggDynBinary::from_slice(v);
+                            }
+                        }
+                        w @ None => {
+                            *w = Some(Box::new(AggDynBinary::from_slice(v)));
+                        }
+                    }
+                }
+            }
+        }),
+        _ => Ok(|this, accs, v| {
+            for (row_idx, acc) in accs.iter_mut().enumerate() {
+                let v = ScalarValue::try_from_array(v, row_idx)
+                    .expect(&format!("error cast to ScalarValue, dt={}", v.data_type()));
+                if !v.is_null() {
+                    match acc.dyn_value_mut(this.accum_state_val_addr) {
+                        Some(wv) => {
+                            let wv = downcast_any!(wv, mut AggDynScalar).unwrap();
+                            if v.partial_cmp(wv.value()) == Some(P::ORD) {
+                                this.add_mem_used(v.size());
+                                *wv = AggDynScalar::new(v);
+                            }
+                        }
+                        w @ None => {
+                            *w = Some(Box::new(AggDynScalar::new(v)));
+                        }
+                    }
+                }
+            }
+        }),
     }
 }
 
@@ -440,7 +559,50 @@ fn get_partial_buf_merger<P: AggMaxMinParams>(
                 (s1 @ None, s2 @ _) => *s1 = s2,
             }
         }),
-        other => df_unimplemented_err!("unsupported data type in {}(): {other}", P::NAME),
+        DataType::Binary => Ok(|this, acc1, acc2| {
+            let s1 = acc1.dyn_value_mut(this.accum_state_val_addr);
+            let s2 = std::mem::take(acc2.dyn_value_mut(this.accum_state_val_addr));
+            match (s1, s2) {
+                (Some(w), Some(v)) => {
+                    let w = downcast_any!(w, mut AggDynBinary).unwrap();
+                    let v = v
+                        .as_any_boxed()
+                        .downcast::<AggDynBinary>()
+                        .or_else(|_| df_execution_err!("error downcasting to AggSynBinary"))
+                        .unwrap();
+                    if v.value().partial_cmp(w.value()) == Some(P::ORD) {
+                        this.sub_mem_used(w.mem_size()); // w will be dropped
+                        *w = AggDynBinary::new(v.into_value());
+                    } else {
+                        this.sub_mem_used(v.mem_size()); // v will be dropped
+                    }
+                }
+                (Some(_), None) => {}
+                (s1 @ None, s2 @ _) => *s1 = s2,
+            }
+        }),
+        _ => Ok(|this, acc1, acc2| {
+            let s1 = acc1.dyn_value_mut(this.accum_state_val_addr);
+            let s2 = std::mem::take(acc2.dyn_value_mut(this.accum_state_val_addr));
+            match (s1, s2) {
+                (Some(w), Some(v)) => {
+                    let w = downcast_any!(w, mut AggDynScalar).unwrap();
+                    let v = v
+                        .as_any_boxed()
+                        .downcast::<AggDynScalar>()
+                        .or_else(|_| df_execution_err!("error downcasting to AggSynBinary"))
+                        .unwrap();
+                    if v.value().partial_cmp(w.value()) == Some(P::ORD) {
+                        this.sub_mem_used(w.mem_size()); // w will be dropped
+                        *w = AggDynScalar::new(v.into_value());
+                    } else {
+                        this.sub_mem_used(v.mem_size()); // v will be dropped
+                    }
+                }
+                (Some(_), None) => {}
+                (s1 @ None, s2 @ _) => *s1 = s2,
+            }
+        }),
     }
 }
 
@@ -453,7 +615,12 @@ pub trait AggMaxMinParams: 'static + Send + Sync {
     where
         T: ArrowNumericType,
         <T as ArrowPrimitiveType>::Native: ArrowNativeType;
+
     fn maxmin_string<T>(array: &GenericByteArray<GenericStringType<T>>) -> Option<&str>
+    where
+        T: OffsetSizeTrait;
+
+    fn maxmin_binary<T>(array: &GenericByteArray<GenericBinaryType<T>>) -> Option<&[u8]>
     where
         T: OffsetSizeTrait;
 }
@@ -483,6 +650,13 @@ impl AggMaxMinParams for AggMaxParams {
     {
         arrow::compute::max_string(array)
     }
+
+    fn maxmin_binary<T>(array: &GenericByteArray<GenericBinaryType<T>>) -> Option<&[u8]>
+    where
+        T: OffsetSizeTrait,
+    {
+        arrow::compute::max_binary(array)
+    }
 }
 
 impl AggMaxMinParams for AggMinParams {
@@ -506,5 +680,12 @@ impl AggMaxMinParams for AggMinParams {
         T: OffsetSizeTrait,
     {
         arrow::compute::min_string(array)
+    }
+
+    fn maxmin_binary<T>(array: &GenericByteArray<GenericBinaryType<T>>) -> Option<&[u8]>
+    where
+        T: OffsetSizeTrait,
+    {
+        arrow::compute::min_binary(array)
     }
 }
