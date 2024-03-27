@@ -228,6 +228,8 @@ abstract class Shims {
       nativeExpr: pb.PhysicalExprNode,
       dataType: DataType,
       nullable: Boolean): Expression
+
+  def postTransform(plan: SparkPlan, sc: SparkContext): Unit = {}
 }
 
 object Shims {
