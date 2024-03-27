@@ -23,6 +23,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.{KwaiSparkBasicMetrics, SparkContext, SparkEnv}
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.planStore
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -43,17 +44,21 @@ class BlazeOperatorMetricsCollector extends Logging {
 
   private val objectMapper: ObjectMapper = new ObjectMapper()
 
-  def sendOperatorMetrics(exec: SparkPlan, sc: SparkContext): Unit = {
+  def sendOperatorMetrics(sc: SparkContext): Unit = {
     try {
-      val msg = buildMsg(sc, exec.nodeName, exec.metrics.mkString)
-      producer.foreach(_.send(key = sc.conf.getAppId, msg))
+      planStore.foreach { plan =>
+        val msg = objectMapper.writeValueAsString(
+          new BlazeOperatorMetrics(sc, plan.nodeName, plan.metrics.mkString))
+        producer.foreach(_.send(key = sc.conf.getAppId, msg))
+      }
+
     } catch {
-      case _: Exception => // ignore exceptions
+      case e: Exception =>
+        logInfo(s"Blaze sendOperatorMetrics error: ${e.getMessage}")
+        producer.foreach(_.flush())
+        producer.foreach(_.close())
     }
   }
-
-  private def buildMsg(sc: SparkContext, execName: String, execMetric: String): String =
-    objectMapper.writeValueAsString(new BlazeOperatorMetrics(sc, execName, execMetric))
 }
 
 object BlazeOperatorMetricsCollector {
@@ -67,6 +72,7 @@ object BlazeOperatorMetricsCollector {
       None
     }
   }
+  var planStore: ArrayBuffer[SparkPlan] = new ArrayBuffer[SparkPlan]()
 }
 
 class BlazeOperatorMetrics(sc: SparkContext, execName: String, execMetric: String)
@@ -75,13 +81,11 @@ class BlazeOperatorMetrics(sc: SparkContext, execName: String, execMetric: Strin
   @BeanProperty val operatorMetric: String = execMetric
 }
 
-class OperatorMetricsListener(sc: SparkContext, exec: SparkPlan) extends SparkListener {
+class OperatorMetricsListener(sc: SparkContext) extends SparkListener with Logging {
 
   override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = {
     BlazeOperatorMetricsCollector.instance.foreach { collector =>
-      exec.foreachUp { case _ =>
-        collector.sendOperatorMetrics(exec, sc)
-      }
+      collector.sendOperatorMetrics(sc)
     }
     sc.listenerBus.removeListener(this)
   }

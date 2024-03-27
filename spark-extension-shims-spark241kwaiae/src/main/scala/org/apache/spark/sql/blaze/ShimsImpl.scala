@@ -675,9 +675,11 @@ class ShimsImpl extends Shims with Logging {
   override def postTransform(plan: SparkPlan, sc: SparkContext): Unit = {
     if (!sc.conf.getBoolean("spark.blaze.enable.queueNullPlaceholderSet", defaultValue = false)) {
       sc.conf.set("spark.blaze.enable.queueNullPlaceholderSet", "true")
-      sc.listenerBus.addToQueue(new BlazeNullPlaceholderListener, "BlazeOperatorMetrics")
+      sc.listenerBus.addToQueue(new OperatorMetricsListener(sc), "BlazeOperatorMetrics")
     }
-    sc.listenerBus.addToQueue(new OperatorMetricsListener(sc, plan), "BlazeOperatorMetrics")
+    plan.foreachUp { case p =>
+      BlazeOperatorMetricsCollector.planStore += p
+    }
   }
 }
 
