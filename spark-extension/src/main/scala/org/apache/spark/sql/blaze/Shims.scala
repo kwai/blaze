@@ -19,6 +19,7 @@ import java.io.File
 
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
+import org.apache.spark.SparkContext
 import org.blaze.{protobuf => pb}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
@@ -228,6 +229,8 @@ abstract class Shims {
       nativeExpr: pb.PhysicalExprNode,
       dataType: DataType,
       nullable: Boolean): Expression
+
+  def postTransform(plan: SparkPlan, sc: SparkContext): Unit = {}
 }
 
 object Shims {
