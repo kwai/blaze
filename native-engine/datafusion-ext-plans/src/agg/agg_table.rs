@@ -35,7 +35,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    bytes_arena::BytesArena,
+    bytes_arena::{BytesArena, BytesArenaAddr},
     downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     io::{read_bytes_slice, read_len, write_len},
@@ -532,7 +532,7 @@ pub struct HashingData {
     task_ctx: Arc<TaskContext>,
     acc_store: AccStore,
     map_key_store: BytesArena,
-    map: RawTable<(u64, u32)>, // keys addr to accs store addr
+    map: RawTable<(BytesArenaAddr, u32)>, // keys addr to accs store addr
     num_input_records: usize,
     spill_metrics: SpillMetrics,
 }
@@ -593,7 +593,10 @@ impl HashingData {
                 .map
                 .find_or_find_insert_slot(
                     hash,
-                    |v| self.map_key_store.get(v.0) == row.as_ref(),
+                    |v| {
+                        v.0.unpack().len == row.as_ref().len()
+                            && self.map_key_store.get(v.0) == row.as_ref()
+                    },
                     |v| gx_hash::<GX_HASH_SEED>(self.map_key_store.get(v.0)),
                 )
                 .unwrap_or_else(|slot| {

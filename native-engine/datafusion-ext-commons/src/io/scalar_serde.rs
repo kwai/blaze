@@ -22,169 +22,150 @@ use crate::{
     io::{read_bytes_slice, read_len, read_u8, write_len, write_u8},
 };
 
-pub fn write_scalar<W: Write>(value: &ScalarValue, output: &mut W) -> Result<()> {
-    fn write_primitive_valid_scalar<W: Write>(buf: &[u8], output: &mut W) -> Result<()> {
-        write_len(1 as usize, output)?;
-        output.write_all(buf)?;
-        Ok(())
-    }
-    match value {
-        ScalarValue::Null => {}
-        ScalarValue::Boolean(Some(value)) => write_u8((*value as u8) + 1u8, output)?,
-        ScalarValue::Int8(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Int16(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Int32(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Int64(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::UInt8(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::UInt16(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::UInt32(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::UInt64(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Float32(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Float64(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Decimal128(Some(value), ..) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Utf8(Some(value)) => {
-            let value_bytes = value.as_bytes();
-            write_len(value_bytes.len() + 1, output)?;
-            output.write_all(value_bytes)?;
-        }
-        ScalarValue::Binary(Some(value)) => {
-            let value_byte = value.as_bytes();
-            write_len(value_byte.len() + 1, output)?;
-            output.write_all(value_byte)?;
-        }
-        ScalarValue::Date32(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::Date64(Some(value)) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::TimestampSecond(Some(value), _) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::TimestampMillisecond(Some(value), _) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::TimestampMicrosecond(Some(value), _) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::TimestampNanosecond(Some(value), _) => {
-            write_primitive_valid_scalar(value.to_ne_bytes().as_slice(), output)?
-        }
-        ScalarValue::List(Some(value), _field) => {
-            write_len(value.len() + 1, output)?;
-            if value.len() != 0 {
-                for element in value {
-                    write_scalar(element, output)?;
+pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut W) -> Result<()> {
+    assert!(nullable || !value.is_null());
+
+    macro_rules! write_prim {
+        ($v:expr) => {{
+            if nullable {
+                if let Some(v) = $v {
+                    write_u8(1, output)?;
+                    output.write_all(&v.to_ne_bytes())?;
+                } else {
+                    write_u8(0, output)?;
                 }
+            } else {
+                output.write_all(&$v.unwrap().to_ne_bytes())?;
+            }
+        }};
+    }
+
+    match value {
+        ScalarValue::Null => write_u8(0, output)?,
+        ScalarValue::Boolean(v) => write_prim!(v.map(|v| v as i8)),
+        ScalarValue::Int8(v) => write_prim!(v),
+        ScalarValue::Int16(v) => write_prim!(v),
+        ScalarValue::Int32(v) => write_prim!(v),
+        ScalarValue::Int64(v) => write_prim!(v),
+        ScalarValue::UInt8(v) => write_prim!(v),
+        ScalarValue::UInt16(v) => write_prim!(v),
+        ScalarValue::UInt32(v) => write_prim!(v),
+        ScalarValue::UInt64(v) => write_prim!(v),
+        ScalarValue::Float32(v) => write_prim!(v),
+        ScalarValue::Float64(v) => write_prim!(v),
+        ScalarValue::Decimal128(v, ..) => write_prim!(v),
+        ScalarValue::Date32(v) => write_prim!(v),
+        ScalarValue::Date64(v) => write_prim!(v),
+        ScalarValue::TimestampSecond(v, ..) => write_prim!(v),
+        ScalarValue::TimestampMillisecond(v, ..) => write_prim!(v),
+        ScalarValue::TimestampMicrosecond(v, ..) => write_prim!(v),
+        ScalarValue::TimestampNanosecond(v, ..) => write_prim!(v),
+        ScalarValue::Utf8(v) => {
+            if let Some(v) = v {
+                write_len(v.as_bytes().len() + 1, output)?;
+                output.write_all(v.as_bytes())?;
+            } else {
+                write_len(0, output)?;
             }
         }
-        ScalarValue::Struct(Some(value), _fields) => {
-            write_len(value.len() + 1, output)?;
-            if value.len() != 0 {
-                for element in value {
-                    write_scalar(element, output)?;
+        ScalarValue::Binary(v) => {
+            if let Some(v) = v {
+                write_len(v.as_bytes().len() + 1, output)?;
+                output.write_all(v.as_bytes())?;
+            } else {
+                write_len(0, output)?;
+            }
+        }
+        ScalarValue::List(v, field) => {
+            if let Some(v) = v {
+                write_len(v.len() + 1, output)?;
+                for v in v {
+                    write_scalar(v, field.is_nullable(), output)?;
+                }
+            } else {
+                write_len(0, output)?;
+            }
+        }
+        ScalarValue::Struct(v, fields) => {
+            if nullable {
+                if let Some(v) = v {
+                    write_u8(1, output)?;
+                    for (v, field) in v.iter().zip(fields) {
+                        write_scalar(v, field.is_nullable(), output)?;
+                    }
+                } else {
+                    write_u8(0, output)?;
+                }
+            } else {
+                for (v, field) in v.as_ref().unwrap().iter().zip(fields) {
+                    write_scalar(v, field.is_nullable(), output)?;
                 }
             }
         }
         ScalarValue::Map(value, _bool) => {
-            write_scalar(value, output)?;
+            write_scalar(value, nullable, output)?;
         }
-        ScalarValue::Boolean(None)
-        | ScalarValue::Int8(None)
-        | ScalarValue::Int16(None)
-        | ScalarValue::Int32(None)
-        | ScalarValue::Int64(None)
-        | ScalarValue::UInt8(None)
-        | ScalarValue::UInt16(None)
-        | ScalarValue::UInt32(None)
-        | ScalarValue::UInt64(None)
-        | ScalarValue::Float32(None)
-        | ScalarValue::Float64(None)
-        | ScalarValue::Decimal128(None, ..)
-        | ScalarValue::Binary(None)
-        | ScalarValue::Utf8(None)
-        | ScalarValue::Date32(None)
-        | ScalarValue::Date64(None)
-        | ScalarValue::TimestampSecond(None, _)
-        | ScalarValue::TimestampMillisecond(None, _)
-        | ScalarValue::TimestampMicrosecond(None, _)
-        | ScalarValue::TimestampNanosecond(None, _)
-        | ScalarValue::List(None, _)
-        | ScalarValue::Struct(None, ..) => write_len(0 as usize, output)?,
         other => df_unimplemented_err!("unsupported scalarValue type: {other}")?,
     }
     Ok(())
 }
 
-pub fn read_scalar<R: Read>(input: &mut R, data_type: &DataType) -> Result<ScalarValue> {
-    macro_rules! read_primitive_scalar {
-        ($input:ident, $len:expr, $byte_kind:ident) => {{
-            let valid = read_len(input)?;
-            if valid != 0 {
-                let mut buf = [0; $len];
-                $input.read_exact(&mut buf)?;
-                Some($byte_kind::from_ne_bytes(buf))
+pub fn read_scalar<R: Read>(
+    input: &mut R,
+    data_type: &DataType,
+    nullable: bool,
+) -> Result<ScalarValue> {
+    macro_rules! read_prim {
+        ($ty:ty) => {{
+            if nullable {
+                let valid = read_u8(input)? != 0;
+                if valid {
+                    let mut buf = [0u8; std::mem::size_of::<$ty>()];
+                    input.read_exact(&mut buf)?;
+                    Some(<$ty>::from_ne_bytes(buf))
+                } else {
+                    None
+                }
             } else {
-                None
+                let mut buf = [0u8; std::mem::size_of::<$ty>()];
+                input.read_exact(&mut buf)?;
+                Some(<$ty>::from_ne_bytes(buf))
             }
         }};
     }
 
     Ok(match data_type {
-        DataType::Null => ScalarValue::Null,
-        DataType::Boolean => match read_u8(input)? {
-            0u8 => ScalarValue::Boolean(None),
-            1u8 => ScalarValue::Boolean(Some(false)),
-            _ => ScalarValue::Boolean(Some(true)),
-        },
-        DataType::Int8 => ScalarValue::Int8(read_primitive_scalar!(input, 1, i8)),
-        DataType::Int16 => ScalarValue::Int16(read_primitive_scalar!(input, 2, i16)),
-        DataType::Int32 => ScalarValue::Int32(read_primitive_scalar!(input, 4, i32)),
-        DataType::Int64 => ScalarValue::Int64(read_primitive_scalar!(input, 8, i64)),
-        DataType::UInt8 => ScalarValue::UInt8(read_primitive_scalar!(input, 1, u8)),
-        DataType::UInt16 => ScalarValue::UInt16(read_primitive_scalar!(input, 2, u16)),
-        DataType::UInt32 => ScalarValue::UInt32(read_primitive_scalar!(input, 4, u32)),
-        DataType::UInt64 => ScalarValue::UInt64(read_primitive_scalar!(input, 8, u64)),
-        DataType::Float32 => ScalarValue::Float32(read_primitive_scalar!(input, 4, f32)),
-        DataType::Float64 => ScalarValue::Float64(read_primitive_scalar!(input, 8, f64)),
-        DataType::Decimal128(precision, scale) => {
-            ScalarValue::Decimal128(read_primitive_scalar!(input, 16, i128), *precision, *scale)
+        DataType::Null => {
+            read_u8(input)?;
+            ScalarValue::Null
         }
-        DataType::Date32 => ScalarValue::Date32(read_primitive_scalar!(input, 4, i32)),
-        DataType::Date64 => ScalarValue::Date64(read_primitive_scalar!(input, 8, i64)),
+        DataType::Boolean => ScalarValue::Boolean(read_prim!(u8).map(|v| v != 0)),
+        DataType::Int8 => ScalarValue::Int8(read_prim!(i8)),
+        DataType::Int16 => ScalarValue::Int16(read_prim!(i16)),
+        DataType::Int32 => ScalarValue::Int32(read_prim!(i32)),
+        DataType::Int64 => ScalarValue::Int64(read_prim!(i64)),
+        DataType::UInt8 => ScalarValue::UInt8(read_prim!(u8)),
+        DataType::UInt16 => ScalarValue::UInt16(read_prim!(u16)),
+        DataType::UInt32 => ScalarValue::UInt32(read_prim!(u32)),
+        DataType::UInt64 => ScalarValue::UInt64(read_prim!(u64)),
+        DataType::Float32 => ScalarValue::Float32(read_prim!(f32)),
+        DataType::Float64 => ScalarValue::Float64(read_prim!(f64)),
+        DataType::Decimal128(precision, scale) => {
+            ScalarValue::Decimal128(read_prim!(i128), *precision, *scale)
+        }
+        DataType::Date32 => ScalarValue::Date32(read_prim!(i32)),
+        DataType::Date64 => ScalarValue::Date64(read_prim!(i64)),
         DataType::Timestamp(TimeUnit::Second, str) => {
-            ScalarValue::TimestampSecond(read_primitive_scalar!(input, 8, i64), str.clone())
+            ScalarValue::TimestampSecond(read_prim!(i64), str.clone())
         }
         DataType::Timestamp(TimeUnit::Millisecond, str) => {
-            ScalarValue::TimestampMillisecond(read_primitive_scalar!(input, 8, i64), str.clone())
+            ScalarValue::TimestampMillisecond(read_prim!(i64), str.clone())
         }
         DataType::Timestamp(TimeUnit::Microsecond, str) => {
-            ScalarValue::TimestampMicrosecond(read_primitive_scalar!(input, 8, i64), str.clone())
+            ScalarValue::TimestampMicrosecond(read_prim!(i64), str.clone())
         }
         DataType::Timestamp(TimeUnit::Nanosecond, str) => {
-            ScalarValue::TimestampNanosecond(read_primitive_scalar!(input, 8, i64), str.clone())
+            ScalarValue::TimestampNanosecond(read_prim!(i64), str.clone())
         }
         DataType::Binary => {
             let data_len = read_len(input)?;
@@ -210,34 +191,88 @@ pub fn read_scalar<R: Read>(input: &mut R, data_type: &DataType) -> Result<Scala
             let data_len = read_len(input)?;
             if data_len > 0 {
                 let data_len = data_len - 1;
-                let mut list_data: Vec<ScalarValue> = Vec::with_capacity(data_len);
+                let mut children = Vec::with_capacity(data_len);
                 for _i in 0..data_len {
-                    let child_value = read_scalar(input, field.data_type())?;
-                    list_data.push(child_value);
+                    children.push(read_scalar(input, field.data_type(), field.is_nullable())?);
                 }
-                ScalarValue::List(Some(list_data), field.clone())
+                ScalarValue::List(Some(children), field.clone())
             } else {
                 ScalarValue::List(None, field.clone())
             }
         }
         DataType::Struct(fields) => {
-            let data_len = read_len(input)?;
-            if data_len > 0 {
-                let data_len = data_len - 1;
-                let mut struct_data: Vec<ScalarValue> = Vec::with_capacity(data_len);
-                for i in 0..data_len {
-                    let child_value = read_scalar(input, fields[i].data_type())?;
-                    struct_data.push(child_value);
+            if nullable {
+                let valid = read_u8(input)? != 0;
+                if valid {
+                    let mut children = Vec::with_capacity(fields.len());
+                    for field in fields {
+                        children.push(read_scalar(input, field.data_type(), field.is_nullable())?);
+                    }
+                    ScalarValue::Struct(Some(children), fields.clone())
+                } else {
+                    ScalarValue::Struct(None, fields.clone())
                 }
-                ScalarValue::Struct(Some(struct_data), fields.clone())
             } else {
-                ScalarValue::Struct(None, fields.clone())
+                let mut children = Vec::with_capacity(fields.len());
+                for field in fields {
+                    children.push(read_scalar(input, field.data_type(), field.is_nullable())?);
+                }
+                ScalarValue::Struct(Some(children), fields.clone())
             }
         }
         DataType::Map(field, bool) => {
-            let map_value = read_scalar(input, field.data_type())?;
+            let map_value = read_scalar(input, field.data_type(), field.is_nullable())?;
             ScalarValue::Map(Box::new(map_value), *bool)
         }
         other => df_unimplemented_err!("unsupported data type: {other}")?,
     })
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::Cursor;
+
+    use arrow_schema::DataType;
+    use datafusion::common::{Result, ScalarValue};
+
+    use crate::io::{read_scalar, write_scalar};
+
+    #[test]
+    fn test() -> Result<()> {
+        let mut buf = vec![];
+
+        write_scalar(&ScalarValue::from(123), false, &mut buf)?;
+        write_scalar(&ScalarValue::from("Wooden"), false, &mut buf)?;
+        write_scalar(&ScalarValue::from("Slash"), true, &mut buf)?;
+        write_scalar(&ScalarValue::Utf8(None), true, &mut buf)?;
+        write_scalar(&ScalarValue::Null, true, &mut buf)?;
+        write_scalar(&ScalarValue::from(3.15), false, &mut buf)?;
+
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(
+            read_scalar(&mut cur, &DataType::Int32, false)?,
+            ScalarValue::from(123)
+        );
+        assert_eq!(
+            read_scalar(&mut cur, &DataType::Utf8, false)?,
+            ScalarValue::from("Wooden")
+        );
+        assert_eq!(
+            read_scalar(&mut cur, &DataType::Utf8, true)?,
+            ScalarValue::from("Slash")
+        );
+        assert_eq!(
+            read_scalar(&mut cur, &DataType::Utf8, true)?,
+            ScalarValue::Utf8(None)
+        );
+        assert_eq!(
+            read_scalar(&mut cur, &DataType::Null, true)?,
+            ScalarValue::Null
+        );
+        assert_eq!(
+            read_scalar(&mut cur, &DataType::Float64, false)?,
+            ScalarValue::from(3.15)
+        );
+        Ok(())
+    }
 }
