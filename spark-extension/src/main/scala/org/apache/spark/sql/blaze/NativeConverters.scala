@@ -662,7 +662,7 @@ object NativeConverters extends Logging {
               pb.PhysicalBinaryExprNode
                 .newBuilder()
                 .setL(convertExprWithFallback(Cast(lhs, resultType), isPruningExpr, fallback))
-                .setR(convertExprWithFallback(rhs, isPruningExpr, fallback))
+                .setR(buildExtScalarFunction("NullIfZero", rhs :: Nil, rhs.dataType))
                 .setOp("Divide"))
           }
         } else {
