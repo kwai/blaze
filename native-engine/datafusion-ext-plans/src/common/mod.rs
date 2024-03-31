@@ -57,7 +57,7 @@ fn compute_batch_size_with_target_mem_size(
     if num_rows == 0 {
         return batch_size;
     }
-    let est_mem_size_per_row = mem_size / num_rows;
-    let est_sub_batch_size = target_mem_size / est_mem_size_per_row;
+    let est_mem_size_per_row = mem_size.max(16) / num_rows.max(1);
+    let est_sub_batch_size = target_mem_size / est_mem_size_per_row.max(16);
     est_sub_batch_size.min(batch_size).max(batch_size_min)
 }
