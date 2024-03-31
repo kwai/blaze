@@ -71,9 +71,9 @@ use crate::{
 };
 
 // reserve memory for each spill
-// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB +
-// batches=~100KB
-const SPILL_OFFHEAP_MEM_COST: usize = 300000;
+// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
+const SPILL_OFFHEAP_MEM_COST: usize = 200000;
+const SPILL_MERGING_SIZE: usize = 32;
 
 #[derive(Debug)]
 pub struct SortExec {
@@ -162,13 +162,18 @@ impl ExecutionPlan for SortExec {
     }
 }
 
+struct LevelSpill {
+    spill: Box<dyn Spill>,
+    level: usize,
+}
+
 struct ExternalSorter {
     name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     prune_sort_keys_from_batch: Arc<PruneSortKeysFromBatch>,
     limit: usize,
     data: Arc<Mutex<BufferedData>>,
-    spills: Mutex<Vec<Box<dyn Spill>>>,
+    spills: Mutex<Vec<LevelSpill>>,
     baseline_metrics: BaselineMetrics,
     spill_metrics: SpillMetrics,
 }
@@ -191,10 +196,41 @@ impl MemConsumer for ExternalSorter {
 
     async fn spill(&self) -> Result<()> {
         let mut spill = try_new_spill(&self.spill_metrics)?;
-        std::mem::take(&mut *self.data.lock().await).try_into_spill(self, &mut spill)?;
+        let data = std::mem::take(&mut *self.data.lock().await);
+        let sub_batch_size =
+            compute_suggested_batch_size_for_kway_merge(data.mem_used(), data.num_rows);
+        data.try_into_spill(self, &mut spill)?;
 
-        self.spills.lock().await.push(spill);
+        self.spills
+            .lock()
+            .await
+            .push(LevelSpill { spill, level: 0 });
         self.update_mem_used(0).await?;
+
+        // merge if there are too many spills
+        let mut spills = self.spills.lock().await;
+        let mut levels = (0..32).map(|_| vec![]).collect::<Vec<_>>();
+        for spill in std::mem::take(&mut *spills) {
+            levels[spill.level].push(spill.spill);
+        }
+        for level in 0..levels.len() {
+            if levels[level].len() >= SPILL_MERGING_SIZE {
+                let merged = merge_spills(
+                    std::mem::take(&mut levels[level]),
+                    &self.spill_metrics,
+                    sub_batch_size,
+                    self.limit,
+                    self.prune_sort_keys_from_batch.pruned_schema.clone(),
+                )?;
+                levels[level + 1].push(merged);
+            } else {
+                spills.extend(
+                    std::mem::take(&mut levels[level])
+                        .into_iter()
+                        .map(|spill| LevelSpill { spill, level }),
+                )
+            }
+        }
         Ok(())
     }
 }
@@ -571,7 +607,7 @@ impl ExternalSorter {
         self.set_spillable(false);
 
         let data = std::mem::take(&mut *self.data.lock().await);
-        let mut spills = std::mem::take(&mut *self.spills.lock().await);
+        let spills = std::mem::take(&mut *self.spills.lock().await);
         log::info!(
             "sort exec starts outputting with {} ({} spills)",
             self.name(),
@@ -591,7 +627,7 @@ impl ExternalSorter {
             for (keys, batch) in data.into_sorted_batches(sub_batch_size, &self)? {
                 let batch = self
                     .prune_sort_keys_from_batch
-                    .restore(batch, keys.into_iter())?;
+                    .restore(batch, keys.iter())?;
                 self.baseline_metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }
@@ -600,6 +636,7 @@ impl ExternalSorter {
         }
 
         // move in-mem batches into spill, so we can free memory as soon as possible
+        let mut spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
         let mut spill: Box<dyn Spill> = Box::new(vec![]);
         data.try_into_spill(&self, &mut spill)?;
         let spill_size = downcast_any!(spill, Vec<u8>)?.len();
@@ -607,91 +644,22 @@ impl ExternalSorter {
             .await?;
         spills.push(spill);
 
-        // use loser tree to merge all spills
-        let mut cursors: LoserTree<SpillCursor> = LoserTree::new(
-            spills
-                .iter_mut()
-                .enumerate()
-                .map(|(id, spill)| SpillCursor::try_from_spill(id, self.clone(), spill))
-                .collect::<Result<_>>()?,
-        );
+        let mut merger = ExternalMerger::try_new(
+            &mut spills,
+            self.prune_sort_keys_from_batch.pruned_schema(),
+            sub_batch_size,
+            self.limit,
+        )?;
 
-        let mut num_total_output_rows = 0;
-        let mut staging_cursor_ids = Vec::with_capacity(sub_batch_size);
-        let mut staging_keys = Vec::with_capacity(sub_batch_size);
+        while let Some((keys, pruned_batch)) = merger.next().transpose()? {
+            let batch = self
+                .prune_sort_keys_from_batch
+                .restore(pruned_batch, keys.iter())?;
+            let cursors_mem_used = merger.cursors_mem_used();
 
-        macro_rules! flush_staging {
-            () => {{
-                if num_total_output_rows < self.limit {
-                    let batch_num_rows = staging_keys.len().min(self.limit - num_total_output_rows);
-                    let mut batches_base_idx = vec![];
-                    let mut base_idx = 0;
-                    for cursor in cursors.values() {
-                        batches_base_idx.push(base_idx);
-                        base_idx += cursor.cur_batches.len();
-                    }
-
-                    let pruned_schema = self.prune_sort_keys_from_batch.pruned_schema();
-                    let pruned_batch = if !self.prune_sort_keys_from_batch.is_all_pruned() {
-                        let mut batches = vec![];
-                        for cursor in cursors.values() {
-                            batches.extend(cursor.cur_batches.clone());
-                        }
-                        let staging_indices = std::mem::take(&mut staging_cursor_ids)
-                            .iter()
-                            .map(|&cursor_id| {
-                                let cursor = &mut cursors.values_mut()[cursor_id];
-                                let base_idx = batches_base_idx[cursor.id];
-                                let (batch_idx, row_idx) = cursor.next_row();
-                                (base_idx + batch_idx, row_idx)
-                            })
-                            .collect::<Vec<_>>();
-                        interleave_batches(pruned_schema, &batches, &staging_indices)?
-                    } else {
-                        RecordBatch::try_new_with_options(
-                            pruned_schema,
-                            vec![],
-                            &RecordBatchOptions::new().with_row_count(Some(staging_keys.len())),
-                        )?
-                    };
-
-                    let mut batch = self
-                        .prune_sort_keys_from_batch
-                        .restore(pruned_batch, std::mem::take(&mut staging_keys).iter())?;
-                    if batch_num_rows < batch.num_rows() {
-                        batch = batch.slice(0, batch_num_rows)
-                    }
-
-                    num_total_output_rows += batch.num_rows();
-                    let _ = num_total_output_rows;
-                    self.baseline_metrics.record_output(batch.num_rows());
-                    sender.send(Ok(batch), Some(&mut timer)).await;
-                }
-            }};
-        }
-
-        // merge
-        while num_total_output_rows < self.limit {
-            let mut min_cursor = cursors.peek_mut();
-            if min_cursor.finished {
-                break;
-            }
-            if !self.prune_sort_keys_from_batch.is_all_pruned() {
-                staging_cursor_ids.push(min_cursor.id);
-            }
-            staging_keys.push(min_cursor.next_key()?);
-            drop(min_cursor);
-
-            if staging_keys.len() >= sub_batch_size {
-                flush_staging!();
-
-                for cursor in cursors.values_mut() {
-                    cursor.clear_finished_batches();
-                }
-            }
-        }
-        if !staging_keys.is_empty() {
-            flush_staging!();
+            self.update_mem_used(cursors_mem_used).await?;
+            self.baseline_metrics.record_output(batch.num_rows());
+            sender.send(Ok(batch), Some(&mut timer)).await;
         }
         self.update_mem_used(0).await?;
         Ok(())
@@ -700,7 +668,7 @@ impl ExternalSorter {
 
 struct SpillCursor<'a> {
     id: usize,
-    sorter: Arc<ExternalSorter>,
+    pruned_schema: SchemaRef,
     input: SpillCompressedReader<'a>,
     cur_batch_num_rows: usize,
     cur_loaded_num_rows: usize,
@@ -708,6 +676,7 @@ struct SpillCursor<'a> {
     cur_batch_idx: usize,
     cur_row_idx: usize,
     cur_key: SlimBytes,
+    cur_mem_used: usize,
     finished: bool,
 }
 
@@ -723,12 +692,12 @@ impl<'a> ComparableForLoserTree for SpillCursor<'a> {
 impl<'a> SpillCursor<'a> {
     fn try_from_spill(
         id: usize,
-        sorter: Arc<ExternalSorter>,
+        pruned_schema: SchemaRef,
         spill: &'a mut Box<dyn Spill>,
     ) -> Result<Self> {
         let mut iter = SpillCursor {
             id,
-            sorter,
+            pruned_schema,
             input: spill.get_compressed_reader(),
             cur_batch_num_rows: 0,
             cur_loaded_num_rows: 0,
@@ -736,6 +705,7 @@ impl<'a> SpillCursor<'a> {
             cur_batch_idx: 0,
             cur_row_idx: 0,
             cur_key: Default::default(),
+            cur_mem_used: 0,
             finished: false,
         };
         iter.next_key()?; // load first record into current
@@ -763,10 +733,8 @@ impl<'a> SpillCursor<'a> {
     }
 
     fn load_next_batch(&mut self) -> Result<bool> {
-        if let Some(batch) = read_one_batch(
-            &mut self.input,
-            &self.sorter.prune_sort_keys_from_batch.pruned_schema(),
-        )? {
+        if let Some(batch) = read_one_batch(&mut self.input, &self.pruned_schema)? {
+            self.cur_mem_used += batch.get_array_mem_size();
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;
             self.cur_batches.push(batch);
@@ -790,10 +758,171 @@ impl<'a> SpillCursor<'a> {
 
     fn clear_finished_batches(&mut self) {
         if self.cur_batch_idx > 0 {
-            self.cur_batches.drain(..self.cur_batch_idx);
+            for batch in self.cur_batches.drain(..self.cur_batch_idx) {
+                self.cur_mem_used -= batch.get_array_mem_size();
+            }
             self.cur_batch_idx = 0;
         }
     }
+}
+
+struct ExternalMerger<'a> {
+    cursors: LoserTree<SpillCursor<'a>>,
+    pruned_schema: SchemaRef,
+    sub_batch_size: usize,
+    limit: usize,
+    num_total_output_rows: usize,
+    staging_cursor_ids: Vec<usize>,
+    staging_keys: Vec<SlimBytes>,
+}
+
+impl<'a> ExternalMerger<'a> {
+    fn try_new(
+        spills: &'a mut [Box<dyn Spill>],
+        pruned_schema: SchemaRef,
+        sub_batch_size: usize,
+        limit: usize,
+    ) -> Result<Self> {
+        Ok(Self {
+            cursors: LoserTree::new(
+                spills
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(id, spill)| {
+                        SpillCursor::try_from_spill(id, pruned_schema.clone(), spill)
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+            pruned_schema,
+            sub_batch_size,
+            limit,
+            num_total_output_rows: 0,
+            staging_cursor_ids: Vec::with_capacity(sub_batch_size),
+            staging_keys: Vec::with_capacity(sub_batch_size),
+        })
+    }
+}
+
+impl Iterator for ExternalMerger<'_> {
+    type Item = Result<(Vec<SlimBytes>, RecordBatch)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.merge_one().transpose()
+    }
+}
+
+impl ExternalMerger<'_> {
+    fn cursors_mem_used(&self) -> usize {
+        self.cursors.len() * SPILL_OFFHEAP_MEM_COST
+            + self
+                .cursors
+                .values()
+                .iter()
+                .map(|cursor| cursor.cur_mem_used)
+                .sum::<usize>()
+    }
+
+    fn merge_one(&mut self) -> Result<Option<(Vec<SlimBytes>, RecordBatch)>> {
+        let pruned_schema = self.pruned_schema.clone();
+
+        // collect merged records to staging
+        if self.num_total_output_rows < self.limit {
+            while self.staging_keys.len() < self.sub_batch_size {
+                let mut min_cursor = self.cursors.peek_mut();
+                if min_cursor.finished {
+                    break;
+                }
+                if !pruned_schema.fields().is_empty() {
+                    self.staging_cursor_ids.push(min_cursor.id);
+                }
+                self.staging_keys.push(min_cursor.next_key()?);
+            }
+        }
+
+        // flush staging
+        if !self.staging_keys.is_empty() {
+            let flushed = self.flush_staging()?;
+            for cursor in self.cursors.values_mut() {
+                cursor.clear_finished_batches();
+            }
+            return Ok(Some(flushed));
+        }
+        Ok(None)
+    }
+
+    fn flush_staging(&mut self) -> Result<(Vec<SlimBytes>, RecordBatch)> {
+        // collect keys
+        if self.num_total_output_rows + self.staging_keys.len() > self.limit {
+            self.staging_keys
+                .truncate(self.limit - self.num_total_output_rows);
+        }
+        let keys = std::mem::take(&mut self.staging_keys);
+
+        // collect pruned columns
+        let pruned_schema = self.pruned_schema.clone();
+        let pruned_batch = if !pruned_schema.fields().is_empty() {
+            let mut batches_base_idx = vec![];
+            let mut base_idx = 0;
+            for cursor in self.cursors.values() {
+                batches_base_idx.push(base_idx);
+                base_idx += cursor.cur_batches.len();
+            }
+
+            let mut batches = vec![];
+            for cursor in self.cursors.values() {
+                batches.extend(cursor.cur_batches.clone());
+            }
+            let staging_indices = std::mem::take(&mut self.staging_cursor_ids)
+                .iter()
+                .take(keys.len())
+                .map(|&cursor_id| {
+                    let cursor = &mut self.cursors.values_mut()[cursor_id];
+                    let base_idx = batches_base_idx[cursor.id];
+                    let (batch_idx, row_idx) = cursor.next_row();
+                    (base_idx + batch_idx, row_idx)
+                })
+                .collect::<Vec<_>>();
+            interleave_batches(pruned_schema, &batches, &staging_indices)?
+        } else {
+            RecordBatch::try_new_with_options(
+                pruned_schema.clone(),
+                vec![],
+                &RecordBatchOptions::new().with_row_count(Some(keys.len())),
+            )?
+        };
+        self.num_total_output_rows += keys.len();
+        Ok((keys, pruned_batch))
+    }
+}
+
+fn merge_spills(
+    mut spills: Vec<Box<dyn Spill>>,
+    spill_metrics: &SpillMetrics,
+    sub_batch_size: usize,
+    limit: usize,
+    pruned_schema: SchemaRef,
+) -> Result<Box<dyn Spill>> {
+    assert!(spills.len() >= 1);
+    if spills.len() == 1 {
+        return Ok(spills.into_iter().next().unwrap());
+    }
+
+    let mut output_spill = try_new_spill(spill_metrics)?;
+    let mut output_writer = output_spill.get_compressed_writer();
+    let mut merger = ExternalMerger::try_new(&mut spills, pruned_schema, sub_batch_size, limit)?;
+
+    while let Some((keys, pruned_batch)) = merger.next().transpose()? {
+        let mut buf = vec![];
+        write_one_batch(&pruned_batch, &mut Cursor::new(&mut buf))?;
+        output_writer.write_all(&buf)?;
+
+        for key in keys {
+            write_len(key.len(), &mut output_writer)?;
+            output_writer.write_all(&key)?;
+        }
+    }
+    drop(output_writer);
+    Ok(output_spill)
 }
 
 fn create_zero_column_batch(num_rows: usize) -> RecordBatch {
@@ -1091,10 +1220,10 @@ mod fuzztest {
             let rand_val1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
             let rand_val2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
             let batch = RecordBatch::try_from_iter_with_nullable(vec![
-                ("k1", rand_key1, false),
-                ("k2", rand_key2, false),
-                ("v1", rand_val1, false),
-                ("v2", rand_val2, false),
+                ("k1", rand_key1, true),
+                ("k2", rand_key2, true),
+                ("v1", rand_val1, true),
+                ("v2", rand_val2, true),
             ])?;
             num_rows += batch.num_rows();
             batches.push(batch);
