@@ -25,7 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.planStore
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 
 class BlazeOperatorMetricsCollector extends Logging {
 
@@ -46,12 +46,15 @@ class BlazeOperatorMetricsCollector extends Logging {
 
   def sendOperatorMetrics(sc: SparkContext): Unit = {
     try {
+      val startTime = System.currentTimeMillis()
+      val planInfoJson = new ListBuffer[BlazeOperatorMetrics]()
       planStore.foreach { plan =>
-        val msg = objectMapper.writeValueAsString(
-          new BlazeOperatorMetrics(sc, plan.nodeName, plan.metrics.mkString))
-        producer.foreach(_.send(key = sc.conf.getAppId, msg))
+        planInfoJson += new BlazeOperatorMetrics(sc, plan.nodeName, plan.metrics.mkString)
       }
-
+      producer.foreach(
+        _.send(key = sc.conf.getAppId, objectMapper.writeValueAsString(planInfoJson)))
+      logInfo(
+        s"send app opretor metrics to kafka succ after ${System.currentTimeMillis() - startTime}ms")
     } catch {
       case e: Exception =>
         logInfo(s"Blaze sendOperatorMetrics error: ${e.getMessage}")
