@@ -86,21 +86,6 @@ class OnHeapSpillManager(taskContext: TaskContext)
       .read(buf)
   }
 
-  def completeSpill(spillId: Int): Unit = {
-    val spill = spills(spillId)
-      .getOrElse(
-        throw new RuntimeException(
-          s"completing released spill, task=${taskContext.taskAttemptId}, id=${spillId}"))
-    spill.complete()
-
-    logInfo(
-      "completed a spill" +
-        s", task=${taskContext.taskAttemptId}" +
-        s", id=$spillId" +
-        s", size=${Utils.bytesToString(spill.size)}")
-    dumpStatus()
-  }
-
   def getSpillDiskUsage(spillId: Int): Long = {
     spills(spillId).map(_.diskUsed).getOrElse(0)
   }
