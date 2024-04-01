@@ -31,5 +31,5 @@ case class NativeRenameColumnsExec(override val child: SparkPlan, renamedColumnN
 
   override protected def outputExpressions: Seq[NamedExpression] = output
 
-  override protected def orderingExpressions: Seq[SortOrder] = outputOrdering
+  override protected def orderingExpressions: Seq[SortOrder] = child.outputOrdering
 }
