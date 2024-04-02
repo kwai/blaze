@@ -120,5 +120,3 @@ class OperatorMetricsListener(sc: SparkContext) extends SparkListener with Loggi
     sc.listenerBus.removeListener(this)
   }
 }
-
-class BlazeNullPlaceholderListener extends SparkListener
