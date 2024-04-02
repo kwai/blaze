@@ -58,12 +58,8 @@ class BlazeOperatorMetricsCollector extends Logging {
         }
         operatorList.append(BlazeOperatorInfo(plan.getClass.getSimpleName, index, metricobject))
       }
-
-      val applicationInfo =
-        new BlazeApplicationInfo(sc, operatorList.toArray)
-      logInfo(s"applicationInfo is ${objectMapper.writeValueAsString(applicationInfo)}")
       producer.foreach(
-        _.send(key = sc.conf.getAppId, objectMapper.writeValueAsString(applicationInfo)))
+        _.send(key = sc.conf.getAppId, objectMapper.writeValueAsString(new BlazeApplicationInfo(sc, operatorList.toArray))))
       planStore.clear()
       logInfo(
         s"send app opretor metrics to kafka succ after ${System.currentTimeMillis() - startTime}ms")
