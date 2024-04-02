@@ -868,7 +868,7 @@ dependencies = [
  "bytes",
  "datafusion",
  "futures",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "jni",
  "log",
  "num",
@@ -911,7 +911,7 @@ dependencies = [
  "blaze-jni-bridge",
  "datafusion",
  "datafusion-ext-commons",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "log",
  "num",
  "paste",
@@ -939,7 +939,7 @@ dependencies = [
  "futures",
  "gxhash",
  "hashbrown",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "jni",
  "log",
  "lz4_flex",
@@ -1450,15 +1450,6 @@ name = "integer-encoding"
 version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
-
-[[package]]
-name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
 
 [[package]]
 name = "itertools"
