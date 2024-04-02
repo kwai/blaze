@@ -498,16 +498,17 @@ object BlazeConverters extends Logging {
       // reference: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html
       var needPostProject = false
       val (modifiedLeft, modifiedRight, modifiedJoinType) = (buildSide, joinType) match {
-        case (BuildLeft, RightOuter | FullOuter) => (broadcasted, nativeProbed, joinType)
+        case (BuildLeft, RightOuter | FullOuter) =>
+          (broadcasted, nativeProbed, joinType) // RightOuter, FullOuter => BuildLeft
         case (BuildRight, Inner | LeftOuter | LeftSemi | LeftAnti) =>
-          (nativeProbed, broadcasted, joinType)
+          (nativeProbed, broadcasted, joinType) // Inner, LeftOuter, LeftSemi, LeftAnti => BuildRight
         case _ =>
           needPostProject = true
-          val modifiedJoinType = joinType match { // reverse join type
-            case Inner => (nativeProbed, broadcasted, Inner)
-            case FullOuter => (broadcasted, nativeProbed, FullOuter)
-            case LeftOuter => (broadcasted, nativeProbed, RightOuter)
-            case RightOuter => (nativeProbed, broadcasted, LeftOuter)
+          val modifiedJoinType = joinType match {
+            case Inner =>
+              (nativeProbed, broadcasted, Inner) // Inner + BuildLeft => BuildRight
+            case FullOuter =>
+              (broadcasted, nativeProbed, FullOuter) // FullOuter + BuildRight => BuildLeft
             case _ =>
               throw new NotImplementedError(
                 s"BNLJ $joinType with $buildSide is not yet supported")
