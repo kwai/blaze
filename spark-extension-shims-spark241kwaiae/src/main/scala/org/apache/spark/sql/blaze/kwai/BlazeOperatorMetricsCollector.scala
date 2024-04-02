@@ -22,8 +22,10 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.{KwaiSparkBasicMetrics, SparkContext, SparkEnv}
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.planStore
+import org.codehaus.jackson.annotate.JsonProperty
 
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 
@@ -47,12 +49,22 @@ class BlazeOperatorMetricsCollector extends Logging {
   def sendOperatorMetrics(sc: SparkContext): Unit = {
     try {
       val startTime = System.currentTimeMillis()
-      val planInfoJson = new ListBuffer[BlazeOperatorMetrics]()
-      planStore.foreach { plan =>
-        planInfoJson += new BlazeOperatorMetrics(sc, plan.nodeName, plan.metrics.mkString)
+      val operatorList = new ListBuffer[BlazeOperatorInfo]()
+
+      planStore.zipWithIndex.foreach { case (plan, index) =>
+        val metricobject = objectMapper.createObjectNode()
+        plan.metrics.foreach { case (key, value) =>
+          metricobject.put(key, value.value)
+        }
+        operatorList.append(BlazeOperatorInfo(plan.getClass.getSimpleName, index, metricobject))
       }
+
+      val applicationInfo =
+        new BlazeApplicationInfo(sc, operatorList.toArray)
+      logInfo(s"applicationInfo is ${objectMapper.writeValueAsString(applicationInfo)}")
       producer.foreach(
-        _.send(key = sc.conf.getAppId, objectMapper.writeValueAsString(planInfoJson)))
+        _.send(key = sc.conf.getAppId, objectMapper.writeValueAsString(applicationInfo)))
+      planStore.clear()
       logInfo(
         s"send app opretor metrics to kafka succ after ${System.currentTimeMillis() - startTime}ms")
     } catch {
@@ -78,11 +90,23 @@ object BlazeOperatorMetricsCollector {
   var planStore: ArrayBuffer[SparkPlan] = new ArrayBuffer[SparkPlan]()
 }
 
-class BlazeOperatorMetrics(sc: SparkContext, execName: String, execMetric: String)
+class BlazeApplicationInfo(sc: SparkContext, info: Array[BlazeOperatorInfo])
     extends KwaiSparkBasicMetrics(sc) {
-  @BeanProperty val operatorName: String = execName
-  @BeanProperty val operatorMetric: String = execMetric
+  @BeanProperty
+  @JsonProperty("operatorsInfo")
+  val operatorsInfo: Array[BlazeOperatorInfo] = info
 }
+
+case class BlazeOperatorInfo(
+    @BeanProperty
+    @JsonProperty("execName")
+    execName: String,
+    @BeanProperty
+    @JsonProperty("execId")
+    execId: Int,
+    @BeanProperty
+    @JsonProperty("execMetric")
+    execMetric: ObjectNode) {}
 
 class OperatorMetricsListener(sc: SparkContext) extends SparkListener with Logging {
 
