@@ -32,7 +32,7 @@ use datafusion::{
     },
     common::Result,
     logical_expr::ColumnarValue,
-    physical_expr::{expr_list_eq_any_order, PhysicalExpr},
+    physical_expr::{physical_exprs_bag_equal, PhysicalExpr},
 };
 use datafusion_ext_commons::{df_execution_err, io::name_batch};
 
@@ -73,7 +73,8 @@ impl PartialEq<dyn Any> for NamedStructExpr {
         down_cast_any_ref(other)
             .downcast_ref::<Self>()
             .map(|x| {
-                expr_list_eq_any_order(&self.values, &x.values) && self.return_type == x.return_type
+                physical_exprs_bag_equal(&self.values, &x.values)
+                    && self.return_type == x.return_type
             })
             .unwrap_or(false)
     }
@@ -96,7 +97,10 @@ impl PhysicalExpr for NamedStructExpr {
         let input_arrays = self
             .values
             .iter()
-            .map(|expr| expr.evaluate(batch).map(|r| r.into_array(batch.num_rows())))
+            .map(|expr| {
+                expr.evaluate(batch)
+                    .and_then(|r| r.into_array(batch.num_rows()))
+            })
             .collect::<Result<Vec<_>>>()?;
         let input_empty_fields = input_arrays
             .iter()
@@ -174,7 +178,7 @@ mod test {
                 ),
             ])),
         )?);
-        let output_array = named_struct.evaluate(&input_batch)?.into_array(0);
+        let output_array = named_struct.evaluate(&input_batch)?.into_array(0)?;
         let output_batch =
             RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", output_array, true)])?;
 

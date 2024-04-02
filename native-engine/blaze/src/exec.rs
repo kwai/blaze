@@ -74,7 +74,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 let runtime_config =
                     RuntimeConfig::new().with_disk_manager(DiskManagerConfig::Disabled);
                 let runtime = Arc::new(RuntimeEnv::new(runtime_config)?);
-                let session = SessionContext::with_config_rt(session_config, runtime);
+                let session = SessionContext::new_with_config_rt(session_config, runtime);
                 Ok::<_, DataFusionError>(session)
             })?;
             Ok::<_, DataFusionError>(())

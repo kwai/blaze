@@ -30,7 +30,7 @@ use blaze_jni_bridge::{
     jni_new_object,
 };
 use datafusion::{
-    error::Result, logical_expr::ColumnarValue, physical_expr::utils::expr_list_eq_any_order,
+    error::Result, logical_expr::ColumnarValue, physical_expr::physical_exprs_bag_equal,
     physical_plan::PhysicalExpr,
 };
 use datafusion_ext_commons::{cast::cast, df_execution_err};
@@ -55,7 +55,7 @@ impl PartialEq<dyn Any> for SparkUDFWrapperExpr {
         down_cast_any_ref(other)
             .downcast_ref::<Self>()
             .map(|x| {
-                expr_list_eq_any_order(&self.params, &x.params)
+                physical_exprs_bag_equal(&self.params, &x.params)
                     && self.serialized == x.serialized
                     && self.return_type == x.return_type
                     && self.return_nullable == x.return_nullable
@@ -150,7 +150,7 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             .iter()
             .zip(params_schema.fields())
             .map(|(param, field)| {
-                let param_array = param.evaluate(batch).map(|r| r.into_array(num_rows))?;
+                let param_array = param.evaluate(batch).and_then(|r| r.into_array(num_rows))?;
                 cast(&param_array, field.data_type())
             })
             .collect::<Result<_>>()?;
@@ -236,7 +236,8 @@ fn invoke_udf(
 
     // import output from context
     let import_ffi_schema = FFI_ArrowSchema::try_from(result_schema.as_ref())?;
-    let import_struct_array = make_array(from_ffi(import_ffi_array, &import_ffi_schema)?);
+    let import_struct_array =
+        make_array(unsafe { from_ffi(import_ffi_array, &import_ffi_schema)? });
     let import_array = as_struct_array(&import_struct_array).column(0).clone();
     Ok(import_array)
 }

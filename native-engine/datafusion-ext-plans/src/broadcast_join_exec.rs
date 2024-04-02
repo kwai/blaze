@@ -42,7 +42,7 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::df_execution_err;
+use datafusion_ext_commons::{df_execution_err, downcast_any};
 use futures::{stream::once, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 
@@ -161,7 +161,7 @@ impl ExecutionPlan for BroadcastJoinExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         unimplemented!()
     }
 }
@@ -280,7 +280,12 @@ async fn execute_broadcast_join(
             let sort_exprs: Vec<PhysicalSortExpr> = on
                 .iter()
                 .map(|(_col_left, col_right)| PhysicalSortExpr {
-                    expr: Arc::new(Column::new("", col_right.index())),
+                    expr: Arc::new(Column::new(
+                        "",
+                        downcast_any!(col_right, Column)
+                            .expect("requires column")
+                            .index(),
+                    )),
                     options: Default::default(),
                 })
                 .collect();
@@ -381,7 +386,7 @@ impl ExecutionPlan for RecordBatchStreamsWrapperExec {
         )))
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         unimplemented!()
     }
 }

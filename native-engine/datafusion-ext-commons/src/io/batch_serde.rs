@@ -523,7 +523,12 @@ fn write_boolean_array<W: Write>(array: &BooleanArray, output: &mut W) -> Result
     } else {
         write_len(0, output)?;
     }
-    write_bits_buffer(array_data.buffers()[0], array.offset(), array.len(), output)?;
+    write_bits_buffer(
+        &array_data.buffers()[0],
+        array.offset(),
+        array.len(),
+        output,
+    )?;
     Ok(())
 }
 

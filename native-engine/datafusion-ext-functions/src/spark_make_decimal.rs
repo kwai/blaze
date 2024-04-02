@@ -61,7 +61,7 @@ pub fn spark_make_decimal(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 }
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
 
     use arrow::array::{ArrayRef, Decimal128Array, Int64Array};
     use datafusion::{common::ScalarValue, physical_plan::ColumnarValue};
@@ -69,7 +69,7 @@ mod test {
     use crate::spark_make_decimal::spark_make_decimal;
 
     #[test]
-    fn test_decimal() {
+    fn test_decimal() -> Result<(), Box<dyn Error>> {
         let array = Int64Array::from(vec![
             Some(12342132145623),
             Some(13245),
@@ -81,9 +81,8 @@ mod test {
             ColumnarValue::Array(Arc::new(array)),
             ColumnarValue::Scalar(ScalarValue::Int32(Some(10))), // precision
             ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),  // scale
-        ])
-        .unwrap()
-        .into_array(5);
+        ])?
+        .into_array(5)?;
         let expected = Decimal128Array::from(vec![
             Some(12342132145623),
             Some(13245),
@@ -91,9 +90,10 @@ mod test {
             Some(1234567890),
             None,
         ])
-        .with_precision_and_scale(10, 5)
-        .unwrap();
+        .with_precision_and_scale(10, 5)?;
+
         let expected: ArrayRef = Arc::new(expected);
         assert_eq!(&result, &expected);
+        Ok(())
     }
 }

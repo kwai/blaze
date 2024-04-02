@@ -45,7 +45,7 @@ impl Generator for ExplodeArray {
     }
 
     fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
-        let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
+        let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows())?;
         let list = as_list_array(&input_array);
         let value_offsets = list.value_offsets();
         let mut orig_row_id_builder = UInt32Builder::new();
@@ -99,7 +99,7 @@ impl Generator for ExplodeMap {
     }
 
     fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
-        let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows());
+        let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows())?;
         let map = as_map_array(&input_array);
         let value_offsets = map.value_offsets();
         let mut orig_row_id_builder = UInt32Builder::new();

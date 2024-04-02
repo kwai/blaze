@@ -185,20 +185,21 @@ impl Agg for AggCollectSet {
     }
 
     fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
-        Ok(
-            match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
-                Some(w) => {
-                    self.sub_mem_used(w.mem_size());
-                    let set = w
-                        .as_any_boxed()
-                        .downcast::<AggDynSet>()
-                        .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?
-                        .into_values(self.arg_type.clone(), false);
-                    ScalarValue::new_list(Some(set.into_iter().collect()), self.arg_type.clone())
-                }
-                None => ScalarValue::new_list(None, self.arg_type.clone()),
-            },
-        )
+        match std::mem::take(acc.dyn_value_mut(self.accum_state_val_addr)) {
+            Some(w) => {
+                self.sub_mem_used(w.mem_size());
+                let set = w
+                    .as_any_boxed()
+                    .downcast::<AggDynSet>()
+                    .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?
+                    .into_values(self.arg_type.clone(), false);
+                Ok(ScalarValue::List(ScalarValue::new_list(
+                    &set.into_iter().collect::<Vec<_>>(),
+                    &self.arg_type,
+                )))
+            }
+            None => ScalarValue::try_from(&self.data_type),
+        }
     }
 
     fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {

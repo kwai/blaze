@@ -30,7 +30,7 @@ use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 pub fn spark_get_json_object(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let json_string_array = match &args[0] {
         ColumnarValue::Array(array) => array.clone(),
-        ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(1),
+        ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(1)?,
     };
 
     let json_strings = json_string_array
@@ -75,7 +75,7 @@ pub fn spark_get_json_object(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 pub fn spark_parse_json(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let json_string_array = match &args[0] {
         ColumnarValue::Array(array) => array.clone(),
-        ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(1),
+        ColumnarValue::Scalar(scalar) => scalar.to_array_of_size(1)?,
     };
 
     let json_strings = json_string_array
@@ -508,7 +508,7 @@ impl HiveGetJsonObjectMatcher {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
 
     use arrow::array::{AsArray, StringArray};
     use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
@@ -518,7 +518,7 @@ mod test {
     };
 
     #[test]
-    fn test_hive_demo() {
+    fn test_hive_demo() -> Result<(), Box<dyn Error>> {
         let input = r#"
             {
                 "store": {
@@ -603,10 +603,11 @@ mod test {
                 .unwrap(),
             None
         );
+        Ok(())
     }
 
     #[test]
-    fn test_2() {
+    fn test_2() -> Result<(), Box<dyn Error>> {
         let input = r#"
             {
                 "ID": 121,
@@ -636,43 +637,34 @@ mod test {
         let parsed = spark_parse_json(&[ColumnarValue::Array(input_array)]).unwrap();
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.county"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
-            .unwrap()
-            .into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"["浦东","西直门"]"#));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.NOT_EXISTED"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
-            .unwrap()
-            .into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"[]"#));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.name"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
-            .unwrap()
-            .into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert!(v.unwrap().contains("Asher"));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.city"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
-            .unwrap()
-            .into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"["1.234",1.234]"#));
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location[0]"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
-            .unwrap()
-            .into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"{"city":"1.234","county":"浦东"}"#));
+        Ok(())
     }
 
     #[test]
-    fn test_3() {
+    fn test_3() -> Result<(), Box<dyn Error>> {
         let input = r#"
             {
                 "i1": [
@@ -699,17 +691,16 @@ mod test {
             }
         "#;
         let input_array = Arc::new(StringArray::from(vec![input]));
-        let parsed = spark_parse_json(&[ColumnarValue::Array(input_array)]).unwrap();
+        let parsed = spark_parse_json(&[ColumnarValue::Array(input_array)])?;
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.i1.j2"));
-        let r = spark_get_parsed_json_object(&[parsed.clone(), path])
-            .unwrap()
-            .into_array(1);
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
 
         // NOTE:
         // standard jsonpath should output [[200,300],[400, 500],null,"other"]
         // but we have to keep consistent with hive UDFJson
         assert_eq!(v, Some(r#"[200,300,400,500,"other"]"#));
+        Ok(())
     }
 }

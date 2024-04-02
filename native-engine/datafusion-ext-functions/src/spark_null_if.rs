@@ -14,18 +14,64 @@
 
 use std::sync::Arc;
 
-use arrow::{array::*, compute::*, datatypes::*};
+use arrow::{
+    array::*,
+    compute::{
+        kernels::{cmp::eq, nullif::nullif},
+        *,
+    },
+    datatypes::*,
+};
 use datafusion::{
     common::{Result, ScalarValue},
     physical_plan::ColumnarValue,
 };
-use datafusion_ext_commons::df_unimplemented_err;
+use datafusion_ext_commons::{df_execution_err, df_unimplemented_err};
+
+pub fn spark_null_if(args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    // copied from https://docs.rs/datafusion-functions/36.0.0/src/datafusion_functions/core/nullif.rs.html
+    // will use ScalarUDF in the future
+    if args.len() != 2 {
+        return df_execution_err!(
+            "{:?} args were supplied but NULLIF takes exactly two args",
+            args.len()
+        );
+    }
+
+    let (lhs, rhs) = (&args[0], &args[1]);
+
+    match (lhs, rhs) {
+        (ColumnarValue::Array(lhs), ColumnarValue::Scalar(rhs)) => {
+            let rhs = rhs.to_scalar()?;
+            let array = nullif(lhs, &eq(&lhs, &rhs)?)?;
+
+            Ok(ColumnarValue::Array(array))
+        }
+        (ColumnarValue::Array(lhs), ColumnarValue::Array(rhs)) => {
+            let array = nullif(lhs, &eq(&lhs, &rhs)?)?;
+            Ok(ColumnarValue::Array(array))
+        }
+        (ColumnarValue::Scalar(lhs), ColumnarValue::Array(rhs)) => {
+            let lhs = lhs.to_array_of_size(rhs.len())?;
+            let array = nullif(&lhs, &eq(&lhs, &rhs)?)?;
+            Ok(ColumnarValue::Array(array))
+        }
+        (ColumnarValue::Scalar(lhs), ColumnarValue::Scalar(rhs)) => {
+            let val: ScalarValue = match lhs.eq(rhs) {
+                true => lhs.data_type().try_into()?,
+                false => lhs.clone(),
+            };
+
+            Ok(ColumnarValue::Scalar(val))
+        }
+    }
+}
 
 /// used to avoid DivideByZero error in divide/modulo
 pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     Ok(match &args[0] {
         ColumnarValue::Scalar(scalar) => {
-            let data_type = scalar.get_datatype();
+            let data_type = scalar.data_type();
             let zero = match &data_type {
                 &DataType::Decimal128(prec, scale) => ScalarValue::Decimal128(Some(0), prec, scale),
                 _other => ScalarValue::new_zero(&data_type)?,
@@ -84,36 +130,35 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
 
     use arrow::array::{ArrayRef, Decimal128Array, Float32Array, Int32Array};
     use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
 
-    use crate::spark_null_if_zero::spark_null_if_zero;
+    use crate::spark_null_if::spark_null_if_zero;
 
     #[test]
-    fn test_null_if_zero_int() {
+    fn test_null_if_zero_int() -> Result<(), Box<dyn Error>> {
         let result = spark_null_if_zero(&vec![ColumnarValue::Array(Arc::new(Int32Array::from(
             vec![Some(1), None, Some(-1), Some(0)],
-        )))])
-        .unwrap()
-        .into_array(4);
+        )))])?
+        .into_array(4)?;
 
         let expected = Int32Array::from(vec![Some(1), None, Some(-1), None]);
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 
     #[test]
-    fn test_null_if_zero_decimal() {
+    fn test_null_if_zero_decimal() -> Result<(), Box<dyn Error>> {
         let result = spark_null_if_zero(&vec![ColumnarValue::Scalar(ScalarValue::Decimal128(
             Some(1230427389124691),
             20,
             2,
-        ))])
-        .unwrap()
-        .into_array(1);
+        ))])?
+        .into_array(1)?;
 
         let expected = Decimal128Array::from(vec![Some(1230427389124691)])
             .with_precision_and_scale(20, 2)
@@ -121,19 +166,20 @@ mod test {
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 
     #[test]
-    fn test_null_if_zero_float() {
+    fn test_null_if_zero_float() -> Result<(), Box<dyn Error>> {
         let result = spark_null_if_zero(&vec![ColumnarValue::Scalar(ScalarValue::Float32(Some(
             0.0,
-        )))])
-        .unwrap()
-        .into_array(1);
+        )))])?
+        .into_array(1)?;
 
         let expected = Float32Array::from(vec![None]);
         let expected: ArrayRef = Arc::new(expected);
 
         assert_eq!(&result, &expected);
+        Ok(())
     }
 }

@@ -49,7 +49,7 @@ impl Generator for JsonTuple {
     fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
         let num_rows = batch.num_rows();
         let json_values = spark_parse_json(&[self.child.evaluate(batch)?])?;
-        let parsed_json_array = json_values.into_array(num_rows);
+        let parsed_json_array = json_values.into_array(num_rows)?;
         let evaluated: Vec<ArrayRef> = self
             .json_paths
             .iter()

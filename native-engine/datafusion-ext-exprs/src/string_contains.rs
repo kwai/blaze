@@ -158,7 +158,8 @@ mod test {
         let ret = expr
             .evaluate(&batch)
             .expect("Error evaluating expr")
-            .into_array(batch.num_rows());
+            .into_array(batch.num_rows())
+            .unwrap();
 
         // verify result
         let expected: ArrayRef = Arc::new(BooleanArray::from(vec![
@@ -195,7 +196,8 @@ mod test {
         let ret = expr
             .evaluate(&batch)
             .expect("Error evaluating expr")
-            .into_array(batch.num_rows());
+            .into_array(batch.num_rows())
+            .unwrap();
 
         // verify result
         let expected: ArrayRef = Arc::new(BooleanArray::from(vec![

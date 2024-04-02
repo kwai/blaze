@@ -19,7 +19,7 @@ use std::{
 };
 
 use arrow::{
-    array::{ArrayRef, UInt32Builder},
+    array::{ArrayRef, UInt32Array, UInt32Builder},
     datatypes::{Field, Schema, SchemaRef},
     error::ArrowError,
     record_batch::{RecordBatch, RecordBatchOptions},
@@ -188,7 +188,7 @@ impl ExecutionPlan for GenerateExec {
         Some(self.metrics.clone_inner())
     }
 
-    fn statistics(&self) -> Statistics {
+    fn statistics(&self) -> Result<Statistics> {
         todo!()
     }
 }
@@ -221,7 +221,7 @@ async fn execute_generate(
                     .map(|column| {
                         column
                             .evaluate(&batch)
-                            .map(|r| r.into_array(batch.num_rows()))
+                            .and_then(|r| r.into_array(batch.num_rows()))
                     })
                     .collect::<Result<Vec<_>>>()
                     .map_err(|err| err.context("generate: evaluating child output arrays error"))?;
@@ -262,9 +262,9 @@ async fn execute_generate(
                         cur_row_id += 1;
                     }
 
-                    let child_output_row_ids = arrow::compute::add_scalar(
+                    let child_output_row_ids = arrow::compute::kernels::numeric::add(
                         &child_output_row_ids.finish(),
-                        slice_start as u32,
+                        &UInt32Array::new_scalar(slice_start as u32),
                     )?;
                     let generated_ids = generated_ids.finish();
 

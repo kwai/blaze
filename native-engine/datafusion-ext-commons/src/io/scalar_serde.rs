@@ -12,14 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    sync::Arc,
+};
 
-use arrow::datatypes::*;
+use arrow::{
+    array::{AsArray, StructArray},
+    datatypes::*,
+};
 use datafusion::{common::Result, parquet::data_type::AsBytes, scalar::ScalarValue};
 
 use crate::{
     df_unimplemented_err,
-    io::{read_bytes_slice, read_len, read_u8, write_len, write_u8},
+    io::{read_array, read_bytes_slice, read_len, read_u8, write_array, write_len, write_u8},
 };
 
 pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut W) -> Result<()> {
@@ -76,30 +82,12 @@ pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut 
                 write_len(0, output)?;
             }
         }
-        ScalarValue::List(v, field) => {
-            if let Some(v) = v {
-                write_len(v.len() + 1, output)?;
-                for v in v {
-                    write_scalar(v, field.is_nullable(), output)?;
-                }
-            } else {
-                write_len(0, output)?;
-            }
+        ScalarValue::List(v) => {
+            write_array(v.as_ref(), output)?;
         }
-        ScalarValue::Struct(v, fields) => {
-            if nullable {
-                if let Some(v) = v {
-                    write_u8(1, output)?;
-                    for (v, field) in v.iter().zip(fields) {
-                        write_scalar(v, field.is_nullable(), output)?;
-                    }
-                } else {
-                    write_u8(0, output)?;
-                }
-            } else {
-                for (v, field) in v.as_ref().unwrap().iter().zip(fields) {
-                    write_scalar(v, field.is_nullable(), output)?;
-                }
+        ScalarValue::Struct(v) => {
+            for col in v.columns() {
+                write_array(col, output)?;
             }
         }
         ScalarValue::Map(value, _bool) => {
@@ -187,38 +175,16 @@ pub fn read_scalar<R: Read>(
                 ScalarValue::Utf8(None)
             }
         }
-        DataType::List(field) => {
-            let data_len = read_len(input)?;
-            if data_len > 0 {
-                let data_len = data_len - 1;
-                let mut children = Vec::with_capacity(data_len);
-                for _i in 0..data_len {
-                    children.push(read_scalar(input, field.data_type(), field.is_nullable())?);
-                }
-                ScalarValue::List(Some(children), field.clone())
-            } else {
-                ScalarValue::List(None, field.clone())
-            }
+        DataType::List(_) => {
+            let list = read_array(input, data_type, 1)?.as_list().clone();
+            ScalarValue::List(Arc::new(list))
         }
         DataType::Struct(fields) => {
-            if nullable {
-                let valid = read_u8(input)? != 0;
-                if valid {
-                    let mut children = Vec::with_capacity(fields.len());
-                    for field in fields {
-                        children.push(read_scalar(input, field.data_type(), field.is_nullable())?);
-                    }
-                    ScalarValue::Struct(Some(children), fields.clone())
-                } else {
-                    ScalarValue::Struct(None, fields.clone())
-                }
-            } else {
-                let mut children = Vec::with_capacity(fields.len());
-                for field in fields {
-                    children.push(read_scalar(input, field.data_type(), field.is_nullable())?);
-                }
-                ScalarValue::Struct(Some(children), fields.clone())
-            }
+            let columns = fields
+                .iter()
+                .map(|field| read_array(input, field.data_type(), 1))
+                .collect::<Result<Vec<_>>>()?;
+            ScalarValue::Struct(Arc::new(StructArray::new(fields.clone(), columns, None)))
         }
         DataType::Map(field, bool) => {
             let map_value = read_scalar(input, field.data_type(), field.is_nullable())?;
