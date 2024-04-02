@@ -24,6 +24,7 @@ import org.apache.spark.{KwaiSparkBasicMetrics, SparkContext, SparkEnv}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.Shims.get.isNative
 import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.planStore
 import org.codehaus.jackson.annotate.JsonProperty
 
@@ -52,14 +53,17 @@ class BlazeOperatorMetricsCollector extends Logging {
       val operatorList = new ListBuffer[BlazeOperatorInfo]()
 
       planStore.zipWithIndex.foreach { case (plan, index) =>
-        val metricobject = objectMapper.createObjectNode()
+        val metricObject = objectMapper.createObjectNode()
         plan.metrics.foreach { case (key, value) =>
-          metricobject.put(key, value.value)
+          metricObject.put(key, value.value)
         }
-        operatorList.append(BlazeOperatorInfo(plan.getClass.getSimpleName, index, metricobject))
+        operatorList.append(
+          BlazeOperatorInfo(plan.getClass.getSimpleName, index, isNative(plan), metricObject))
       }
       producer.foreach(
-        _.send(key = sc.conf.getAppId, objectMapper.writeValueAsString(new BlazeApplicationInfo(sc, operatorList.toArray))))
+        _.send(
+          key = sc.conf.getAppId,
+          objectMapper.writeValueAsString(new BlazeApplicationInfo(sc, operatorList.toArray))))
       planStore.clear()
       logInfo(
         s"send app opretor metrics to kafka succ after ${System.currentTimeMillis() - startTime}ms")
@@ -100,6 +104,9 @@ case class BlazeOperatorInfo(
     @BeanProperty
     @JsonProperty("execId")
     execId: Int,
+    @BeanProperty
+    @JsonProperty("isNative")
+    isNative: Boolean,
     @BeanProperty
     @JsonProperty("execMetric")
     execMetric: ObjectNode) {}
