@@ -18,7 +18,6 @@ package org.apache.spark.sql.blaze.kwai
 import scala.beans.BeanProperty
 import scala.util.Try
 import org.apache.spark.scheduler._
-import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.{KwaiSparkBasicMetrics, SparkContext, SparkEnv}
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -57,13 +56,9 @@ class BlazeOperatorMetricsCollector extends Logging {
         plan.metrics.foreach { case (key, value) =>
           metricObject.put(key, value.value)
         }
-        logInfo(s"operator metrics is: ${objectMapper.writeValueAsString(
-          BlazeOperatorInfo(plan.getClass.getSimpleName, index, isNative(plan), metricObject))}")
         operatorList.append(
           BlazeOperatorInfo(plan.getClass.getSimpleName, index, isNative(plan), metricObject))
       }
-      logInfo(
-        s"appinfo is: ${objectMapper.writeValueAsString(new BlazeApplicationInfo(sc, operatorList.toArray))}")
       producer.foreach(
         _.send(
           key = sc.conf.getAppId,
@@ -96,6 +91,9 @@ object BlazeOperatorMetricsCollector {
 
 class BlazeApplicationInfo(sc: SparkContext, info: Array[BlazeOperatorInfo])
     extends KwaiSparkBasicMetrics(sc) {
+  @BeanProperty
+  @JsonProperty("blazeJarVersion")
+  val blazeJarVersion: String = sc.conf.get("spark.blaze.jar", "default")
   @BeanProperty
   @JsonProperty("operatorsInfo")
   val operatorsInfo: Array[BlazeOperatorInfo] = info
