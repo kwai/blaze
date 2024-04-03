@@ -57,9 +57,13 @@ class BlazeOperatorMetricsCollector extends Logging {
         plan.metrics.foreach { case (key, value) =>
           metricObject.put(key, value.value)
         }
+        logInfo(s"operator metrics is: ${objectMapper.writeValueAsString(
+          BlazeOperatorInfo(plan.getClass.getSimpleName, index, isNative(plan), metricObject))}")
         operatorList.append(
           BlazeOperatorInfo(plan.getClass.getSimpleName, index, isNative(plan), metricObject))
       }
+      logInfo(
+        s"appinfo is: ${objectMapper.writeValueAsString(new BlazeApplicationInfo(sc, operatorList.toArray))}")
       producer.foreach(
         _.send(
           key = sc.conf.getAppId,

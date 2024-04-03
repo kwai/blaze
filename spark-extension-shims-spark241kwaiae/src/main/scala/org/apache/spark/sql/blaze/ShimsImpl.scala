@@ -35,7 +35,7 @@ import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.UnifiedShuffleManager
 import org.apache.spark.shuffle.sort.MapInfo
-import org.apache.spark.sql.blaze.kwai.{BlazeNullPlaceholderListener, BlazeOperatorMetricsCollector, OperatorMetricsListener}
+import org.apache.spark.sql.blaze.kwai.{BlazeOperatorMetricsCollector, OperatorMetricsListener}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.First
