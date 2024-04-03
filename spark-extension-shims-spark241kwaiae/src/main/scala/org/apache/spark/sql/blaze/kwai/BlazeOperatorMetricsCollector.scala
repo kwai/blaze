@@ -17,15 +17,19 @@ package org.apache.spark.sql.blaze.kwai
 
 import scala.beans.BeanProperty
 import scala.util.Try
-
 import org.apache.spark.scheduler._
-import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.{KwaiSparkBasicMetrics, SparkContext, SparkEnv}
-
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
+import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.Shims.get.isNative
+import org.apache.spark.sql.blaze.kwai.BlazeOperatorMetricsCollector.planStore
+import org.codehaus.jackson.annotate.JsonProperty
 
-class BlazeOperatorMetricsCollector {
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
+
+class BlazeOperatorMetricsCollector extends Logging {
 
   private val kafkaStageMetricsBroker =
     SparkEnv.get.conf.get(
@@ -42,64 +46,33 @@ class BlazeOperatorMetricsCollector {
 
   private val objectMapper: ObjectMapper = new ObjectMapper()
 
-  def createListener(plan: SparkPlan with NativeSupports, sc: SparkContext): Unit = {
-    if (!sc.conf.getBoolean("spark.blaze.enable.queueNullPlaceholderSet", defaultValue = false)) {
-      sc.conf.set("spark.blaze.enable.queueNullPlaceholderSet", "true")
-      sc.listenerBus.addToQueue(new BlazeNullPlaceholderListener, "BlazeOperatorMetrics")
-    }
-    sc.listenerBus.addToQueue(new BlazeOperatorMetricsListener(sc, plan), "BlazeOperatorMetrics")
-  }
-
-  def sendOperatorMetrics(
-      stageInfo: StageInfo,
-      nodeName: String,
-      output: Long,
-      simpleString: String,
-      sc: SparkContext): Unit = {
-    val stageId = stageInfo.stageId
-    val stageAttemptId = stageInfo.attemptNumber()
-    val stageStatus = stageInfo.getStatusString
-    val stageFailedReason = stageInfo.failureReason.getOrElse("")
-
-    val execName = nodeName
-    val execInfo = simpleString
-    val outputRows = output
+  def sendOperatorMetrics(sc: SparkContext): Unit = {
     try {
-      val msg = buildMsg(
-        sc,
-        stageId,
-        stageAttemptId,
-        execName,
-        outputRows,
-        execInfo,
-        stageStatus,
-        stageFailedReason)
-      producer.foreach(_.send(key = sc.conf.getAppId, msg))
+      val startTime = System.currentTimeMillis()
+      val operatorList = new ListBuffer[BlazeOperatorInfo]()
+
+      planStore.zipWithIndex.foreach { case (plan, index) =>
+        val metricObject = objectMapper.createObjectNode()
+        plan.metrics.foreach { case (key, value) =>
+          metricObject.put(key, value.value)
+        }
+        operatorList.append(
+          BlazeOperatorInfo(plan.getClass.getSimpleName, index, isNative(plan), metricObject))
+      }
+      producer.foreach(
+        _.send(
+          key = sc.conf.getAppId,
+          objectMapper.writeValueAsString(new BlazeApplicationInfo(sc, operatorList.toArray))))
+      planStore.clear()
+      logInfo(
+        s"send app opretor metrics to kafka succ after ${System.currentTimeMillis() - startTime}ms")
     } catch {
-      case _: Exception => // ignore exceptions
+      case e: Exception =>
+        logInfo(s"Blaze sendOperatorMetrics error: ${e.getMessage}")
+        producer.foreach(_.flush())
+        producer.foreach(_.close())
     }
   }
-
-  private def buildMsg(
-      sc: SparkContext,
-      stageId: Int,
-      stageAttemptId: Int,
-      execName: String,
-      outputRows: Long,
-      execInfo: String,
-      stageStatus: String,
-      stageFailedReason: String): String =
-    objectMapper.writeValueAsString(
-      new BlazeOperatorMetrics(
-        sc,
-        stageId,
-        stageAttemptId,
-        execName,
-        outputRows,
-        execInfo,
-        stageStatus,
-        stageFailedReason))
-
 }
 
 object BlazeOperatorMetricsCollector {
@@ -113,50 +86,39 @@ object BlazeOperatorMetricsCollector {
       None
     }
   }
+  var planStore: ArrayBuffer[SparkPlan] = new ArrayBuffer[SparkPlan]()
 }
 
-class BlazeOperatorMetrics(
-    sc: SparkContext,
-    metricStageId: Int,
-    metricStageAttemptId: Int,
-    execName: String,
-    outputRows: Long,
-    execInfo: String,
-    stageStatus: String,
-    stageFailedReason: String)
+class BlazeApplicationInfo(sc: SparkContext, info: Array[BlazeOperatorInfo])
     extends KwaiSparkBasicMetrics(sc) {
-  @BeanProperty val stageId: Int = metricStageId
-  @BeanProperty val stageAttemptId: Int = metricStageAttemptId
-  @BeanProperty val operatorName: String = execName
-  @BeanProperty val operatorOutputRows: Long = outputRows
-  @BeanProperty val operatorInfo: String = execInfo
-  @BeanProperty val operatorStageStatus: String = stageStatus
-  @BeanProperty val operatorStageFailedReason: String = stageFailedReason
+  @BeanProperty
+  @JsonProperty("blazeJarVersion")
+  val blazeJarVersion: String = sc.conf.get("spark.blaze.jar", "default")
+  @BeanProperty
+  @JsonProperty("operatorsInfo")
+  val operatorsInfo: Array[BlazeOperatorInfo] = info
 }
 
-class BlazeOperatorMetricsListener(sc: SparkContext, exec: NativeSupports) extends SparkListener {
+case class BlazeOperatorInfo(
+    @BeanProperty
+    @JsonProperty("execName")
+    execName: String,
+    @BeanProperty
+    @JsonProperty("execId")
+    execId: Int,
+    @BeanProperty
+    @JsonProperty("isNative")
+    isNative: Boolean,
+    @BeanProperty
+    @JsonProperty("execMetric")
+    execMetric: ObjectNode) {}
 
-  override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
+class OperatorMetricsListener(sc: SparkContext) extends SparkListener with Logging {
 
+  override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = {
     BlazeOperatorMetricsCollector.instance.foreach { collector =>
-      if (exec.metrics.contains("output_rows")) {
-        collector.sendOperatorMetrics(
-          stageCompleted.stageInfo,
-          exec.getClass.getSimpleName,
-          exec.metrics("output_rows").value,
-          exec.toString(),
-          sc)
-      } else {
-        collector.sendOperatorMetrics(
-          stageCompleted.stageInfo,
-          exec.getClass.getSimpleName,
-          0L,
-          exec.toString(),
-          sc)
-      }
+      collector.sendOperatorMetrics(sc)
     }
     sc.listenerBus.removeListener(this)
   }
 }
-
-class BlazeNullPlaceholderListener extends SparkListener

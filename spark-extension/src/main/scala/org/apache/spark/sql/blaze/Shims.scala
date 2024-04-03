@@ -16,7 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-
+import org.apache.spark.SparkContext
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.blaze.{protobuf => pb}
@@ -229,6 +229,8 @@ abstract class Shims extends Serializable {
       nativeExpr: pb.PhysicalExprNode,
       dataType: DataType,
       nullable: Boolean): Expression
+
+  def postTransform(plan: SparkPlan, sc: SparkContext): Unit = {}
 }
 
 object Shims {
