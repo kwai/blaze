@@ -225,8 +225,7 @@ fn write_bits_buffer<W: Write>(
 }
 
 fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> Result<Buffer> {
-    let buf = read_bytes_slice(input, (bits_len + 7) / 8)
-        .map_err(|err| err.context("batch_serde: error reading bit buffer"))?;
+    let buf = read_bytes_slice(input, (bits_len + 7) / 8)?;
     Ok(Buffer::from(buf))
 }
 

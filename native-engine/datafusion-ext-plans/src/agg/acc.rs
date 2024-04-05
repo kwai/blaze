@@ -570,7 +570,7 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                                 return write_scalar(scalar, false, &mut w.0);
                             }
                         }
-                        return write_u8(0, &mut w.0);
+                        return Ok(write_u8(0, &mut w.0)?);
                     }
                     let f: SaveFn = Box::new(f);
                     f

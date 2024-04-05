@@ -75,7 +75,7 @@ pub fn name_batch(batch: RecordBatch, name_schema: &SchemaRef) -> Result<RecordB
     )?)?))
 }
 
-pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> Result<()> {
+pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> std::io::Result<()> {
     while len >= 128 {
         let v = len % 128;
         len /= 128;
@@ -85,7 +85,7 @@ pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> Result<()> {
     Ok(())
 }
 
-pub fn read_len<R: Read>(input: &mut R) -> Result<usize> {
+pub fn read_len<R: Read>(input: &mut R) -> std::io::Result<usize> {
     let mut len = 0usize;
     let mut factor = 1;
     loop {
@@ -100,18 +100,18 @@ pub fn read_len<R: Read>(input: &mut R) -> Result<usize> {
     Ok(len)
 }
 
-pub fn write_u8<W: Write>(n: u8, output: &mut W) -> Result<()> {
+pub fn write_u8<W: Write>(n: u8, output: &mut W) -> std::io::Result<()> {
     output.write_all(&[n])?;
     Ok(())
 }
 
-pub fn read_u8<R: Read>(input: &mut R) -> Result<u8> {
+pub fn read_u8<R: Read>(input: &mut R) -> std::io::Result<u8> {
     let mut buf = [0; 1];
     input.read_exact(&mut buf)?;
     Ok(buf[0])
 }
 
-pub fn read_bytes_slice<R: Read>(input: &mut R, len: usize) -> Result<Box<[u8]>> {
+pub fn read_bytes_slice<R: Read>(input: &mut R, len: usize) -> std::io::Result<Box<[u8]>> {
     // safety - assume_init() is safe for [u8]
     let mut byte_slice = unsafe { Box::new_uninit_slice(len).assume_init() };
     input.read_exact(byte_slice.as_mut())?;
