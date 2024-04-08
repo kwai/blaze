@@ -18,9 +18,8 @@ use std::{
     any::Any,
     collections::HashSet,
     fmt::Formatter,
-    io::{Cursor, Write},
+    io::{Cursor, Read, Write},
     marker::PhantomData,
-    mem::size_of,
     sync::{Arc, Weak},
 };
 
@@ -45,8 +44,7 @@ use datafusion_ext_commons::{
     array_size::ArraySize,
     downcast_any,
     ds::loser_tree::{ComparableForLoserTree, LoserTree},
-    io::{read_bytes_slice, read_len, read_one_batch, write_len, write_one_batch},
-    slim_bytes::SlimBytes,
+    io::{read_len, read_one_batch, write_len, write_one_batch},
     streams::coalesce_stream::CoalesceInput,
 };
 use futures::{lock::Mutex, stream::once, StreamExt, TryStreamExt};
@@ -71,9 +69,9 @@ use crate::{
 };
 
 // reserve memory for each spill
-// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB +
-// batches=~100KB
-const SPILL_OFFHEAP_MEM_COST: usize = 300000;
+// estimated size: bufread=64KB + lz4dec.src=64KB + lz4dec.dest=64KB
+const SPILL_OFFHEAP_MEM_COST: usize = 200000;
+const SPILL_MERGING_SIZE: usize = 32;
 
 #[derive(Debug)]
 pub struct SortExec {
@@ -162,13 +160,18 @@ impl ExecutionPlan for SortExec {
     }
 }
 
+struct LevelSpill {
+    spill: Box<dyn Spill>,
+    level: usize,
+}
+
 struct ExternalSorter {
     name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     prune_sort_keys_from_batch: Arc<PruneSortKeysFromBatch>,
     limit: usize,
     data: Arc<Mutex<BufferedData>>,
-    spills: Mutex<Vec<Box<dyn Spill>>>,
+    spills: Mutex<Vec<LevelSpill>>,
     baseline_metrics: BaselineMetrics,
     spill_metrics: SpillMetrics,
 }
@@ -191,42 +194,51 @@ impl MemConsumer for ExternalSorter {
 
     async fn spill(&self) -> Result<()> {
         let mut spill = try_new_spill(&self.spill_metrics)?;
-        std::mem::take(&mut *self.data.lock().await).try_into_spill(self, &mut spill)?;
+        let data = std::mem::take(&mut *self.data.lock().await);
+        let sub_batch_size =
+            compute_suggested_batch_size_for_kway_merge(data.mem_used(), data.num_rows);
+        data.try_into_spill(self, &mut spill)?;
 
-        self.spills.lock().await.push(spill);
+        self.spills
+            .lock()
+            .await
+            .push(LevelSpill { spill, level: 0 });
         self.update_mem_used(0).await?;
+
+        // merge if there are too many spills
+        let mut spills = self.spills.lock().await;
+        let mut levels = (0..32).map(|_| vec![]).collect::<Vec<_>>();
+        for spill in std::mem::take(&mut *spills) {
+            levels[spill.level].push(spill.spill);
+        }
+        for level in 0..levels.len() {
+            if levels[level].len() >= SPILL_MERGING_SIZE {
+                let merged = merge_spills(
+                    std::mem::take(&mut levels[level]),
+                    &self.spill_metrics,
+                    sub_batch_size,
+                    self.limit,
+                    self.prune_sort_keys_from_batch.pruned_schema.clone(),
+                )?;
+                levels[level + 1].push(merged);
+            } else {
+                spills.extend(
+                    std::mem::take(&mut levels[level])
+                        .into_iter()
+                        .map(|spill| LevelSpill { spill, level }),
+                )
+            }
+        }
         Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-struct KeyRef {
-    start: u32,
-    len: u32,
-}
-
-impl KeyRef {
-    fn new_from_key_store(key_store: &mut Vec<u8>, key: &[u8]) -> Self {
-        let start = key_store.len() as u32;
-        let len = key.len() as u32;
-        key_store.extend_from_slice(key);
-        Self { start, len }
-    }
-
-    fn ref_key<'a>(&self, key_store: &'a [u8]) -> &'a [u8] {
-        let start = self.start as usize;
-        let end = start + self.len as usize;
-        &key_store[start..end]
     }
 }
 
 #[derive(Default)]
 struct BufferedData {
     staging_batches: Vec<RecordBatch>,
-    key_stores: Vec<Box<[u8]>>,
-    key_stores_mem_used: usize,
+    sorted_key_stores: Vec<Box<[u8]>>,
+    sorted_key_stores_mem_used: usize,
     sorted_batches: Vec<RecordBatch>,
-    sorted_keys: Vec<Vec<KeyRef>>,
     staging_mem_used: usize,
     sorted_batches_mem_used: usize,
     num_rows: usize,
@@ -237,24 +249,17 @@ impl BufferedData {
         let mut writer = spill.get_compressed_writer();
         let sub_batch_size =
             compute_suggested_batch_size_for_kway_merge(self.mem_used(), self.num_rows);
-        for (keys, batch) in self.into_sorted_batches(sub_batch_size, sorter)? {
+        for (sorted_key_store, batch) in self.into_sorted_batches(sub_batch_size, sorter)? {
             let mut buf = vec![];
             write_one_batch(&batch, &mut Cursor::new(&mut buf))?;
             writer.write_all(&buf)?;
-
-            for key in keys {
-                write_len(key.len(), &mut writer)?;
-                writer.write_all(key)?;
-            }
+            writer.write_all(&sorted_key_store)?;
         }
         Ok(())
     }
 
     fn mem_used(&self) -> usize {
-        self.staging_mem_used
-            + self.sorted_batches_mem_used
-            + self.key_stores_mem_used
-            + self.num_rows * size_of::<KeyRef>()
+        self.staging_mem_used + self.sorted_batches_mem_used + self.sorted_key_stores_mem_used
     }
 
     fn add_batch(&mut self, batch: RecordBatch, sorter: &ExternalSorter) -> Result<()> {
@@ -280,13 +285,14 @@ impl BufferedData {
             .unzip();
 
         // sort the batch and append to sorter
-        let mut key_store =
+        let mut sorted_key_store =
             Vec::with_capacity(key_rows.iter().map(|rows| rows.size()).sum::<usize>());
-        let sorted_keys;
+        let mut key_writer = SortedKeysWriter::default();
+        let mut num_rows = 0;
         let sorted_batch;
 
         if !sorter.prune_sort_keys_from_batch.is_all_pruned() {
-            let (cur_sorted_keys, cur_sorted_indices): (Vec<KeyRef>, Vec<_>) = key_rows
+            let cur_sorted_indices = key_rows
                 .iter()
                 .enumerate()
                 .flat_map(|(batch_idx, rows)| {
@@ -301,15 +307,14 @@ impl BufferedData {
                 .sorted_unstable_by_key(|&(key, ..)| key)
                 .take(sorter.limit)
                 .map(|(key, batch_idx, row_idx)| {
-                    let key_ref = KeyRef::new_from_key_store(&mut key_store, key);
-                    (key_ref, (batch_idx as usize, row_idx as usize))
+                    num_rows += 1;
+                    key_writer.write_key(key, &mut sorted_key_store).unwrap();
+                    (batch_idx as usize, row_idx as usize)
                 })
-                .unzip();
-
-            sorted_keys = cur_sorted_keys;
+                .collect::<Vec<_>>();
             sorted_batch = interleave_batches(schema, &batches, &cur_sorted_indices)?;
         } else {
-            sorted_keys = key_rows
+            key_rows
                 .iter()
                 .flat_map(|rows| {
                     rows.iter().map(|key| unsafe {
@@ -319,16 +324,17 @@ impl BufferedData {
                 })
                 .sorted_unstable()
                 .take(sorter.limit)
-                .map(|key| KeyRef::new_from_key_store(&mut key_store, key))
-                .collect();
-            sorted_batch = create_zero_column_batch(sorted_keys.len());
+                .for_each(|key| {
+                    num_rows += 1;
+                    key_writer.write_key(key, &mut sorted_key_store).unwrap();
+                });
+            sorted_batch = create_zero_column_batch(num_rows);
         }
         self.sorted_batches_mem_used += sorted_batch.get_array_mem_size();
-        self.key_stores_mem_used += key_store.len();
+        self.sorted_key_stores_mem_used += sorted_key_store.len();
 
-        self.key_stores.push(key_store.into());
+        self.sorted_key_stores.push(sorted_key_store.into());
         self.sorted_batches.push(sorted_batch);
-        self.sorted_keys.push(sorted_keys);
         Ok(())
     }
 
@@ -336,70 +342,76 @@ impl BufferedData {
         mut self,
         batch_size: usize,
         sorter: &ExternalSorter,
-    ) -> Result<impl Iterator<Item = (Vec<&'a [u8]>, RecordBatch)>> {
+    ) -> Result<impl Iterator<Item = (Vec<u8>, RecordBatch)>> {
         if !self.staging_batches.is_empty() {
             self.flush_staging_batches(sorter)?;
         }
-        struct Cursor<'a> {
+        struct Cursor {
             idx: usize,
             row_idx: usize,
-            keys: Vec<KeyRef>,
-            key_store: Box<[u8]>,
-            cur_key: Option<&'a [u8]>,
+            num_rows: usize,
+            sorted_key_store_cursor: std::io::Cursor<Box<[u8]>>,
+            key_reader: SortedKeysReader,
         }
 
-        impl Cursor<'_> {
-            fn new(idx: usize, keys: Vec<KeyRef>, key_store: Box<[u8]>) -> Self {
-                let mut new = Self {
-                    idx,
+        impl Cursor {
+            fn new(idx: usize, num_rows: usize, sorted_key_store: Box<[u8]>) -> Self {
+                let mut sorted_key_store_cursor = std::io::Cursor::new(sorted_key_store);
+                let mut key_reader = SortedKeysReader::default();
+                if num_rows > 0 {
+                    key_reader.read_key(&mut sorted_key_store_cursor).unwrap();
+                }
+
+                Self {
                     row_idx: 0,
-                    keys,
-                    key_store,
-                    cur_key: None,
-                };
-                new.update_cur_key();
-                new
+                    idx,
+                    num_rows,
+                    sorted_key_store_cursor,
+                    key_reader,
+                }
+            }
+
+            fn finished(&self) -> bool {
+                self.row_idx >= self.num_rows
+            }
+
+            fn cur_key(&self) -> &[u8] {
+                &self.key_reader.cur_key
             }
 
             fn forward(&mut self) {
                 self.row_idx += 1;
-                self.update_cur_key();
-            }
-
-            fn update_cur_key(&mut self) {
-                self.cur_key = unsafe {
-                    // safety: cur_key has the same lifetime with key_store
-                    std::mem::transmute(
-                        self.keys
-                            .get(self.row_idx)
-                            .map(|key_ref| key_ref.ref_key(&self.key_store)),
-                    )
-                };
-            }
-        }
-
-        impl ComparableForLoserTree for Cursor<'_> {
-            #[inline(always)]
-            fn lt(&self, other: &Self) -> bool {
-                match (&self.cur_key, &other.cur_key) {
-                    (Some(k1), Some(k2)) => k1 < k2,
-                    (None, _) => false,
-                    (_, None) => true,
+                if !self.finished() {
+                    self.key_reader
+                        .read_key(&mut self.sorted_key_store_cursor)
+                        .unwrap();
                 }
             }
         }
 
-        struct SortedBatchesIterator<'a> {
-            cursors: LoserTree<Cursor<'a>>,
+        impl ComparableForLoserTree for Cursor {
+            #[inline(always)]
+            fn lt(&self, other: &Self) -> bool {
+                if self.finished() {
+                    return false;
+                }
+                if other.finished() {
+                    return true;
+                }
+                self.cur_key() < other.cur_key()
+            }
+        }
+
+        struct SortedBatchesIterator {
+            cursors: LoserTree<Cursor>,
             batches: Vec<RecordBatch>,
             batch_size: usize,
             num_output_rows: usize,
             limit: usize,
-            _phantom: PhantomData<&'a ()>,
         }
 
-        impl<'a> Iterator for SortedBatchesIterator<'a> {
-            type Item = (Vec<&'a [u8]>, RecordBatch);
+        impl Iterator for SortedBatchesIterator {
+            type Item = (Vec<u8>, RecordBatch);
 
             fn next(&mut self) -> Option<Self::Item> {
                 if self.num_output_rows >= self.limit {
@@ -408,13 +420,17 @@ impl BufferedData {
                 let cur_batch_size = self.batch_size.min(self.limit - self.num_output_rows);
                 let batch_schema = self.batches[0].schema();
                 let is_all_pruned = self.batches[0].num_columns() == 0;
-
-                let mut key_refs = Vec::with_capacity(cur_batch_size);
                 let mut indices = Vec::with_capacity(cur_batch_size);
+                let mut sorted_key_store = vec![];
+                let mut key_writer = SortedKeysWriter::default();
 
-                while key_refs.len() < cur_batch_size {
+                for _ in 0..cur_batch_size {
                     let mut min_cursor = self.cursors.peek_mut();
-                    key_refs.push(min_cursor.keys[min_cursor.row_idx]);
+                    assert!(!min_cursor.finished());
+
+                    key_writer
+                        .write_key(min_cursor.cur_key(), &mut sorted_key_store)
+                        .unwrap();
                     indices.push((min_cursor.idx, min_cursor.row_idx));
                     min_cursor.forward();
                 }
@@ -422,30 +438,19 @@ impl BufferedData {
                     interleave_batches(batch_schema, &self.batches, &indices)
                         .expect("error merging sorted batches: interleaving error")
                 } else {
-                    create_zero_column_batch(key_refs.len())
+                    create_zero_column_batch(cur_batch_size)
                 };
-                let keys = key_refs
-                    .into_iter()
-                    .zip(&indices)
-                    .map(|(key_ref, (idx, _))| unsafe {
-                        // safety: cursor have same lifetime with 'a
-                        std::mem::transmute::<_, &'a [u8]>(
-                            key_ref.ref_key(&self.cursors.values()[*idx].key_store),
-                        )
-                    })
-                    .collect();
-
                 self.num_output_rows += cur_batch_size;
-                Some((keys, batch))
+                Some((sorted_key_store, batch))
             }
         }
 
         let cursors = LoserTree::new(
-            self.sorted_keys
+            self.sorted_key_stores
                 .into_iter()
-                .zip(self.key_stores)
+                .zip(&self.sorted_batches)
                 .enumerate()
-                .map(|(idx, (keys, key_store))| Cursor::new(idx, keys, key_store))
+                .map(|(idx, (key_store, batch))| Cursor::new(idx, batch.num_rows(), key_store))
                 .collect(),
         );
 
@@ -455,7 +460,6 @@ impl BufferedData {
             batches: self.sorted_batches,
             limit: sorter.limit.min(self.num_rows),
             num_output_rows: 0,
-            _phantom: PhantomData::default(),
         }))
     }
 }
@@ -571,27 +575,26 @@ impl ExternalSorter {
         self.set_spillable(false);
 
         let data = std::mem::take(&mut *self.data.lock().await);
-        let mut spills = std::mem::take(&mut *self.spills.lock().await);
+        let spills = std::mem::take(&mut *self.spills.lock().await);
         log::info!(
             "sort exec starts outputting with {} ({} spills)",
             self.name(),
             spills.len(),
         );
 
-        let sub_batch_size = if spills.is_empty() {
-            compute_suggested_batch_size_for_output(data.mem_used(), data.num_rows)
-        } else {
-            compute_suggested_batch_size_for_kway_merge(data.mem_used(), data.num_rows)
-        };
-        self.update_mem_used_with_diff(sub_batch_size as isize)
-            .await?;
-
         // no spills -- output in-mem batches
         if spills.is_empty() {
-            for (keys, batch) in data.into_sorted_batches(sub_batch_size, &self)? {
+            if data.num_rows == 0 {
+                // no data
+                return Ok(());
+            }
+            let sub_batch_size =
+                compute_suggested_batch_size_for_output(data.mem_used(), data.num_rows);
+
+            for (key_store, pruned_batch) in data.into_sorted_batches(sub_batch_size, &self)? {
                 let batch = self
                     .prune_sort_keys_from_batch
-                    .restore(batch, keys.into_iter())?;
+                    .restore(pruned_batch, key_store)?;
                 self.baseline_metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
             }
@@ -600,98 +603,32 @@ impl ExternalSorter {
         }
 
         // move in-mem batches into spill, so we can free memory as soon as possible
+        let mut spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
         let mut spill: Box<dyn Spill> = Box::new(vec![]);
+        let sub_batch_size =
+            compute_suggested_batch_size_for_kway_merge(data.mem_used(), data.num_rows);
+
         data.try_into_spill(&self, &mut spill)?;
         let spill_size = downcast_any!(spill, Vec<u8>)?.len();
         self.update_mem_used(spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
             .await?;
         spills.push(spill);
 
-        // use loser tree to merge all spills
-        let mut cursors: LoserTree<SpillCursor> = LoserTree::new(
-            spills
-                .iter_mut()
-                .enumerate()
-                .map(|(id, spill)| SpillCursor::try_from_spill(id, self.clone(), spill))
-                .collect::<Result<_>>()?,
-        );
+        let mut merger = ExternalMerger::try_new(
+            &mut spills,
+            self.prune_sort_keys_from_batch.pruned_schema(),
+            sub_batch_size,
+            self.limit,
+        )?;
+        while let Some((key_store, pruned_batch)) = merger.next().transpose()? {
+            let batch = self
+                .prune_sort_keys_from_batch
+                .restore(pruned_batch, key_store)?;
+            let cursors_mem_used = merger.cursors_mem_used();
 
-        let mut num_total_output_rows = 0;
-        let mut staging_cursor_ids = Vec::with_capacity(sub_batch_size);
-        let mut staging_keys = Vec::with_capacity(sub_batch_size);
-
-        macro_rules! flush_staging {
-            () => {{
-                if num_total_output_rows < self.limit {
-                    let batch_num_rows = staging_keys.len().min(self.limit - num_total_output_rows);
-                    let mut batches_base_idx = vec![];
-                    let mut base_idx = 0;
-                    for cursor in cursors.values() {
-                        batches_base_idx.push(base_idx);
-                        base_idx += cursor.cur_batches.len();
-                    }
-
-                    let pruned_schema = self.prune_sort_keys_from_batch.pruned_schema();
-                    let pruned_batch = if !self.prune_sort_keys_from_batch.is_all_pruned() {
-                        let mut batches = vec![];
-                        for cursor in cursors.values() {
-                            batches.extend(cursor.cur_batches.clone());
-                        }
-                        let staging_indices = std::mem::take(&mut staging_cursor_ids)
-                            .iter()
-                            .map(|&cursor_id| {
-                                let cursor = &mut cursors.values_mut()[cursor_id];
-                                let base_idx = batches_base_idx[cursor.id];
-                                let (batch_idx, row_idx) = cursor.next_row();
-                                (base_idx + batch_idx, row_idx)
-                            })
-                            .collect::<Vec<_>>();
-                        interleave_batches(pruned_schema, &batches, &staging_indices)?
-                    } else {
-                        RecordBatch::try_new_with_options(
-                            pruned_schema,
-                            vec![],
-                            &RecordBatchOptions::new().with_row_count(Some(staging_keys.len())),
-                        )?
-                    };
-
-                    let mut batch = self
-                        .prune_sort_keys_from_batch
-                        .restore(pruned_batch, std::mem::take(&mut staging_keys).iter())?;
-                    if batch_num_rows < batch.num_rows() {
-                        batch = batch.slice(0, batch_num_rows)
-                    }
-
-                    num_total_output_rows += batch.num_rows();
-                    let _ = num_total_output_rows;
-                    self.baseline_metrics.record_output(batch.num_rows());
-                    sender.send(Ok(batch), Some(&mut timer)).await;
-                }
-            }};
-        }
-
-        // merge
-        while num_total_output_rows < self.limit {
-            let mut min_cursor = cursors.peek_mut();
-            if min_cursor.finished {
-                break;
-            }
-            if !self.prune_sort_keys_from_batch.is_all_pruned() {
-                staging_cursor_ids.push(min_cursor.id);
-            }
-            staging_keys.push(min_cursor.next_key()?);
-            drop(min_cursor);
-
-            if staging_keys.len() >= sub_batch_size {
-                flush_staging!();
-
-                for cursor in cursors.values_mut() {
-                    cursor.clear_finished_batches();
-                }
-            }
-        }
-        if !staging_keys.is_empty() {
-            flush_staging!();
+            self.update_mem_used(cursors_mem_used).await?;
+            self.baseline_metrics.record_output(batch.num_rows());
+            sender.send(Ok(batch), Some(&mut timer)).await;
         }
         self.update_mem_used(0).await?;
         Ok(())
@@ -700,76 +637,86 @@ impl ExternalSorter {
 
 struct SpillCursor<'a> {
     id: usize,
-    sorter: Arc<ExternalSorter>,
+    pruned_schema: SchemaRef,
     input: SpillCompressedReader<'a>,
     cur_batch_num_rows: usize,
     cur_loaded_num_rows: usize,
     cur_batches: Vec<RecordBatch>,
+    cur_key_reader: SortedKeysReader,
+    cur_key_row_idx: usize,
     cur_batch_idx: usize,
     cur_row_idx: usize,
-    cur_key: SlimBytes,
+    cur_mem_used: usize,
     finished: bool,
 }
 
 impl<'a> ComparableForLoserTree for SpillCursor<'a> {
     #[inline(always)]
     fn lt(&self, other: &Self) -> bool {
-        let key1 = (self.finished, &self.cur_key);
-        let key2 = (other.finished, &other.cur_key);
-        key1 < key2
+        if self.finished {
+            return false;
+        }
+        if other.finished {
+            return true;
+        }
+        self.cur_key() < other.cur_key()
     }
 }
 
 impl<'a> SpillCursor<'a> {
     fn try_from_spill(
         id: usize,
-        sorter: Arc<ExternalSorter>,
+        pruned_schema: SchemaRef,
         spill: &'a mut Box<dyn Spill>,
     ) -> Result<Self> {
         let mut iter = SpillCursor {
             id,
-            sorter,
+            pruned_schema,
             input: spill.get_compressed_reader(),
             cur_batch_num_rows: 0,
             cur_loaded_num_rows: 0,
             cur_batches: vec![],
+            cur_key_reader: SortedKeysReader::default(),
+            cur_key_row_idx: 0,
             cur_batch_idx: 0,
             cur_row_idx: 0,
-            cur_key: Default::default(),
+            cur_mem_used: 0,
             finished: false,
         };
-        iter.next_key()?; // load first record into current
+        iter.next_key()?; // load first record
         Ok(iter)
     }
 
+    fn cur_key(&self) -> &[u8] {
+        &self.cur_key_reader.cur_key
+    }
+
     // forwards to next key and returns current key
-    fn next_key(&mut self) -> Result<SlimBytes> {
+    fn next_key(&mut self) -> Result<()> {
         assert!(
             !self.finished,
             "calling next_key() on finished sort spill cursor"
         );
 
-        if self.cur_loaded_num_rows >= self.cur_batch_num_rows && !self.load_next_batch()? {
-            let cur_key = std::mem::take(&mut self.cur_key);
-            return Ok(cur_key);
+        if self.cur_key_row_idx >= self.cur_batches.last().map(|b| b.num_rows()).unwrap_or(0) {
+            if !self.load_next_batch()? {
+                self.finished = true;
+                return Ok(());
+            }
         }
-        let sorted_row_len = read_len(&mut self.input)?;
-        let cur_key = std::mem::replace(
-            &mut self.cur_key,
-            read_bytes_slice(&mut self.input, sorted_row_len)?.into(),
-        );
-        self.cur_loaded_num_rows += 1;
-        Ok(cur_key)
+        self.cur_key_reader.read_key(&mut self.input).unwrap();
+        self.cur_key_row_idx += 1;
+        Ok(())
     }
 
     fn load_next_batch(&mut self) -> Result<bool> {
-        if let Some(batch) = read_one_batch(
-            &mut self.input,
-            &self.sorter.prune_sort_keys_from_batch.pruned_schema(),
-        )? {
+        if let Some(batch) = read_one_batch(&mut self.input, &self.pruned_schema)? {
+            self.cur_mem_used += batch.get_array_mem_size();
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;
             self.cur_batches.push(batch);
+            self.cur_key_reader = SortedKeysReader::default();
+            self.cur_key_row_idx = 0;
             return Ok(true);
         }
         self.finished = true;
@@ -790,10 +737,177 @@ impl<'a> SpillCursor<'a> {
 
     fn clear_finished_batches(&mut self) {
         if self.cur_batch_idx > 0 {
-            self.cur_batches.drain(..self.cur_batch_idx);
+            for batch in self.cur_batches.drain(..self.cur_batch_idx) {
+                self.cur_mem_used -= batch.get_array_mem_size();
+            }
             self.cur_batch_idx = 0;
         }
     }
+}
+
+struct ExternalMerger<'a> {
+    cursors: LoserTree<SpillCursor<'a>>,
+    pruned_schema: SchemaRef,
+    sub_batch_size: usize,
+    limit: usize,
+    num_total_output_rows: usize,
+    staging_cursor_ids: Vec<usize>,
+    staging_key_store: Vec<u8>,
+    staging_key_writer: SortedKeysWriter,
+    staging_num_rows: usize,
+}
+
+impl<'a> ExternalMerger<'a> {
+    fn try_new(
+        spills: &'a mut [Box<dyn Spill>],
+        pruned_schema: SchemaRef,
+        sub_batch_size: usize,
+        limit: usize,
+    ) -> Result<Self> {
+        Ok(Self {
+            cursors: LoserTree::new(
+                spills
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(id, spill)| {
+                        SpillCursor::try_from_spill(id, pruned_schema.clone(), spill)
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+            pruned_schema,
+            sub_batch_size,
+            limit,
+            num_total_output_rows: 0,
+            staging_cursor_ids: Vec::with_capacity(sub_batch_size),
+            staging_key_store: vec![],
+            staging_key_writer: SortedKeysWriter::default(),
+            staging_num_rows: 0,
+        })
+    }
+}
+
+impl Iterator for ExternalMerger<'_> {
+    type Item = Result<(Vec<u8>, RecordBatch)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.merge_one().transpose()
+    }
+}
+
+impl ExternalMerger<'_> {
+    fn cursors_mem_used(&self) -> usize {
+        self.cursors.len() * SPILL_OFFHEAP_MEM_COST
+            + self
+                .cursors
+                .values()
+                .iter()
+                .map(|cursor| cursor.cur_mem_used)
+                .sum::<usize>()
+    }
+
+    fn merge_one(&mut self) -> Result<Option<(Vec<u8>, RecordBatch)>> {
+        let pruned_schema = self.pruned_schema.clone();
+
+        // collect merged records to staging
+        if self.num_total_output_rows < self.limit {
+            while self.staging_num_rows < self.sub_batch_size {
+                let mut min_cursor = self.cursors.peek_mut();
+                if min_cursor.finished {
+                    break;
+                }
+                if !pruned_schema.fields().is_empty() {
+                    self.staging_cursor_ids.push(min_cursor.id);
+                }
+                self.staging_key_writer
+                    .write_key(min_cursor.cur_key(), &mut self.staging_key_store)
+                    .unwrap();
+                self.staging_num_rows += 1;
+                min_cursor.next_key()?;
+            }
+        }
+
+        // flush staging
+        if !self.staging_key_store.is_empty() {
+            let flushed = self.flush_staging()?;
+            for cursor in self.cursors.values_mut() {
+                cursor.clear_finished_batches();
+            }
+            return Ok(Some(flushed));
+        }
+        Ok(None)
+    }
+
+    fn flush_staging(&mut self) -> Result<(Vec<u8>, RecordBatch)> {
+        let num_rows = self
+            .staging_num_rows
+            .min(self.limit - self.num_total_output_rows);
+
+        // collect keys
+        let key_store = std::mem::take(&mut self.staging_key_store);
+        self.staging_key_writer = SortedKeysWriter::default();
+        self.staging_num_rows = 0;
+
+        // collect pruned columns
+        let pruned_schema = self.pruned_schema.clone();
+        let pruned_batch = if !pruned_schema.fields().is_empty() {
+            let mut batches_base_idx = vec![];
+            let mut base_idx = 0;
+            for cursor in self.cursors.values() {
+                batches_base_idx.push(base_idx);
+                base_idx += cursor.cur_batches.len();
+            }
+
+            let mut batches = vec![];
+            for cursor in self.cursors.values() {
+                batches.extend(cursor.cur_batches.clone());
+            }
+            let staging_indices = std::mem::take(&mut self.staging_cursor_ids)
+                .iter()
+                .take(num_rows)
+                .map(|&cursor_id| {
+                    let cursor = &mut self.cursors.values_mut()[cursor_id];
+                    let base_idx = batches_base_idx[cursor.id];
+                    let (batch_idx, row_idx) = cursor.next_row();
+                    (base_idx + batch_idx, row_idx)
+                })
+                .collect::<Vec<_>>();
+            interleave_batches(pruned_schema, &batches, &staging_indices)?
+        } else {
+            RecordBatch::try_new_with_options(
+                pruned_schema.clone(),
+                vec![],
+                &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+            )?
+        };
+        self.num_total_output_rows += num_rows;
+        Ok((key_store, pruned_batch))
+    }
+}
+
+fn merge_spills(
+    mut spills: Vec<Box<dyn Spill>>,
+    spill_metrics: &SpillMetrics,
+    sub_batch_size: usize,
+    limit: usize,
+    pruned_schema: SchemaRef,
+) -> Result<Box<dyn Spill>> {
+    assert!(spills.len() >= 1);
+    if spills.len() == 1 {
+        return Ok(spills.into_iter().next().unwrap());
+    }
+
+    let mut output_spill = try_new_spill(spill_metrics)?;
+    let mut output_writer = output_spill.get_compressed_writer();
+    let mut merger = ExternalMerger::try_new(&mut spills, pruned_schema, sub_batch_size, limit)?;
+
+    while let Some((key_store, pruned_batch)) = merger.next().transpose()? {
+        let mut buf = vec![];
+        write_one_batch(&pruned_batch, &mut Cursor::new(&mut buf))?;
+        output_writer.write_all(&buf)?;
+        output_writer.write_all(&key_store)?;
+    }
+    drop(output_writer);
+    Ok(output_spill)
 }
 
 fn create_zero_column_batch(num_rows: usize) -> RecordBatch {
@@ -938,15 +1052,30 @@ impl PruneSortKeysFromBatch {
     fn restore<'a>(
         &self,
         pruned_batch: RecordBatch,
-        keys: impl Iterator<Item = impl AsRef<[u8]>>,
+        sorted_key_store: Vec<u8>,
     ) -> Result<RecordBatch> {
         let mut restored_fields = vec![];
+
+        // restore keys
+        let mut key_data = vec![];
+        let mut key_lens = vec![];
+        let mut key_reader = SortedKeysReader::default();
+        let mut sorted_key_store_cursor = Cursor::new(sorted_key_store);
+        for _ in 0..pruned_batch.num_rows() {
+            key_reader.read_key(&mut sorted_key_store_cursor)?;
+            key_data.extend(&key_reader.cur_key);
+            key_lens.push(key_reader.cur_key.len());
+        }
+
+        let mut key_offset = 0;
         let key_cols = self
             .sort_row_converter
             .lock()
-            .convert_rows(keys.map(|key| unsafe {
-                // safety - row has the same lifetime 'a
-                let row = self.sort_row_parser.parse(key.as_ref());
+            .convert_rows(key_lens.into_iter().map(|key_len| unsafe {
+                // safety - row has the same lifetime with key_data
+                let key = &key_data[key_offset..][..key_len];
+                let row = self.sort_row_parser.parse(key);
+                key_offset += key_len;
                 std::mem::transmute::<_, Row<'a>>(row)
             }))?;
 
@@ -966,6 +1095,60 @@ impl PruneSortKeysFromBatch {
             &RecordBatchOptions::new().with_row_count(Some(pruned_batch.num_rows())),
         )?)
     }
+}
+
+#[derive(Default)]
+struct SortedKeysWriter {
+    cur_key: Vec<u8>,
+}
+
+impl SortedKeysWriter {
+    fn write_key(&mut self, key: &[u8], w: &mut impl Write) -> std::io::Result<()> {
+        let prefix_len = common_prefix_len(&self.cur_key, key);
+        let suffix_len = key.len() - prefix_len;
+
+        if prefix_len == key.len() && suffix_len == 0 {
+            write_len(0, w)?; // indicates same record
+        } else {
+            self.cur_key.resize(key.len(), 0);
+            self.cur_key[prefix_len..].copy_from_slice(&key[prefix_len..]);
+            write_len(suffix_len + 1, w)?;
+            write_len(prefix_len, w)?;
+            w.write_all(&key[prefix_len..])?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct SortedKeysReader {
+    cur_key: Vec<u8>,
+}
+
+impl SortedKeysReader {
+    fn read_key(&mut self, r: &mut impl Read) -> std::io::Result<&[u8]> {
+        let b = read_len(r)?;
+        if b > 0 {
+            let suffix_len = b - 1;
+            let prefix_len = read_len(r)?;
+            self.cur_key.resize(prefix_len + suffix_len, 0);
+            r.read_exact(&mut self.cur_key[prefix_len..][..suffix_len])?;
+        }
+        return Ok(&self.cur_key);
+    }
+}
+
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    let max_len = a.len().min(b.len());
+    for i in 0..max_len {
+        if unsafe {
+            // safety - indices are within bounds
+            a.get_unchecked(i) != b.get_unchecked(i)
+        } {
+            return i;
+        }
+    }
+    max_len
 }
 
 #[cfg(test)]
@@ -1091,10 +1274,10 @@ mod fuzztest {
             let rand_val1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
             let rand_val2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
             let batch = RecordBatch::try_from_iter_with_nullable(vec![
-                ("k1", rand_key1, false),
-                ("k2", rand_key2, false),
-                ("v1", rand_val1, false),
-                ("v2", rand_val2, false),
+                ("k1", rand_key1, true),
+                ("k2", rand_key2, true),
+                ("v1", rand_val1, true),
+                ("v2", rand_val2, true),
             ])?;
             num_rows += batch.num_rows();
             batches.push(batch);
