@@ -25,6 +25,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryConsumer
 import org.apache.spark.memory.MemoryMode
+import org.apache.spark.memory.blaze.OnHeapSpillManagerHelper
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.util.Utils
 
@@ -52,6 +53,23 @@ class OnHeapSpillManager(taskContext: TaskContext)
   def blockManager: BlockManager = _blockManager
 
   def memUsed: Long = getUsed
+
+  /**
+   * check whether we should spill to onheap memory
+   * @return
+   */
+  @SuppressWarnings(Array("unused"))
+  def isOnHeapAvailable: Boolean = {
+    val memoryPool = OnHeapSpillManagerHelper.getOnHeapExecutionMemoryPool
+    val memoryUsed = memoryPool.memoryUsed
+    val memoryFree = memoryPool.memoryFree
+    val memoryUsedRatio = (memoryUsed + 1.0) / (memoryUsed + memoryFree + 1.0)
+    logInfo(s"current on-heap execution memory usage:" +
+      s" used=${Utils.bytesToString(memoryUsed)}," +
+      s" free=${Utils.bytesToString(memoryFree)}," +
+      s" ratio=$memoryUsedRatio")
+    memoryUsedRatio < 0.9 // we should have at least 10% free memory
+  }
 
   /**
    * allocate a new spill and return its id

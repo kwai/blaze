@@ -1269,6 +1269,8 @@ impl<'a> BlazeCallNativeWrapper<'a> {
 #[allow(non_snake_case)]
 pub struct BlazeOnHeapSpillManager<'a> {
     pub class: JClass<'a>,
+    pub method_isOnHeapAvailable: JMethodID,
+    pub method_isOnHeapAvailable_ret: ReturnType,
     pub method_newSpill: JMethodID,
     pub method_newSpill_ret: ReturnType,
     pub method_writeSpill: JMethodID,
@@ -1289,6 +1291,10 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeOnHeapSpillManager {
             class,
+            method_isOnHeapAvailable: env
+                .get_method_id(class, "isOnHeapAvailable", "()Z")
+                .unwrap(),
+            method_isOnHeapAvailable_ret: ReturnType::Primitive(Primitive::Boolean),
             method_newSpill: env.get_method_id(class, "newSpill", "()I").unwrap(),
             method_newSpill_ret: ReturnType::Primitive(Primitive::Int),
             method_writeSpill: env
