@@ -857,48 +857,7 @@ impl InternalSet {
         iter
     }
 
-    fn insert(&mut self, list: &mut AggDynList, raw_value: &[u8]) {
-        if let Self::Small(s) = self {
-            if s.len() == s.inline_size() {
-                self.convert_to_huge(list);
-            }
-        }
-
-        match self {
-            InternalSet::Small(s) => {
-                for &mut pos_len in &mut *s {
-                    if list.ref_raw(pos_len) == raw_value {
-                        return;
-                    }
-                }
-                let new_pos_len = (list.raw.len() as u32, raw_value.len() as u32);
-                list.raw.extend_from_slice(raw_value);
-                s.push(new_pos_len);
-            }
-            InternalSet::Huge(s) => {
-                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw_value);
-                match s.find_or_find_insert_slot(
-                    hash,
-                    |&pos_len| {
-                        raw_value.len() == pos_len.1 as usize && raw_value == list.ref_raw(pos_len)
-                    },
-                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len)),
-                ) {
-                    Ok(_found) => {}
-                    Err(slot) => {
-                        let new_pos_len = (list.raw.len() as u32, raw_value.len() as u32);
-                        list.raw.extend_from_slice(&raw_value);
-                        unsafe {
-                            // safety: call unsafe `insert_in_slot` method
-                            s.insert_in_slot(hash, slot, new_pos_len);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn convert_to_huge(&mut self, list: &mut AggDynList) {
+    fn convert_to_huge_if_needed(&mut self, list: &mut AggDynList) {
         if let Self::Small(s) = self {
             let mut huge = RawTable::default();
 
@@ -918,14 +877,18 @@ const AGG_DYN_SET_HASH_SEED: i64 = 0x7BCB48DA4C72B4F2;
 
 impl AggDynSet {
     pub fn append(&mut self, value: &ScalarValue, nullable: bool) {
-        let mut raw_value = vec![];
-        write_scalar(value, nullable, &mut raw_value).unwrap();
-        self.append_raw(&raw_value);
+        let old_raw_len = self.list.raw.len();
+        write_scalar(value, nullable, &mut self.list.raw).unwrap();
+        self.append_raw_inline(old_raw_len);
     }
 
     pub fn merge(&mut self, other: &mut Self) {
+        if self.set.len() < other.set.len() {
+            // ensure the probed set is smaller
+            std::mem::swap(self, other);
+        }
         for pos_len in std::mem::take(&mut other.set).into_iter() {
-            self.append_raw(other.ref_raw(pos_len));
+            self.append_raw(other.list.ref_raw(pos_len));
         }
     }
 
@@ -933,16 +896,90 @@ impl AggDynSet {
         self.list.into_values(dt, nullable)
     }
 
-    fn append_raw(&mut self, raw_value: &[u8]) {
-        let self_set = unsafe {
-            // safety: bypass borrow checking
-            std::mem::transmute::<_, &mut InternalSet>(&mut self.set)
-        };
-        self_set.insert(&mut self.list, raw_value)
+    fn append_raw(&mut self, raw: &[u8]) {
+        let new_len = raw.len();
+        let new_pos_len = (self.list.raw.len() as u32, new_len as u32);
+
+        match &mut self.set {
+            InternalSet::Small(s) => {
+                let mut found = false;
+                for &mut pos_len in &mut *s {
+                    if self.list.ref_raw(pos_len) == raw {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    s.push(new_pos_len);
+                    self.list.raw.extend(raw);
+                    self.set.convert_to_huge_if_needed(&mut self.list);
+                }
+            }
+            InternalSet::Huge(s) => {
+                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                match s.find_or_find_insert_slot(
+                    hash,
+                    |&pos_len| new_len == pos_len.1 as usize && raw == self.list.ref_raw(pos_len),
+                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
+                ) {
+                    Ok(_found) => {}
+                    Err(slot) => {
+                        unsafe {
+                            // safety: call unsafe `insert_in_slot` method
+                            self.list.raw.extend(raw);
+                            s.insert_in_slot(hash, slot, new_pos_len);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    fn ref_raw(&self, pos_len: (u32, u32)) -> &[u8] {
-        self.list.ref_raw(pos_len)
+    fn append_raw_inline(&mut self, raw_start: usize) {
+        let new_len = self.list.raw.len() - raw_start;
+        let new_pos_len = (raw_start as u32, new_len as u32);
+        let mut inserted = true;
+
+        match &mut self.set {
+            InternalSet::Small(s) => {
+                for &mut pos_len in &mut *s {
+                    if self.list.ref_raw(pos_len) == self.list.ref_raw(new_pos_len) {
+                        inserted = false;
+                        break;
+                    }
+                }
+                if inserted {
+                    s.push(new_pos_len);
+                    self.set.convert_to_huge_if_needed(&mut self.list);
+                }
+            }
+            InternalSet::Huge(s) => {
+                let new_value = self.list.ref_raw(new_pos_len);
+                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(new_value);
+                match s.find_or_find_insert_slot(
+                    hash,
+                    |&pos_len| {
+                        new_len == pos_len.1 as usize && new_value == self.list.ref_raw(pos_len)
+                    },
+                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
+                ) {
+                    Ok(_found) => {
+                        inserted = false;
+                    }
+                    Err(slot) => {
+                        unsafe {
+                            // safety: call unsafe `insert_in_slot` method
+                            s.insert_in_slot(hash, slot, new_pos_len);
+                        }
+                    }
+                }
+            }
+        }
+
+        // remove the value from list if not inserted
+        if !inserted {
+            self.list.raw.truncate(raw_start);
+        }
     }
 }
 
