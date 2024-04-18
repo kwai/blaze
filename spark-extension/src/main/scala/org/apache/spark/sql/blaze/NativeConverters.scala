@@ -398,7 +398,7 @@ object NativeConverters extends Logging {
       sparkExpr: Expression,
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): pb.PhysicalExprNode = {
-    assert(sparkExpr.deterministic, s"nondeterministic expression not supported: $sparkExpr")
+    // assert(sparkExpr.deterministic, s"nondeterministic expression not supported: $sparkExpr")
 
     def buildBinaryExprNode(
         left: Expression,

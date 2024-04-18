@@ -24,6 +24,7 @@ import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
@@ -32,9 +33,10 @@ import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.Utils
 
 case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
+  private val allocator =
+    ArrowUtils.rootAllocator.newChildAllocator("SparkUDFWrapperContext", 0, Long.MaxValue)
 
   private val (expr, javaParamsSchema) = NativeConverters.deserializeExpression({
     val bytes = new Array[Byte](serialized.remaining())
@@ -61,25 +63,14 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
   }
 
   def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
-    var outputRoot: VectorSchemaRoot = null
-    var paramsRoot: VectorSchemaRoot = null
-
-    Utils.tryWithSafeFinally {
-      outputRoot = VectorSchemaRoot.create(outputSchema, ArrowUtils.rootAllocator)
-      paramsRoot = VectorSchemaRoot.create(paramsSchema, ArrowUtils.rootAllocator)
+    Using.resources(
+      VectorSchemaRoot.create(outputSchema, allocator),
+      VectorSchemaRoot.create(paramsSchema, allocator),
+      ArrowArray.wrap(importFFIArrayPtr),
+      ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
 
       // import into params root
-      val importArray = ArrowArray.wrap(importFFIArrayPtr)
-      Utils.tryWithSafeFinally {
-        Data.importIntoVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          importArray,
-          paramsRoot,
-          dictionaryProvider)
-        true
-      } {
-        importArray.close()
-      }
+      Data.importIntoVectorSchemaRoot(allocator, importArray, paramsRoot, dictionaryProvider)
 
       // evaluate expression and write to output root
       val outputWriter = ArrowWriter.create(outputRoot)
@@ -90,23 +81,7 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
       outputWriter.finish()
 
       // export to output
-      val exportArray = ArrowArray.wrap(exportFFIArrayPtr)
-      Utils.tryWithSafeFinally {
-        Data.exportVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          outputRoot,
-          dictionaryProvider,
-          exportArray)
-      } {
-        exportArray.close()
-      }
-    } {
-      if (outputRoot != null) {
-        outputRoot.close()
-      }
-      if (paramsRoot != null) {
-        paramsRoot.close()
-      }
+      Data.exportVectorSchemaRoot(allocator, outputRoot, dictionaryProvider, exportArray)
     }
   }
 }
