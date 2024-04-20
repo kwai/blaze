@@ -755,7 +755,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "ahash",
  "arrow",
@@ -804,7 +804,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "ahash",
  "arrow",
@@ -823,7 +823,7 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "arrow",
  "chrono",
@@ -843,7 +843,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "ahash",
  "arrow",
@@ -960,7 +960,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "arrow",
  "base64 0.21.7",
@@ -974,7 +974,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions-array"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -987,7 +987,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "arrow",
  "async-trait",
@@ -1004,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "ahash",
  "arrow",
@@ -1039,7 +1039,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-plan"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "ahash",
  "arrow",
@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=5d6b63a#5d6b63abf96d489942a42722ca3e483b4da86ca9"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=90b13d32d#90b13d32d029b95278e5a2317631d870402835be"
 dependencies = [
  "arrow",
  "arrow-schema",
