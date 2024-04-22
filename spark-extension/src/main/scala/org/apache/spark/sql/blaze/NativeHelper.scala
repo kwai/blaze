@@ -39,22 +39,28 @@ object NativeHelper extends Logging {
   val nativeMemory: Long = {
     val MEMORY_OVERHEAD_FACTOR = 0.10
     val MEMORY_OVERHEAD_MIN = 384L
-    if (TaskContext.get() != null) {
-      // executor side
-      val executorMemory = conf.get(config.EXECUTOR_MEMORY)
-      val executorMemoryOverheadMiB = conf
-        .get(config.EXECUTOR_MEMORY_OVERHEAD)
-        .getOrElse(
-          math.max((MEMORY_OVERHEAD_FACTOR * executorMemory).toLong, MEMORY_OVERHEAD_MIN))
-      executorMemoryOverheadMiB * 1024L * 1024L
-    } else {
-      // driver side
-      val driverMemory = conf.get(config.DRIVER_MEMORY)
-      val driverMemoryOverheadMiB = conf
-        .get(config.DRIVER_MEMORY_OVERHEAD)
-        .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * driverMemory).toLong, MEMORY_OVERHEAD_MIN))
-      driverMemoryOverheadMiB * 1024L * 1024L
+    val totalMemory = {
+      if (TaskContext.get() != null) {
+        // executor side
+        val executorMemoryMiB = conf.get(config.EXECUTOR_MEMORY)
+        val executorMemoryOverheadMiB = conf
+          .get(config.EXECUTOR_MEMORY_OVERHEAD)
+          .getOrElse(
+            math.max((MEMORY_OVERHEAD_FACTOR * executorMemoryMiB).toLong, MEMORY_OVERHEAD_MIN))
+        (executorMemoryMiB + executorMemoryOverheadMiB) * 1024L * 1024L
+      } else {
+        // driver side
+        val driverMemoryMiB = conf.get(config.DRIVER_MEMORY)
+        val driverMemoryOverheadMiB = conf
+          .get(config.DRIVER_MEMORY_OVERHEAD)
+          .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * driverMemoryMiB).toLong, MEMORY_OVERHEAD_MIN))
+        (driverMemoryMiB + driverMemoryOverheadMiB) * 1024L * 1024L
+      }
     }
+    val heapMemory = Runtime.getRuntime.maxMemory()
+    val offheapMemory = totalMemory - heapMemory
+    logWarning(s"memory total: $totalMemory, onheap: $heapMemory, offheap: $offheapMemory")
+    offheapMemory
   }
 
   def isNative(exec: SparkPlan): Boolean =
