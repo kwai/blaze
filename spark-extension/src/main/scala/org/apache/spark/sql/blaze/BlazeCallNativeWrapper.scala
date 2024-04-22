@@ -30,6 +30,7 @@ import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
@@ -100,18 +101,20 @@ case class BlazeCallNativeWrapper(
     metrics
 
   protected def importSchema(ffiSchemaPtr: Long): Unit = {
-    val ffiSchema = ArrowSchema.wrap(ffiSchemaPtr)
-    arrowSchema = Data.importSchema(allocator, ffiSchema, dictionaryProvider)
-    schema = ArrowUtils.fromArrowSchema(arrowSchema)
-    toUnsafe = UnsafeProjection.create(schema)
+    Using(ArrowSchema.wrap(ffiSchemaPtr)) { ffiSchema =>
+      arrowSchema = Data.importSchema(allocator, ffiSchema, dictionaryProvider)
+      schema = ArrowUtils.fromArrowSchema(arrowSchema)
+      toUnsafe = UnsafeProjection.create(schema)
+    }
   }
 
   protected def importBatch(ffiArrayPtr: Long): Unit = {
-    val ffiArray = ArrowArray.wrap(ffiArrayPtr)
-    root = VectorSchemaRoot.create(arrowSchema, allocator)
-    Data.importIntoVectorSchemaRoot(allocator, ffiArray, root, dictionaryProvider)
-    batch = ColumnarHelper.rootAsBatch(root)
-    batchCurRowIdx = 0
+    Using(ArrowArray.wrap(ffiArrayPtr)) { ffiArray =>
+      root = VectorSchemaRoot.create(arrowSchema, allocator)
+      Data.importIntoVectorSchemaRoot(allocator, ffiArray, root, dictionaryProvider)
+      batch = ColumnarHelper.rootAsBatch(root)
+      batchCurRowIdx = 0
+    }
   }
 
   protected def setError(error: Throwable): Unit = {

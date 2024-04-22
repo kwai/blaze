@@ -26,6 +26,7 @@ import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConf
+import org.apache.spark.sql.blaze.util.Using
 
 class ArrowFFIExportIterator(rowIter: Iterator[InternalRow], schema: StructType)
     extends Iterator[(Long, Long) => Unit]
@@ -39,29 +40,36 @@ class ArrowFFIExportIterator(rowIter: Iterator[InternalRow], schema: StructType)
     ArrowUtils.rootAllocator.newChildAllocator(this.getClass.getName, 0, Long.MaxValue)
   private val arrowSchema = ArrowUtils.toArrowSchema(schema)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
-  override def hasNext: Boolean = rowIter.hasNext
+  private var currentVectorConsumed = true
+
+  override def hasNext: Boolean = {
+    assert(currentVectorConsumed)
+    rowIter.hasNext
+  }
 
   override def next(): (Long, Long) => Unit = {
-    val root = VectorSchemaRoot.create(arrowSchema, allocator)
-    val arrowWriter = ArrowWriter.create(root)
-    var rowCount = 0
-
-    while (rowIter.hasNext
-      && rowCount < maxBatchNumRows
-      && allocator.getAllocatedMemory < maxBatchMemorySize) {
-      arrowWriter.write(rowIter.next())
-      rowCount += 1
-    }
-    arrowWriter.finish()
-
     (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) => {
-      Data.exportVectorSchemaRoot(
-        ArrowUtils.rootAllocator,
-        root,
-        emptyDictionaryProvider,
-        ArrowArray.wrap(exportArrowArrayPtr),
-        ArrowSchema.wrap(exportArrowSchemaPtr))
-      root.close()
+      currentVectorConsumed = false
+      Using(VectorSchemaRoot.create(arrowSchema, allocator)) { root =>
+        val arrowWriter = ArrowWriter.create(root)
+        var rowCount = 0
+
+        while (rowIter.hasNext
+          && rowCount < maxBatchNumRows
+          && allocator.getAllocatedMemory < maxBatchMemorySize) {
+          arrowWriter.write(rowIter.next())
+          rowCount += 1
+        }
+        arrowWriter.finish()
+        currentVectorConsumed = true
+
+        Data.exportVectorSchemaRoot(
+          ArrowUtils.rootAllocator,
+          root,
+          emptyDictionaryProvider,
+          ArrowArray.wrap(exportArrowArrayPtr),
+          ArrowSchema.wrap(exportArrowSchemaPtr))
+      }
     }
   }
 }
