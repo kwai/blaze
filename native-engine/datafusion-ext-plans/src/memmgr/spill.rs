@@ -21,7 +21,8 @@ use std::{
 };
 
 use blaze_jni_bridge::{
-    is_jni_bridge_inited, jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref,
+    is_jni_bridge_inited, jni_bridge::LocalRef, jni_call, jni_call_static,
+    jni_new_direct_byte_buffer, jni_new_global_ref,
 };
 use datafusion::{common::Result, parquet::file::reader::Length, physical_plan::metrics::Time};
 use jni::{objects::GlobalRef, sys::jlong};
@@ -65,12 +66,18 @@ pub fn try_new_spill(spill_metrics: &SpillMetrics) -> Result<Box<dyn Spill>> {
     if !is_jni_bridge_inited() || jni_call_static!(JniBridge.isDriverSide() -> bool)? {
         Ok(Box::new(FileSpill::try_new(spill_metrics)?))
     } else {
-        Ok(Box::new(OnHeapSpill::try_new(spill_metrics)?))
+        // use on heap spill if on-heap memory is available, otherwise use file spill
+        let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
+        if jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).isOnHeapAvailable() -> bool)? {
+            Ok(Box::new(OnHeapSpill::try_new(hsm, spill_metrics)?))
+        } else {
+            Ok(Box::new(FileSpill::try_new(spill_metrics)?))
+        }
     }
 }
 
 /// A spill structure which write data to temporary files
-/// used in driver side
+/// used in driver side or executor side with on-heap memory is full
 struct FileSpill(File, SpillMetrics);
 impl FileSpill {
     fn try_new(spill_metrics: &SpillMetrics) -> Result<Self> {
@@ -111,11 +118,9 @@ impl Spill for FileSpill {
 
 impl Drop for FileSpill {
     fn drop(&mut self) {
-        // values of mem spill size/iotime are the same with disk spill
-        self.1.mem_spill_size.add(self.0.len() as usize);
         self.1.disk_spill_size.add(self.0.len() as usize);
         self.1
-            .mem_spill_iotime
+            .disk_spill_iotime
             .add_duration(Duration::from_nanos(self.1.mem_spill_iotime.value() as u64))
     }
 }
@@ -124,10 +129,8 @@ impl Drop for FileSpill {
 /// used in executor side
 struct OnHeapSpill(Arc<RawOnHeapSpill>, SpillMetrics);
 impl OnHeapSpill {
-    fn try_new(spill_metrics: &SpillMetrics) -> Result<Self> {
-        let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
+    fn try_new(hsm: LocalRef, spill_metrics: &SpillMetrics) -> Result<Self> {
         let spill_id = jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).newSpill() -> i32)?;
-
         Ok(Self(
             Arc::new(RawOnHeapSpill {
                 hsm: jni_new_global_ref!(hsm.as_obj())?,
