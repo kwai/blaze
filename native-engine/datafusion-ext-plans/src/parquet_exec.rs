@@ -229,12 +229,10 @@ impl ExecutionPlan for ParquetExec {
             None => (0..self.base_config.file_schema.fields().len()).collect(),
         };
 
-        let batch_size = batch_size();
-        let sub_batch_size = batch_size / batch_size.ilog2() as usize;
         let opener = ParquetOpener {
             partition_index,
             projection: Arc::from(projection),
-            batch_size: sub_batch_size,
+            batch_size: batch_size(),
             limit: self.base_config.limit,
             predicate: self.predicate.clone(),
             pruning_predicate: self.pruning_predicate.clone(),
