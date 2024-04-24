@@ -21,8 +21,9 @@ use std::{
 };
 
 use blaze_jni_bridge::{
-    is_jni_bridge_inited, jni_bridge::LocalRef, jni_call, jni_call_static,
-    jni_new_direct_byte_buffer, jni_new_global_ref,
+    is_jni_bridge_inited,
+    jni_bridge::{JObject, LocalRef},
+    jni_call, jni_call_static, jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
 use datafusion::{common::Result, parquet::file::reader::Length, physical_plan::metrics::Time};
 use jni::{objects::GlobalRef, sys::jlong};
@@ -39,11 +40,11 @@ pub trait Spill: Send + Sync {
     fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>>;
     fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>>;
 
-    fn get_compressed_reader<'a>(&'a self) -> SpillCompressedReader<'a> {
+    fn get_compressed_reader(&self) -> SpillCompressedReader<'_> {
         lz4_flex::frame::FrameDecoder::new(self.get_buf_reader())
     }
 
-    fn get_compressed_writer<'a>(&'a mut self) -> SpillCompressedWriter<'a> {
+    fn get_compressed_writer(&mut self) -> SpillCompressedWriter<'_> {
         lz4_flex::frame::FrameEncoder::new(self.get_buf_writer()).auto_finish()
     }
 }
@@ -81,8 +82,18 @@ pub fn try_new_spill(spill_metrics: &SpillMetrics) -> Result<Box<dyn Spill>> {
 struct FileSpill(File, SpillMetrics);
 impl FileSpill {
     fn try_new(spill_metrics: &SpillMetrics) -> Result<Self> {
-        let file = tempfile::tempfile()?;
-        Ok(Self(file, spill_metrics.clone()))
+        if is_jni_bridge_inited() {
+            let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
+            let file_name = jni_get_string!(
+            jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).getDirectWriteSpillToDiskFile()-> JObject)?
+                .as_obj()
+                .into())?;
+            let file = File::create_new(file_name)?;
+            Ok(Self(file, spill_metrics.clone()))
+        } else {
+            let file = tempfile::tempfile()?;
+            Ok(Self(file, spill_metrics.clone()))
+        }
     }
 }
 
