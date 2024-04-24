@@ -1283,6 +1283,8 @@ pub struct BlazeOnHeapSpillManager<'a> {
     pub method_getSpillDiskIOTime_ret: ReturnType,
     pub method_releaseSpill: JMethodID,
     pub method_releaseSpill_ret: ReturnType,
+    pub method_getDirectWriteSpillToDiskFile: JMethodID,
+    pub method_getDirectWriteSpillToDiskFile_ret: ReturnType,
 }
 impl<'a> BlazeOnHeapSpillManager<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/memory/OnHeapSpillManager";
@@ -1313,6 +1315,14 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
             method_getSpillDiskIOTime_ret: ReturnType::Primitive(Primitive::Long),
             method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V").unwrap(),
             method_releaseSpill_ret: ReturnType::Primitive(Primitive::Void),
+            method_getDirectWriteSpillToDiskFile: env
+                .get_method_id(
+                    class,
+                    "getDirectWriteSpillToDiskFile",
+                    "()Ljava/lang/String;",
+                )
+                .unwrap(),
+            method_getDirectWriteSpillToDiskFile_ret: ReturnType::Object,
         })
     }
 }
