@@ -21,8 +21,9 @@ use std::{
 };
 
 use blaze_jni_bridge::{
-    is_jni_bridge_inited, jni_bridge::LocalRef, jni_call, jni_call_static,
-    jni_new_direct_byte_buffer, jni_new_global_ref,
+    is_jni_bridge_inited,
+    jni_bridge::{JObject, LocalRef},
+    jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_get_string,
 };
 use datafusion::{common::Result, parquet::file::reader::Length, physical_plan::metrics::Time};
 use jni::{objects::GlobalRef, sys::jlong};
@@ -81,7 +82,12 @@ pub fn try_new_spill(spill_metrics: &SpillMetrics) -> Result<Box<dyn Spill>> {
 struct FileSpill(File, SpillMetrics);
 impl FileSpill {
     fn try_new(spill_metrics: &SpillMetrics) -> Result<Self> {
-        let file = tempfile::tempfile()?;
+        let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
+        let file_name = jni_get_string!(
+            jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).getDirectWriteSpillToDiskFile()-> JObject)?
+                .as_obj()
+                .into())?;
+        let file = File::create_new(file_name)?;
         Ok(Self(file, spill_metrics.clone()))
     }
 }
