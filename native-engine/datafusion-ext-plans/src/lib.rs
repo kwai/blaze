@@ -14,6 +14,7 @@
 
 #![feature(get_mut_unchecked)]
 #![feature(io_error_other)]
+#![feature(file_create_new)]
 
 pub mod agg;
 pub mod agg_exec;
