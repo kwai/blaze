@@ -72,6 +72,15 @@ class OnHeapSpillManager(taskContext: TaskContext)
   }
 
   /**
+   * create new spill file and return its name
+   * @return
+   */
+  @SuppressWarnings(Array("unused"))
+  def getDirectWriteSpillToDiskFile: String = {
+    blockManager.diskBlockManager.createTempLocalBlock()._2.getPath
+  }
+
+  /**
    * allocate a new spill and return its id
    * @return
    *   allocated spill id
