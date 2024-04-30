@@ -27,6 +27,7 @@ pub mod array_size;
 pub mod bytes_arena;
 pub mod cast;
 pub mod ds;
+pub mod ffi_helper;
 pub mod hadoop_fs;
 pub mod io;
 pub mod rdxsort;
@@ -82,4 +83,45 @@ pub fn batch_size() -> usize {
         })
         .expect("error getting configured batch size") as usize;
     batch_size
+}
+
+// for better cache usage
+pub const fn staging_mem_size_for_partial_sort() -> usize {
+    4194304 * 8 / 10
+}
+
+// use bigger batch memory size writing shuffling data
+pub const fn suggested_output_batch_mem_size() -> usize {
+    25165824
+}
+
+// use smaller batch memory size for kway merging since there will be multiple
+// batches in memory at the same time
+pub const fn suggested_kway_merge_batch_mem_size() -> usize {
+    1048576
+}
+
+pub fn compute_suggested_batch_size_for_output(mem_size: usize, num_rows: usize) -> usize {
+    let suggested_batch_mem_size = suggested_output_batch_mem_size();
+    compute_batch_size_with_target_mem_size(mem_size, num_rows, suggested_batch_mem_size)
+}
+
+pub fn compute_suggested_batch_size_for_kway_merge(mem_size: usize, num_rows: usize) -> usize {
+    let suggested_batch_mem_size = suggested_kway_merge_batch_mem_size();
+    compute_batch_size_with_target_mem_size(mem_size, num_rows, suggested_batch_mem_size)
+}
+
+fn compute_batch_size_with_target_mem_size(
+    mem_size: usize,
+    num_rows: usize,
+    target_mem_size: usize,
+) -> usize {
+    let batch_size = batch_size();
+    let batch_size_min = 20;
+    if num_rows == 0 {
+        return batch_size;
+    }
+    let est_mem_size_per_row = mem_size.max(16) / num_rows.max(1);
+    let est_sub_batch_size = target_mem_size / est_mem_size_per_row.max(16);
+    est_sub_batch_size.min(batch_size).max(batch_size_min)
 }

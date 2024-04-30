@@ -11,6 +11,7 @@ blaze-jni-bridge = { workspace = true }
 bigdecimal = "0.4.3"
 datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
+itertools = "0.12.1"
 jni = "0.20.0"
 log = "0.4.21"
 num = "0.4.2"

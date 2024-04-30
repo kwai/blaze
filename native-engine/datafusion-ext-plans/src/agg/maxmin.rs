@@ -641,7 +641,17 @@ impl AggMaxMinParams for AggMaxParams {
         T: ArrowNumericType,
         <T as ArrowPrimitiveType>::Native: ArrowNativeType,
     {
-        arrow::compute::max(array)
+        match array.data_type() {
+            DataType::Float32 => array
+                .iter()
+                .flatten()
+                .max_by(|a, b| a.partial_cmp(b).unwrap()),
+            DataType::Float64 => array
+                .iter()
+                .flatten()
+                .max_by(|a, b| a.partial_cmp(b).unwrap()),
+            _ => arrow::compute::max(array),
+        }
     }
 
     fn maxmin_string<T>(array: &GenericByteArray<GenericStringType<T>>) -> Option<&str>
@@ -672,7 +682,17 @@ impl AggMaxMinParams for AggMinParams {
         T: ArrowNumericType,
         <T as ArrowPrimitiveType>::Native: ArrowNativeType,
     {
-        arrow::compute::min(array)
+        match array.data_type() {
+            DataType::Float32 => array
+                .iter()
+                .flatten()
+                .min_by(|a, b| a.partial_cmp(b).unwrap()),
+            DataType::Float64 => array
+                .iter()
+                .flatten()
+                .min_by(|a, b| a.partial_cmp(b).unwrap()),
+            _ => arrow::compute::min(array),
+        }
     }
 
     fn maxmin_string<T>(array: &GenericByteArray<GenericStringType<T>>) -> Option<&str>

@@ -32,9 +32,7 @@ use datafusion::{
 };
 use futures::{Stream, StreamExt};
 
-use crate::{array_size::ArraySize, batch_size};
-
-const STAGING_BATCHES_MEM_SIZE_LIMIT: usize = 1 << 25; // limit output batch size to 32MB
+use crate::{array_size::ArraySize, batch_size, suggested_output_batch_mem_size};
 
 pub trait CoalesceInput {
     fn coalesce_input(
@@ -124,10 +122,11 @@ impl CoalesceStream {
     }
 
     fn should_flush(&self) -> bool {
+        let size_limit = suggested_output_batch_mem_size();
         let (batch_size_limit, mem_size_limit) = if self.staging_batches.len() > 1 {
-            (self.batch_size, STAGING_BATCHES_MEM_SIZE_LIMIT)
+            (self.batch_size, size_limit)
         } else {
-            (self.batch_size / 2, STAGING_BATCHES_MEM_SIZE_LIMIT / 2)
+            (self.batch_size / 2, size_limit / 2)
         };
         self.staging_rows >= batch_size_limit || self.staging_batches_mem_size > mem_size_limit
     }

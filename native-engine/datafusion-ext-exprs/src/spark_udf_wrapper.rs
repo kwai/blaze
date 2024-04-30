@@ -20,7 +20,7 @@ use std::{
 };
 
 use arrow::{
-    array::{as_struct_array, make_array, Array, ArrayRef, StructArray},
+    array::{as_struct_array, make_array, ArrayRef},
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::{RecordBatch, RecordBatchOptions},
@@ -33,7 +33,7 @@ use datafusion::{
     error::Result, logical_expr::ColumnarValue, physical_expr::physical_exprs_bag_equal,
     physical_plan::PhysicalExpr,
 };
-use datafusion_ext_commons::{cast::cast, df_execution_err};
+use datafusion_ext_commons::{cast::cast, df_execution_err, ffi_helper::batch_to_ffi};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
@@ -224,10 +224,8 @@ fn invoke_udf(
     params_batch: RecordBatch,
     result_schema: SchemaRef,
 ) -> Result<ArrayRef> {
-    let params_struct_array = Arc::new(StructArray::from(params_batch));
-
     // evalute via context
-    let mut export_ffi_array = FFI_ArrowArray::new(&params_struct_array.to_data());
+    let mut export_ffi_array = batch_to_ffi(params_batch);
     let mut import_ffi_array = FFI_ArrowArray::empty();
     jni_call!(SparkUDFWrapperContext(jcontext.as_obj()).eval(
         &mut export_ffi_array as *mut FFI_ArrowArray as i64,

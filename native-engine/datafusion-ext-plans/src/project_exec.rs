@@ -31,7 +31,9 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{array_size::ArraySize, streams::coalesce_stream::CoalesceInput};
+use datafusion_ext_commons::{
+    array_size::ArraySize, streams::coalesce_stream::CoalesceInput, suggested_output_batch_mem_size,
+};
 use futures::{stream::once, FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
 
@@ -41,7 +43,6 @@ use crate::{
         cached_exprs_evaluator::CachedExprsEvaluator,
         column_pruning::{prune_columns, ExecuteWithColumnPruning},
         output::TaskOutputter,
-        suggested_output_batch_mem_size,
     },
     filter_exec::FilterExec,
 };
@@ -241,16 +242,22 @@ async fn execute_project_with_filtering(
 
 fn split_batch_by_estimated_size(batch: RecordBatch, num_output_cols: usize) -> Vec<RecordBatch> {
     let target_mem_size = suggested_output_batch_mem_size();
-    let target_num_batches =
-        batch.get_array_mem_size() * num_output_cols / batch.num_columns().max(1) / target_mem_size;
+    let target_num_batches = batch.get_array_mem_size() * 2 * num_output_cols
+        / batch.num_columns().max(1)
+        / target_mem_size;
 
     if target_num_batches <= 1 {
         return vec![batch];
     }
     let target_num_rows = (batch.num_rows() / target_num_batches.max(1)).max(1);
 
-    (0..batch.num_rows())
-        .step_by(target_num_rows.max(1))
-        .map(|offset| batch.slice(offset, target_num_rows.min(batch.num_rows() - offset)))
-        .collect()
+    let mut batches = vec![];
+    let mut offset = 0;
+
+    while offset < batch.num_rows() {
+        let num_rows = target_num_rows.min(batch.num_rows() - offset);
+        batches.push(batch.slice(offset, num_rows));
+        offset += num_rows;
+    }
+    batches
 }

@@ -378,7 +378,7 @@ impl HiveGetJsonObjectMatcher {
                         }
                     }
                 }
-                if index_str == "*" {
+                if index_str.is_empty() || index_str == "*" {
                     return Ok(Some(Self::SubscriptAll));
                 }
                 let index = str::parse::<usize>(&index_str).map_err(|_| {
@@ -405,30 +405,33 @@ impl HiveGetJsonObjectMatcher {
                         None => Cow::Owned(serde_json::Value::Null),
                     };
                 } else if let serde_json::Value::Array(array) = value {
-                    return Cow::Owned(serde_json::Value::Array(
-                        array
-                            .into_iter()
-                            .map(|item| {
-                                if let serde_json::Value::Object(object) = item {
-                                    match object.get(child) {
-                                        Some(v) => v.clone(),
-                                        None => serde_json::Value::Null,
-                                    }
-                                } else {
-                                    serde_json::Value::Null
+                    let vs = array
+                        .into_iter()
+                        .map(|item| {
+                            if let serde_json::Value::Object(object) = item {
+                                match object.get(child) {
+                                    Some(v) => v.clone(),
+                                    None => serde_json::Value::Null,
                                 }
-                            })
-                            .filter(|r| !r.is_null())
-                            .flat_map(|r| {
-                                // keep consistent with hive UDFJson
-                                let iter: Box<dyn Iterator<Item = serde_json::Value>> = match r {
-                                    serde_json::Value::Array(array) => Box::new(array.into_iter()),
-                                    other => Box::new(std::iter::once(other)),
-                                };
-                                iter
-                            })
-                            .collect(),
-                    ));
+                            } else {
+                                serde_json::Value::Null
+                            }
+                        })
+                        .filter(|r| !r.is_null())
+                        .flat_map(|r| {
+                            // keep consistent with hive UDFJson
+                            let iter: Box<dyn Iterator<Item = serde_json::Value>> = match r {
+                                serde_json::Value::Array(array) => Box::new(array.into_iter()),
+                                other => Box::new(std::iter::once(other)),
+                            };
+                            iter
+                        })
+                        .collect::<Vec<_>>();
+
+                    if vs.is_empty() {
+                        return Cow::Owned(serde_json::Value::Null);
+                    }
+                    return Cow::Owned(serde_json::Value::Array(vs));
                 }
             }
             HiveGetJsonObjectMatcher::Subscript(index) => {
@@ -460,32 +463,33 @@ impl HiveGetJsonObjectMatcher {
                         None => Cow::Owned(sonic_rs::Value::default()),
                     };
                 } else if let Some(array) = value.as_array() {
-                    return Cow::Owned(sonic_rs::Value::from(
-                        array
-                            .into_iter()
-                            .map(|item| {
-                                if let Some(object) = item.as_object() {
-                                    match object.get(child) {
-                                        Some(v) => v.clone(),
-                                        None => sonic_rs::Value::default(),
-                                    }
-                                } else {
-                                    sonic_rs::Value::default()
+                    let vs = array
+                        .into_iter()
+                        .map(|item| {
+                            if let Some(object) = item.as_object() {
+                                match object.get(child) {
+                                    Some(v) => v.clone(),
+                                    None => sonic_rs::Value::default(),
                                 }
-                            })
-                            .filter(|r| !r.is_null())
-                            .flat_map(|r| {
-                                // keep consistent with hive UDFJson
-                                let iter: Box<dyn Iterator<Item = sonic_rs::Value>> = match r {
-                                    v if v.is_array() => {
-                                        Box::new(v.into_array().unwrap().into_iter())
-                                    }
-                                    other => Box::new(std::iter::once(other)),
-                                };
-                                iter
-                            })
-                            .collect::<Vec<_>>(),
-                    ));
+                            } else {
+                                sonic_rs::Value::default()
+                            }
+                        })
+                        .filter(|r| !r.is_null())
+                        .flat_map(|r| {
+                            // keep consistent with hive UDFJson
+                            let iter: Box<dyn Iterator<Item = sonic_rs::Value>> = match r {
+                                v if v.is_array() => Box::new(v.into_array().unwrap().into_iter()),
+                                other => Box::new(std::iter::once(other)),
+                            };
+                            iter
+                        })
+                        .collect::<Vec<_>>();
+
+                    if vs.is_empty() {
+                        return Cow::Owned(sonic_rs::Value::default());
+                    }
+                    return Cow::Owned(sonic_rs::Value::from(vs));
                 }
             }
             HiveGetJsonObjectMatcher::Subscript(index) => {
@@ -644,7 +648,7 @@ mod test {
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location.NOT_EXISTED"));
         let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
-        assert_eq!(v, Some(r#"[]"#));
+        assert_eq!(v, None);
 
         let path = ColumnarValue::Scalar(ScalarValue::from("$.message.name"));
         let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
@@ -660,6 +664,11 @@ mod test {
         let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
         let v = r.as_string::<i32>().iter().next().unwrap();
         assert_eq!(v, Some(r#"{"city":"1.234","county":"浦东"}"#));
+
+        let path = ColumnarValue::Scalar(ScalarValue::from("$.message.location[].county"));
+        let r = spark_get_parsed_json_object(&[parsed.clone(), path])?.into_array(1)?;
+        let v = r.as_string::<i32>().iter().next().unwrap();
+        assert_eq!(v, Some(r#"["浦东","西直门"]"#));
         Ok(())
     }
 

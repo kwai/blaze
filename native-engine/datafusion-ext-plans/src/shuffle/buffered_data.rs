@@ -21,16 +21,15 @@ use count_write::CountWrite;
 use datafusion::{common::Result, physical_plan::Partitioning};
 use datafusion_ext_commons::{
     array_size::ArraySize,
+    compute_suggested_batch_size_for_output,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     rdxsort::radix_sort_u16_ranged_by,
+    staging_mem_size_for_partial_sort,
 };
 use jni::objects::GlobalRef;
 
 use crate::{
-    common::{
-        batch_selection::interleave_batches, compute_suggested_batch_size_for_output,
-        ipc_compression::IpcCompressionWriter, staging_mem_size_for_partial_sort,
-    },
+    common::{batch_selection::interleave_batches, ipc_compression::IpcCompressionWriter},
     shuffle::{evaluate_hashes, evaluate_partition_ids, rss::RssWriter},
 };
 

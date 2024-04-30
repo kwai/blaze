@@ -41,6 +41,7 @@ use datafusion_ext_commons::{
     io::{read_bytes_slice, read_len, write_len},
     rdxsort::radix_sort_u16_ranged_by,
     slim_bytes::SlimBytes,
+    staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
 };
 use futures::lock::Mutex;
 use gxhash::GxHasher;
@@ -51,10 +52,7 @@ use crate::{
         acc::{AccStore, AccumStateRow, OwnedAccumStateRow, RefAccumStateRow},
         agg_context::AggContext,
     },
-    common::{
-        output::WrappedRecordBatchSender, staging_mem_size_for_partial_sort,
-        suggested_output_batch_mem_size,
-    },
+    common::output::WrappedRecordBatchSender,
     memmgr::{
         metrics::SpillMetrics,
         spill::{try_new_spill, Spill, SpillCompressedReader},

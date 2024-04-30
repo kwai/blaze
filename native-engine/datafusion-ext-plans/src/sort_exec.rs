@@ -45,9 +45,11 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
+    compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
     downcast_any,
     ds::loser_tree::{ComparableForLoserTree, LoserTree},
     io::{read_len, read_one_batch, write_len, write_one_batch},
+    staging_mem_size_for_partial_sort,
     streams::coalesce_stream::CoalesceInput,
 };
 use futures::{lock::Mutex, stream::once, StreamExt, TryStreamExt};
@@ -60,9 +62,7 @@ use crate::{
         batch_selection::interleave_batches,
         batch_statisitcs::{stat_input, InputBatchStatistics},
         column_pruning::ExecuteWithColumnPruning,
-        compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
         output::{TaskOutputter, WrappedRecordBatchSender},
-        staging_mem_size_for_partial_sort,
     },
     memmgr::{
         metrics::SpillMetrics,
