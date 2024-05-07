@@ -21,7 +21,6 @@ use std::{
 
 use arrow::{
     array::*,
-    compute::{eq_dyn_binary_scalar, eq_dyn_bool_scalar, eq_dyn_scalar, eq_dyn_utf8_scalar},
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -31,6 +30,7 @@ use datafusion::{
     physical_expr::PhysicalExpr,
 };
 use datafusion_ext_commons::{df_execution_err, df_unimplemented_err};
+use itertools::Itertools;
 
 use crate::down_cast_any_ref;
 
@@ -92,202 +92,32 @@ impl PhysicalExpr for GetMapValueExpr {
                 df_unimplemented_err!("map key not support Null Type")
             }
             (DataType::Map(..), _) => {
-                let as_map_array = array.as_any().downcast_ref::<MapArray>().unwrap();
-                if !as_map_array
-                    .key_type()
-                    .equals_datatype(&self.key.data_type())
+                let as_map_array = array.as_map();
+                let value_data = as_map_array.values().to_data();
+                let key = self.key.to_array()?;
+                let comparator = build_compare(as_map_array.keys(), &key)?;
+                let mut mutable =
+                    MutableArrayData::new(vec![&value_data], true, as_map_array.len());
+
+                for (start, end) in as_map_array
+                    .value_offsets()
+                    .iter()
+                    .map(|offset| *offset as usize)
+                    .tuple_windows()
                 {
-                    df_execution_err!("MapArray key type must equal to GetMapValue key type")?;
-                }
-
-                macro_rules! get_boolean_value {
-                    ($keyarrowty:ident, $scalar:expr) => {{
-                        type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
-                        let ans_boolean = eq_dyn_bool_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, ans)| {
-                                if let Some(res) = ans {
-                                    res.clone()
-                                } else {
-                                    false
-                                }
-                            })
-                            .map(|(idx, _)| idx as i32)
-                            .collect::<Vec<_>>();
-                        let mut indices = vec![];
-                        if ans_index.len() == 0 {
-                            for _i in 0..as_map_array.len() {
-                                indices.push(None);
-                            }
-                        } else {
-                            let mut cur_offset = 0;
-                            for &idx in as_map_array.value_offsets().into_iter().skip(1) {
-                                if cur_offset >= ans_index.len() {
-                                    indices.push(None);
-                                } else if idx <= ans_index[cur_offset] {
-                                    indices.push(None);
-                                } else {
-                                    indices.push(Some(ans_index[cur_offset] as u32));
-                                    cur_offset += 1;
-                                }
-                            }
+                    let mut found = false;
+                    for key_idx in start..end {
+                        if comparator(key_idx, 0).is_eq() {
+                            found = true;
+                            mutable.extend(0, key_idx, key_idx + 1);
+                            break;
                         }
-                        let indice_array = UInt32Array::from(indices);
-                        let ans_array =
-                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
-                        Ok(ColumnarValue::Array(ans_array))
-                    }};
-                }
-
-                macro_rules! get_prim_value {
-                    ($keyarrowty:ident, $scalar:expr) => {{
-                        type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
-                        let ans_boolean = eq_dyn_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, ans)| {
-                                if let Some(res) = ans {
-                                    res.clone()
-                                } else {
-                                    false
-                                }
-                            })
-                            .map(|(idx, _)| idx as i32)
-                            .collect::<Vec<_>>();
-                        let mut indices = vec![];
-                        if ans_index.len() == 0 {
-                            for _i in 0..as_map_array.len() {
-                                indices.push(None);
-                            }
-                        } else {
-                            let mut cur_offset = 0;
-                            for &idx in as_map_array.value_offsets().into_iter().skip(1) {
-                                if cur_offset >= ans_index.len() {
-                                    indices.push(None);
-                                } else if idx <= ans_index[cur_offset] {
-                                    indices.push(None);
-                                } else {
-                                    indices.push(Some(ans_index[cur_offset] as u32));
-                                    cur_offset += 1;
-                                }
-                            }
-                        }
-                        let indice_array = UInt32Array::from(indices);
-                        let ans_array =
-                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
-                        Ok(ColumnarValue::Array(ans_array))
-                    }};
-                }
-
-                macro_rules! get_str_value {
-                    ($keyarrowty:ident, $scalar:expr) => {{
-                        type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
-                        let ans_boolean = eq_dyn_utf8_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, ans)| {
-                                if let Some(res) = ans {
-                                    res.clone()
-                                } else {
-                                    false
-                                }
-                            })
-                            .map(|(idx, _)| idx as i32)
-                            .collect::<Vec<_>>();
-                        let mut indices = vec![];
-                        if ans_index.len() == 0 {
-                            for _i in 0..as_map_array.len() {
-                                indices.push(None);
-                            }
-                        } else {
-                            let mut cur_offset = 0;
-                            for &idx in as_map_array.value_offsets().into_iter().skip(1) {
-                                if cur_offset >= ans_index.len() {
-                                    indices.push(None);
-                                } else if idx <= ans_index[cur_offset] {
-                                    indices.push(None);
-                                } else {
-                                    indices.push(Some(ans_index[cur_offset] as u32));
-                                    cur_offset += 1;
-                                }
-                            }
-                        }
-                        let indice_array = UInt32Array::from(indices);
-                        let ans_array =
-                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
-                        Ok(ColumnarValue::Array(ans_array))
-                    }};
-                }
-
-                macro_rules! get_binary_value {
-                    ($keyarrowty:ident, $scalar:expr) => {{
-                        type A = paste::paste! {[< $keyarrowty Array >]};
-                        let key_array = as_map_array.keys().as_any().downcast_ref::<A>().unwrap();
-                        let ans_boolean = eq_dyn_binary_scalar(key_array, $scalar)?;
-                        let ans_index = ans_boolean
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, ans)| {
-                                if let Some(res) = ans {
-                                    res.clone()
-                                } else {
-                                    false
-                                }
-                            })
-                            .map(|(idx, _)| idx as i32)
-                            .collect::<Vec<_>>();
-                        let mut indices = vec![];
-                        if ans_index.len() == 0 {
-                            for _i in 0..as_map_array.len() {
-                                indices.push(None);
-                            }
-                        } else {
-                            let mut cur_offset = 0;
-                            for &idx in as_map_array.value_offsets().into_iter().skip(1) {
-                                if cur_offset >= ans_index.len() {
-                                    indices.push(None);
-                                } else if idx <= ans_index[cur_offset] {
-                                    indices.push(None);
-                                } else {
-                                    indices.push(Some(ans_index[cur_offset] as u32));
-                                    cur_offset += 1;
-                                }
-                            }
-                        }
-                        let indice_array = UInt32Array::from(indices);
-                        let ans_array =
-                            arrow::compute::take(as_map_array.values(), &indice_array, None)?;
-                        Ok(ColumnarValue::Array(ans_array))
-                    }};
-                }
-
-                match &self.key {
-                    ScalarValue::Boolean(Some(i)) => get_boolean_value!(Boolean, *i),
-                    ScalarValue::Float32(Some(i)) => get_prim_value!(Float32, *i),
-                    ScalarValue::Float64(Some(i)) => get_prim_value!(Float64, *i),
-                    ScalarValue::Int8(Some(i)) => get_prim_value!(Int8, *i),
-                    ScalarValue::Int16(Some(i)) => get_prim_value!(Int16, *i),
-                    ScalarValue::Int32(Some(i)) => get_prim_value!(Int32, *i),
-                    ScalarValue::Int64(Some(i)) => get_prim_value!(Int64, *i),
-                    ScalarValue::UInt8(Some(i)) => get_prim_value!(UInt8, *i),
-                    ScalarValue::UInt16(Some(i)) => get_prim_value!(UInt16, *i),
-                    ScalarValue::UInt32(Some(i)) => get_prim_value!(UInt32, *i),
-                    ScalarValue::UInt64(Some(i)) => get_prim_value!(UInt64, *i),
-                    ScalarValue::Utf8(Some(i)) => get_str_value!(String, i.as_str()),
-                    ScalarValue::LargeUtf8(Some(i)) => get_str_value!(LargeString, i.as_str()),
-                    ScalarValue::Binary(Some(i)) => get_binary_value!(Binary, i.as_slice()),
-                    ScalarValue::LargeBinary(Some(i)) => {
-                        get_binary_value!(LargeBinary, i.as_slice())
                     }
-                    t => df_execution_err!("get map value (Map) not support {t} as key type"),
+                    if !found {
+                        mutable.extend_nulls(1);
+                    }
                 }
+                Ok(ColumnarValue::Array(make_array(mutable.freeze())))
             }
             (dt, key) => {
                 df_execution_err!("get map value (Map) is only possible on map with no-null key. Tried {dt:?} with {key:?} key")
@@ -395,13 +225,26 @@ mod test {
         let output_array = get_indexed.evaluate(&input_batch)?.into_array(0)?;
         let output_batch =
             RecordBatch::try_from_iter_with_nullable(vec![("test col", output_array, true)])?;
-
         let expected = vec![
             "+----------+",
             "| test col |",
             "+----------+",
             "|          |",
             "|          |",
+            "| 70       |",
+            "+----------+",
+        ];
+        assert_batches_eq!(expected, &[output_batch]);
+
+        // test with sliced batch
+        let input_batch = input_batch.slice(2, 1);
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0)?;
+        let output_batch =
+            RecordBatch::try_from_iter_with_nullable(vec![("test col", output_array, true)])?;
+        let expected = vec![
+            "+----------+",
+            "| test col |",
+            "+----------+",
             "| 70       |",
             "+----------+",
         ];
@@ -437,6 +280,21 @@ mod test {
             "| test col |",
             "+----------+",
             "|          |",
+            "| 40       |",
+            "|          |",
+            "+----------+",
+        ];
+        assert_batches_eq!(expected, &[output_batch]);
+
+        // test with sliced batch
+        let input_batch = input_batch.slice(1, 2);
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0)?;
+        let output_batch =
+            RecordBatch::try_from_iter_with_nullable(vec![("test col", output_array, true)])?;
+        let expected = vec![
+            "+----------+",
+            "| test col |",
+            "+----------+",
             "| 40       |",
             "|          |",
             "+----------+",

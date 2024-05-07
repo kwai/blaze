@@ -230,6 +230,22 @@ mod test {
             "+---------+",
         ];
         assert_batches_eq!(expected, &[output_batch]);
+
+        // test with sliced batch
+        let input_batch = input_batch.slice(1, 3);
+        let output_array = get_indexed.evaluate(&input_batch)?.into_array(0)?;
+        let output_batch =
+            RecordBatch::try_from_iter_with_nullable(vec![("cccccc1", output_array, true)])?;
+        let expected = vec![
+            "+---------+",
+            "| cccccc1 |",
+            "+---------+",
+            "| 201     |",
+            "|         |",
+            "|         |",
+            "+---------+",
+        ];
+        assert_batches_eq!(expected, &[output_batch]);
         Ok(())
     }
 }
