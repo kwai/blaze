@@ -9,7 +9,6 @@ default = ["prost/no-recursion-limit"]
 [dependencies]
 arrow = { workspace = true }
 base64 = "*"
-chrono = "*"
 datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
 datafusion-ext-exprs = { workspace = true }

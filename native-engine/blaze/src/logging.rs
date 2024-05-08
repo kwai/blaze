@@ -12,18 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::Local;
+use std::time::Instant;
+
 use log::{Level, LevelFilter, Log, Metadata, Record};
+use once_cell::sync::OnceCell;
 
 const MAX_LEVEL: Level = Level::Info;
 
 pub fn init_logging() {
-    log::set_logger(&SimpleLogger).expect("error setting logger");
+    static LOGGER: OnceCell<SimpleLogger> = OnceCell::new();
+    let logger = LOGGER.get_or_init(|| SimpleLogger {
+        start_instant: Instant::now(),
+    });
+
+    log::set_logger(logger).expect("error setting logger");
     log::set_max_level(LevelFilter::Info);
 }
 
 #[derive(Clone, Copy)]
-struct SimpleLogger;
+struct SimpleLogger {
+    start_instant: Instant,
+}
 
 impl Log for SimpleLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
@@ -32,10 +41,10 @@ impl Log for SimpleLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let local_time = Local::now().format("%d/%m/%Y %H:%M:%S");
+            let elapsed = Instant::now() - self.start_instant;
+            let elapsed_sec = elapsed.as_secs_f64();
             eprintln!(
-                "{} [{}] Blaze - {}",
-                local_time,
+                "(+{elapsed_sec:.3}s) [{}] Blaze - {}",
                 record.level(),
                 record.args()
             );

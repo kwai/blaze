@@ -63,15 +63,15 @@ parquet = { version = "50.0.0" }
 serde_json = { version = "1.0.96" }
 
 [patch.crates-io]
-# datafusion: branch=v30-blaze
-datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9d1f7f2fc"}
-datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9d1f7f2fc"}
-datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9d1f7f2fc"}
-datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9d1f7f2fc"}
-datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9d1f7f2fc"}
-datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9d1f7f2fc"}
+# datafusion: branch=v36-blaze
+datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "8cd557f32"}
+datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "8cd557f32"}
+datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "8cd557f32"}
+datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "8cd557f32"}
+datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "8cd557f32"}
+datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "8cd557f32"}
 
-# arrow: branch=v45-blaze
+# arrow: branch=v50-blaze
 arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "b1e0762ba4"}
 arrow-arith = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "b1e0762ba4"}
 arrow-array = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "b1e0762ba4"}

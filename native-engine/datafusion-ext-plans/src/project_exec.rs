@@ -17,10 +17,7 @@
 
 use std::{any::Any, fmt::Formatter, sync::Arc};
 
-use arrow::{
-    datatypes::{Field, Fields, Schema, SchemaRef},
-    record_batch::RecordBatch,
-};
+use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use datafusion::{
     common::{Result, Statistics},
     execution::TaskContext,
@@ -31,9 +28,7 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{
-    array_size::ArraySize, streams::coalesce_stream::CoalesceInput, suggested_output_batch_mem_size,
-};
+use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
 use futures::{stream::once, FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
 
@@ -221,43 +216,16 @@ async fn execute_project_with_filtering(
         InputBatchStatistics::from_metrics_set_and_blaze_conf(&metrics, partition)?,
         input.execute_projected(partition, context.clone(), &projection)?,
     )?;
-    let num_output_cols = output_schema.fields().len();
 
     context.output_with_sender("Project", output_schema, move |sender| async move {
         while let Some(batch) = input.next().await.transpose()? {
             let mut timer = baseline_metrics.elapsed_compute().timer();
+            let output_batch = cached_expr_evaluator.filter_project(&batch)?;
+            drop(batch);
 
-            if batch.num_rows() == 0 {
-                continue;
-            }
-            for batch in split_batch_by_estimated_size(batch, num_output_cols) {
-                let output_batch = cached_expr_evaluator.filter_project(&batch)?;
-                baseline_metrics.record_output(output_batch.num_rows());
-                sender.send(Ok(output_batch), Some(&mut timer)).await;
-            }
+            baseline_metrics.record_output(output_batch.num_rows());
+            sender.send(Ok(output_batch), Some(&mut timer)).await;
         }
         Ok(())
     })
-}
-
-fn split_batch_by_estimated_size(batch: RecordBatch, num_output_cols: usize) -> Vec<RecordBatch> {
-    let target_mem_size = suggested_output_batch_mem_size();
-    let target_num_batches = batch.get_array_mem_size() * 2 * num_output_cols
-        / batch.num_columns().max(1)
-        / target_mem_size;
-
-    if target_num_batches <= 1 {
-        return vec![batch];
-    }
-    let target_num_rows = (batch.num_rows() / target_num_batches.max(1)).max(1);
-
-    let mut batches = vec![];
-    let mut offset = 0;
-
-    while offset < batch.num_rows() {
-        let num_rows = target_num_rows.min(batch.num_rows() - offset);
-        batches.push(batch.slice(offset, num_rows));
-        offset += num_rows;
-    }
-    batches
 }
