@@ -39,6 +39,8 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.BinaryArithmetic
 import org.apache.spark.sql.catalyst.expressions.aggregate.First
+import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
+import org.apache.spark.sql.catalyst.expressions.codegen.ExprCode
 import org.apache.spark.sql.catalyst.plans.FullOuter
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -48,6 +50,8 @@ import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.util.ArrayData
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.LeafExpression
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
@@ -975,6 +979,11 @@ object NativeConverters extends Logging {
               .setKey(convertValue(e.ordinal, IntegerType)))
         }
 
+      case StubExpr("RowNum", _, _) =>
+        buildExprNode {
+          _.setRowNumExpr(pb.RowNumExprNode.newBuilder())
+        }
+
       // hive UDFJson
       case e
           if (isHiveSimpleUDF(e)
@@ -1158,5 +1167,14 @@ object NativeConverters extends Logging {
 
       case e => e.dataType
     }
+  }
+
+  case class StubExpr(
+      name: String,
+      override val dataType: DataType,
+      override val nullable: Boolean)
+      extends LeafExpression {
+    override def eval(input: InternalRow): Any = null
+    override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = null
   }
 }

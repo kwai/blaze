@@ -64,10 +64,11 @@ class OnHeapSpillManager(taskContext: TaskContext)
     val memoryUsed = memoryPool.memoryUsed
     val memoryFree = memoryPool.memoryFree
     val memoryUsedRatio = (memoryUsed + 1.0) / (memoryUsed + memoryFree + 1.0)
-    logInfo(s"current on-heap execution memory usage:" +
-      s" used=${Utils.bytesToString(memoryUsed)}," +
-      s" free=${Utils.bytesToString(memoryFree)}," +
-      s" ratio=$memoryUsedRatio")
+    logInfo(
+      s"current on-heap execution memory usage:" +
+        s" used=${Utils.bytesToString(memoryUsed)}," +
+        s" free=${Utils.bytesToString(memoryFree)}," +
+        s" ratio=$memoryUsedRatio")
     memoryUsedRatio < 0.9 // we should have at least 10% free memory
   }
 

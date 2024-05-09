@@ -28,6 +28,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
+import org.apache.spark.sql.blaze.NativeConverters.StubExpr
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
@@ -72,6 +73,7 @@ import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
+import org.apache.spark.sql.types.LongType
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -501,7 +503,11 @@ object BlazeConverters extends Logging {
         case (BuildLeft, RightOuter | FullOuter) =>
           (broadcasted, nativeProbed, joinType) // RightOuter, FullOuter => BuildLeft
         case (BuildRight, Inner | LeftOuter | LeftSemi | LeftAnti) =>
-          (nativeProbed, broadcasted, joinType) // Inner, LeftOuter, LeftSemi, LeftAnti => BuildRight
+          (
+            nativeProbed,
+            broadcasted,
+            joinType
+          ) // Inner, LeftOuter, LeftSemi, LeftAnti => BuildRight
         case _ =>
           needPostProject = true
           val modifiedJoinType = joinType match {
@@ -780,13 +786,15 @@ object BlazeConverters extends Logging {
           if cmd.table.storage.outputFormat.contains(
             classOf[MapredParquetOutputFormat].getName) =>
         // add an extra SortExec to sort child with dynamic columns
+        // add row number to achieve stable sort
         var sortedChild = convertToNative(child)
         val numDynParts = cmd.partition.count(_._2.isEmpty)
         val requiredOrdering =
           child.output.slice(child.output.length - numDynParts, child.output.length)
-        if (child.outputOrdering.map(_.child) != requiredOrdering) {
+        if (requiredOrdering.nonEmpty && child.outputOrdering.map(_.child) != requiredOrdering) {
+          val rowNumExpr = StubExpr("RowNum", LongType, nullable = false)
           sortedChild = Shims.get.createNativeSortExec(
-            requiredOrdering.map(SortOrder(_, Ascending)),
+            requiredOrdering.map(SortOrder(_, Ascending)) ++ Seq(SortOrder(rowNumExpr, Ascending)),
             global = false,
             sortedChild)
         }

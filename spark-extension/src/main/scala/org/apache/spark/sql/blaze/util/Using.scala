@@ -1,23 +1,25 @@
 /*
- * Scala (https://www.scala-lang.org)
+ * Copyright 2022 The Blaze Authors
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Licensed under Apache License 2.0
- * (http://www.apache.org/licenses/LICENSE-2.0).
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * See the NOTICE file distributed with this work for
- * additional information regarding copyright ownership.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
-// this file comes from https://github.com/bigwheel/util-backports/blob/24dc4b68cf57013c84ec01bd6f925fd4341ce651/src/main/scala/scala/util/Using.scala
-
 package org.apache.spark.sql.blaze.util
 
 import scala.util.control.{ControlThrowable, NonFatal}
 import scala.util.Try
 
-/** A utility for performing automatic resource management. It can be used to perform an
+/**
+ * A utility for performing automatic resource management. It can be used to perform an
  * operation using resources, after which it releases the resources in reverse order
  * of their creation.
  *
@@ -96,7 +98,9 @@ import scala.util.Try
  *                             suppression behavior.
  */
 object Using {
-  /** Performs an operation using a resource, and then releases the resource,
+
+  /**
+   * Performs an operation using a resource, and then releases the resource,
    * even if the operation throws an exception.
    *
    * $suppressionBehavior
@@ -104,9 +108,12 @@ object Using {
    * @return a [[Try]] containing an exception if one or more were thrown,
    *         or the result of the operation if no exceptions were thrown
    */
-  def apply[R: Releasable, A](resource: => R)(f: R => A): Try[A] = Try { Using.resource(resource)(f) }
+  def apply[R: Releasable, A](resource: => R)(f: R => A): Try[A] = Try {
+    Using.resource(resource)(f)
+  }
 
-  /** A resource manager.
+  /**
+   * A resource manager.
    *
    * Resources can be registered with the manager by calling [[acquire `acquire`]];
    * such resources will be released in reverse order of their acquisition
@@ -119,7 +126,6 @@ object Using {
    *       for the creation of custom resources, and to call `acquire` during those
    *       resources' construction. Doing so guarantees that the resource ''must'' be
    *       automatically managed, and makes it impossible to forget to do so.
-   *
    *
    *       Example:
    *       {{{
@@ -138,7 +144,8 @@ object Using {
     private var closed = false
     private[this] var resources: List[Resource[_]] = Nil
 
-    /** Registers the specified resource with this manager, so that
+    /**
+     * Registers the specified resource with this manager, so that
      * the resource is released when the manager is closed, and then
      * returns the (unmodified) resource.
      */
@@ -147,7 +154,8 @@ object Using {
       resource
     }
 
-    /** Registers the specified resource with this manager, so that
+    /**
+     * Registers the specified resource with this manager, so that
      * the resource is released when the manager is closed.
      */
     def acquire[R: Releasable](resource: R): Unit = {
@@ -184,7 +192,9 @@ object Using {
   }
 
   object Manager {
-    /** Performs an operation using a `Manager`, then closes the `Manager`,
+
+    /**
+     * Performs an operation using a `Manager`, then closes the `Manager`,
      * releasing its resources (in reverse order of acquisition).
      *
      * Example:
@@ -221,20 +231,23 @@ object Using {
 
   private def preferentiallySuppress(primary: Throwable, secondary: Throwable): Throwable = {
     def score(t: Throwable): Int = t match {
-      case _: VirtualMachineError                   => 4
-      case _: LinkageError                          => 3
+      case _: VirtualMachineError => 4
+      case _: LinkageError => 3
       case _: InterruptedException | _: ThreadDeath => 2
-      case _: ControlThrowable                      => 0
-      case e if !NonFatal(e)                        => 1 // in case this method gets out of sync with NonFatal
-      case _                                        => -1
+      case _: ControlThrowable => 0
+      case e if !NonFatal(e) => 1 // in case this method gets out of sync with NonFatal
+      case _ => -1
     }
-    @inline def suppress(t: Throwable, suppressed: Throwable): Throwable = { t.addSuppressed(suppressed); t }
+    @inline def suppress(t: Throwable, suppressed: Throwable): Throwable = {
+      t.addSuppressed(suppressed); t
+    }
 
     if (score(secondary) > score(primary)) suppress(secondary, primary)
     else suppress(primary, secondary)
   }
 
-  /** Performs an operation using a resource, and then releases the resource,
+  /**
+   * Performs an operation using a resource, and then releases the resource,
    * even if the operation throws an exception. This method behaves similarly
    * to Java's try-with-resources.
    *
@@ -267,7 +280,8 @@ object Using {
     }
   }
 
-  /** Performs an operation using two resources, and then releases the resources
+  /**
+   * Performs an operation using two resources, and then releases the resources
    * in reverse order, even if the operation throws an exception. This method
    * behaves similarly to Java's try-with-resources.
    *
@@ -282,18 +296,16 @@ object Using {
    * @return the result of the operation, if neither the operation nor
    *         releasing the resources throws
    */
-  def resources[R1: Releasable, R2: Releasable, A](
-    resource1: R1,
-    resource2: => R2
-  )(body: (R1, R2) => A
-  ): A =
+  def resources[R1: Releasable, R2: Releasable, A](resource1: R1, resource2: => R2)(
+      body: (R1, R2) => A): A =
     resource(resource1) { r1 =>
       resource(resource2) { r2 =>
         body(r1, r2)
       }
     }
 
-  /** Performs an operation using three resources, and then releases the resources
+  /**
+   * Performs an operation using three resources, and then releases the resources
    * in reverse order, even if the operation throws an exception. This method
    * behaves similarly to Java's try-with-resources.
    *
@@ -311,11 +323,9 @@ object Using {
    *         releasing the resources throws
    */
   def resources[R1: Releasable, R2: Releasable, R3: Releasable, A](
-    resource1: R1,
-    resource2: => R2,
-    resource3: => R3
-  )(body: (R1, R2, R3) => A
-  ): A =
+      resource1: R1,
+      resource2: => R2,
+      resource3: => R3)(body: (R1, R2, R3) => A): A =
     resource(resource1) { r1 =>
       resource(resource2) { r2 =>
         resource(resource3) { r3 =>
@@ -324,7 +334,8 @@ object Using {
       }
     }
 
-  /** Performs an operation using four resources, and then releases the resources
+  /**
+   * Performs an operation using four resources, and then releases the resources
    * in reverse order, even if the operation throws an exception. This method
    * behaves similarly to Java's try-with-resources.
    *
@@ -344,12 +355,10 @@ object Using {
    *         releasing the resources throws
    */
   def resources[R1: Releasable, R2: Releasable, R3: Releasable, R4: Releasable, A](
-    resource1: R1,
-    resource2: => R2,
-    resource3: => R3,
-    resource4: => R4
-  )(body: (R1, R2, R3, R4) => A
-  ): A =
+      resource1: R1,
+      resource2: => R2,
+      resource3: => R3,
+      resource4: => R4)(body: (R1, R2, R3, R4) => A): A =
     resource(resource1) { r1 =>
       resource(resource2) { r2 =>
         resource(resource3) { r3 =>
@@ -360,7 +369,8 @@ object Using {
       }
     }
 
-  /** A typeclass describing how to release a particular type of resource.
+  /**
+   * A typeclass describing how to release a particular type of resource.
    *
    * A resource is anything which needs to be released, closed, or otherwise cleaned up
    * in some way after it is finished being used, and for which waiting for the object's
@@ -375,11 +385,13 @@ object Using {
    * @tparam R the type of the resource
    */
   trait Releasable[-R] {
+
     /** Releases the specified resource. */
     def release(resource: R): Unit
   }
 
   object Releasable {
+
     /** An implicit `Releasable` for [[java.lang.AutoCloseable `AutoCloseable`s]]. */
     implicit object AutoCloseableIsReleasable extends Releasable[AutoCloseable] {
       def release(resource: AutoCloseable): Unit = resource.close()

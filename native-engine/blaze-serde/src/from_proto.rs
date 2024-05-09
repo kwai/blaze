@@ -51,7 +51,8 @@ use datafusion::{
 };
 use datafusion_ext_exprs::{
     cast::TryCastExpr, get_indexed_field::GetIndexedFieldExpr, get_map_value::GetMapValueExpr,
-    named_struct::NamedStructExpr, spark_scalar_subquery_wrapper::SparkScalarSubqueryWrapperExpr,
+    named_struct::NamedStructExpr, row_num::RowNumExpr,
+    spark_scalar_subquery_wrapper::SparkScalarSubqueryWrapperExpr,
     spark_udf_wrapper::SparkUDFWrapperExpr, string_contains::StringContainsExpr,
     string_ends_with::StringEndsWithExpr, string_starts_with::StringStartsWithExpr,
 };
@@ -1008,6 +1009,7 @@ fn try_parse_physical_expr(
                 let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
                 Arc::new(StringContainsExpr::new(expr, e.infix.clone()))
             }
+            ExprType::RowNumExpr(_) => Arc::new(RowNumExpr::default()),
             ExprType::ScAndExpr(e) => {
                 let l = try_parse_physical_expr_box_required(&e.left, input_schema)?;
                 let r = try_parse_physical_expr_box_required(&e.right, input_schema)?;
