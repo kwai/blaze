@@ -1,23 +1,12 @@
-# blaze-v2.0.9
+# blaze-v2.0.9.1
 
 ## Features
-* Upgrades datafusion/arrow dependency version to v36/v50.
-* Supports max/min aggregation with complex types.
-* Supports json_tuple.
-* Introduce sonic-rs for json parsing.
-* Add stage id in operator metrics.
-* Implements writing table with dynamic partitions (not tested in spark303/spark333).
+* Supports failing-back nondeterministic expressions.
+* Supports "$[].xxx" jsonpath syntax in get_json_object().
 
 ## Performance
-* Improves batch serialization format and reduce compressed size.
-* Implements radix-based k-way merging used in shuffling and aggregating.
-* Improves performance of on-heap spilling.
-* Improves performance of SortExec.
-* Improves performance of AggExec.
-* Improves performance of collect_set/collect_list.
+* Supports adaptive batch size in ParquetScan, improving vectorized reading performance.
+* Supports directly spill to disk file when on-heap memory is full.
 
 ## Bugfix
-* Fix concat_ws with empty batches.
-* Fix spark333 RenameExec incorrect ordering expressions.
-* Fix incorrect join type mapping in BroadcastNestedLoopJoin.
-* Fix decimal dividing with zero.
+* Fix incorrect parquet rowgroup pruning with files containing deprecated min/max values.
