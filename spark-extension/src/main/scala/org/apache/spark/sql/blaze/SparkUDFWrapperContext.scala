@@ -42,12 +42,13 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
     val bytes = new Array[Byte](serialized.remaining())
     serialized.get(bytes)
     bytes
-  }) match {
-    case (nondeterministic: Nondeterministic, paramsSchema) =>
+  })
+
+  // initialize all nondeterministic children exprs
+  expr.foreach {
+    case nondeterministic: Nondeterministic =>
       nondeterministic.initialize(TaskContext.get.partitionId())
-      (nondeterministic, paramsSchema)
-    case (expr, paramsSchema) =>
-      (expr, paramsSchema)
+    case _ =>
   }
 
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()

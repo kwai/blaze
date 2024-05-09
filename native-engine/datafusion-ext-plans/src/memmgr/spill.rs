@@ -14,7 +14,7 @@
 
 use std::{
     any::Any,
-    fs::File,
+    fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Cursor, Read, Seek, Write},
     sync::Arc,
     time::Duration,
@@ -88,7 +88,12 @@ impl FileSpill {
             jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).getDirectWriteSpillToDiskFile()-> JObject)?
                 .as_obj()
                 .into())?;
-            let file = File::create(file_name)?;
+            let file = OpenOptions::new() // create file and open under rw mode
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .read(true)
+                .open(&file_name)?;
             Ok(Self(file, spill_metrics.clone()))
         } else {
             let file = tempfile::tempfile()?;

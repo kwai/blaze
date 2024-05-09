@@ -24,7 +24,6 @@ use arrow::{
     datatypes::{Field, FieldRef, SchemaRef},
 };
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
-use chrono::DateTime;
 use datafusion::{
     common::stats::Precision,
     datasource::{
@@ -1095,7 +1094,7 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
             object_meta: ObjectMeta {
                 location: Path::from(format!("/{}", BASE64_URL_SAFE_NO_PAD.encode(&val.path))),
                 size: val.size as usize,
-                last_modified: DateTime::default(),
+                last_modified: Default::default(),
                 e_tag: None,
                 version: None,
             },
