@@ -22,7 +22,6 @@ import java.util.concurrent.LinkedBlockingDeque
 
 import scala.collection.immutable.SortedMap
 import scala.collection.mutable
-import scala.collection.mutable
 
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path

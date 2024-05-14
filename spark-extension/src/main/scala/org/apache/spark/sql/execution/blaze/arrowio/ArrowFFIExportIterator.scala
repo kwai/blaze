@@ -48,28 +48,29 @@ class ArrowFFIExportIterator(rowIter: Iterator[InternalRow], schema: StructType)
   }
 
   override def next(): (Long, Long) => Unit = {
-    (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) => {
-      currentVectorConsumed = false
-      Using(VectorSchemaRoot.create(arrowSchema, allocator)) { root =>
-        val arrowWriter = ArrowWriter.create(root)
-        var rowCount = 0
+    (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) =>
+      {
+        currentVectorConsumed = false
+        Using(VectorSchemaRoot.create(arrowSchema, allocator)) { root =>
+          val arrowWriter = ArrowWriter.create(root)
+          var rowCount = 0
 
-        while (rowIter.hasNext
-          && rowCount < maxBatchNumRows
-          && allocator.getAllocatedMemory < maxBatchMemorySize) {
-          arrowWriter.write(rowIter.next())
-          rowCount += 1
+          while (rowIter.hasNext
+            && rowCount < maxBatchNumRows
+            && allocator.getAllocatedMemory < maxBatchMemorySize) {
+            arrowWriter.write(rowIter.next())
+            rowCount += 1
+          }
+          arrowWriter.finish()
+          currentVectorConsumed = true
+
+          Data.exportVectorSchemaRoot(
+            ArrowUtils.rootAllocator,
+            root,
+            emptyDictionaryProvider,
+            ArrowArray.wrap(exportArrowArrayPtr),
+            ArrowSchema.wrap(exportArrowSchemaPtr))
         }
-        arrowWriter.finish()
-        currentVectorConsumed = true
-
-        Data.exportVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          root,
-          emptyDictionaryProvider,
-          ArrowArray.wrap(exportArrowArrayPtr),
-          ArrowSchema.wrap(exportArrowSchemaPtr))
       }
-    }
   }
 }

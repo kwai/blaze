@@ -69,7 +69,6 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
       VectorSchemaRoot.create(paramsSchema, allocator),
       ArrowArray.wrap(importFFIArrayPtr),
       ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
-
       // import into params root
       Data.importIntoVectorSchemaRoot(allocator, importArray, paramsRoot, dictionaryProvider)
 

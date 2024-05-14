@@ -53,7 +53,8 @@ object NativeHelper extends Logging {
         val driverMemoryMiB = conf.get(config.DRIVER_MEMORY)
         val driverMemoryOverheadMiB = conf
           .get(config.DRIVER_MEMORY_OVERHEAD)
-          .getOrElse(math.max((MEMORY_OVERHEAD_FACTOR * driverMemoryMiB).toLong, MEMORY_OVERHEAD_MIN))
+          .getOrElse(
+            math.max((MEMORY_OVERHEAD_FACTOR * driverMemoryMiB).toLong, MEMORY_OVERHEAD_MIN))
         (driverMemoryMiB + driverMemoryOverheadMiB) * 1024L * 1024L
       }
     }

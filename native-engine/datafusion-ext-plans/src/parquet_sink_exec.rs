@@ -28,7 +28,7 @@ use datafusion::{
     parquet::{
         arrow::{parquet_to_arrow_schema, ArrowWriter},
         basic::{BrotliLevel, Compression, GzipLevel, ZstdLevel},
-        file::properties::{WriterProperties, WriterVersion},
+        file::properties::{EnabledStatistics, WriterProperties, WriterVersion},
         schema::{parser::parse_message_type, types::SchemaDescriptor},
     },
     physical_expr::PhysicalSortExpr,
@@ -40,6 +40,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
+    array_size::ArraySize,
     cast::cast,
     df_execution_err,
     hadoop_fs::{FsDataOutputStream, FsProvider},
@@ -252,19 +253,6 @@ async fn execute_parquet_sink(
                 });
             }};
         }
-        macro_rules! part_writer_output {
-            ($batch:expr) => {{
-                let part_writer = part_writer.clone();
-                let batch = adapt_schema($batch, &parquet_sink_context.hive_schema)?;
-                tokio::task::spawn_blocking(move || {
-                    let mut part_writer = part_writer.lock();
-                    let w = part_writer.as_mut().unwrap();
-                    w.write(&batch)
-                })
-                .await
-                .or_else(|e| df_execution_err!("writing parquet file error: {e}"))??;
-            }};
-        }
         macro_rules! part_writer_close {
             () => {{
                 let maybe_writer = part_writer.lock().take();
@@ -305,11 +293,33 @@ async fn execute_parquet_sink(
                     continue;
                 }
 
+                // compute sub batch size
+                let batch_mem_size = batch.get_array_mem_size();
+                let num_sub_batches = (batch_mem_size / 1048576).max(1);
+                let num_sub_batch_rows = (batch.num_rows() / num_sub_batches).max(16);
+
                 // split batch into current part and rest parts, then write current part
                 let m = rfind_part_values(&batch, &part_values)?;
                 let cur_batch = batch.slice(0, m);
                 batch = batch.slice(m, batch.num_rows() - m);
-                part_writer_output!(&cur_batch);
+
+                // write cur batch
+                let cur_batch = adapt_schema(&cur_batch, &parquet_sink_context.hive_schema)?;
+                let mut offset = 0;
+                while offset < cur_batch.num_rows() {
+                    let part_writer = part_writer.clone();
+                    let sub_batch_size = num_sub_batch_rows.min(cur_batch.num_rows() - offset);
+                    let sub_batch = cur_batch.slice(offset, sub_batch_size);
+                    offset += sub_batch_size;
+
+                    tokio::task::spawn_blocking(move || {
+                        let mut part_writer = part_writer.lock();
+                        let w = part_writer.as_mut().unwrap();
+                        w.write(&sub_batch)
+                    })
+                    .await
+                    .or_else(|e| df_execution_err!("writing parquet file error: {e}"))??;
+                }
             }
         }
         part_writer_close!();
@@ -341,22 +351,34 @@ fn rfind_part_values(batch: &RecordBatch, part_values: &[ScalarValue]) -> Result
 }
 
 fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
-    let mut builder = WriterProperties::builder().set_created_by(format!("blaze-engine"));
+    let mut builder = WriterProperties::builder();
 
     macro_rules! setprop {
         ($key:expr, $value:expr, $tnum:ty, $setfn:ident) => {{
             if let Ok(value) = $value.parse::<$tnum>() {
+                log::warn!("set parquet writer prop value: {}={}", $key, $value);
                 builder.$setfn(value)
             } else {
-                log::warn!("invalid parquet prop value: {}={}", $key, $value);
+                log::warn!("invalid parquet writer prop value: {}={}", $key, $value);
                 builder
             }
         }};
     }
 
+    // apply default configuration from parquet-rs
+    builder = builder.set_data_page_row_count_limit(20000);
+
+    // do not use page-level statistics and bloom filter
+    builder = builder.set_statistics_enabled(EnabledStatistics::Chunk);
+    builder = builder.set_bloom_filter_enabled(false);
+
+    // apply configuration
     for (key, value) in prop_kvs {
         builder = match key.as_ref() {
             "parquet.page.size" => setprop!(key, value, usize, set_data_page_size_limit),
+            "parquet.page.row.count.limit" => {
+                setprop!(key, value, usize, set_data_page_row_count_limit)
+            }
             "parquet.enable.dictionary" => setprop!(key, value, bool, set_dictionary_enabled),
             "parquet.dictionary.page.size" => {
                 setprop!(key, value, usize, set_dictionary_page_size_limit)
@@ -370,7 +392,7 @@ fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
                     "PARQUET_2_0" => WriterVersion::PARQUET_2_0,
                     _ => {
                         log::warn!("unsupported parquet writer version: {}", value);
-                        WriterVersion::PARQUET_2_0
+                        WriterVersion::PARQUET_1_0
                     }
                 })
             }
@@ -382,7 +404,15 @@ fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
                     "LZO" => Compression::LZO,
                     "BROTLI" => Compression::BROTLI(BrotliLevel::default()),
                     "LZ4" => Compression::LZ4,
-                    "ZSTD" => Compression::ZSTD(ZstdLevel::default()),
+                    "ZSTD" => {
+                        let level_default = ZstdLevel::default().compression_level();
+                        let level = prop_kvs
+                            .iter()
+                            .find(|(key, _)| key == "parquet.compression.codec.zstd.level")
+                            .map(|(_, value)| value.parse::<i32>().unwrap_or(level_default))
+                            .unwrap_or(level_default);
+                        Compression::ZSTD(ZstdLevel::try_new(level).unwrap_or_default())
+                    }
                     _ => {
                         log::warn!("unsupported parquet compression: {}", value);
                         Compression::UNCOMPRESSED
@@ -451,16 +481,28 @@ impl PartWriter {
         if self.parquet_writer.in_progress_size() >= row_group_block_size {
             self.parquet_writer.flush()?;
         }
-        self.rows_written.add(batch.num_rows());
         Ok(())
     }
 
     fn close(self) -> Result<PartFileStat> {
-        self.parquet_writer.into_inner()?.close()?;
+        let mut parquet_writer = self.parquet_writer;
+        parquet_writer.flush()?;
+        let rows_written = parquet_writer
+            .flushed_row_groups()
+            .iter()
+            .map(|rg| rg.num_rows() as usize)
+            .sum();
+        let data_writer = parquet_writer.into_inner()?;
+        let bytes_written = data_writer.bytes_written.value();
+        data_writer.close()?;
+
+        self.rows_written.add(rows_written);
+        self.bytes_written.add(bytes_written);
+
         Ok(PartFileStat {
             path: self.path,
-            num_rows: self.rows_written.value(),
-            num_bytes: self.bytes_written.value(),
+            num_rows: rows_written,
+            num_bytes: bytes_written,
         })
     }
 }
