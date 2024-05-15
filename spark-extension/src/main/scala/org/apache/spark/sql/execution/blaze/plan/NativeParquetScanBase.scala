@@ -110,7 +110,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
       }
       pb.PartitionedFile
         .newBuilder()
-        .setPath(file.filePath)
+        .setPath(file.filePath.toString)
         .setSize(fileSizes(file.filePath))
         .addAllPartitionValues(nativePartitionValues.asJava)
         .setLastModifiedNs(0)

@@ -275,5 +275,21 @@
         <sparkVersion>3.3.3</sparkVersion>
       </properties>
     </profile>
+
+    <profile>
+      <id>spark351</id>
+      <modules>
+        <module>spark-extension-shims-spark351</module>
+      </modules>
+      <properties>
+        <shimName>spark351</shimName>
+        <javaVersion>1.8</javaVersion>
+        <scalaVersion>2.12</scalaVersion>
+        <scalaLongVersion>2.12.15</scalaLongVersion>
+        <scalaTestVersion>3.2.9</scalaTestVersion>
+        <scalafmtVersion>3.0.0</scalafmtVersion>
+        <sparkVersion>3.5.1</sparkVersion>
+      </properties>
+    </profile>
   </profiles>
 </project>
