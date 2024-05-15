@@ -286,7 +286,7 @@ async fn execute_agg_no_grouping(
         )?;
         baseline_metrics.record_output(1);
         sender.send(Ok(batch), Some(&mut timer)).await;
-        log::info!("aggregate exec (no grouping) outputting one record");
+        log::info!("[partition={partition_id}] aggregate exec (no grouping) outputting one record");
         Ok(())
     })
 }

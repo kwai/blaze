@@ -142,12 +142,18 @@ impl NativeExecutionRuntime {
                         return Ok(());
                     }
 
-                    err_sender.send(df_execution_err!("execution aborted"))?;
                     let cause = if jni_exception_check!()? {
-                        log::error!("[partition={partition}] panics with an java exception: {err}");
+                        let err_text = format!(
+                            "[partition={partition}] native execution panics with exception: {err}"
+                        );
+                        err_sender.send(df_execution_err!("{err_text}"))?;
+                        log::error!("{err_text}");
                         Some(jni_exception_occurred!()?)
                     } else {
-                        log::error!("[partition={partition}] panics: {err}");
+                        let err_text =
+                            format!("[partition={partition}] native execution panics: {err}");
+                        err_sender.send(df_execution_err!("{err_text}"))?;
+                        log::error!("{err_text}");
                         None
                     };
 
@@ -197,13 +203,15 @@ impl NativeExecutionRuntime {
     }
 
     pub fn finalize(self) {
-        log::info!("native execution [partition={}] finalizing", self.partition);
+        let partition = self.partition;
+
+        log::info!("[partition={partition}] native execution finalizing");
         self.update_metrics().unwrap_or_default();
         drop(self.plan);
 
         self.task_context.cancel_task(); // cancel all pending streams
         self.rt.shutdown_background();
-        log::info!("native execution [partition={}] finalized", self.partition);
+        log::info!("[partition={partition}] native execution finalized");
     }
 
     fn update_metrics(&self) -> Result<()> {

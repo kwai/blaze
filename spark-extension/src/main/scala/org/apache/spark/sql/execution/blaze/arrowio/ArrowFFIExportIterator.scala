@@ -36,8 +36,6 @@ class ArrowFFIExportIterator(rowIter: Iterator[InternalRow], schema: StructType)
   private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf()
   private val maxBatchMemorySize = 1 << 24 // 16MB
 
-  private val allocator =
-    ArrowUtils.rootAllocator.newChildAllocator(this.getClass.getName, 0, Long.MaxValue)
   private val arrowSchema = ArrowUtils.toArrowSchema(schema)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
   private var currentVectorConsumed = true
@@ -48,29 +46,37 @@ class ArrowFFIExportIterator(rowIter: Iterator[InternalRow], schema: StructType)
   }
 
   override def next(): (Long, Long) => Unit = {
-    (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) =>
-      {
+    (exportArrowSchemaPtr: Long, exportArrowArrayPtr: Long) => {
+      Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
         currentVectorConsumed = false
-        Using(VectorSchemaRoot.create(arrowSchema, allocator)) { root =>
+
+        Using.resources(
+          VectorSchemaRoot.create(arrowSchema, batchAllocator),
+          ArrowArray.wrap(exportArrowArrayPtr),
+          ArrowSchema.wrap(exportArrowSchemaPtr)
+        ) { case (root, exportArray, exportSchema) =>
+
           val arrowWriter = ArrowWriter.create(root)
           var rowCount = 0
 
           while (rowIter.hasNext
             && rowCount < maxBatchNumRows
-            && allocator.getAllocatedMemory < maxBatchMemorySize) {
+            && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
             arrowWriter.write(rowIter.next())
             rowCount += 1
           }
           arrowWriter.finish()
           currentVectorConsumed = true
 
+          // export using root allocator
           Data.exportVectorSchemaRoot(
             ArrowUtils.rootAllocator,
             root,
             emptyDictionaryProvider,
-            ArrowArray.wrap(exportArrowArrayPtr),
-            ArrowSchema.wrap(exportArrowSchemaPtr))
+            exportArray,
+            exportSchema)
         }
       }
+    }
   }
 }

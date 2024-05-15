@@ -593,9 +593,9 @@ impl ExternalSorter {
         let data = std::mem::take(&mut *self.data.lock().await);
         let spills = std::mem::take(&mut *self.spills.lock().await);
         log::info!(
-            "sort exec starts outputting with {} ({} spills)",
+            "{} starts outputting ({} spills)",
             self.name(),
-            spills.len(),
+            spills.len()
         );
 
         // no spills -- output in-mem batches

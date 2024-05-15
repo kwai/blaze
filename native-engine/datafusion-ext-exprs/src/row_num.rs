@@ -26,10 +26,7 @@ use arrow::{
     array::{Int64Array, RecordBatch},
     datatypes::{DataType, Schema},
 };
-use datafusion::{
-    common::Result, logical_expr::ColumnarValue, parquet::data_type::AsBytes,
-    physical_expr::PhysicalExpr,
-};
+use datafusion::{common::Result, logical_expr::ColumnarValue, physical_expr::PhysicalExpr};
 
 #[derive(Default)]
 pub struct RowNumExpr {

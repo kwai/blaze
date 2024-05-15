@@ -33,8 +33,8 @@ use crate::{
     shuffle::{evaluate_hashes, evaluate_partition_ids, rss::RssWriter},
 };
 
-#[derive(Default)]
 pub struct BufferedData {
+    partition_id: usize,
     staging_batches: Vec<RecordBatch>,
     sorted_batches: Vec<RecordBatch>,
     sorted_partition_indices: Vec<Vec<u32>>,
@@ -44,6 +44,22 @@ pub struct BufferedData {
 }
 
 impl BufferedData {
+    pub fn new(partition_id: usize) -> Self {
+        Self {
+            partition_id,
+            staging_batches: vec![],
+            sorted_batches: vec![],
+            sorted_partition_indices: vec![],
+            num_rows: 0,
+            staging_mem_used: 0,
+            sorted_mem_used: 0,
+        }
+    }
+
+    pub fn drain(&mut self) -> Self {
+        std::mem::replace(self, Self::new(self.partition_id))
+    }
+
     pub fn add_batch(&mut self, batch: RecordBatch, partitioning: &Partitioning) -> Result<()> {
         self.num_rows += batch.num_rows();
         self.staging_mem_used += batch.get_array_mem_size();
@@ -56,7 +72,8 @@ impl BufferedData {
 
     fn flush_staging_batches(&mut self, partitioning: &Partitioning) -> Result<()> {
         log::info!(
-            "shuffle buffered data starts partial sort, staging: {}, total: {}, total rows: {}",
+            "[partition={}] shuffle buffered data starts partial sort, staging: {}, total: {}, total rows: {}",
+            self.partition_id,
             ByteSize(self.staging_mem_used as u64),
             ByteSize(self.mem_used() as u64),
             self.num_rows,
@@ -81,23 +98,30 @@ impl BufferedData {
         mut w: W,
         partitioning: &Partitioning,
     ) -> Result<(usize, Vec<u64>)> {
+        let partition_id = self.partition_id;
+        log::info!(
+            "[partition={partition_id}] draining all buffered data, total_mem={}",
+            self.mem_used()
+        );
+
         if self.num_rows == 0 {
             return Ok((0, vec![0; partitioning.partition_count() + 1]));
         }
         let mut offsets = vec![];
         let mut offset = 0;
-        let mut iter = self.into_sorted_batches(partitioning)?.peekable();
+        let mut iter = self.into_sorted_batches(partitioning)?;
         let mut uncompressed_size = 0;
 
-        while let Some(&part_id) = iter.peek().map(|(part_id, _)| part_id) {
-            while offsets.len() <= part_id as usize {
+        while (iter.cur_part_id() as usize) < partitioning.partition_count() {
+            let cur_part_id = iter.cur_part_id();
+            while offsets.len() <= cur_part_id as usize {
                 offsets.push(offset); // fill offsets of empty partitions
             }
 
             // write all batches with this part id
             let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w), true);
-            while matches!(iter.peek(), Some((id, _)) if *id == part_id) {
-                uncompressed_size += writer.write_batch(iter.next().unwrap().1)?;
+            while iter.cur_part_id() == cur_part_id {
+                uncompressed_size += writer.write_batch(iter.next_batch())?;
             }
             offset += writer.finish_into_inner()?.count();
             offsets.push(offset);
@@ -105,6 +129,8 @@ impl BufferedData {
         while offsets.len() <= partitioning.partition_count() {
             offsets.push(offset); // fill offsets of empty partitions
         }
+
+        log::info!("[partition={partition_id}] all buffered data drained, uncompressed_size={uncompressed_size}");
         Ok((uncompressed_size, offsets))
     }
 
@@ -114,89 +140,46 @@ impl BufferedData {
         rss_partition_writer: GlobalRef,
         partitioning: &Partitioning,
     ) -> Result<usize> {
+        let partition_id = self.partition_id;
+        log::info!(
+            "[partition={partition_id}] draining all buffered data to rss, total_mem={}",
+            self.mem_used()
+        );
+
         if self.num_rows == 0 {
             return Ok(0);
         }
-        let mut iter = self.into_sorted_batches(partitioning)?.peekable();
+        let mut iter = self.into_sorted_batches(partitioning)?;
         let mut uncompressed_size = 0;
 
-        while let Some(&part_id) = iter.peek().map(|(part_id, _)| part_id) {
+        while (iter.cur_part_id() as usize) < partitioning.partition_count() {
+            let cur_part_id = iter.cur_part_id();
             let mut writer = IpcCompressionWriter::new(
-                RssWriter::new(rss_partition_writer.clone(), part_id as usize),
+                RssWriter::new(rss_partition_writer.clone(), cur_part_id as usize),
                 true,
             );
 
             // write all batches with this part id
-            while matches!(iter.peek(), Some((id, _)) if *id == part_id) {
-                uncompressed_size += writer.write_batch(iter.next().unwrap().1)?;
+            while iter.cur_part_id() == cur_part_id {
+                uncompressed_size += writer.write_batch(iter.next_batch())?;
             }
             writer.finish_into_inner()?;
         }
         jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ())?;
+
+        log::info!(
+            "[partition={partition_id}] all buffered data drained to rss, uncompressed_size={}",
+            uncompressed_size
+        );
         Ok(uncompressed_size)
     }
 
     fn into_sorted_batches(
         mut self,
         partitioning: &Partitioning,
-    ) -> Result<impl Iterator<Item = (u32, RecordBatch)>> {
+    ) -> Result<PartitionedBatchesIterator> {
         if !self.staging_batches.is_empty() {
             self.flush_staging_batches(partitioning)?;
-        }
-
-        struct Cursor {
-            idx: usize,
-            partition_indices: Vec<u32>,
-            row_idx: usize,
-            part_id: u32,
-        }
-
-        impl KeyForRadixTournamentTree for Cursor {
-            fn rdx(&self) -> usize {
-                self.part_id as usize
-            }
-        }
-
-        struct PartitionedBatchesIterator {
-            batches: Vec<RecordBatch>,
-            cursors: RadixTournamentTree<Cursor>,
-            num_output_rows: usize,
-            num_rows: usize,
-            batch_size: usize,
-        }
-
-        impl Iterator for PartitionedBatchesIterator {
-            type Item = (u32, RecordBatch);
-
-            fn next(&mut self) -> Option<Self::Item> {
-                if self.num_output_rows >= self.num_rows {
-                    return None;
-                }
-                let cur_batch_size = self.batch_size.min(self.num_rows - self.num_output_rows);
-                let cur_part_id = self.cursors.peek().part_id;
-                let mut indices = Vec::with_capacity(cur_batch_size);
-
-                // add rows with same parition id under this cursor
-                while indices.len() < cur_batch_size {
-                    let mut min_cursor = self.cursors.peek_mut();
-                    if min_cursor.part_id != cur_part_id {
-                        break;
-                    }
-                    while indices.len() < cur_batch_size && min_cursor.part_id == cur_part_id {
-                        indices.push((min_cursor.idx, min_cursor.row_idx));
-                        min_cursor.row_idx += 1;
-                        min_cursor.part_id = *min_cursor
-                            .partition_indices
-                            .get(min_cursor.row_idx)
-                            .unwrap_or(&u32::MAX);
-                    }
-                }
-                let output_batch =
-                    interleave_batches(self.batches[0].schema(), &self.batches, &indices)
-                        .expect("error merging sorted batches: interleaving error");
-                self.num_output_rows += output_batch.num_rows();
-                Some((cur_part_id, output_batch))
-            }
         }
 
         let sub_batch_size =
@@ -208,7 +191,7 @@ impl BufferedData {
                 self.sorted_partition_indices
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, partition_indices)| Cursor {
+                    .map(|(idx, partition_indices)| PartCursor {
                         idx,
                         part_id: partition_indices[0],
                         row_idx: 0,
@@ -225,6 +208,59 @@ impl BufferedData {
 
     pub fn mem_used(&self) -> usize {
         self.staging_mem_used + self.sorted_mem_used
+    }
+}
+
+struct PartitionedBatchesIterator {
+    batches: Vec<RecordBatch>,
+    cursors: RadixTournamentTree<PartCursor>,
+    num_output_rows: usize,
+    num_rows: usize,
+    batch_size: usize,
+}
+
+impl PartitionedBatchesIterator {
+    pub fn cur_part_id(&self) -> u32 {
+        self.cursors.peek().part_id
+    }
+
+    fn next_batch(&mut self) -> RecordBatch {
+        let cur_batch_size = self.batch_size.min(self.num_rows - self.num_output_rows);
+        let cur_part_id = self.cur_part_id();
+        let mut indices = Vec::with_capacity(cur_batch_size);
+
+        // add rows with same parition id under this cursor
+        while indices.len() < cur_batch_size {
+            let mut min_cursor = self.cursors.peek_mut();
+            if min_cursor.part_id != cur_part_id {
+                break;
+            }
+            while indices.len() < cur_batch_size && min_cursor.part_id == cur_part_id {
+                indices.push((min_cursor.idx, min_cursor.row_idx));
+                min_cursor.row_idx += 1;
+                min_cursor.part_id = *min_cursor
+                    .partition_indices
+                    .get(min_cursor.row_idx)
+                    .unwrap_or(&u32::MAX);
+            }
+        }
+        let output_batch = interleave_batches(self.batches[0].schema(), &self.batches, &indices)
+            .expect("error merging sorted batches: interleaving error");
+        self.num_output_rows += output_batch.num_rows();
+        output_batch
+    }
+}
+
+struct PartCursor {
+    idx: usize,
+    partition_indices: Vec<u32>,
+    row_idx: usize,
+    part_id: u32,
+}
+
+impl KeyForRadixTournamentTree for PartCursor {
+    fn rdx(&self) -> usize {
+        self.part_id as usize
     }
 }
 

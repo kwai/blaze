@@ -48,7 +48,7 @@ impl RssSortShuffleRepartitioner {
         Self {
             name: format!("RssSortShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
-            data: Mutex::default(),
+            data: Mutex::new(BufferedData::new(partition_id)),
             partitioning,
             rss: rss_partition_writer,
             data_size_metric,
@@ -73,7 +73,7 @@ impl MemConsumer for RssSortShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<()> {
-        let data = std::mem::take(&mut *self.data.lock().await);
+        let data = self.data.lock().await.drain();
         let rss = self.rss.clone();
         let partitioning = self.partitioning.clone();
         let uncompressed_size =

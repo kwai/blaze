@@ -108,7 +108,6 @@ impl FFIReaderStream {
             struct_array.columns().to_vec(),
             &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
         )?;
-
         self.size_counter.add(batch.get_array_mem_size());
         Ok(Some(batch))
     }
