@@ -136,6 +136,8 @@ impl From<protobuf::AggFunction> for AggFunction {
             protobuf::AggFunction::CollectSet => AggFunction::CollectSet,
             protobuf::AggFunction::First => AggFunction::First,
             protobuf::AggFunction::FirstIgnoresNull => AggFunction::FirstIgnoresNull,
+            protobuf::AggFunction::BrickhouseCollect => AggFunction::BrickhouseCollect,
+            protobuf::AggFunction::BrickhouseCombineUnique => AggFunction::BrickhouseCombineUnique,
         }
     }
 }

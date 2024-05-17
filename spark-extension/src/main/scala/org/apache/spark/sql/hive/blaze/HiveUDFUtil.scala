@@ -18,6 +18,7 @@ package org.apache.spark.sql.hive.blaze
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.hive.{HiveGenericUDF, HiveSimpleUDF}
+import org.apache.spark.sql.hive.HiveUDAFFunction
 
 object HiveUDFUtil extends Logging {
   def isHiveUDF(expression: Expression): Boolean = {
@@ -36,6 +37,7 @@ object HiveUDFUtil extends Logging {
     expression match {
       case e: HiveSimpleUDF => Some(e.funcWrapper.functionClassName)
       case e: HiveGenericUDF => Some(e.funcWrapper.functionClassName)
+      case e: HiveUDAFFunction => Some(e.funcWrapper.functionClassName)
       case _ => None
     }
   }

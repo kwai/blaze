@@ -66,24 +66,30 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
         VectorSchemaRoot.create(outputSchema, batchAllocator),
         VectorSchemaRoot.create(paramsSchema, batchAllocator),
         ArrowArray.wrap(importFFIArrayPtr),
-        ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
-        // import into params root
-        Data.importIntoVectorSchemaRoot(batchAllocator, importArray, paramsRoot, dictionaryProvider)
+        ArrowArray.wrap(exportFFIArrayPtr)) {
+        (outputRoot, paramsRoot, importArray, exportArray) =>
+          // import into params root
+          Data.importIntoVectorSchemaRoot(
+            batchAllocator,
+            importArray,
+            paramsRoot,
+            dictionaryProvider)
 
-        // evaluate expression and write to output root
-        val outputWriter = ArrowWriter.create(outputRoot)
-        for (paramsRow <- ColumnarHelper.batchAsRowIter(ColumnarHelper.rootAsBatch(paramsRoot))) {
-          val outputRow = InternalRow(expr.eval(paramsToUnsafe(paramsRow)))
-          outputWriter.write(outputRow)
-        }
-        outputWriter.finish()
+          // evaluate expression and write to output root
+          val outputWriter = ArrowWriter.create(outputRoot)
+          for (paramsRow <- ColumnarHelper.batchAsRowIter(
+              ColumnarHelper.rootAsBatch(paramsRoot))) {
+            val outputRow = InternalRow(expr.eval(paramsToUnsafe(paramsRow)))
+            outputWriter.write(outputRow)
+          }
+          outputWriter.finish()
 
-        // export to output using root allocator
-        Data.exportVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          outputRoot,
-          dictionaryProvider,
-          exportArray)
+          // export to output using root allocator
+          Data.exportVectorSchemaRoot(
+            ArrowUtils.rootAllocator,
+            outputRoot,
+            dictionaryProvider,
+            exportArray)
       }
     }
   }

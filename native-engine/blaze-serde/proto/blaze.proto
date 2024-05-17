@@ -133,6 +133,8 @@ enum AggFunction {
   COLLECT_SET = 6;
   FIRST = 7;
   FIRST_IGNORES_NULL = 8;
+  BRICKHOUSE_COLLECT = 1000;
+  BRICKHOUSE_COMBINE_UNIQUE = 1001;
 }
 
 message PhysicalAggExprNode {

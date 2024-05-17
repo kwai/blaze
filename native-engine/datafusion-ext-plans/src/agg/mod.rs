@@ -16,6 +16,7 @@ pub mod acc;
 pub mod agg_context;
 pub mod agg_table;
 pub mod avg;
+pub mod brickhouse;
 pub mod collect_list;
 pub mod collect_set;
 pub mod count;
@@ -87,6 +88,8 @@ pub enum AggFunction {
     FirstIgnoresNull,
     CollectList,
     CollectSet,
+    BrickhouseCollect,
+    BrickhouseCombineUnique,
 }
 
 #[derive(Debug, Clone)]
@@ -239,7 +242,7 @@ pub fn create_agg(
         }
         AggFunction::CollectList => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = DataType::List(Arc::new(Field::new("item", arg_type.clone(), true)));
+            let return_type = DataType::new_list(arg_type.clone(), true);
             Arc::new(collect_list::AggCollectList::try_new(
                 children[0].clone(),
                 return_type,
@@ -248,11 +251,33 @@ pub fn create_agg(
         }
         AggFunction::CollectSet => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = DataType::List(Arc::new(Field::new("item", arg_type.clone(), true)));
+            let return_type = DataType::new_list(arg_type.clone(), true);
             Arc::new(collect_set::AggCollectSet::try_new(
                 children[0].clone(),
                 return_type,
                 arg_type,
+            )?)
+        }
+        AggFunction::BrickhouseCollect => {
+            let arg_type = children[0].data_type(input_schema)?;
+            let arg_list_inner_type = match arg_type {
+                DataType::List(field) => field.data_type().clone(),
+                _ => return df_execution_err!("brickhouse.collect expect list type"),
+            };
+            Arc::new(brickhouse::collect::AggCollect::try_new(
+                children[0].clone(),
+                arg_list_inner_type,
+            )?)
+        }
+        AggFunction::BrickhouseCombineUnique => {
+            let arg_type = children[0].data_type(input_schema)?;
+            let arg_list_inner_type = match arg_type {
+                DataType::List(field) => field.data_type().clone(),
+                _ => return df_execution_err!("brickhouse.combine_unique expect list type"),
+            };
+            Arc::new(brickhouse::collect::AggCollect::try_new(
+                children[0].clone(),
+                arg_list_inner_type,
             )?)
         }
     })

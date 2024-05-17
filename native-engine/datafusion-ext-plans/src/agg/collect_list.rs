@@ -69,6 +69,10 @@ impl AggCollectList {
             mem_used_tracker: AtomicUsize::new(0),
         })
     }
+
+    pub fn arg_type(&self) -> &DataType {
+        &self.arg_type
+    }
 }
 
 impl Debug for AggCollectList {

@@ -18,6 +18,7 @@ use std::sync::Arc;
 use datafusion::{common::Result, logical_expr::ScalarFunctionImplementation};
 use datafusion_ext_commons::df_unimplemented_err;
 
+mod brickhouse;
 mod spark_check_overflow;
 pub mod spark_get_json_object;
 mod spark_make_array;
@@ -47,6 +48,7 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "StringConcatWs" => Arc::new(spark_strings::string_concat_ws),
         "StringLower" => Arc::new(spark_strings::string_lower),
         "StringUpper" => Arc::new(spark_strings::string_upper),
+        "BrickhouseArrayUnion" => Arc::new(brickhouse::array_union::array_union),
         _ => df_unimplemented_err!("spark ext function not implemented: {name}")?,
     })
 }

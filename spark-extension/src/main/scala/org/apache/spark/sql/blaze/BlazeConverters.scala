@@ -794,7 +794,8 @@ object BlazeConverters extends Logging {
         if (requiredOrdering.nonEmpty && child.outputOrdering.map(_.child) != requiredOrdering) {
           val rowNumExpr = StubExpr("RowNum", LongType, nullable = false)
           sortedChild = Shims.get.createNativeSortExec(
-            requiredOrdering.map(SortOrder(_, Ascending)) ++ Seq(SortOrder(rowNumExpr, Ascending)),
+            requiredOrdering.map(SortOrder(_, Ascending)) ++ Seq(
+              SortOrder(rowNumExpr, Ascending)),
             global = false,
             sortedChild)
         }

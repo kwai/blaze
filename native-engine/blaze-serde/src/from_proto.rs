@@ -642,6 +642,12 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 protobuf::AggFunction::FirstIgnoresNull => {
                                     WindowFunction::Agg(AggFunction::FirstIgnoresNull)
                                 }
+                                protobuf::AggFunction::BrickhouseCollect => {
+                                    WindowFunction::Agg(AggFunction::BrickhouseCollect)
+                                }
+                                protobuf::AggFunction::BrickhouseCombineUnique => {
+                                    WindowFunction::Agg(AggFunction::BrickhouseCombineUnique)
+                                }
                             },
                         };
                         Ok::<_, Self::Error>(WindowExpr::new(window_func, children, field))

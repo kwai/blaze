@@ -54,6 +54,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.LeafExpression
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
+import org.apache.spark.sql.execution.aggregate.ScalaUDAF
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
@@ -986,21 +987,28 @@ object NativeConverters extends Logging {
 
       // hive UDFJson
       case e
-          if (isHiveSimpleUDF(e)
-            && getFunctionClassName(e).contains("org.apache.hadoop.hive.ql.udf.UDFJson")
+          if getFunctionClassName(e).contains("org.apache.hadoop.hive.ql.udf.UDFJson")
             && SparkEnv.get.conf.getBoolean(
               "spark.blaze.udf.UDFJson.enabled",
               defaultValue = true)
             && e.children.length == 2
             && e.children(0).dataType == StringType
             && e.children(1).dataType == StringType
-            && e.children(1).isInstanceOf[Literal]) =>
+            && e.children(1).isInstanceOf[Literal] =>
         // use GetParsedJsonObject + ParseJson for reusing parsed json value in native
         val parsed = Shims.get.createNativeExprWrapper(
           buildExtScalarFunction("ParseJson", e.children(0) :: Nil, BinaryType),
           BinaryType,
           nullable = false)
         buildExtScalarFunction("GetParsedJsonObject", parsed :: e.children(1) :: Nil, StringType)
+
+      // hive UDF brickhouse.array_union
+      case e
+          if getFunctionClassName(e).contains("brickhouse.udf.collect.ArrayUnionUDF")
+            && SparkEnv.get.conf.getBoolean(
+              "spark.blaze.udf.brickhouse.enabled",
+              defaultValue = true) =>
+        buildExtScalarFunction("BrickhouseArrayUnion", e.children, e.dataType)
 
       case e =>
         Shims.get.convertExpr(e) match {
@@ -1062,6 +1070,26 @@ object NativeConverters extends Logging {
       case CollectSet(child, _, _) if child.dataType.isInstanceOf[AtomicType] =>
         aggBuilder.setAggFunction(pb.AggFunction.COLLECT_SET)
         aggBuilder.addChildren(convertExpr(child))
+
+      // brickhouse UDAFs
+      case udaf
+          if HiveUDFUtil
+            .getFunctionClassName(udaf)
+            .contains("brickhouse.udf.collect.CollectUDAF")
+            && SparkEnv.get.conf.getBoolean(
+              "spark.blaze.udf.brickhouse.enabled",
+              defaultValue = true) =>
+        aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COLLECT)
+        aggBuilder.addChildren(convertExpr(udaf.children.head))
+      case udaf
+          if HiveUDFUtil
+            .getFunctionClassName(udaf)
+            .contains("brickhouse.udf.collect.CombineUniqueUDAF")
+            && SparkEnv.get.conf.getBoolean(
+              "spark.blaze.udf.brickhouse.enabled",
+              defaultValue = true) =>
+        aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COMBINE_UNIQUE)
+        aggBuilder.addChildren(convertExpr(udaf.children.head))
 
       case _ =>
         Shims.get.convertAggregateExpr(e) match {
