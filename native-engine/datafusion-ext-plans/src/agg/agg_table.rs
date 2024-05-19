@@ -109,29 +109,35 @@ impl AggTable {
 
     pub async fn process_input_batch(&self, input_batch: RecordBatch) -> Result<()> {
         let _timer = self.baseline_metrics.elapsed_compute().timer();
-        let mut in_mem = self.in_mem.lock().await;
 
-        // compute input arrays
-        match in_mem.mode {
-            InMemMode::Hashing => {
-                in_mem
-                    .hashing_data
-                    .update_batch::<GX_HASH_SEED_HASHING>(input_batch)?;
-            }
-            InMemMode::Merging => {
-                in_mem.merging_data.add_batch(input_batch)?;
-            }
-            InMemMode::PartialSkipped => {
-                unreachable!("in_mem.mode cannot be PartialSkipped");
-            }
-        }
+        // update memory usage before processing
+        let mem_used = self.in_mem.lock().await.mem_used() + input_batch.get_array_mem_size() * 2;
+        self.update_mem_used(mem_used).await?;
 
-        // check for partial skipping
-        if in_mem.num_records() >= self.agg_ctx.partial_skipping_min_rows {
-            in_mem.check_trigger_partial_skipping();
-        }
-        let mem_used = in_mem.mem_used();
-        drop(in_mem);
+        let mem_used = {
+            let mut in_mem = self.in_mem.lock().await;
+
+            // compute input arrays
+            match in_mem.mode {
+                InMemMode::Hashing => {
+                    in_mem
+                        .hashing_data
+                        .update_batch::<GX_HASH_SEED_HASHING>(input_batch)?;
+                }
+                InMemMode::Merging => {
+                    in_mem.merging_data.add_batch(input_batch)?;
+                }
+                InMemMode::PartialSkipped => {
+                    unreachable!("in_mem.mode cannot be PartialSkipped");
+                }
+            }
+
+            // check for partial skipping
+            if in_mem.num_records() >= self.agg_ctx.partial_skipping_min_rows {
+                in_mem.check_trigger_partial_skipping();
+            }
+            in_mem.mem_used()
+        };
 
         // if triggered partial skipping, no need to update memory usage and try to
         // spill

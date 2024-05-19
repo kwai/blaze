@@ -16,10 +16,7 @@ use std::sync::Weak;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::{
-    common::Result,
-    physical_plan::{metrics::Count, Partitioning},
-};
+use datafusion::{common::Result, physical_plan::Partitioning};
 use datafusion_ext_commons::df_execution_err;
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
@@ -35,7 +32,6 @@ pub struct RssSortShuffleRepartitioner {
     data: Mutex<BufferedData>,
     partitioning: Partitioning,
     rss: GlobalRef,
-    data_size_metric: Count,
 }
 
 impl RssSortShuffleRepartitioner {
@@ -43,7 +39,6 @@ impl RssSortShuffleRepartitioner {
         partition_id: usize,
         rss_partition_writer: GlobalRef,
         partitioning: Partitioning,
-        data_size_metric: Count,
     ) -> Self {
         Self {
             name: format!("RssSortShufflePartitioner[partition={}]", partition_id),
@@ -51,7 +46,6 @@ impl RssSortShuffleRepartitioner {
             data: Mutex::new(BufferedData::new(partition_id)),
             partitioning,
             rss: rss_partition_writer,
-            data_size_metric,
         }
     }
 }
@@ -76,11 +70,10 @@ impl MemConsumer for RssSortShuffleRepartitioner {
         let data = self.data.lock().await.drain();
         let rss = self.rss.clone();
         let partitioning = self.partitioning.clone();
-        let uncompressed_size =
-            tokio::task::spawn_blocking(move || data.write_rss(rss, &partitioning))
-                .await
-                .or_else(|err| df_execution_err!("{err}"))??;
-        self.data_size_metric.add(uncompressed_size);
+
+        tokio::task::spawn_blocking(move || data.write_rss(rss, &partitioning))
+            .await
+            .or_else(|err| df_execution_err!("{err}"))??;
         self.update_mem_used(0).await?;
         Ok(())
     }
@@ -95,11 +88,16 @@ impl Drop for RssSortShuffleRepartitioner {
 #[async_trait]
 impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let mut data = self.data.lock().await;
-        data.add_batch(input, &self.partitioning)?;
-        let mem_used = data.mem_used();
-        drop(data);
+        // update memory usage before adding to buffered data
+        let mem_used = self.data.lock().await.mem_used() + input.get_array_memory_size() * 2;
+        self.update_mem_used(mem_used).await?;
 
+        // add batch to buffered data
+        let mem_used = {
+            let mut data = self.data.lock().await;
+            data.add_batch(input, &self.partitioning)?;
+            data.mem_used()
+        };
         self.update_mem_used(mem_used).await?;
 
         // we are likely to spill more frequently because the cost of spilling a shuffle

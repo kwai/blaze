@@ -121,16 +121,14 @@ impl ExecutionPlan for RssShuffleWriterExec {
 
         let input = self.input.execute(partition, context.clone())?;
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
-            p if p.partition_count() == 1 => Arc::new(RssSingleShuffleRepartitioner::new(
-                rss_partition_writer,
-                data_size_metric,
-            )),
+            p if p.partition_count() == 1 => {
+                Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
+            }
             Partitioning::Hash(..) => {
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
                     self.partitioning.clone(),
-                    data_size_metric,
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
@@ -144,6 +142,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
                 partition,
                 input,
                 BaselineMetrics::new(&self.metrics, partition),
+                data_size_metric,
             ))
             .try_flatten(),
         )))

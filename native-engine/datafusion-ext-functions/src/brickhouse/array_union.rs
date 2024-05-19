@@ -15,7 +15,7 @@
 use std::{cmp::Ordering, collections::HashSet, sync::Arc};
 
 use arrow::{
-    array::{Array, ArrayAccessor, ListArray},
+    array::{Array, ListArray},
     buffer::{OffsetBuffer, ScalarBuffer},
     datatypes::{DataType, Field},
 };

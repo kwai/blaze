@@ -116,7 +116,6 @@ impl ExecutionPlan for ShuffleWriterExec {
                 self.output_data_file.clone(),
                 self.output_index_file.clone(),
                 BaselineMetrics::new(&self.metrics, partition),
-                data_size_metric,
             )),
             Partitioning::Hash(..) => {
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
@@ -125,7 +124,6 @@ impl ExecutionPlan for ShuffleWriterExec {
                     self.output_index_file.clone(),
                     self.partitioning.clone(),
                     &self.metrics,
-                    data_size_metric,
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
@@ -144,6 +142,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 partition,
                 input,
                 BaselineMetrics::new(&self.metrics, partition),
+                data_size_metric,
             ))
             .try_flatten(),
         )))

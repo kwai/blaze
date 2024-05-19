@@ -281,7 +281,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         }
 
         // consumer is unspillable/shrinking, no need to wait or spill
-        if !spillable || new_used < old_used {
+        if old_used == 0 || !spillable || new_used < old_used {
             return Ok(());
         }
 

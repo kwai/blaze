@@ -24,7 +24,10 @@ use datafusion::{
     common::Result,
     error::DataFusionError,
     execution::context::TaskContext,
-    physical_plan::{metrics::BaselineMetrics, Partitioning, SendableRecordBatchStream},
+    physical_plan::{
+        metrics::{BaselineMetrics, Count},
+        Partitioning, SendableRecordBatchStream,
+    },
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
@@ -56,6 +59,7 @@ impl dyn ShuffleRepartitioner {
         partition: usize,
         input: SendableRecordBatchStream,
         metrics: BaselineMetrics,
+        data_size_metric: Count,
     ) -> Result<SendableRecordBatchStream> {
         let input_schema = input.schema();
 
@@ -84,6 +88,7 @@ impl dyn ShuffleRepartitioner {
                     .await
                     .map_err(|err| err.context("shuffle: executing insert_batch() error"))?;
             }
+            data_size_metric.add(batches_mem_size.load(SeqCst));
 
             let _timer = metrics.elapsed_compute().timer();
             log::info!(
