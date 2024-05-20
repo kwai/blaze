@@ -555,7 +555,7 @@ object NativeConverters extends Logging {
         }
 
       // in
-      case InSet(value, set) if set.forall(_.isInstanceOf[Literal]) =>
+      case InSet(value, set) =>
         buildExprNode {
           _.setInList(
             pb.PhysicalInListNode
