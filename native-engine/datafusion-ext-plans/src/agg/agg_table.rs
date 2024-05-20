@@ -87,10 +87,11 @@ impl AggTable {
     ) -> Self {
         let baseline_metrics = BaselineMetrics::new(&metrics, partition_id);
         let spill_metrics = SpillMetrics::new(&metrics, partition_id);
+        let name = format!("AggTable[partition={}]", partition_id);
         Self {
-            name: format!("AggTable[partition={}]", partition_id),
             mem_consumer_info: None,
             in_mem: Mutex::new(InMemTable::new(
+                name.clone(),
                 0,
                 agg_ctx.clone(),
                 context.clone(),
@@ -98,6 +99,7 @@ impl AggTable {
                 spill_metrics.clone(),
             )),
             spills: Mutex::default(),
+            name,
             agg_ctx,
             context,
             baseline_metrics,
@@ -217,9 +219,9 @@ impl AggTable {
         };
 
         log::info!(
-            "aggregate exec starts outputting with {} ({} spills)",
+            "{} starts outputting ({} spills)",
             self.name(),
-            spills.len(),
+            spills.len()
         );
 
         // only one in-mem table, directly output it
@@ -437,6 +439,7 @@ pub enum InMemMode {
 
 /// Unordered in-mem hash table which can be updated
 pub struct InMemTable {
+    name: String,
     id: usize,
     agg_ctx: Arc<AggContext>,
     task_ctx: Arc<TaskContext>,
@@ -447,6 +450,7 @@ pub struct InMemTable {
 
 impl InMemTable {
     fn new(
+        name: String,
         id: usize,
         agg_ctx: Arc<AggContext>,
         task_ctx: Arc<TaskContext>,
@@ -454,6 +458,7 @@ impl InMemTable {
         spill_metrics: SpillMetrics,
     ) -> Self {
         Self {
+            name,
             id,
             hashing_data: HashingData::new(agg_ctx.clone(), task_ctx.clone(), &spill_metrics),
             merging_data: MergingData::new(agg_ctx.clone(), task_ctx.clone(), &spill_metrics),
@@ -465,11 +470,15 @@ impl InMemTable {
 
     fn renew(&mut self, mode: InMemMode) -> Self {
         self.id += 1;
+        let name = self.name.clone();
         let agg_ctx = self.agg_ctx.clone();
         let task_ctx = self.task_ctx.clone();
         let spill_metrics = self.hashing_data.spill_metrics.clone();
         let id = self.id + 1;
-        std::mem::replace(self, Self::new(id, agg_ctx, task_ctx, mode, spill_metrics))
+        std::mem::replace(
+            self,
+            Self::new(name, id, agg_ctx, task_ctx, mode, spill_metrics),
+        )
     }
 
     pub fn mem_used(&self) -> usize {
@@ -491,7 +500,8 @@ impl InMemTable {
             let cardinality_ratio = self.hashing_data.cardinality_ratio();
             if cardinality_ratio > self.agg_ctx.partial_skipping_ratio {
                 log::warn!(
-                    "Agg: cardinality ratio = {cardinality_ratio}, will trigger partial skipping"
+                    "{} cardinality ratio = {cardinality_ratio}, will trigger partial skipping",
+                    self.name,
                 );
                 self.mode = InMemMode::PartialSkipped;
             }

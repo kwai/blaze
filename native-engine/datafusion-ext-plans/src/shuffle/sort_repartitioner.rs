@@ -70,7 +70,7 @@ impl SortShuffleRepartitioner {
             mem_consumer_info: None,
             output_data_file,
             output_index_file,
-            data: Mutex::default(),
+            data: Mutex::new(BufferedData::new(partition_id)),
             spills: Mutex::default(),
             partitioning,
             num_output_partitions,
@@ -97,7 +97,7 @@ impl MemConsumer for SortShuffleRepartitioner {
     }
 
     async fn spill(&self) -> Result<()> {
-        let data = std::mem::take(&mut *self.data.lock().await);
+        let data = self.data.lock().await.drain();
         let mut spill = try_new_spill(&self.spill_metrics)?;
 
         let (uncompressed_size, offsets) =
@@ -140,12 +140,12 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
     async fn shuffle_write(&self) -> Result<()> {
         self.set_spillable(false);
         let mut spills = std::mem::take(&mut *self.spills.lock().await);
-        let data = std::mem::take(&mut *self.data.lock().await);
+        let data = self.data.lock().await.drain();
 
         log::info!(
-            "sort repartitioner starts outputting with {} ({} spills)",
+            "{} starts outputting ({} spills)",
             self.name(),
-            spills.len(),
+            spills.len()
         );
 
         let data_size_metric = self.data_size_metric.clone();
