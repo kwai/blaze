@@ -106,6 +106,15 @@ pub struct LoserTreePeekMut<'a, T: ComparableForLoserTree> {
     dirty: bool,
 }
 
+impl<T: ComparableForLoserTree> LoserTreePeekMut<'_, T> {
+    pub fn adjust(&mut self) {
+        if self.dirty {
+            self.tree.adjust_tree();
+            self.dirty = false;
+        }
+    }
+}
+
 impl<T: ComparableForLoserTree> Deref for LoserTreePeekMut<'_, T> {
     type Target = T;
 

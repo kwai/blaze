@@ -371,7 +371,9 @@ impl BufferedData {
                 let mut sorted_key_store_cursor = std::io::Cursor::new(sorted_key_store);
                 let mut key_reader = SortedKeysReader::default();
                 if num_rows > 0 {
-                    key_reader.read_key(&mut sorted_key_store_cursor).unwrap();
+                    key_reader
+                        .next_key(&mut sorted_key_store_cursor)
+                        .expect("error reading first sorted key");
                 }
 
                 Self {
@@ -395,9 +397,13 @@ impl BufferedData {
                 self.row_idx += 1;
                 if !self.finished() {
                     self.key_reader
-                        .read_key(&mut self.sorted_key_store_cursor)
-                        .unwrap();
+                        .next_key(&mut self.sorted_key_store_cursor)
+                        .expect("error reading next sorted key");
                 }
+            }
+
+            fn is_equal_to_prev_key(&self) -> bool {
+                self.key_reader.is_equal_to_prev
             }
         }
 
@@ -435,14 +441,19 @@ impl BufferedData {
                 let is_all_pruned = self.batches[0].num_columns() == 0;
                 let mut indices = Vec::with_capacity(cur_batch_size);
                 let mut key_collector = KC::default();
+                let mut min_cursor = self.cursors.peek_mut();
 
                 for _ in 0..cur_batch_size {
-                    let mut min_cursor = self.cursors.peek_mut();
                     assert!(!min_cursor.finished());
 
                     key_collector.add_key(min_cursor.cur_key());
                     indices.push((min_cursor.idx, min_cursor.row_idx));
                     min_cursor.forward();
+
+                    // fetch next min key from loser tree only if it is different from previous key
+                    if min_cursor.finished() || !min_cursor.is_equal_to_prev_key() {
+                        min_cursor.adjust();
+                    }
                 }
                 let batch = if !is_all_pruned {
                     interleave_batches(batch_schema, &self.batches, &indices)
@@ -734,9 +745,15 @@ impl<'a> SpillCursor<'a> {
                 return Ok(());
             }
         }
-        self.cur_key_reader.read_key(&mut self.input).unwrap();
+        self.cur_key_reader
+            .next_key(&mut self.input)
+            .expect("error reading next key");
         self.cur_key_row_idx += 1;
         Ok(())
+    }
+
+    fn is_equal_to_prev_key(&self) -> bool {
+        self.cur_key_reader.is_equal_to_prev
     }
 
     fn load_next_batch(&mut self) -> Result<bool> {
@@ -838,8 +855,9 @@ impl<KC: KeyCollector> ExternalMerger<'_, KC> {
 
         // collect merged records to staging
         if self.num_total_output_rows < self.limit {
+            let mut min_cursor = self.cursors.peek_mut();
+
             while self.staging_num_rows < self.sub_batch_size {
-                let mut min_cursor = self.cursors.peek_mut();
                 if min_cursor.finished {
                     break;
                 }
@@ -849,6 +867,11 @@ impl<KC: KeyCollector> ExternalMerger<'_, KC> {
                 self.staging_key_collector.add_key(min_cursor.cur_key());
                 self.staging_num_rows += 1;
                 min_cursor.next_key()?;
+
+                // fetch next min key from loser tree only if it is different from previous key
+                if min_cursor.finished || !min_cursor.is_equal_to_prev_key() {
+                    min_cursor.adjust();
+                }
             }
         }
 
@@ -1098,7 +1121,9 @@ impl PruneSortKeysFromBatch {
                 let mut key_reader = SortedKeysReader::default();
                 let mut sorted_key_store_cursor = Cursor::new(&kc.store);
                 for _ in 0..pruned_batch.num_rows() {
-                    key_reader.read_key(&mut sorted_key_store_cursor)?;
+                    key_reader
+                        .next_key(&mut sorted_key_store_cursor)
+                        .expect("error reading next key");
                     key_data.extend(&key_reader.cur_key);
                     key_lens.push(key_reader.cur_key.len());
                 }
@@ -1221,18 +1246,22 @@ impl SortedKeysWriter {
 #[derive(Default)]
 struct SortedKeysReader {
     cur_key: Vec<u8>,
+    is_equal_to_prev: bool,
 }
 
 impl SortedKeysReader {
-    fn read_key(&mut self, r: &mut impl Read) -> std::io::Result<&[u8]> {
+    fn next_key(&mut self, r: &mut impl Read) -> std::io::Result<()> {
         let b = read_len(r)?;
         if b > 0 {
+            self.is_equal_to_prev = false;
             let suffix_len = b - 1;
             let prefix_len = read_len(r)?;
             self.cur_key.resize(prefix_len + suffix_len, 0);
             r.read_exact(&mut self.cur_key[prefix_len..][..suffix_len])?;
+        } else {
+            self.is_equal_to_prev = true;
         }
-        return Ok(&self.cur_key);
+        Ok(())
     }
 }
 
