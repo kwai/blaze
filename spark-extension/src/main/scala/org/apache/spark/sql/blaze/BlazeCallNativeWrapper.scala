@@ -116,14 +116,14 @@ case class BlazeCallNativeWrapper(
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         ArrowArray.wrap(ffiArrayPtr),
-        VectorSchemaRoot.create(arrowSchema, batchAllocator)
-      ) { case (ffiArray, root) =>
+        VectorSchemaRoot.create(arrowSchema, batchAllocator)) { case (ffiArray, root) =>
         Data.importIntoVectorSchemaRoot(batchAllocator, ffiArray, root, dictionaryProvider)
-        batchRows.append(ColumnarHelper
-          .rootAsBatch(root)
-          .rowIterator
-          .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
-          .toSeq: _*)
+        batchRows.append(
+          ColumnarHelper
+            .rootAsBatch(root)
+            .rowIterator
+            .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
+            .toSeq: _*)
       }
     }
   }
