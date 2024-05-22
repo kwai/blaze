@@ -66,7 +66,7 @@ use datafusion_ext_plans::{
     expand_exec::ExpandExec,
     ffi_reader_exec::FFIReaderExec,
     filter_exec::FilterExec,
-    generate::create_generator,
+    generate::{create_generator, create_udtf_generator},
     generate_exec::GenerateExec,
     ipc_reader_exec::IpcReaderExec,
     ipc_writer_exec::IpcWriterExec,
@@ -720,17 +720,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let pb_generate_func = GenerateFunction::try_from(pb_generator.func)
                     .expect("unsupported generate function");
 
-                let func = match pb_generate_func {
-                    GenerateFunction::Explode => {
-                        datafusion_ext_plans::generate::GenerateFunc::Explode
-                    }
-                    GenerateFunction::PosExplode => {
-                        datafusion_ext_plans::generate::GenerateFunc::PosExplode
-                    }
-                    GenerateFunction::JsonTuple => {
-                        datafusion_ext_plans::generate::GenerateFunc::JsonTuple
-                    }
-                };
                 let children = pb_generator_children
                     .iter()
                     .map(|expr| {
@@ -740,7 +729,30 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         )?)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let generator = create_generator(&input_schema, func, children)?;
+
+                let generator = match pb_generate_func {
+                    GenerateFunction::Explode => create_generator(
+                        &input_schema,
+                        datafusion_ext_plans::generate::GenerateFunc::Explode,
+                        children,
+                    )?,
+                    GenerateFunction::PosExplode => create_generator(
+                        &input_schema,
+                        datafusion_ext_plans::generate::GenerateFunc::PosExplode,
+                        children,
+                    )?,
+                    GenerateFunction::JsonTuple => create_generator(
+                        &input_schema,
+                        datafusion_ext_plans::generate::GenerateFunc::JsonTuple,
+                        children,
+                    )?,
+                    GenerateFunction::Udtf => {
+                        let udtf = pb_generator.udtf.as_ref().unwrap();
+                        let serialized = udtf.serialized.clone();
+                        let return_schema = Arc::new(convert_required!(udtf.return_schema)?);
+                        create_udtf_generator(serialized, return_schema, children)?
+                    }
+                };
                 let generator_output_schema = Arc::new(Schema::new(
                     generate
                         .generator_output

@@ -17,14 +17,18 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
+import org.apache.spark.sql.blaze.NativeConverters.convertExprWithFallback
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.Explode
 import org.apache.spark.sql.catalyst.expressions.Generator
 import org.apache.spark.sql.catalyst.expressions.JsonTuple
@@ -35,8 +39,12 @@ import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalPlanNode
+
+import com.google.protobuf.ByteString
 
 abstract class NativeGenerateBase(
     generator: Generator,
@@ -83,8 +91,29 @@ abstract class NativeGenerateBase(
         .setFunc(pb.GenerateFunction.JsonTuple)
         .addAllChild(children.map(NativeConverters.convertExpr).asJava)
         .build()
-    case other =>
-      throw new NotImplementedError(s"generator not supported: $other")
+    case udtf =>
+      val children = ArrayBuffer[AttributeReference]()
+      val paramsFields = ArrayBuffer[StructField]()
+
+      val bound = udtf.mapChildren(_.transformDown {
+        case p: AttributeReference =>
+          children += p
+          paramsFields += StructField(p.name, p.dataType, p.nullable)
+          BoundReference(paramsFields.length - 1, p.dataType, p.nullable)
+        case p => p
+      })
+      pb.Generator
+        .newBuilder()
+        .setFunc(pb.GenerateFunction.Udtf)
+        .setUdtf(
+          pb.GenerateUdtf
+            .newBuilder()
+            .setSerialized(ByteString.copyFrom(NativeConverters.serializeExpression(
+              bound.asInstanceOf[Generator with Serializable],
+              StructType(paramsFields))))
+            .setReturnSchema(NativeConverters.convertSchema(udtf.elementSchema)))
+        .addAllChild(children.map(NativeConverters.convertExpr).asJava)
+        .build()
   }
 
   private def nativeGeneratorOutput =

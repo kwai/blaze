@@ -26,17 +26,18 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.Generator
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
+import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 
-case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
-  private val (expr, javaParamsSchema) = NativeConverters.deserializeExpression[Expression]({
+case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
+  private val (expr, javaParamsSchema) = NativeConverters.deserializeExpression[Generator]({
     val bytes = new Array[Byte](serialized.remaining())
     serialized.get(bytes)
     bytes
@@ -50,10 +51,11 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
   }
 
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
-  private val outputSchema = {
-    val schema = StructType(Seq(StructField("", expr.dataType, expr.nullable)))
-    ArrowUtils.toArrowSchema(schema)
-  }
+  private val javaOutputSchema = StructType(
+    Seq(
+      StructField("rowid", IntegerType, nullable = false),
+      StructField("element", expr.elementSchema, nullable = false)))
+  private val outputSchema = ArrowUtils.toArrowSchema(javaOutputSchema)
   private val paramsSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
   private val paramsToUnsafe = {
     val toUnsafe = UnsafeProjection.create(javaParamsSchema)
@@ -79,9 +81,10 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
 
           // evaluate expression and write to output root
           val outputWriter = ArrowWriter.create(outputRoot)
-          for (paramsRow <- ColumnarHelper.batchAsRowIter(batch)) {
-            val outputRow = InternalRow(expr.eval(paramsToUnsafe(paramsRow)))
-            outputWriter.write(outputRow)
+          for ((paramsRow, rowId) <- ColumnarHelper.batchAsRowIter(batch).zipWithIndex) {
+            for (outputRow <- expr.eval(paramsToUnsafe(paramsRow))) {
+              outputWriter.write(InternalRow(rowId, outputRow))
+            }
           }
           outputWriter.finish()
 

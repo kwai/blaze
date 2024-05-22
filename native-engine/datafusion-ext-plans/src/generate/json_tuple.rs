@@ -57,7 +57,7 @@ impl Generator for JsonTuple {
             .collect::<Result<_>>()?;
 
         Ok(GeneratedRows {
-            orig_row_ids: (0..num_rows as u32).collect(),
+            orig_row_ids: (0..num_rows as i32).collect(),
             cols: evaluated,
         })
     }
