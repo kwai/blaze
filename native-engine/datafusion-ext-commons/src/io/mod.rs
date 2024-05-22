@@ -26,9 +26,9 @@ pub use scalar_serde::{read_scalar, write_scalar};
 mod batch_serde;
 mod scalar_serde;
 
-pub fn write_one_batch<W: Write + Seek>(batch: &RecordBatch, output: &mut W) -> Result<usize> {
+pub fn write_one_batch<W: Write + Seek>(batch: &RecordBatch, output: &mut W) -> Result<()> {
     if batch.num_rows() == 0 {
-        return Ok(0);
+        return Ok(());
     }
     // write ipc_length placeholder
     let start_pos = output.stream_position()?;
@@ -43,7 +43,7 @@ pub fn write_one_batch<W: Write + Seek>(batch: &RecordBatch, output: &mut W) -> 
     output.seek(SeekFrom::Start(start_pos))?;
     output.write_all(&ipc_length.to_le_bytes()[..])?;
     output.seek(SeekFrom::Start(end_pos))?;
-    Ok((end_pos - start_pos) as usize)
+    Ok(())
 }
 
 pub fn read_one_batch<R: Read>(input: &mut R, schema: &SchemaRef) -> Result<Option<RecordBatch>> {

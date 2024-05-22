@@ -37,7 +37,8 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    batch_size, df_execution_err, downcast_any, streams::coalesce_stream::CoalesceInput,
+    array_size::ArraySize, batch_size, df_execution_err, downcast_any,
+    streams::coalesce_stream::CoalesceInput, suggested_output_batch_mem_size,
 };
 use futures::{StreamExt, TryStreamExt};
 use parking_lot::Mutex as SyncMutex;
@@ -540,7 +541,11 @@ async fn execute_join(
         }
 
         // flush joiner if cursors buffered too many batches
-        if !joiner.is_empty() && lcur.num_buffered_batches() + rcur.num_buffered_batches() > 5 {
+        if !joiner.is_empty()
+            && lcur.num_buffered_batches() > 1
+            && rcur.num_buffered_batches() > 1
+            && lcur.mem_size() + rcur.mem_size() > suggested_output_batch_mem_size()
+        {
             if let Some(batch) = joiner.flush_pairs(&join_params, &mut lcur, &mut rcur)? {
                 metrics.record_output(batch.num_rows());
                 sender.send(Ok(batch), Some(&mut timer)).await;
@@ -588,6 +593,7 @@ struct StreamCursor {
     on_row_null_buffers: Vec<Option<NullBuffer>>,
     cur_idx: (usize, usize),
     num_null_batches: usize,
+    mem_size: usize,
     finished: bool,
 }
 
@@ -631,6 +637,7 @@ impl StreamCursor {
             on_row_null_buffers: vec![Some(null_nb)],
             cur_idx: (0, 0),
             num_null_batches: 1,
+            mem_size: 0,
             finished: false,
         })
     }
@@ -662,6 +669,13 @@ impl StreamCursor {
                 .unwrap_or(None);
             let on_rows = Arc::new(self.on_row_converter.lock().convert_columns(&on_columns)?);
 
+            self.mem_size += batch.get_array_mem_size();
+            self.mem_size += on_row_null_buffer
+                .as_ref()
+                .map(|nb| nb.buffer().len())
+                .unwrap_or_default();
+            self.mem_size += on_rows.size();
+
             self.projected_batches
                 .push(batch.project(&self.projection)?);
             self.batches.push(batch);
@@ -688,9 +702,21 @@ impl StreamCursor {
     }
 
     #[inline]
+    fn mem_size(&self) -> usize {
+        self.mem_size
+    }
+
+    #[inline]
     fn clear_outdated(&mut self, min_reserved_bidx: usize) {
         // fill out-dated batches with null batches
         for i in self.num_null_batches..min_reserved_bidx.min(self.cur_idx.0) {
+            self.mem_size -= self.batches[i].get_array_mem_size();
+            self.mem_size -= self.on_row_null_buffers[i]
+                .as_ref()
+                .map(|nb| nb.buffer().len())
+                .unwrap_or_default();
+            self.mem_size -= self.on_rows[i].size();
+
             self.projected_batches[i] = self.projected_batches[0].clone();
             self.batches[i] = self.batches[0].clone();
             self.on_rows[i] = self.on_rows[0].clone();

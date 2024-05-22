@@ -47,9 +47,9 @@ impl<W: Write> IpcCompressionWriter<W> {
     }
 
     /// Write a batch, returning uncompressed bytes size
-    pub fn write_batch(&mut self, batch: RecordBatch) -> Result<usize> {
+    pub fn write_batch(&mut self, batch: RecordBatch) -> Result<()> {
         let mut batch_buf = vec![];
-        let uncompressed_bytes_size = write_one_batch(&batch, &mut Cursor::new(&mut batch_buf))?;
+        write_one_batch(&batch, &mut Cursor::new(&mut batch_buf))?;
         self.buf.write_all(&mut batch_buf)?;
         self.buf_empty = false;
         drop(batch_buf);
@@ -57,7 +57,7 @@ impl<W: Write> IpcCompressionWriter<W> {
         if self.buf.buf_len() as f64 >= DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE as f64 * 0.9 {
             self.flush()?;
         }
-        Ok(uncompressed_bytes_size)
+        Ok(())
     }
 
     pub fn flush(&mut self) -> Result<()> {

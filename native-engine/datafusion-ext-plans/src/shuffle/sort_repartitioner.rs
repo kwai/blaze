@@ -22,10 +22,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::{
     common::{DataFusionError, Result},
-    physical_plan::{
-        metrics::{Count, ExecutionPlanMetricsSet},
-        Partitioning,
-    },
+    physical_plan::{metrics::ExecutionPlanMetricsSet, Partitioning},
 };
 use datafusion_ext_commons::{
     df_execution_err,
@@ -51,7 +48,6 @@ pub struct SortShuffleRepartitioner {
     spills: Mutex<Vec<ShuffleSpill>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
-    data_size_metric: Count,
     spill_metrics: SpillMetrics,
 }
 
@@ -62,7 +58,6 @@ impl SortShuffleRepartitioner {
         output_index_file: String,
         partitioning: Partitioning,
         metrics: &ExecutionPlanMetricsSet,
-        data_size_metric: Count,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
         Self {
@@ -74,7 +69,6 @@ impl SortShuffleRepartitioner {
             spills: Mutex::default(),
             partitioning,
             num_output_partitions,
-            data_size_metric,
             spill_metrics: SpillMetrics::new(metrics, partition_id),
         }
     }
@@ -100,10 +94,7 @@ impl MemConsumer for SortShuffleRepartitioner {
         let data = self.data.lock().await.drain();
         let mut spill = try_new_spill(&self.spill_metrics)?;
 
-        let (uncompressed_size, offsets) =
-            data.write(spill.get_buf_writer(), &self.partitioning)?;
-        self.data_size_metric.add(uncompressed_size);
-
+        let offsets = data.write(spill.get_buf_writer(), &self.partitioning)?;
         self.spills
             .lock()
             .await
@@ -122,11 +113,16 @@ impl Drop for SortShuffleRepartitioner {
 #[async_trait]
 impl ShuffleRepartitioner for SortShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let mut data = self.data.lock().await;
-        data.add_batch(input, &self.partitioning)?;
-        let mem_used = data.mem_used();
-        drop(data);
+        // update memory usage before adding to buffered data
+        let mem_used = self.data.lock().await.mem_used() + input.get_array_memory_size() * 2;
+        self.update_mem_used(mem_used).await?;
 
+        // add batch to buffered data
+        let mem_used = {
+            let mut data = self.data.lock().await;
+            data.add_batch(input, &self.partitioning)?;
+            data.mem_used()
+        };
         self.update_mem_used(mem_used).await?;
 
         // we are likely to spill more frequently because the cost of spilling a shuffle
@@ -148,7 +144,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             spills.len()
         );
 
-        let data_size_metric = self.data_size_metric.clone();
         let data_file = self.output_data_file.clone();
         let index_file = self.output_index_file.clone();
 
@@ -162,8 +157,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     .truncate(true)
                     .open(&data_file)?;
 
-                let (uncompressed_size, offsets) = data.write(&mut output_data, &partitioning)?;
-                data_size_metric.add(uncompressed_size);
+                let offsets = data.write(&mut output_data, &partitioning)?;
                 output_data.sync_data()?;
                 output_data.flush()?;
 
@@ -206,9 +200,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         if data.mem_used() > 0 {
             let mut spill = Box::new(vec![]);
             let writer = spill.get_buf_writer();
-            let (uncompressed_size, offsets) = data.write(writer, &self.partitioning)?;
-            self.data_size_metric.add(uncompressed_size);
-
+            let offsets = data.write(writer, &self.partitioning)?;
             self.update_mem_used(spill.len()).await?;
             spills.push(ShuffleSpill { spill, offsets });
         }

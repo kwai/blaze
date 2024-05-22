@@ -93,11 +93,7 @@ impl BufferedData {
 
     // write buffered data to spill/target file, returns uncompressed size and
     // offsets to each partition
-    pub fn write<W: Write>(
-        self,
-        mut w: W,
-        partitioning: &Partitioning,
-    ) -> Result<(usize, Vec<u64>)> {
+    pub fn write<W: Write>(self, mut w: W, partitioning: &Partitioning) -> Result<Vec<u64>> {
         let partition_id = self.partition_id;
         log::info!(
             "[partition={partition_id}] draining all buffered data, total_mem={}",
@@ -105,12 +101,11 @@ impl BufferedData {
         );
 
         if self.num_rows == 0 {
-            return Ok((0, vec![0; partitioning.partition_count() + 1]));
+            return Ok(vec![0; partitioning.partition_count() + 1]);
         }
         let mut offsets = vec![];
         let mut offset = 0;
         let mut iter = self.into_sorted_batches(partitioning)?;
-        let mut uncompressed_size = 0;
 
         while (iter.cur_part_id() as usize) < partitioning.partition_count() {
             let cur_part_id = iter.cur_part_id();
@@ -121,7 +116,7 @@ impl BufferedData {
             // write all batches with this part id
             let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w), true);
             while iter.cur_part_id() == cur_part_id {
-                uncompressed_size += writer.write_batch(iter.next_batch())?;
+                writer.write_batch(iter.next_batch())?;
             }
             offset += writer.finish_into_inner()?.count();
             offsets.push(offset);
@@ -129,9 +124,10 @@ impl BufferedData {
         while offsets.len() <= partitioning.partition_count() {
             offsets.push(offset); // fill offsets of empty partitions
         }
+        let compressed_size = offsets.last().cloned().unwrap_or_default();
 
-        log::info!("[partition={partition_id}] all buffered data drained, uncompressed_size={uncompressed_size}");
-        Ok((uncompressed_size, offsets))
+        log::info!("[partition={partition_id}] all buffered data drained, compressed_size={compressed_size}");
+        Ok(offsets)
     }
 
     // write buffered data to rss, returns uncompressed size
@@ -139,7 +135,7 @@ impl BufferedData {
         self,
         rss_partition_writer: GlobalRef,
         partitioning: &Partitioning,
-    ) -> Result<usize> {
+    ) -> Result<()> {
         let partition_id = self.partition_id;
         log::info!(
             "[partition={partition_id}] draining all buffered data to rss, total_mem={}",
@@ -147,10 +143,9 @@ impl BufferedData {
         );
 
         if self.num_rows == 0 {
-            return Ok(0);
+            return Ok(());
         }
         let mut iter = self.into_sorted_batches(partitioning)?;
-        let mut uncompressed_size = 0;
 
         while (iter.cur_part_id() as usize) < partitioning.partition_count() {
             let cur_part_id = iter.cur_part_id();
@@ -161,17 +156,14 @@ impl BufferedData {
 
             // write all batches with this part id
             while iter.cur_part_id() == cur_part_id {
-                uncompressed_size += writer.write_batch(iter.next_batch())?;
+                writer.write_batch(iter.next_batch())?;
             }
             writer.finish_into_inner()?;
         }
         jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ())?;
 
-        log::info!(
-            "[partition={partition_id}] all buffered data drained to rss, uncompressed_size={}",
-            uncompressed_size
-        );
-        Ok(uncompressed_size)
+        log::info!("[partition={partition_id}] all buffered data drained to rss");
+        Ok(())
     }
 
     fn into_sorted_batches(

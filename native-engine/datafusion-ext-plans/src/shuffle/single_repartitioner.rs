@@ -20,10 +20,7 @@ use std::{
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::{
-    common::Result,
-    physical_plan::metrics::{BaselineMetrics, Count},
-};
+use datafusion::{common::Result, physical_plan::metrics::BaselineMetrics};
 use tokio::sync::Mutex;
 
 use crate::{common::ipc_compression::IpcCompressionWriter, shuffle::ShuffleRepartitioner};
@@ -33,7 +30,6 @@ pub struct SingleShuffleRepartitioner {
     output_index_file: String,
     output_data: Arc<Mutex<Option<IpcCompressionWriter<File>>>>,
     metrics: BaselineMetrics,
-    data_size_metric: Count,
 }
 
 impl SingleShuffleRepartitioner {
@@ -41,14 +37,12 @@ impl SingleShuffleRepartitioner {
         output_data_file: String,
         output_index_file: String,
         metrics: BaselineMetrics,
-        data_size_metric: Count,
     ) -> Self {
         Self {
             output_data_file,
             output_index_file,
             output_data: Arc::new(Mutex::default()),
             metrics,
-            data_size_metric,
         }
     }
 
@@ -76,8 +70,7 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
         let _timer = self.metrics.elapsed_compute().timer();
         let mut output_data = self.output_data.lock().await;
         let output_writer = self.get_output_writer(&mut *output_data)?;
-        let uncompressed_size = output_writer.write_batch(input)?;
-        self.data_size_metric.add(uncompressed_size);
+        output_writer.write_batch(input)?;
         Ok(())
     }
 

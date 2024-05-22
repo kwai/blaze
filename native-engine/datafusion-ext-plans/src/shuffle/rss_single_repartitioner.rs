@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::{arrow::record_batch::RecordBatch, common::Result, physical_plan::metrics::Count};
+use datafusion::{arrow::record_batch::RecordBatch, common::Result};
 use datafusion_ext_commons::df_execution_err;
 use jni::objects::GlobalRef;
 use parking_lot::Mutex;
@@ -27,17 +27,15 @@ use crate::{
 
 pub struct RssSingleShuffleRepartitioner {
     rss_partition_writer: Arc<Mutex<IpcCompressionWriter<RssWriter>>>,
-    data_size_metric: Count,
 }
 
 impl RssSingleShuffleRepartitioner {
-    pub fn new(rss_partition_writer: GlobalRef, data_size_metric: Count) -> Self {
+    pub fn new(rss_partition_writer: GlobalRef) -> Self {
         Self {
             rss_partition_writer: Arc::new(Mutex::new(IpcCompressionWriter::new(
                 RssWriter::new(rss_partition_writer, 0),
                 true,
             ))),
-            data_size_metric,
         }
     }
 }
@@ -46,11 +44,9 @@ impl RssSingleShuffleRepartitioner {
 impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let rss_partition_writer = self.rss_partition_writer.clone();
-        let uncompressed_size =
-            tokio::task::spawn_blocking(move || rss_partition_writer.lock().write_batch(input))
-                .await
-                .or_else(|err| df_execution_err!("{err}"))??;
-        self.data_size_metric.add(uncompressed_size);
+        tokio::task::spawn_blocking(move || rss_partition_writer.lock().write_batch(input))
+            .await
+            .or_else(|err| df_execution_err!("{err}"))??;
         Ok(())
     }
 

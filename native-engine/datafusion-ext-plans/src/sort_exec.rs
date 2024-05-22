@@ -588,11 +588,16 @@ impl ExternalSorter {
         self.mem_total_size
             .fetch_add(batch.get_array_mem_size(), SeqCst);
 
-        let mut data = self.data.lock().await;
-        data.add_batch(batch, self)?;
-        let mem_used = data.mem_used();
-        drop(data);
+        // update memory usage before adding to data
+        let mem_used = self.data.lock().await.mem_used() + batch.get_array_mem_size() * 2;
+        self.update_mem_used(mem_used).await?;
 
+        // add batch to data
+        let mem_used = {
+            let mut data = self.data.lock().await;
+            data.add_batch(batch, self)?;
+            data.mem_used()
+        };
         self.update_mem_used(mem_used).await?;
         Ok(())
     }
