@@ -143,7 +143,7 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
                 Ok(Arc::new(Schema::new(param_fields)))
             })?;
 
-        // evalute params
+        // evaluate params
         let num_rows = batch.num_rows();
         let params: Vec<ArrayRef> = self
             .params

@@ -398,6 +398,7 @@ pub struct JavaClasses<'a> {
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
     pub cSparkUDFWrapperContext: SparkUDFWrapperContext<'a>,
+    pub cSparkUDTFWrapperContext: SparkUDTFWrapperContext<'a>,
     pub cBlazeConf: BlazeConf<'a>,
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
@@ -462,6 +463,7 @@ impl JavaClasses<'static> {
                 cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
                 cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
                 cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env).unwrap(),
+                cSparkUDTFWrapperContext: SparkUDTFWrapperContext::new(env).unwrap(),
                 cBlazeConf: BlazeConf::new(env).unwrap(),
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env).unwrap(),
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
@@ -1213,6 +1215,27 @@ impl<'a> SparkUDFWrapperContext<'a> {
     pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkUDFWrapperContext<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkUDFWrapperContext {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
+            method_eval: env.get_method_id(class, "eval", "(JJ)V").unwrap(),
+            method_eval_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkUDTFWrapperContext<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID,
+    pub method_eval: JMethodID,
+    pub method_eval_ret: ReturnType,
+}
+impl<'a> SparkUDTFWrapperContext<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDTFWrapperContext";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkUDTFWrapperContext<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkUDTFWrapperContext {
             class,
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
             method_eval: env.get_method_id(class, "eval", "(JJ)V").unwrap(),

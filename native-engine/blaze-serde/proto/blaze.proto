@@ -513,13 +513,20 @@ message GenerateExecNode {
 
 message Generator {
   GenerateFunction func = 1;
-  repeated PhysicalExprNode child = 2;
+  GenerateUdtf udtf = 2;
+  repeated PhysicalExprNode child = 3;
 }
 
 enum GenerateFunction {
   Explode = 0;
   PosExplode = 1;
   JsonTuple = 2;
+  Udtf = 10000;
+}
+
+message GenerateUdtf {
+  bytes serialized = 1;
+  Schema return_schema = 2;
 }
 
 message ParquetSinkExecNode {

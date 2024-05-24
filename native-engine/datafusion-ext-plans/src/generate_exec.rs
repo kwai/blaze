@@ -19,7 +19,7 @@ use std::{
 };
 
 use arrow::{
-    array::{ArrayRef, UInt32Array, UInt32Builder},
+    array::{ArrayRef, Int32Array, Int32Builder},
     datatypes::{Field, Schema, SchemaRef},
     error::ArrowError,
     record_batch::{RecordBatch, RecordBatchOptions},
@@ -237,8 +237,8 @@ async fn execute_generate(
                         .eval(&slice)
                         .map_err(|err| err.context("generate: evaluating generator error"))?;
                     let capacity = generated_outputs.orig_row_ids.len();
-                    let mut child_output_row_ids = UInt32Builder::with_capacity(capacity);
-                    let mut generated_ids = UInt32Builder::with_capacity(capacity);
+                    let mut child_output_row_ids = Int32Builder::with_capacity(capacity);
+                    let mut generated_ids = Int32Builder::with_capacity(capacity);
                     let mut cur_row_id = 0;
 
                     // build ids for joining
@@ -251,10 +251,10 @@ async fn execute_generate(
                             cur_row_id += 1;
                         }
                         child_output_row_ids.append_value(row_id);
-                        generated_ids.append_value(i as u32);
+                        generated_ids.append_value(i as i32);
                         cur_row_id = row_id + 1;
                     }
-                    while cur_row_id < slice.num_rows() as u32 {
+                    while cur_row_id < slice.num_rows() as i32 {
                         if outer {
                             child_output_row_ids.append_value(cur_row_id);
                             generated_ids.append_null();
@@ -264,7 +264,7 @@ async fn execute_generate(
 
                     let child_output_row_ids = arrow::compute::kernels::numeric::add(
                         &child_output_row_ids.finish(),
-                        &UInt32Array::new_scalar(slice_start as u32),
+                        &Int32Array::new_scalar(slice_start as i32),
                     )?;
                     let generated_ids = generated_ids.finish();
 

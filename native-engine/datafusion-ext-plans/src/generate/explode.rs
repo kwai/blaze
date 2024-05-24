@@ -48,14 +48,14 @@ impl Generator for ExplodeArray {
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows())?;
         let list = as_list_array(&input_array);
         let value_offsets = list.value_offsets();
-        let mut orig_row_id_builder = UInt32Builder::new();
+        let mut orig_row_id_builder = Int32Builder::new();
         let mut pos_builder = Int32Builder::new();
 
         // build row_id and pos arrays
         for (orig_row_id, (&start, &end)) in value_offsets.iter().tuple_windows().enumerate() {
             if list.is_valid(orig_row_id) && start < end {
                 for i in start..end {
-                    orig_row_id_builder.append_value(orig_row_id as u32);
+                    orig_row_id_builder.append_value(orig_row_id as i32);
                     pos_builder.append_value((i - start) as i32);
                 }
             }
@@ -102,14 +102,14 @@ impl Generator for ExplodeMap {
         let input_array = self.child.evaluate(batch)?.into_array(batch.num_rows())?;
         let map = as_map_array(&input_array);
         let value_offsets = map.value_offsets();
-        let mut orig_row_id_builder = UInt32Builder::new();
+        let mut orig_row_id_builder = Int32Builder::new();
         let mut pos_builder = Int32Builder::new();
 
         // build row_id and pos arrays
         for (orig_row_id, (&start, &end)) in value_offsets.iter().tuple_windows().enumerate() {
             if map.is_valid(orig_row_id) && start < end {
                 for i in start..end {
-                    orig_row_id_builder.append_value(orig_row_id as u32);
+                    orig_row_id_builder.append_value(orig_row_id as i32);
                     pos_builder.append_value((i - start) as i32);
                 }
             }

@@ -14,11 +14,12 @@
 
 mod explode;
 mod json_tuple;
+mod spark_udtf_wrapper;
 
 use std::{fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, UInt32Array},
+    array::{ArrayRef, Int32Array},
     datatypes::{DataType, SchemaRef},
     record_batch::RecordBatch,
 };
@@ -32,6 +33,7 @@ use datafusion_ext_commons::{df_execution_err, df_unimplemented_err, downcast_an
 use crate::generate::{
     explode::{ExplodeArray, ExplodeMap},
     json_tuple::JsonTuple,
+    spark_udtf_wrapper::SparkUDTFWrapper,
 };
 
 pub trait Generator: Debug + Send + Sync {
@@ -44,7 +46,7 @@ pub trait Generator: Debug + Send + Sync {
 
 #[derive(Clone)]
 pub struct GeneratedRows {
-    pub orig_row_ids: UInt32Array,
+    pub orig_row_ids: Int32Array,
     pub cols: Vec<ArrayRef>,
 }
 
@@ -53,6 +55,7 @@ pub enum GenerateFunc {
     Explode,
     PosExplode,
     JsonTuple,
+    UDTF,
 }
 
 pub fn create_generator(
@@ -84,5 +87,20 @@ pub fn create_generator(
                 })
                 .collect::<Result<_>>()?,
         ))),
+        GenerateFunc::UDTF => {
+            unreachable!("UDTF should be handled in create_generator")
+        }
     }
+}
+
+pub fn create_udtf_generator(
+    serialized: Vec<u8>,
+    return_schema: SchemaRef,
+    children: Vec<Arc<dyn PhysicalExpr>>,
+) -> Result<Arc<dyn Generator>> {
+    Ok(Arc::new(SparkUDTFWrapper::try_new(
+        serialized,
+        return_schema,
+        children,
+    )?))
 }

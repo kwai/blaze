@@ -1116,8 +1116,8 @@ object NativeConverters extends Logging {
     }
   }
 
-  def serializeExpression(
-      expr: Expression with Serializable,
+  def serializeExpression[E <: Expression](
+      expr: E with Serializable,
       paramsSchema: StructType): Array[Byte] = {
     Utils.tryWithResource(new ByteArrayOutputStream()) { bos =>
       Utils.tryWithResource(new ObjectOutputStream(bos)) { oos =>
@@ -1129,11 +1129,11 @@ object NativeConverters extends Logging {
     }
   }
 
-  def deserializeExpression(
-      serialized: Array[Byte]): (Expression with Serializable, StructType) = {
+  def deserializeExpression[E <: Expression](
+      serialized: Array[Byte]): (E with Serializable, StructType) = {
     Utils.tryWithResource(new ByteArrayInputStream(serialized)) { bis =>
       Utils.tryWithResource(new ObjectInputStream(bis)) { ois =>
-        val expr = ois.readObject().asInstanceOf[Expression with Serializable]
+        val expr = ois.readObject().asInstanceOf[E with Serializable]
         val paramsSchema = ois.readObject().asInstanceOf[StructType]
         (expr, paramsSchema)
       }
