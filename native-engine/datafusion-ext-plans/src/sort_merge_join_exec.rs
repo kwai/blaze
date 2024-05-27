@@ -541,10 +541,10 @@ async fn execute_join(
         }
 
         // flush joiner if cursors buffered too many batches
-        if !joiner.is_empty()
-            && lcur.num_buffered_batches() > 1
-            && rcur.num_buffered_batches() > 1
-            && lcur.mem_size() + rcur.mem_size() > suggested_output_batch_mem_size()
+        if !joiner.is_empty() && (lcur.num_buffered_batches() + rcur.num_buffered_batches() > 5)
+            || (lcur.mem_size() + rcur.mem_size() > suggested_output_batch_mem_size()
+                && lcur.num_buffered_batches() > 1
+                && rcur.num_buffered_batches() > 1)
         {
             if let Some(batch) = joiner.flush_pairs(&join_params, &mut lcur, &mut rcur)? {
                 metrics.record_output(batch.num_rows());
