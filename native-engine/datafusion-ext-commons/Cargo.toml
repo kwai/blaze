@@ -17,7 +17,7 @@ bigdecimal = "0.4.3"
 bytes = "1.6.0"
 datafusion = { workspace = true }
 futures = "0.3"
-itertools = "0.12.1"
+itertools = "0.13.0"
 jni = "0.20.0"
 log = "0.4.21"
 num = "0.4.2"
