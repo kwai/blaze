@@ -34,6 +34,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate._
+import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.plans.physical.AllTuples
 import org.apache.spark.sql.catalyst.plans.physical.ClusteredDistribution
 import org.apache.spark.sql.catalyst.plans.physical.Distribution
@@ -47,6 +48,7 @@ import org.apache.spark.sql.types.DataType
 import org.blaze.{protobuf => pb}
 import org.apache.spark.sql.catalyst.expressions.ExprId
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.execution.aggregate.SortAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.AggExecMode
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.HashAgg
@@ -89,6 +91,12 @@ abstract class NativeAggBase(
       case Some(exprs) => ClusteredDistribution(exprs) :: Nil
       case None => UnspecifiedDistribution :: Nil
     }
+  }
+
+  override def requiredChildOrdering: Seq[Seq[SortOrder]] = if (execMode == SortAgg) {
+    groupingExpressions.map(SortOrder(_, Ascending)) :: Nil
+  } else {
+    Seq(Nil)
   }
 
   private def nativeAggrInfos: Seq[NativeAggrInfo] = aggregateExpressions

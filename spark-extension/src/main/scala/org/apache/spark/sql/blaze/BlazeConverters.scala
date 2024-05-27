@@ -25,6 +25,7 @@ import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.childOrderingRequiredTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
@@ -125,7 +126,10 @@ object BlazeConverters extends Logging {
         danglingConverted.splitAt(danglingConverted.length - exec.children.length)
 
       var newExec = exec.withNewChildren(newChildren)
-      if (!isNeverConvert(exec)) {
+      exec.getTagValue(convertibleTag).foreach(newExec.setTagValue(convertibleTag, _))
+      exec.getTagValue(convertStrategyTag).foreach(newExec.setTagValue(convertStrategyTag, _))
+      exec.getTagValue(childOrderingRequiredTag).foreach(newExec.setTagValue(childOrderingRequiredTag, _))
+      if (!isNeverConvert(newExec)) {
         newExec = convertSparkPlan(newExec)
       }
       danglingConverted = newDanglingConverted :+ newExec
@@ -702,8 +706,17 @@ object BlazeConverters extends Logging {
     if (exec.requiredChildDistributionExpressions.isDefined) {
       assert(NativeAggBase.findPreviousNativeAggrExec(exec).isDefined)
     }
+    val requireOrdering = exec.getTagValue(childOrderingRequiredTag).contains(true)
+    val canUseHashAgg = !requireOrdering && (exec.child.isInstanceOf[NativeSortBase] || exec.child
+      .isInstanceOf[SortExec])
+    val (aggMode, child) = if (canUseHashAgg) {
+      (NativeAggBase.HashAgg, exec.child.children.head)
+    } else {
+      (NativeAggBase.SortAgg, exec.child)
+    }
+
     val nativeAggr = Shims.get.createNativeAggExec(
-      NativeAggBase.SortAgg,
+      aggMode,
       exec.requiredChildDistributionExpressions,
       exec.groupingExpressions,
       exec.aggregateExpressions,
@@ -711,14 +724,14 @@ object BlazeConverters extends Logging {
       exec.initialInputBufferOffset,
       exec.requiredChildDistributionExpressions match {
         case None =>
-          addRenameColumnsExec(convertToNative(exec.child))
+          addRenameColumnsExec(convertToNative(child))
         case _ =>
-          if (needRenameColumns(exec.child)) {
+          if (needRenameColumns(child)) {
             val newNames = exec.groupingExpressions.map(Util.getFieldNameByExprId) :+
               NativeAggBase.AGG_BUF_COLUMN_NAME
-            Shims.get.createNativeRenameColumnsExec(convertToNative(exec.child), newNames)
+            Shims.get.createNativeRenameColumnsExec(convertToNative(child), newNames)
           } else {
-            convertToNative(exec.child)
+            convertToNative(child)
           }
       })
 

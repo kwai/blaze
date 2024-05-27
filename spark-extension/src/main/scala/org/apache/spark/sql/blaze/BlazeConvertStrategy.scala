@@ -46,6 +46,7 @@ object BlazeConvertStrategy extends Logging {
 
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
   val convertStrategyTag: TreeNodeTag[ConvertStrategy] = TreeNodeTag("blaze.convert.strategy")
+  val childOrderingRequiredTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.child.ordering.required")
 
   def apply(exec: SparkPlan): Unit = {
     exec.foreach(_.setTagValue(convertibleTag, true))
@@ -74,6 +75,19 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case _ =>
     }
+
+    // fill childOrderingRequired tag
+    exec.foreach { exec =>
+      exec.children
+        .zip(exec.requiredChildOrdering)
+        .foreach { case (child, requiredOrdering) =>
+          if (requiredOrdering.nonEmpty) {
+            logInfo(s"physical plan [${child.nodeName}] requires ordering: $requiredOrdering")
+            child.setTagValue(childOrderingRequiredTag, true)
+          }
+        }
+    }
+    exec.setTagValue(childOrderingRequiredTag, exec.outputOrdering.nonEmpty)
 
     // execute some special strategies
     removeInefficientConverts(exec)
