@@ -74,6 +74,9 @@ abstract class NativeWindowBase(
     }
   }
 
+  override def requiredChildOrdering: Seq[Seq[SortOrder]] =
+    Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
+
   private def nativeWindowExprs = windowExpression.map { named =>
     val field = NativeConverters.convertField(Util.getSchema(named :: Nil).fields(0))
     val windowExprBuilder = pb.WindowExprNode.newBuilder().setField(field)
