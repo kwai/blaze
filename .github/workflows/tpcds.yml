@@ -87,9 +87,30 @@ jobs:
           mkdir -p spark-bin-${{ matrix.sparkver }}
           cd spark-bin-${{ matrix.sparkver }} && tar -xf ../spark-*.tgz --strip-component=1
 
+  setup-async-profiler:
+    name: Setup async-profiler
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache@v3
+        with:
+          path: async-profiler
+          key: async-profiler
+
+      - name: Download async-profiler
+        run: |
+          wget -c https://github.com/async-profiler/async-profiler/releases/download/v3.0/async-profiler-3.0-linux-x64.tar.gz
+          mkdir -p async-profiler
+          cd async-profiler && tar -xf ../async-profiler-3.0-linux-x64.tar.gz
+
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: async-profiler
+          path: async-profiler
+
   test-it:
     name: Run test ${{ matrix.query }}
-    needs: [build-validator, build-blaze-jar, setup-spark]
+    needs: [build-validator, build-blaze-jar, setup-spark, setup-async-profiler]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -112,6 +133,9 @@ jobs:
         with: {name: validator}
 
       - uses: actions/download-artifact@v3
+        with: {name: async-profiler}
+
+      - uses: actions/download-artifact@v3
         with:
           name: blaze-engine-${{ matrix.sparkver }}
 
@@ -131,21 +155,40 @@ jobs:
 
       - name: Run with BHJ
         run: |
+          sudo sysctl kernel.perf_event_paranoid=1
+          sudo sysctl kernel.kptr_restrict=0
+
           export RUST_LOG=ERROR
           export RUST_BACKTRACE=1
+          export ASYNC_PROFILER_SO="$PWD/async-profiler-3.0-linux-x64/lib/libasyncProfiler.so"
+
           SPARK_HOME=spark-bin-${{ matrix.sparkver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
             --conf spark.driver.memory=3g \
             --conf spark.driver.memoryOverhead=2048 \
+            --conf spark.driver.extraJavaOptions=-agentpath:$ASYNC_PROFILER_SO=start,event=cpu,file=$PWD/profile-with-bhj-driver-${{ matrix.sparkver }}-${{ matrix.query }}.html \
+            --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
 
       - name: Run without BHJ
         run: |
+          sudo sysctl kernel.perf_event_paranoid=1
+          sudo sysctl kernel.kptr_restrict=0
+
           export RUST_LOG=ERROR
           export RUST_BACKTRACE=1
+          export ASYNC_PROFILER_SO="$PWD/async-profiler-3.0-linux-x64/lib/libasyncProfiler.so"
+
           SPARK_HOME=spark-bin-${{ matrix.sparkver }} dev/run-tpcds-test \
             --conf spark.sql.autoBroadcastJoinThreshold=-1 \
             --conf spark.driver.memory=3g \
             --conf spark.driver.memoryOverhead=2048 \
+            --conf spark.driver.extraJavaOptions=-agentpath:$ASYNC_PROFILER_SO=start,event=cpu,file=$PWD/profile-without-bhj-driver-${{ matrix.sparkver }}-${{ matrix.query }}.html \
             --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
+
+      - name: Upload flamegraph
+        uses: actions/upload-artifact@v3
+        with:
+          name: flamegraph
+          path: profile-with*.html

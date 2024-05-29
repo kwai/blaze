@@ -33,6 +33,7 @@ strip = false
 [profile.pre]
 inherits = "release"
 #incremental = true
+debug = true
 opt-level = 1
 lto = false
 codegen-units = 16
