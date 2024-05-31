@@ -83,11 +83,11 @@ struct FileSpill(File, SpillMetrics);
 impl FileSpill {
     fn try_new(spill_metrics: &SpillMetrics) -> Result<Self> {
         if is_jni_bridge_inited() {
-            let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
             let file_name = jni_get_string!(
-            jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).getDirectWriteSpillToDiskFile()-> JObject)?
-                .as_obj()
-                .into())?;
+                jni_call_static!(JniBridge.getDirectWriteSpillToDiskFile() -> JObject)?
+                    .as_obj()
+                    .into()
+            )?;
             let file = OpenOptions::new() // create file and open under rw mode
                 .create(true)
                 .truncate(true)

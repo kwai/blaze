@@ -19,6 +19,7 @@ import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
 import org.apache.spark.sql.blaze.memory.OnHeapSpillManager;
@@ -78,5 +79,14 @@ public class JniBridge {
         return directMXBeans.stream()
                 .mapToLong(BufferPoolMXBean::getTotalCapacity)
                 .sum();
+    }
+
+    public static String getDirectWriteSpillToDiskFile() {
+        return SparkEnv.get()
+                .blockManager()
+                .diskBlockManager()
+                .createTempLocalBlock()
+                ._2
+                .getPath();
     }
 }
