@@ -38,6 +38,7 @@ import org.blaze.{protobuf => pb}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.blaze.BlazeCallNativeWrapper
 import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
@@ -70,9 +71,6 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   override def output: Seq[Attribute] = child.output
   override def outputPartitioning: Partitioning = BroadcastPartitioning(mode)
 
-  protected lazy val isNative: Boolean = {
-    getTagValue(NativeBroadcastExchangeBase.nativeExecutionTag).getOrElse(false)
-  }
   protected val nativeSchema: pb.Schema = Util.getNativeSchema(output)
 
   def getRunId: UUID
@@ -95,27 +93,42 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   override def doPrepare(): Unit = {
     // Materialize the future.
     relationFuture
+    relationFuture
+    relationFuture
+    relationFuture
   }
 
   override def doExecuteBroadcast[T](): Broadcast[T] = {
-    val broadcast = nonNativeBroadcastExec.executeBroadcast[T]()
-    for ((k, metric) <- nonNativeBroadcastExec.metrics) {
-      metrics.get(k).foreach(_.add(metric.value))
+    val singlePartition = new Partition() {
+      override def index: Int = 0
     }
-    broadcast
+    val broadcastReadNativePlan = doExecuteNative().nativePlan(singlePartition, null)
+    val rows = NativeHelper.executeNativePlan(
+      broadcastReadNativePlan,
+      MetricNode(Map(), Nil, None),
+      singlePartition,
+      None)
+    val v = mode.transform(rows.toArray)
+
+    val dummyBroadcasted = new Broadcast[Any](-1) {
+      override protected def getValue(): Any = v
+      override protected def doUnpersist(blocking: Boolean): Unit = {}
+      override protected def doDestroy(blocking: Boolean): Unit = {}
+    }
+    dummyBroadcasted.asInstanceOf[Broadcast[T]]
   }
 
   def doExecuteBroadcastNative[T](): broadcast.Broadcast[T] = {
     val conf = SparkSession.getActiveSession.map(_.sqlContext.conf).orNull
     val timeout: Long = conf.broadcastTimeout
     try {
-      nativeRelationFuture.get(timeout, TimeUnit.SECONDS).asInstanceOf[broadcast.Broadcast[T]]
+      relationFuture.get(timeout, TimeUnit.SECONDS).asInstanceOf[broadcast.Broadcast[T]]
     } catch {
       case ex: TimeoutException =>
         logError(s"Could not execute broadcast in $timeout secs.", ex)
-        if (!nativeRelationFuture.isDone) {
+        if (!relationFuture.isDone) {
           sparkContext.cancelJobGroup(getRunId.toString)
-          nativeRelationFuture.cancel(true)
+          relationFuture.cancel(true)
         }
         throw new SparkException("Native broadcast exchange timed out.", ex)
     }
@@ -218,22 +231,11 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   }
 
   @transient
-  lazy val relationFuture: Future[Broadcast[Any]] = if (isNative) {
-    nativeRelationFuture.asInstanceOf[Future[Broadcast[Any]]]
-  } else {
-    val relationFutureField = classOf[BroadcastExchangeExec].getDeclaredField("relationFuture")
-    relationFutureField.setAccessible(true)
-    relationFutureField.get(nonNativeBroadcastExec).asInstanceOf[Future[Broadcast[Any]]]
-  }
+  lazy val relationFuturePromise: Promise[Broadcast[Any]] = Promise[Broadcast[Any]]()
 
   @transient
-  lazy val nonNativeBroadcastExec: BroadcastExchangeExec = {
-    BroadcastExchangeExec(mode, child)
-  }
-
-  @transient
-  lazy val nativeRelationFuture: Future[Broadcast[Array[Array[Byte]]]] = {
-    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Array[Byte]]]](
+  lazy val relationFuture: Future[Broadcast[Any]] = {
+    SQLExecution.withThreadLocalCaptured[Broadcast[Any]](
       Shims.get.getSqlContext(this).sparkSession,
       BroadcastExchangeExec.executionContext) {
       try {
@@ -241,12 +243,12 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
           getRunId.toString,
           s"native broadcast exchange (runId $getRunId)",
           interruptOnCancel = true)
-        val broadcasted = sparkContext.broadcast(collectNative())
-        Promise[Broadcast[Array[Array[Byte]]]].trySuccess(broadcasted)
+        val broadcasted = sparkContext.broadcast(collectNative().asInstanceOf[Any])
+        relationFuturePromise.trySuccess(broadcasted)
         broadcasted
       } catch {
         case e: Throwable =>
-          Promise[Broadcast[Array[Array[Byte]]]].tryFailure(e)
+          relationFuturePromise.tryFailure(e)
           throw e
       }
     }
