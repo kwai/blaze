@@ -385,7 +385,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
         let inner = self.0.clone();
         let meta_size = inner.meta.size;
-        let size_hint = Some(2097152);
+        let size_hint = None;
         fetch_parquet_metadata(
             move |range| {
                 let inner = inner.clone();
