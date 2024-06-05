@@ -37,7 +37,7 @@ case class NativeBroadcastExchangeExec(mode: BroadcastMode, override val child: 
     extends NativeBroadcastExchangeBase(mode, child)
     with NativeSupports {
 
-  override def getRunId: UUID = UUID.randomUUID()
+  override val getRunId: UUID = UUID.randomUUID()
 
   override def runtimeStatistics: Statistics = {
     val dataSize = metrics("dataSize").value

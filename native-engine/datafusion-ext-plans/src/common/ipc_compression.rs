@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::io::{BufReader, Cursor, Read, Take, Write};
+use std::io::{BufRead, BufReader, Cursor, Read, Take, Write};
 
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -276,4 +276,66 @@ fn create_block_reader<R: Read + 'static>(
     Ok(Some(Box::new(
         zstd::Decoder::new(taken).expect("error creating ztd decoder"),
     )))
+}
+
+enum IoCompressionWriter<W: Write> {
+    LZ4(lz4_flex::frame::FrameEncoder<W>),
+    ZSTD(zstd::Encoder<'static, W>),
+}
+
+impl<W: Write> IoCompressionWriter<W> {
+    fn try_new(codec: &str, inner: W) -> Result<Self> {
+        match codec {
+            "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameEncoder::new(inner))),
+            "zstd" => Ok(Self::ZSTD(zstd::Encoder::new(inner, ZSTD_LEVEL)?)),
+            _ => df_execution_err!("unsupported codec: {}", codec),
+        }
+    }
+}
+
+impl <W: Write> Write for IoCompressionWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            IoCompressionWriter::LZ4(w) => w.write(buf),
+            IoCompressionWriter::ZSTD(w) => w.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            IoCompressionWriter::LZ4(w) => w.flush(),
+            IoCompressionWriter::ZSTD(w) => w.flush(),
+        }
+    }
+}
+
+enum IoCompressionReader<'a, R: Read> {
+    LZ4(lz4_flex::frame::FrameDecoder<BufReader<R>>),
+    ZSTD(zstd::Decoder<'a, BufReader<R>>),
+}
+
+impl<R: Read> IoCompressionReader<'_, R> {
+    fn try_new(codec: &str, inner: R) -> Result<Self> {
+        match codec {
+            "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameDecoder::new(BufReader::new(inner)))),
+            "zstd" => Ok(Self::ZSTD(zstd::Decoder::new(inner)?)),
+            _ => df_execution_err!("unsupported codec: {}", codec),
+        }
+    }
+
+    fn finish_into_inner(self) -> Result<R> {
+        match self {
+            Self::LZ4(r) => Ok(r.into_inner().into_inner()),
+            Self::ZSTD(r) => Ok(r.finish().into_inner()),
+        }
+    }
+}
+
+impl<R: Read> Read for IoCompressionReader<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::LZ4(r) => r.read(buf),
+            Self::ZSTD(r) => r.read(buf),
+        }
+    }
 }
