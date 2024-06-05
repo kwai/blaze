@@ -15,15 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::io::{BufRead, BufReader, Cursor, Read, Take, Write};
+use std::io::{BufReader, Cursor, Read, Take, Write};
 
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use blaze_jni_bridge::{jni_call_static, jni_get_string, jni_new_string};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use datafusion::common::Result;
+use datafusion::{common::Result, error::DataFusionError};
 use datafusion_ext_commons::{
     df_execution_err,
     io::{read_one_batch, write_one_batch},
 };
+use once_cell::sync::OnceCell;
 
 pub const DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE: usize = 4194304;
 const ZSTD_LEVEL: i32 = 1;
@@ -164,15 +166,18 @@ trait CompressibleBlockWriter: Write {
     fn finish(self: Box<Self>) -> Result<Vec<u8>>;
 }
 
-struct ZstdWriter(zstd::Encoder<'static, Vec<u8>>);
+struct ZWriter(IoCompressionWriter<Vec<u8>>);
 
-impl ZstdWriter {
+impl ZWriter {
     fn new() -> Self {
-        Self(zstd::Encoder::new(vec![0u8; 4], ZSTD_LEVEL).expect("error creating zstd encoder"))
+        Self(
+            IoCompressionWriter::try_new(io_compression_codec(), vec![0u8; 4])
+                .expect("error creating zstd encoder"),
+        )
     }
 }
 
-impl Write for ZstdWriter {
+impl Write for ZWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.write(buf)
     }
@@ -182,7 +187,7 @@ impl Write for ZstdWriter {
     }
 }
 
-impl CompressibleBlockWriter for ZstdWriter {
+impl CompressibleBlockWriter for ZWriter {
     fn buf_len(&self) -> usize {
         self.0.get_ref().len()
     }
@@ -234,9 +239,9 @@ trait CompressibleBlockReader<R: Read>: Read {
     fn finish_into_inner(self: Box<Self>) -> Result<R>;
 }
 
-impl<R: Read> CompressibleBlockReader<R> for zstd::Decoder<'_, BufReader<Take<R>>> {
+impl<R: Read> CompressibleBlockReader<R> for IoCompressionReader<'_, Take<R>> {
     fn finish_into_inner(self: Box<Self>) -> Result<R> {
-        let mut r = self.finish().into_inner();
+        let mut r = (*self).finish_into_inner()?;
         std::io::copy(&mut r, &mut std::io::sink())?; // skip to end
         Ok(r.into_inner())
     }
@@ -250,7 +255,7 @@ impl<R: Read> CompressibleBlockReader<R> for Take<R> {
 
 fn create_block_writer(compressed: bool) -> Box<dyn CompressibleBlockWriter> {
     if compressed {
-        Box::new(ZstdWriter::new())
+        Box::new(ZWriter::new())
     } else {
         Box::new(UncompressedWriter::new())
     }
@@ -274,7 +279,8 @@ fn create_block_reader<R: Read + 'static>(
         return Ok(Some(Box::new(taken)));
     }
     Ok(Some(Box::new(
-        zstd::Decoder::new(taken).expect("error creating ztd decoder"),
+        IoCompressionReader::try_new(io_compression_codec(), taken)
+            .expect("error creating ztd decoder"),
     )))
 }
 
@@ -291,9 +297,23 @@ impl<W: Write> IoCompressionWriter<W> {
             _ => df_execution_err!("unsupported codec: {}", codec),
         }
     }
+
+    fn get_ref(&self) -> &W {
+        match self {
+            IoCompressionWriter::LZ4(w) => w.get_ref(),
+            IoCompressionWriter::ZSTD(w) => w.get_ref(),
+        }
+    }
+
+    fn finish(self) -> Result<W> {
+        match self {
+            IoCompressionWriter::LZ4(w) => Ok(w.finish().or_else(|e| df_execution_err!("{e}"))?),
+            IoCompressionWriter::ZSTD(w) => Ok(w.finish().or_else(|e| df_execution_err!("{e}"))?),
+        }
+    }
 }
 
-impl <W: Write> Write for IoCompressionWriter<W> {
+impl<W: Write> Write for IoCompressionWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             IoCompressionWriter::LZ4(w) => w.write(buf),
@@ -310,14 +330,14 @@ impl <W: Write> Write for IoCompressionWriter<W> {
 }
 
 enum IoCompressionReader<'a, R: Read> {
-    LZ4(lz4_flex::frame::FrameDecoder<BufReader<R>>),
+    LZ4(lz4_flex::frame::FrameDecoder<R>),
     ZSTD(zstd::Decoder<'a, BufReader<R>>),
 }
 
 impl<R: Read> IoCompressionReader<'_, R> {
     fn try_new(codec: &str, inner: R) -> Result<Self> {
         match codec {
-            "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameDecoder::new(BufReader::new(inner)))),
+            "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameDecoder::new(inner))),
             "zstd" => Ok(Self::ZSTD(zstd::Decoder::new(inner)?)),
             _ => df_execution_err!("unsupported codec: {}", codec),
         }
@@ -325,7 +345,7 @@ impl<R: Read> IoCompressionReader<'_, R> {
 
     fn finish_into_inner(self) -> Result<R> {
         match self {
-            Self::LZ4(r) => Ok(r.into_inner().into_inner()),
+            Self::LZ4(r) => Ok(r.into_inner()),
             Self::ZSTD(r) => Ok(r.finish().into_inner()),
         }
     }
@@ -338,4 +358,23 @@ impl<R: Read> Read for IoCompressionReader<'_, R> {
             Self::ZSTD(r) => r.read(buf),
         }
     }
+}
+
+fn io_compression_codec() -> &'static str {
+    static IO_COMPRESSION_CODEC: OnceCell<String> = OnceCell::new();
+    let codec = IO_COMPRESSION_CODEC.get_or_try_init(|| {
+        Ok({
+            let key = jni_new_string!("spark.io.compression.codec")?;
+            let value =
+                jni_call_static!(JniBridge.getSparkEnvConfAsString(key.as_obj()) -> JObject)?;
+            jni_get_string!(value.as_obj().into())?
+        })
+    });
+
+    codec
+        .map(|value| value.as_ref())
+        .unwrap_or_else(|_: DataFusionError| {
+            log::warn!("unable to get spark.io.compression.codec, use lz4 as default");
+            "lz4"
+        })
 }
