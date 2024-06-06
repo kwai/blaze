@@ -59,9 +59,10 @@ use datafusion_ext_commons::{
     streams::coalesce_stream::CoalesceInput,
 };
 use fmt::Debug;
-use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryStreamExt};
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
+use parking_lot::Mutex;
 
 use crate::common::output::TaskOutputter;
 
@@ -207,7 +208,8 @@ impl ExecutionPlan for ParquetExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
-        let _timer = baseline_metrics.elapsed_compute().timer();
+        let elapsed_compute = baseline_metrics.elapsed_compute();
+        let _timer = elapsed_compute.timer();
 
         let io_time = Time::default();
         let io_time_metric = Arc::new(Metric::new(
@@ -241,14 +243,13 @@ impl ExecutionPlan for ParquetExec {
             metadata_size_hint: None,
             metrics: self.metrics.clone(),
             parquet_file_reader_factory: Arc::new(FsReaderFactory::new(fs_provider)),
-            pushdown_filters: false, // still buggy
+            pushdown_filters: false,
             reorder_filters: false,
             enable_page_index: false,
             enable_bloom_filter: false,
         };
 
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
-        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
+        let baseline_metrics_cloned = baseline_metrics.clone();
         let mut file_stream =
             FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?;
         if conf::IGNORE_CORRUPTED_FILES.value()? {
@@ -263,7 +264,7 @@ impl ExecutionPlan for ParquetExec {
                     "ParquetScan",
                     stream.schema(),
                     move |sender| async move {
-                        let mut timer = elapsed_compute.timer();
+                        let mut timer = baseline_metrics_cloned.elapsed_compute().timer();
                         while let Some(batch) = stream.next().await.transpose()? {
                             sender.send(Ok(batch), Some(&mut timer)).await;
                         }
@@ -373,9 +374,13 @@ impl AsyncFileReader for ParquetFileReaderRef {
         let inner = self.0.clone();
         inner.metrics.bytes_scanned.add(range.end - range.start);
         async move {
-            inner
-                .read_fully(range)
-                .map_err(|e| ParquetError::External(Box::new(e)))
+            tokio::task::spawn_blocking(move || {
+                inner
+                    .read_fully(range)
+                    .map_err(|e| ParquetError::External(Box::new(e)))
+            })
+            .await
+            .expect("tokio spawn_blocking error")
         }
         .boxed()
     }
@@ -383,23 +388,61 @@ impl AsyncFileReader for ParquetFileReaderRef {
     fn get_metadata(
         &mut self,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
+        const METADATA_CACHE_SIZE: usize = 5; // TODO: make it configurable
+
+        type ParquetMetaDataSlot = tokio::sync::OnceCell<Arc<ParquetMetaData>>;
+        type ParquetMetaDataCacheTable = Vec<(ObjectMeta, ParquetMetaDataSlot)>;
+        static METADATA_CACHE: OnceCell<Mutex<ParquetMetaDataCacheTable>> = OnceCell::new();
+
         let inner = self.0.clone();
         let meta_size = inner.meta.size;
-        let size_hint = None;
-        fetch_parquet_metadata(
-            move |range| {
-                let inner = inner.clone();
-                inner.metrics.bytes_scanned.add(range.end - range.start);
-                async move {
-                    inner
-                        .read_fully(range)
-                        .map_err(|e| ParquetError::External(Box::new(e)))
+        let size_hint = Some(1048576);
+        let cache_slot = (move || {
+            let mut metadata_cache = METADATA_CACHE.get_or_init(|| Mutex::new(Vec::new())).lock();
+
+            // find existed cache slot
+            for (cache_meta, cache_slot) in metadata_cache.iter() {
+                if cache_meta.location == self.0.meta.location {
+                    return cache_slot.clone();
                 }
-            },
-            meta_size,
-            size_hint,
-        )
-        .and_then(|metadata| futures::future::ok(Arc::new(metadata)))
+            }
+
+            // reserve a new cache slot
+            if metadata_cache.len() >= METADATA_CACHE_SIZE {
+                metadata_cache.remove(0); // remove eldest
+            }
+            let cache_slot = ParquetMetaDataSlot::default();
+            metadata_cache.push((self.0.meta.clone(), cache_slot.clone()));
+            cache_slot
+        })();
+
+        // fetch metadata from file and update to cache
+        async move {
+            cache_slot
+                .get_or_try_init(move || async move {
+                    fetch_parquet_metadata(
+                        move |range| {
+                            let inner = inner.clone();
+                            inner.metrics.bytes_scanned.add(range.end - range.start);
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    inner
+                                        .read_fully(range)
+                                        .map_err(|e| ParquetError::External(Box::new(e)))
+                                })
+                                .await
+                                .expect("tokio spawn_blocking error")
+                            }
+                        },
+                        meta_size,
+                        size_hint,
+                    )
+                    .await
+                    .map(|parquet_metadata| Arc::new(parquet_metadata))
+                })
+                .map(|parquet_metadata| parquet_metadata.cloned())
+                .await
+        }
         .boxed()
     }
 }
