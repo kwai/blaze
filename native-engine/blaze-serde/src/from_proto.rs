@@ -20,6 +20,7 @@ use std::{
 };
 
 use arrow::{
+    array::RecordBatch,
     compute::SortOptions,
     datatypes::{Field, FieldRef, SchemaRef},
 };
@@ -33,15 +34,15 @@ use datafusion::{
     },
     error::DataFusionError,
     execution::context::ExecutionProps,
-    logical_expr::{BuiltinScalarFunction, Operator},
+    logical_expr::{BuiltinScalarFunction, ColumnarValue, Operator},
     physical_expr::{
-        expressions::{LikeExpr, SCAndExpr, SCOrExpr},
+        expressions::{in_list, LikeExpr, SCAndExpr, SCOrExpr},
         functions, ScalarFunctionExpr,
     },
     physical_plan::{
         expressions as phys_expr,
         expressions::{
-            BinaryExpr, CaseExpr, CastExpr, Column, InListExpr, IsNotNullExpr, IsNullExpr, Literal,
+            BinaryExpr, CaseExpr, CastExpr, Column, IsNotNullExpr, IsNullExpr, Literal,
             NegativeExpr, NotExpr, PhysicalSortExpr,
         },
         joins::utils::{ColumnIndex, JoinFilter},
@@ -49,6 +50,7 @@ use datafusion::{
         ColumnStatistics, ExecutionPlan, Partitioning, PhysicalExpr, Statistics,
     },
 };
+use datafusion_ext_commons::downcast_any;
 use datafusion_ext_exprs::{
     cast::TryCastExpr, get_indexed_field::GetIndexedFieldExpr, get_map_value::GetMapValueExpr,
     named_struct::NamedStructExpr, row_num::RowNumExpr,
@@ -926,15 +928,39 @@ fn try_parse_physical_expr(
             ExprType::Negative(e) => Arc::new(NegativeExpr::new(
                 try_parse_physical_expr_box_required(&e.expr, input_schema)?,
             )),
-            ExprType::InList(e) => Arc::new(InListExpr::new(
-                try_parse_physical_expr_box_required(&e.expr, input_schema)?,
-                e.list
-                    .iter()
-                    .map(|x| try_parse_physical_expr(x, input_schema))
-                    .collect::<Result<Vec<_>, _>>()?,
-                e.negated,
-                None,
-            )),
+            ExprType::InList(e) => {
+                let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)
+                    .and_then(|expr| Ok(bind(expr, input_schema)?))?; // materialize expr.data_type
+                let dt = expr.data_type(input_schema)?;
+                in_list(
+                    bind(expr, input_schema)?,
+                    e.list
+                        .iter()
+                        .map(|x| {
+                            Ok::<_, PlanSerDeError>({
+                                match try_parse_physical_expr(x, input_schema)? {
+                                    // cast list values to expr type
+                                    e if downcast_any!(e, Literal).is_ok()
+                                        && e.data_type(input_schema)? != dt =>
+                                    {
+                                        match TryCastExpr::new(e, dt.clone()).evaluate(
+                                            &RecordBatch::new_empty(input_schema.clone()),
+                                        )? {
+                                            ColumnarValue::Scalar(scalar) => {
+                                                Arc::new(Literal::new(scalar))
+                                            }
+                                            ColumnarValue::Array(_) => unreachable!(),
+                                        }
+                                    }
+                                    other => other,
+                                }
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    &e.negated,
+                    &input_schema,
+                )?
+            }
             ExprType::Case(e) => Arc::new(CaseExpr::try_new(
                 e.expr
                     .as_ref()
