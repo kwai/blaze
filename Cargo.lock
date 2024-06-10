@@ -1314,12 +1314,11 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "gxhash"
-version = "3.1.1"
+version = "3.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "370b2ac6cb58eb38e600bf6a783f8cca3f164d5fe5e501ad274d5dc8e94c7212"
+checksum = "a197c9b654827513cf53842c5c6d3da2b4b35a785f8e0eff78bdf8e445aba1bb"
 dependencies = [
- "rand",
- "rustc_version",
+ "rustversion",
 ]
 
 [[package]]
