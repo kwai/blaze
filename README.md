@@ -73,7 +73,7 @@ Blaze._
 
 ```shell
 SHIM=spark333 # or spark303
-MODE=release # or dev
+MODE=release # or pre
 mvn package -P"${SHIM}" -P"${MODE}"
 ```
 
@@ -94,11 +94,16 @@ This section describes how to submit and configure a Spark Job with Blaze suppor
 1. move blaze jar package to spark client classpath (normally `spark-xx.xx.xx/jars/`).
 
 2. add the follow confs to spark configuration in `spark-xx.xx.xx/conf/spark-default.conf`:
+
 ```properties
+spark.blaze.enable true
 spark.sql.extensions org.apache.spark.sql.blaze.BlazeSparkSessionExtension
 spark.shuffle.manager org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleManager
+spark.memory.offHeap.enabled false
 
-# other blaze confs defined in spark-extension/src/main/java/org/apache/spark/sql/blaze/BlazeConf.java
+# suggested executor memory configuration
+spark.executor.memory 4g
+spark.executor.memoryOverhead 4096
 ```
 
 3. submit a query with spark-sql, or other tools like spark-thriftserver:
@@ -108,16 +113,15 @@ spark-sql -f tpcds/q01.sql
 
 ## Performance
 
-Check [Benchmark Results](./benchmark-results/20240202.md) with the latest date for the performance
-comparison with vanilla Spark on TPC-DS 1TB dataset. The benchmark result shows that Blaze saved
-~55% query time and ~60% cluster resources in average. ~6x performance achieved for the best case (q06).
+Check [Benchmark Results](./benchmark-results/20240701-blaze300.md) with the latest date for the performance
+comparison with vanilla Spark 3.3.3. The benchmark result shows that Blaze save about 50% time on TPC-DS/TPC-H 1TB datasets.
 Stay tuned and join us for more upcoming thrilling numbers.
 
-Query time:
-![20240202-query-time](./benchmark-results/blaze-query-time-comparison-20240202.png)
+TPC-DS Query time:
+![20240701-query-time-tpcds](./benchmark-results/spark333-vs-blaze300-query-time-20240701.png)
 
-Cluster resources:
-![20240202-resources](./benchmark-results/blaze-cluster-resources-cost-comparison-20240202.png)
+TPC-H Query time:
+![20240701-query-time-tpch](./benchmark-results/spark333-vs-blaze300-query-time-20240701-tpch.png)
 
 We also encourage you to benchmark Blaze and share the results with us. 🤗
 

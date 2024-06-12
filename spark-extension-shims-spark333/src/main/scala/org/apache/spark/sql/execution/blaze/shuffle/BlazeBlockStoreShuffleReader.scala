@@ -20,7 +20,6 @@ import java.io.InputStream
 import org.apache.spark.MapOutputTracker
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
 import org.apache.spark.io.CompressionCodec
@@ -28,30 +27,21 @@ import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.BlockManager
+import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.ShuffleBlockFetcherIterator
 
 class BlazeBlockStoreShuffleReader[K, C](
     handle: BaseShuffleHandle[K, _, C],
-    startPartition: Int,
-    endPartition: Int,
+    blocksByAddress: Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
     context: TaskContext,
     readMetrics: ShuffleReadMetricsReporter,
     blockManager: BlockManager = SparkEnv.get.blockManager,
     mapOutputTracker: MapOutputTracker = SparkEnv.get.mapOutputTracker,
-    startMapId: Option[Int] = None,
-    endMapId: Option[Int] = None,
     shouldBatchFetch: Boolean = false)
     extends BlazeBlockStoreShuffleReaderBase[K, C](handle, context)
     with Logging {
 
   override def readBlocks(): Iterator[(BlockId, InputStream)] = {
-    val blocksByAddress = mapOutputTracker.getMapSizesByExecutorId(
-      handle.shuffleId,
-      startMapId.getOrElse(0),
-      endMapId.getOrElse(Int.MaxValue),
-      startPartition,
-      endPartition)
-
     new ShuffleBlockFetcherIterator(
       context,
       blockManager.blockStoreClient,

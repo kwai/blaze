@@ -15,10 +15,8 @@
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields, IntervalUnit, Schema, TimeUnit};
-use datafusion::{
-    common::JoinSide, logical_expr::Operator, prelude::JoinType, scalar::ScalarValue,
-};
-use datafusion_ext_plans::agg::AggFunction;
+use datafusion::{common::JoinSide, logical_expr::Operator, scalar::ScalarValue};
+use datafusion_ext_plans::{agg::AggFunction, joins::join_utils::JoinType};
 
 use crate::error::PlanSerDeError;
 
@@ -111,6 +109,7 @@ impl From<protobuf::JoinType> for JoinType {
             protobuf::JoinType::Full => JoinType::Full,
             protobuf::JoinType::Semi => JoinType::LeftSemi,
             protobuf::JoinType::Anti => JoinType::LeftAnti,
+            protobuf::JoinType::Existence => JoinType::Existence,
         }
     }
 }

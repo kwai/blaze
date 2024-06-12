@@ -27,15 +27,13 @@ public enum BlazeConf {
     /// actual off-heap memory usage is expected to be spark.executor.memoryOverhead * fraction.
     MEMORY_FRACTION("spark.blaze.memoryFraction", 0.6),
 
-    /// translates inequality smj to native. improves performance in most cases, however some
-    /// issues are found in special cases, like tpcds q72.
-    SMJ_INEQUALITY_JOIN_ENABLE("spark.blaze.enable.smjInequalityJoin", false),
-
     /// fallbacks to SortMergeJoin when executing BroadcastHashJoin with big broadcasted table.
-    BHJ_FALLBACKS_TO_SMJ_ENABLE("spark.blaze.enable.bhjFallbacksToSmj", true),
+    /// not available in blaze 3.0+
+    BHJ_FALLBACKS_TO_SMJ_ENABLE("spark.blaze.enable.bhjFallbacksToSmj", false),
 
     /// fallbacks to SortMergeJoin when BroadcastHashJoin has a broadcasted table with rows more
     /// than this threshold. requires spark.blaze.enable.bhjFallbacksToSmj = true.
+    /// not available in blaze 3.0+
     BHJ_FALLBACKS_TO_SMJ_ROWS_THRESHOLD("spark.blaze.bhjFallbacksToSmj.rows", 1000000),
 
     /// fallbacks to SortMergeJoin when BroadcastHashJoin has a broadcasted table with memory usage
@@ -44,7 +42,7 @@ public enum BlazeConf {
 
     /// enable converting upper/lower functions to native, special cases may provide different
     /// outputs from spark due to different unicode versions.
-    CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", false),
+    CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", true),
 
     /// number of threads evaluating UDFs
     /// improves performance for special case that UDF concurrency matters
@@ -64,6 +62,12 @@ public enum BlazeConf {
 
     /// mininum number of rows to trigger partial aggregate skipping
     PARTIAL_AGG_SKIPPING_MIN_ROWS("spark.blaze.partialAggSkipping.minRows", BATCH_SIZE.intConf() * 2),
+
+    // parquet enable page filtering
+    PARQUET_ENABLE_PAGE_FILTERING("spark.blaze.parquet.enable.pageFiltering", false),
+
+    // parqeut enable bloom filter
+    PARQUET_ENABLE_BLOOM_FILTER("spark.blaze.parquet.enable.bloomFilter", false),
     ;
 
     private String key;

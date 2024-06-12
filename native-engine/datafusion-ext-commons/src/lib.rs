@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #![feature(new_uninit)]
-#![feature(io_error_other)]
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
 
@@ -85,9 +84,9 @@ pub fn batch_size() -> usize {
     batch_size
 }
 
-// for better cache usage
+// bigger for better radix sort performance
 pub const fn staging_mem_size_for_partial_sort() -> usize {
-    4194304 * 8 / 10
+    8388608
 }
 
 // use bigger batch memory size writing shuffling data

@@ -194,8 +194,8 @@ enum ParsedJsonValue {
 
 #[derive(Debug)]
 enum HiveGetJsonObjectError {
-    InvalidJsonPath(String),
-    InvalidInput(String),
+    InvalidJsonPath,
+    InvalidInput,
 }
 
 struct HiveGetJsonObjectEvaluator {
@@ -212,15 +212,11 @@ impl HiveGetJsonObjectEvaluator {
             evaluator.matchers.push(matcher);
         }
         if evaluator.matchers.first() != Some(&HiveGetJsonObjectMatcher::Root) {
-            return Err(HiveGetJsonObjectError::InvalidJsonPath(
-                "json path missing root".to_string(),
-            ));
+            return Err(HiveGetJsonObjectError::InvalidJsonPath);
         }
         evaluator.matchers.remove(0); // remove root matcher
         if evaluator.matchers.contains(&HiveGetJsonObjectMatcher::Root) {
-            return Err(HiveGetJsonObjectError::InvalidJsonPath(
-                "json path has more than one root".to_string(),
-            ));
+            return Err(HiveGetJsonObjectError::InvalidJsonPath);
         }
         Ok(evaluator)
     }
@@ -240,9 +236,7 @@ impl HiveGetJsonObjectEvaluator {
                 return Ok(v);
             }
         }
-        Err(HiveGetJsonObjectError::InvalidInput(
-            "invalid json string".to_string(),
-        ))
+        Err(HiveGetJsonObjectError::InvalidInput)
     }
 
     fn evaluate_with_value_serde_json(
@@ -296,7 +290,7 @@ fn serde_json_value_to_string(
         serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => serde_json::to_string(value)
             .map(Some)
-            .map_err(|_| HiveGetJsonObjectError::InvalidInput("array to json error".to_string())),
+            .map_err(|_| HiveGetJsonObjectError::InvalidInput),
     }
 }
 
@@ -310,7 +304,7 @@ fn sonic_value_to_string(
         sonic_rs::JsonType::Boolean => Ok(value.as_bool().map(|v| v.to_string())),
         _ => sonic_rs::to_string(value)
             .map(Some)
-            .map_err(|_| HiveGetJsonObjectError::InvalidInput("array to json error".to_string())),
+            .map_err(|_| HiveGetJsonObjectError::InvalidInput),
     }
 }
 
@@ -352,9 +346,7 @@ impl HiveGetJsonObjectMatcher {
                     }
                 }
                 if child_name.is_empty() {
-                    return Err(HiveGetJsonObjectError::InvalidJsonPath(
-                        "empty child name".to_string(),
-                    ));
+                    return Err(HiveGetJsonObjectError::InvalidJsonPath);
                 }
                 Ok(Some(Self::Child(child_name)))
             }
@@ -372,24 +364,18 @@ impl HiveGetJsonObjectMatcher {
                             chars.next();
                         }
                         None => {
-                            return Err(HiveGetJsonObjectError::InvalidJsonPath(
-                                "unterminated subscript".to_string(),
-                            ));
+                            return Err(HiveGetJsonObjectError::InvalidJsonPath);
                         }
                     }
                 }
                 if index_str.is_empty() || index_str == "*" {
                     return Ok(Some(Self::SubscriptAll));
                 }
-                let index = str::parse::<usize>(&index_str).map_err(|_| {
-                    HiveGetJsonObjectError::InvalidJsonPath("invalid subscript index".to_string())
-                })?;
+                let index = str::parse::<usize>(&index_str)
+                    .map_err(|_| HiveGetJsonObjectError::InvalidJsonPath)?;
                 Ok(Some(Self::Subscript(index)))
             }
-            Some(c) => Err(HiveGetJsonObjectError::InvalidJsonPath(format!(
-                "unexpected char in json path: {}",
-                c
-            ))),
+            Some(_) => Err(HiveGetJsonObjectError::InvalidJsonPath),
         }
     }
 

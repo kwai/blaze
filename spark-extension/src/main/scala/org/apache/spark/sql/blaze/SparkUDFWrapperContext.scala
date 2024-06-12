@@ -16,7 +16,6 @@
 package org.apache.spark.sql.blaze
 
 import java.nio.ByteBuffer
-
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot

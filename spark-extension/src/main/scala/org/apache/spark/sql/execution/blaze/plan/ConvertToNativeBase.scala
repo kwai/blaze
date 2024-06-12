@@ -34,7 +34,6 @@ import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.OneToOneDependency
-import org.apache.spark.sql.blaze.BlazeConf
 import org.blaze.protobuf.FFIReaderExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema

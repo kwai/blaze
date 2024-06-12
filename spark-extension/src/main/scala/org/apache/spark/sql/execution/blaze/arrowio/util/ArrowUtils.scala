@@ -15,7 +15,8 @@
  */
 package org.apache.spark.sql.execution.blaze.arrowio.util
 
-import scala.collection.JavaConverters._
+import scala.collection.JavaConverters.asScalaBufferConverter
+import scala.collection.JavaConverters.seqAsJavaListConverter
 
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.memory.RootAllocator
@@ -31,7 +32,6 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.ShutdownHookManager
 
 object ArrowUtils {
-
   val rootAllocator = new RootAllocator(Long.MaxValue)
   ShutdownHookManager.addShutdownHook(() => rootAllocator.close())
 
@@ -128,7 +128,7 @@ object ArrowUtils {
         ArrayType(elementType, containsNull = elementField.isNullable)
 
       case ArrowType.Struct.INSTANCE =>
-        val fields = field.getChildren().asScala.map { child =>
+        val fields = field.getChildren.asScala.map { child =>
           val dt = fromArrowField(child)
           StructField(child.getName, dt, child.isNullable)
         }
