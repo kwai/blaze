@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use arrow::{compute::SortOptions, datatypes::SchemaRef, record_batch::RecordBatch};
 use blaze_jni_bridge::{
     conf,
     conf::{BooleanConf, IntConf},
@@ -141,6 +141,7 @@ impl ExecutionPlan for BroadcastJoinExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let stream = execute_broadcast_join(
+            self.schema(),
             self.left.clone(),
             self.right.clone(),
             partition,
@@ -173,6 +174,7 @@ impl DisplayAs for BroadcastJoinExec {
 }
 
 async fn execute_broadcast_join(
+    schema: SchemaRef,
     left: Arc<dyn ExecutionPlan>,
     right: Arc<dyn ExecutionPlan>,
     partition: usize,
@@ -292,12 +294,12 @@ async fn execute_broadcast_join(
 
             let right_sorted = Arc::new(SortExec::new(right, sort_exprs.clone(), None));
             let join = Arc::new(SortMergeJoinExec::try_new(
+                schema,
                 left.clone(),
                 right_sorted.clone(),
                 on,
-                join_type,
-                join_filter,
-                sort_exprs.into_iter().map(|se| se.options).collect(),
+                join_type.try_into()?,
+                vec![SortOptions::default(); sort_exprs.len()],
             )?);
             log::info!("BroadcastJoin is using sort-merge join mode: {:?}", &join);
 

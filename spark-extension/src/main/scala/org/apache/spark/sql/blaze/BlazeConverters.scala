@@ -128,7 +128,9 @@ object BlazeConverters extends Logging {
       var newExec = exec.withNewChildren(newChildren)
       exec.getTagValue(convertibleTag).foreach(newExec.setTagValue(convertibleTag, _))
       exec.getTagValue(convertStrategyTag).foreach(newExec.setTagValue(convertStrategyTag, _))
-      exec.getTagValue(childOrderingRequiredTag).foreach(newExec.setTagValue(childOrderingRequiredTag, _))
+      exec
+        .getTagValue(childOrderingRequiredTag)
+        .foreach(newExec.setTagValue(childOrderingRequiredTag, _))
       if (!isNeverConvert(newExec)) {
         newExec = convertSparkPlan(newExec)
       }
@@ -333,45 +335,14 @@ object BlazeConverters extends Logging {
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    var nativeLeft = convertToNative(left)
-    var nativeRight = convertToNative(right)
-    var modifiedLeftKeys = leftKeys
-    var modifiedRightKeys = rightKeys
-    var needPostProject = false
 
-    if (leftKeys.exists(!_.isInstanceOf[AttributeReference])) {
-      val (keys, exec) = buildJoinColumnsProject(nativeLeft, leftKeys)
-      modifiedLeftKeys = keys
-      nativeLeft = exec
-      needPostProject = true
-    }
-    if (rightKeys.exists(!_.isInstanceOf[AttributeReference])) {
-      val (keys, exec) = buildJoinColumnsProject(nativeRight, rightKeys)
-      modifiedRightKeys = keys
-      nativeRight = exec
-      needPostProject = true
-    }
-
-    val smjOrig = SortMergeJoinExec(
-      modifiedLeftKeys,
-      modifiedRightKeys,
+    Shims.get.createNativeSortMergeJoinExec(
+      convertToNative(left),
+      convertToNative(right),
+      leftKeys,
+      rightKeys,
       joinType,
-      condition,
-      addRenameColumnsExec(nativeLeft),
-      addRenameColumnsExec(nativeRight))
-    val smj = Shims.get.createNativeSortMergeJoinExec(
-      smjOrig.left,
-      smjOrig.right,
-      smjOrig.leftKeys,
-      smjOrig.rightKeys,
-      smjOrig.joinType,
-      smjOrig.condition)
-
-    if (needPostProject) {
-      buildPostJoinProject(smj, exec.output)
-    } else {
-      smj
-    }
+      condition)
   }
 
   def convertBroadcastHashJoinExec(exec: BroadcastHashJoinExec): SparkPlan = {

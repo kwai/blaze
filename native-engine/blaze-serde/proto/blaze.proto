@@ -398,12 +398,13 @@ enum PartitionMode {
 }
 
 message SortMergeJoinExecNode {
-  PhysicalPlanNode left = 1;
-  PhysicalPlanNode right = 2;
-  repeated JoinOn on = 3;
-  repeated SortOptions sort_options = 4;
-  JoinType join_type = 5;
-  JoinFilter join_filter = 6;
+  Schema schema = 1;
+  PhysicalPlanNode left = 2;
+  PhysicalPlanNode right = 3;
+  repeated JoinOn on = 4;
+  repeated SortOptions sort_options = 5;
+  JoinType join_type = 6;
+  JoinFilter join_filter = 7;
 }
 
 message BroadcastJoinExecNode {
@@ -438,6 +439,7 @@ enum JoinType {
   FULL = 3;
   SEMI = 4;
   ANTI = 5;
+  EXISTENCE = 6;
 }
 
 message SortOptions {
@@ -456,8 +458,8 @@ message BoundReference {
 }
 
 message JoinOn {
-  PhysicalColumn left = 1;
-  PhysicalColumn right = 2;
+  PhysicalExprNode left = 1;
+  PhysicalExprNode right = 2;
 }
 
 message ProjectionExecNode {

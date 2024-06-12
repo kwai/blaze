@@ -20,7 +20,6 @@ import scala.collection.immutable.SortedMap
 
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
-import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
@@ -28,13 +27,12 @@ import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
-import org.apache.spark.sql.catalyst.plans.LeftAnti
-import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.BinaryExecNode
 import org.blaze.{protobuf => pb}
+import org.blaze.protobuf.JoinOn
 
 abstract class NativeBroadcastJoinBase(
     override val left: SparkPlan,
@@ -47,14 +45,7 @@ abstract class NativeBroadcastJoinBase(
     extends BinaryExecNode
     with NativeSupports {
 
-  assert(
-    (joinType != LeftSemi && joinType != LeftAnti) || condition.isEmpty,
-    "Semi/Anti join with filter is not supported yet")
-
-  assert(
-    !BlazeConf.BHJ_FALLBACKS_TO_SMJ_ENABLE.booleanConf() || BlazeConf.SMJ_INEQUALITY_JOIN_ENABLE
-      .booleanConf() || condition.isEmpty,
-    "Join filter is not supported when BhjFallbacksToSmj and SmjInequalityJoin both enabled")
+  assert(condition.isEmpty, "join filter is not supported")
 
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
@@ -62,20 +53,12 @@ abstract class NativeBroadcastJoinBase(
       .toSeq: _*)
 
   private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
-    val leftColumn = NativeConverters.convertExpr(leftKey).getColumn match {
-      case column if column.getName.isEmpty =>
-        throw new NotImplementedError(s"BHJ leftKey is not column: ${leftKey}")
-      case column => column
-    }
-    val rightColumn = NativeConverters.convertExpr(rightKey).getColumn match {
-      case column if column.getName.isEmpty =>
-        throw new NotImplementedError(s"BHJ rightKey is not column: ${rightKey}")
-      case column => column
-    }
-    pb.JoinOn
+    val leftKeyExpr = NativeConverters.convertExpr(leftKey)
+    val rightKeyExpr = NativeConverters.convertExpr(rightKey)
+    JoinOn
       .newBuilder()
-      .setLeft(leftColumn)
-      .setRight(rightColumn)
+      .setLeft(leftKeyExpr)
+      .setRight(rightKeyExpr)
       .build()
   }
 

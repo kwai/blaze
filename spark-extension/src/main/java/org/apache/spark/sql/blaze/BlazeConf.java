@@ -27,10 +27,6 @@ public enum BlazeConf {
     /// actual off-heap memory usage is expected to be spark.executor.memoryOverhead * fraction.
     MEMORY_FRACTION("spark.blaze.memoryFraction", 0.6),
 
-    /// translates inequality smj to native. improves performance in most cases, however some
-    /// issues are found in special cases, like tpcds q72.
-    SMJ_INEQUALITY_JOIN_ENABLE("spark.blaze.enable.smjInequalityJoin", false),
-
     /// fallbacks to SortMergeJoin when executing BroadcastHashJoin with big broadcasted table.
     BHJ_FALLBACKS_TO_SMJ_ENABLE("spark.blaze.enable.bhjFallbacksToSmj", true),
 

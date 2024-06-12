@@ -63,6 +63,7 @@ use datafusion_ext_plans::{
     agg_exec::AggExec,
     broadcast_join_exec::BroadcastJoinExec,
     broadcast_nested_loop_join_exec::BroadcastNestedLoopJoinExec,
+    common::join_utils::JoinType,
     debug_exec::DebugExec,
     empty_partitions_exec::EmptyPartitionsExec,
     expand_exec::ExpandExec,
@@ -89,7 +90,7 @@ use object_store::{path::Path, ObjectMeta};
 use crate::{
     convert_box_required, convert_required,
     error::PlanSerDeError,
-    from_proto_binary_op, into_required, proto_error, protobuf,
+    from_proto_binary_op, proto_error, protobuf,
     protobuf::{
         physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType, GenerateFunction,
     },
@@ -182,19 +183,20 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
+                let schema = Arc::new(convert_required!(sort_merge_join.schema)?);
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(sort_merge_join.left)?;
                 let right: Arc<dyn ExecutionPlan> = convert_box_required!(sort_merge_join.right)?;
                 let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = sort_merge_join
                     .on
                     .iter()
                     .map(|col| {
-                        let left_col: Column = into_required!(col.left)?;
-                        let left_col_binded: Arc<dyn PhysicalExpr> =
-                            Arc::new(Column::new_with_schema(left_col.name(), &left.schema())?);
-                        let right_col: Column = into_required!(col.right)?;
-                        let right_col_binded: Arc<dyn PhysicalExpr> =
-                            Arc::new(Column::new_with_schema(right_col.name(), &right.schema())?);
-                        Ok((left_col_binded, right_col_binded))
+                        let left_key =
+                            try_parse_physical_expr(&col.left.as_ref().unwrap(), &left.schema())?;
+                        let left_key_binded = bind(left_key, &left.schema())?;
+                        let right_key =
+                            try_parse_physical_expr(&col.right.as_ref().unwrap(), &right.schema())?;
+                        let right_key_binded = bind(right_key, &right.schema())?;
+                        Ok((left_key_binded, right_key_binded))
                     })
                     .collect::<Result<_, Self::Error>>()?;
 
@@ -210,38 +212,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let join_type = protobuf::JoinType::try_from(sort_merge_join.join_type)
                     .expect("invalid JoinType");
 
-                let join_filter = sort_merge_join
-                    .join_filter
-                    .as_ref()
-                    .map(|f| {
-                        let schema = Arc::new(convert_required!(f.schema)?);
-                        let expression = try_parse_physical_expr_required(&f.expression, &schema)?;
-                        let column_indices = f
-                            .column_indices
-                            .iter()
-                            .map(|i| {
-                                let side =
-                                    protobuf::JoinSide::try_from(i.side).expect("invalid JoinSide");
-                                Ok(ColumnIndex {
-                                    index: i.index as usize,
-                                    side: side.into(),
-                                })
-                            })
-                            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
-
-                        Ok(JoinFilter::new(
-                            bind(expression, &schema)?,
-                            column_indices,
-                            schema.as_ref().clone(),
-                        ))
-                    })
-                    .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
                 Ok(Arc::new(SortMergeJoinExec::try_new(
+                    schema,
                     left,
                     right,
                     on,
-                    join_type.into(),
-                    join_filter,
+                    join_type
+                        .try_into()
+                        .map_err(|_| proto_error("invalid JoinType"))?,
                     sort_options,
                 )?))
             }
@@ -349,13 +327,13 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .on
                     .iter()
                     .map(|col| {
-                        let left_col: Column = into_required!(col.left)?;
-                        let left_col_binded: Arc<dyn PhysicalExpr> =
-                            Arc::new(Column::new_with_schema(left_col.name(), &left.schema())?);
-                        let right_col: Column = into_required!(col.right)?;
-                        let right_col_binded: Arc<dyn PhysicalExpr> =
-                            Arc::new(Column::new_with_schema(right_col.name(), &right.schema())?);
-                        Ok((left_col_binded, right_col_binded))
+                        let left_key =
+                            try_parse_physical_expr(&col.left.as_ref().unwrap(), &left.schema())?;
+                        let left_key_binded = bind(left_key, &left.schema())?;
+                        let right_key =
+                            try_parse_physical_expr(&col.right.as_ref().unwrap(), &right.schema())?;
+                        let right_key_binded = bind(right_key, &right.schema())?;
+                        Ok((left_key_binded, right_key_binded))
                     })
                     .collect::<Result<_, Self::Error>>()?;
 
@@ -388,11 +366,16 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })
                     .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
 
+                let blaze_join_type: JoinType = join_type
+                    .try_into()
+                    .map_err(|_| proto_error("invalid JoinType"))?;
                 Ok(Arc::new(BroadcastJoinExec::try_new(
                     left,
                     right,
                     on,
-                    join_type.into(),
+                    blaze_join_type
+                        .try_into()
+                        .map_err(|_| proto_error("invalid JoinType"))?,
                     join_filter,
                 )?))
             }
@@ -428,10 +411,15 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })
                     .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
 
+                let blaze_join_type: JoinType = join_type
+                    .try_into()
+                    .map_err(|_| proto_error("invalid JoinType"))?;
                 Ok(Arc::new(BroadcastNestedLoopJoinExec::try_new(
                     left,
                     right,
-                    join_type.into(),
+                    blaze_join_type
+                        .try_into()
+                        .map_err(|_| proto_error("invalid JoinType"))?,
                     join_filter,
                 )?))
             }

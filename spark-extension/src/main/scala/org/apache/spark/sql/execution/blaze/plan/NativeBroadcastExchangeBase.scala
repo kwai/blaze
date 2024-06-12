@@ -24,7 +24,6 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 import scala.concurrent.Promise
@@ -38,7 +37,6 @@ import org.blaze.{protobuf => pb}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.blaze.BlazeCallNativeWrapper
 import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode

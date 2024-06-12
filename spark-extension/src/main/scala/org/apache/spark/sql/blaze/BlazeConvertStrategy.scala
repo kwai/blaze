@@ -46,7 +46,8 @@ object BlazeConvertStrategy extends Logging {
 
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
   val convertStrategyTag: TreeNodeTag[ConvertStrategy] = TreeNodeTag("blaze.convert.strategy")
-  val childOrderingRequiredTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.child.ordering.required")
+  val childOrderingRequiredTag: TreeNodeTag[Boolean] = TreeNodeTag(
+    "blaze.child.ordering.required")
 
   def apply(exec: SparkPlan): Unit = {
     exec.foreach(_.setTagValue(convertibleTag, true))

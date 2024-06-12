@@ -1,0 +1,223 @@
+// Copyright 2022 The Blaze Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::{cmp::Ordering, pin::Pin, sync::Arc};
+
+use arrow::array::{RecordBatch, RecordBatchOptions};
+use async_trait::async_trait;
+use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion_ext_commons::suggested_output_batch_mem_size;
+
+use crate::{
+    common::{batch_selection::interleave_batches, output::WrappedRecordBatchSender},
+    compare_cursor, cur_forward,
+    sort_merge_join_exec::{Idx, JoinParams, Joiner, StreamCursors},
+};
+
+pub struct SemiJoiner<
+    const L_SEMI: bool,
+    const R_SEMI: bool,
+    const L_ANTI: bool,
+    const R_ANTI: bool,
+> {
+    join_params: JoinParams,
+    output_sender: Arc<WrappedRecordBatchSender>,
+    indices: Vec<Idx>,
+    send_output_time: Time,
+}
+
+pub type LeftSemiJoiner = SemiJoiner<true, false, false, false>;
+pub type RightSemiJoiner = SemiJoiner<false, true, false, false>;
+pub type LeftAntiJoiner = SemiJoiner<false, false, true, false>;
+pub type RightAntiJoiner = SemiJoiner<false, false, false, true>;
+
+impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: bool>
+    SemiJoiner<L_SEMI, R_SEMI, L_ANTI, R_ANTI>
+{
+    pub fn new(join_params: JoinParams, output_sender: Arc<WrappedRecordBatchSender>) -> Self {
+        Self {
+            join_params,
+            output_sender,
+            indices: vec![],
+            send_output_time: Time::new(),
+        }
+    }
+
+    fn should_flush(&self, curs: &StreamCursors) -> bool {
+        if self.indices.len() >= self.join_params.batch_size {
+            return true;
+        }
+
+        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 6
+            && curs.0.mem_size() + curs.1.mem_size() > suggested_output_batch_mem_size()
+        {
+            if let Some(first_idx) = self.indices.first() {
+                let cur_idx = if L_SEMI || L_ANTI {
+                    curs.0.cur_idx
+                } else {
+                    curs.1.cur_idx
+                };
+                if first_idx.0 < cur_idx.0 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+        let indices = std::mem::take(&mut self.indices);
+        let num_rows = indices.len();
+        let cols = if L_SEMI || L_ANTI {
+            interleave_batches(curs.0.batch_schema.clone(), &curs.0.batches, &indices)?
+        } else {
+            interleave_batches(curs.1.batch_schema.clone(), &curs.1.batches, &indices)?
+        };
+        let output_batch = RecordBatch::try_new_with_options(
+            self.join_params.output_schema.clone(),
+            cols.columns().to_vec(),
+            &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+        )?;
+
+        if output_batch.num_rows() > 0 {
+            let timer = self.send_output_time.timer();
+            self.output_sender.send(Ok(output_batch), None).await;
+            drop(timer);
+        }
+        Ok(())
+    }
+
+    async fn join_less(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+        let lidx = curs.0.cur_idx;
+        if L_ANTI {
+            self.indices.push(lidx);
+        }
+        cur_forward!(curs.0);
+        if self.should_flush(curs) {
+            self.as_mut().flush(curs).await?;
+        }
+        if L_SEMI || L_ANTI {
+            curs.0
+                .set_min_reserved_idx(*self.indices.first().unwrap_or(&lidx));
+        } else {
+            curs.0.set_min_reserved_idx(lidx);
+        }
+        Ok(())
+    }
+
+    async fn join_greater(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+        let ridx = curs.1.cur_idx;
+        if R_ANTI {
+            self.indices.push(ridx);
+        }
+        cur_forward!(curs.1);
+        if self.should_flush(curs) {
+            self.as_mut().flush(curs).await?;
+        }
+        if R_SEMI || R_ANTI {
+            curs.1
+                .set_min_reserved_idx(*self.indices.first().unwrap_or(&ridx));
+        } else {
+            curs.1.set_min_reserved_idx(ridx);
+        }
+        Ok(())
+    }
+
+    async fn join_equal(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+        let mut lidx = curs.0.cur_idx;
+        let mut ridx = curs.1.cur_idx;
+
+        // output/skip left equal rows
+        loop {
+            if L_SEMI {
+                self.indices.push(lidx);
+                if self.should_flush(curs) {
+                    self.as_mut().flush(curs).await?;
+                }
+            }
+            cur_forward!(curs.0);
+            curs.0.set_min_reserved_idx(*if L_SEMI || L_ANTI {
+                self.indices.first().unwrap_or(&lidx)
+            } else {
+                &lidx
+            });
+
+            if !curs.0.finished && curs.0.key(curs.0.cur_idx) == curs.0.key(lidx) {
+                lidx = curs.0.cur_idx;
+                continue;
+            }
+            break;
+        }
+
+        // output/skip right equal rows
+        loop {
+            if R_SEMI {
+                self.indices.push(ridx);
+                if self.should_flush(curs) {
+                    self.as_mut().flush(curs).await?;
+                }
+            }
+            cur_forward!(curs.1);
+            curs.1.set_min_reserved_idx(*if R_SEMI || R_ANTI {
+                self.indices.first().unwrap_or(&ridx)
+            } else {
+                &ridx
+            });
+
+            if !curs.1.finished && curs.1.key(curs.1.cur_idx) == curs.1.key(ridx) {
+                ridx = curs.1.cur_idx;
+                continue;
+            }
+            break;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: bool> Joiner
+    for SemiJoiner<L_SEMI, R_SEMI, L_ANTI, R_ANTI>
+{
+    async fn join(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+        while !curs.0.finished && !curs.1.finished {
+            match compare_cursor!(curs) {
+                Ordering::Less => {
+                    self.as_mut().join_less(curs).await?;
+                }
+                Ordering::Greater => {
+                    self.as_mut().join_greater(curs).await?;
+                }
+                Ordering::Equal => {
+                    self.as_mut().join_equal(curs).await?;
+                }
+            }
+        }
+
+        // at least one side is finished, consume the other side if it is an anti side
+        while L_ANTI && !curs.0.finished {
+            self.as_mut().join_less(curs).await?;
+        }
+        while R_ANTI && !curs.1.finished {
+            self.as_mut().join_greater(curs).await?;
+        }
+        if !self.indices.is_empty() {
+            self.flush(curs).await?;
+        }
+        Ok(())
+    }
+
+    fn total_send_output_time(&self) -> usize {
+        self.send_output_time.value()
+    }
+}
