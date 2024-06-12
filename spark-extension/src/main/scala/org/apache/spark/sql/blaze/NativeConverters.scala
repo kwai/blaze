@@ -532,9 +532,7 @@ object NativeConverters extends Logging {
 
       // cast
       // not performing native cast for timestamp/dates (will use UDFWrapper instead)
-      case cast: Cast
-          if !Seq(cast.dataType, cast.child.dataType).contains(TimestampType) &&
-            !Seq(cast.dataType, cast.child.dataType).contains(DateType) =>
+      case cast: Cast if !Seq(cast.dataType, cast.child.dataType).contains(TimestampType) =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode
