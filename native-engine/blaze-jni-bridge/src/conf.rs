@@ -41,6 +41,8 @@ define_conf!(BooleanConf, IGNORE_CORRUPTED_FILES);
 define_conf!(BooleanConf, PARTIAL_AGG_SKIPPING_ENABLE);
 define_conf!(DoubleConf, PARTIAL_AGG_SKIPPING_RATIO);
 define_conf!(IntConf, PARTIAL_AGG_SKIPPING_MIN_ROWS);
+define_conf!(BooleanConf, PARQUET_ENABLE_PAGE_FILTERING);
+define_conf!(BooleanConf, PARQUET_ENABLE_BLOOM_FILTER);
 
 pub trait BooleanConf {
     fn key(&self) -> &'static str;

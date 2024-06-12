@@ -35,7 +35,6 @@ use datafusion::{
         SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::df_execution_err;
 use futures::{Stream, StreamExt};
 
 use crate::agg::AGG_BUF_COLUMN_NAME;
@@ -56,7 +55,12 @@ impl RenameColumnsExec {
         let input_schema = input.schema();
         let mut new_names = vec![];
 
-        for (i, field) in input_schema.fields().iter().enumerate() {
+        for (i, field) in input_schema
+            .fields()
+            .iter()
+            .take(renamed_column_names.len())
+            .enumerate()
+        {
             if field.name() != AGG_BUF_COLUMN_NAME {
                 new_names.push(renamed_column_names[i].clone());
             } else {
@@ -64,11 +68,9 @@ impl RenameColumnsExec {
                 break;
             }
         }
-        if new_names.len() != input_schema.fields().len() {
-            df_execution_err!(
-                "renamed_column_names length not matched with input schema, \
-                    renames: {renamed_column_names:?}, input schema: {input_schema}",
-            )?;
+
+        while new_names.len() < input_schema.fields().len() {
+            new_names.push(input_schema.field(new_names.len()).name().clone());
         }
         let renamed_column_names = new_names;
         let renamed_schema = Arc::new(Schema::new(

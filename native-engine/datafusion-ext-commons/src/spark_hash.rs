@@ -77,10 +77,8 @@ fn spark_compatible_murmur3_hash<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
     // avoid boundary checking in performance critical codes.
     // all operations are garenteed to be safe
     unsafe {
-        let mut h1 = hash_bytes_by_int(
-            std::slice::from_raw_parts(data.get_unchecked(0), len_aligned),
-            seed,
-        );
+        let mut h1 =
+            hash_bytes_by_int(std::slice::from_raw_parts(data.as_ptr(), len_aligned), seed);
 
         for i in len_aligned..len {
             let half_word = *data.get_unchecked(i) as i8 as i32;

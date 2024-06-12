@@ -79,8 +79,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.AggExecMode
 import org.apache.spark.sql.execution.blaze.plan.NativeAggExec
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinExec
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastNestedLoopJoinBase
-import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandBase
 import org.apache.spark.sql.execution.blaze.plan.NativeExpandExec
 import org.apache.spark.sql.execution.blaze.plan.NativeFilterBase
@@ -114,6 +112,7 @@ import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.execution.blaze.plan.BroadcastSide
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetSinkBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetSinkExec
 import org.blaze.{protobuf => pb}
@@ -153,7 +152,7 @@ class ShimsImpl extends Shims with Logging {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastJoinBase =
+      buildSide: BroadcastSide): NativeBroadcastJoinBase =
     NativeBroadcastJoinExec(
       left,
       right,
@@ -161,14 +160,7 @@ class ShimsImpl extends Shims with Logging {
       leftKeys,
       rightKeys,
       joinType,
-      condition)
-
-  override def createNativeBroadcastNestedLoopJoinExec(
-      left: SparkPlan,
-      right: SparkPlan,
-      joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastNestedLoopJoinBase =
-    NativeBroadcastNestedLoopJoinExec(left, right, joinType, condition)
+      buildSide)
 
   override def createNativeSortMergeJoinExec(
       left: SparkPlan,

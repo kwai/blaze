@@ -16,5 +16,5 @@
 # under the License.
 
 [toolchain]
-channel = "nightly-2023-08-01"
-components = ["cargo", "rustfmt", "clippy"]
+channel = "nightly-2024-06-27"
+components = ["rust-src", "cargo", "rustfmt", "clippy"]

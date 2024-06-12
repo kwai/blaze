@@ -151,6 +151,6 @@ abstract class NativeParquetSinkBase(
       "ParquetSink")
   }
 
-  protected def newHadoopConf(tableDesc: TableDesc): Configuration =
+  protected def newHadoopConf(_tableDesc: TableDesc): Configuration =
     sparkSession.sessionState.newHadoopConf()
 }
