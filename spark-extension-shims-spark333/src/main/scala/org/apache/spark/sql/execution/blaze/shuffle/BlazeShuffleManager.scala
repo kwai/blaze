@@ -22,6 +22,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.sort.SortShuffleManager
+import org.apache.spark.shuffle.sort.SortShuffleManager.canUseBatchFetch
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArrowShuffle
 
 class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
@@ -54,16 +55,27 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
 
     if (isArrowShuffle(handle)) {
+      val baseShuffleHandle = handle.asInstanceOf[BaseShuffleHandle[K, _, C]]
+      val (blocksByAddress, canEnableBatchFetch) =
+        if (baseShuffleHandle.dependency.isShuffleMergeFinalizedMarked) {
+          val res = SparkEnv.get.mapOutputTracker.getPushBasedShuffleMapSizesByExecutorId(
+            handle.shuffleId, startMapIndex, endMapIndex, startPartition, endPartition)
+          (res.iter, res.enableBatchFetch)
+        } else {
+          val address = SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
+            handle.shuffleId, startMapIndex, endMapIndex, startPartition, endPartition)
+          (address, true)
+        }
+
       new BlazeBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
-        startPartition,
-        endPartition,
+        blocksByAddress,
         context,
         metrics,
         SparkEnv.get.blockManager,
         SparkEnv.get.mapOutputTracker,
-        startMapId = Some(startMapIndex),
-        endMapId = Some(endMapIndex))
+        shouldBatchFetch =
+          canEnableBatchFetch && canUseBatchFetch(startPartition, endPartition, context))
     } else {
       sortShuffleManager.getReader(
         handle,

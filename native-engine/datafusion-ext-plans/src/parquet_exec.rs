@@ -20,7 +20,7 @@
 use std::{any::Any, fmt, fmt::Formatter, ops::Range, sync::Arc};
 
 use arrow::{
-    array::ArrayRef,
+    array::{Array, ArrayRef, AsArray, ListArray},
     datatypes::{DataType, SchemaRef},
 };
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
@@ -71,7 +71,61 @@ fn schema_adapter_cast_column(
     col: &ArrayRef,
     data_type: &DataType,
 ) -> Result<ArrayRef, DataFusionError> {
-    datafusion_ext_commons::cast::cast_scan_input_array(col.as_ref(), data_type)
+    macro_rules! handle_decimal {
+        ($s:ident, $t:ident, $tnative:ty, $prec:expr, $scale:expr) => {{
+            use arrow::{array::*, datatypes::*};
+            type DecimalBuilder = paste::paste! {[<$t Builder>]};
+            type IntType = paste::paste! {[<$s Type>]};
+
+            let col = col.as_primitive::<IntType>();
+            let mut decimal_builder = DecimalBuilder::new();
+            for i in 0..col.len() {
+                if col.is_valid(i) {
+                    decimal_builder.append_value(col.value(i) as $tnative);
+                } else {
+                    decimal_builder.append_null();
+                }
+            }
+            Ok(Arc::new(
+                decimal_builder
+                    .finish()
+                    .with_precision_and_scale($prec, $scale)?,
+            ))
+        }};
+    }
+    match data_type {
+        DataType::Decimal128(prec, scale) => match col.data_type() {
+            DataType::Int8 => handle_decimal!(Int8, Decimal128, i128, *prec, *scale),
+            DataType::Int16 => handle_decimal!(Int16, Decimal128, i128, *prec, *scale),
+            DataType::Int32 => handle_decimal!(Int32, Decimal128, i128, *prec, *scale),
+            DataType::Int64 => handle_decimal!(Int64, Decimal128, i128, *prec, *scale),
+            DataType::Decimal128(p, s) if p == prec && s == scale => Ok(col.clone()),
+            _ => df_execution_err!(
+                "schema_adapter_cast_column unsupported type: {:?} => {:?}",
+                col.data_type(),
+                data_type,
+            ),
+        },
+        DataType::List(to_field) => match col.data_type() {
+            DataType::List(_from_field) => {
+                let col = col.as_list::<i32>();
+                let from_inner = col.values();
+                let to_inner = schema_adapter_cast_column(from_inner, to_field.data_type())?;
+                Ok(Arc::new(ListArray::try_new(
+                    to_field.clone(),
+                    col.offsets().clone(),
+                    to_inner,
+                    col.nulls().cloned(),
+                )?))
+            }
+            _ => df_execution_err!(
+                "schema_adapter_cast_column unsupported type: {:?} => {:?}",
+                col.data_type(),
+                data_type,
+            ),
+        },
+        _ => datafusion_ext_commons::cast::cast_scan_input_array(col.as_ref(), data_type),
+    }
 }
 
 /// Execution plan for scanning one or more Parquet partitions
@@ -231,6 +285,9 @@ impl ExecutionPlan for ParquetExec {
             None => (0..self.base_config.file_schema.fields().len()).collect(),
         };
 
+        let page_filtering_enabled = conf::PARQUET_ENABLE_PAGE_FILTERING.value()?;
+        let bloom_filter_enabled = conf::PARQUET_ENABLE_BLOOM_FILTER.value()?;
+
         let opener = ParquetOpener {
             partition_index,
             projection: Arc::from(projection),
@@ -243,10 +300,10 @@ impl ExecutionPlan for ParquetExec {
             metadata_size_hint: None,
             metrics: self.metrics.clone(),
             parquet_file_reader_factory: Arc::new(FsReaderFactory::new(fs_provider)),
-            pushdown_filters: false,
-            reorder_filters: false,
-            enable_page_index: false,
-            enable_bloom_filter: false,
+            pushdown_filters: page_filtering_enabled,
+            reorder_filters: page_filtering_enabled,
+            enable_page_index: page_filtering_enabled,
+            enable_bloom_filter: bloom_filter_enabled,
         };
 
         let baseline_metrics_cloned = baseline_metrics.clone();

@@ -105,7 +105,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.CoalescedMapperPartitionSpec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
-import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeSortMergeJoinExec
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
@@ -150,7 +149,7 @@ class ShimsImpl extends Shims with Logging {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastJoinBase =
+      broadcastSide: BroadcastSide): NativeBroadcastJoinBase =
     NativeBroadcastJoinExec(
       left,
       right,
@@ -158,14 +157,7 @@ class ShimsImpl extends Shims with Logging {
       leftKeys,
       rightKeys,
       joinType,
-      condition)
-
-  override def createNativeBroadcastNestedLoopJoinExec(
-      left: SparkPlan,
-      right: SparkPlan,
-      joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastNestedLoopJoinBase =
-    NativeBroadcastNestedLoopJoinExec(left, right, joinType, condition)
+      broadcastSide)
 
   override def createNativeSortMergeJoinExec(
       left: SparkPlan,

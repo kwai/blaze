@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #![feature(new_uninit)]
-#![feature(io_error_other)]
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
 

@@ -19,8 +19,9 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.joins
 import org.apache.spark.sql.execution.joins.BuildLeft
+import org.apache.spark.sql.execution.joins.BuildRight
+import org.apache.spark.sql.execution.joins.BuildSide
 import org.apache.spark.sql.execution.joins.HashJoin
 
 case class NativeBroadcastJoinExec(
@@ -30,7 +31,7 @@ case class NativeBroadcastJoinExec(
     override val leftKeys: Seq[Expression],
     override val rightKeys: Seq[Expression],
     override val joinType: JoinType,
-    override val condition: Option[Expression])
+    broadcastSide: BroadcastSide)
     extends NativeBroadcastJoinBase(
       left,
       right,
@@ -38,10 +39,15 @@ case class NativeBroadcastJoinExec(
       leftKeys,
       rightKeys,
       joinType,
-      condition)
+      broadcastSide)
     with HashJoin {
 
-  override val buildSide: joins.BuildSide = BuildLeft
+  override val condition: Option[Expression] = None
+
+  override val buildSide: BuildSide = broadcastSide match {
+    case BroadcastLeft => BuildLeft
+    case BroadcastRight => BuildRight
+  }
 
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(left = newChildren(0), right = newChildren(1))
