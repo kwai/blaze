@@ -34,8 +34,6 @@ use datafusion_ext_commons::batch_size;
 use futures::{stream::once, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 
-use crate::broadcast_join_exec::RecordBatchStreamsWrapperExec;
-
 #[derive(Debug)]
 pub struct BroadcastNestedLoopJoinExec {
     left: Arc<dyn ExecutionPlan>,
@@ -249,4 +247,67 @@ fn left_is_build_side(join_type: JoinType) -> bool {
         join_type,
         JoinType::Right | JoinType::RightSemi | JoinType::RightAnti | JoinType::Full
     )
+}
+
+struct RecordBatchStreamsWrapperExec {
+    pub schema: SchemaRef,
+    pub stream: Mutex<Option<SendableRecordBatchStream>>,
+    pub output_partitioning: Partitioning,
+}
+
+impl std::fmt::Debug for RecordBatchStreamsWrapperExec {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RecordBatchStreamsWrapper")
+    }
+}
+
+impl DisplayAs for RecordBatchStreamsWrapperExec {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "RecordBatchStreamsWrapper")
+    }
+}
+
+impl ExecutionPlan for RecordBatchStreamsWrapperExec {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn output_partitioning(&self) -> Partitioning {
+        self.output_partitioning.clone()
+    }
+
+    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
+        None
+    }
+
+    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        unimplemented!()
+    }
+
+    fn execute(
+        &self,
+        _partition: usize,
+        _context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
+        let stream = std::mem::take(&mut *self.stream.lock());
+        Ok(Box::pin(RecordBatchStreamAdapter::new(
+            self.schema.clone(),
+            Box::pin(futures::stream::iter(stream).flatten()),
+        )))
+    }
+
+    fn statistics(&self) -> Result<Statistics> {
+        unimplemented!()
+    }
 }

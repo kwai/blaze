@@ -92,7 +92,7 @@ object BlazeConverters extends Logging {
   val enableBhj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.bhj", defaultValue = true)
   val enableBnlj: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.bnlj", defaultValue = true)
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.bnlj", defaultValue = false)
   val enableLocalLimit: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.limit", defaultValue = true)
   val enableGlobalLimit: Boolean =
@@ -128,7 +128,9 @@ object BlazeConverters extends Logging {
       var newExec = exec.withNewChildren(newChildren)
       exec.getTagValue(convertibleTag).foreach(newExec.setTagValue(convertibleTag, _))
       exec.getTagValue(convertStrategyTag).foreach(newExec.setTagValue(convertStrategyTag, _))
-      exec.getTagValue(childOrderingRequiredTag).foreach(newExec.setTagValue(childOrderingRequiredTag, _))
+      exec
+        .getTagValue(childOrderingRequiredTag)
+        .foreach(newExec.setTagValue(childOrderingRequiredTag, _))
       if (!isNeverConvert(newExec)) {
         newExec = convertSparkPlan(newExec)
       }
@@ -333,45 +335,14 @@ object BlazeConverters extends Logging {
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    var nativeLeft = convertToNative(left)
-    var nativeRight = convertToNative(right)
-    var modifiedLeftKeys = leftKeys
-    var modifiedRightKeys = rightKeys
-    var needPostProject = false
 
-    if (leftKeys.exists(!_.isInstanceOf[AttributeReference])) {
-      val (keys, exec) = buildJoinColumnsProject(nativeLeft, leftKeys)
-      modifiedLeftKeys = keys
-      nativeLeft = exec
-      needPostProject = true
-    }
-    if (rightKeys.exists(!_.isInstanceOf[AttributeReference])) {
-      val (keys, exec) = buildJoinColumnsProject(nativeRight, rightKeys)
-      modifiedRightKeys = keys
-      nativeRight = exec
-      needPostProject = true
-    }
-
-    val smjOrig = SortMergeJoinExec(
-      modifiedLeftKeys,
-      modifiedRightKeys,
+    Shims.get.createNativeSortMergeJoinExec(
+      addRenameColumnsExec(convertToNative(left)),
+      addRenameColumnsExec(convertToNative(right)),
+      leftKeys,
+      rightKeys,
       joinType,
-      condition,
-      addRenameColumnsExec(nativeLeft),
-      addRenameColumnsExec(nativeRight))
-    val smj = Shims.get.createNativeSortMergeJoinExec(
-      smjOrig.left,
-      smjOrig.right,
-      smjOrig.leftKeys,
-      smjOrig.rightKeys,
-      smjOrig.joinType,
-      smjOrig.condition)
-
-    if (needPostProject) {
-      buildPostJoinProject(smj, exec.output)
-    } else {
-      smj
-    }
+      condition)
   }
 
   def convertBroadcastHashJoinExec(exec: BroadcastHashJoinExec): SparkPlan = {
@@ -385,84 +356,33 @@ object BlazeConverters extends Logging {
         exec.left,
         exec.right)
       logDebug(s"Converting BroadcastHashJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-      logDebug(s"  leftKeys: ${exec.leftKeys}")
-      logDebug(s"  rightKeys: ${exec.rightKeys}")
-      logDebug(s"  joinType: ${exec.joinType}")
-      logDebug(s"  buildSide: ${exec.buildSide}")
-      logDebug(s"  condition: ${exec.condition}")
-      var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
+      logDebug(s"  leftKeys: $leftKeys")
+      logDebug(s"  rightKeys: $rightKeys")
+      logDebug(s"  joinType: $joinType")
+      logDebug(s"  buildSide: $buildSide")
+      logDebug(s"  condition: $condition")
+      assert(condition.isEmpty, "join condition is not supported")
+
+      // verify build side is native
+      buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
-          val convertedLeft = convertToNative(left)
-          (right, rightKeys, convertedLeft, leftKeys)
-
         case BuildLeft =>
           assert(NativeHelper.isNative(left), "broadcast join build side is not native")
-          val convertedRight = convertToNative(right)
-          (left, leftKeys, convertedRight, rightKeys)
-
-        case _ =>
-          // scalastyle:off throwerror
-          throw new NotImplementedError(
-            "Ignore BroadcastHashJoin with unsupported children structure")
       }
 
-      var modifiedHashedKeys = hashedKeys
-      var modifiedProbedKeys = probedKeys
-      var needPostProject = false
+      Shims.get.createNativeBroadcastJoinExec(
+        addRenameColumnsExec(convertToNative(left)),
+        addRenameColumnsExec(convertToNative(right)),
+        exec.outputPartitioning,
+        leftKeys,
+        rightKeys,
+        joinType,
+        buildSide match {
+          case BuildLeft => BroadcastLeft
+          case BuildRight => BroadcastRight
+        })
 
-      if (hashedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-        val (keys, exec) = buildJoinColumnsProject(hashed, hashedKeys)
-        modifiedHashedKeys = keys
-        hashed = exec
-        needPostProject = true
-      }
-      if (probedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-        val (keys, exec) = buildJoinColumnsProject(nativeProbed, probedKeys)
-        modifiedProbedKeys = keys
-        nativeProbed = exec
-        needPostProject = true
-      }
-
-      val modifiedJoinType = buildSide match {
-        case BuildLeft => joinType
-        case BuildRight =>
-          needPostProject = true
-          val modifiedJoinType = joinType match { // reverse join type
-            case Inner => Inner
-            case FullOuter => FullOuter
-            case LeftOuter => RightOuter
-            case RightOuter => LeftOuter
-            case _ =>
-              throw new NotImplementedError(
-                "BHJ Semi/Anti join with BuildRight is not yet supported")
-          }
-          modifiedJoinType
-      }
-
-      val bhjOrig = BroadcastHashJoinExec(
-        modifiedHashedKeys,
-        modifiedProbedKeys,
-        modifiedJoinType,
-        BuildLeft,
-        condition,
-        addRenameColumnsExec(hashed),
-        addRenameColumnsExec(nativeProbed))
-
-      val bhj = Shims.get.createNativeBroadcastJoinExec(
-        bhjOrig.left,
-        bhjOrig.right,
-        bhjOrig.outputPartitioning,
-        bhjOrig.leftKeys,
-        bhjOrig.rightKeys,
-        bhjOrig.joinType,
-        bhjOrig.condition)
-
-      if (needPostProject) {
-        buildPostJoinProject(bhj, exec.output)
-      } else {
-        bhj
-      }
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
         val underlyingBroadcast = exec.buildSide match {

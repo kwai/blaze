@@ -150,7 +150,7 @@ class ShimsImpl extends Shims with Logging {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastJoinBase =
+      broadcastSide: BroadcastSide): NativeBroadcastJoinBase =
     NativeBroadcastJoinExec(
       left,
       right,
@@ -158,7 +158,7 @@ class ShimsImpl extends Shims with Logging {
       leftKeys,
       rightKeys,
       joinType,
-      condition)
+      broadcastSide)
 
   override def createNativeBroadcastNestedLoopJoinExec(
       left: SparkPlan,

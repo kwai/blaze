@@ -20,21 +20,24 @@ import scala.collection.immutable.SortedMap
 
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
-import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
+import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
-import org.apache.spark.sql.catalyst.plans.LeftAnti
-import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.BinaryExecNode
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
+import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
+import org.apache.spark.sql.types.LongType
 import org.blaze.{protobuf => pb}
+import org.blaze.protobuf.JoinOn
 
 abstract class NativeBroadcastJoinBase(
     override val left: SparkPlan,
@@ -43,82 +46,112 @@ abstract class NativeBroadcastJoinBase(
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
     joinType: JoinType,
-    condition: Option[Expression])
+    broadcastSide: BroadcastSide)
     extends BinaryExecNode
     with NativeSupports {
-
-  assert(
-    (joinType != LeftSemi && joinType != LeftAnti) || condition.isEmpty,
-    "Semi/Anti join with filter is not supported yet")
-
-  assert(
-    !BlazeConf.BHJ_FALLBACKS_TO_SMJ_ENABLE.booleanConf() || BlazeConf.SMJ_INEQUALITY_JOIN_ENABLE
-      .booleanConf() || condition.isEmpty,
-    "Join filter is not supported when BhjFallbacksToSmj and SmjInequalityJoin both enabled")
 
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .toSeq: _*)
 
+  private val isLongHashRelation = {
+    val baseBroadcast = broadcastSide match {
+      case BroadcastLeft => Shims.get.getUnderlyingBroadcast(left)
+      case BroadcastRight => Shims.get.getUnderlyingBroadcast(right)
+    }
+    val mode = baseBroadcast match {
+      case b: BroadcastExchangeExec => b.mode
+      case b: NativeBroadcastExchangeBase => b.broadcastMode
+    }
+    mode match {
+      case HashedRelationBroadcastMode(Seq(key), _) if key.dataType == LongType => true
+      case _ => false
+    }
+  }
+
+  private def nativeSchema = Util.getNativeSchema(output)
+
   private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
-    val leftColumn = NativeConverters.convertExpr(leftKey).getColumn match {
-      case column if column.getName.isEmpty =>
-        throw new NotImplementedError(s"BHJ leftKey is not column: ${leftKey}")
-      case column => column
+    val leftKeyExpr = leftKey match {
+      case k if !isLongHashRelation || k.dataType == LongType => k
+      case k => Cast(k, LongType)
     }
-    val rightColumn = NativeConverters.convertExpr(rightKey).getColumn match {
-      case column if column.getName.isEmpty =>
-        throw new NotImplementedError(s"BHJ rightKey is not column: ${rightKey}")
-      case column => column
+    val rightKeyExpr = rightKey match {
+      case k if !isLongHashRelation || k.dataType == LongType => k
+      case k => Cast(k, LongType)
     }
-    pb.JoinOn
+    JoinOn
       .newBuilder()
-      .setLeft(leftColumn)
-      .setRight(rightColumn)
+      .setLeft(NativeConverters.convertExpr(leftKeyExpr))
+      .setRight(NativeConverters.convertExpr(rightKeyExpr))
       .build()
   }
 
   private def nativeJoinType = NativeConverters.convertJoinType(joinType)
 
-  private def nativeJoinFilter =
-    condition.map(NativeConverters.convertJoinFilter(_, left.output, right.output))
+  private def nativeBroadcastSide = broadcastSide match {
+    case BroadcastLeft => pb.JoinSide.LEFT_SIDE
+    case BroadcastRight => pb.JoinSide.RIGHT_SIDE
+  }
 
   // check whether native converting is supported
+  nativeSchema
   nativeJoinType
-  nativeJoinFilter
+  nativeJoinOn
+  nativeBroadcastSide
 
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeHelper.executeNative(left)
     val rightRDD = NativeHelper.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
+    val nativeSchema = this.nativeSchema
     val nativeJoinType = this.nativeJoinType
     val nativeJoinOn = this.nativeJoinOn
-    val nativeJoinFilter = this.nativeJoinFilter
-    val partitions = rightRDD.partitions
+
+    val (probedRDD, builtRDD) = broadcastSide match {
+      case BroadcastLeft => (rightRDD, leftRDD)
+      case BroadcastRight => (leftRDD, rightRDD)
+    }
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      partitions,
-      rddDependencies = new OneToOneDependency(rightRDD) :: Nil,
-      rightRDD.isShuffleReadFull,
+      probedRDD.partitions,
+      rddDependencies = new OneToOneDependency(probedRDD) :: Nil,
+      probedRDD.isShuffleReadFull,
       (partition, context) => {
         val partition0 = new Partition() {
           override def index: Int = 0
         }
-        val leftChild = leftRDD.nativePlan(partition0, context)
-        val rightChild = rightRDD.nativePlan(rightRDD.partitions(partition.index), context)
+        val (leftChild, rightChild) = broadcastSide match {
+          case BroadcastLeft => (
+            leftRDD.nativePlan(partition0, context),
+            rightRDD.nativePlan(rightRDD.partitions(partition.index), context),
+          )
+          case BroadcastRight => (
+            leftRDD.nativePlan(leftRDD.partitions(partition.index), context),
+            rightRDD.nativePlan(partition0, context),
+          )
+        }
+        val cachedBuildHashMapId = s"bhm_stage${context.stageId}_rdd${builtRDD.id}"
+
         val broadcastJoinExec = pb.BroadcastJoinExecNode
           .newBuilder()
+          .setSchema(nativeSchema)
           .setLeft(leftChild)
           .setRight(rightChild)
           .setJoinType(nativeJoinType)
+          .setBroadcastSide(nativeBroadcastSide)
+          .setCachedBuildHashMapId(cachedBuildHashMapId)
           .addAllOn(nativeJoinOn.asJava)
 
-        nativeJoinFilter.foreach(joinFilter => broadcastJoinExec.setJoinFilter(joinFilter))
         pb.PhysicalPlanNode.newBuilder().setBroadcastJoin(broadcastJoinExec).build()
       },
       friendlyName = "NativeRDD.BroadcastJoin")
   }
 }
+
+class BroadcastSide {}
+case object BroadcastLeft extends BroadcastSide {}
+case object BroadcastRight extends BroadcastSide {}
