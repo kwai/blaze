@@ -102,6 +102,11 @@ abstract class NativeParquetInsertIntoHiveTableBase(
       cmd.overwrite,
       cmd.ifPartitionNotExists,
       cmd.outputColumnNames,
+      cmd.partitionColumns,
+      cmd.bucketSpec,
+      cmd.options,
+      cmd.fileFormat,
+      cmd.hiveTmpPath,
       metrics)
     DataWritingCommandExec(transformedCmd, child)
   }
@@ -129,6 +134,11 @@ abstract class NativeParquetInsertIntoHiveTableBase(
       overwrite: Boolean,
       ifPartitionNotExists: Boolean,
       outputColumnNames: Seq[String],
+      partitionColumns: Seq[org.apache.spark.sql.catalyst.expressions.Attribute],
+      bucketSpec: Option[org.apache.spark.sql.catalyst.catalog.BucketSpec],
+      options: Map[String, String],
+      fileFormat: org.apache.spark.sql.execution.datasources.FileFormat,
+      hiveTmpPath: org.apache.spark.sql.hive.execution.HiveTempPath,
       metrics: Map[String, SQLMetric]): InsertIntoHiveTable
 }
 

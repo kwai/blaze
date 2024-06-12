@@ -48,6 +48,7 @@ import org.apache.spark.sql.execution.UnsafeRowSerializer
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.StructField
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.OneToOneDependency
 
@@ -226,7 +227,9 @@ abstract class NativeShuffleExchangeBase(
 
         override def getPartition(key: Any): Int = key.asInstanceOf[Int]
       },
-      schema = StructType.fromAttributes(outputAttributes))
+      // schema = StructType.fromAttributes(outputAttributes))
+      schema = StructType(
+        outputAttributes.map(a => StructField(a.name, a.dataType, a.nullable, a.metadata))))
     dependency
   }
 }
