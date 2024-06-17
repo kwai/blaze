@@ -337,8 +337,8 @@ object BlazeConverters extends Logging {
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
 
     Shims.get.createNativeSortMergeJoinExec(
-      convertToNative(left),
-      convertToNative(right),
+      addRenameColumnsExec(convertToNative(left)),
+      addRenameColumnsExec(convertToNative(right)),
       leftKeys,
       rightKeys,
       joinType,
@@ -356,84 +356,33 @@ object BlazeConverters extends Logging {
         exec.left,
         exec.right)
       logDebug(s"Converting BroadcastHashJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-      logDebug(s"  leftKeys: ${exec.leftKeys}")
-      logDebug(s"  rightKeys: ${exec.rightKeys}")
-      logDebug(s"  joinType: ${exec.joinType}")
-      logDebug(s"  buildSide: ${exec.buildSide}")
-      logDebug(s"  condition: ${exec.condition}")
-      var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
+      logDebug(s"  leftKeys: $leftKeys")
+      logDebug(s"  rightKeys: $rightKeys")
+      logDebug(s"  joinType: $joinType")
+      logDebug(s"  buildSide: $buildSide")
+      logDebug(s"  condition: $condition")
+      assert(condition.isEmpty, "join condition is not supported")
+
+      // verify build side is native
+      buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
-          val convertedLeft = convertToNative(left)
-          (right, rightKeys, convertedLeft, leftKeys)
-
         case BuildLeft =>
           assert(NativeHelper.isNative(left), "broadcast join build side is not native")
-          val convertedRight = convertToNative(right)
-          (left, leftKeys, convertedRight, rightKeys)
-
-        case _ =>
-          // scalastyle:off throwerror
-          throw new NotImplementedError(
-            "Ignore BroadcastHashJoin with unsupported children structure")
       }
 
-      var modifiedHashedKeys = hashedKeys
-      var modifiedProbedKeys = probedKeys
-      var needPostProject = false
+      Shims.get.createNativeBroadcastJoinExec(
+        addRenameColumnsExec(convertToNative(left)),
+        addRenameColumnsExec(convertToNative(right)),
+        exec.outputPartitioning,
+        leftKeys,
+        rightKeys,
+        joinType,
+        buildSide match {
+          case BuildLeft => BroadcastLeft
+          case BuildRight => BroadcastRight
+        })
 
-      if (hashedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-        val (keys, exec) = buildJoinColumnsProject(hashed, hashedKeys)
-        modifiedHashedKeys = keys
-        hashed = exec
-        needPostProject = true
-      }
-      if (probedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-        val (keys, exec) = buildJoinColumnsProject(nativeProbed, probedKeys)
-        modifiedProbedKeys = keys
-        nativeProbed = exec
-        needPostProject = true
-      }
-
-      val modifiedJoinType = buildSide match {
-        case BuildLeft => joinType
-        case BuildRight =>
-          needPostProject = true
-          val modifiedJoinType = joinType match { // reverse join type
-            case Inner => Inner
-            case FullOuter => FullOuter
-            case LeftOuter => RightOuter
-            case RightOuter => LeftOuter
-            case _ =>
-              throw new NotImplementedError(
-                "BHJ Semi/Anti join with BuildRight is not yet supported")
-          }
-          modifiedJoinType
-      }
-
-      val bhjOrig = BroadcastHashJoinExec(
-        modifiedHashedKeys,
-        modifiedProbedKeys,
-        modifiedJoinType,
-        BuildLeft,
-        condition,
-        addRenameColumnsExec(hashed),
-        addRenameColumnsExec(nativeProbed))
-
-      val bhj = Shims.get.createNativeBroadcastJoinExec(
-        bhjOrig.left,
-        bhjOrig.right,
-        bhjOrig.outputPartitioning,
-        bhjOrig.leftKeys,
-        bhjOrig.rightKeys,
-        bhjOrig.joinType,
-        bhjOrig.condition)
-
-      if (needPostProject) {
-        buildPostJoinProject(bhj, exec.output)
-      } else {
-        bhj
-      }
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
         val underlyingBroadcast = exec.buildSide match {

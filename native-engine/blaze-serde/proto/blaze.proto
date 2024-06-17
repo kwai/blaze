@@ -35,19 +35,20 @@ message PhysicalPlanNode {
     FilterExecNode filter = 8;
     UnionExecNode union = 9;
     SortMergeJoinExecNode sort_merge_join = 10;
-    BroadcastJoinExecNode broadcast_join = 11;
-    RenameColumnsExecNode rename_columns = 12;
-    EmptyPartitionsExecNode empty_partitions = 13;
-    AggExecNode agg = 14;
-    LimitExecNode limit = 15;
-    FFIReaderExecNode ffi_reader = 16;
-    CoalesceBatchesExecNode coalesce_batches = 17;
-    ExpandExecNode expand = 18;
-    RssShuffleWriterExecNode rss_shuffle_writer= 19;
-    WindowExecNode window = 20;
-    GenerateExecNode generate = 21;
-    ParquetSinkExecNode parquet_sink = 22;
-    BroadcastNestedLoopJoinExecNode broadcast_nested_loop_join = 23;
+    BroadcastJoinBuildHashMapExecNode broadcast_join_build_hash_map = 11;
+    BroadcastJoinExecNode broadcast_join = 12;
+    RenameColumnsExecNode rename_columns = 13;
+    EmptyPartitionsExecNode empty_partitions = 14;
+    AggExecNode agg = 15;
+    LimitExecNode limit = 16;
+    FFIReaderExecNode ffi_reader = 17;
+    CoalesceBatchesExecNode coalesce_batches = 18;
+    ExpandExecNode expand = 19;
+    RssShuffleWriterExecNode rss_shuffle_writer= 20;
+    WindowExecNode window = 21;
+    GenerateExecNode generate = 22;
+    ParquetSinkExecNode parquet_sink = 23;
+    BroadcastNestedLoopJoinExecNode broadcast_nested_loop_join = 24;
   }
 }
 
@@ -407,12 +408,18 @@ message SortMergeJoinExecNode {
   JoinFilter join_filter = 7;
 }
 
+message BroadcastJoinBuildHashMapExecNode {
+  PhysicalPlanNode input = 1;
+  repeated PhysicalExprNode keys =2;
+}
+
 message BroadcastJoinExecNode {
-  PhysicalPlanNode left = 1;
-  PhysicalPlanNode right = 2;
-  repeated JoinOn on = 3;
-  JoinType join_type = 4;
-  JoinFilter join_filter = 5;
+  Schema schema = 1;
+  PhysicalPlanNode left = 2;
+  PhysicalPlanNode right = 3;
+  repeated JoinOn on = 4;
+  JoinType join_type = 5;
+  JoinSide broadcast_side = 6;
 }
 
 message BroadcastNestedLoopJoinExecNode {

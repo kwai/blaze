@@ -14,23 +14,22 @@
 
 #![feature(get_mut_unchecked)]
 #![feature(io_error_other)]
+#![feature(adt_const_params)]
 
-pub mod agg;
+// execution plan implementations
 pub mod agg_exec;
+pub mod broadcast_join_build_hash_map_exec;
 pub mod broadcast_join_exec;
 pub mod broadcast_nested_loop_join_exec;
-pub mod common;
 pub mod debug_exec;
 pub mod empty_partitions_exec;
 pub mod expand_exec;
 pub mod ffi_reader_exec;
 pub mod filter_exec;
-pub mod generate;
 pub mod generate_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod limit_exec;
-pub mod memmgr;
 pub mod parquet_exec;
 pub mod parquet_sink_exec;
 pub mod project_exec;
@@ -39,8 +38,15 @@ pub mod rss_shuffle_writer_exec;
 pub mod shuffle_writer_exec;
 pub mod sort_exec;
 pub mod sort_merge_join_exec;
-pub mod window;
 pub mod window_exec;
 
+// memory management
+pub mod memmgr;
+
+// helper modules
+pub mod agg;
+pub mod common;
+pub mod generate;
+pub mod joins;
 mod shuffle;
-mod smj;
+pub mod window;

@@ -61,6 +61,7 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.types.BinaryType
 
 abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike
@@ -90,9 +91,6 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
 
   override def doPrepare(): Unit = {
     // Materialize the future.
-    relationFuture
-    relationFuture
-    relationFuture
     relationFuture
   }
 
@@ -152,13 +150,33 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
             Channels.newChannel(new ByteArrayInputStream(bytes))
           })
         }
+
+        // native hash map schema = nullable native schema + key column
+        val nativeHashMapSchema = pb.Schema
+          .newBuilder()
+          .addAllColumns(nativeSchema
+            .getColumnsList
+            .asScala
+            .map(field => pb.Field
+              .newBuilder()
+              .setName(field.getName)
+              .setArrowType(field.getArrowType)
+              .setNullable(true)
+              .build())
+            .asJava)
+          .addColumns(pb.Field
+            .newBuilder()
+            .setName("~key")
+            .setArrowType(NativeConverters.convertDataType(BinaryType))
+            .setNullable(true))
+
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
         pb.PhysicalPlanNode
           .newBuilder()
           .setIpcReader(
             pb.IpcReaderExecNode
               .newBuilder()
-              .setSchema(nativeSchema)
+              .setSchema(nativeHashMapSchema)
               .setNumPartitions(1)
               .setIpcProviderResourceId(resourceId)
               .build())
@@ -265,39 +283,21 @@ object NativeBroadcastExchangeBase {
       keys: Seq[Expression],
       nativeSchema: pb.Schema): Array[Array[Byte]] = {
 
-    if (!BlazeConf.BHJ_FALLBACKS_TO_SMJ_ENABLE.booleanConf() || keys.isEmpty) {
-      return collectedData // no need to sort data in driver side
-    }
-
     val readerIpcProviderResourceId = s"BuildBroadcastDataReader:${UUID.randomUUID()}"
     val readerExec = pb.IpcReaderExecNode
       .newBuilder()
       .setSchema(nativeSchema)
       .setIpcProviderResourceId(readerIpcProviderResourceId)
 
-    val sortExec = pb.SortExecNode
+    val buildHashMapExec = pb.BroadcastJoinBuildHashMapExecNode
       .newBuilder()
       .setInput(pb.PhysicalPlanNode.newBuilder().setIpcReader(readerExec))
-      .addAllExpr(
-        keys
-          .map(key => {
-            pb.PhysicalExprNode
-              .newBuilder()
-              .setSort(
-                pb.PhysicalSortExprNode
-                  .newBuilder()
-                  .setExpr(NativeConverters.convertExpr(key))
-                  .setAsc(true)
-                  .setNullsFirst(true)
-                  .build())
-              .build()
-          })
-          .asJava)
+      .addAllKeys(keys.map(key => NativeConverters.convertExpr(key)).asJava)
 
     val writerIpcProviderResourceId = s"BuildBroadcastDataWriter:${UUID.randomUUID()}"
     val writerExec = pb.IpcWriterExecNode
       .newBuilder()
-      .setInput(pb.PhysicalPlanNode.newBuilder().setSort(sortExec))
+      .setInput(pb.PhysicalPlanNode.newBuilder().setBroadcastJoinBuildHashMap(buildHashMapExec))
       .setIpcConsumerResourceId(writerIpcProviderResourceId)
 
     // build native sorter

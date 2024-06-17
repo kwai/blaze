@@ -61,9 +61,9 @@ use datafusion_ext_exprs::{
 use datafusion_ext_plans::{
     agg::{create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr},
     agg_exec::AggExec,
+    broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
     broadcast_join_exec::BroadcastJoinExec,
     broadcast_nested_loop_join_exec::BroadcastNestedLoopJoinExec,
-    common::join_utils::JoinType,
     debug_exec::DebugExec,
     empty_partitions_exec::EmptyPartitionsExec,
     expand_exec::ExpandExec,
@@ -73,6 +73,7 @@ use datafusion_ext_plans::{
     generate_exec::GenerateExec,
     ipc_reader_exec::IpcReaderExec,
     ipc_writer_exec::IpcWriterExec,
+    joins::join_utils::JoinType,
     limit_exec::LimitExec,
     parquet_exec::ParquetExec,
     parquet_sink_exec::ParquetSinkExec,
@@ -284,7 +285,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 self
                             ))
                         })?;
-                        if let protobuf::physical_expr_node::ExprType::Sort(sort_expr) = expr {
+                        if let ExprType::Sort(sort_expr) = expr {
                             let expr = sort_expr
                                 .expr
                                 .as_ref()
@@ -320,7 +321,22 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     sort.fetch_limit.as_ref().map(|limit| limit.limit as usize),
                 )))
             }
+            PhysicalPlanType::BroadcastJoinBuildHashMap(bhm) => {
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(bhm.input)?;
+                let keys = bhm
+                    .keys
+                    .iter()
+                    .map(|expr| {
+                        Ok(bind(
+                            try_parse_physical_expr(expr, &input.schema())?,
+                            &input.schema(),
+                        )?)
+                    })
+                    .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, Self::Error>>()?;
+                Ok(Arc::new(BroadcastJoinBuildHashMapExec::new(input, keys)))
+            }
             PhysicalPlanType::BroadcastJoin(broadcast_join) => {
+                let schema = Arc::new(convert_required!(broadcast_join.schema)?);
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.left)?;
                 let right: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.right)?;
                 let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = broadcast_join
@@ -339,44 +355,21 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
 
                 let join_type = protobuf::JoinType::try_from(broadcast_join.join_type)
                     .expect("invalid JoinType");
-                let join_filter = broadcast_join
-                    .join_filter
-                    .as_ref()
-                    .map(|f| {
-                        let schema = Arc::new(convert_required!(f.schema)?);
-                        let expression = try_parse_physical_expr_required(&f.expression, &schema)?;
-                        let column_indices = f
-                            .column_indices
-                            .iter()
-                            .map(|i| {
-                                let side =
-                                    protobuf::JoinSide::try_from(i.side).expect("invalid JoinSide");
-                                Ok(ColumnIndex {
-                                    index: i.index as usize,
-                                    side: side.into(),
-                                })
-                            })
-                            .collect::<Result<Vec<_>, PlanSerDeError>>()?;
 
-                        Ok(JoinFilter::new(
-                            bind(expression, &schema)?,
-                            column_indices,
-                            schema.as_ref().clone(),
-                        ))
-                    })
-                    .map_or(Ok(None), |v: Result<_, PlanSerDeError>| v.map(Some))?;
+                let broadcast_side = protobuf::JoinSide::try_from(broadcast_join.broadcast_side)
+                    .expect("invalid BroadcastSide");
 
-                let blaze_join_type: JoinType = join_type
-                    .try_into()
-                    .map_err(|_| proto_error("invalid JoinType"))?;
                 Ok(Arc::new(BroadcastJoinExec::try_new(
+                    schema,
                     left,
                     right,
                     on,
-                    blaze_join_type
+                    join_type
                         .try_into()
                         .map_err(|_| proto_error("invalid JoinType"))?,
-                    join_filter,
+                    broadcast_side
+                        .try_into()
+                        .map_err(|_| proto_error("invalid BroadcastSide"))?,
                 )?))
             }
             PhysicalPlanType::BroadcastNestedLoopJoin(bnlj) => {

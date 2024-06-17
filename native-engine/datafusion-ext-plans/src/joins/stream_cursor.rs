@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 
 use crate::{
     common::batch_selection::take_batch_opt,
-    sort_merge_join_exec::{Idx, JoinParams},
+    joins::{Idx, JoinParams},
 };
 
 pub struct StreamCursor {

@@ -14,7 +14,7 @@
 
 use std::{cmp::Ordering, pin::Pin, sync::Arc};
 
-use arrow::array::{RecordBatch, RecordBatchOptions};
+use arrow::array::{ArrayRef, RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::{common::Result, physical_plan::metrics::Time};
 use datafusion_ext_commons::suggested_output_batch_mem_size;
@@ -22,35 +22,28 @@ use datafusion_ext_commons::suggested_output_batch_mem_size;
 use crate::{
     common::{batch_selection::interleave_batches, output::WrappedRecordBatchSender},
     compare_cursor, cur_forward,
-    sort_merge_join_exec::{Idx, JoinParams, Joiner, StreamCursors},
+    joins::{Idx, JoinParams, StreamCursors},
+    sort_merge_join_exec::Joiner,
 };
 
-pub struct SemiJoiner<
-    const L_SEMI: bool,
-    const R_SEMI: bool,
-    const L_ANTI: bool,
-    const R_ANTI: bool,
-> {
+pub struct ExistenceJoiner {
     join_params: JoinParams,
     output_sender: Arc<WrappedRecordBatchSender>,
     indices: Vec<Idx>,
+    exists: Vec<bool>,
     send_output_time: Time,
+    output_rows: usize,
 }
 
-pub type LeftSemiJoiner = SemiJoiner<true, false, false, false>;
-pub type RightSemiJoiner = SemiJoiner<false, true, false, false>;
-pub type LeftAntiJoiner = SemiJoiner<false, false, true, false>;
-pub type RightAntiJoiner = SemiJoiner<false, false, false, true>;
-
-impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: bool>
-    SemiJoiner<L_SEMI, R_SEMI, L_ANTI, R_ANTI>
-{
+impl ExistenceJoiner {
     pub fn new(join_params: JoinParams, output_sender: Arc<WrappedRecordBatchSender>) -> Self {
         Self {
             join_params,
             output_sender,
             indices: vec![],
+            exists: vec![],
             send_output_time: Time::new(),
+            output_rows: 0,
         }
     }
 
@@ -63,12 +56,7 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
             && curs.0.mem_size() + curs.1.mem_size() > suggested_output_batch_mem_size()
         {
             if let Some(first_idx) = self.indices.first() {
-                let cur_idx = if L_SEMI || L_ANTI {
-                    curs.0.cur_idx
-                } else {
-                    curs.1.cur_idx
-                };
-                if first_idx.0 < cur_idx.0 {
+                if first_idx.0 < curs.0.cur_idx.0 {
                     return true;
                 }
             }
@@ -79,18 +67,20 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
     async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
         let indices = std::mem::take(&mut self.indices);
         let num_rows = indices.len();
-        let cols = if L_SEMI || L_ANTI {
-            interleave_batches(curs.0.batch_schema.clone(), &curs.0.batches, &indices)?
-        } else {
-            interleave_batches(curs.1.batch_schema.clone(), &curs.1.batches, &indices)?
-        };
+        let cols = interleave_batches(curs.0.batch_schema.clone(), &curs.0.batches, &indices)?;
+
+        let exists = std::mem::take(&mut self.exists);
+        let exists_col: ArrayRef = Arc::new(arrow::array::BooleanArray::from(exists));
+
         let output_batch = RecordBatch::try_new_with_options(
             self.join_params.output_schema.clone(),
-            cols.columns().to_vec(),
+            [cols.columns().to_vec(), vec![exists_col]].concat(),
             &RecordBatchOptions::new().with_row_count(Some(num_rows)),
         )?;
 
         if output_batch.num_rows() > 0 {
+            self.output_rows += output_batch.num_rows();
+
             let timer = self.send_output_time.timer();
             self.output_sender.send(Ok(output_batch), None).await;
             drop(timer);
@@ -99,38 +89,21 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
     }
 
     async fn join_less(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
-        let lidx = curs.0.cur_idx;
-        if L_ANTI {
-            self.indices.push(lidx);
-        }
+        self.indices.push(curs.0.cur_idx);
+        self.exists.push(false);
         cur_forward!(curs.0);
         if self.should_flush(curs) {
             self.as_mut().flush(curs).await?;
         }
-        if L_SEMI || L_ANTI {
-            curs.0
-                .set_min_reserved_idx(*self.indices.first().unwrap_or(&lidx));
-        } else {
-            curs.0.set_min_reserved_idx(lidx);
-        }
+        curs.0
+            .set_min_reserved_idx(*self.indices.first().unwrap_or(&curs.0.cur_idx));
         Ok(())
     }
 
-    async fn join_greater(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
-        let ridx = curs.1.cur_idx;
-        if R_ANTI {
-            self.indices.push(ridx);
-        }
+    async fn join_greater(self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
         cur_forward!(curs.1);
-        if self.should_flush(curs) {
-            self.as_mut().flush(curs).await?;
-        }
-        if R_SEMI || R_ANTI {
-            curs.1
-                .set_min_reserved_idx(*self.indices.first().unwrap_or(&ridx));
-        } else {
-            curs.1.set_min_reserved_idx(ridx);
-        }
+        curs.1
+            .set_min_reserved_idx(*self.indices.first().unwrap_or(&curs.1.cur_idx));
         Ok(())
     }
 
@@ -138,20 +111,15 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
         let mut lidx = curs.0.cur_idx;
         let mut ridx = curs.1.cur_idx;
 
-        // output/skip left equal rows
         loop {
-            if L_SEMI {
-                self.indices.push(lidx);
-                if self.should_flush(curs) {
-                    self.as_mut().flush(curs).await?;
-                }
-            }
+            self.indices.push(lidx);
+            self.exists.push(true);
             cur_forward!(curs.0);
-            curs.0.set_min_reserved_idx(*if L_SEMI || L_ANTI {
-                self.indices.first().unwrap_or(&lidx)
-            } else {
-                &lidx
-            });
+            if self.should_flush(curs) {
+                self.as_mut().flush(curs).await?;
+            }
+            curs.0
+                .set_min_reserved_idx(*self.indices.first().unwrap_or(&lidx));
 
             if !curs.0.finished && curs.0.key(curs.0.cur_idx) == curs.0.key(lidx) {
                 lidx = curs.0.cur_idx;
@@ -160,20 +128,10 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
             break;
         }
 
-        // output/skip right equal rows
+        // skip all right equal rows
         loop {
-            if R_SEMI {
-                self.indices.push(ridx);
-                if self.should_flush(curs) {
-                    self.as_mut().flush(curs).await?;
-                }
-            }
             cur_forward!(curs.1);
-            curs.1.set_min_reserved_idx(*if R_SEMI || R_ANTI {
-                self.indices.first().unwrap_or(&ridx)
-            } else {
-                &ridx
-            });
+            curs.1.set_min_reserved_idx(ridx);
 
             if !curs.1.finished && curs.1.key(curs.1.cur_idx) == curs.1.key(ridx) {
                 ridx = curs.1.cur_idx;
@@ -186,9 +144,7 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
 }
 
 #[async_trait]
-impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: bool> Joiner
-    for SemiJoiner<L_SEMI, R_SEMI, L_ANTI, R_ANTI>
-{
+impl Joiner for ExistenceJoiner {
     async fn join(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
         while !curs.0.finished && !curs.1.finished {
             match compare_cursor!(curs) {
@@ -204,12 +160,8 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
             }
         }
 
-        // at least one side is finished, consume the other side if it is an anti side
-        while L_ANTI && !curs.0.finished {
+        while !curs.0.finished {
             self.as_mut().join_less(curs).await?;
-        }
-        while R_ANTI && !curs.1.finished {
-            self.as_mut().join_greater(curs).await?;
         }
         if !self.indices.is_empty() {
             self.flush(curs).await?;
@@ -219,5 +171,9 @@ impl<const L_SEMI: bool, const R_SEMI: bool, const L_ANTI: bool, const R_ANTI: b
 
     fn total_send_output_time(&self) -> usize {
         self.send_output_time.value()
+    }
+
+    fn num_output_rows(&self) -> usize {
+        self.output_rows
     }
 }

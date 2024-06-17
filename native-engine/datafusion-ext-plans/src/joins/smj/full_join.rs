@@ -23,7 +23,8 @@ use smallvec::{smallvec, SmallVec};
 use crate::{
     common::{batch_selection::interleave_batches, output::WrappedRecordBatchSender},
     compare_cursor, cur_forward,
-    sort_merge_join_exec::{Idx, JoinParams, Joiner, StreamCursors},
+    joins::{Idx, JoinParams, StreamCursors},
+    sort_merge_join_exec::Joiner,
 };
 
 pub struct FullJoiner<const L_OUTER: bool, const R_OUTER: bool> {
@@ -32,6 +33,7 @@ pub struct FullJoiner<const L_OUTER: bool, const R_OUTER: bool> {
     lindices: Vec<Idx>,
     rindices: Vec<Idx>,
     send_output_time: Time,
+    output_rows: usize,
 }
 
 pub type InnerJoiner = FullJoiner<false, false>;
@@ -47,6 +49,7 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
             lindices: vec![],
             rindices: vec![],
             send_output_time: Time::new(),
+            output_rows: 0,
         }
     }
 
@@ -87,6 +90,8 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
         )?;
 
         if output_batch.num_rows() > 0 {
+            self.output_rows += output_batch.num_rows();
+
             let timer = self.send_output_time.timer();
             self.output_sender.send(Ok(output_batch), None).await;
             drop(timer);
@@ -224,5 +229,9 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
 
     fn total_send_output_time(&self) -> usize {
         self.send_output_time.value()
+    }
+
+    fn num_output_rows(&self) -> usize {
+        self.output_rows
     }
 }

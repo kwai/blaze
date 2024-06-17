@@ -15,4 +15,9 @@
 pub mod existence_join;
 pub mod full_join;
 pub mod semi_join;
-pub mod stream_cursor;
+
+#[derive(std::marker::ConstParamTy, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeSide {
+    L,
+    R,
+}

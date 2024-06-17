@@ -41,16 +41,16 @@ abstract class NativeBroadcastJoinBase(
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
     joinType: JoinType,
-    condition: Option[Expression])
+    broadcastSide: BroadcastSide)
     extends BinaryExecNode
     with NativeSupports {
-
-  assert(condition.isEmpty, "join filter is not supported")
 
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
       .toSeq: _*)
+
+  private def nativeSchema = Util.getNativeSchema(output)
 
   private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
     val leftKeyExpr = NativeConverters.convertExpr(leftKey)
@@ -64,44 +64,67 @@ abstract class NativeBroadcastJoinBase(
 
   private def nativeJoinType = NativeConverters.convertJoinType(joinType)
 
-  private def nativeJoinFilter =
-    condition.map(NativeConverters.convertJoinFilter(_, left.output, right.output))
+  private def nativeBroadcastSide = broadcastSide match {
+    case BroadcastLeft => pb.JoinSide.LEFT_SIDE
+    case BroadcastRight => pb.JoinSide.RIGHT_SIDE
+  }
 
   // check whether native converting is supported
+  nativeSchema
   nativeJoinType
-  nativeJoinFilter
+  nativeJoinOn
+  nativeBroadcastSide
 
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeHelper.executeNative(left)
     val rightRDD = NativeHelper.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
+    val nativeSchema = this.nativeSchema
     val nativeJoinType = this.nativeJoinType
     val nativeJoinOn = this.nativeJoinOn
-    val nativeJoinFilter = this.nativeJoinFilter
-    val partitions = rightRDD.partitions
+    val partitions = broadcastSide match {
+      case BroadcastLeft => rightRDD.partitions
+      case BroadcastRight => leftRDD.partitions
+    }
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       partitions,
-      rddDependencies = new OneToOneDependency(rightRDD) :: Nil,
+      rddDependencies = broadcastSide match {
+        case BroadcastLeft => new OneToOneDependency(rightRDD) :: Nil
+        case BroadcastRight => new OneToOneDependency(leftRDD) :: Nil
+      },
       rightRDD.isShuffleReadFull,
       (partition, context) => {
         val partition0 = new Partition() {
           override def index: Int = 0
         }
-        val leftChild = leftRDD.nativePlan(partition0, context)
-        val rightChild = rightRDD.nativePlan(rightRDD.partitions(partition.index), context)
+        val (leftChild, rightChild) = broadcastSide match {
+          case BroadcastLeft => (
+            leftRDD.nativePlan(partition0, context),
+            rightRDD.nativePlan(rightRDD.partitions(partition.index), context),
+          )
+          case BroadcastRight => (
+            leftRDD.nativePlan(leftRDD.partitions(partition.index), context),
+            rightRDD.nativePlan(partition0, context),
+          )
+        }
         val broadcastJoinExec = pb.BroadcastJoinExecNode
           .newBuilder()
+          .setSchema(nativeSchema)
           .setLeft(leftChild)
           .setRight(rightChild)
           .setJoinType(nativeJoinType)
+          .setBroadcastSide(nativeBroadcastSide)
           .addAllOn(nativeJoinOn.asJava)
 
-        nativeJoinFilter.foreach(joinFilter => broadcastJoinExec.setJoinFilter(joinFilter))
         pb.PhysicalPlanNode.newBuilder().setBroadcastJoin(broadcastJoinExec).build()
       },
       friendlyName = "NativeRDD.BroadcastJoin")
   }
 }
+
+class BroadcastSide {}
+case object BroadcastLeft extends BroadcastSide {}
+case object BroadcastRight extends BroadcastSide {}

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields, IntervalUnit, Schema, TimeUnit};
 use datafusion::{common::JoinSide, logical_expr::Operator, scalar::ScalarValue};
-use datafusion_ext_plans::{agg::AggFunction, common::join_utils::JoinType};
+use datafusion_ext_plans::{agg::AggFunction, joins::join_utils::JoinType};
 
 use crate::error::PlanSerDeError;
 
