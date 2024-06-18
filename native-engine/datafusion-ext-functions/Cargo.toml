@@ -8,7 +8,7 @@ resolver = "1"
 arrow = { workspace = true }
 async-trait = "0.1.80"
 blaze-jni-bridge = { workspace = true }
-bigdecimal = "0.4.3"
+bigdecimal = "0.4.5"
 datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
 itertools = "0.13.0"
