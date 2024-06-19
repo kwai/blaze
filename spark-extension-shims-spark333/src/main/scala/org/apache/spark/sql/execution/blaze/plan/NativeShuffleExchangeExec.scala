@@ -78,25 +78,7 @@ case class NativeShuffleExchangeExec(
     } else {
       sparkContext
         .submitMapStage(shuffleDependency)
-        .map(stat => {
-          // NOTE:
-          //  in the case that one ipc contains little number of records, the data size may
-          //  be much more larger than unsafe row shuffle (because of a lot of redundant
-          //  arrow headers). so a data size factor is needed here to prevent incorrect
-          //  conversion to later SMJ/BHJ.
-          //
-          // assume compressed ipc size is smaller than unsafe rows only when the bytes
-          // size is larger than 512B
-          //
-          val totalBytesWritten = stat.bytesByPartitionId.sum
-          val estimatedIpcCount: Int =
-            Math.max(inputRDD.getNumPartitions * outputPartitioning.numPartitions, 1)
-          val avgBytesPerIpc = totalBytesWritten / estimatedIpcCount
-          val dataSizeFactor = Math.min(Math.max(avgBytesPerIpc / 512, 0.1), 1.0)
-          new MapOutputStatistics(
-            stat.shuffleId,
-            stat.bytesByPartitionId.map(n => (n * dataSizeFactor).ceil.toLong))
-        })
+        .map(stat => new MapOutputStatistics(stat.shuffleId, stat.bytesByPartitionId))
     }
   }
 

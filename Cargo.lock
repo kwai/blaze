@@ -923,6 +923,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "base64 0.22.1",
+ "bitvec",
  "blaze-jni-bridge",
  "byteorder",
  "bytes",

@@ -20,6 +20,7 @@ use std::{
 };
 
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use async_trait::async_trait;
 use blaze_jni_bridge::is_task_running;
 use datafusion::{
     common::Result,
@@ -219,5 +220,36 @@ impl TaskOutputter for Arc<TaskContext> {
 
     fn cancel_task(&self) {
         WrappedRecordBatchSender::cancel_task(self);
+    }
+}
+
+#[async_trait]
+pub trait NextBatchWithTimer {
+    async fn next_batch(
+        &mut self,
+        stop_timer: Option<&mut ScopedTimerGuard<'_>>,
+    ) -> Result<Option<RecordBatch>>;
+}
+
+#[async_trait]
+impl NextBatchWithTimer for SendableRecordBatchStream {
+    async fn next_batch(
+        &mut self,
+        stop_timer: Option<&mut ScopedTimerGuard<'_>>,
+    ) -> Result<Option<RecordBatch>> {
+        struct StopScopedTimerGuard<'a, 'z>(&'a mut ScopedTimerGuard<'z>);
+        impl<'a, 'z> StopScopedTimerGuard<'a, 'z> {
+            fn new(timer: &'a mut ScopedTimerGuard<'z>) -> Self {
+                timer.stop();
+                Self(timer)
+            }
+        }
+        impl Drop for StopScopedTimerGuard<'_, '_> {
+            fn drop(&mut self) {
+                self.0.restart();
+            }
+        }
+        let _stop_timer = stop_timer.map(|timer| StopScopedTimerGuard::new(timer));
+        self.next().await.transpose()
     }
 }

@@ -494,6 +494,8 @@ pub struct JniBridge<'a> {
     pub method_getContextClassLoader_ret: ReturnType,
     pub method_setContextClassLoader: JStaticMethodID,
     pub method_setContextClassLoader_ret: ReturnType,
+    pub method_getSparkEnvConfAsString: JStaticMethodID,
+    pub method_getSparkEnvConfAsString_ret: ReturnType,
     pub method_getResource: JStaticMethodID,
     pub method_getResource_ret: ReturnType,
     pub method_setTaskContext: JStaticMethodID,
@@ -530,6 +532,12 @@ impl<'a> JniBridge<'a> {
                 "(Ljava/lang/ClassLoader;)V",
             )?,
             method_setContextClassLoader_ret: ReturnType::Primitive(Primitive::Void),
+            method_getSparkEnvConfAsString: env.get_static_method_id(
+                class,
+                "getSparkEnvConfAsString",
+                "(Ljava/lang/String;)Ljava/lang/String;",
+            )?,
+            method_getSparkEnvConfAsString_ret: ReturnType::Object,
             method_getResource: env.get_static_method_id(
                 class,
                 "getResource",
@@ -564,13 +572,11 @@ impl<'a> JniBridge<'a> {
                 "()J",
             )?,
             method_getDirectMemoryUsed_ret: ReturnType::Primitive(Primitive::Long),
-            method_getDirectWriteSpillToDiskFile: env
-                .get_static_method_id(
-                    class,
-                    "getDirectWriteSpillToDiskFile",
-                    "()Ljava/lang/String;",
-                )
-                .unwrap(),
+            method_getDirectWriteSpillToDiskFile: env.get_static_method_id(
+                class,
+                "getDirectWriteSpillToDiskFile",
+                "()Ljava/lang/String;",
+            )?,
             method_getDirectWriteSpillToDiskFile_ret: ReturnType::Object,
         })
     }

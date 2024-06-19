@@ -22,7 +22,6 @@ import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
-import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
@@ -52,13 +51,7 @@ abstract class NativeSortMergeJoinBase(
     extends BinaryExecNode
     with NativeSupports {
 
-  assert(
-    (joinType != LeftSemi && joinType != LeftAnti) || condition.isEmpty,
-    "Semi/Anti join with filter is not supported yet")
-
-  assert(
-    BlazeConf.SMJ_INEQUALITY_JOIN_ENABLE.booleanConf() || condition.isEmpty,
-    "inequality sort-merge join is not enabled")
+  assert(condition.isEmpty, "inequality join is not supported")
 
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
@@ -81,21 +74,15 @@ abstract class NativeSortMergeJoinBase(
     keys.map(SortOrder(_, Ascending))
   }
 
+  private def nativeSchema = Util.getNativeSchema(output)
+
   private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
-    val leftColumn = NativeConverters.convertExpr(leftKey).getColumn match {
-      case column if column.getName.isEmpty =>
-        throw new NotImplementedError(s"SMJ leftKey is not column: ${leftKey}")
-      case column => column
-    }
-    val rightColumn = NativeConverters.convertExpr(rightKey).getColumn match {
-      case column if column.getName.isEmpty =>
-        throw new NotImplementedError(s"SMJ rightKey is not column: ${rightKey}")
-      case column => column
-    }
+    val leftKeyExpr = NativeConverters.convertExpr(leftKey)
+    val rightKeyExpr = NativeConverters.convertExpr(rightKey)
     JoinOn
       .newBuilder()
-      .setLeft(leftColumn)
-      .setRight(rightColumn)
+      .setLeft(leftKeyExpr)
+      .setRight(rightKeyExpr)
       .build()
   }
 
@@ -109,14 +96,11 @@ abstract class NativeSortMergeJoinBase(
 
   private def nativeJoinType = NativeConverters.convertJoinType(joinType)
 
-  private def nativeJoinFilter =
-    condition.map(NativeConverters.convertJoinFilter(_, left.output, right.output))
-
   // check whether native converting is supported
+  nativeSchema
   nativeSortOptions
   nativeJoinOn
   nativeJoinType
-  nativeJoinFilter
 
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeHelper.executeNative(left)
@@ -125,7 +109,6 @@ abstract class NativeSortMergeJoinBase(
     val nativeSortOptions = this.nativeSortOptions
     val nativeJoinOn = this.nativeJoinOn
     val nativeJoinType = this.nativeJoinType
-    val nativeJoinFilter = this.nativeJoinFilter
 
     val partitions = if (joinType != RightOuter) {
       leftRDD.partitions
@@ -161,13 +144,12 @@ abstract class NativeSortMergeJoinBase(
 
         val sortMergeJoinExec = SortMergeJoinExecNode
           .newBuilder()
+          .setSchema(nativeSchema)
           .setLeft(leftChild)
           .setRight(rightChild)
           .setJoinType(nativeJoinType)
           .addAllOn(nativeJoinOn.asJava)
           .addAllSortOptions(nativeSortOptions.asJava)
-
-        nativeJoinFilter.foreach(joinFilter => sortMergeJoinExec.setJoinFilter(joinFilter))
         PhysicalPlanNode.newBuilder().setSortMergeJoin(sortMergeJoinExec).build()
       },
       friendlyName = "NativeRDD.SortMergeJoin")

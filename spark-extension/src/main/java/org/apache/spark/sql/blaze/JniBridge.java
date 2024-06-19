@@ -43,6 +43,10 @@ public class JniBridge {
         Thread.currentThread().setContextClassLoader(cl);
     }
 
+    public static String getSparkEnvConfAsString(String key) {
+        return SparkEnv.get().conf().get(key);
+    }
+
     public static Object getResource(String key) {
         return resourcesMap.remove(key);
     }

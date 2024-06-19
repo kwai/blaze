@@ -79,7 +79,7 @@ abstract class Shims {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastJoinBase
+      broadcastSide: BroadcastSide): NativeBroadcastJoinBase
 
   def createNativeBroadcastNestedLoopJoinExec(
       left: SparkPlan,
