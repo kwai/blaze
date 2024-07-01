@@ -79,13 +79,7 @@ abstract class Shims {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastJoinBase
-
-  def createNativeBroadcastNestedLoopJoinExec(
-      left: SparkPlan,
-      right: SparkPlan,
-      joinType: JoinType,
-      condition: Option[Expression]): NativeBroadcastNestedLoopJoinBase
+      broadcastSide: BroadcastSide): NativeBroadcastJoinBase
 
   def createNativeSortMergeJoinExec(
       left: SparkPlan,

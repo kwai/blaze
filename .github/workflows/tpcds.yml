@@ -34,19 +34,18 @@ jobs:
         with: {version: "21.7"}
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with: {rustflags: --allow warnings -C target-cpu=native}
+        with:
+          toolchain: nightly
+          rustflags: --allow warnings -C target-feature=+aes
+          components:
+            cargo
+            rustfmt
 
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
 
-          ## - name: Rust Clippy Check
-          ##   uses: actions-rs/clippy-check@v1
-          ##   with:
-          ##     token: ${{ secrets.GITHUB_TOKEN }}
-          ##     args: --all-features
-
       - name: Cargo test
-        run: cargo test --workspace --all-features
+        run: cargo +nightly test --workspace --all-features
 
       - name: Build Spark303
         run: mvn package -Ppre -Pspark303

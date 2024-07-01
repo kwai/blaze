@@ -16,10 +16,7 @@ use std::sync::Arc;
 
 use arrow::{
     array::*,
-    compute::{
-        kernels::{cmp::eq, nullif::nullif},
-        *,
-    },
+    compute::kernels::{cmp::eq, nullif::nullif},
     datatypes::*,
 };
 use datafusion::{
@@ -87,7 +84,8 @@ pub fn spark_null_if_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                 ($dt:ident) => {{
                     type T = paste::paste! {arrow::datatypes::[<$dt Type>]};
                     let array = as_primitive_array::<T>(array);
-                    let eq_zeros = eq_scalar(array, T::default_value())?;
+                    let _0 = PrimitiveArray::<T>::new_scalar(Default::default());
+                    let eq_zeros = eq(array, &_0)?;
                     Arc::new(nullif(array, &eq_zeros)?) as ArrayRef
                 }};
             }

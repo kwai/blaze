@@ -24,21 +24,19 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 import scala.concurrent.Promise
 
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
 import org.apache.spark.SparkException
 import org.apache.spark.TaskContext
 import org.apache.spark.broadcast
-import org.blaze.{protobuf => pb}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
@@ -48,7 +46,10 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.BoundReference
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.InterpretedUnsafeProjection
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.IdentityBroadcastMode
@@ -62,6 +63,8 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.types.BinaryType
+import org.blaze.{protobuf => pb}
 
 abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike
@@ -70,13 +73,15 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   override def output: Seq[Attribute] = child.output
   override def outputPartitioning: Partitioning = BroadcastPartitioning(mode)
 
-  protected lazy val isNative: Boolean = {
-    getTagValue(NativeBroadcastExchangeBase.nativeExecutionTag).getOrElse(false)
-  }
+  def broadcastMode: BroadcastMode = this.mode
+
+  protected val hashMapOutput: Seq[Attribute] = output
+    .map(_.withNullability(true)) :+ AttributeReference("~TABLE", BinaryType, nullable = true)()
+
   protected val nativeSchema: pb.Schema = Util.getNativeSchema(output)
+  protected val nativeHashMapSchema: pb.Schema = Util.getNativeSchema(hashMapOutput)
 
   def getRunId: UUID
-
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
@@ -98,24 +103,50 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   }
 
   override def doExecuteBroadcast[T](): Broadcast[T] = {
-    val broadcast = nonNativeBroadcastExec.executeBroadcast[T]()
-    for ((k, metric) <- nonNativeBroadcastExec.metrics) {
-      metrics.get(k).foreach(_.add(metric.value))
+    val singlePartition = new Partition() {
+      override def index: Int = 0
     }
-    broadcast
+    val broadcastReadNativePlan = doExecuteNative().nativePlan(singlePartition, null)
+    val rowsIter = NativeHelper.executeNativePlan(
+      broadcastReadNativePlan,
+      MetricNode(Map(), Nil, None),
+      singlePartition,
+      None)
+    val pruneKeyField = new InterpretedUnsafeProjection(
+      output.zipWithIndex
+        .map(v => BoundReference(v._2, v._1.dataType, v._1.nullable))
+        .toArray)
+
+    val dataRows = rowsIter
+      .map(pruneKeyField)
+      .map(_.copy())
+      .toArray
+
+    val broadcast = relationFuture.get // bloadcast must be resolved
+    val v = mode.transform(dataRows)
+    val dummyBroadcasted = new Broadcast[Any](-1) {
+      override protected def getValue(): Any = v
+      override protected def doUnpersist(blocking: Boolean): Unit = {
+        MethodUtils.invokeMethod(broadcast, true, "doUnpersist", Array(blocking))
+      }
+      override protected def doDestroy(blocking: Boolean): Unit = {
+        MethodUtils.invokeMethod(broadcast, true, "doDestroy", Array(blocking))
+      }
+    }
+    dummyBroadcasted.asInstanceOf[Broadcast[T]]
   }
 
   def doExecuteBroadcastNative[T](): broadcast.Broadcast[T] = {
     val conf = SparkSession.getActiveSession.map(_.sqlContext.conf).orNull
     val timeout: Long = conf.broadcastTimeout
     try {
-      nativeRelationFuture.get(timeout, TimeUnit.SECONDS).asInstanceOf[broadcast.Broadcast[T]]
+      relationFuture.get(timeout, TimeUnit.SECONDS).asInstanceOf[broadcast.Broadcast[T]]
     } catch {
       case ex: TimeoutException =>
         logError(s"Could not execute broadcast in $timeout secs.", ex)
-        if (!nativeRelationFuture.isDone) {
+        if (!relationFuture.isDone) {
           sparkContext.cancelJobGroup(getRunId.toString)
-          nativeRelationFuture.cancel(true)
+          relationFuture.cancel(true)
         }
         throw new SparkException("Native broadcast exchange timed out.", ex)
     }
@@ -141,13 +172,14 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
             Channels.newChannel(new ByteArrayInputStream(bytes))
           })
         }
+
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
         pb.PhysicalPlanNode
           .newBuilder()
           .setIpcReader(
             pb.IpcReaderExecNode
               .newBuilder()
-              .setSchema(nativeSchema)
+              .setSchema(nativeHashMapSchema)
               .setNumPartitions(1)
               .setIpcProviderResourceId(resourceId)
               .build())
@@ -218,22 +250,11 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
   }
 
   @transient
-  lazy val relationFuture: Future[Broadcast[Any]] = if (isNative) {
-    nativeRelationFuture.asInstanceOf[Future[Broadcast[Any]]]
-  } else {
-    val relationFutureField = classOf[BroadcastExchangeExec].getDeclaredField("relationFuture")
-    relationFutureField.setAccessible(true)
-    relationFutureField.get(nonNativeBroadcastExec).asInstanceOf[Future[Broadcast[Any]]]
-  }
+  lazy val relationFuturePromise: Promise[Broadcast[Any]] = Promise[Broadcast[Any]]()
 
   @transient
-  lazy val nonNativeBroadcastExec: BroadcastExchangeExec = {
-    BroadcastExchangeExec(mode, child)
-  }
-
-  @transient
-  lazy val nativeRelationFuture: Future[Broadcast[Array[Array[Byte]]]] = {
-    SQLExecution.withThreadLocalCaptured[Broadcast[Array[Array[Byte]]]](
+  lazy val relationFuture: Future[Broadcast[Any]] = {
+    SQLExecution.withThreadLocalCaptured[Broadcast[Any]](
       Shims.get.getSqlContext(this).sparkSession,
       BroadcastExchangeExec.executionContext) {
       try {
@@ -241,12 +262,12 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
           getRunId.toString,
           s"native broadcast exchange (runId $getRunId)",
           interruptOnCancel = true)
-        val broadcasted = sparkContext.broadcast(collectNative())
-        Promise[Broadcast[Array[Array[Byte]]]].trySuccess(broadcasted)
+        val broadcasted = sparkContext.broadcast(collectNative().asInstanceOf[Any])
+        relationFuturePromise.trySuccess(broadcasted)
         broadcasted
       } catch {
         case e: Throwable =>
-          Promise[Broadcast[Array[Array[Byte]]]].tryFailure(e)
+          relationFuturePromise.tryFailure(e)
           throw e
       }
     }
@@ -265,39 +286,21 @@ object NativeBroadcastExchangeBase {
       keys: Seq[Expression],
       nativeSchema: pb.Schema): Array[Array[Byte]] = {
 
-    if (!BlazeConf.BHJ_FALLBACKS_TO_SMJ_ENABLE.booleanConf() || keys.isEmpty) {
-      return collectedData // no need to sort data in driver side
-    }
-
     val readerIpcProviderResourceId = s"BuildBroadcastDataReader:${UUID.randomUUID()}"
     val readerExec = pb.IpcReaderExecNode
       .newBuilder()
       .setSchema(nativeSchema)
       .setIpcProviderResourceId(readerIpcProviderResourceId)
 
-    val sortExec = pb.SortExecNode
+    val buildHashMapExec = pb.BroadcastJoinBuildHashMapExecNode
       .newBuilder()
       .setInput(pb.PhysicalPlanNode.newBuilder().setIpcReader(readerExec))
-      .addAllExpr(
-        keys
-          .map(key => {
-            pb.PhysicalExprNode
-              .newBuilder()
-              .setSort(
-                pb.PhysicalSortExprNode
-                  .newBuilder()
-                  .setExpr(NativeConverters.convertExpr(key))
-                  .setAsc(true)
-                  .setNullsFirst(true)
-                  .build())
-              .build()
-          })
-          .asJava)
+      .addAllKeys(keys.map(key => NativeConverters.convertExpr(key)).asJava)
 
     val writerIpcProviderResourceId = s"BuildBroadcastDataWriter:${UUID.randomUUID()}"
     val writerExec = pb.IpcWriterExecNode
       .newBuilder()
-      .setInput(pb.PhysicalPlanNode.newBuilder().setSort(sortExec))
+      .setInput(pb.PhysicalPlanNode.newBuilder().setBroadcastJoinBuildHashMap(buildHashMapExec))
       .setIpcConsumerResourceId(writerIpcProviderResourceId)
 
     // build native sorter

@@ -49,7 +49,6 @@ use datafusion_ext_commons::{
     downcast_any,
     ds::loser_tree::{ComparableForLoserTree, LoserTree},
     io::{read_len, read_one_batch, write_len, write_one_batch},
-    staging_mem_size_for_partial_sort,
     streams::coalesce_stream::CoalesceInput,
 };
 use futures::{lock::Mutex, stream::once, StreamExt, TryStreamExt};
@@ -59,7 +58,7 @@ use parking_lot::Mutex as SyncMutex;
 
 use crate::{
     common::{
-        batch_selection::interleave_batches,
+        batch_selection::{interleave_batches, take_batch},
         batch_statisitcs::{stat_input, InputBatchStatistics},
         column_pruning::ExecuteWithColumnPruning,
         output::{TaskOutputter, WrappedRecordBatchSender},
@@ -242,11 +241,9 @@ impl MemConsumer for ExternalSorter {
 
 #[derive(Default)]
 struct BufferedData {
-    staging_batches: Vec<RecordBatch>,
     sorted_key_stores: Vec<Box<[u8]>>,
     sorted_key_stores_mem_used: usize,
     sorted_batches: Vec<RecordBatch>,
-    staging_mem_used: usize,
     sorted_batches_mem_used: usize,
     num_rows: usize,
 }
@@ -271,34 +268,15 @@ impl BufferedData {
     }
 
     fn mem_used(&self) -> usize {
-        self.staging_mem_used + self.sorted_batches_mem_used + self.sorted_key_stores_mem_used
+        self.sorted_batches_mem_used + self.sorted_key_stores_mem_used
     }
 
     fn add_batch(&mut self, batch: RecordBatch, sorter: &ExternalSorter) -> Result<()> {
         self.num_rows += batch.num_rows();
-        self.staging_mem_used += batch.get_array_mem_size();
-        self.staging_batches.push(batch);
-        if self.staging_mem_used >= staging_mem_size_for_partial_sort() {
-            self.flush_staging_batches(sorter)?;
-        }
-        Ok(())
-    }
-
-    fn flush_staging_batches(&mut self, sorter: &ExternalSorter) -> Result<()> {
-        let staging_batches = std::mem::take(&mut self.staging_batches);
-        self.staging_mem_used = 0;
-
-        let schema = sorter.prune_sort_keys_from_batch.pruned_schema.clone();
-        let (key_rows, batches): (Vec<Rows>, Vec<RecordBatch>) = staging_batches
-            .into_iter()
-            .map(|batch| sorter.prune_sort_keys_from_batch.prune(batch))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .unzip();
+        let (key_rows, batch) = sorter.prune_sort_keys_from_batch.prune(batch)?;
 
         // sort the batch and append to sorter
-        let mut sorted_key_store =
-            Vec::with_capacity(key_rows.iter().map(|rows| rows.size()).sum::<usize>());
+        let mut sorted_key_store = Vec::with_capacity(key_rows.size());
         let mut key_writer = SortedKeysWriter::default();
         let mut num_rows = 0;
         let sorted_batch;
@@ -307,32 +285,28 @@ impl BufferedData {
             let cur_sorted_indices = key_rows
                 .iter()
                 .enumerate()
-                .flat_map(|(batch_idx, rows)| {
-                    rows.iter()
-                        .map(|key| unsafe {
-                            // safety: keys have the same lifetime with key_rows
-                            std::mem::transmute::<_, &'static [u8]>(key.as_ref())
-                        })
-                        .enumerate()
-                        .map(move |(row_idx, key)| (key, batch_idx as u32, row_idx as u32))
+                .map(|(row_idx, key)| {
+                    let key = unsafe {
+                        // safety: keys have the same lifetime with key_rows
+                        std::mem::transmute::<_, &'static [u8]>(key.as_ref())
+                    };
+                    (key, row_idx as u32)
                 })
                 .sorted_unstable_by_key(|&(key, ..)| key)
                 .take(sorter.limit)
-                .map(|(key, batch_idx, row_idx)| {
+                .map(|(key, row_idx)| {
                     num_rows += 1;
                     key_writer.write_key(key, &mut sorted_key_store).unwrap();
-                    (batch_idx as usize, row_idx as usize)
+                    row_idx as usize
                 })
                 .collect::<Vec<_>>();
-            sorted_batch = interleave_batches(schema, &batches, &cur_sorted_indices)?;
+            sorted_batch = take_batch(batch, cur_sorted_indices)?;
         } else {
             key_rows
                 .iter()
-                .flat_map(|rows| {
-                    rows.iter().map(|key| unsafe {
-                        // safety: keys have the same lifetime with key_rows
-                        std::mem::transmute::<_, &'static [u8]>(key.as_ref())
-                    })
+                .map(|key| unsafe {
+                    // safety: keys have the same lifetime with key_rows
+                    std::mem::transmute::<_, &'static [u8]>(key.as_ref())
                 })
                 .sorted_unstable()
                 .take(sorter.limit)
@@ -351,13 +325,10 @@ impl BufferedData {
     }
 
     fn into_sorted_batches<'a, KC: KeyCollector>(
-        mut self,
+        self,
         batch_size: usize,
         sorter: &ExternalSorter,
     ) -> Result<impl Iterator<Item = (KC, RecordBatch)>> {
-        if !self.staging_batches.is_empty() {
-            self.flush_staging_batches(sorter)?;
-        }
         struct Cursor {
             idx: usize,
             row_idx: usize,

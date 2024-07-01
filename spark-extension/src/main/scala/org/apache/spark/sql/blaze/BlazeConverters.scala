@@ -15,11 +15,8 @@
  */
 package org.apache.spark.sql.blaze
 
-import java.util.UUID
-
 import scala.annotation.tailrec
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
@@ -57,7 +54,6 @@ import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
 import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase
-import org.apache.spark.sql.execution.blaze.plan.NativeProjectBase
 import org.apache.spark.sql.execution.blaze.plan.NativeUnionBase
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
@@ -128,7 +124,9 @@ object BlazeConverters extends Logging {
       var newExec = exec.withNewChildren(newChildren)
       exec.getTagValue(convertibleTag).foreach(newExec.setTagValue(convertibleTag, _))
       exec.getTagValue(convertStrategyTag).foreach(newExec.setTagValue(convertStrategyTag, _))
-      exec.getTagValue(childOrderingRequiredTag).foreach(newExec.setTagValue(childOrderingRequiredTag, _))
+      exec
+        .getTagValue(childOrderingRequiredTag)
+        .foreach(newExec.setTagValue(childOrderingRequiredTag, _))
       if (!isNeverConvert(newExec)) {
         newExec = convertSparkPlan(newExec)
       }
@@ -333,45 +331,14 @@ object BlazeConverters extends Logging {
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    var nativeLeft = convertToNative(left)
-    var nativeRight = convertToNative(right)
-    var modifiedLeftKeys = leftKeys
-    var modifiedRightKeys = rightKeys
-    var needPostProject = false
 
-    if (leftKeys.exists(!_.isInstanceOf[AttributeReference])) {
-      val (keys, exec) = buildJoinColumnsProject(nativeLeft, leftKeys)
-      modifiedLeftKeys = keys
-      nativeLeft = exec
-      needPostProject = true
-    }
-    if (rightKeys.exists(!_.isInstanceOf[AttributeReference])) {
-      val (keys, exec) = buildJoinColumnsProject(nativeRight, rightKeys)
-      modifiedRightKeys = keys
-      nativeRight = exec
-      needPostProject = true
-    }
-
-    val smjOrig = SortMergeJoinExec(
-      modifiedLeftKeys,
-      modifiedRightKeys,
+    Shims.get.createNativeSortMergeJoinExec(
+      addRenameColumnsExec(convertToNative(left)),
+      addRenameColumnsExec(convertToNative(right)),
+      leftKeys,
+      rightKeys,
       joinType,
-      condition,
-      addRenameColumnsExec(nativeLeft),
-      addRenameColumnsExec(nativeRight))
-    val smj = Shims.get.createNativeSortMergeJoinExec(
-      smjOrig.left,
-      smjOrig.right,
-      smjOrig.leftKeys,
-      smjOrig.rightKeys,
-      smjOrig.joinType,
-      smjOrig.condition)
-
-    if (needPostProject) {
-      buildPostJoinProject(smj, exec.output)
-    } else {
-      smj
-    }
+      condition)
   }
 
   def convertBroadcastHashJoinExec(exec: BroadcastHashJoinExec): SparkPlan = {
@@ -385,84 +352,33 @@ object BlazeConverters extends Logging {
         exec.left,
         exec.right)
       logDebug(s"Converting BroadcastHashJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-      logDebug(s"  leftKeys: ${exec.leftKeys}")
-      logDebug(s"  rightKeys: ${exec.rightKeys}")
-      logDebug(s"  joinType: ${exec.joinType}")
-      logDebug(s"  buildSide: ${exec.buildSide}")
-      logDebug(s"  condition: ${exec.condition}")
-      var (hashed, hashedKeys, nativeProbed, probedKeys) = buildSide match {
+      logDebug(s"  leftKeys: $leftKeys")
+      logDebug(s"  rightKeys: $rightKeys")
+      logDebug(s"  joinType: $joinType")
+      logDebug(s"  buildSide: $buildSide")
+      logDebug(s"  condition: $condition")
+      assert(condition.isEmpty, "join condition is not supported")
+
+      // verify build side is native
+      buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
-          val convertedLeft = convertToNative(left)
-          (right, rightKeys, convertedLeft, leftKeys)
-
         case BuildLeft =>
           assert(NativeHelper.isNative(left), "broadcast join build side is not native")
-          val convertedRight = convertToNative(right)
-          (left, leftKeys, convertedRight, rightKeys)
-
-        case _ =>
-          // scalastyle:off throwerror
-          throw new NotImplementedError(
-            "Ignore BroadcastHashJoin with unsupported children structure")
       }
 
-      var modifiedHashedKeys = hashedKeys
-      var modifiedProbedKeys = probedKeys
-      var needPostProject = false
+      Shims.get.createNativeBroadcastJoinExec(
+        addRenameColumnsExec(convertToNative(left)),
+        addRenameColumnsExec(convertToNative(right)),
+        exec.outputPartitioning,
+        leftKeys,
+        rightKeys,
+        joinType,
+        buildSide match {
+          case BuildLeft => BroadcastLeft
+          case BuildRight => BroadcastRight
+        })
 
-      if (hashedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-        val (keys, exec) = buildJoinColumnsProject(hashed, hashedKeys)
-        modifiedHashedKeys = keys
-        hashed = exec
-        needPostProject = true
-      }
-      if (probedKeys.exists(!_.isInstanceOf[AttributeReference])) {
-        val (keys, exec) = buildJoinColumnsProject(nativeProbed, probedKeys)
-        modifiedProbedKeys = keys
-        nativeProbed = exec
-        needPostProject = true
-      }
-
-      val modifiedJoinType = buildSide match {
-        case BuildLeft => joinType
-        case BuildRight =>
-          needPostProject = true
-          val modifiedJoinType = joinType match { // reverse join type
-            case Inner => Inner
-            case FullOuter => FullOuter
-            case LeftOuter => RightOuter
-            case RightOuter => LeftOuter
-            case _ =>
-              throw new NotImplementedError(
-                "BHJ Semi/Anti join with BuildRight is not yet supported")
-          }
-          modifiedJoinType
-      }
-
-      val bhjOrig = BroadcastHashJoinExec(
-        modifiedHashedKeys,
-        modifiedProbedKeys,
-        modifiedJoinType,
-        BuildLeft,
-        condition,
-        addRenameColumnsExec(hashed),
-        addRenameColumnsExec(nativeProbed))
-
-      val bhj = Shims.get.createNativeBroadcastJoinExec(
-        bhjOrig.left,
-        bhjOrig.right,
-        bhjOrig.outputPartitioning,
-        bhjOrig.leftKeys,
-        bhjOrig.rightKeys,
-        bhjOrig.joinType,
-        bhjOrig.condition)
-
-      if (needPostProject) {
-        buildPostJoinProject(bhj, exec.output)
-      } else {
-        bhj
-      }
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
         val underlyingBroadcast = exec.buildSide match {
@@ -483,60 +399,29 @@ object BlazeConverters extends Logging {
       logDebug(s"  joinType: ${exec.joinType}")
       logDebug(s"  buildSide: ${exec.buildSide}")
       logDebug(s"  condition: ${exec.condition}")
-      val (broadcasted, nativeProbed) = buildSide match {
+      assert(condition.isEmpty, "join condition is not supported")
+
+      // verify build side is native
+      buildSide match {
         case BuildRight =>
           assert(NativeHelper.isNative(right), "broadcast join build side is not native")
-          val convertedLeft = convertToNative(left)
-          (right, convertedLeft)
-
         case BuildLeft =>
           assert(NativeHelper.isNative(left), "broadcast join build side is not native")
-          val convertedRight = convertToNative(right)
-          (left, convertedRight)
-
-        case _ =>
-          // scalastyle:off throwerror
-          throw new NotImplementedError(
-            "Ignore BroadcastNestedLoopJoin with unsupported children structure")
       }
 
-      // the in-memory inner table is not the same in different join types
-      // reference: https://docs.rs/datafusion/latest/datafusion/physical_plan/joins/struct.NestedLoopJoinExec.html
-      var needPostProject = false
-      val (modifiedLeft, modifiedRight, modifiedJoinType) = (buildSide, joinType) match {
-        case (BuildLeft, RightOuter | FullOuter) =>
-          (broadcasted, nativeProbed, joinType) // RightOuter, FullOuter => BuildLeft
-        case (BuildRight, Inner | LeftOuter | LeftSemi | LeftAnti) =>
-          (
-            nativeProbed,
-            broadcasted,
-            joinType
-          ) // Inner, LeftOuter, LeftSemi, LeftAnti => BuildRight
-        case _ =>
-          needPostProject = true
-          val modifiedJoinType = joinType match {
-            case Inner =>
-              (nativeProbed, broadcasted, Inner) // Inner + BuildLeft => BuildRight
-            case FullOuter =>
-              (broadcasted, nativeProbed, FullOuter) // FullOuter + BuildRight => BuildLeft
-            case _ =>
-              throw new NotImplementedError(
-                s"BNLJ $joinType with $buildSide is not yet supported")
-          }
-          modifiedJoinType
-      }
+      // reuse NativeBroadcastJoin with empty equility keys
+      Shims.get.createNativeBroadcastJoinExec(
+        addRenameColumnsExec(convertToNative(left)),
+        addRenameColumnsExec(convertToNative(right)),
+        exec.outputPartitioning,
+        Nil,
+        Nil,
+        joinType,
+        buildSide match {
+          case BuildLeft => BroadcastLeft
+          case BuildRight => BroadcastRight
+        })
 
-      val bnlj = Shims.get.createNativeBroadcastNestedLoopJoinExec(
-        addRenameColumnsExec(modifiedLeft),
-        addRenameColumnsExec(modifiedRight),
-        modifiedJoinType,
-        condition)
-
-      if (needPostProject) {
-        buildPostJoinProject(bnlj, exec.output)
-      } else {
-        bnlj
-      }
     } catch {
       case e @ (_: NotImplementedError | _: Exception) =>
         val underlyingBroadcast = exec.buildSide match {
@@ -849,44 +734,6 @@ object BlazeConverters extends Logging {
         exec.output.map(Util.getFieldNameByExprId))
     }
     exec
-  }
-
-  private def buildJoinColumnsProject(
-      child: SparkPlan,
-      joinKeys: Seq[Expression]): (Seq[AttributeReference], NativeProjectBase) = {
-    val extraProjectList = ArrayBuffer[NamedExpression]()
-    val transformedKeys = ArrayBuffer[AttributeReference]()
-
-    joinKeys.foreach {
-      case attr: AttributeReference => transformedKeys.append(attr)
-      case expr =>
-        val aliasExpr =
-          Alias(expr, s"JOIN_KEY:${expr.toString()} (${UUID.randomUUID().toString})")()
-        extraProjectList.append(aliasExpr)
-
-        val attr = AttributeReference(
-          aliasExpr.name,
-          aliasExpr.dataType,
-          aliasExpr.nullable,
-          aliasExpr.metadata)(aliasExpr.exprId, aliasExpr.qualifier)
-        transformedKeys.append(attr)
-    }
-    (
-      transformedKeys,
-      Shims.get
-        .createNativeProjectExec(child.output ++ extraProjectList, addRenameColumnsExec(child)))
-  }
-
-  private def buildPostJoinProject(
-      child: SparkPlan,
-      output: Seq[Attribute]): NativeProjectBase = {
-    val projectList = output
-      .filter(!_.name.startsWith("JOIN_KEY:"))
-      .map(attr =>
-        AttributeReference(attr.name, attr.dataType, attr.nullable, attr.metadata)(
-          attr.exprId,
-          attr.qualifier))
-    Shims.get.createNativeProjectExec(projectList, child)
   }
 
   private def getPartialAggProjection(

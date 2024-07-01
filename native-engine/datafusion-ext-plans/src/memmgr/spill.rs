@@ -21,9 +21,8 @@ use std::{
 };
 
 use blaze_jni_bridge::{
-    is_jni_bridge_inited,
-    jni_bridge::{JObject, LocalRef},
-    jni_call, jni_call_static, jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
+    is_jni_bridge_inited, jni_bridge::LocalRef, jni_call, jni_call_static, jni_get_string,
+    jni_new_direct_byte_buffer, jni_new_global_ref,
 };
 use datafusion::{common::Result, parquet::file::reader::Length, physical_plan::metrics::Time};
 use jni::{objects::GlobalRef, sys::jlong};

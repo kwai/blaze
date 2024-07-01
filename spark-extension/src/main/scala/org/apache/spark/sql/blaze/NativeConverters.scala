@@ -52,12 +52,11 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.LeafExpression
+import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
-import org.apache.spark.sql.execution.aggregate.ScalaUDAF
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
-import org.apache.spark.sql.hive.blaze.HiveUDFUtil.isHiveSimpleUDF
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.AtomicType
@@ -532,9 +531,7 @@ object NativeConverters extends Logging {
 
       // cast
       // not performing native cast for timestamp/dates (will use UDFWrapper instead)
-      case cast: Cast
-          if !Seq(cast.dataType, cast.child.dataType).contains(TimestampType) &&
-            !Seq(cast.dataType, cast.child.dataType).contains(DateType) =>
+      case cast: Cast if !Seq(cast.dataType, cast.child.dataType).contains(TimestampType) =>
         buildExprNode {
           _.setTryCast(
             pb.PhysicalTryCastNode
@@ -1112,6 +1109,7 @@ object NativeConverters extends Logging {
       case FullOuter => pb.JoinType.FULL
       case LeftSemi => pb.JoinType.SEMI
       case LeftAnti => pb.JoinType.ANTI
+      case _: ExistenceJoin => pb.JoinType.EXISTENCE
       case _ => throw new NotImplementedError(s"unsupported join type: ${joinType}")
     }
   }

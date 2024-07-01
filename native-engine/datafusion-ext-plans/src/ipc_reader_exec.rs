@@ -192,8 +192,8 @@ pub async fn read_ipc(
             }));
 
             while let Some(batch) = {
-                let reader_cloned = reader.clone();
-                tokio::task::spawn_blocking(move || reader_cloned.clone().lock().read_batch())
+                let reader = reader.clone();
+                tokio::task::spawn_blocking(move || reader.lock().read_batch())
                     .await
                     .or_else(|err| df_execution_err!("{err}"))??
             } {

@@ -21,12 +21,16 @@ import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
 import org.apache.spark.sql.catalyst.optimizer.BuildLeft
+import org.apache.spark.sql.catalyst.optimizer.BuildRight
 import org.apache.spark.sql.catalyst.optimizer.BuildSide
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastDistribution
 import org.apache.spark.sql.catalyst.plans.physical.Distribution
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.blaze.plan.BroadcastLeft
+import org.apache.spark.sql.execution.blaze.plan.BroadcastRight
+import org.apache.spark.sql.execution.blaze.plan.BroadcastSide
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
 import org.apache.spark.sql.execution.joins.HashedRelationInfo
@@ -39,7 +43,7 @@ case class NativeBroadcastJoinExec(
     override val leftKeys: Seq[Expression],
     override val rightKeys: Seq[Expression],
     override val joinType: JoinType,
-    override val condition: Option[Expression])
+    broadcastSide: BroadcastSide)
     extends NativeBroadcastJoinBase(
       left,
       right,
@@ -47,8 +51,10 @@ case class NativeBroadcastJoinExec(
       leftKeys,
       rightKeys,
       joinType,
-      condition)
+      broadcastSide)
     with HashJoin {
+
+  override def condition: Option[Expression] = None
 
   override def requiredChildDistribution: Seq[Distribution] = {
     val mode = HashedRelationBroadcastMode(buildBoundKeys, isNullAware = false)
@@ -65,7 +71,10 @@ case class NativeBroadcastJoinExec(
     throw new NotImplementedError("NativeBroadcastJoin dose not support codegen")
   }
 
-  override def buildSide: BuildSide = BuildLeft
+  override def buildSide: BuildSide = broadcastSide match {
+    case BroadcastLeft => BuildLeft
+    case BroadcastRight => BuildRight
+  }
 
   override protected def withNewChildrenInternal(
       newLeft: SparkPlan,
