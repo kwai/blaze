@@ -12,7 +12,7 @@ bigdecimal = "0.4.3"
 datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
 itertools = "0.13.0"
-log = "0.4.21"
+log = "0.4.22"
 num = "0.4.2"
 paste = "1.0.15"
 serde_json = { workspace = true }

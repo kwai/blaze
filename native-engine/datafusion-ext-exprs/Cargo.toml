@@ -13,7 +13,7 @@ datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
 itertools = "0.13.0"
 jni = "0.20.0"
-log = "0.4.21"
+log = "0.4.22"
 num = "0.4.2"
 once_cell = "1.19.0"
 parking_lot = "0.12.3"
