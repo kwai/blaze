@@ -105,6 +105,18 @@ impl BroadcastJoinExec {
         })
     }
 
+    pub fn on(&self) -> &JoinOn {
+        &self.on
+    }
+
+    pub fn join_type(&self) -> JoinType {
+        self.join_type
+    }
+
+    pub fn broadcast_side(&self) -> JoinSide {
+        self.broadcast_side
+    }
+
     fn create_join_params(&self, projection: &[usize]) -> Result<JoinParams> {
         let left_schema = self.left.schema();
         let right_schema = self.right.schema();
@@ -421,10 +433,11 @@ async fn collect_join_hash_map_without_caching(
     }
     match hash_map_batches.len() {
         0 => Ok(JoinHashMap::try_new_empty(input.schema(), key_exprs)?),
-        1 => Ok(JoinHashMap::try_from_hash_map_batch(
-            hash_map_batches[0].clone(),
-            key_exprs,
-        )?),
+        1 => Ok(if hash_map_batches[0].num_rows() == 0 {
+            JoinHashMap::try_new_empty(input.schema(), key_exprs)?
+        } else {
+            JoinHashMap::try_from_hash_map_batch(hash_map_batches[0].clone(), key_exprs)?
+        }),
         n => df_execution_err!("expect zero or one hash map batch, got {n}"),
     }
 }

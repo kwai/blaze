@@ -35,19 +35,20 @@ message PhysicalPlanNode {
     FilterExecNode filter = 8;
     UnionExecNode union = 9;
     SortMergeJoinExecNode sort_merge_join = 10;
-    BroadcastJoinBuildHashMapExecNode broadcast_join_build_hash_map = 11;
-    BroadcastJoinExecNode broadcast_join = 12;
-    RenameColumnsExecNode rename_columns = 13;
-    EmptyPartitionsExecNode empty_partitions = 14;
-    AggExecNode agg = 15;
-    LimitExecNode limit = 16;
-    FFIReaderExecNode ffi_reader = 17;
-    CoalesceBatchesExecNode coalesce_batches = 18;
-    ExpandExecNode expand = 19;
-    RssShuffleWriterExecNode rss_shuffle_writer= 20;
-    WindowExecNode window = 21;
-    GenerateExecNode generate = 22;
-    ParquetSinkExecNode parquet_sink = 23;
+    HashJoinExecNode hash_join = 11;
+    BroadcastJoinBuildHashMapExecNode broadcast_join_build_hash_map = 12;
+    BroadcastJoinExecNode broadcast_join = 13;
+    RenameColumnsExecNode rename_columns = 14;
+    EmptyPartitionsExecNode empty_partitions = 15;
+    AggExecNode agg = 16;
+    LimitExecNode limit = 17;
+    FFIReaderExecNode ffi_reader = 18;
+    CoalesceBatchesExecNode coalesce_batches = 19;
+    ExpandExecNode expand = 20;
+    RssShuffleWriterExecNode rss_shuffle_writer= 21;
+    WindowExecNode window = 22;
+    GenerateExecNode generate = 23;
+    ParquetSinkExecNode parquet_sink = 24;
   }
 }
 
@@ -404,7 +405,15 @@ message SortMergeJoinExecNode {
   repeated JoinOn on = 4;
   repeated SortOptions sort_options = 5;
   JoinType join_type = 6;
-  JoinFilter join_filter = 7;
+}
+
+message HashJoinExecNode {
+  Schema schema = 1;
+  PhysicalPlanNode left = 2;
+  PhysicalPlanNode right = 3;
+  repeated JoinOn on = 4;
+  JoinType join_type = 5;
+  JoinSide build_side = 6;
 }
 
 message BroadcastJoinBuildHashMapExecNode {

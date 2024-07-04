@@ -113,8 +113,10 @@ import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.blaze.plan.BroadcastSide
+import org.apache.spark.sql.execution.blaze.plan.BuildSide
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetSinkBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetSinkExec
+import org.apache.spark.sql.execution.blaze.plan.NativeShuffledHashJoinExec
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.PhysicalExprNode
 
@@ -167,9 +169,17 @@ class ShimsImpl extends Shims with Logging {
       right: SparkPlan,
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
+      joinType: JoinType): NativeSortMergeJoinBase =
+    NativeSortMergeJoinExec(left, right, leftKeys, rightKeys, joinType)
+
+  override def createNativeShuffledHashJoinExec(
+      left: SparkPlan,
+      right: SparkPlan,
+      leftKeys: Seq[Expression],
+      rightKeys: Seq[Expression],
       joinType: JoinType,
-      condition: Option[Expression]): NativeSortMergeJoinBase =
-    NativeSortMergeJoinExec(left, right, leftKeys, rightKeys, joinType, condition)
+      buildSide: BuildSide): SparkPlan =
+    NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
 
   override def createNativeExpandExec(
       projections: Seq[Seq[Expression]],

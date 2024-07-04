@@ -20,18 +20,19 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
-import org.apache.spark.sql.catalyst.expressions.codegen.ExprCode
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinBase
+import org.apache.spark.sql.execution.blaze.plan.BuildSide
+import org.apache.spark.sql.execution.blaze.plan.NativeShuffledHashJoinBase
 import org.apache.spark.sql.execution.joins.ShuffledJoin
 
-case class NativeSortMergeJoinExec(
+case class NativeShuffledHashJoinExec(
     override val left: SparkPlan,
     override val right: SparkPlan,
     override val leftKeys: Seq[Expression],
     override val rightKeys: Seq[Expression],
-    override val joinType: JoinType)
-    extends NativeSortMergeJoinBase(left, right, leftKeys, rightKeys, joinType)
+    override val joinType: JoinType,
+    buildSide: BuildSide)
+    extends NativeShuffledHashJoinBase(left, right, leftKeys, rightKeys, joinType, buildSide)
     with ShuffledJoin {
 
   override def condition: Option[Expression] = None

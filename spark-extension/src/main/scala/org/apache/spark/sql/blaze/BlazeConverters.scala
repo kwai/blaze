@@ -52,7 +52,6 @@ import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase
 import org.apache.spark.sql.execution.blaze.plan.NativeUnionBase
 import org.apache.spark.sql.execution.blaze.plan.Util
@@ -68,7 +67,11 @@ import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.blaze.plan.BroadcastLeft
+import org.apache.spark.sql.execution.blaze.plan.BroadcastRight
+import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
+import org.apache.spark.sql.execution.blaze.plan.NativeSortBase
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.LongType
 
@@ -85,6 +88,8 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.union", defaultValue = true)
   val enableSmj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.smj", defaultValue = true)
+  val enableShj: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.shj", defaultValue = true)
   val enableBhj: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.bhj", defaultValue = true)
   val enableBnlj: Boolean =
@@ -151,6 +156,8 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertUnionExec)
       case e: SortMergeJoinExec if enableSmj => // sort merge join
         tryConvert(e, convertSortMergeJoinExec)
+      case e: ShuffledHashJoinExec if enableShj => // shuffled hash join
+        tryConvert(e, convertShuffledHashJoinExec)
       case e: BroadcastHashJoinExec if enableBhj => // broadcast hash join
         tryConvert(e, convertBroadcastHashJoinExec)
       case e: BroadcastNestedLoopJoinExec if enableBnlj => // broadcast nested loop join
@@ -331,14 +338,47 @@ object BlazeConverters extends Logging {
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
+    logDebug(s"  leftKeys: $leftKeys")
+    logDebug(s"  rightKeys: $rightKeys")
+    logDebug(s"  joinType: $joinType")
+    logDebug(s"  condition: $condition")
+    assert(condition.isEmpty, "join condition is not supported")
 
     Shims.get.createNativeSortMergeJoinExec(
       addRenameColumnsExec(convertToNative(left)),
       addRenameColumnsExec(convertToNative(right)),
       leftKeys,
       rightKeys,
+      joinType)
+  }
+
+  def convertShuffledHashJoinExec(exec: ShuffledHashJoinExec): SparkPlan = {
+    val (leftKeys, rightKeys, joinType, condition, left, right, buildSide) = (
+      exec.leftKeys,
+      exec.rightKeys,
+      exec.joinType,
+      exec.condition,
+      exec.left,
+      exec.right,
+      exec.buildSide)
+    logDebug(s"Converting ShuffledHashJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
+    logDebug(s"  leftKeys: $leftKeys")
+    logDebug(s"  rightKeys: $rightKeys")
+    logDebug(s"  joinType: $joinType")
+    logDebug(s"  condition: $condition")
+    logDebug(s"  buildSide: $buildSide")
+    assert(condition.isEmpty, "join condition is not supported")
+
+    Shims.get.createNativeShuffledHashJoinExec(
+      addRenameColumnsExec(convertToNative(left)),
+      addRenameColumnsExec(convertToNative(right)),
+      leftKeys,
+      rightKeys,
       joinType,
-      condition)
+      buildSide match {
+        case BuildLeft => org.apache.spark.sql.execution.blaze.plan.BuildLeft
+        case BuildRight => org.apache.spark.sql.execution.blaze.plan.BuildRight
+      })
   }
 
   def convertBroadcastHashJoinExec(exec: BroadcastHashJoinExec): SparkPlan = {

@@ -69,6 +69,7 @@ use datafusion_ext_plans::{
     filter_exec::FilterExec,
     generate::{create_generator, create_udtf_generator},
     generate_exec::GenerateExec,
+    hash_join_exec::HashJoinExec,
     ipc_reader_exec::IpcReaderExec,
     ipc_writer_exec::IpcWriterExec,
     limit_exec::LimitExec,
@@ -179,6 +180,43 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     scan.fs_resource_id.clone(),
                     Some(predicate),
                 )))
+            }
+            PhysicalPlanType::HashJoin(hash_join) => {
+                let schema = Arc::new(convert_required!(hash_join.schema)?);
+                let left: Arc<dyn ExecutionPlan> = convert_box_required!(hash_join.left)?;
+                let right: Arc<dyn ExecutionPlan> = convert_box_required!(hash_join.right)?;
+                let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = hash_join
+                    .on
+                    .iter()
+                    .map(|col| {
+                        let left_key =
+                            try_parse_physical_expr(&col.left.as_ref().unwrap(), &left.schema())?;
+                        let left_key_binded = bind(left_key, &left.schema())?;
+                        let right_key =
+                            try_parse_physical_expr(&col.right.as_ref().unwrap(), &right.schema())?;
+                        let right_key_binded = bind(right_key, &right.schema())?;
+                        Ok((left_key_binded, right_key_binded))
+                    })
+                    .collect::<Result<_, Self::Error>>()?;
+
+                let join_type =
+                    protobuf::JoinType::try_from(hash_join.join_type).expect("invalid JoinType");
+
+                let build_side =
+                    protobuf::JoinSide::try_from(hash_join.build_side).expect("invalid BuildSide");
+
+                Ok(Arc::new(HashJoinExec::try_new(
+                    schema,
+                    left,
+                    right,
+                    on,
+                    join_type
+                        .try_into()
+                        .map_err(|_| proto_error("invalid JoinType"))?,
+                    build_side
+                        .try_into()
+                        .map_err(|_| proto_error("invalid BuildSide"))?,
+                )?))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
                 let schema = Arc::new(convert_required!(sort_merge_join.schema)?);

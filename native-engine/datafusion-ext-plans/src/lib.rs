@@ -25,6 +25,7 @@ pub mod expand_exec;
 pub mod ffi_reader_exec;
 pub mod filter_exec;
 pub mod generate_exec;
+pub mod hash_join_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
 pub mod limit_exec;
