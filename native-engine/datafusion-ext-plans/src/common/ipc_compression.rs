@@ -18,14 +18,13 @@
 use std::io::{BufReader, Cursor, Read, Take, Write};
 
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
-use blaze_jni_bridge::{jni_call_static, jni_get_string, jni_new_string};
+use blaze_jni_bridge::{conf, conf::StringConf};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use datafusion::{common::Result, error::DataFusionError};
+use datafusion::common::Result;
 use datafusion_ext_commons::{
     df_execution_err,
     io::{read_one_batch, write_one_batch},
 };
-use once_cell::sync::OnceCell;
 
 pub const DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE: usize = 4194304;
 const ZSTD_LEVEL: i32 = 1;
@@ -172,7 +171,7 @@ impl ZWriter {
     fn new() -> Self {
         Self(
             IoCompressionWriter::try_new(io_compression_codec(), vec![0u8; 4])
-                .expect("error creating zstd encoder"),
+                .expect("error creating compression encoder"),
         )
     }
 }
@@ -280,7 +279,7 @@ fn create_block_reader<R: Read + 'static>(
     }
     Ok(Some(Box::new(
         IoCompressionReader::try_new(io_compression_codec(), taken)
-            .expect("error creating ztd decoder"),
+            .expect("error creating compression decoder"),
     )))
 }
 
@@ -361,20 +360,5 @@ impl<R: Read> Read for IoCompressionReader<'_, R> {
 }
 
 fn io_compression_codec() -> &'static str {
-    static IO_COMPRESSION_CODEC: OnceCell<String> = OnceCell::new();
-    let codec = IO_COMPRESSION_CODEC.get_or_try_init(|| {
-        Ok({
-            let key = jni_new_string!("spark.io.compression.codec")?;
-            let value =
-                jni_call_static!(JniBridge.getSparkEnvConfAsString(key.as_obj()) -> JObject)?;
-            jni_get_string!(value.as_obj().into())?
-        })
-    });
-
-    codec
-        .map(|value| value.as_ref())
-        .unwrap_or_else(|_: DataFusionError| {
-            log::warn!("unable to get spark.io.compression.codec, use lz4 as default");
-            "lz4"
-        })
+    conf::SPARK_IO_COMPRESSION_CODEC.value().unwrap()
 }
