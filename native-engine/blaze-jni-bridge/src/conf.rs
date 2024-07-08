@@ -14,7 +14,7 @@
 
 use datafusion::common::Result;
 
-use crate::{jni_call_static, jni_new_string};
+use crate::{jni_call_static, jni_get_string, jni_new_string};
 
 macro_rules! define_conf {
     ($conftype:ty, $name:ident) => {
@@ -43,6 +43,7 @@ define_conf!(DoubleConf, PARTIAL_AGG_SKIPPING_RATIO);
 define_conf!(IntConf, PARTIAL_AGG_SKIPPING_MIN_ROWS);
 define_conf!(BooleanConf, PARQUET_ENABLE_PAGE_FILTERING);
 define_conf!(BooleanConf, PARQUET_ENABLE_BLOOM_FILTER);
+define_conf!(StringConf, SPARK_IO_COMPRESSION_CODEC);
 
 pub trait BooleanConf {
     fn key(&self) -> &'static str;
@@ -73,5 +74,18 @@ pub trait DoubleConf {
     fn value(&self) -> Result<f64> {
         let key = jni_new_string!(self.key())?;
         jni_call_static!(BlazeConf.doubleConf(key.as_obj()) -> f64)
+    }
+}
+
+pub trait StringConf {
+    fn key(&self) -> &'static str;
+    fn value(&self) -> Result<&'static str> {
+        let key = jni_new_string!(self.key())?;
+        let value = jni_get_string!(
+            jni_call_static!(BlazeConf.stringConf(key.as_obj()) -> JObject)?
+                .as_obj()
+                .into()
+        )?;
+        Ok(Box::leak(value.into_boxed_str()))
     }
 }

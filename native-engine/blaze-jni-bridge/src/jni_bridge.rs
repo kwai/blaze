@@ -1158,6 +1158,8 @@ pub struct BlazeConf<'a> {
     pub method_longConf_ret: ReturnType,
     pub method_doubleConf: JStaticMethodID,
     pub method_doubleConf_ret: ReturnType,
+    pub method_stringConf: JStaticMethodID,
+    pub method_stringConf_ret: ReturnType,
 }
 
 impl<'a> BlazeConf<'_> {
@@ -1183,6 +1185,14 @@ impl<'a> BlazeConf<'_> {
                 .get_static_method_id(class, "doubleConf", "(Ljava/lang/String;)D")
                 .unwrap(),
             method_doubleConf_ret: ReturnType::Primitive(Primitive::Double),
+            method_stringConf: env
+                .get_static_method_id(
+                    class,
+                    "stringConf",
+                    "(Ljava/lang/String;)Ljava/lang/String;",
+                )
+                .unwrap(),
+            method_stringConf_ret: ReturnType::Object,
         })
     }
 }

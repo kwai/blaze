@@ -68,10 +68,12 @@ public enum BlazeConf {
 
     // parqeut enable bloom filter
     PARQUET_ENABLE_BLOOM_FILTER("spark.blaze.parquet.enable.bloomFilter", false),
-    ;
 
-    private String key;
-    private Object defaultValue;
+    // spark io compression codec
+    SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4");
+
+    private final String key;
+    private final Object defaultValue;
 
     BlazeConf(String key, Object defaultValue) {
         this.key = key;
@@ -94,6 +96,10 @@ public enum BlazeConf {
         return conf().getDouble(key, (double) defaultValue);
     }
 
+    public String stringConf() {
+        return conf().get(key, (String) defaultValue);
+    }
+
     public static boolean booleanConf(String confName) {
         return BlazeConf.valueOf(confName).booleanConf();
     }
@@ -108,6 +114,10 @@ public enum BlazeConf {
 
     public static double doubleConf(String confName) {
         return BlazeConf.valueOf(confName).doubleConf();
+    }
+
+    public static String stringConf(String confName) {
+        return BlazeConf.valueOf(confName).stringConf();
     }
 
     private static SparkConf conf() {
