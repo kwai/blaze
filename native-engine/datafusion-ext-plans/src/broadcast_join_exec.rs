@@ -105,6 +105,18 @@ impl BroadcastJoinExec {
         })
     }
 
+    pub fn on(&self) -> &JoinOn {
+        &self.on
+    }
+
+    pub fn join_type(&self) -> JoinType {
+        self.join_type
+    }
+
+    pub fn broadcast_side(&self) -> JoinSide {
+        self.broadcast_side
+    }
+
     fn create_join_params(&self, projection: &[usize]) -> Result<JoinParams> {
         let left_schema = self.left.schema();
         let right_schema = self.right.schema();
@@ -306,6 +318,7 @@ async fn execute_join(
                     cached_build_hash_map_id,
                     left,
                     &join_params.left_keys,
+                    matches!(join_params.join_type, RightSemi | RightAnti),
                     poll_time.clone(),
                 ),
             );
@@ -340,6 +353,7 @@ async fn execute_join(
                     cached_build_hash_map_id,
                     right,
                     &join_params.right_keys,
+                    matches!(join_params.join_type, LeftSemi | LeftAnti | Existence),
                     poll_time.clone(),
                 ),
             );
@@ -389,17 +403,19 @@ async fn collect_join_hash_map(
     cached_build_hash_map_id: Option<String>,
     input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
+    distinct: bool,
     poll_time: Time,
 ) -> Result<Arc<JoinHashMap>> {
     Ok(match cached_build_hash_map_id {
         Some(cached_id) => {
             get_cached_join_hash_map(&cached_id, || async {
-                collect_join_hash_map_without_caching(input, key_exprs, poll_time).await
+                collect_join_hash_map_without_caching(input, key_exprs, distinct, poll_time).await
             })
             .await?
         }
         None => {
-            let map = collect_join_hash_map_without_caching(input, key_exprs, poll_time).await?;
+            let map = collect_join_hash_map_without_caching(input, key_exprs, distinct, poll_time)
+                .await?;
             Arc::new(map)
         }
     })
@@ -408,6 +424,7 @@ async fn collect_join_hash_map(
 async fn collect_join_hash_map_without_caching(
     mut input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
+    distinct: bool,
     poll_time: Time,
 ) -> Result<JoinHashMap> {
     let mut hash_map_batches = vec![];
@@ -419,14 +436,21 @@ async fn collect_join_hash_map_without_caching(
     } {
         hash_map_batches.push(batch);
     }
-    match hash_map_batches.len() {
-        0 => Ok(JoinHashMap::try_new_empty(input.schema(), key_exprs)?),
-        1 => Ok(JoinHashMap::try_from_hash_map_batch(
-            hash_map_batches[0].clone(),
-            key_exprs,
-        )?),
-        n => df_execution_err!("expect zero or one hash map batch, got {n}"),
+    let mut join_hash_map = match hash_map_batches.len() {
+        0 => JoinHashMap::try_new_empty(input.schema(), key_exprs)?,
+        1 => {
+            if hash_map_batches[0].num_rows() == 0 {
+                JoinHashMap::try_new_empty(input.schema(), key_exprs)?
+            } else {
+                JoinHashMap::try_from_hash_map_batch(hash_map_batches[0].clone(), key_exprs)?
+            }
+        }
+        n => return df_execution_err!("expect zero or one hash map batch, got {n}"),
+    };
+    if distinct {
+        join_hash_map.distinct()?;
     }
+    Ok(join_hash_map)
 }
 
 #[async_trait]

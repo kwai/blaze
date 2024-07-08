@@ -59,11 +59,19 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       val (blocksByAddress, canEnableBatchFetch) =
         if (baseShuffleHandle.dependency.isShuffleMergeFinalizedMarked) {
           val res = SparkEnv.get.mapOutputTracker.getPushBasedShuffleMapSizesByExecutorId(
-            handle.shuffleId, startMapIndex, endMapIndex, startPartition, endPartition)
+            handle.shuffleId,
+            startMapIndex,
+            endMapIndex,
+            startPartition,
+            endPartition)
           (res.iter, res.enableBatchFetch)
         } else {
           val address = SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
-            handle.shuffleId, startMapIndex, endMapIndex, startPartition, endPartition)
+            handle.shuffleId,
+            startMapIndex,
+            endMapIndex,
+            startPartition,
+            endPartition)
           (address, true)
         }
 

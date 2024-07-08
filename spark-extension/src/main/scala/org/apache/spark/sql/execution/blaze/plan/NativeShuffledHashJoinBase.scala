@@ -30,23 +30,17 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.plans.ExistenceJoin
-import org.apache.spark.sql.catalyst.plans.InnerLike
 import org.apache.spark.sql.catalyst.plans.JoinType
-import org.apache.spark.sql.catalyst.plans.LeftAnti
-import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.execution.BinaryExecNode
-import org.blaze.protobuf.JoinOn
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.SortMergeJoinExecNode
-import org.blaze.protobuf.SortOptions
+import org.blaze.{protobuf => pb}
 
-abstract class NativeSortMergeJoinBase(
+abstract class NativeShuffledHashJoinBase(
     override val left: SparkPlan,
     override val right: SparkPlan,
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
-    joinType: JoinType)
+    joinType: JoinType,
+    buildSide: BuildSide)
     extends BinaryExecNode
     with NativeSupports {
 
@@ -76,36 +70,32 @@ abstract class NativeSortMergeJoinBase(
   private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
     val leftKeyExpr = NativeConverters.convertExpr(leftKey)
     val rightKeyExpr = NativeConverters.convertExpr(rightKey)
-    JoinOn
+    pb.JoinOn
       .newBuilder()
       .setLeft(leftKeyExpr)
       .setRight(rightKeyExpr)
       .build()
   }
 
-  private def nativeSortOptions = nativeJoinOn.map(_ => {
-    SortOptions
-      .newBuilder()
-      .setAsc(true)
-      .setNullsFirst(true)
-      .build()
-  })
-
   private def nativeJoinType = NativeConverters.convertJoinType(joinType)
 
+  private def nativeBuildSide = buildSide match {
+    case BuildLeft => pb.JoinSide.LEFT_SIDE
+    case BuildRight => pb.JoinSide.RIGHT_SIDE
+  }
   // check whether native converting is supported
   nativeSchema
-  nativeSortOptions
   nativeJoinOn
   nativeJoinType
+  nativeBuildSide
 
   override def doExecuteNative(): NativeRDD = {
     val leftRDD = NativeHelper.executeNative(left)
     val rightRDD = NativeHelper.executeNative(right)
     val nativeMetrics = MetricNode(metrics, leftRDD.metrics :: rightRDD.metrics :: Nil)
-    val nativeSortOptions = this.nativeSortOptions
     val nativeJoinOn = this.nativeJoinOn
     val nativeJoinType = this.nativeJoinType
+    val nativeBuildSide = this.nativeBuildSide
 
     val partitions = if (joinType != RightOuter) {
       leftRDD.partitions
@@ -113,25 +103,13 @@ abstract class NativeSortMergeJoinBase(
       rightRDD.partitions
     }
     val dependencies = Seq(new OneToOneDependency(leftRDD), new OneToOneDependency(rightRDD))
-    val isShuffleReadFull = joinType match {
-      case _: InnerLike =>
-        logInfo("SortMergeJoin Inner mark shuffleReadFull = false")
-        false
-      case LeftAnti | LeftSemi =>
-        logInfo("SortMergeJoin LeftAnti|LeftSemi mark shuffleReadFull = false")
-        false
-      case _: ExistenceJoin =>
-        logInfo("SortMergeJoin ExistenceJoin mark shuffleReadFull = false")
-        false
-      case _ => leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull
-    }
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       partitions,
       dependencies,
-      isShuffleReadFull,
+      leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val leftPartition = leftRDD.partitions(partition.index)
         val leftChild = leftRDD.nativePlan(leftPartition, taskContext)
@@ -139,16 +117,20 @@ abstract class NativeSortMergeJoinBase(
         val rightPartition = rightRDD.partitions(partition.index)
         val rightChild = rightRDD.nativePlan(rightPartition, taskContext)
 
-        val sortMergeJoinExec = SortMergeJoinExecNode
+        val hashJoinExec = pb.HashJoinExecNode
           .newBuilder()
           .setSchema(nativeSchema)
           .setLeft(leftChild)
           .setRight(rightChild)
           .setJoinType(nativeJoinType)
           .addAllOn(nativeJoinOn.asJava)
-          .addAllSortOptions(nativeSortOptions.asJava)
-        PhysicalPlanNode.newBuilder().setSortMergeJoin(sortMergeJoinExec).build()
+          .setBuildSide(nativeBuildSide)
+        pb.PhysicalPlanNode.newBuilder().setHashJoin(hashJoinExec).build()
       },
-      friendlyName = "NativeRDD.SortMergeJoin")
+      friendlyName = "NativeRDD.ShuffledHashJoin")
   }
 }
+
+class BuildSide {}
+case object BuildLeft extends BuildSide {}
+case object BuildRight extends BuildSide {}

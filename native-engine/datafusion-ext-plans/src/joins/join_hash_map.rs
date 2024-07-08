@@ -19,7 +19,7 @@ use std::{
 };
 
 use arrow::{
-    array::{ArrayRef, AsArray, BinaryBuilder, RecordBatch},
+    array::{Array, ArrayRef, AsArray, BinaryBuilder, RecordBatch},
     datatypes::{DataType, Field, FieldRef, Schema, SchemaRef},
 };
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
@@ -63,13 +63,19 @@ impl Table {
 
         let num_entries = Self::num_entries_of_rows(num_rows) as u32;
         let item_hashes = join_create_hashes(num_rows, &key_columns)?;
+        let item_valids = (0..num_rows)
+            .map(|row_idx| key_columns.iter().all(|key| key.is_valid(row_idx)))
+            .collect::<Vec<_>>();
 
         // sort record batch by hashes for better compression and data locality
-        let (indices, item_hashes): (Vec<usize>, Vec<u32>) = item_hashes
+        // null values are placed in the front of each entry
+        let (indices, item_hashes, item_valids): (Vec<usize>, Vec<u32>, Vec<bool>) = item_hashes
             .into_iter()
+            .zip(item_valids)
             .enumerate()
-            .sorted_unstable_by_key(|(_idx, hash)| *hash)
-            .unzip();
+            .map(|(row_idx, (hash, valid))| (row_idx, hash, valid))
+            .sorted_unstable_by_key(|&(_row_idx, hash, valid)| (hash, valid))
+            .multiunzip();
         let data_batch = take_batch(data_batch, indices)?;
 
         let mut entries_to_row_indices: HashMap<u32, Vec<u32>> = HashMap::new();
@@ -95,6 +101,15 @@ impl Table {
                     entry_offsets.push(item_indices.len() as u32);
                     entry_lens.push(0);
                 }
+            }
+
+            // exclude null values from entry
+            let cur_entry_idx = entry_offsets.len() - 1;
+            while entry_lens[cur_entry_idx] > 0
+                && !item_valids[item_indices[entry_offsets[cur_entry_idx] as usize] as usize]
+            {
+                entry_offsets[cur_entry_idx] += 1;
+                entry_lens[cur_entry_idx] -= 1;
             }
         }
         let new = Self {
@@ -263,6 +278,51 @@ impl JoinHashMap {
             key_columns,
             table,
         })
+    }
+
+    pub fn distinct(&mut self) -> Result<()> {
+        let comparators = self
+            .key_columns
+            .iter()
+            .map(|array| Ok(arrow::array::build_compare(&array, &array)?))
+            .collect::<Result<Vec<_>>>()?;
+        let total_eq = |i, j| {
+            comparators
+                .iter()
+                .all(|comparator| comparator(i, j).is_eq())
+        };
+
+        for entry in 0..self.table.entry_offsets.len() {
+            if self.table.entry_lens[entry] <= 1 {
+                continue;
+            }
+            let entry_offset = self.table.entry_offsets[entry] as usize;
+            let mut entry_end = entry_offset + self.table.entry_lens[entry] as usize;
+            let mut i = entry_offset + 1;
+
+            while i < entry_end {
+                let item_i = self.table.item_indices[i] as usize;
+                let hash_i = self.table.item_hashes[item_i];
+                let mut removed = false;
+
+                for j in entry_offset..i {
+                    let item_j = self.table.item_indices[j] as usize;
+                    let hash_j = self.table.item_hashes[item_j];
+                    if hash_j == hash_i && total_eq(item_j, item_i) {
+                        // remove an duplicated key, remove it from entry
+                        self.table.item_indices.swap(i, entry_end - 1);
+                        entry_end -= 1;
+                        removed = true;
+                        break;
+                    }
+                }
+                if !removed {
+                    i += 1;
+                }
+            }
+            self.table.entry_lens[entry] = (entry_end - entry_offset) as u32;
+        }
+        Ok(())
     }
 
     pub fn data_schema(&self) -> SchemaRef {

@@ -36,6 +36,7 @@ mod tests {
     use crate::{
         broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
         broadcast_join_exec::BroadcastJoinExec,
+        hash_join_exec::HashJoinExec,
         joins::join_utils::{JoinType, JoinType::*},
         sort_merge_join_exec::SortMergeJoinExec,
     };
@@ -45,6 +46,8 @@ mod tests {
         SMJ,
         BHJLeftProbed,
         BHJRightProbed,
+        SHJLeftProbed,
+        SHJRightProbed,
     }
 
     fn columns(schema: &Schema) -> Vec<String> {
@@ -230,6 +233,22 @@ mod tests {
                     None,
                 )?)
             }
+            SHJLeftProbed => Arc::new(HashJoinExec::try_new(
+                schema,
+                left,
+                right,
+                on,
+                join_type,
+                JoinSide::Left,
+            )?),
+            SHJRightProbed => Arc::new(HashJoinExec::try_new(
+                schema,
+                left,
+                right,
+                on,
+                join_type,
+                JoinSide::Right,
+            )?),
         };
         let columns = columns(&join.schema());
         let stream = join.execute(0, task_ctx)?;
@@ -237,9 +256,17 @@ mod tests {
         Ok((columns, batches))
     }
 
+    const ALL_TEST_TYPE: [TestType; 5] = [
+        SMJ,
+        BHJLeftProbed,
+        BHJRightProbed,
+        SHJLeftProbed,
+        SHJRightProbed,
+    ];
+
     #[tokio::test]
     async fn join_inner_one() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 2, 3]),
                 ("b1", &vec![4, 5, 5]), // this has a repetition
@@ -274,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_inner_two() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 2, 2]),
                 ("b2", &vec![1, 2, 2]),
@@ -314,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_inner_two_two() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 1, 2]),
                 ("b2", &vec![1, 1, 2]),
@@ -355,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_inner_with_nulls() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table_i32_nullable(
                 ("a1", &vec![Some(1), Some(1), Some(2), Some(2)]),
                 ("b2", &vec![None, Some(1), Some(2), Some(2)]), // null in key field
@@ -395,7 +422,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_left_one() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 2, 3]),
                 ("b1", &vec![4, 5, 7]), // 7 does not exist on the right
@@ -429,7 +456,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_right_one() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 2, 3]),
                 ("b1", &vec![4, 5, 7]),
@@ -463,7 +490,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_full_one() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 2, 3]),
                 ("b1", &vec![4, 5, 7]), // 7 does not exist on the right
@@ -497,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_anti() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 2, 2, 3, 5]),
                 ("b1", &vec![4, 5, 5, 7, 7]), // 7 does not exist on the right
@@ -530,7 +557,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_semi() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![1, 2, 2, 3]),
                 ("b1", &vec![4, 5, 5, 7]), // 7 does not exist on the right
@@ -564,7 +591,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_with_duplicated_column_names() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a", &vec![1, 2, 3]),
                 ("b", &vec![4, 5, 7]),
@@ -598,7 +625,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_date32() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_date_table(
                 ("a1", &vec![1, 2, 3]),
                 ("b1", &vec![19107, 19108, 19108]), // this has a repetition
@@ -634,7 +661,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_date64() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_date64_table(
                 ("a1", &vec![1, 2, 3]),
                 ("b1", &vec![1650703441000, 1650903441000, 1650903441000]), /* this has a
@@ -671,7 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_left_sort_order() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![0, 1, 2, 3, 4, 5]),
                 ("b1", &vec![3, 4, 5, 6, 6, 7]),
@@ -709,7 +736,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_right_sort_order() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left = build_table(
                 ("a1", &vec![0, 1, 2, 3]),
                 ("b1", &vec![3, 4, 5, 7]),
@@ -743,7 +770,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_left_multiple_batches() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left_batch_1 = build_table_i32(
                 ("a1", &vec![0, 1, 2]),
                 ("b1", &vec![3, 4, 5]),
@@ -794,7 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_right_multiple_batches() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let right_batch_1 = build_table_i32(
                 ("a2", &vec![0, 1, 2]),
                 ("b2", &vec![3, 4, 5]),
@@ -845,7 +872,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_full_multiple_batches() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left_batch_1 = build_table_i32(
                 ("a1", &vec![0, 1, 2]),
                 ("b1", &vec![3, 4, 5]),
@@ -898,7 +925,7 @@ mod tests {
 
     #[tokio::test]
     async fn join_existence_multiple_batches() -> Result<()> {
-        for test_type in [SMJ, BHJLeftProbed, BHJRightProbed] {
+        for test_type in ALL_TEST_TYPE {
             let left_batch_1 = build_table_i32(
                 ("a1", &vec![0, 1, 2]),
                 ("b1", &vec![3, 4, 5]),
