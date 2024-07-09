@@ -19,4 +19,4 @@ object_store = "0.9.0"
 prost = "0.12.6"
 
 [build-dependencies]
-tonic-build = "0.11.0"
+tonic-build = "0.12.0"
