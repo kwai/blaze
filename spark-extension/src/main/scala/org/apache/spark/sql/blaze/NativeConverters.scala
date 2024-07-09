@@ -1075,7 +1075,9 @@ object NativeConverters extends Logging {
             .contains("brickhouse.udf.collect.CollectUDAF")
             && SparkEnv.get.conf.getBoolean(
               "spark.blaze.udf.brickhouse.enabled",
-              defaultValue = true) =>
+              defaultValue = true)
+            && udaf.children.size == 1
+            && udaf.children.head.dataType.isInstanceOf[ArrayType]=>
         aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COLLECT)
         aggBuilder.addChildren(convertExpr(udaf.children.head))
       case udaf
