@@ -84,7 +84,8 @@ abstract class NativeGenerateBase(
         .setFunc(pb.GenerateFunction.PosExplode)
         .addChild(NativeConverters.convertExpr(child))
         .build()
-    case JsonTuple(children) if children.drop(1).forall(_.isInstanceOf[Literal]) =>
+    case JsonTuple(children)
+        if NativeConverters.udfJsonEnabled && children.drop(1).forall(_.isInstanceOf[Literal]) =>
       pb.Generator
         .newBuilder()
         .setFunc(pb.GenerateFunction.JsonTuple)

@@ -20,7 +20,6 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
-import org.apache.spark.sql.catalyst.expressions.codegen.ExprCode
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinBase
 import org.apache.spark.sql.execution.joins.ShuffledJoin

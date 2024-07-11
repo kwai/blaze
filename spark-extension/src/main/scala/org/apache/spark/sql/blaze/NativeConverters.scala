@@ -48,9 +48,9 @@ import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.GetJsonObject
 import org.apache.spark.sql.catalyst.expressions.LeafExpression
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.execution.blaze.plan.Util
@@ -83,7 +83,8 @@ import org.apache.spark.util.Utils
 import org.blaze.protobuf.PhysicalExprNode
 
 object NativeConverters extends Logging {
-  val subqueryEvaluatedTag: TreeNodeTag[Boolean] = TreeNodeTag[Boolean]("subqueryEvaluated")
+  val udfJsonEnabled: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.udf.UDFJson.enabled", defaultValue = true)
 
   def convertScalarType(dataType: DataType): pb.ScalarType = {
     val scalarTypeBuilder = dataType match {
@@ -983,14 +984,13 @@ object NativeConverters extends Logging {
         }
 
       // hive UDFJson
+      // hive UDFJson
       case e
-          if getFunctionClassName(e).contains("org.apache.hadoop.hive.ql.udf.UDFJson")
-            && SparkEnv.get.conf.getBoolean(
-              "spark.blaze.udf.UDFJson.enabled",
-              defaultValue = true)
-            && e.children.length == 2
-            && e.children(0).dataType == StringType
-            && e.children(1).dataType == StringType
+          if udfJsonEnabled && (
+            e.isInstanceOf[GetJsonObject]
+              || getFunctionClassName(e).contains("org.apache.hadoop.hive.ql.udf.UDFJson")
+          )
+            && e.children.map(_.dataType) == Seq(StringType, StringType)
             && e.children(1).isInstanceOf[Literal] =>
         // use GetParsedJsonObject + ParseJson for reusing parsed json value in native
         val parsed = Shims.get.createNativeExprWrapper(
@@ -1077,7 +1077,7 @@ object NativeConverters extends Logging {
               "spark.blaze.udf.brickhouse.enabled",
               defaultValue = true)
             && udaf.children.size == 1
-            && udaf.children.head.dataType.isInstanceOf[ArrayType]=>
+            && udaf.children.head.dataType.isInstanceOf[ArrayType] =>
         aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COLLECT)
         aggBuilder.addChildren(convertExpr(udaf.children.head))
       case udaf
