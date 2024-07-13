@@ -2353,9 +2353,9 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "sonic-rs"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d16b7974db39ac84e6fb1b2aab10d9ef883e5eca1ed2a1bc71d6869e2c4675f"
+checksum = "8e683c86e3ea4a72446733ca7f7dc5acadc70d5a37f272f32a87fe975e90afa9"
 dependencies = [
  "arrayref",
  "bumpalo",
