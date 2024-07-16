@@ -109,6 +109,7 @@ import org.apache.spark.sql.execution.joins.blaze.plan.NativeSortMergeJoinExec
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.TaggingExpression
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeShuffledHashJoinExec
 import org.blaze.{protobuf => pb}
 
@@ -399,6 +400,7 @@ class ShimsImpl extends Shims with Logging {
                 .setReturnType(NativeConverters.convertDataType(StringType)))
             .build())
 
+      case e: TaggingExpression => Some(NativeConverters.convertExpr(e.child))
       case _ => None
     }
   }
