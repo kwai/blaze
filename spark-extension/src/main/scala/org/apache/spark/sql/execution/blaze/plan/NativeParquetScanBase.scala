@@ -22,6 +22,7 @@ import java.util.UUID
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
@@ -71,6 +72,8 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
   override val outputPartitioning: Partitioning = basedFileScan.outputPartitioning
 
   private val inputFileScanRDD = {
+    MethodUtils.invokeMethod(basedFileScan, true, "prepare")
+    MethodUtils.invokeMethod(basedFileScan, true, "waitForSubqueries")
     basedFileScan.inputRDDs().head match {
       case rdd: FileScanRDD => rdd
       case rdd: MapPartitionsRDD[_, _] => rdd.prev.asInstanceOf[FileScanRDD]
