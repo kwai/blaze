@@ -1,0 +1,75 @@
+SUM(SALES)
+----------
+  346507.2
+
+
+
+C_LAST_NAME		       C_FIRST_NAME		 SALES
+------------------------------ -------------------- ----------
+Allen			       William			148.37
+Barrera 		       Sharon		       2601.72
+Beck			       Shannon		       5709.82
+Burton			       Heather		      32609.67
+Cardenas		       Janette		       1528.27
+Carlisle		       Anthony			  1944
+Chavez			       Christy		       5285.89
+Churchill		       Angela			2910.6
+Cooper			       Annie		       6735.92
+Copeland		       Victor		       8881.95
+Cordova 		       Paul		      14910.72
+Davis			       Kerry			1388.9
+Davis			       Michael		      13639.59
+Dawson			       Steve		       4333.07
+Dean			       Renea		      13684.48
+Estrada 		       Gary		       6580.05
+Farmer			       Katie			1866.4
+Forney			       Amanda		       3351.21
+Gaston			       Joseph			 76.68
+George			       Robert		       1853.39
+Gonzalez		       Don		      16428.28
+Hall			       Margie		       3704.61
+Harvey			       Aaron		       5977.24
+Hoag			       Ashley			2074.1
+Howard			       Donald			1532.7
+Howard			       Jorge		       1869.56
+Irvine			       Thelma		       5199.93
+Jackson 		       Douglas		       2005.76
+Johnson 		       Steven			3629.4
+Jones			       Chris		       5394.78
+Kennedy 		       Joyce			198.63
+King			       Donald		      13096.89
+Kirby			       Delores			382.97
+Lassiter		       Ronald			448.28
+Lee			       Barbara		      19841.55
+Lord			       Benjamin 	       6633.66
+Lovell			       Jami		       1910.54
+Macias			       John		       1233.68
+Mason			       Martha			2647.2
+Massey			       Shaunna		       8813.42
+Massey			       Shaunna		       8397.52
+Mclean			       Joseph			455.94
+Mitchell		       Robert		       9705.81
+Morgan			       Margaret 	       3885.12
+Orourke 		       Joel		       19814.2
+Price			       Elizabeth	       2338.56
+Ragsdale		       John			854.62
+Ragsdale		       Mertie			2674.8
+Reese			       Steven		      15576.48
+Reilly			       Melissa		       3998.32
+Robbins 		       Frank		       1068.75
+Roberson		       Antonio		       7250.04
+Rockwell		       Jeffrey		       5055.68
+Self			       Michael		      15974.91
+Seymour 		       Calvin			 783.4
+Stanley 		       Judith			286.08
+Steadman		       Trinidad 		2359.8
+Thompson		       Ruth		       1910.29
+Tillman 		       Carl		       3757.13
+Torres			       Jessica		       4041.18
+Trapp			       Calvin			1039.4
+West			       Teresa		       2215.29
+
+62 rows selected.
+
+
+

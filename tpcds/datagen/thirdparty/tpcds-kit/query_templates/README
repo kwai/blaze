@@ -1,0 +1,4 @@
+-- README
+-- ====================
+-- this directory contains all of the base query templates
+-- approved for TPC-DS. Query variants are located in query_variants/.

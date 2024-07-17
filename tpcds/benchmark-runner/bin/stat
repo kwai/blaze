@@ -1,0 +1,37 @@
+#!/bin/bash
+
+LOG_FILE="$1"
+if [ -d "$LOG_FILE" ]; then
+  LOG_FILE="$LOG_FILE/log"
+fi
+
+record="$(
+  while read line; do
+    case_name="$(echo "$line" | grep -Poi 'case: \K\w+')"
+    c_time="$(echo "$line" | grep -Poi 'time: \K[\d.]+')"
+
+    if [ "x$case_name" != 'x' ]; then
+      echo "$case_name" "$c_time"
+    fi
+  done <"$LOG_FILE"
+)"
+
+echo "$record" | FS='\t' awk 'BEGIN {
+  i = 0;
+} {
+  case_name=$1;
+  c_time=$2;
+  if (!(case_name in m) || m[case_name] * 1.0 > c_time * 1.0) {
+    if (!(case_name in m)) {
+      c[i++] = case_name;
+    }
+    m[case_name] = c_time;
+  }
+} END {
+  for (z = 0; z < i; z++) {
+    t = m[c[z]];
+    sum += t;
+    print(c[z], t);
+  }
+  print("total:", sum);
+}'

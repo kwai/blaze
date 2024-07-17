@@ -117,7 +117,7 @@ Check [Benchmark Results](./benchmark-results/20240701-blaze300.md) with the lat
 comparison with vanilla Spark 3.3.3. The benchmark result shows that Blaze save about 50% time on TPC-DS/TPC-H 1TB datasets.
 Stay tuned and join us for more upcoming thrilling numbers.
 
-TPC-DS Query time:
+TPC-DS Query time: ([How can I run TPC-DS benchmark?](./tpcds/README.md))
 ![20240701-query-time-tpcds](./benchmark-results/spark333-vs-blaze300-query-time-20240701.png)
 
 TPC-H Query time:
