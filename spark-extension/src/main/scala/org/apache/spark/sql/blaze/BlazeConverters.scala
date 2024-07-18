@@ -253,7 +253,8 @@ object BlazeConverters extends Logging {
 
     assert(
       exec.outputPartitioning.numPartitions == 1 || exec.outputPartitioning
-        .isInstanceOf[HashPartitioning])
+        .isInstanceOf[HashPartitioning],
+      s"partitioning not supported: ${exec.outputPartitioning}")
 
     val convertedChild = outputPartitioning match {
       case p if p.isInstanceOf[HashPartitioning] || p.numPartitions == 1 =>
@@ -527,7 +528,9 @@ object BlazeConverters extends Logging {
 
     // ensure native partial agg exists
     if (exec.requiredChildDistributionExpressions.isDefined) {
-      assert(NativeAggBase.findPreviousNativeAggrExec(exec).isDefined)
+      assert(
+        NativeAggBase.findPreviousNativeAggrExec(exec).isDefined,
+        "partial AggregateExec is not native")
     }
     val nativeAggr = Shims.get.createNativeAggExec(
       NativeAggBase.HashAgg,

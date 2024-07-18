@@ -20,7 +20,7 @@
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>spark-extension-shims-${shimName}</artifactId>
+      <artifactId>spark-extension-shims-${shimPkg}</artifactId>
       <version>${revision}</version>
     </dependency>
   </dependencies>

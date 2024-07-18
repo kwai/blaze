@@ -145,7 +145,7 @@ abstract class NativeAggBase(
   override def outputPartitioning: Partitioning =
     child.outputPartitioning
 
-  private val supportsPartialSkipping = (
+  private def supportsPartialSkipping = (
     BlazeConf.PARTIAL_AGG_SKIPPING_ENABLE.booleanConf()
       && (child match { // do not trigger skipping after ExpandExec
         case _: NativeExpandBase => false
