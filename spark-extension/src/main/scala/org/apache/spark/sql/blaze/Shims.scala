@@ -188,7 +188,10 @@ abstract class Shims {
 
   // shim methods for expressions
 
-  def convertExpr(e: Expression): Option[pb.PhysicalExprNode]
+  def convertMoreExprWithFallback(
+      e: Expression,
+      isPruningExpr: Boolean,
+      fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode]
 
   def convertAggregateExpr(e: AggregateExpression): Option[pb.PhysicalExprNode]
 

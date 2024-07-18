@@ -1,6 +1,8 @@
 FROM centos:7
 
 # install common tools
+RUN sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+RUN sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
 RUN yum update -y
 RUN yum install -y centos-release-scl epel-release
 RUN yum install -y libzip unzip wget cmake3 openssl-devel

@@ -53,7 +53,7 @@ abstract class NativeUnionBase(override val children: Seq[SparkPlan])
     children.map(_.output).transpose.map { attrs =>
       val firstAttr = attrs.head
       val nullable = attrs.exists(_.nullable)
-      val newDt = attrs.map(_.dataType).reduce(StructType.merge)
+      val newDt = attrs.map(_.dataType).reduce((dt1, dt2) => StructType.merge(dt1, dt2))
       if (firstAttr.dataType == newDt) {
         firstAttr.withNullability(nullable)
       } else {
