@@ -1,0 +1,23 @@
+C_LAST_NAME		       C_FIRST_NAME	    S_STORE_NAME					     PAID
+------------------------------ -------------------- -------------------------------------------------- ----------
+Mclemore		       Renita		    bar 						 21518.64
+Griffith		       Ray		    able						 39799.76
+Roberts 		       Genoveva 	    able						   1821.6
+Hahn			       Donald		    bar 						 96500.36
+
+
+
+C_LAST_NAME		       C_FIRST_NAME	    S_STORE_NAME					     PAID
+------------------------------ -------------------- -------------------------------------------------- ----------
+Littlefield		       Clarence 	    able						   127380
+Townsend		       Franklin 	    able						  68983.2
+Pettit			       Richard		    able						  3930.52
+%			       Tommy		    able						 38118.08
+Holt			       Curtis		    able						   8225.8
+Kunz			       Lee		    able						 34631.52
+Winchester		       Margaret 	    bar 						  14269.2
+
+7 rows selected.
+
+
+

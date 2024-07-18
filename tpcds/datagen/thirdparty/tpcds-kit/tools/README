@@ -1,0 +1,73 @@
+Author: Haider Rizvi
+File-started: <Wed Jun 23 09:04:52 EDT 2004>
+Time-stamp: <Fri Oct 29 15:31:46 EDT 2004>
+
+This is my incomplete log of the changes that are being made and sent
+out as part of the Approved Queries for tpcds. As you'll notice, it is
+in reverse-chronological order.
+
+Wed MArch 16th 
+mpoess added q38.tpl as q39.tpl,q39.tpl as q40.tpl, q40.tpl as q41.tpl 
+         and q41.tpl as q42.tpl (were voted in on January 20th)
+       including two variants each in the vriant directory 
+       Elapsed time variability for q41 q41_a and q41_b is too high. I am looking
+       into this.
+
+ 
+Tue March 14
+mpoess added HP11 and HP15 as queries q37.tpl and q38.tpl (were voted in on January 20th 2005 
+
+Wed Oct  6 16:27:55 EDT 2004
+--------------------------------------
+
+Work done in Houston meeting: 
+1. converted original queries to template form that can be run against qgen. 
+     Issues: 
+	- still missing q20
+	- q4 template doesn't run cleanly
+2. Added queries 23-27, 30-36
+    Issues: 
+	- q27 template doesn't run cleanly on mine (uses cities distribution)
+
+Todos: 
+	Need to convert the variants to template form.
+	Find more queries!
+
+Thu Jun 24 09:22:54 EDT 2004
+----------------------------------------
+- Fixed q1 to look up web_site data through web_sales table when
+collecting info on web_returns (wr CTE)
+	Also fixed the date function to cast as date syntax. 
+
+- Fixed q6 to conform to Oracle's limited SQL capabilities ;-)
+- Fixed q21 to work 
+- Got a q3 rewrite from Raghu
+- Got a q18 rewrite from Meikel
+
+Wed Jun 23 09:04:52 EDT 2004
+----------------------------------------
+- Received queries 15, 16, 18, 19 from Meikel.
+	accepted 15, 16, 18, 19 in ApprovedVersion list
+
+- Received query 6 from John Susag
+	changed the group by item to refer to the specific column grouping by
+
+- Changed q13 as per discussion
+	reflects the directive to fetch top 10 rows in comments in the syntax
+	--#SET ROWS_FETCH 10
+
+- Received q3 from Raghu
+	accepted
+
+- Left overs from the original 22:
+	17 (Meikel), 20 (Raghu/John)
+
+Problems:
+
+$ grep SQL q*.out | grep -v SQL0100W | grep -v SQLSTATE
+q1.out:SQL0206N  "WR_WEB_SITE_SK" is not valid in the context where it is used.  
+q21.out:SQL0198N  The statement string of the PREPARE or EXECUTE IMMEDIATE statement is 
+q22.out:SQL0206N  "I_REC_START_DATE_ID" is not valid in the context where it is used.  
+
+
+- Fixed q22, removed reference to i_rec_start_date_id to i_rec_start_date
