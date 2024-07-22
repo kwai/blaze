@@ -84,12 +84,20 @@ object BlazeConvertStrategy extends Logging {
         .zip(exec.requiredChildOrdering)
         .foreach { case (child, requiredOrdering) =>
           if (requiredOrdering.nonEmpty) {
-            logInfo(s"physical plan [${child.nodeName}] requires ordering: $requiredOrdering")
             child.setTagValue(childOrderingRequiredTag, true)
           }
         }
     }
-    exec.setTagValue(childOrderingRequiredTag, exec.outputOrdering.nonEmpty)
+    exec.foreach {
+      case exec: SortExec =>
+        exec.setTagValue(childOrderingRequiredTag, false)
+      case exec =>
+        if (exec.getTagValue(childOrderingRequiredTag).contains(true)) {
+          exec.children.foreach { child =>
+            child.setTagValue(childOrderingRequiredTag, child.outputOrdering.nonEmpty)
+          }
+        }
+    }
 
     // execute some special strategies
     removeInefficientConverts(exec)
