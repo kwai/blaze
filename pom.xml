@@ -8,6 +8,7 @@
 
   <modules>
     <module>spark-extension</module>
+    <module>spark-extension-shims-${shimPkg}</module>
     <module>dev/mvn-build-helper/assembly</module>
     <module>dev/mvn-build-helper/proto</module>
   </modules>
@@ -99,11 +100,19 @@
           <args>
             <arg>-Ywarn-unused</arg>
           </args>
+          <jvmArgs>
+            <jvmArg>-Dblaze.shim=${shimName}</jvmArg>
+          </jvmArgs>
           <compilerPlugins>
             <compilerPlugin>
               <groupId>org.scalameta</groupId>
               <artifactId>semanticdb-scalac_${scalaLongVersion}</artifactId>
               <version>4.8.1</version>
+            </compilerPlugin>
+            <compilerPlugin>
+              <groupId>org.scalamacros</groupId>
+              <artifactId>paradise_${scalaLongVersion}</artifactId>
+              <version>2.1.1</version>
             </compilerPlugin>
           </compilerPlugins>
         </configuration>
@@ -253,11 +262,9 @@
 
     <profile>
       <id>spark303</id>
-      <modules>
-        <module>spark-extension-shims-spark303</module>
-      </modules>
       <properties>
         <shimName>spark303</shimName>
+        <shimPkg>spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
         <scalaLongVersion>2.12.17</scalaLongVersion>
@@ -268,18 +275,44 @@
     </profile>
 
     <profile>
+      <id>spark324</id>
+      <properties>
+        <shimName>spark324</shimName>
+        <shimPkg>spark3</shimPkg>
+        <javaVersion>1.8</javaVersion>
+        <scalaVersion>2.12</scalaVersion>
+        <scalaLongVersion>2.12.15</scalaLongVersion>
+        <scalaTestVersion>3.2.9</scalaTestVersion>
+        <scalafmtVersion>3.0.0</scalafmtVersion>
+        <sparkVersion>3.2.4</sparkVersion>
+      </properties>
+    </profile>
+
+    <profile>
       <id>spark333</id>
-      <modules>
-        <module>spark-extension-shims-spark333</module>
-      </modules>
       <properties>
         <shimName>spark333</shimName>
+        <shimPkg>spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
         <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.3.3</sparkVersion>
+      </properties>
+    </profile>
+
+    <profile>
+      <id>spark351</id>
+      <properties>
+        <shimName>spark351</shimName>
+        <shimPkg>spark3</shimPkg>
+        <javaVersion>1.8</javaVersion>
+        <scalaVersion>2.12</scalaVersion>
+        <scalaLongVersion>2.12.15</scalaLongVersion>
+        <scalaTestVersion>3.2.9</scalaTestVersion>
+        <scalafmtVersion>3.0.0</scalafmtVersion>
+        <sparkVersion>3.5.1</sparkVersion>
       </properties>
     </profile>
   </profiles>

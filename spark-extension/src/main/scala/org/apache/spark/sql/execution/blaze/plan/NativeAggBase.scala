@@ -145,7 +145,7 @@ abstract class NativeAggBase(
   override def outputPartitioning: Partitioning =
     child.outputPartitioning
 
-  private val supportsPartialSkipping = (
+  private def supportsPartialSkipping = (
     BlazeConf.PARTIAL_AGG_SKIPPING_ENABLE.booleanConf()
       && (child match { // do not trigger skipping after ExpandExec
         case _: NativeExpandBase => false
@@ -288,6 +288,7 @@ object NativeAggBase extends Logging {
         case e: NativeAggBase => Some(e)
         case e: ReusedExchangeExec => findRecursive(e.child)
         case e: NativeShuffleExchangeBase => findRecursive(e.child)
+        case e: NativeRenameColumnsBase => findRecursive(e.child)
         case e: NativeSortBase if isSortExec => findRecursive(e.child)
         case e: UnaryExecNode if passthroughNodeNames.exists(e.nodeName.contains(_)) =>
           findRecursive(e.child)
