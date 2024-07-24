@@ -27,7 +27,7 @@ postcard = { version = "1.0.8", features = ["alloc"]}
 slimmer_box = "0.6.5"
 tempfile = "3"
 thrift = "0.17.0"
-tokio = "1.38"
+tokio = "1.39"
 unchecked-index = "0.2.2"
 
 [dev-dependencies]
