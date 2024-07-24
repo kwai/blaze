@@ -31,7 +31,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    spark_hash::{create_hashes, pmod},
+    spark_hash::{create_murmur3_hashes, pmod},
     streams::coalesce_stream::CoalesceInput,
 };
 use futures::StreamExt;
@@ -110,7 +110,7 @@ struct ShuffleSpill {
     offsets: Vec<u64>,
 }
 
-fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<u32>> {
+fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
     match partitioning {
         Partitioning::Hash(exprs, _) => {
             let mut hashes_buf = vec![];
@@ -123,14 +123,14 @@ fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowRes
             hashes_buf.resize(arrays[0].len(), 42);
 
             // compute hash array
-            create_hashes(&arrays, &mut hashes_buf)?;
+            create_murmur3_hashes(&arrays, &mut hashes_buf)?;
             Ok(hashes_buf)
         }
         _ => unreachable!("unsupported partitioning: {:?}", partitioning),
     }
 }
 
-fn evaluate_partition_ids(hashes: &[u32], num_partitions: usize) -> Vec<u32> {
+fn evaluate_partition_ids(hashes: &[i32], num_partitions: usize) -> Vec<u32> {
     hashes
         .iter()
         .map(|hash| pmod(*hash, num_partitions) as u32)

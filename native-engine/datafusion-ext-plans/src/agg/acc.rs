@@ -27,6 +27,7 @@ use datafusion_ext_commons::{
     df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, read_scalar, read_u8, write_len, write_scalar, write_u8},
     slim_bytes::SlimBytes,
+    spark_bloom_filter::SparkBloomFilter,
 };
 use hashbrown::raw::RawTable;
 use itertools::Itertools;
@@ -295,6 +296,10 @@ pub enum AccumInitialValue {
     Scalar(ScalarValue),
     DynList(DataType),
     DynSet(DataType),
+    BloomFilter {
+        estimated_num_items: usize,
+        num_bits: usize,
+    },
 }
 
 pub fn create_acc_from_initial_value(
@@ -377,6 +382,15 @@ pub fn create_acc_from_initial_value(
             AccumInitialValue::DynSet(_dt) => {
                 addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
                 dyns.push(Some(Box::new(AggDynSet::default())));
+            }
+            AccumInitialValue::BloomFilter {
+                estimated_num_items,
+                num_bits,
+            } => {
+                addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
+                dyns.push(Some(Box::new(
+                    SparkBloomFilter::new_with_expected_num_items(*estimated_num_items, *num_bits),
+                )));
             }
         }
     }
@@ -501,6 +515,12 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                     }
                 })
             }),
+            AccumInitialValue::BloomFilter { .. } => Box::new(move |r: &mut LoadReader| {
+                Ok(match read_len(&mut r.0)? {
+                    0 => None,
+                    _ => Some(Box::new(SparkBloomFilter::read_from(&mut r.0)?)),
+                })
+            }),
         };
         loaders.push(loader);
     }
@@ -611,6 +631,24 @@ pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Res
                         {
                             write_len(len as usize, &mut w.0)?;
                         }
+                    } else {
+                        write_len(0, &mut w.0)?;
+                    }
+                    Ok(())
+                });
+                f
+            }
+            AccumInitialValue::BloomFilter { .. } => {
+                let f: SaveFn = Box::new(move |w: &mut SaveWriter, v: DynVal| -> Result<()> {
+                    if let Some(v) = v {
+                        let bloom_filter = v
+                            .as_any_boxed()
+                            .downcast::<SparkBloomFilter>()
+                            .or_else(|_| {
+                                df_execution_err!("error downcasting to AggDynBloomFilter")
+                            })?;
+                        write_len(1, &mut w.0)?;
+                        bloom_filter.write_to(&mut w.0)?;
                     } else {
                         write_len(0, &mut w.0)?;
                     }
@@ -1003,6 +1041,28 @@ impl AggDynValue for AggDynSet {
                 InternalSet::Small(_) => 0,
                 InternalSet::Huge(s) => s.capacity() * size_of::<(u32, u32, u8)>(),
             }
+    }
+
+    fn clone_boxed(&self) -> Box<dyn AggDynValue> {
+        Box::new(self.clone())
+    }
+}
+
+impl AggDynValue for SparkBloomFilter {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+
+    fn mem_size(&self) -> usize {
+        SparkBloomFilter::mem_size(self)
     }
 
     fn clone_boxed(&self) -> Box<dyn AggDynValue> {

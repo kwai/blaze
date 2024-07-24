@@ -25,92 +25,22 @@ use arrow::{
 };
 use datafusion::error::Result;
 
-use crate::df_execution_err;
-
-#[inline]
-fn spark_compatible_murmur3_hash<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
-    #[inline]
-    fn mix_k1(mut k1: i32) -> i32 {
-        k1 *= 0xcc9e2d51u32 as i32;
-        k1 = k1.rotate_left(15);
-        k1 *= 0x1b873593u32 as i32;
-        k1
-    }
-
-    #[inline]
-    fn mix_h1(mut h1: i32, k1: i32) -> i32 {
-        h1 ^= k1;
-        h1 = h1.rotate_left(13);
-        h1 = h1 * 5 + 0xe6546b64u32 as i32;
-        h1
-    }
-
-    #[inline]
-    fn fmix(mut h1: i32, len: i32) -> i32 {
-        h1 ^= len;
-        h1 ^= (h1 as u32 >> 16) as i32;
-        h1 *= 0x85ebca6bu32 as i32;
-        h1 ^= (h1 as u32 >> 13) as i32;
-        h1 *= 0xc2b2ae35u32 as i32;
-        h1 ^= (h1 as u32 >> 16) as i32;
-        h1
-    }
-
-    #[inline]
-    unsafe fn hash_bytes_by_int(data: &[u8], seed: u32) -> i32 {
-        // safety: data length must be aligned to 4 bytes
-        let mut h1 = seed as i32;
-        for i in (0..data.len()).step_by(4) {
-            let mut half_word = std::ptr::read_unaligned(data.as_ptr().add(i) as *const i32);
-            if cfg!(target_endian = "big") {
-                half_word = half_word.reverse_bits();
-            }
-            h1 = mix_h1(h1, mix_k1(half_word));
-        }
-        h1
-    }
-    let data = data.as_ref();
-    let len = data.len();
-    let len_aligned = len - len % 4;
-
-    // safety:
-    // avoid boundary checking in performance critical codes.
-    // all operations are garenteed to be safe
-    unsafe {
-        let mut h1 =
-            hash_bytes_by_int(std::slice::from_raw_parts(data.as_ptr(), len_aligned), seed);
-
-        for i in len_aligned..len {
-            let half_word = *data.get_unchecked(i) as i8 as i32;
-            h1 = mix_h1(h1, mix_k1(half_word));
-        }
-        fmix(h1, len as i32) as u32
-    }
-}
-
-#[test]
-fn test_murmur3() {
-    let _hashes = ["", "a", "ab", "abc", "abcd", "abcde"]
-        .into_iter()
-        .map(|s| spark_compatible_murmur3_hash(s.as_bytes(), 42) as i32)
-        .collect::<Vec<_>>();
-    let _expected = vec![
-        142593372, 1485273170, -97053317, 1322437556, -396302900, 814637928,
-    ];
-    assert_eq!(_hashes, _expected)
-}
+use crate::{
+    df_execution_err,
+    hash::{mur::spark_compatible_murmur3_hash, xxhash::spark_compatible_xxhash64_hash},
+};
 
 macro_rules! hash_array {
-    ($array_type:ident, $column:ident, $hashes:ident) => {
+    ($array_type:ident, $column:ident, $hashes:ident, $h:expr) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash = spark_compatible_murmur3_hash(&array.value(i), *hash);
+                *hash = $h(&array.value(i).as_ref(), *hash);
             }
         } else {
             for (i, hash) in $hashes.iter_mut().enumerate() {
                 if !array.is_null(i) {
-                    *hash = spark_compatible_murmur3_hash(&array.value(i), *hash);
+                    *hash = $h(&array.value(i).as_ref(), *hash);
                 }
             }
         }
@@ -118,18 +48,18 @@ macro_rules! hash_array {
 }
 
 macro_rules! hash_array_primitive {
-    ($array_type:ident, $column:ident, $ty:ident, $hashes:ident) => {
+    ($array_type:ident, $column:ident, $ty:ident, $hashes:ident, $h:expr) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
         let values = array.values();
 
         if array.null_count() == 0 {
             for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
-                *hash = spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *hash);
+                *hash = $h((*value as $ty).to_le_bytes().as_ref(), *hash);
             }
         } else {
             for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
                 if !array.is_null(i) {
-                    *hash = spark_compatible_murmur3_hash((*value as $ty).to_le_bytes(), *hash);
+                    *hash = $h((*value as $ty).to_le_bytes().as_ref(), *hash);
                 }
             }
         }
@@ -137,17 +67,17 @@ macro_rules! hash_array_primitive {
 }
 
 macro_rules! hash_array_decimal {
-    ($array_type:ident, $column:ident, $hashes:ident) => {
+    ($array_type:ident, $column:ident, $hashes:ident, $h:expr) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
 
         if array.null_count() == 0 {
             for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *hash);
+                *hash = $h(array.value(i).to_le_bytes().as_ref(), *hash);
             }
         } else {
             for (i, hash) in $hashes.iter_mut().enumerate() {
                 if !array.is_null(i) {
-                    *hash = spark_compatible_murmur3_hash(array.value(i).to_le_bytes(), *hash);
+                    *hash = $h(array.value(i).to_le_bytes().as_ref(), *hash);
                 }
             }
         }
@@ -155,9 +85,10 @@ macro_rules! hash_array_decimal {
 }
 
 /// Hash the values in a dictionary array
-fn create_hashes_dictionary<K: ArrowDictionaryKeyType>(
+fn create_hashes_dictionary<K: ArrowDictionaryKeyType, T: num::PrimInt>(
     array: &ArrayRef,
-    hashes_buffer: &mut [u32],
+    hashes_buffer: &mut [T],
+    h: impl Fn(&[u8], T) -> T + Copy,
 ) -> Result<()> {
     let dict_array = array.as_any().downcast_ref::<DictionaryArray<K>>().unwrap();
 
@@ -165,8 +96,8 @@ fn create_hashes_dictionary<K: ArrowDictionaryKeyType>(
     // hash for each key value to avoid a potentially expensive
     // redundant hashing for large dictionary elements (e.g. strings)
     let dict_values = Arc::clone(dict_array.values());
-    let mut dict_hashes = vec![0; dict_values.len()];
-    create_hashes(&[dict_values], &mut dict_hashes)?;
+    let mut dict_hashes = vec![T::zero(); dict_values.len()];
+    create_hashes(&[dict_values], &mut dict_hashes, h)?;
 
     for (hash, key) in hashes_buffer.iter_mut().zip(dict_array.keys().iter()) {
         if let Some(key) = key {
@@ -183,35 +114,59 @@ fn create_hashes_dictionary<K: ArrowDictionaryKeyType>(
     Ok(())
 }
 
+pub fn create_murmur3_hashes(arrays: &[ArrayRef], hashes_buffer: &mut [i32]) -> Result<()> {
+    create_hashes(arrays, hashes_buffer, |data: &[u8], seed: i32| {
+        spark_compatible_murmur3_hash(data, seed)
+    })
+}
+
+pub fn create_xxhash64_hashes(arrays: &[ArrayRef], hashes_buffer: &mut [i64]) -> Result<()> {
+    create_hashes(arrays, hashes_buffer, |data: &[u8], seed: i64| {
+        spark_compatible_xxhash64_hash(data, seed)
+    })
+}
+
 /// Creates hash values for every row, based on the values in the
 /// columns.
 ///
 /// The number of rows to hash is determined by `hashes_buffer.len()`.
 /// `hashes_buffer` should be pre-sized appropriately
-pub fn create_hashes<'a>(arrays: &[ArrayRef], hashes_buffer: &mut [u32]) -> Result<()> {
+pub fn create_hashes<T: num::PrimInt>(
+    arrays: &[ArrayRef],
+    hashes_buffer: &mut [T],
+    h: impl Fn(&[u8], T) -> T + Copy,
+) -> Result<()> {
     for col in arrays {
-        hash_array(col, hashes_buffer)?;
+        hash_array(col, hashes_buffer, h)?;
     }
     Ok(())
 }
 
-fn hash_array(array: &ArrayRef, hashes_buffer: &mut [u32]) -> Result<()> {
+fn hash_array<T: num::PrimInt>(
+    array: &ArrayRef,
+    hashes_buffer: &mut [T],
+    h: impl Fn(&[u8], T) -> T + Copy,
+) -> Result<()> {
     match array.data_type() {
         DataType::Null => {}
         DataType::Boolean => {
             let array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
             if array.null_count() == 0 {
                 for (i, hash) in hashes_buffer.iter_mut().enumerate() {
-                    *hash = spark_compatible_murmur3_hash(
-                        (if array.value(i) { 1u32 } else { 0u32 }).to_le_bytes(),
+                    *hash = h(
+                        (if array.value(i) { 1u32 } else { 0u32 })
+                            .to_le_bytes()
+                            .as_ref(),
                         *hash,
                     );
                 }
             } else {
                 for (i, hash) in hashes_buffer.iter_mut().enumerate() {
                     if !array.is_null(i) {
-                        *hash = spark_compatible_murmur3_hash(
-                            (if array.value(i) { 1u32 } else { 0u32 }).to_le_bytes(),
+                        *hash = h(
+                            (if array.value(i) { 1u32 } else { 0u32 })
+                                .to_le_bytes()
+                                .as_ref(),
                             *hash,
                         );
                     }
@@ -219,66 +174,66 @@ fn hash_array(array: &ArrayRef, hashes_buffer: &mut [u32]) -> Result<()> {
             }
         }
         DataType::Int8 => {
-            hash_array_primitive!(Int8Array, array, i32, hashes_buffer);
+            hash_array_primitive!(Int8Array, array, i32, hashes_buffer, h);
         }
         DataType::Int16 => {
-            hash_array_primitive!(Int16Array, array, i32, hashes_buffer);
+            hash_array_primitive!(Int16Array, array, i32, hashes_buffer, h);
         }
         DataType::Int32 => {
-            hash_array_primitive!(Int32Array, array, i32, hashes_buffer);
+            hash_array_primitive!(Int32Array, array, i32, hashes_buffer, h);
         }
         DataType::Int64 => {
-            hash_array_primitive!(Int64Array, array, i64, hashes_buffer);
+            hash_array_primitive!(Int64Array, array, i64, hashes_buffer, h);
         }
         DataType::Float32 => {
-            hash_array_primitive!(Float32Array, array, f32, hashes_buffer);
+            hash_array_primitive!(Float32Array, array, f32, hashes_buffer, h);
         }
         DataType::Float64 => {
-            hash_array_primitive!(Float64Array, array, f64, hashes_buffer);
+            hash_array_primitive!(Float64Array, array, f64, hashes_buffer, h);
         }
         DataType::Timestamp(TimeUnit::Second, _) => {
-            hash_array_primitive!(TimestampSecondArray, array, i64, hashes_buffer);
+            hash_array_primitive!(TimestampSecondArray, array, i64, hashes_buffer, h);
         }
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
-            hash_array_primitive!(TimestampMillisecondArray, array, i64, hashes_buffer);
+            hash_array_primitive!(TimestampMillisecondArray, array, i64, hashes_buffer, h);
         }
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            hash_array_primitive!(TimestampMicrosecondArray, array, i64, hashes_buffer);
+            hash_array_primitive!(TimestampMicrosecondArray, array, i64, hashes_buffer, h);
         }
         DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-            hash_array_primitive!(TimestampNanosecondArray, array, i64, hashes_buffer);
+            hash_array_primitive!(TimestampNanosecondArray, array, i64, hashes_buffer, h);
         }
         DataType::Date32 => {
-            hash_array_primitive!(Date32Array, array, i32, hashes_buffer);
+            hash_array_primitive!(Date32Array, array, i32, hashes_buffer, h);
         }
         DataType::Date64 => {
-            hash_array_primitive!(Date64Array, array, i64, hashes_buffer);
+            hash_array_primitive!(Date64Array, array, i64, hashes_buffer, h);
         }
         DataType::Binary => {
-            hash_array!(BinaryArray, array, hashes_buffer);
+            hash_array!(BinaryArray, array, hashes_buffer, h);
         }
         DataType::LargeBinary => {
-            hash_array!(LargeBinaryArray, array, hashes_buffer);
+            hash_array!(LargeBinaryArray, array, hashes_buffer, h);
         }
         DataType::Utf8 => {
-            hash_array!(StringArray, array, hashes_buffer);
+            hash_array!(StringArray, array, hashes_buffer, h);
         }
         DataType::LargeUtf8 => {
-            hash_array!(LargeStringArray, array, hashes_buffer);
+            hash_array!(LargeStringArray, array, hashes_buffer, h);
         }
         DataType::Decimal128(..) => {
-            hash_array_decimal!(Decimal128Array, array, hashes_buffer);
+            hash_array_decimal!(Decimal128Array, array, hashes_buffer, h);
         }
         DataType::Dictionary(index_type, _) => match &**index_type {
-            DataType::Int8 => create_hashes_dictionary::<Int8Type>(array, hashes_buffer)?,
-            DataType::Int16 => create_hashes_dictionary::<Int16Type>(array, hashes_buffer)?,
-            DataType::Int32 => create_hashes_dictionary::<Int32Type>(array, hashes_buffer)?,
-            DataType::Int64 => create_hashes_dictionary::<Int64Type>(array, hashes_buffer)?,
+            DataType::Int8 => create_hashes_dictionary::<Int8Type, _>(array, hashes_buffer, h)?,
+            DataType::Int16 => create_hashes_dictionary::<Int16Type, _>(array, hashes_buffer, h)?,
+            DataType::Int32 => create_hashes_dictionary::<Int32Type, _>(array, hashes_buffer, h)?,
+            DataType::Int64 => create_hashes_dictionary::<Int64Type, _>(array, hashes_buffer, h)?,
             other => df_execution_err!("Unsupported dictionary type in hasher hashing: {other}")?,
         },
         _ => {
             for idx in 0..array.len() {
-                hash_one(array, idx, &mut hashes_buffer[idx])?;
+                hash_one(array, idx, &mut hashes_buffer[idx], h)?;
             }
         }
     }
@@ -286,96 +241,103 @@ fn hash_array(array: &ArrayRef, hashes_buffer: &mut [u32]) -> Result<()> {
 }
 
 macro_rules! hash_one_primitive {
-    ($array_type:ident, $column:ident, $ty:ident, $hash:ident, $idx:ident) => {
+    ($array_type:ident, $column:ident, $ty:ident, $hash:ident, $idx:ident, $h:expr) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        *$hash = spark_compatible_murmur3_hash(
-            (array.value($idx as usize) as $ty).to_le_bytes(),
+        *$hash = $h(
+            (array.value($idx as usize) as $ty).to_le_bytes().as_ref(),
             *$hash,
         );
     };
 }
 
 macro_rules! hash_one_binary {
-    ($array_type:ident, $column:ident, $hash:ident, $idx:ident) => {
+    ($array_type:ident, $column:ident, $hash:ident, $idx:ident, $h:expr) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        *$hash = spark_compatible_murmur3_hash(&array.value($idx as usize), *$hash);
+        *$hash = $h(&array.value($idx as usize).as_ref(), *$hash);
     };
 }
 
 macro_rules! hash_one_decimal {
-    ($array_type:ident, $column:ident, $hash:ident, $idx:ident) => {
+    ($array_type:ident, $column:ident, $hash:ident, $idx:ident, $h:expr) => {
         let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        *$hash = spark_compatible_murmur3_hash(array.value($idx as usize).to_le_bytes(), *$hash);
+        *$hash = $h(array.value($idx as usize).to_le_bytes().as_ref(), *$hash);
     };
 }
 
-fn hash_one(col: &ArrayRef, idx: usize, hash: &mut u32) -> Result<()> {
+fn hash_one<T: num::PrimInt>(
+    col: &ArrayRef,
+    idx: usize,
+    hash: &mut T,
+    h: impl Fn(&[u8], T) -> T + Copy,
+) -> Result<()> {
     if col.is_valid(idx) {
         match col.data_type() {
             DataType::Null => {}
             DataType::Boolean => {
                 let array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
-                *hash = spark_compatible_murmur3_hash(
-                    (if array.value(idx) { 1u32 } else { 0u32 }).to_le_bytes(),
+                *hash = h(
+                    (if array.value(idx) { 1u32 } else { 0u32 })
+                        .to_le_bytes()
+                        .as_ref(),
                     *hash,
                 );
             }
             DataType::Int8 => {
-                hash_one_primitive!(Int8Array, col, i32, hash, idx);
+                hash_one_primitive!(Int8Array, col, i32, hash, idx, h);
             }
             DataType::Int16 => {
-                hash_one_primitive!(Int16Array, col, i32, hash, idx);
+                hash_one_primitive!(Int16Array, col, i32, hash, idx, h);
             }
             DataType::Int32 => {
-                hash_one_primitive!(Int32Array, col, i32, hash, idx);
+                hash_one_primitive!(Int32Array, col, i32, hash, idx, h);
             }
             DataType::Int64 => {
-                hash_one_primitive!(Int64Array, col, i64, hash, idx);
+                hash_one_primitive!(Int64Array, col, i64, hash, idx, h);
             }
             DataType::Float32 => {
-                hash_one_primitive!(Float32Array, col, f32, hash, idx);
+                hash_one_primitive!(Float32Array, col, f32, hash, idx, h);
             }
             DataType::Float64 => {
-                hash_one_primitive!(Float64Array, col, f64, hash, idx);
+                hash_one_primitive!(Float64Array, col, f64, hash, idx, h);
             }
             DataType::Timestamp(TimeUnit::Second, None) => {
-                hash_one_primitive!(TimestampSecondArray, col, i64, hash, idx);
+                hash_one_primitive!(TimestampSecondArray, col, i64, hash, idx, h);
             }
             DataType::Timestamp(TimeUnit::Millisecond, None) => {
-                hash_one_primitive!(TimestampMillisecondArray, col, i64, hash, idx);
+                hash_one_primitive!(TimestampMillisecondArray, col, i64, hash, idx, h);
             }
             DataType::Timestamp(TimeUnit::Microsecond, None) => {
-                hash_one_primitive!(TimestampMicrosecondArray, col, i64, hash, idx);
+                hash_one_primitive!(TimestampMicrosecondArray, col, i64, hash, idx, h);
             }
             DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-                hash_one_primitive!(TimestampNanosecondArray, col, i64, hash, idx);
+                hash_one_primitive!(TimestampNanosecondArray, col, i64, hash, idx, h);
             }
             DataType::Date32 => {
-                hash_one_primitive!(Date32Array, col, i32, hash, idx);
+                hash_one_primitive!(Date32Array, col, i32, hash, idx, h);
             }
             DataType::Date64 => {
-                hash_one_primitive!(Date64Array, col, i64, hash, idx);
+                hash_one_primitive!(Date64Array, col, i64, hash, idx, h);
             }
             DataType::Binary => {
-                hash_one_binary!(BinaryArray, col, hash, idx);
+                hash_one_binary!(BinaryArray, col, hash, idx, h);
             }
             DataType::LargeBinary => {
-                hash_one_binary!(LargeBinaryArray, col, hash, idx);
+                hash_one_binary!(LargeBinaryArray, col, hash, idx, h);
             }
             DataType::Utf8 => {
-                hash_one_binary!(StringArray, col, hash, idx);
+                hash_one_binary!(StringArray, col, hash, idx, h);
             }
             DataType::LargeUtf8 => {
-                hash_one_binary!(LargeStringArray, col, hash, idx);
+                hash_one_binary!(LargeStringArray, col, hash, idx, h);
             }
             DataType::Decimal128(..) => {
-                hash_one_decimal!(Decimal128Array, col, hash, idx);
+                hash_one_decimal!(Decimal128Array, col, hash, idx, h);
             }
             DataType::List(..) => {
                 let list_array = col.as_any().downcast_ref::<ListArray>().unwrap();
                 let value_array = list_array.value(idx);
                 for i in 0..value_array.len() {
-                    hash_one(&value_array, i, hash)?;
+                    hash_one(&value_array, i, hash, h)?;
                 }
             }
             DataType::Map(..) => {
@@ -384,14 +346,14 @@ fn hash_one(col: &ArrayRef, idx: usize, hash: &mut u32) -> Result<()> {
                 let key_array = kv_array.column(0);
                 let value_array = kv_array.column(1);
                 for i in 0..kv_array.len() {
-                    hash_one(key_array, i, hash)?;
-                    hash_one(value_array, i, hash)?;
+                    hash_one(key_array, i, hash, h)?;
+                    hash_one(value_array, i, hash, h)?;
                 }
             }
             DataType::Struct(_) => {
                 let struct_array = col.as_any().downcast_ref::<StructArray>().unwrap();
                 for col in struct_array.columns() {
-                    hash_one(col, idx, hash)?;
+                    hash_one(col, idx, hash, h)?;
                 }
             }
             other => df_execution_err!("Unsupported data type in hasher: {other}")?,
@@ -400,8 +362,7 @@ fn hash_one(col: &ArrayRef, idx: usize, hash: &mut u32) -> Result<()> {
     Ok(())
 }
 
-pub fn pmod(hash: u32, n: usize) -> usize {
-    let hash = hash as i32;
+pub fn pmod(hash: i32, n: usize) -> usize {
     let n = n as i32;
     let r = hash % n;
     let result = if r < 0 { (r + n) % n } else { r };
@@ -421,7 +382,7 @@ mod tests {
         datatypes::{DataType, Field, ToByteSlice},
     };
 
-    use crate::spark_hash::{create_hashes, pmod, spark_compatible_murmur3_hash};
+    use super::*;
 
     #[test]
     fn test_list() {
@@ -441,10 +402,19 @@ mod tests {
             Some(i8::MIN),
         ])) as ArrayRef;
         let mut hashes = vec![42; 5];
-        create_hashes(&[i], &mut hashes).unwrap();
+        create_murmur3_hashes(&[i], &mut hashes).unwrap();
 
         // generated with Spark Murmur3_x86_32
-        let expected = vec![0xdea578e3, 0x379fae8f, 0xa0590e3d, 0x43b4d8ed, 0x422a1365];
+        let expected: Vec<i32> = [
+            0xdea578e3_u32,
+            0x379fae8f,
+            0xa0590e3d,
+            0x43b4d8ed,
+            0x422a1365,
+        ]
+        .into_iter()
+        .map(|v| v as i32)
+        .collect();
         assert_eq!(hashes, expected);
     }
 
@@ -452,16 +422,16 @@ mod tests {
     fn test_i32() {
         let i = Arc::new(Int32Array::from(vec![Some(1)])) as ArrayRef;
         let mut hashes = vec![42; 1];
-        create_hashes(&[i], &mut hashes).unwrap();
+        create_murmur3_hashes(&[i], &mut hashes).unwrap();
 
         let j = Arc::new(Int32Array::from(vec![Some(2)])) as ArrayRef;
-        create_hashes(&[j], &mut hashes).unwrap();
+        create_murmur3_hashes(&[j], &mut hashes).unwrap();
 
         let m = Arc::new(Int32Array::from(vec![Some(3)])) as ArrayRef;
-        create_hashes(&[m], &mut hashes).unwrap();
+        create_murmur3_hashes(&[m], &mut hashes).unwrap();
 
         let n = Arc::new(Int32Array::from(vec![Some(4)])) as ArrayRef;
-        create_hashes(&[n], &mut hashes).unwrap();
+        create_murmur3_hashes(&[n], &mut hashes).unwrap();
     }
 
     #[test]
@@ -473,29 +443,76 @@ mod tests {
             Some(i64::MAX),
             Some(i64::MIN),
         ])) as ArrayRef;
-        let mut hashes = vec![42; 5];
-        create_hashes(&[i], &mut hashes).unwrap();
 
-        // generated with Spark Murmur3_x86_32
-        let expected = vec![0x99f0149d, 0x9c67b85d, 0xc8008529, 0xa05b5d7b, 0xcd1e64fb];
+        // generated with Murmur3Hash(Seq(Literal(1L)), 42).eval() since Spark is tested
+        let mut hashes = vec![42; 5];
+        create_murmur3_hashes(&[i.clone()], &mut hashes).unwrap();
+        let expected: Vec<i32> = [
+            0x99f0149d_u32,
+            0x9c67b85d,
+            0xc8008529,
+            0xa05b5d7b,
+            0xcd1e64fb,
+        ]
+        .into_iter()
+        .map(|v| v as i32)
+        .collect();
+        assert_eq!(hashes, expected);
+
+        // generated with XxHash64(Seq(Literal(1L)), 42).eval() since Spark is tested
+        // against this as well
+        let mut hashes = vec![42; 5];
+        create_xxhash64_hashes(&[i.clone()], &mut hashes).unwrap();
+        let expected = vec![
+            -7001672635703045582,
+            -5252525462095825812,
+            3858142552250413010,
+            -3246596055638297850,
+            -8619748838626508300,
+        ];
         assert_eq!(hashes, expected);
     }
 
     #[test]
     fn test_str() {
         let i = Arc::new(StringArray::from(vec!["hello", "bar", "", "😁", "天地"]));
-        let mut hashes = vec![42; 5];
-        create_hashes(&[i], &mut hashes).unwrap();
 
         // generated with Murmur3Hash(Seq(Literal("")), 42).eval() since Spark is tested
         // against this as well
-        let expected = vec![3286402344, 2486176763, 142593372, 885025535, 2395000894];
+        let mut hashes = vec![42; 5];
+        create_murmur3_hashes(&[i.clone()], &mut hashes).unwrap();
+        let expected: Vec<i32> = [3286402344_u32, 2486176763, 142593372, 885025535, 2395000894]
+            .into_iter()
+            .map(|v| v as i32)
+            .collect();
+        assert_eq!(hashes, expected);
+
+        // generated with XxHash64(Seq(Literal("")), 42).eval() since Spark is tested
+        // against this as well
+        let mut hashes = vec![42; 5];
+        create_xxhash64_hashes(&[i.clone()], &mut hashes).unwrap();
+        let expected = vec![
+            -4367754540140381902,
+            -1798770879548125814,
+            -7444071767201028348,
+            -6337236088984028203,
+            -235771157374669727,
+        ];
         assert_eq!(hashes, expected);
     }
 
     #[test]
     fn test_pmod() {
-        let i: Vec<u32> = vec![0x99f0149d, 0x9c67b85d, 0xc8008529, 0xa05b5d7b, 0xcd1e64fb];
+        let i: Vec<i32> = [
+            0x99f0149d_u32,
+            0x9c67b85d,
+            0xc8008529,
+            0xa05b5d7b,
+            0xcd1e64fb,
+        ]
+        .into_iter()
+        .map(|v| v as i32)
+        .collect();
         let result = i.into_iter().map(|i| pmod(i, 200)).collect::<Vec<usize>>();
 
         // expected partition from Spark with n=200

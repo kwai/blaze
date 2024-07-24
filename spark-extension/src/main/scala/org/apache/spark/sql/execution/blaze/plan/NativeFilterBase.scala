@@ -91,7 +91,6 @@ abstract class NativeFilterBase(condition: Expression, override val child: Spark
     val inputRDD = NativeHelper.executeNative(child)
     val nativeMetrics = MetricNode(metrics, inputRDD.metrics :: Nil)
     val nativeFilterExprs = this.nativeFilterExprs
-
     new NativeRDD(
       sparkContext,
       nativeMetrics,

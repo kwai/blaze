@@ -16,10 +16,10 @@ use std::sync::Arc;
 
 use arrow::array::*;
 use datafusion::{common::Result, physical_plan::ColumnarValue};
-use datafusion_ext_commons::spark_hash::create_murmur3_hashes;
+use datafusion_ext_commons::spark_hash::create_xxhash64_hashes;
 
-/// implements org.apache.spark.sql.catalyst.expressions.Murmur3Hash
-pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
+/// implements org.apache.spark.sql.catalyst.expressions.XxHash64
+pub fn spark_xxhash64(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let len = args
         .iter()
         .map(|arg| match arg {
@@ -40,11 +40,11 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         .collect::<Result<Vec<_>>>()?;
 
     // use identical seed as spark hash partition
-    let spark_murmur3_default_seed = 42i32;
-    let mut hash_buffer = vec![spark_murmur3_default_seed; len];
-    create_murmur3_hashes(&arrays, &mut hash_buffer)?;
+    let spark_xxhash64_default_seed = 42i64;
+    let mut hash_buffer = vec![spark_xxhash64_default_seed; len];
+    create_xxhash64_hashes(&arrays, &mut hash_buffer)?;
 
-    Ok(ColumnarValue::Array(Arc::new(Int32Array::from(
+    Ok(ColumnarValue::Array(Arc::new(Int64Array::from(
         hash_buffer,
     ))))
 }
@@ -53,24 +53,24 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 mod test {
     use std::{error::Error, sync::Arc};
 
-    use arrow::array::{ArrayRef, Int32Array, Int64Array, StringArray};
+    use arrow::array::{ArrayRef, Int64Array, StringArray};
     use datafusion::logical_expr::ColumnarValue;
 
-    use crate::spark_murmur3_hash::spark_murmur3_hash;
+    use super::*;
 
     #[test]
-    fn test_murmur3_hash_int64() -> Result<(), Box<dyn Error>> {
-        let result = spark_murmur3_hash(&vec![ColumnarValue::Array(Arc::new(Int64Array::from(
+    fn test_xxhash64_int64() -> Result<(), Box<dyn Error>> {
+        let result = spark_xxhash64(&vec![ColumnarValue::Array(Arc::new(Int64Array::from(
             vec![Some(1), Some(0), Some(-1), Some(i64::MAX), Some(i64::MIN)],
         )))])?
         .into_array(5)?;
 
-        let expected = Int32Array::from(vec![
-            Some(-1712319331),
-            Some(-1670924195),
-            Some(-939490007),
-            Some(-1604625029),
-            Some(-853646085),
+        let expected = Int64Array::from(vec![
+            Some(-7001672635703045582),
+            Some(-5252525462095825812),
+            Some(3858142552250413010),
+            Some(-3246596055638297850),
+            Some(-8619748838626508300),
         ]);
         let expected: ArrayRef = Arc::new(expected);
 
@@ -79,18 +79,18 @@ mod test {
     }
 
     #[test]
-    fn test_murmur3_hash_string() -> Result<(), Box<dyn Error>> {
-        let result = spark_murmur3_hash(&vec![ColumnarValue::Array(Arc::new(
+    fn test_xxhash64_string() -> Result<(), Box<dyn Error>> {
+        let result = spark_xxhash64(&vec![ColumnarValue::Array(Arc::new(
             StringArray::from_iter_values(["hello", "bar", "", "😁", "天地"]),
         ))])?
         .into_array(5)?;
 
-        let expected = Int32Array::from(vec![
-            Some(-1008564952),
-            Some(-1808790533),
-            Some(142593372),
-            Some(885025535),
-            Some(-1899966402),
+        let expected = Int64Array::from(vec![
+            Some(-4367754540140381902),
+            Some(-1798770879548125814),
+            Some(-7444071767201028348),
+            Some(-6337236088984028203),
+            Some(-235771157374669727),
         ]);
         let expected: ArrayRef = Arc::new(expected);
 

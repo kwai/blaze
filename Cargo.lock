@@ -861,6 +861,7 @@ dependencies = [
  "bigdecimal",
  "bitvec",
  "blaze-jni-bridge",
+ "byteorder",
  "bytes",
  "datafusion",
  "futures",

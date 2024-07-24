@@ -51,7 +51,8 @@ use datafusion::{
 };
 use datafusion_ext_commons::downcast_any;
 use datafusion_ext_exprs::{
-    cast::TryCastExpr, get_indexed_field::GetIndexedFieldExpr, get_map_value::GetMapValueExpr,
+    bloom_filter_might_contain::BloomFilterMightContainExpr, cast::TryCastExpr,
+    get_indexed_field::GetIndexedFieldExpr, get_map_value::GetMapValueExpr,
     named_struct::NamedStructExpr, row_num::RowNumExpr,
     spark_scalar_subquery_wrapper::SparkScalarSubqueryWrapperExpr,
     spark_udf_wrapper::SparkUDFWrapperExpr, string_contains::StringContainsExpr,
@@ -619,6 +620,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 protobuf::AggFunction::FirstIgnoresNull => {
                                     WindowFunction::Agg(AggFunction::FirstIgnoresNull)
                                 }
+                                protobuf::AggFunction::BloomFilter => {
+                                    WindowFunction::Agg(AggFunction::BloomFilter)
+                                }
                                 protobuf::AggFunction::BrickhouseCollect => {
                                     WindowFunction::Agg(AggFunction::BrickhouseCollect)
                                 }
@@ -1029,6 +1033,10 @@ fn try_parse_physical_expr(
                 Arc::new(StringContainsExpr::new(expr, e.infix.clone()))
             }
             ExprType::RowNumExpr(_) => Arc::new(RowNumExpr::default()),
+            ExprType::BloomFilterMightContainExpr(e) => Arc::new(BloomFilterMightContainExpr::new(
+                try_parse_physical_expr_box_required(&e.bloom_filter_expr, input_schema)?,
+                try_parse_physical_expr_box_required(&e.value_expr, input_schema)?,
+            )),
             ExprType::ScAndExpr(e) => {
                 let l = try_parse_physical_expr_box_required(&e.left, input_schema)?;
                 let r = try_parse_physical_expr_box_required(&e.right, input_schema)?;

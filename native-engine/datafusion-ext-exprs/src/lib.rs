@@ -16,6 +16,7 @@ use std::{any::Any, sync::Arc};
 
 use datafusion::physical_expr::PhysicalExpr;
 
+pub mod bloom_filter_might_contain;
 pub mod cast;
 pub mod get_indexed_field;
 pub mod get_map_value;
