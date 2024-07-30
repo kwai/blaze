@@ -1255,6 +1255,8 @@ pub struct SparkUDTFWrapperContext<'a> {
     pub ctor: JMethodID,
     pub method_eval: JMethodID,
     pub method_eval_ret: ReturnType,
+    pub method_terminate: JMethodID,
+    pub method_terminate_ret: ReturnType,
 }
 impl<'a> SparkUDTFWrapperContext<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDTFWrapperContext";
@@ -1266,6 +1268,8 @@ impl<'a> SparkUDTFWrapperContext<'a> {
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
             method_eval: env.get_method_id(class, "eval", "(JJ)V").unwrap(),
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
+            method_terminate: env.get_method_id(class, "terminate", "(IJ)V").unwrap(),
+            method_terminate_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

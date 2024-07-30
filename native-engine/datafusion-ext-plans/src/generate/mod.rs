@@ -42,6 +42,10 @@ pub trait Generator: Debug + Send + Sync {
     fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>>;
 
     fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows>;
+
+    fn terminate(&self, _last_row_id: i32) -> Result<Option<GeneratedRows>> {
+        Ok(None)
+    }
 }
 
 #[derive(Clone)]
