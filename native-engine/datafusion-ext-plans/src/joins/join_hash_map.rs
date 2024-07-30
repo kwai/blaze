@@ -24,7 +24,7 @@ use arrow::{
 };
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
-use datafusion_ext_commons::spark_hash::create_murmur3_hashes;
+use datafusion_ext_commons::spark_hash::create_hashes;
 use hashbrown::HashMap;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -387,7 +387,9 @@ pub fn join_hash_map_schema(data_schema: &SchemaRef) -> SchemaRef {
 pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Result<Vec<i32>> {
     const JOIN_HASH_RANDOM_SEED: i32 = 0x90ec4058u32 as i32;
     let mut hashes = vec![JOIN_HASH_RANDOM_SEED; num_rows];
-    create_murmur3_hashes(key_columns, &mut hashes)?;
+    create_hashes(key_columns, &mut hashes, |v, h| {
+        gxhash::gxhash32(v, h as i64) as i32
+    })?;
     Ok(hashes)
 }
 
