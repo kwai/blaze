@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        sparkver: [spark303, spark324, spark333]
+        sparkver: [spark303, spark320, spark324, spark333]
         blazever: [3.0.1]
 
     steps:

@@ -49,7 +49,7 @@ case object NativeProjectExecProvider {
     NativeProjectExec(projectList, child, addTypeCast)
   }
 
-  @enableIf(Seq("spark324", "spark333").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark320", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
   def provide(
       projectList: Seq[NamedExpression],
       child: SparkPlan,

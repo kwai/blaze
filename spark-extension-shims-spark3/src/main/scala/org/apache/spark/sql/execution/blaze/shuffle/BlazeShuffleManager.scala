@@ -47,7 +47,9 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     sortShuffleManager.registerShuffle(shuffleId, dependency)
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def getReader[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,
@@ -60,7 +62,7 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     if (isArrowShuffle(handle)) {
       val baseShuffleHandle = handle.asInstanceOf[BaseShuffleHandle[K, _, C]]
 
-      @enableIf(Seq("spark324").contains(System.getProperty("blaze.shim")))
+      @enableIf(Seq("spark320", "spark324").contains(System.getProperty("blaze.shim")))
       def shuffleMergeFinalized = baseShuffleHandle.dependency.shuffleMergeFinalized
       @enableIf(Seq("spark333", "spark351").contains(System.getProperty("blaze.shim")))
       def shuffleMergeFinalized = baseShuffleHandle.dependency.isShuffleMergeFinalizedMarked

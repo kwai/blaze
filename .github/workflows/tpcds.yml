@@ -12,6 +12,13 @@ jobs:
       sparkver: spark303
       sparkurl: https://archive.apache.org/dist/spark/spark-3.0.3/spark-3.0.3-bin-hadoop2.7.tgz
 
+  test-spark320:
+    name: Test Spark320
+    uses: ./.github/workflows/tpcds-reusable.yml
+    with:
+      sparkver: spark320
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.2.0/spark-3.2.0-bin-hadoop2.7.tgz
+
   test-spark324:
     name: Test Spark324
     uses: ./.github/workflows/tpcds-reusable.yml

@@ -47,7 +47,9 @@ case class NativeBroadcastJoinExec(
 
   override val condition: Option[Expression] = None
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def buildSide: org.apache.spark.sql.catalyst.optimizer.BuildSide =
     broadcastSide match {
       case BroadcastLeft => org.apache.spark.sql.catalyst.optimizer.BuildLeft
@@ -60,7 +62,9 @@ case class NativeBroadcastJoinExec(
     case BroadcastRight => org.apache.spark.sql.execution.joins.BuildRight
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def requiredChildDistribution = {
     import org.apache.spark.sql.catalyst.plans.physical.BroadcastDistribution
     import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
@@ -70,22 +74,30 @@ case class NativeBroadcastJoinExec(
     BroadcastDistribution(mode) :: UnspecifiedDistribution :: Nil
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def supportCodegen: Boolean = false
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def inputRDDs() = {
     throw new NotImplementedError("NativeBroadcastJoin dose not support codegen")
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override protected def prepareRelation(
       ctx: org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext)
       : org.apache.spark.sql.execution.joins.HashedRelationInfo = {
     throw new NotImplementedError("NativeBroadcastJoin dose not support codegen")
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildrenInternal(
       newLeft: SparkPlan,
       newRight: SparkPlan): SparkPlan =

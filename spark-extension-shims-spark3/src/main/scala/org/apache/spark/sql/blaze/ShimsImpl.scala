@@ -116,6 +116,8 @@ class ShimsImpl extends Shims with Logging {
 
   @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
   def shimVersion: String = "spark303"
+  @enableIf(Seq("spark320").contains(System.getProperty("blaze.shim")))
+  def shimVersion: String = "spark320"
   @enableIf(Seq("spark324").contains(System.getProperty("blaze.shim")))
   def shimVersion: String = "spark324"
   @enableIf(Seq("spark333").contains(System.getProperty("blaze.shim")))
@@ -134,7 +136,7 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark320").contains(System.getProperty("blaze.shim")))
   override def initExtension(): Unit = {}
 
   override def createConvertToNativeExec(child: SparkPlan): ConvertToNativeBase =
@@ -354,7 +356,9 @@ class ShimsImpl extends Shims with Logging {
       length: Long,
       numRecords: Long): FileSegment = new FileSegment(file, offset, length)
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def commit(
       dep: ShuffleDependency[_, _, _],
       shuffleBlockResolver: IndexShuffleBlockResolver,
@@ -495,7 +499,9 @@ class ShimsImpl extends Shims with Logging {
     expr.asInstanceOf[AggregateExpression].filter
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   private def isAQEShuffleRead(exec: SparkPlan): Boolean = {
     import org.apache.spark.sql.execution.adaptive.AQEShuffleReadExec
     exec.isInstanceOf[AQEShuffleReadExec]
@@ -507,7 +513,9 @@ class ShimsImpl extends Shims with Logging {
     exec.isInstanceOf[CustomShuffleReaderExec]
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   private def executeNativeAQEShuffleReader(exec: SparkPlan): NativeRDD = {
     import org.apache.spark.sql.execution.adaptive.AQEShuffleReadExec
     import org.apache.spark.sql.execution.CoalescedMapperPartitionSpec
@@ -686,7 +694,9 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def getSqlContext(sparkPlan: SparkPlan): SQLContext =
     sparkPlan.session.sqlContext
 
@@ -700,7 +710,9 @@ class ShimsImpl extends Shims with Logging {
     NativeExprWrapper(nativeExpr, dataType, nullable)
   }
 
-  @enableIf(Seq("spark303", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark303", "spark320", "spark324", "spark333").contains(
+      System.getProperty("blaze.shim")))
   private def convertPromotePrecision(
       e: Expression,
       isPruningExpr: Boolean,
@@ -747,7 +759,7 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @enableIf(Seq("spark303", "spark324").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark320", "spark324").contains(System.getProperty("blaze.shim")))
   private def convertBloomFilterAgg(agg: AggregateFunction): Option[pb.PhysicalAggExprNode] = None
 
   @enableIf(Seq("spark333", "spark351").contains(System.getProperty("blaze.shim")))
@@ -771,7 +783,7 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @enableIf(Seq("spark303", "spark324").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark320", "spark324").contains(System.getProperty("blaze.shim")))
   private def convertBloomFilterMightContain(
       e: Expression,
       isPruningExpr: Boolean,
@@ -782,7 +794,9 @@ class ShimsImpl extends Shims with Logging {
 case class ForceNativeExecutionWrapper(override val child: SparkPlan)
     extends ForceNativeExecutionWrapperBase(child) {
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
@@ -797,6 +811,8 @@ case class NativeExprWrapper(
     override val nullable: Boolean)
     extends NativeExprWrapperBase(nativeExpr, dataType, nullable) {
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): Expression = copy()
 }
