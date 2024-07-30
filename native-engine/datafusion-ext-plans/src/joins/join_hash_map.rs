@@ -24,7 +24,7 @@ use arrow::{
 };
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
-use datafusion_ext_commons::spark_hash::create_hashes;
+use datafusion_ext_commons::spark_hash::create_murmur3_hashes;
 use hashbrown::HashMap;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -35,7 +35,7 @@ pub struct Table {
     entry_offsets: Vec<u32>,
     entry_lens: Vec<u32>,
     item_indices: Vec<u32>,
-    item_hashes: Vec<u32>,
+    item_hashes: Vec<i32>,
 }
 
 impl Table {
@@ -69,7 +69,7 @@ impl Table {
 
         // sort record batch by hashes for better compression and data locality
         // null values are placed in the front of each entry
-        let (indices, item_hashes, item_valids): (Vec<usize>, Vec<u32>, Vec<bool>) = item_hashes
+        let (indices, item_hashes, item_valids): (Vec<usize>, Vec<i32>, Vec<bool>) = item_hashes
             .into_iter()
             .zip(item_valids)
             .enumerate()
@@ -80,7 +80,7 @@ impl Table {
 
         let mut entries_to_row_indices: HashMap<u32, Vec<u32>> = HashMap::new();
         for (row_idx, hash) in item_hashes.iter().enumerate() {
-            let entry = hash % num_entries;
+            let entry = *hash as u32 % num_entries;
             entries_to_row_indices
                 .entry(entry)
                 .or_default()
@@ -183,8 +183,8 @@ impl Table {
         Ok(raw_bytes)
     }
 
-    pub fn entry<'a>(&'a self, hash: u32) -> Option<impl Iterator<Item = u32> + 'a> {
-        let entry = hash % (self.entry_offsets.len() as u32);
+    pub fn entry<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {
+        let entry = (hash as u32) % (self.entry_offsets.len() as u32);
         let len = self.entry_lens[entry as usize] as usize;
         if len > 0 {
             let offset = self.entry_offsets[entry as usize] as usize;
@@ -337,7 +337,7 @@ impl JoinHashMap {
         &self.key_columns
     }
 
-    pub fn entry_indices<'a>(&'a self, hash: u32) -> Option<impl Iterator<Item = u32> + 'a> {
+    pub fn entry_indices<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {
         self.table.entry(hash)
     }
 
@@ -384,10 +384,10 @@ pub fn join_hash_map_schema(data_schema: &SchemaRef) -> SchemaRef {
 }
 
 #[inline]
-pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Result<Vec<u32>> {
-    const JOIN_HASH_RANDOM_SEED: u32 = 0x90ec4058;
+pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Result<Vec<i32>> {
+    const JOIN_HASH_RANDOM_SEED: i32 = 0x90ec4058u32 as i32;
     let mut hashes = vec![JOIN_HASH_RANDOM_SEED; num_rows];
-    create_hashes(key_columns, &mut hashes)?;
+    create_murmur3_hashes(key_columns, &mut hashes)?;
     Ok(hashes)
 }
 

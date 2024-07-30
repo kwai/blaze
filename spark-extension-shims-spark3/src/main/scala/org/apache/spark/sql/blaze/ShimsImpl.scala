@@ -45,6 +45,7 @@ import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.expressions.StringSplit
 import org.apache.spark.sql.catalyst.expressions.TaggingExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.expressions.aggregate.First
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
@@ -113,9 +114,24 @@ import com.thoughtworks.enableIf
 
 class ShimsImpl extends Shims with Logging {
 
+  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  def shimVersion: String = "spark303"
+  @enableIf(Seq("spark324").contains(System.getProperty("blaze.shim")))
+  def shimVersion: String = "spark324"
+  @enableIf(Seq("spark333").contains(System.getProperty("blaze.shim")))
+  def shimVersion: String = "spark333"
+  @enableIf(Seq("spark351").contains(System.getProperty("blaze.shim")))
+  def shimVersion: String = "spark351"
+
   @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
   override def initExtension(): Unit = {
     ValidateSparkPlanInjector.inject()
+
+    // disable MultiCommutativeOp suggested in spark3.4+
+    if (shimVersion >= "spark340") {
+      val confName = "spark.sql.analyzer.canonicalization.multiCommutativeOpMemoryOptThreshold"
+      SparkEnv.get.conf.set(confName, Int.MaxValue.toString)
+    }
   }
 
   @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
@@ -434,7 +450,11 @@ class ShimsImpl extends Shims with Logging {
       case e: TaggingExpression =>
         Some(NativeConverters.convertExprWithFallback(e.child, isPruningExpr, fallback))
       case e =>
-        convertPremotePrecision(e, isPruningExpr, fallback) match {
+        convertPromotePrecision(e, isPruningExpr, fallback) match {
+          case Some(v) => return Some(v)
+          case None =>
+        }
+        convertBloomFilterMightContain(e, isPruningExpr, fallback) match {
           case Some(v) => return Some(v)
           case None =>
         }
@@ -446,21 +466,28 @@ class ShimsImpl extends Shims with Logging {
     expr.asInstanceOf[Like].escapeChar
   }
 
-  override def convertAggregateExpr(e: AggregateExpression): Option[pb.PhysicalExprNode] = {
+  override def convertMoreAggregateExpr(e: AggregateExpression): Option[pb.PhysicalExprNode] = {
     assert(getAggregateExpressionFilter(e).isEmpty)
-    val aggBuilder = pb.PhysicalAggExprNode.newBuilder()
 
     e.aggregateFunction match {
       case First(child, ignoresNull) =>
-        aggBuilder.setAggFunction(if (ignoresNull) {
-          pb.AggFunction.FIRST_IGNORES_NULL
-        } else {
-          pb.AggFunction.FIRST
-        })
-        aggBuilder.addChildren(NativeConverters.convertExpr(child))
-        Some(pb.PhysicalExprNode.newBuilder().setAggExpr(aggBuilder).build())
+        val aggExpr = pb.PhysicalAggExprNode
+          .newBuilder()
+          .setAggFunction(if (ignoresNull) {
+            pb.AggFunction.FIRST_IGNORES_NULL
+          } else {
+            pb.AggFunction.FIRST
+          })
+          .addChildren(NativeConverters.convertExpr(child))
+        Some(pb.PhysicalExprNode.newBuilder().setAggExpr(aggExpr).build())
 
-      case _ => None
+      case agg =>
+        convertBloomFilterAgg(agg) match {
+          case Some(aggExpr) =>
+            return Some(pb.PhysicalExprNode.newBuilder().setAggExpr(aggExpr).build())
+          case None =>
+        }
+        None
     }
   }
 
@@ -674,7 +701,7 @@ class ShimsImpl extends Shims with Logging {
   }
 
   @enableIf(Seq("spark303", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
-  def convertPremotePrecision(
+  private def convertPromotePrecision(
       e: Expression,
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode] = {
@@ -695,10 +722,61 @@ class ShimsImpl extends Shims with Logging {
   }
 
   @enableIf(Seq("spark351").contains(System.getProperty("blaze.shim")))
-  def convertPremotePrecision(
+  private def convertPromotePrecision(
       e: Expression,
       isPruningExpr: Boolean,
-      fallback: Expression => Option[pb.PhysicalExprNode]): Option[pb.PhysicalExprNode] = None
+      fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode] = None
+
+  @enableIf(Seq("spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  private def convertBloomFilterAgg(agg: AggregateFunction): Option[pb.PhysicalAggExprNode] = {
+    import org.apache.spark.sql.catalyst.expressions.aggregate.BloomFilterAggregate
+    agg match {
+      case BloomFilterAggregate(child, estimatedNumItemsExpression, numBitsExpression, _, _) =>
+        val estimatedNumItems =
+          estimatedNumItemsExpression.eval().asInstanceOf[Number].longValue()
+        val numBits = numBitsExpression.eval().asInstanceOf[Number].longValue()
+        Some(
+          pb.PhysicalAggExprNode
+            .newBuilder()
+            .setAggFunction(pb.AggFunction.BLOOM_FILTER)
+            .addChildren(NativeConverters.convertExpr(child))
+            .addChildren(NativeConverters.convertExpr(Literal(estimatedNumItems)))
+            .addChildren(NativeConverters.convertExpr(Literal(numBits)))
+            .build())
+      case _ => None
+    }
+  }
+
+  @enableIf(Seq("spark303", "spark324").contains(System.getProperty("blaze.shim")))
+  private def convertBloomFilterAgg(agg: AggregateFunction): Option[pb.PhysicalAggExprNode] = None
+
+  @enableIf(Seq("spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  private def convertBloomFilterMightContain(
+      e: Expression,
+      isPruningExpr: Boolean,
+      fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode] = {
+    import org.apache.spark.sql.catalyst.expressions.BloomFilterMightContain
+    e match {
+      case e: BloomFilterMightContain =>
+        Some(NativeConverters.buildExprNode {
+          _.setBloomFilterMightContainExpr(
+            pb.BloomFilterMightContainExprNode
+              .newBuilder()
+              .setBloomFilterExpr(NativeConverters
+                .convertExprWithFallback(e.bloomFilterExpression, isPruningExpr, fallback))
+              .setValueExpr(NativeConverters
+                .convertExprWithFallback(e.valueExpression, isPruningExpr, fallback)))
+        })
+      case _ => None
+    }
+  }
+
+  @enableIf(Seq("spark303", "spark324").contains(System.getProperty("blaze.shim")))
+  private def convertBloomFilterMightContain(
+      e: Expression,
+      isPruningExpr: Boolean,
+      fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode] = None
+
 }
 
 case class ForceNativeExecutionWrapper(override val child: SparkPlan)

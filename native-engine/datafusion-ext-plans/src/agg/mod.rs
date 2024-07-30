@@ -16,6 +16,7 @@ pub mod acc;
 pub mod agg_context;
 pub mod agg_table;
 pub mod avg;
+pub mod bloom_filter;
 pub mod brickhouse;
 pub mod collect_list;
 pub mod collect_set;
@@ -88,6 +89,7 @@ pub enum AggFunction {
     FirstIgnoresNull,
     CollectList,
     CollectSet,
+    BloomFilter,
     BrickhouseCollect,
     BrickhouseCombineUnique,
 }
@@ -239,6 +241,26 @@ pub fn create_agg(
                 children[0].clone(),
                 dt,
             )?)
+        }
+        AggFunction::BloomFilter => {
+            let dt = children[0].data_type(input_schema)?;
+            let empty_batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
+            let estimated_num_items = children[1]
+                .evaluate(&empty_batch)?
+                .into_array(1)?
+                .as_primitive::<Int64Type>()
+                .value(0);
+            let num_bits = children[2]
+                .evaluate(&empty_batch)?
+                .into_array(1)?
+                .as_primitive::<Int64Type>()
+                .value(0);
+            Arc::new(bloom_filter::AggBloomFilter::new(
+                children[0].clone(),
+                dt,
+                estimated_num_items as usize,
+                num_bits as usize,
+            ))
         }
         AggFunction::CollectList => {
             let arg_type = children[0].data_type(input_schema)?;

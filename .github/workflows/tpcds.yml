@@ -25,3 +25,10 @@ jobs:
     with:
       sparkver: spark333
       sparkurl: https://archive.apache.org/dist/spark/spark-3.3.3/spark-3.3.3-bin-hadoop3.tgz
+
+  test-spark351:
+    name: Test Spark351
+    uses: ./.github/workflows/tpcds-reusable.yml
+    with:
+      sparkver: spark351
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.1/spark-3.5.1-bin-hadoop3.tgz

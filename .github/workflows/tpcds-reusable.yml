@@ -78,7 +78,7 @@ jobs:
           cd spark-bin-${{ inputs.sparkver }} && tar -xf ../spark-*.tgz --strip-component=1
 
   run-tpcds-test:
-    name: Run test ${{ inputs.querygroup }}
+    name: Run TPC-DS test ${{ matrix.query }}
     needs: [build-validator, build-blaze-jar, setup-spark]
     runs-on: ubuntu-latest
     strategy:

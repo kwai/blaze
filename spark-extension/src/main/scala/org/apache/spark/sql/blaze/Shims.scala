@@ -193,7 +193,7 @@ abstract class Shims {
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode]
 
-  def convertAggregateExpr(e: AggregateExpression): Option[pb.PhysicalExprNode]
+  def convertMoreAggregateExpr(e: AggregateExpression): Option[pb.PhysicalExprNode]
 
   def getLikeEscapeChar(expr: Expression): Char
 
