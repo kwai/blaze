@@ -27,7 +27,9 @@ case class NativeExpandExec(
     override val child: SparkPlan)
     extends NativeExpandBase(projections, output, child) {
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 

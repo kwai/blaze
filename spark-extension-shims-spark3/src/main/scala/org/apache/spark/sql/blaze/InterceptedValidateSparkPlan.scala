@@ -70,9 +70,10 @@ object InterceptedValidateSparkPlan extends Logging {
     }
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark320").contains(System.getProperty("blaze.shim")))
   def validate(plan: SparkPlan): Unit = {
-    throw new UnsupportedOperationException("validate is not supported in spark 3.0.3")
+    throw new UnsupportedOperationException(
+      "validate is not supported in spark 3.0.3 or spark 3.2.0")
   }
 
   @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))

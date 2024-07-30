@@ -46,7 +46,7 @@ case object NativeRenameColumnsExecProvider {
     NativeRenameColumnsExec(child, renamedColumnNames)
   }
 
-  @enableIf(Seq("spark324", "spark333").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark320", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
   def provide(child: SparkPlan, renamedColumnNames: Seq[String]): NativeRenameColumnsBase = {
     import org.apache.spark.sql.catalyst.expressions.NamedExpression
     import org.apache.spark.sql.catalyst.expressions.SortOrder

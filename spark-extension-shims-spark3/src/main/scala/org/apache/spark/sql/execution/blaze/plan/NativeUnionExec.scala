@@ -22,7 +22,9 @@ import com.thoughtworks.enableIf
 case class NativeUnionExec(override val children: Seq[SparkPlan])
     extends NativeUnionBase(children) {
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildrenInternal(newChildren: IndexedSeq[SparkPlan]): SparkPlan =
     copy(children = newChildren)
 

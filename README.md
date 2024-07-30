@@ -72,7 +72,7 @@ _You could either build Blaze in dev mode for debugging or in release mode to un
 Blaze._
 
 ```shell
-SHIM=spark333 # or spark303/spark324/spark351
+SHIM=spark333 # or spark303/spark320/spark324/spark351
 MODE=release # or pre
 mvn package -P"${SHIM}" -P"${MODE}"
 ```

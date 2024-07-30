@@ -154,11 +154,15 @@ case class NativeShuffleExchangeExec(
   override def canChangeNumPartitions: Boolean =
     outputPartitioning != SinglePartition
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override def shuffleOrigin =
     org.apache.spark.sql.execution.exchange.ENSURE_REQUIREMENTS
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 

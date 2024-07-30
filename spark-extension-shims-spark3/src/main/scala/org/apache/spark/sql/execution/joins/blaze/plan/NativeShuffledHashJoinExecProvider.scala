@@ -25,7 +25,9 @@ import com.thoughtworks.enableIf
 
 case object NativeShuffledHashJoinExecProvider {
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   def provide(
       left: SparkPlan,
       right: SparkPlan,

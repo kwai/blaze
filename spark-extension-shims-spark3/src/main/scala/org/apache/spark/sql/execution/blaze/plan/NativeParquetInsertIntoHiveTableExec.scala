@@ -31,7 +31,9 @@ case class NativeParquetInsertIntoHiveTableExec(
     override val child: SparkPlan)
     extends NativeParquetInsertIntoHiveTableBase(cmd, child) {
 
-  @enableIf(Seq("spark303", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark303", "spark320", "spark324", "spark333").contains(
+      System.getProperty("blaze.shim")))
   override protected def getInsertIntoHiveTableCommand(
       table: CatalogTable,
       partition: Map[String, Option[String]],
@@ -69,7 +71,9 @@ case class NativeParquetInsertIntoHiveTableExec(
       metrics)
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark320", "spark324", "spark333", "spark351").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
@@ -77,7 +81,9 @@ case class NativeParquetInsertIntoHiveTableExec(
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 
-  @enableIf(Seq("spark303", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark303", "spark320", "spark324", "spark333").contains(
+      System.getProperty("blaze.shim")))
   class BlazeInsertIntoHiveTable303(
       table: CatalogTable,
       partition: Map[String, Option[String]],
@@ -102,7 +108,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       super.run(sparkSession, nativeParquetSink)
     }
 
-    @enableIf(Seq("spark324", "spark333").contains(System.getProperty("blaze.shim")))
+    @enableIf(Seq("spark320", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
     override def basicWriteJobStatsTracker(hadoopConf: org.apache.hadoop.conf.Configuration) = {
       import org.apache.spark.sql.catalyst.InternalRow
       import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
