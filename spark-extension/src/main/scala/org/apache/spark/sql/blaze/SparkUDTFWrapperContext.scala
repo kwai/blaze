@@ -97,4 +97,28 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
       }
     }
   }
+
+  def terminate(rowId: Int, exportFFIArrayPtr: Long): Unit = {
+    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
+      Using.resources(
+        VectorSchemaRoot.create(outputSchema, batchAllocator),
+        ArrowArray.wrap(exportFFIArrayPtr)) {
+        (outputRoot, exportArray) =>
+
+          // evaluate expression and write to output root
+          val outputWriter = ArrowWriter.create(outputRoot)
+          for (outputRow <- expr.terminate()) {
+            outputWriter.write(InternalRow(rowId, outputRow))
+          }
+          outputWriter.finish()
+
+          // export to output using root allocator
+          Data.exportVectorSchemaRoot(
+            ArrowUtils.rootAllocator,
+            outputRoot,
+            dictionaryProvider,
+            exportArray)
+      }
+    }
+  }
 }

@@ -19,7 +19,7 @@ use std::{
 };
 
 use arrow::{
-    array::{ArrayRef, Int32Array, Int32Builder},
+    array::{new_null_array, Array, ArrayRef, Int32Array, Int32Builder},
     datatypes::{Field, Schema, SchemaRef},
     error::ArrowError,
     record_batch::{RecordBatch, RecordBatchOptions},
@@ -37,6 +37,7 @@ use datafusion::{
 use datafusion_ext_commons::{batch_size, cast::cast, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
 use num::integer::Roots;
+use parking_lot::Mutex;
 
 use crate::{
     common::{
@@ -203,10 +204,13 @@ async fn execute_generate(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     let batch_size = batch_size();
+    let input_schema = input_stream.schema();
+
     context.output_with_sender(
         "Generate",
         output_schema.clone(),
         move |sender| async move {
+            let last_child_outputs: Arc<Mutex<Option<Vec<ArrayRef>>>> = Arc::default();
             while let Some(batch) = input_stream
                 .next()
                 .await
@@ -225,6 +229,9 @@ async fn execute_generate(
                     })
                     .collect::<Result<Vec<_>>>()
                     .map_err(|err| err.context("generate: evaluating child output arrays error"))?;
+
+                // cache last child outputs for UDTF termination
+                last_child_outputs.lock().replace(child_outputs.clone());
 
                 // split batch into smaller slice to avoid too much memory usage
                 let slice_step = batch_size.sqrt().max(1);
@@ -308,6 +315,57 @@ async fn execute_generate(
                         sender.send(Ok(output_batch), Some(&mut timer)).await;
                     }
                 }
+            }
+
+            // execute generator.terminate(), joining with last child output row
+            // keep it the same as hive does
+            let last_child_outputs = match last_child_outputs.lock().take() {
+                Some(arrays) => arrays,
+                None => child_output_cols
+                    .iter()
+                    .map(|col| Ok(new_null_array(&col.data_type(&input_schema)?, 1)))
+                    .collect::<Result<_>>()?,
+            };
+
+            let last_row_id = last_child_outputs
+                .iter()
+                .filter(|col| !col.is_empty())
+                .map(|col| col.len() - 1)
+                .max()
+                .unwrap_or(0);
+
+            if let Some(generated_outputs) = generator.terminate(last_row_id as i32)? {
+                let mut timer = metrics.elapsed_compute().timer();
+                let child_outputs = last_child_outputs
+                    .iter()
+                    .map(|c| {
+                        Ok(arrow::compute::take(
+                            c,
+                            &generated_outputs.orig_row_ids,
+                            None,
+                        )?)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                let num_rows = generated_outputs.orig_row_ids.len();
+                let outputs: Vec<ArrayRef> = child_outputs
+                    .iter()
+                    .chain(&generated_outputs.cols)
+                    .zip(output_schema.fields())
+                    .map(|(array, field)| {
+                        if array.data_type() != field.data_type() {
+                            return cast(&array, field.data_type());
+                        }
+                        Ok(array.clone())
+                    })
+                    .collect::<Result<_>>()?;
+                let output_batch = RecordBatch::try_new_with_options(
+                    output_schema.clone(),
+                    outputs,
+                    &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                )?;
+                metrics.record_output(output_batch.num_rows());
+                sender.send(Ok(output_batch), Some(&mut timer)).await;
             }
             Ok(())
         },

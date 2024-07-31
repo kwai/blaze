@@ -18,7 +18,7 @@ use std::{
 };
 
 use arrow::{
-    array::{make_array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions},
+    array::{make_array, Array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions},
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
 };
@@ -144,6 +144,19 @@ impl Generator for SparkUDTFWrapper {
             cols: result_elements.to_vec(),
         })
     }
+
+    fn terminate(&self, last_row_id: i32) -> Result<Option<GeneratedRows>> {
+        // terminate UDF through JNI
+        let result_array =
+            terminate_udtf(self.jcontext()?, last_row_id, self.import_schema.clone())?;
+        let result_struct = result_array.as_struct();
+        let result_row_ids: &Int32Array = result_struct.column(0).as_primitive();
+        let result_elements: &[ArrayRef] = result_struct.column(1).as_struct().columns();
+        Ok(Some(GeneratedRows {
+            orig_row_ids: result_row_ids.clone(),
+            cols: result_elements.to_vec(),
+        }))
+    }
 }
 
 fn invoke_udtf(
@@ -156,6 +169,24 @@ fn invoke_udtf(
     let mut import_ffi_array = FFI_ArrowArray::empty();
     jni_call!(SparkUDTFWrapperContext(jcontext.as_obj()).eval(
         &mut export_ffi_array as *mut FFI_ArrowArray as i64,
+        &mut import_ffi_array as *mut FFI_ArrowArray as i64,
+    ) -> ())?;
+
+    // import output from context
+    let import_ffi_schema = FFI_ArrowSchema::try_from(result_schema.as_ref())?;
+    let import_array = make_array(unsafe { from_ffi(import_ffi_array, &import_ffi_schema)? });
+    Ok(import_array)
+}
+
+fn terminate_udtf(
+    jcontext: GlobalRef,
+    last_row_id: i32,
+    result_schema: SchemaRef,
+) -> Result<ArrayRef> {
+    // evalute via context
+    let mut import_ffi_array = FFI_ArrowArray::empty();
+    jni_call!(SparkUDTFWrapperContext(jcontext.as_obj()).terminate(
+        last_row_id,
         &mut import_ffi_array as *mut FFI_ArrowArray as i64,
     ) -> ())?;
 
