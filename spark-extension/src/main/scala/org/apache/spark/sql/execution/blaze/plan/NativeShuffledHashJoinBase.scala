@@ -52,6 +52,7 @@ abstract class NativeShuffledHashJoinBase(
           "stage_id",
           "output_rows",
           "elapsed_compute",
+          "build_hash_map_time",
           "input_batch_count",
           "input_batch_mem_size",
           "input_row_count"))

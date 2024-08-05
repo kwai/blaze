@@ -97,7 +97,7 @@ impl BytesArena {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BytesArenaAddr(u64);
 
 impl BytesArenaAddr {

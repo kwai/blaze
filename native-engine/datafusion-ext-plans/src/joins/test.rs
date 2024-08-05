@@ -36,7 +36,6 @@ mod tests {
     use crate::{
         broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
         broadcast_join_exec::BroadcastJoinExec,
-        hash_join_exec::HashJoinExec,
         joins::join_utils::{JoinType, JoinType::*},
         sort_merge_join_exec::SortMergeJoinExec,
     };
@@ -215,6 +214,7 @@ mod tests {
                     on,
                     join_type,
                     JoinSide::Right,
+                    true,
                     None,
                 )?)
             }
@@ -230,24 +230,29 @@ mod tests {
                     on,
                     join_type,
                     JoinSide::Left,
+                    true,
                     None,
                 )?)
             }
-            SHJLeftProbed => Arc::new(HashJoinExec::try_new(
-                schema,
-                left,
-                right,
-                on,
-                join_type,
-                JoinSide::Left,
-            )?),
-            SHJRightProbed => Arc::new(HashJoinExec::try_new(
+            SHJLeftProbed => Arc::new(BroadcastJoinExec::try_new(
                 schema,
                 left,
                 right,
                 on,
                 join_type,
                 JoinSide::Right,
+                false,
+                None,
+            )?),
+            SHJRightProbed => Arc::new(BroadcastJoinExec::try_new(
+                schema,
+                left,
+                right,
+                on,
+                join_type,
+                JoinSide::Left,
+                false,
+                None,
             )?),
         };
         let columns = columns(&join.schema());

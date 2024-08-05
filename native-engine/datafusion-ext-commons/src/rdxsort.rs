@@ -12,110 +12,46 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[inline]
-pub fn radix_sort_u16_by<T>(array: &mut [T], key: impl Fn(&T) -> u16) -> Vec<usize> {
-    radix_sort_u16_ranged_by(array, 65536, key)
+use std::vec::IntoIter;
+
+use radsort::Key;
+
+const STD_SORT_LIMIT: usize = 4096;
+
+pub fn radix_sort_unstable(array: &mut [impl Key + Ord]) {
+    radix_sort_unstable_by_key(array, |v| *v);
 }
 
-#[inline]
-pub fn radix_sort_u16_ranged_by<T>(
-    array: &mut [T],
-    num_keys: usize,
-    key: impl Fn(&T) -> u16,
-) -> Vec<usize> {
-    // performance critical
-    unsafe {
-        // count
-        let mut counts = vec![0; num_keys];
-        for item in array.iter() {
-            *counts.get_unchecked_mut(key(item) as usize) += 1;
-        }
-
-        // construct parts
-        #[derive(Default, Clone, Copy)]
-        struct Part {
-            cur: usize,
-            end: usize,
-        }
-        let mut parts = vec![Part::default(); num_keys];
-        let mut beg = 0;
-        for (idx, count) in counts.iter().enumerate() {
-            if *count > 0 {
-                *parts.get_unchecked_mut(idx) = Part {
-                    cur: beg,
-                    end: beg + count,
-                };
-                beg += count;
-            }
-        }
-
-        // reorganize each partition
-        let mut inexhausted_part_indices = vec![0; num_keys];
-        for i in 0..num_keys {
-            inexhausted_part_indices[i] = i;
-        }
-        while {
-            inexhausted_part_indices.retain(|&i| {
-                let part = parts.get_unchecked(i);
-                part.cur < part.end
-            });
-            inexhausted_part_indices.len() > 1
-        } {
-            for &part_idx in &inexhausted_part_indices {
-                let cur_part = parts.get_unchecked(part_idx);
-                let cur = cur_part.cur;
-                let end = cur_part.end;
-                for item_idx in cur..end {
-                    let target_part_idx = key(array.get_unchecked(item_idx)) as usize;
-                    let target_part = parts.get_unchecked_mut(target_part_idx);
-                    array.swap_unchecked(item_idx, target_part.cur);
-                    target_part.cur += 1;
-                }
-            }
-        }
-
-        // returns counts of each bucket
-        counts
+pub fn radix_sort_unstable_by_key<T, K: Key + Ord>(array: &mut [T], key: impl Fn(&T) -> K) {
+    if array.len() < STD_SORT_LIMIT {
+        array.sort_unstable_by_key(key);
+    } else {
+        radsort::sort_by_key(array, key);
     }
 }
 
-#[cfg(test)]
-mod test {
-    use rand::Rng;
-
-    use crate::rdxsort::radix_sort_u16_by;
-
-    #[test]
-    fn fuzzytest_u16_small() {
-        for n in 0..1000 {
-            let mut array = vec![];
-            for _ in 0..n {
-                array.push(rand::thread_rng().gen::<u16>());
-            }
-
-            let mut array1 = array.clone();
-            radix_sort_u16_by(&mut array1, |key| *key);
-
-            let mut array2 = array.clone();
-            array2.sort_unstable();
-
-            assert_eq!(array1, array2);
-        }
+pub trait RadixSortIterExt: Iterator {
+    fn radix_sorted_unstable(self) -> IntoIter<Self::Item>
+    where
+        Self: Sized,
+        Self::Item: Key + Ord,
+    {
+        let mut vec: Vec<Self::Item> = self.collect();
+        radix_sort_unstable(&mut vec);
+        vec.into_iter()
     }
 
-    #[test]
-    fn fuzzytest_u16_1m() {
-        let mut array = vec![];
-        for _ in 0..1000000 {
-            array.push(rand::thread_rng().gen::<u16>());
-        }
-
-        let mut array1 = array.clone();
-        radix_sort_u16_by(&mut array1, |key| *key);
-
-        let mut array2 = array.clone();
-        array2.sort_unstable();
-
-        assert_eq!(array1, array2);
+    fn radix_sorted_unstable_by_key<K: Key + Ord>(
+        self,
+        key: impl Fn(&Self::Item) -> K,
+    ) -> IntoIter<Self::Item>
+    where
+        Self: Sized,
+    {
+        let mut vec: Vec<Self::Item> = self.collect();
+        radix_sort_unstable_by_key(&mut vec, key);
+        vec.into_iter()
     }
 }
+
+impl<T, I: Iterator<Item = T>> RadixSortIterExt for I {}

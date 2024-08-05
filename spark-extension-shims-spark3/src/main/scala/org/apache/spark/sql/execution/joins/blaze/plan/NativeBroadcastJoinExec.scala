@@ -71,7 +71,12 @@ case class NativeBroadcastJoinExec(
     import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
 
     def mode = HashedRelationBroadcastMode(buildBoundKeys, isNullAware = false)
-    BroadcastDistribution(mode) :: UnspecifiedDistribution :: Nil
+    broadcastSide match {
+      case BroadcastLeft =>
+        BroadcastDistribution(mode) :: UnspecifiedDistribution :: Nil
+      case BroadcastRight =>
+        UnspecifiedDistribution :: BroadcastDistribution(mode) :: Nil
+    }
   }
 
   @enableIf(

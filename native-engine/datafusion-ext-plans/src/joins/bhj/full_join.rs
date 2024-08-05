@@ -20,7 +20,10 @@ use std::{
     },
 };
 
-use arrow::array::{new_null_array, ArrayRef, RecordBatch};
+use arrow::{
+    array::{new_null_array, Array, ArrayRef, RecordBatch},
+    buffer::NullBuffer,
+};
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
 use datafusion::{common::Result, physical_plan::metrics::Time};
@@ -30,9 +33,8 @@ use crate::{
     common::{batch_selection::take_cols, output::WrappedRecordBatchSender},
     joins::{
         bhj::{
-            filter_joined_indices,
             full_join::ProbeSide::{L, R},
-            ProbeSide,
+            make_eq_comparator_multiple_arrays, ProbeSide,
         },
         join_hash_map::{join_create_hashes, JoinHashMap},
         JoinParams,
@@ -136,20 +138,12 @@ impl<const P: JoinerParams> FullJoiner<P> {
     async fn flush_hash_joined(
         mut self: Pin<&mut Self>,
         probed_batch: &RecordBatch,
-        probed_key_columns: &[ArrayRef],
         probed_joined: &mut BitVec,
-        mut hash_joined_probe_indices: Vec<u32>,
-        mut hash_joined_build_indices: Vec<u32>,
+        hash_joined_probe_indices: Vec<u32>,
+        hash_joined_build_indices: Vec<u32>,
     ) -> Result<()> {
-        filter_joined_indices(
-            probed_key_columns,
-            self.map.key_columns(),
-            &mut hash_joined_probe_indices,
-            &mut hash_joined_build_indices,
-        )?;
         let probe_indices = hash_joined_probe_indices;
         let build_indices = hash_joined_build_indices;
-
         let pprojected = match P.probe_side {
             L => self
                 .join_params
@@ -197,26 +191,41 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
         let mut hash_joined_build_indices: Vec<u32> = vec![];
         let mut probed_joined = bitvec![0; probed_batch.num_rows()];
         let batch_size = self.join_params.batch_size.max(probed_batch.num_rows());
-
         let probed_key_columns = self.create_probed_key_columns(&probed_batch)?;
         let probed_hashes = join_create_hashes(probed_batch.num_rows(), &probed_key_columns)?;
+        let probed_valids = probed_key_columns
+            .iter()
+            .map(|col| col.nulls().cloned())
+            .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
+            .flatten();
+
+        let eq = make_eq_comparator_multiple_arrays(&probed_key_columns, self.map.key_columns())?;
 
         // join by hash code
         for (row_idx, &hash) in probed_hashes.iter().enumerate() {
+            // nulls may not be joined
+            if probed_valids
+                .as_ref()
+                .map(|nb| nb.is_null(row_idx))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
             let mut maybe_joined = false;
             if let Some(entries) = self.map.entry_indices(hash) {
                 for map_idx in entries {
-                    hash_joined_probe_indices.push(row_idx as u32);
-                    hash_joined_build_indices.push(map_idx);
+                    if eq(row_idx, map_idx as usize) {
+                        hash_joined_probe_indices.push(row_idx as u32);
+                        hash_joined_build_indices.push(map_idx);
+                    }
                 }
                 maybe_joined = true;
             }
-
             if maybe_joined && hash_joined_probe_indices.len() > batch_size {
                 self.as_mut()
                     .flush_hash_joined(
                         &probed_batch,
-                        &probed_key_columns,
                         &mut probed_joined,
                         std::mem::take(&mut hash_joined_probe_indices),
                         std::mem::take(&mut hash_joined_build_indices),
@@ -224,11 +233,11 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
                     .await?;
             }
         }
+
         if !hash_joined_probe_indices.is_empty() {
             self.as_mut()
                 .flush_hash_joined(
                     &probed_batch,
-                    &probed_key_columns,
                     &mut probed_joined,
                     hash_joined_probe_indices,
                     hash_joined_build_indices,

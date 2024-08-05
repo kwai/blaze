@@ -95,7 +95,9 @@ object NativeHelper extends Logging {
       "output_rows" -> SQLMetrics.createMetric(sc, "Native.output_rows"),
       "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
       "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
-      "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"),
+      "build_hash_map_time" -> SQLMetrics.createNanoTimingMetric(
+        sc,
+        "Native.build_hash_map_time"),
       "mem_spill_count" -> SQLMetrics.createMetric(sc, "Native.mem_spill_count"),
       "mem_spill_size" -> SQLMetrics.createSizeMetric(sc, "Native.mem_spill_size"),
       "mem_spill_iotime" -> SQLMetrics.createNanoTimingMetric(sc, "Native.mem_spill_iotime"),

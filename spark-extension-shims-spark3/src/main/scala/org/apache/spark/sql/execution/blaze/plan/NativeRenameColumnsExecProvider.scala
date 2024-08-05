@@ -40,8 +40,6 @@ case object NativeRenameColumnsExecProvider {
       override protected def outputExpressions: Seq[NamedExpression] = output
 
       override protected def orderingExpressions: Seq[SortOrder] = child.outputOrdering
-
-      override def nodeName: String = "NativeRenameColumnsExec"
     }
     NativeRenameColumnsExec(child, renamedColumnNames)
   }
@@ -66,8 +64,6 @@ case object NativeRenameColumnsExecProvider {
       override protected def outputExpressions: Seq[NamedExpression] = output
 
       override protected def orderingExpressions: Seq[SortOrder] = child.outputOrdering
-
-      override def nodeName: String = "NativeRenameColumnsExec"
     }
     NativeRenameColumnsExec(child, renamedColumnNames)
   }
@@ -81,8 +77,6 @@ case object NativeRenameColumnsExecProvider {
 
       override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
         copy(child = newChildren.head)
-
-      override def nodeName: String = "NativeRenameColumnsExec"
     }
     NativeRenameColumnsExec(child, renamedColumnNames)
   }

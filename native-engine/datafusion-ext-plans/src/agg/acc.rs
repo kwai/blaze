@@ -14,6 +14,7 @@
 
 use std::{
     any::Any,
+    hash::Hasher,
     io::{Cursor, Read, Write},
     mem::{size_of, size_of_val},
 };
@@ -29,12 +30,11 @@ use datafusion_ext_commons::{
     slim_bytes::SlimBytes,
     spark_bloom_filter::SparkBloomFilter,
 };
+use gxhash::GxHasher;
 use hashbrown::raw::RawTable;
 use itertools::Itertools;
 use slimmer_box::SlimmerBox;
 use smallvec::SmallVec;
-
-use crate::agg::agg_table::gx_hash;
 
 pub type DynVal = Option<Box<dyn AggDynValue>>;
 
@@ -67,6 +67,10 @@ impl AccStore {
         self.num_accs = 0;
         self.fixed_store = vec![];
         self.dyn_store = vec![];
+    }
+
+    pub fn len(&self) -> usize {
+        self.num_accs
     }
 
     pub fn mem_size(&self) -> usize {
@@ -411,6 +415,14 @@ pub struct SaveWriter<'a>(pub Box<dyn Write + 'a>);
 pub type LoadFn = Box<dyn Fn(&mut LoadReader) -> Result<DynVal> + Send + Sync>;
 pub type SaveFn = Box<dyn Fn(&mut SaveWriter, DynVal) -> Result<()> + Send + Sync>;
 
+#[inline]
+pub fn acc_hash(value: impl AsRef<[u8]>) -> u32 {
+    const AGG_DYN_SET_HASH_SEED: i64 = 0x7BCB48DA4C72B4F2;
+    let mut h = GxHasher::with_seed(AGG_DYN_SET_HASH_SEED);
+    h.write(value.as_ref());
+    h.finish() as u32 | 0x80000000
+}
+
 pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Result<Vec<LoadFn>> {
     let mut loaders: Vec<LoadFn> = vec![];
     for value in values {
@@ -501,9 +513,9 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                                 InternalSet::Small(s) => s.push(pos_len),
                                 InternalSet::Huge(s) => {
                                     let raw = list.ref_raw(pos_len);
-                                    let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                                    let hash = acc_hash(raw) as u64;
                                     s.insert(hash, pos_len, |&pos_len| {
-                                        gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
+                                        acc_hash(list.ref_raw(pos_len)) as u64
                                     });
                                 }
                             }
@@ -901,17 +913,15 @@ impl InternalSet {
 
             for &mut pos_len in s {
                 let raw = list.ref_raw(pos_len);
-                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                let hash = acc_hash(raw) as u64;
                 huge.insert(hash, pos_len, |&pos_len| {
-                    gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
+                    acc_hash(list.ref_raw(pos_len)) as u64
                 });
             }
             *self = Self::Huge(huge);
         }
     }
 }
-
-const AGG_DYN_SET_HASH_SEED: i64 = 0x7BCB48DA4C72B4F2;
 
 impl AggDynSet {
     pub fn append(&mut self, value: &ScalarValue, nullable: bool) {
@@ -954,11 +964,11 @@ impl AggDynSet {
                 }
             }
             InternalSet::Huge(s) => {
-                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                let hash = acc_hash(raw) as u64;
                 match s.find_or_find_insert_slot(
                     hash,
                     |&pos_len| new_len == pos_len.1 as usize && raw == self.list.ref_raw(pos_len),
-                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
+                    |&pos_len| acc_hash(self.list.ref_raw(pos_len)) as u64,
                 ) {
                     Ok(_found) => {}
                     Err(slot) => {
@@ -993,13 +1003,13 @@ impl AggDynSet {
             }
             InternalSet::Huge(s) => {
                 let new_value = self.list.ref_raw(new_pos_len);
-                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(new_value);
+                let hash = acc_hash(new_value) as u64;
                 match s.find_or_find_insert_slot(
                     hash,
                     |&pos_len| {
                         new_len == pos_len.1 as usize && new_value == self.list.ref_raw(pos_len)
                     },
-                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
+                    |&pos_len| acc_hash(self.list.ref_raw(pos_len)) as u64,
                 ) {
                     Ok(_found) => {
                         inserted = false;

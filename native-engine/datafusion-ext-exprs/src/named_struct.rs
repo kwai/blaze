@@ -19,11 +19,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{
-    array::Array,
-    datatypes::{Field, Fields, SchemaRef},
-    record_batch::RecordBatchOptions,
-};
+use arrow::datatypes::SchemaRef;
 use datafusion::{
     arrow::{
         array::StructArray,
@@ -34,7 +30,7 @@ use datafusion::{
     logical_expr::ColumnarValue,
     physical_expr::{physical_exprs_bag_equal, PhysicalExpr},
 };
-use datafusion_ext_commons::{df_execution_err, io::name_batch};
+use datafusion_ext_commons::{df_execution_err, io::recover_named_batch};
 
 use crate::down_cast_any_ref;
 
@@ -102,17 +98,9 @@ impl PhysicalExpr for NamedStructExpr {
                     .and_then(|r| r.into_array(batch.num_rows()))
             })
             .collect::<Result<Vec<_>>>()?;
-        let input_empty_fields = input_arrays
-            .iter()
-            .map(|array| Field::new("", array.data_type().clone(), array.null_count() > 0))
-            .collect::<Fields>();
-        let input_batch = RecordBatch::try_new_with_options(
-            Arc::new(Schema::new(input_empty_fields)),
-            input_arrays,
-            &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-        )?;
 
-        let named_batch = name_batch(input_batch, &self.return_schema)?;
+        let named_batch =
+            recover_named_batch(batch.num_rows(), &input_arrays, self.return_schema.clone())?;
         let named_struct = Arc::new(StructArray::from(named_batch));
         Ok(ColumnarValue::Array(named_struct))
     }

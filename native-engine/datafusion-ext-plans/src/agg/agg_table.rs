@@ -35,22 +35,22 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    bytes_arena::{BytesArena, BytesArenaAddr},
+    bytes_arena::BytesArena,
     downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     io::{read_bytes_slice, read_len, write_len},
-    rdxsort::radix_sort_u16_ranged_by,
+    rdxsort::radix_sort_unstable_by_key,
     slim_bytes::SlimBytes,
     staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
 };
 use futures::lock::Mutex;
 use gxhash::GxHasher;
-use hashbrown::raw::RawTable;
 
 use crate::{
     agg::{
         acc::{AccStore, AccumStateRow, OwnedAccumStateRow, RefAccumStateRow},
         agg_context::AggContext,
+        agg_hash_map::{AggHashMap, AggHashMapLookupEntry},
     },
     common::output::WrappedRecordBatchSender,
     memmgr::{
@@ -120,9 +120,7 @@ impl AggTable {
             // compute input arrays
             match in_mem.mode {
                 InMemMode::Hashing => {
-                    in_mem
-                        .hashing_data
-                        .update_batch::<GX_HASH_SEED_HASHING>(input_batch)?;
+                    in_mem.hashing_data.update_batch(input_batch)?;
                 }
                 InMemMode::Merging => {
                     in_mem.merging_data.add_batch(input_batch)?;
@@ -241,9 +239,9 @@ impl AggTable {
                 .hashing_data
                 .map
                 .into_iter()
-                .map(|(key_addr, acc_addr)| {
-                    let key = in_mem.hashing_data.map_key_store.get(key_addr);
-                    let acc = in_mem.hashing_data.acc_store.get(acc_addr);
+                .map(|item| {
+                    let key = in_mem.hashing_data.map_key_store.get(item.key_addr);
+                    let acc = in_mem.hashing_data.acc_store.get(item.acc_idx);
                     (key, acc)
                 })
                 .collect::<Vec<_>>();
@@ -306,13 +304,13 @@ impl AggTable {
                 let map = cur_hashing.map;
                 let map_key_store = cur_hashing.map_key_store;
                 let acc_store = cur_hashing.acc_store;
-                for (key_addr, value) in map {
+                for item in map {
                     let key = unsafe {
                         // safety:
                         // map_key_store will be append-only while processing the same bucket
-                        std::mem::transmute::<_, &[u8]>(map_key_store.get(key_addr))
+                        std::mem::transmute::<_, &[u8]>(map_key_store.get(item.key_addr))
                     };
-                    let acc = acc_store.get(value);
+                    let acc = acc_store.get(item.acc_idx);
                     staging_records.push((key, acc));
                 }
                 let batch = self.agg_ctx.convert_records_to_batch(staging_records)?;
@@ -348,24 +346,19 @@ impl AggTable {
 
             // merge records of current bucket
             while min_cursor.cur_bucket_idx == current_bucket_idx {
+                hashing.map.ensure_capacity(hashing.num_records() + 1);
                 let (key, mut acc) = min_cursor.next_record()?;
-                let hash = gx_hash::<GX_HASH_SEED_POST_MERGING>(&key);
-                match hashing.map.find_or_find_insert_slot(
-                    hash,
-                    |v| key.as_ref() == hashing.map_key_store.get(v.0),
-                    |v| gx_hash::<GX_HASH_SEED_POST_MERGING>(hashing.map_key_store.get(v.0)),
-                ) {
-                    Ok(found) => unsafe {
-                        // safety - access hashbrown raw table
-                        let old_acc = &mut hashing.acc_store.get(found.as_mut().1);
+                let hash = merging_data_hash(&key);
+                match hashing.map.lookup(&hashing.map_key_store, hash, &key) {
+                    AggHashMapLookupEntry::Occupied(item) => {
+                        let old_acc = &mut hashing.acc_store.get(item.acc_idx);
                         self.agg_ctx.partial_merge(old_acc, &mut acc.as_mut())?;
-                    },
-                    Err(slot) => unsafe {
-                        // safety - access hashbrown raw table
-                        let key_addr = hashing.map_key_store.add(key.as_ref());
-                        let acc_addr = hashing.acc_store.new_acc_from(&acc);
-                        hashing.map.insert_in_slot(hash, slot, (key_addr, acc_addr));
-                    },
+                    }
+                    AggHashMapLookupEntry::Vaccant(item) => {
+                        item.non_zero_hash = hash;
+                        item.key_addr = hashing.map_key_store.add(&key);
+                        item.acc_idx = hashing.acc_store.new_acc_from(&acc);
+                    }
                 }
             }
         }
@@ -527,26 +520,41 @@ impl InMemTable {
 
 // hasher used in table
 const GX_HASH_SEED_HASHING: i64 = 0x3F6F1B9378DD6AAF;
-const GX_HASH_SEED_MERGING: i64 = 0x7A9A2D4E8C19B4EB;
-const GX_HASH_SEED_POST_MERGING: i64 = 0x1CE19D40EEED6CA2;
+const GX_HASH_SEED_MERGING: i64 = 0x1CE19D40EEED6CA2;
 
 #[inline]
-pub fn gx_hash<const SEED: i64>(value: impl AsRef<[u8]>) -> u64 {
-    let mut h = GxHasher::with_seed(SEED);
+pub fn hash<const SEED: i64>(value: impl AsRef<[u8]>) -> u32 {
+    let mut h = GxHasher::with_seed(GX_HASH_SEED_HASHING);
     h.write(value.as_ref());
-    h.finish()
+    h.finish() as u32 | 0x80000000
 }
 
 #[inline]
-pub fn gx_merging_bucket_id(value: impl AsRef<[u8]>) -> u16 {
-    (gx_hash::<GX_HASH_SEED_MERGING>(value) % NUM_SPILL_BUCKETS as u64) as u16
+pub fn hashing_data_hash(value: impl AsRef<[u8]>) -> u32 {
+    hash::<GX_HASH_SEED_HASHING>(value)
 }
+
+#[inline]
+pub fn merging_data_hash(value: impl AsRef<[u8]>) -> u32 {
+    hash::<GX_HASH_SEED_MERGING>(value)
+}
+
+#[inline]
+pub fn merging_bucket_id(value: impl AsRef<[u8]>) -> u16 {
+    merging_bucket_id_from_hash(hash::<GX_HASH_SEED_HASHING>(value))
+}
+
+#[inline]
+pub fn merging_bucket_id_from_hash(hash: u32) -> u16 {
+    (hash % NUM_SPILL_BUCKETS as u32) as u16
+}
+
 pub struct HashingData {
     agg_ctx: Arc<AggContext>,
     task_ctx: Arc<TaskContext>,
     acc_store: AccStore,
     map_key_store: BytesArena,
-    map: RawTable<(BytesArenaAddr, u32)>, // keys addr to accs store addr
+    map: AggHashMap,
     num_input_records: usize,
     spill_metrics: SpillMetrics,
 }
@@ -576,61 +584,49 @@ impl HashingData {
     }
 
     fn num_records(&self) -> usize {
-        self.map.len()
+        self.acc_store.len()
     }
 
     fn cardinality_ratio(&self) -> f64 {
         let num_input_records = self.num_input_records;
-        let num_records = self.map.len();
+        let num_records = self.acc_store.len();
         num_records as f64 / num_input_records as f64
     }
 
     fn mem_used(&self) -> usize {
-        // including cost of sorting
-        self.map_key_store.mem_size() + self.acc_store.mem_size() + self.map.capacity() * 32
+        self.map_key_store.mem_size() + self.acc_store.mem_size() + self.map.mem_size()
     }
 
-    fn update_batch<const GX_HASH_SEED: i64>(&mut self, batch: RecordBatch) -> Result<()> {
+    fn update_batch(&mut self, batch: RecordBatch) -> Result<()> {
+        log::warn!("XXX update_batch {}", batch.num_rows());
         let num_rows = batch.num_rows();
         self.num_input_records += num_rows;
+        self.map.ensure_capacity(self.num_records() + num_rows);
 
+        // compute hash
         let grouping_rows = self.agg_ctx.create_grouping_rows(&batch)?;
-        let hashes: Vec<u64> = grouping_rows
+        let hashes: Vec<u32> = grouping_rows
             .iter()
-            .map(|row| gx_hash::<GX_HASH_SEED>(row))
+            .map(|row| hashing_data_hash(row))
             .collect();
 
         // update hashmap
-        let mut acc_addrs = Vec::with_capacity(num_rows);
+        let mut acc_indices = Vec::with_capacity(num_rows);
         for (hash, row) in hashes.into_iter().zip(&grouping_rows) {
-            let found = self
-                .map
-                .find_or_find_insert_slot(
-                    hash,
-                    |v| {
-                        v.0.unpack().len == row.as_ref().len()
-                            && self.map_key_store.get(v.0) == row.as_ref()
-                    },
-                    |v| gx_hash::<GX_HASH_SEED>(self.map_key_store.get(v.0)),
-                )
-                .unwrap_or_else(|slot| {
-                    let key_addr = self.map_key_store.add(row.as_ref());
-                    let acc_addr = self.acc_store.new_acc();
-                    let entry = (key_addr, acc_addr);
-                    unsafe {
-                        // safety: inserting slot is ensured to be valid
-                        self.map.insert_in_slot(hash, slot, entry)
-                    }
-                });
-
-            acc_addrs.push(unsafe {
-                // safety: accessing hashbrown raw table
-                found.as_ref().1
-            });
+            let acc_idx = match self.map.lookup(&self.map_key_store, hash, &row) {
+                AggHashMapLookupEntry::Occupied(item) => item.acc_idx,
+                AggHashMapLookupEntry::Vaccant(item) => {
+                    item.non_zero_hash = hash;
+                    item.key_addr = self.map_key_store.add(row.as_ref());
+                    item.acc_idx = self.acc_store.new_acc();
+                    item.acc_idx
+                }
+            };
+            acc_indices.push(acc_idx);
         }
-        let mut accs = acc_addrs
+        let mut accs = acc_indices
             .into_iter()
-            .map(|acc_addr| self.acc_store.get(acc_addr))
+            .map(|acc_idx| self.acc_store.get(acc_idx))
             .collect::<Vec<_>>();
 
         // partial update
@@ -642,6 +638,7 @@ impl HashingData {
         let acc_array = self.agg_ctx.get_input_acc_array(&batch)?;
         self.agg_ctx
             .partial_batch_merge_input(&mut accs, acc_array)?;
+        log::warn!("XXX update_batch done");
         Ok(())
     }
 
@@ -650,28 +647,31 @@ impl HashingData {
         let mut bucketed_records = self
             .map
             .into_iter()
-            .map(|(key_addr, acc_addr)| {
-                let key = self.map_key_store.get(key_addr);
-                let acc = self.acc_store.get(acc_addr);
-                let bucket_id = gx_merging_bucket_id(key);
+            .map(|item| {
+                let key = self.map_key_store.get(item.key_addr);
+                let acc = self.acc_store.get(item.acc_idx);
+                let bucket_id = merging_bucket_id_from_hash(item.non_zero_hash);
                 (key, acc, bucket_id)
             })
             .collect::<Vec<_>>();
-
-        let bucket_counts =
-            radix_sort_u16_ranged_by(&mut bucketed_records, NUM_SPILL_BUCKETS, |v| v.2);
+        radix_sort_unstable_by_key(&mut bucketed_records, |v| v.2);
 
         let mut writer = spill.get_compressed_writer();
         let mut beg = 0;
 
         for i in 0..NUM_SPILL_BUCKETS {
-            if bucket_counts[i] > 0 {
+            let bucket_count = bucketed_records[beg..]
+                .iter()
+                .take_while(|(_, _, bucket_id)| *bucket_id == i as u16)
+                .count();
+
+            if bucket_count > 0 {
                 // write bucket id and number of records in this bucket
                 write_len(i, &mut writer)?;
-                write_len(bucket_counts[i], &mut writer)?;
+                write_len(bucket_count, &mut writer)?;
 
                 // write records in this bucket
-                for (key, acc, _) in &mut bucketed_records[beg..][..bucket_counts[i]] {
+                for (key, acc, _) in &mut bucketed_records[beg..][..bucket_count] {
                     // write key
                     let key = key.as_ref();
                     write_len(key.len(), &mut writer)?;
@@ -680,7 +680,7 @@ impl HashingData {
                     // write value
                     acc.save(&mut writer, &self.agg_ctx.acc_dyn_savers)?;
                 }
-                beg += bucket_counts[i];
+                beg += bucket_count;
             }
         }
         write_len(NUM_SPILL_BUCKETS, &mut writer)?; // EOF
@@ -757,15 +757,15 @@ impl MergingData {
             .map(|batch| self.agg_ctx.create_grouping_rows(batch))
             .collect::<Result<Vec<_>>>()?;
 
-        let acc_addrs = staging_batches
+        let acc_indices = staging_batches
             .iter()
             .map(|batch| {
-                let acc_addrs = (0..batch.num_rows())
+                let acc_indices = (0..batch.num_rows())
                     .map(|_| self.staging_acc_store.new_acc())
                     .collect::<Vec<_>>();
-                let mut accs = acc_addrs
+                let mut accs = acc_indices
                     .iter()
-                    .map(|&acc_addr| self.staging_acc_store.get(acc_addr))
+                    .map(|&acc_idx| self.staging_acc_store.get(acc_idx))
                     .collect::<Vec<_>>();
 
                 // partial update
@@ -777,7 +777,7 @@ impl MergingData {
                 let acc_array = self.agg_ctx.get_input_acc_array(&batch)?;
                 self.agg_ctx
                     .partial_batch_merge_input(&mut accs, acc_array)?;
-                Ok(acc_addrs)
+                Ok(acc_indices)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -787,12 +787,12 @@ impl MergingData {
             .enumerate()
             .flat_map(|(batch_idx, rows)| {
                 rows.iter().enumerate().map(move |(row_idx, row)| {
-                    let bucket_id = gx_merging_bucket_id(&row);
+                    let bucket_id = merging_bucket_id(&row);
                     (batch_idx as u32, row_idx as u32, bucket_id)
                 })
             })
             .collect::<Vec<_>>();
-        radix_sort_u16_ranged_by(&mut sorted, NUM_SPILL_BUCKETS, |v| v.2);
+        radix_sort_unstable_by_key(&mut sorted, |v| v.2);
 
         // store serialized records
         // let acc_store = acc_store.lock();
@@ -805,7 +805,7 @@ impl MergingData {
             let row_idx = row_idx as usize;
             let grouping_row = grouping_rows[batch_idx].row(row_idx);
             let key = grouping_row.as_ref();
-            let mut acc = self.staging_acc_store.get(acc_addrs[batch_idx][row_idx]);
+            let mut acc = self.staging_acc_store.get(acc_indices[batch_idx][row_idx]);
 
             // serialize this record to temp_raw_record
             write_len(key.len(), &mut temp_raw_record)?;
