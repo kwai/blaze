@@ -58,6 +58,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastExchangeBase.buildBroadcastData
+import org.apache.spark.sql.execution.blaze.shuffle.BlockObject
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
@@ -168,8 +169,10 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       (_, _) => {
         val resourceId = s"ArrowBroadcastExchangeExec:${UUID.randomUUID()}"
         val provideIpcIterator = () => {
-          broadcast.value.iterator.map(bytes => {
-            Channels.newChannel(new ByteArrayInputStream(bytes))
+          broadcast.value.iterator.map(bytes => new BlockObject {
+            override def hasByteBuffer: Boolean = true
+            override def getByteBuffer: ByteBuffer = ByteBuffer.wrap(bytes)
+            override def close(): Unit = {}
           })
         }
 
@@ -302,8 +305,7 @@ object NativeBroadcastExchangeBase {
       .newBuilder()
       .setInput(pb.PhysicalPlanNode.newBuilder().setBroadcastJoinBuildHashMap(buildHashMapExec))
       .setIpcConsumerResourceId(writerIpcProviderResourceId)
-
-    // build native sorter
+    
     val exec = pb.PhysicalPlanNode
       .newBuilder()
       .setIpcWriter(writerExec)
@@ -311,10 +313,11 @@ object NativeBroadcastExchangeBase {
 
     // input
     val provideIpcIterator = () => {
-      collectedData.iterator.map { ipc =>
-        val inputStream = new ByteArrayInputStream(ipc)
-        Channels.newChannel(inputStream)
-      }
+      collectedData.iterator.map(bytes => new BlockObject {
+        override def hasByteBuffer: Boolean = true
+        override def getByteBuffer: ByteBuffer = ByteBuffer.wrap(bytes)
+        override def close(): Unit = {}
+      })
     }
     JniBridge.resourcesMap.put(readerIpcProviderResourceId, () => provideIpcIterator())
 

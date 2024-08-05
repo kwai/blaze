@@ -116,7 +116,8 @@ impl BufferedData {
             // write all batches with this part id
             let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w), true);
             while iter.cur_part_id() == cur_part_id {
-                writer.write_batch(iter.next_batch())?;
+                let batch = iter.next_batch();
+                writer.write_batch(batch.num_rows(), batch.columns())?;
             }
             offset += writer.finish_into_inner()?.count();
             offsets.push(offset);
@@ -156,7 +157,8 @@ impl BufferedData {
 
             // write all batches with this part id
             while iter.cur_part_id() == cur_part_id {
-                writer.write_batch(iter.next_batch())?;
+                let batch = iter.next_batch();
+                writer.write_batch(batch.num_rows(), batch.columns())?;
             }
             writer.finish_into_inner()?;
         }

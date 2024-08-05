@@ -18,7 +18,7 @@ use std::{
 };
 
 use arrow::{
-    array::{make_array, Array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions},
+    array::{make_array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions},
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
 };

@@ -19,9 +19,14 @@ use std::{
 };
 
 use arrow::{
-    datatypes::SchemaRef,
+    array::{make_array, new_empty_array, Array, ArrayRef, AsArray, Capacities, MutableArrayData},
+    datatypes::{
+        ArrowNativeType, BinaryType, ByteArrayType, LargeBinaryType, LargeUtf8Type, SchemaRef,
+        Utf8Type,
+    },
     record_batch::{RecordBatch, RecordBatchOptions},
 };
+use arrow_schema::DataType;
 use datafusion::{
     common::Result,
     execution::TaskContext,
@@ -107,9 +112,9 @@ impl CoalesceStream {
 
         // coalesce each column
         let mut coalesced_cols = vec![];
-        for cols in all_cols {
-            let ref_cols = cols.iter().map(|col| col.as_ref()).collect::<Vec<_>>();
-            coalesced_cols.push(arrow::compute::concat(&ref_cols)?);
+        for (cols, field) in all_cols.into_iter().zip(schema.fields()) {
+            let dt = field.data_type();
+            coalesced_cols.push(coalesce_arrays_unchecked(dt, &cols));
         }
         let coalesced_batch = RecordBatch::try_new_with_options(
             schema,
@@ -170,4 +175,47 @@ impl Stream for CoalesceStream {
             }
         }
     }
+}
+
+/// coalesce arrays without checking there data types, invokers must make
+/// sure all arrays have the same data type
+pub fn coalesce_arrays_unchecked(data_type: &DataType, arrays: &[ArrayRef]) -> ArrayRef {
+    if arrays.is_empty() {
+        return new_empty_array(data_type);
+    }
+    if arrays.len() == 1 {
+        return arrays[0].clone();
+    }
+
+    fn binary_capacity<T: ByteArrayType>(arrays: &[ArrayRef]) -> Capacities {
+        let mut item_capacity = 0;
+        let mut bytes_capacity = 0;
+        for array in arrays {
+            let a = array.as_bytes::<T>();
+
+            // Guaranteed to always have at least one element
+            let offsets = a.value_offsets();
+            bytes_capacity += offsets[offsets.len() - 1].as_usize() - offsets[0].as_usize();
+            item_capacity += a.len();
+        }
+        Capacities::Binary(item_capacity, Some(bytes_capacity))
+    }
+
+    let capacity = match data_type {
+        DataType::Utf8 => binary_capacity::<Utf8Type>(arrays),
+        DataType::LargeUtf8 => binary_capacity::<LargeUtf8Type>(arrays),
+        DataType::Binary => binary_capacity::<BinaryType>(arrays),
+        DataType::LargeBinary => binary_capacity::<LargeBinaryType>(arrays),
+        _ => Capacities::Array(arrays.iter().map(|a| a.len()).sum()),
+    };
+
+    // Concatenates arrays using MutableArrayData
+    let array_data: Vec<_> = arrays.iter().map(|a| a.to_data()).collect::<Vec<_>>();
+    let array_data_refs = array_data.iter().collect();
+    let mut mutable = MutableArrayData::with_capacities(array_data_refs, false, capacity);
+
+    for (i, a) in arrays.iter().enumerate() {
+        mutable.extend(i, 0, a.len())
+    }
+    make_array(mutable.freeze())
 }

@@ -152,9 +152,8 @@ pub async fn write_ipc(
         let mut writer = IpcCompressionWriter::new(IpcConsumerWrite(ipc_consumer), true);
         while let Some(batch) = input.next().await.transpose()? {
             let _timer = metrics.elapsed_compute().timer();
-            let num_rows = batch.num_rows();
-            writer.write_batch(batch)?;
-            metrics.record_output(num_rows);
+            writer.write_batch(batch.num_rows(), batch.columns())?;
+            metrics.record_output(batch.num_rows());
         }
 
         let _timer = metrics.elapsed_compute().timer();

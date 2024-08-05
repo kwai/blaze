@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::io::{BufReader, Cursor, Read, Take, Write};
+use std::io::{BufReader, Read, Take, Write};
 
-use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use arrow::array::ArrayRef;
 use blaze_jni_bridge::{conf, conf::StringConf};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use datafusion::common::Result;
@@ -48,13 +48,9 @@ impl<W: Write> IpcCompressionWriter<W> {
     }
 
     /// Write a batch, returning uncompressed bytes size
-    pub fn write_batch(&mut self, batch: RecordBatch) -> Result<()> {
-        let mut batch_buf = vec![];
-        write_one_batch(&batch, &mut Cursor::new(&mut batch_buf))?;
-        self.buf.write_all(&mut batch_buf)?;
+    pub fn write_batch(&mut self, num_rows: usize, cols: &[ArrayRef]) -> Result<()> {
+        write_one_batch(num_rows, cols, &mut self.buf)?;
         self.buf_empty = false;
-        drop(batch_buf);
-
         if self.buf.buf_len() as f64 >= DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE as f64 * 0.9 {
             self.flush()?;
         }
@@ -80,7 +76,6 @@ impl<W: Write> IpcCompressionWriter<W> {
 }
 
 pub struct IpcCompressionReader<R: Read + 'static> {
-    schema: SchemaRef,
     input: InputState<R>,
 }
 unsafe impl<R: Read> Send for IpcCompressionReader<R> {}
@@ -94,14 +89,13 @@ enum InputState<R: Read + 'static> {
 }
 
 impl<R: Read> IpcCompressionReader<R> {
-    pub fn new(input: R, schema: SchemaRef) -> Self {
+    pub fn new(input: R) -> Self {
         Self {
-            schema,
             input: InputState::BlockStart(input),
         }
     }
 
-    pub fn read_batch(&mut self) -> Result<Option<RecordBatch>> {
+    pub fn read_batch(&mut self) -> Result<Option<(usize, Vec<ArrayRef>)>> {
         struct Reader<'a, R: Read + 'static>(&'a mut IpcCompressionReader<R>);
         impl<'a, R: Read> Read for Reader<'a, R> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -130,8 +124,7 @@ impl<R: Read> IpcCompressionReader<R> {
                 }
             }
         }
-        let schema = self.schema.clone();
-        read_one_batch(&mut Reader(self), &schema)
+        read_one_batch(&mut Reader(self))
     }
 }
 
