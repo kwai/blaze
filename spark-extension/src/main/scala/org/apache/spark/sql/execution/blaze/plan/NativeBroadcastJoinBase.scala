@@ -53,6 +53,14 @@ abstract class NativeBroadcastJoinBase(
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
       .getDefaultNativeMetrics(sparkContext)
+      .filterKeys(
+        Set(
+          "stage_id",
+          "output_rows",
+          "elapsed_compute",
+          "input_batch_count",
+          "input_batch_mem_size",
+          "input_row_count"))
       .toSeq: _*)
 
   private val isLongHashRelation = {

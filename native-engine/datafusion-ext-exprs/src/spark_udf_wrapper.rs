@@ -20,7 +20,7 @@ use std::{
 };
 
 use arrow::{
-    array::{as_struct_array, make_array, ArrayRef},
+    array::{as_struct_array, make_array, Array, ArrayRef},
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::{RecordBatch, RecordBatchOptions},
@@ -33,7 +33,10 @@ use datafusion::{
     error::Result, logical_expr::ColumnarValue, physical_expr::physical_exprs_bag_equal,
     physical_plan::PhysicalExpr,
 };
-use datafusion_ext_commons::{cast::cast, df_execution_err, ffi_helper::batch_to_ffi};
+use datafusion_ext_commons::{
+    cast::cast, df_execution_err, ffi_helper::batch_to_ffi,
+    streams::coalesce_stream::coalesce_arrays_unchecked,
+};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
@@ -189,12 +192,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             .into_iter()
             .map(|fut| fut.join().unwrap())
             .collect::<Result<Vec<_>>>()?;
-        let imported_array = arrow::compute::concat(
-            &sub_imported_arrays
-                .iter()
-                .map(|array| array.as_ref())
-                .collect::<Vec<_>>(),
-        )?;
+        let imported_array =
+            coalesce_arrays_unchecked(sub_imported_arrays[0].data_type(), &sub_imported_arrays);
         Ok(ColumnarValue::Array(imported_array))
     }
 

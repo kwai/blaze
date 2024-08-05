@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::{
-    io::{BufReader, BufWriter, Read, Write},
+    io::{Read, Write},
     mem::size_of,
     sync::Arc,
 };
@@ -22,9 +22,7 @@ use arrow::{
     array::*,
     buffer::{Buffer, MutableBuffer},
     datatypes::*,
-    record_batch::{RecordBatch, RecordBatchOptions},
 };
-use bitvec::prelude::BitVec;
 use datafusion::common::Result;
 use unchecked_index::unchecked_index;
 
@@ -33,90 +31,32 @@ use crate::{
     io::{read_bytes_slice, read_len, write_len},
 };
 
-pub fn write_batch<W: Write>(batch: &RecordBatch, output: &mut W) -> Result<()> {
-    let mut output = BufWriter::new(output);
-    let schema = batch.schema();
-
+pub fn write_batch(num_rows: usize, cols: &[ArrayRef], mut output: impl Write) -> Result<()> {
     // write number of columns and rows
-    write_len(batch.num_columns(), &mut output)?;
-    write_len(batch.num_rows(), &mut output)?;
-
-    // write column data types
-    for field in schema.fields() {
-        write_data_type(field.data_type(), &mut output).map_err(|err| {
-            err.context(format!(
-                "batch_serde error writing data type: {}",
-                field.data_type()
-            ))
-        })?;
-    }
-
-    // write column nullables
-    let mut nullables = BitVec::<u8>::with_capacity(batch.num_columns());
-    for field in schema.fields() {
-        nullables.push(field.is_nullable());
-    }
-    output.write_all(&nullables.into_vec())?;
+    write_len(cols.len(), &mut output)?;
+    write_len(num_rows, &mut output)?;
 
     // write columns
-    for column in batch.columns() {
-        write_array(column, &mut output).map_err(|err| {
-            err.context(format!(
-                "batch_serde error writing column (data_type={})",
-                column.data_type()
-            ))
-        })?;
+    for col in cols {
+        write_data_type(col.data_type(), &mut output)?;
+        write_array(col, &mut output)?;
     }
     Ok(())
 }
 
-pub fn read_batch<R: Read>(input: &mut R) -> Result<RecordBatch> {
-    let mut input: Box<dyn Read> = Box::new(BufReader::new(input));
-
+pub fn read_batch(mut input: impl Read) -> Result<(usize, Vec<ArrayRef>)> {
     // read number of columns and rows
-    let num_columns = read_len(&mut input)?;
+    let num_cols = read_len(&mut input)?;
     let num_rows = read_len(&mut input)?;
 
-    // read column data types
-    let mut data_types = Vec::with_capacity(num_columns);
-    for _ in 0..num_columns {
-        data_types.push(
-            read_data_type(&mut input)
-                .map_err(|err| err.context("batch_serde error reading data type"))?,
-        );
-    }
-
-    // read nullables
-    let nullables_bytes = read_bytes_slice(&mut input, (num_columns + 7) / 8)?;
-    let nullables = BitVec::<u8>::from_vec(nullables_bytes.into());
-
-    // create schema
-    let schema = Arc::new(Schema::new(
-        data_types
-            .iter()
-            .enumerate()
-            .map(|(i, data_type)| Field::new("", data_type.clone(), nullables[i]))
-            .collect::<Fields>(),
-    ));
-
     // read columns
-    let columns = (0..num_columns)
-        .map(|i| {
-            read_array(&mut input, &data_types[i], num_rows).map_err(|err| {
-                err.context(format!(
-                    "batch_serde error reading column (data_type={}, num_rows={})",
-                    data_types[i], num_rows,
-                ))
-            })
+    let cols = (0..num_cols)
+        .map(|_| {
+            let dt = read_data_type(&mut input)?;
+            read_array(&mut input, &dt, num_rows)
         })
         .collect::<Result<_>>()?;
-
-    // create batch
-    Ok(RecordBatch::try_new_with_options(
-        schema,
-        columns,
-        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
-    )?)
+    Ok((num_rows, cols))
 }
 
 pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
@@ -682,7 +622,7 @@ mod test {
         batch_serde::{
             read_batch, read_primitive_raw_array, write_batch, write_primitive_raw_array,
         },
-        name_batch,
+        recover_named_batch,
     };
 
     #[test]
@@ -723,18 +663,24 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf).unwrap();
+        write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
-        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
+        assert_eq!(
+            recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
+            batch
+        );
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf).unwrap();
+        write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
-        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
+        assert_eq!(
+            recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
+            sliced
+        );
     }
 
     #[test]
@@ -769,9 +715,9 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf).unwrap();
+        write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
         assert_batches_eq!(
             vec![
                 "+-----------+-----------+",
@@ -783,15 +729,15 @@ mod test {
                 "| [6, 7]    | [6, 7]    |",
                 "+-----------+-----------+",
             ],
-            &[name_batch(decoded_batch, &batch.schema()).unwrap()]
+            &[recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap()]
         );
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf).unwrap();
+        write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
         assert_batches_eq!(
             vec![
                 "+----------+----------+",
@@ -801,7 +747,7 @@ mod test {
                 "| [3, , 5] | [3, , 5] |",
                 "+----------+----------+",
             ],
-            &[name_batch(decoded_batch, &batch.schema()).unwrap()]
+            &[recover_named_batch(decoded_num_rows, &decoded_cols, sliced.schema()).unwrap()]
         );
     }
 
@@ -833,18 +779,24 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf).unwrap();
+        write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
-        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
+        assert_eq!(
+            recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
+            batch
+        );
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf).unwrap();
+        write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
-        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
+        assert_eq!(
+            recover_named_batch(decoded_num_rows, &decoded_cols, sliced.schema()).unwrap(),
+            sliced
+        );
     }
 
     #[test]
@@ -865,17 +817,23 @@ mod test {
 
         // test read after write
         let mut buf = vec![];
-        write_batch(&batch, &mut buf).unwrap();
+        write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
-        assert_eq!(name_batch(decoded_batch, &batch.schema()).unwrap(), batch);
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
+        assert_eq!(
+            recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
+            batch
+        );
 
         // test read after write sliced
         let sliced = batch.slice(1, 2);
         let mut buf = vec![];
-        write_batch(&sliced, &mut buf).unwrap();
+        write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let decoded_batch = read_batch(&mut cursor).unwrap();
-        assert_eq!(name_batch(decoded_batch, &sliced.schema()).unwrap(), sliced);
+        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor).unwrap();
+        assert_eq!(
+            recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
+            sliced
+        );
     }
 }

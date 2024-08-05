@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    fmt::{Debug, Formatter},
     io::{Cursor, Read, Write},
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::Arc,
@@ -20,32 +21,41 @@ use std::{
 
 use arrow::{
     array::{Array, ArrayRef, AsArray, BinaryBuilder, RecordBatch},
+    buffer::NullBuffer,
     datatypes::{DataType, Field, FieldRef, Schema, SchemaRef},
 };
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
-use datafusion_ext_commons::spark_hash::create_murmur3_hashes;
-use hashbrown::HashMap;
-use itertools::Itertools;
+use datafusion_ext_commons::spark_hash::create_hashes;
 use once_cell::sync::OnceCell;
 
-use crate::common::batch_selection::take_batch;
+use crate::joins::bhj::make_eq_comparator_multiple_arrays;
 
 pub struct Table {
-    entry_offsets: Vec<u32>,
-    entry_lens: Vec<u32>,
-    item_indices: Vec<u32>,
-    item_hashes: Vec<i32>,
+    entries: Vec<Entry>,
+    items: Vec<Item>,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+#[repr(C)]
+struct Entry {
+    offset: u32,
+    len: u32,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+#[repr(C)]
+struct Item {
+    idx: u32,
+    hash: i32,
 }
 
 impl Table {
     pub fn new_empty() -> Self {
         let num_entries = Self::num_entries_of_rows(0);
         Self {
-            entry_offsets: vec![0; num_entries],
-            entry_lens: vec![0; num_entries],
-            item_indices: vec![],
-            item_hashes: vec![],
+            entries: vec![Entry::default(); num_entries],
+            items: vec![],
         }
     }
 
@@ -54,70 +64,58 @@ impl Table {
         data_batch: RecordBatch,
         key_columns: &[ArrayRef],
     ) -> Result<(Self, RecordBatch)> {
-        // returns the new data batch sorted by hashes
-
         assert!(
             num_rows < 1073741824,
             "join hash table: number of rows exceeded 2^30: {num_rows}"
         );
 
-        let num_entries = Self::num_entries_of_rows(num_rows) as u32;
+        let num_entries = Self::num_entries_of_rows(num_rows);
         let item_hashes = join_create_hashes(num_rows, &key_columns)?;
-        let item_valids = (0..num_rows)
-            .map(|row_idx| key_columns.iter().all(|key| key.is_valid(row_idx)))
+        let item_valids = key_columns
+            .iter()
+            .map(|col| col.nulls().cloned())
+            .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
+            .flatten();
+        let item_is_valid = |row_idx| match &item_valids {
+            Some(nb) => nb.is_valid(row_idx),
+            None => true,
+        };
+
+        let entries_to_row_indices = (0..num_rows)
+            .into_iter()
+            .filter(|&row_idx| item_is_valid(row_idx)) // exclude null keys
+            .map(|row_idx| (row_idx as u32, (item_hashes[row_idx] as usize % num_entries) as u32))
             .collect::<Vec<_>>();
 
-        // sort record batch by hashes for better compression and data locality
-        // null values are placed in the front of each entry
-        let (indices, item_hashes, item_valids): (Vec<usize>, Vec<i32>, Vec<bool>) = item_hashes
-            .into_iter()
-            .zip(item_valids)
-            .enumerate()
-            .map(|(row_idx, (hash, valid))| (row_idx, hash, valid))
-            .sorted_unstable_by_key(|&(_row_idx, hash, valid)| (hash, valid))
-            .multiunzip();
-        let data_batch = take_batch(data_batch, indices)?;
-
-        let mut entries_to_row_indices: HashMap<u32, Vec<u32>> = HashMap::new();
-        for (row_idx, hash) in item_hashes.iter().enumerate() {
-            let entry = *hash as u32 % num_entries;
-            entries_to_row_indices
-                .entry(entry)
-                .or_default()
-                .push(row_idx as u32);
+        // init entry offsets
+        let mut entry_counts = vec![0; num_entries];
+        for &(_, entry_idx) in &entries_to_row_indices {
+            entry_counts[entry_idx as usize] += 1;
+        }
+        let mut entries = vec![Entry::default(); num_entries];
+        let mut offset = 0;
+        for (entry_idx, entry_count) in entry_counts.into_iter().enumerate() {
+            entries[entry_idx].offset = offset;
+            offset += entry_count;
         }
 
-        let mut entry_offsets = Vec::with_capacity(num_entries as usize);
-        let mut entry_lens = Vec::with_capacity(num_entries as usize);
-        let mut item_indices = Vec::with_capacity(num_rows);
-        for entry in 0..num_entries {
-            match entries_to_row_indices.get(&entry) {
-                Some(row_indices) => {
-                    entry_offsets.push(item_indices.len() as u32);
-                    entry_lens.push(row_indices.len() as u32);
-                    item_indices.extend_from_slice(row_indices);
-                }
-                None => {
-                    entry_offsets.push(item_indices.len() as u32);
-                    entry_lens.push(0);
-                }
+        let mut items = vec![Item::default(); num_rows];
+        for (row_idx, entry_idx) in entries_to_row_indices {
+            if !item_is_valid(row_idx as usize) {
+                continue;
             }
+            let entry = &mut entries[entry_idx as usize];
+            entry.len += 1;
 
-            // exclude null values from entry
-            let cur_entry_idx = entry_offsets.len() - 1;
-            while entry_lens[cur_entry_idx] > 0
-                && !item_valids[item_indices[entry_offsets[cur_entry_idx] as usize] as usize]
-            {
-                entry_offsets[cur_entry_idx] += 1;
-                entry_lens[cur_entry_idx] -= 1;
-            }
+            let item_idx = entry.offset + entry.len - 1;
+            items[item_idx as usize] = Item {
+                idx: row_idx,
+                hash: item_hashes[row_idx as usize],
+            };
         }
-        let new = Self {
-            entry_offsets,
-            entry_lens,
-            item_indices,
-            item_hashes,
-        };
+        items.resize(num_rows, Item::default());
+
+        let new = Self { entries, items };
         Ok((new, data_batch))
     }
 
@@ -127,72 +125,52 @@ impl Table {
         let num_entries = Self::num_entries_of_rows(num_rows);
 
         let mut new = Self {
-            entry_offsets: vec![0; num_entries],
-            entry_lens: vec![0; num_entries],
-            item_indices: vec![0; num_rows],
-            item_hashes: vec![0; num_rows],
+            entries: vec![Entry::default(); num_entries],
+            items: vec![Item::default(); num_rows],
         };
 
         unsafe {
             // safety: read integer arrays as raw bytes
             cursor.read_exact(from_raw_parts_mut(
-                new.entry_offsets.as_mut_ptr() as *mut u8,
-                num_entries * 4,
+                new.entries.as_mut_ptr() as *mut u8,
+                num_entries * 8,
             ))?;
             cursor.read_exact(from_raw_parts_mut(
-                new.entry_lens.as_mut_ptr() as *mut u8,
-                num_entries * 4,
-            ))?;
-            cursor.read_exact(from_raw_parts_mut(
-                new.item_indices.as_mut_ptr() as *mut u8,
-                num_rows * 4,
-            ))?;
-            cursor.read_exact(from_raw_parts_mut(
-                new.item_hashes.as_mut_ptr() as *mut u8,
-                num_rows * 4,
+                new.items.as_mut_ptr() as *mut u8,
+                num_rows * 8,
             ))?;
         }
         Ok(new)
     }
 
     pub fn try_into_raw_bytes(self) -> Result<Vec<u8>> {
-        let num_entries = self.entry_offsets.len();
-        let num_rows = self.item_indices.len();
-        let mut raw_bytes = Vec::with_capacity(num_entries * 8 + num_rows * 4 + 4);
+        let num_entries = self.entries.len();
+        let num_rows = self.items.len();
+        let mut raw_bytes = Vec::with_capacity(num_entries * 8 + num_rows * 8 + 4);
 
         raw_bytes.write_u32::<NativeEndian>(num_rows as u32)?;
         unsafe {
             // safety: write integer arrays as raw bytes
             raw_bytes.write_all(from_raw_parts(
-                self.entry_offsets.as_ptr() as *const u8,
-                num_entries * 4,
+                self.entries.as_ptr() as *const u8,
+                num_entries * 8,
             ))?;
             raw_bytes.write_all(from_raw_parts(
-                self.entry_lens.as_ptr() as *const u8,
-                num_entries * 4,
-            ))?;
-            raw_bytes.write_all(from_raw_parts(
-                self.item_indices.as_ptr() as *const u8,
-                num_rows * 4,
-            ))?;
-            raw_bytes.write_all(from_raw_parts(
-                self.item_hashes.as_ptr() as *const u8,
-                num_rows * 4,
+                self.items.as_ptr() as *const u8,
+                num_rows * 8,
             ))?;
         }
         Ok(raw_bytes)
     }
 
     pub fn entry<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {
-        let entry = (hash as u32) % (self.entry_offsets.len() as u32);
-        let len = self.entry_lens[entry as usize] as usize;
-        if len > 0 {
-            let offset = self.entry_offsets[entry as usize] as usize;
+        let entry = self.entries[(hash as usize) % self.entries.len()];
+        if entry.len > 0 {
             Some(
-                self.item_indices[offset..][..len]
+                self.items[entry.offset as usize..][..entry.len as usize]
                     .iter()
-                    .cloned()
-                    .filter(move |&idx| self.item_hashes[idx as usize] == hash),
+                    .filter(move |item| item.hash == hash)
+                    .map(move |item| item.idx),
             )
         } else {
             None
@@ -200,7 +178,7 @@ impl Table {
     }
 
     fn num_entries_of_rows(num_rows: usize) -> usize {
-        num_rows * 3 + 1
+        num_rows * 5 + 1
     }
 }
 
@@ -208,6 +186,12 @@ pub struct JoinHashMap {
     data_batch: RecordBatch,
     key_columns: Vec<ArrayRef>,
     table: Table,
+}
+
+impl Debug for JoinHashMap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JoinHashMap(..)")
+    }
 }
 
 impl JoinHashMap {
@@ -281,36 +265,22 @@ impl JoinHashMap {
     }
 
     pub fn distinct(&mut self) -> Result<()> {
-        let comparators = self
-            .key_columns
-            .iter()
-            .map(|array| Ok(arrow::array::build_compare(&array, &array)?))
-            .collect::<Result<Vec<_>>>()?;
-        let total_eq = |i, j| {
-            comparators
-                .iter()
-                .all(|comparator| comparator(i, j).is_eq())
-        };
+        let eq = make_eq_comparator_multiple_arrays(&self.key_columns, &self.key_columns)?;
 
-        for entry in 0..self.table.entry_offsets.len() {
-            if self.table.entry_lens[entry] <= 1 {
-                continue;
-            }
-            let entry_offset = self.table.entry_offsets[entry] as usize;
-            let mut entry_end = entry_offset + self.table.entry_lens[entry] as usize;
+        for entry in self.table.entries.iter_mut().filter(|entry| entry.len > 1) {
+            let entry_offset = entry.offset as usize;
+            let mut entry_end = entry_offset + entry.len as usize;
             let mut i = entry_offset + 1;
 
             while i < entry_end {
-                let item_i = self.table.item_indices[i] as usize;
-                let hash_i = self.table.item_hashes[item_i];
+                let item_i = self.table.items[i];
                 let mut removed = false;
 
                 for j in entry_offset..i {
-                    let item_j = self.table.item_indices[j] as usize;
-                    let hash_j = self.table.item_hashes[item_j];
-                    if hash_j == hash_i && total_eq(item_j, item_i) {
+                    let item_j = self.table.items[j];
+                    if item_j.hash == item_i.hash && eq(item_j.idx as usize, item_i.idx as usize) {
                         // remove an duplicated key, remove it from entry
-                        self.table.item_indices.swap(i, entry_end - 1);
+                        self.table.items.swap(i, entry_end - 1);
                         entry_end -= 1;
                         removed = true;
                         break;
@@ -320,7 +290,7 @@ impl JoinHashMap {
                     i += 1;
                 }
             }
-            self.table.entry_lens[entry] = (entry_end - entry_offset) as u32;
+            entry.len = (entry_end - entry_offset) as u32;
         }
         Ok(())
     }
@@ -335,6 +305,10 @@ impl JoinHashMap {
 
     pub fn key_columns(&self) -> &[ArrayRef] {
         &self.key_columns
+    }
+
+    pub fn num_entries(&self) -> usize {
+        self.table.entries.len()
     }
 
     pub fn entry_indices<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {
@@ -385,9 +359,11 @@ pub fn join_hash_map_schema(data_schema: &SchemaRef) -> SchemaRef {
 
 #[inline]
 pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Result<Vec<i32>> {
-    const JOIN_HASH_RANDOM_SEED: i32 = 0x90ec4058u32 as i32;
+    const JOIN_HASH_RANDOM_SEED: i32 = 0x30ec4058i32;
     let mut hashes = vec![JOIN_HASH_RANDOM_SEED; num_rows];
-    create_murmur3_hashes(key_columns, &mut hashes)?;
+    create_hashes(key_columns, &mut hashes, |v, h| {
+        gxhash::gxhash32(v, h as i64) as i32
+    })?;
     Ok(hashes)
 }
 

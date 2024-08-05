@@ -250,7 +250,7 @@ class Tables(sqlContext: SQLContext, scaleFactor: Int) extends Serializable {
       tables
     }
 
-    withSpecifiedDataType.foreach { table =>
+    withSpecifiedDataType.par.foreach { table =>
       val tableLocation = s"$location/${table.name}"
       table.genData(tableLocation, format, overwrite, clusterByPartitionColumns,
         filterOutNullPartitionValues, numPartitions)
