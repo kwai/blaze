@@ -23,7 +23,7 @@ use std::{
 
 use arrow::{
     array::RecordBatch,
-    compute::SortOptions,
+    compute::{concat_batches, SortOptions},
     datatypes::{DataType, SchemaRef},
 };
 use async_trait::async_trait;
@@ -65,7 +65,7 @@ use crate::{
                 RProbedRightSemiJoiner,
             },
         },
-        join_hash_map::{join_data_schema, JoinHashMap},
+        join_hash_map::{join_data_schema, join_hash_map_schema, JoinHashMap},
         join_utils::{JoinType, JoinType::*},
         JoinParams, JoinProjection,
     },
@@ -79,6 +79,7 @@ pub struct BroadcastJoinExec {
     join_type: JoinType,
     broadcast_side: JoinSide,
     schema: SchemaRef,
+    is_built: bool, // true for BroadcastHashJoin, false for ShuffledHashJoin
     cached_build_hash_map_id: Option<String>,
     metrics: ExecutionPlanMetricsSet,
 }
@@ -91,6 +92,7 @@ impl BroadcastJoinExec {
         on: JoinOn,
         join_type: JoinType,
         broadcast_side: JoinSide,
+        is_built: bool,
         cached_build_hash_map_id: Option<String>,
     ) -> Result<Self> {
         Ok(Self {
@@ -100,6 +102,7 @@ impl BroadcastJoinExec {
             join_type,
             broadcast_side,
             schema,
+            is_built,
             cached_build_hash_map_id,
             metrics: ExecutionPlanMetricsSet::new(),
         })
@@ -143,12 +146,12 @@ impl BroadcastJoinExec {
             self.join_type,
             &self.schema,
             &match self.broadcast_side {
-                JoinSide::Left => join_data_schema(&left_schema),
-                JoinSide::Right => left_schema.clone(),
+                JoinSide::Left if self.is_built => join_data_schema(&left_schema),
+                _ => left_schema.clone(),
             },
             &match self.broadcast_side {
-                JoinSide::Left => right_schema.clone(),
-                JoinSide::Right => join_data_schema(&right_schema),
+                JoinSide::Right if self.is_built => join_data_schema(&right_schema),
+                _ => right_schema.clone(),
             },
             projection,
         )?;
@@ -178,15 +181,14 @@ impl BroadcastJoinExec {
         let left = self.left.execute(partition, context.clone())?;
         let right = self.right.execute(partition, context.clone())?;
         let broadcast_side = self.broadcast_side;
+        let is_built = self.is_built;
         let cached_build_hash_map_id = self.cached_build_hash_map_id.clone();
 
         // stat probed side
         let input_batch_stat =
             InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?;
-        let (left, right) = match broadcast_side {
-            JoinSide::Left => (left, stat_input(input_batch_stat, right)?),
-            JoinSide::Right => (stat_input(input_batch_stat, left)?, right),
-        };
+        let left = stat_input(input_batch_stat.clone(), left)?;
+        let right = stat_input(input_batch_stat.clone(), right)?;
 
         let metrics_cloned = metrics.clone();
         let context_cloned = context.clone();
@@ -194,7 +196,11 @@ impl BroadcastJoinExec {
             join_params.projection.schema.clone(),
             futures::stream::once(async move {
                 context_cloned.output_with_sender(
-                    "BroadcastJoin",
+                    if is_built {
+                        "BroadcastJoin"
+                    } else {
+                        "HashJoin"
+                    },
                     join_params.projection.schema.clone(),
                     move |sender| {
                         execute_join(
@@ -203,6 +209,7 @@ impl BroadcastJoinExec {
                             join_params,
                             broadcast_side,
                             cached_build_hash_map_id,
+                            is_built,
                             metrics_cloned,
                             sender,
                         )
@@ -261,6 +268,7 @@ impl ExecutionPlan for BroadcastJoinExec {
             self.on.iter().cloned().collect(),
             self.join_type,
             self.broadcast_side,
+            self.is_built,
             None,
         )?))
     }
@@ -285,95 +293,53 @@ impl ExecutionPlan for BroadcastJoinExec {
 
 impl DisplayAs for BroadcastJoinExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "BroadcastJoin")
+        write!(
+            f,
+            "{}",
+            if self.is_built {
+                "BroadcastJoin"
+            } else {
+                "HashJoin"
+            }
+        )
     }
 }
 
-async fn execute_join(
-    left: SendableRecordBatchStream,
-    right: SendableRecordBatchStream,
+async fn execute_join_with_map(
+    mut probed: SendableRecordBatchStream,
+    map: Arc<JoinHashMap>,
     join_params: JoinParams,
     broadcast_side: JoinSide,
-    cached_build_hash_map_id: Option<String>,
     metrics: Arc<BaselineMetrics>,
+    poll_time: Time,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
     let start_time = Instant::now();
     let mut excluded_time_ns = 0;
-    let poll_time = Time::new();
 
-    let (mut probed, _keys, mut joiner): (_, _, Pin<Box<dyn Joiner + Send>>) = match broadcast_side
-    {
-        JoinSide::Left => {
-            let right_schema = right.schema();
-            let mut right_peeked = Box::pin(right.peekable());
-            let (_, lmap_result) = futures::join!(
-                // fetch two sides asynchronously
-                async {
-                    let timer = poll_time.timer();
-                    right_peeked.as_mut().peek().await;
-                    drop(timer);
-                },
-                collect_join_hash_map(
-                    cached_build_hash_map_id,
-                    left,
-                    &join_params.left_keys,
-                    matches!(join_params.join_type, RightSemi | RightAnti),
-                    poll_time.clone(),
-                ),
-            );
-            let lmap = lmap_result?;
-            (
-                Box::pin(RecordBatchStreamAdapter::new(right_schema, right_peeked)),
-                join_params.right_keys.clone(),
-                match join_params.join_type {
-                    Inner => Box::pin(RProbedInnerJoiner::new(join_params, lmap, sender)),
-                    Left => Box::pin(RProbedLeftJoiner::new(join_params, lmap, sender)),
-                    Right => Box::pin(RProbedRightJoiner::new(join_params, lmap, sender)),
-                    Full => Box::pin(RProbedFullOuterJoiner::new(join_params, lmap, sender)),
-                    LeftSemi => Box::pin(RProbedLeftSemiJoiner::new(join_params, lmap, sender)),
-                    LeftAnti => Box::pin(RProbedLeftAntiJoiner::new(join_params, lmap, sender)),
-                    RightSemi => Box::pin(RProbedRightSemiJoiner::new(join_params, lmap, sender)),
-                    RightAnti => Box::pin(RProbedRightAntiJoiner::new(join_params, lmap, sender)),
-                    Existence => Box::pin(RProbedExistenceJoiner::new(join_params, lmap, sender)),
-                },
-            )
-        }
-        JoinSide::Right => {
-            let left_schema = left.schema();
-            let mut left_peeked = Box::pin(left.peekable());
-            let (_, rmap_result) = futures::join!(
-                // fetch two sides asynchronizely
-                async {
-                    let timer = poll_time.timer();
-                    left_peeked.as_mut().peek().await;
-                    drop(timer);
-                },
-                collect_join_hash_map(
-                    cached_build_hash_map_id,
-                    right,
-                    &join_params.right_keys,
-                    matches!(join_params.join_type, LeftSemi | LeftAnti | Existence),
-                    poll_time.clone(),
-                ),
-            );
-            let rmap = rmap_result?;
-            (
-                Box::pin(RecordBatchStreamAdapter::new(left_schema, left_peeked)),
-                join_params.left_keys.clone(),
-                match join_params.join_type {
-                    Inner => Box::pin(LProbedInnerJoiner::new(join_params, rmap, sender)),
-                    Left => Box::pin(LProbedLeftJoiner::new(join_params, rmap, sender)),
-                    Right => Box::pin(LProbedRightJoiner::new(join_params, rmap, sender)),
-                    Full => Box::pin(LProbedFullOuterJoiner::new(join_params, rmap, sender)),
-                    LeftSemi => Box::pin(LProbedLeftSemiJoiner::new(join_params, rmap, sender)),
-                    LeftAnti => Box::pin(LProbedLeftAntiJoiner::new(join_params, rmap, sender)),
-                    RightSemi => Box::pin(LProbedRightSemiJoiner::new(join_params, rmap, sender)),
-                    RightAnti => Box::pin(LProbedRightAntiJoiner::new(join_params, rmap, sender)),
-                    Existence => Box::pin(LProbedExistenceJoiner::new(join_params, rmap, sender)),
-                },
-            )
-        }
+    let mut joiner: Pin<Box<dyn Joiner + Send>> = match broadcast_side {
+        JoinSide::Left => match join_params.join_type {
+            Inner => Box::pin(RProbedInnerJoiner::new(join_params, map, sender)),
+            Left => Box::pin(RProbedLeftJoiner::new(join_params, map, sender)),
+            Right => Box::pin(RProbedRightJoiner::new(join_params, map, sender)),
+            Full => Box::pin(RProbedFullOuterJoiner::new(join_params, map, sender)),
+            LeftSemi => Box::pin(RProbedLeftSemiJoiner::new(join_params, map, sender)),
+            LeftAnti => Box::pin(RProbedLeftAntiJoiner::new(join_params, map, sender)),
+            RightSemi => Box::pin(RProbedRightSemiJoiner::new(join_params, map, sender)),
+            RightAnti => Box::pin(RProbedRightAntiJoiner::new(join_params, map, sender)),
+            Existence => Box::pin(RProbedExistenceJoiner::new(join_params, map, sender)),
+        },
+        JoinSide::Right => match join_params.join_type {
+            Inner => Box::pin(LProbedInnerJoiner::new(join_params, map, sender)),
+            Left => Box::pin(LProbedLeftJoiner::new(join_params, map, sender)),
+            Right => Box::pin(LProbedRightJoiner::new(join_params, map, sender)),
+            Full => Box::pin(LProbedFullOuterJoiner::new(join_params, map, sender)),
+            LeftSemi => Box::pin(LProbedLeftSemiJoiner::new(join_params, map, sender)),
+            LeftAnti => Box::pin(LProbedLeftAntiJoiner::new(join_params, map, sender)),
+            RightSemi => Box::pin(LProbedRightSemiJoiner::new(join_params, map, sender)),
+            RightAnti => Box::pin(LProbedRightAntiJoiner::new(join_params, map, sender)),
+            Existence => Box::pin(LProbedExistenceJoiner::new(join_params, map, sender)),
+        },
     };
 
     while let Some(batch) = {
@@ -383,6 +349,9 @@ async fn execute_join(
         batch
     } {
         joiner.as_mut().join(batch).await?;
+        if joiner.can_early_stop() {
+            break;
+        }
     }
     joiner.as_mut().finish().await?;
     metrics.record_output(joiner.num_output_rows());
@@ -397,6 +366,135 @@ async fn execute_join(
         .elapsed_compute()
         .add_duration(Duration::from_nanos(join_time_ns));
     Ok(())
+}
+
+async fn execute_join(
+    left: SendableRecordBatchStream,
+    right: SendableRecordBatchStream,
+    join_params: JoinParams,
+    broadcast_side: JoinSide,
+    cached_build_hash_map_id: Option<String>,
+    is_built: bool,
+    metrics: Arc<BaselineMetrics>,
+    sender: Arc<WrappedRecordBatchSender>,
+) -> Result<()> {
+    println!("XXX broadcast_side: {broadcast_side}, is_built: {is_built}");
+    let poll_time = Time::new();
+    let (probed, map) = match broadcast_side {
+        JoinSide::Left => {
+            let right_schema = right.schema();
+            let mut right_peeked = Box::pin(right.peekable());
+            let lmap = futures::join!(
+                // fetch two sides asynchronously
+                async {
+                    let timer = poll_time.timer();
+                    right_peeked.as_mut().peek().await;
+                    drop(timer);
+                },
+                async {
+                    if is_built {
+                        collect_join_hash_map(
+                            cached_build_hash_map_id,
+                            left,
+                            &join_params.left_keys,
+                            matches!(join_params.join_type, RightSemi | RightAnti),
+                            poll_time.clone(),
+                        )
+                        .await
+                    } else {
+                        build_join_hash_map(
+                            left,
+                            &join_params.left_keys,
+                            matches!(join_params.join_type, RightSemi | RightAnti),
+                            poll_time.clone(),
+                        )
+                        .await
+                    }
+                }
+            )
+            .1?;
+            (
+                Box::pin(RecordBatchStreamAdapter::new(right_schema, right_peeked)),
+                lmap,
+            )
+        }
+        JoinSide::Right => {
+            let left_schema = left.schema();
+            let mut left_peeked = Box::pin(left.peekable());
+            let rmap = futures::join!(
+                // fetch two sides asynchronizely
+                async {
+                    let timer = poll_time.timer();
+                    left_peeked.as_mut().peek().await;
+                    drop(timer);
+                },
+                async {
+                    if is_built {
+                        collect_join_hash_map(
+                            cached_build_hash_map_id,
+                            right,
+                            &join_params.right_keys,
+                            matches!(join_params.join_type, LeftSemi | LeftAnti | Existence),
+                            poll_time.clone(),
+                        )
+                        .await
+                    } else {
+                        build_join_hash_map(
+                            right,
+                            &join_params.right_keys,
+                            matches!(join_params.join_type, LeftSemi | LeftAnti | Existence),
+                            poll_time.clone(),
+                        )
+                        .await
+                    }
+                }
+            )
+            .1?;
+            (
+                Box::pin(RecordBatchStreamAdapter::new(left_schema, left_peeked)),
+                rmap,
+            )
+        }
+    };
+
+    execute_join_with_map(
+        probed,
+        map,
+        join_params,
+        broadcast_side,
+        metrics,
+        poll_time,
+        sender,
+    )
+    .await
+}
+
+async fn build_join_hash_map(
+    input: SendableRecordBatchStream,
+    key_exprs: &[PhysicalExprRef],
+    distinct: bool,
+    poll_time: Time,
+) -> Result<Arc<JoinHashMap>> {
+    let data_schema = input.schema();
+    let hash_map_schema = join_hash_map_schema(&data_schema);
+
+    let timer = poll_time.timer();
+    let data_batches: Vec<RecordBatch> = input.try_collect().await?;
+    drop(timer);
+
+    let data_batch = concat_batches(&data_schema, data_batches.iter())?;
+    if data_batch.num_rows() == 0 {
+        return Ok(Arc::new(JoinHashMap::try_new_empty(
+            hash_map_schema,
+            key_exprs,
+        )?));
+    }
+
+    let mut join_hash_map = JoinHashMap::try_from_data_batch(data_batch, key_exprs)?;
+    if distinct {
+        join_hash_map.distinct()?;
+    }
+    Ok(Arc::new(join_hash_map))
 }
 
 async fn collect_join_hash_map(
@@ -422,25 +520,21 @@ async fn collect_join_hash_map(
 }
 
 async fn collect_join_hash_map_without_caching(
-    mut input: SendableRecordBatchStream,
+    input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
     distinct: bool,
     poll_time: Time,
 ) -> Result<JoinHashMap> {
-    let mut hash_map_batches = vec![];
-    while let Some(batch) = {
-        let timer = poll_time.timer();
-        let batch = input.next().await.transpose()?;
-        drop(timer);
-        batch
-    } {
-        hash_map_batches.push(batch);
-    }
+    let hash_map_schema = input.schema();
+    let timer = poll_time.timer();
+    let hash_map_batches: Vec<RecordBatch> = input.try_collect().await?;
+    drop(timer);
+
     let mut join_hash_map = match hash_map_batches.len() {
-        0 => JoinHashMap::try_new_empty(input.schema(), key_exprs)?,
+        0 => JoinHashMap::try_new_empty(hash_map_schema, key_exprs)?,
         1 => {
             if hash_map_batches[0].num_rows() == 0 {
-                JoinHashMap::try_new_empty(input.schema(), key_exprs)?
+                JoinHashMap::try_new_empty(hash_map_schema, key_exprs)?
             } else {
                 JoinHashMap::try_from_hash_map_batch(hash_map_batches[0].clone(), key_exprs)?
             }
@@ -457,6 +551,10 @@ async fn collect_join_hash_map_without_caching(
 pub trait Joiner {
     async fn join(self: Pin<&mut Self>, probed_batch: RecordBatch) -> Result<()>;
     async fn finish(self: Pin<&mut Self>) -> Result<()>;
+
+    fn can_early_stop(&self) -> bool {
+        false
+    }
 
     fn total_send_output_time(&self) -> usize;
     fn num_output_rows(&self) -> usize;

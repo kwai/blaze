@@ -93,44 +93,32 @@ macro_rules! jni_map_error_with_env {
                         ex,
                         $crate::jni_bridge::JavaClasses::get()
                             .cJavaThrowable
-                            .method_getMessage,
+                            .method_toString,
                         $crate::jni_bridge::JavaClasses::get()
                             .cJavaThrowable
-                            .method_getMessage_ret
+                            .method_toString_ret
                             .clone(),
                         &[],
                     )
                     .unwrap()
                     .l()
                     .unwrap();
-                if !message_obj.is_null() {
-                    let message = $env
-                        .get_string(message_obj.into())
-                        .map(|s| String::from(s))
-                        .unwrap();
-                    Err(
-                        $crate::jni_bridge::datafusion::error::DataFusionError::External(
-                            format!(
-                                "Java exception thrown at {}:{}: {}",
-                                file!(),
-                                line!(),
-                                message
-                            )
-                            .into(),
-                        ),
-                    )
-                } else {
-                    Err(
-                        $crate::jni_bridge::datafusion::error::DataFusionError::External(
-                            format!(
-                                "Java exception thrown at {}:{}: (no message)",
-                                file!(),
-                                line!()
-                            )
-                            .into(),
-                        ),
-                    )
-                }
+                let message = $env
+                    .get_string(message_obj.into())
+                    .map(|s| String::from(s))
+                    .unwrap();
+
+                Err(
+                    $crate::jni_bridge::datafusion::error::DataFusionError::External(
+                        format!(
+                            "Java exception thrown at {}:{}: {}",
+                            file!(),
+                            line!(),
+                            message
+                        )
+                        .into(),
+                    ),
+                )
             }
             Err(err) => Err(
                 $crate::jni_bridge::datafusion::error::DataFusionError::External(
@@ -233,10 +221,15 @@ macro_rules! jni_get_object_class {
 }
 
 #[macro_export]
-macro_rules! jni_get_byte_array_elements {
-    ($value:expr, $mode:expr) => {{
+macro_rules! jni_get_byte_array_region {
+    ($value:expr, $start:expr, $buf:expr) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
-            $crate::jni_map_error_with_env!(env, env.get_byte_array_elements($value, $mode))
+            $crate::jni_map_error_with_env!(
+                env,
+                env.get_byte_array_region($value, $start as i32, unsafe {
+                    std::mem::transmute::<_, &mut [i8]>($buf)
+                })
+            )
         })
     }};
 }
@@ -660,8 +653,8 @@ impl<'a> JavaClass<'a> {
 #[allow(non_snake_case)]
 pub struct JavaThrowable<'a> {
     pub class: JClass<'a>,
-    pub method_getMessage: JMethodID,
-    pub method_getMessage_ret: ReturnType,
+    pub method_toString: JMethodID,
+    pub method_toString_ret: ReturnType,
 }
 impl<'a> JavaThrowable<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/Throwable";
@@ -670,8 +663,8 @@ impl<'a> JavaThrowable<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaThrowable {
             class,
-            method_getMessage: env.get_method_id(class, "getMessage", "()Ljava/lang/String;")?,
-            method_getMessage_ret: ReturnType::Object,
+            method_toString: env.get_method_id(class, "toString", "()Ljava/lang/String;")?,
+            method_toString_ret: ReturnType::Object,
         })
     }
 }

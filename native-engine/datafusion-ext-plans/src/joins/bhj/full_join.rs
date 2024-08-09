@@ -20,7 +20,10 @@ use std::{
     },
 };
 
-use arrow::array::{new_null_array, ArrayRef, RecordBatch};
+use arrow::{
+    array::{new_null_array, Array, ArrayRef, RecordBatch},
+    buffer::NullBuffer,
+};
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
 use datafusion::{common::Result, physical_plan::metrics::Time};
@@ -200,9 +203,23 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
 
         let probed_key_columns = self.create_probed_key_columns(&probed_batch)?;
         let probed_hashes = join_create_hashes(probed_batch.num_rows(), &probed_key_columns)?;
+        let probed_valids = probed_key_columns
+            .iter()
+            .map(|col| col.nulls().cloned())
+            .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
+            .flatten();
 
         // join by hash code
         for (row_idx, &hash) in probed_hashes.iter().enumerate() {
+            // nulls may not be joined
+            if probed_valids
+                .as_ref()
+                .map(|nb| nb.is_null(row_idx))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
             let mut maybe_joined = false;
             if let Some(entries) = self.map.entry_indices(hash) {
                 for map_idx in entries {
@@ -211,7 +228,6 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
                 }
                 maybe_joined = true;
             }
-
             if maybe_joined && hash_joined_probe_indices.len() > batch_size {
                 self.as_mut()
                     .flush_hash_joined(
@@ -224,6 +240,7 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
                     .await?;
             }
         }
+
         if !hash_joined_probe_indices.is_empty() {
             self.as_mut()
                 .flush_hash_joined(

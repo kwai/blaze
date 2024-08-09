@@ -20,10 +20,14 @@ use std::{
     },
 };
 
-use arrow::array::{ArrayRef, BooleanArray, RecordBatch};
+use arrow::{
+    array::{ArrayRef, BooleanArray, RecordBatch},
+    buffer::NullBuffer,
+};
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
 use datafusion::{common::Result, physical_plan::metrics::Time};
+use hashbrown::HashSet;
 
 use crate::{
     broadcast_join_exec::Joiner,
@@ -92,6 +96,7 @@ pub struct SemiJoiner<const P: JoinerParams> {
     join_params: JoinParams,
     output_sender: Arc<WrappedRecordBatchSender>,
     map_joined: BitVec,
+    hash_skippable: HashSet<i32>,
     map: Arc<JoinHashMap>,
     send_output_time: Time,
     output_rows: AtomicUsize,
@@ -109,6 +114,7 @@ impl<const P: JoinerParams> SemiJoiner<P> {
             output_sender,
             map,
             map_joined,
+            hash_skippable: HashSet::new(),
             send_output_time: Time::new(),
             output_rows: AtomicUsize::new(0),
         }
@@ -156,11 +162,14 @@ impl<const P: JoinerParams> SemiJoiner<P> {
         let probe_indices = hash_joined_probe_indices;
         let build_indices = hash_joined_build_indices;
 
-        for &idx in &probe_indices {
-            probed_joined.set(idx as usize, true);
-        }
-        for &idx in &build_indices {
-            self.map_joined.set(idx as usize, true);
+        if P.probe_is_join_side {
+            for &idx in &probe_indices {
+                probed_joined.set(idx as usize, true);
+            }
+        } else {
+            for &idx in &build_indices {
+                self.map_joined.set(idx as usize, true);
+            }
         }
         Ok(())
     }
@@ -175,16 +184,45 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
 
         let probed_key_columns = self.create_probed_key_columns(&probed_batch)?;
         let probed_hashes = join_create_hashes(probed_batch.num_rows(), &probed_key_columns)?;
+        let probed_valids = probed_key_columns
+            .iter()
+            .map(|col| col.nulls().cloned())
+            .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
+            .flatten();
 
         // join by hash code
         for (row_idx, &hash) in probed_hashes.iter().enumerate() {
+            // nulls may not be joined
+            if probed_valids
+                .as_ref()
+                .map(|nb| nb.is_null(row_idx))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            // map is join side -- skip hashes those may not be joined
+            if !P.probe_is_join_side && self.hash_skippable.contains(&hash) {
+                continue;
+            }
+
             let mut maybe_joined = false;
             if let Some(entries) = self.map.entry_indices(hash) {
                 for map_idx in entries {
+                    // join only once if map side is the join side
+                    if !P.probe_is_join_side && self.map_joined[map_idx as usize] {
+                        continue;
+                    }
                     hash_joined_probe_indices.push(row_idx as u32);
                     hash_joined_build_indices.push(map_idx);
+                    maybe_joined = true;
                 }
-                maybe_joined = true;
+            }
+
+            // map is join side -- mark the hash as skippable
+            if !P.probe_is_join_side && !maybe_joined {
+                self.hash_skippable.insert(hash);
+                continue;
             }
 
             if maybe_joined && hash_joined_probe_indices.len() >= self.join_params.batch_size {
@@ -271,6 +309,14 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
             self.as_mut().flush(pcols).await?;
         }
         Ok(())
+    }
+
+    fn can_early_stop(&self) -> bool {
+        if !P.probe_is_join_side && self.map_joined.all() {
+            // semi join: map is join side and all items are joined
+            return true;
+        }
+        false
     }
 
     fn total_send_output_time(&self) -> usize {

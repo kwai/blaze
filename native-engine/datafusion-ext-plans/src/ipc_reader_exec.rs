@@ -29,7 +29,7 @@ use arrow::{
 };
 use async_trait::async_trait;
 use blaze_jni_bridge::{
-    jni_call, jni_call_static, jni_get_byte_array_elements, jni_get_direct_buffer, jni_get_string,
+    jni_call, jni_call_static, jni_get_byte_array_region, jni_get_direct_buffer, jni_get_string,
     jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
 use datafusion::{
@@ -49,10 +49,7 @@ use datafusion_ext_commons::{
     streams::coalesce_stream::coalesce_arrays_unchecked, suggested_output_batch_mem_size,
 };
 use futures::{stream::once, TryStreamExt};
-use jni::{
-    objects::{AutoArray, GlobalRef, JObject, ReleaseMode::NoCopyBack},
-    sys::jbyte,
-};
+use jni::objects::{GlobalRef, JObject};
 use parking_lot::Mutex;
 
 use crate::common::{ipc_compression::IpcCompressionReader, output::TaskOutputter};
@@ -134,9 +131,12 @@ impl ExecutionPlan for IpcReaderExec {
                 jni_new_string!(&self.ipc_provider_resource_id)?.as_obj()
             ) -> JObject
         )?;
-        let blocks_local = jni_call!(ScalaFunction0(blocks_provider.as_obj()).apply() -> JObject)?;
-        let blocks = jni_new_global_ref!(blocks_local.as_obj())?;
+        assert!(!blocks_provider.as_obj().is_null());
 
+        let blocks_local = jni_call!(ScalaFunction0(blocks_provider.as_obj()).apply() -> JObject)?;
+        assert!(!blocks_local.as_obj().is_null());
+
+        let blocks = jni_new_global_ref!(blocks_local.as_obj())?;
         let ipc_stream = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
             once(read_ipc(
@@ -407,7 +407,7 @@ impl Drop for DirectByteBufferReader {
 
 struct HeapByteBufferReader {
     block: GlobalRef,
-    jarray: AutoArray<'static, jbyte>,
+    byte_array: GlobalRef,
     pos: usize,
     remaining: usize,
 }
@@ -419,10 +419,10 @@ impl HeapByteBufferReader {
         let byte_array = jni_call!(JavaBuffer(byte_buffer).array() -> JObject)?;
         let pos = jni_call!(JavaBuffer(byte_buffer).position() -> i32)? as usize;
         let remaining = jni_call!(JavaBuffer(byte_buffer).remaining() -> i32)? as usize;
-        let jarray = jni_get_byte_array_elements!(byte_array.as_obj().cast(), NoCopyBack)?;
+        let byet_array_global_ref = jni_new_global_ref!(byte_array.as_obj())?;
         Ok(Self {
             block: block_global_ref,
-            jarray,
+            byte_array: byet_array_global_ref,
             pos,
             remaining,
         })
@@ -435,14 +435,12 @@ impl HeapByteBufferReader {
 
     fn read_impl(&mut self, buf: &mut [u8]) -> Result<usize> {
         let read_len = buf.len().min(self.remaining);
-        unsafe {
-            // safety: access java byte array
-            std::ptr::copy_nonoverlapping(
-                self.jarray.as_ptr().wrapping_add(self.pos) as *const u8,
-                buf.as_mut_ptr(),
-                read_len,
-            );
-        }
+
+        jni_get_byte_array_region!(
+            self.byte_array.as_obj().cast(),
+            self.pos,
+            &mut buf[..read_len]
+        )?;
         self.pos += read_len;
         self.remaining -= read_len;
         Ok(read_len)
@@ -458,7 +456,8 @@ impl Read for HeapByteBufferReader {
 impl Drop for HeapByteBufferReader {
     fn drop(&mut self) {
         // ensure the block is closed
-        self.jarray.discard();
         let _ = self.close();
+        let _ = self.byte_array;
+        let _ = self.block;
     }
 }

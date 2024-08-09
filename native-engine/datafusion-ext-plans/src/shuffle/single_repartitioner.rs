@@ -85,14 +85,12 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
             let mut output_index = File::create(&self.output_index_file)?;
             output_index.write_all(&[0u8; 8])?;
             output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
-            output_index.sync_data()?;
         } else {
             // write empty data file and index file
             let output_data = File::create(&self.output_data_file)?;
             output_data.set_len(0)?;
             let mut output_index = File::create(&self.output_index_file)?;
             output_index.write_all(&[0u8; 16])?;
-            output_index.sync_data()?;
         }
         Ok(())
     }

@@ -15,7 +15,6 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.io.File
 import java.io.FileInputStream
 import java.io.FilterInputStream
 import java.io.InputStream
@@ -33,7 +32,6 @@ import org.apache.spark.TaskContext
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.storage.BlockId
 
 import io.netty.buffer.ByteBuf
@@ -176,4 +174,3 @@ trait BlockObject extends AutoCloseable {
   def getByteBuffer: ByteBuffer = throw new UnsupportedOperationException
   def getChannel: ReadableByteChannel = throw new UnsupportedOperationException
 }
-

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    fmt::{Debug, Formatter},
     io::{Cursor, Read, Write},
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::Arc,
@@ -28,8 +29,6 @@ use datafusion_ext_commons::spark_hash::create_murmur3_hashes;
 use hashbrown::HashMap;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-
-use crate::common::batch_selection::take_batch;
 
 pub struct Table {
     entry_offsets: Vec<u32>,
@@ -54,8 +53,6 @@ impl Table {
         data_batch: RecordBatch,
         key_columns: &[ArrayRef],
     ) -> Result<(Self, RecordBatch)> {
-        // returns the new data batch sorted by hashes
-
         assert!(
             num_rows < 1073741824,
             "join hash table: number of rows exceeded 2^30: {num_rows}"
@@ -66,17 +63,7 @@ impl Table {
         let item_valids = (0..num_rows)
             .map(|row_idx| key_columns.iter().all(|key| key.is_valid(row_idx)))
             .collect::<Vec<_>>();
-
-        // sort record batch by hashes for better compression and data locality
-        // null values are placed in the front of each entry
-        let (indices, item_hashes, item_valids): (Vec<usize>, Vec<i32>, Vec<bool>) = item_hashes
-            .into_iter()
-            .zip(item_valids)
-            .enumerate()
-            .map(|(row_idx, (hash, valid))| (row_idx, hash, valid))
-            .sorted_unstable_by_key(|&(_row_idx, hash, valid)| (hash, valid))
-            .multiunzip();
-        let data_batch = take_batch(data_batch, indices)?;
+        let data_batch = data_batch;
 
         let mut entries_to_row_indices: HashMap<u32, Vec<u32>> = HashMap::new();
         for (row_idx, hash) in item_hashes.iter().enumerate() {
@@ -105,13 +92,20 @@ impl Table {
 
             // exclude null values from entry
             let cur_entry_idx = entry_offsets.len() - 1;
-            while entry_lens[cur_entry_idx] > 0
-                && !item_valids[item_indices[entry_offsets[cur_entry_idx] as usize] as usize]
-            {
-                entry_offsets[cur_entry_idx] += 1;
-                entry_lens[cur_entry_idx] -= 1;
+            let entry_offset = entry_offsets[cur_entry_idx] as usize;
+            let mut entry_end = entry_offset + entry_lens[cur_entry_idx] as usize;
+            let mut i = entry_offset;
+            while i < entry_end {
+                if !item_valids[item_indices[i] as usize] {
+                    item_indices.swap(i, entry_end - 1);
+                    entry_end -= 1;
+                } else {
+                    i += 1;
+                }
             }
+            entry_lens[cur_entry_idx] = (entry_end - entry_offset) as u32;
         }
+
         let new = Self {
             entry_offsets,
             entry_lens,
@@ -183,8 +177,12 @@ impl Table {
         Ok(raw_bytes)
     }
 
+    pub fn entry_idx(&self, hash: i32) -> u32 {
+        (hash as u32) % (self.entry_offsets.len() as u32)
+    }
+
     pub fn entry<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {
-        let entry = (hash as u32) % (self.entry_offsets.len() as u32);
+        let entry = self.entry_idx(hash);
         let len = self.entry_lens[entry as usize] as usize;
         if len > 0 {
             let offset = self.entry_offsets[entry as usize] as usize;
@@ -200,7 +198,7 @@ impl Table {
     }
 
     fn num_entries_of_rows(num_rows: usize) -> usize {
-        num_rows * 3 + 1
+        num_rows * 5 + 1
     }
 }
 
@@ -208,6 +206,12 @@ pub struct JoinHashMap {
     data_batch: RecordBatch,
     key_columns: Vec<ArrayRef>,
     table: Table,
+}
+
+impl Debug for JoinHashMap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JoinHashMap(..)")
+    }
 }
 
 impl JoinHashMap {
@@ -335,6 +339,14 @@ impl JoinHashMap {
 
     pub fn key_columns(&self) -> &[ArrayRef] {
         &self.key_columns
+    }
+
+    pub fn num_entries(&self) -> usize {
+        self.table.entry_offsets.len()
+    }
+
+    pub fn entry_idx(&self, hash: i32) -> u32 {
+        self.table.entry_idx(hash)
     }
 
     pub fn entry_indices<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {

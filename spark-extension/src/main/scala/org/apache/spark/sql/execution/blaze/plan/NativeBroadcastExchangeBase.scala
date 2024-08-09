@@ -15,10 +15,8 @@
  */
 package org.apache.spark.sql.execution.blaze.plan
 
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
-import java.nio.channels.Channels
 import java.util.UUID
 import java.util.concurrent.Future
 import java.util.concurrent.TimeoutException
@@ -169,11 +167,12 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       (_, _) => {
         val resourceId = s"ArrowBroadcastExchangeExec:${UUID.randomUUID()}"
         val provideIpcIterator = () => {
-          broadcast.value.iterator.map(bytes => new BlockObject {
-            override def hasByteBuffer: Boolean = true
-            override def getByteBuffer: ByteBuffer = ByteBuffer.wrap(bytes)
-            override def close(): Unit = {}
-          })
+          broadcast.value.iterator.map(bytes =>
+            new BlockObject {
+              override def hasByteBuffer: Boolean = true
+              override def getByteBuffer: ByteBuffer = ByteBuffer.wrap(bytes)
+              override def close(): Unit = {}
+            })
         }
 
         JniBridge.resourcesMap.put(resourceId, () => provideIpcIterator())
@@ -305,7 +304,7 @@ object NativeBroadcastExchangeBase {
       .newBuilder()
       .setInput(pb.PhysicalPlanNode.newBuilder().setBroadcastJoinBuildHashMap(buildHashMapExec))
       .setIpcConsumerResourceId(writerIpcProviderResourceId)
-    
+
     val exec = pb.PhysicalPlanNode
       .newBuilder()
       .setIpcWriter(writerExec)
@@ -313,11 +312,12 @@ object NativeBroadcastExchangeBase {
 
     // input
     val provideIpcIterator = () => {
-      collectedData.iterator.map(bytes => new BlockObject {
-        override def hasByteBuffer: Boolean = true
-        override def getByteBuffer: ByteBuffer = ByteBuffer.wrap(bytes)
-        override def close(): Unit = {}
-      })
+      collectedData.iterator.map(bytes =>
+        new BlockObject {
+          override def hasByteBuffer: Boolean = true
+          override def getByteBuffer: ByteBuffer = ByteBuffer.wrap(bytes)
+          override def close(): Unit = {}
+        })
     }
     JniBridge.resourcesMap.put(readerIpcProviderResourceId, () => provideIpcIterator())
 
