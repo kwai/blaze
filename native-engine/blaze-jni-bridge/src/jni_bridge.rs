@@ -233,10 +233,15 @@ macro_rules! jni_get_object_class {
 }
 
 #[macro_export]
-macro_rules! jni_get_byte_array_elements {
-    ($value:expr, $mode:expr) => {{
+macro_rules! jni_get_byte_array_region {
+    ($value:expr, $start:expr, $buf:expr) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
-            $crate::jni_map_error_with_env!(env, env.get_byte_array_elements($value, $mode))
+            $crate::jni_map_error_with_env!(
+                env,
+                env.get_byte_array_region($value, $start as i32, unsafe {
+                    std::mem::transmute::<_, &mut [i8]>($buf)
+                })
+            )
         })
     }};
 }
