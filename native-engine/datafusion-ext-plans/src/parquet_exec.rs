@@ -448,6 +448,8 @@ impl ParquetHdfsFileReader {
                 let filename = self.meta.location.filename();
                 df_execution_err!("cannot decode filename: {filename:?}")
             })?;
+        eprintln!("trim_path is: {:#?}", trim_path.as_ref());
+        eprintln!("decode path is: {:#?}", path);
         self.store
             .get_range(&Path::from(path), range)
             .await
