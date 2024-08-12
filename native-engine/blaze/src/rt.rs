@@ -95,6 +95,7 @@ impl NativeExecutionRuntime {
                     JniBridge.setTaskContext(spark_task_context_global.as_obj()) -> ()
                 );
             })
+            .enable_io()
             .build()?;
 
         let (batch_sender, batch_receiver) = std::sync::mpsc::sync_channel(1);
