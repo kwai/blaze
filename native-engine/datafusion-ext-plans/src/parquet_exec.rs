@@ -441,7 +441,7 @@ struct ParquetHdfsFileReaderRef(Arc<ParquetHdfsFileReader>);
 impl ParquetHdfsFileReader {
     async fn read_fully(&self, range: Range<usize>) -> Result<Bytes> {
         let path = BASE64_URL_SAFE_NO_PAD
-            .decode(self.meta.location.filename().expect("missing filename"))
+            .decode(self.meta.location.filename().expect("missing filename").trim_start_matches('/'))
             .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
             .or_else(|_| {
                 let filename = self.meta.location.filename();
