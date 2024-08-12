@@ -14,6 +14,15 @@
 
 #![feature(get_mut_unchecked)]
 #![feature(adt_const_params)]
+#![feature(offset_of)]
+#![feature(async_closure)]
+
+use std::sync::Arc;
+
+use datafusion::error::{DataFusionError, Result};
+use hdfs_native::Client;
+use hdfs_native_object_store::HdfsObjectStore;
+use once_cell::sync::OnceCell;
 
 // execution plan implementations
 pub mod agg_exec;
@@ -49,3 +58,15 @@ pub mod generate;
 pub mod joins;
 mod shuffle;
 pub mod window;
+
+pub fn get_hdfs_object_store() -> Result<Arc<HdfsObjectStore>> {
+    static HDFS_OBJECT_STORE: OnceCell<Arc<HdfsObjectStore>> = OnceCell::new();
+    Ok(HDFS_OBJECT_STORE
+        .get_or_try_init(|| {
+            Ok::<_, DataFusionError>(Arc::new(HdfsObjectStore::new(
+                Client::new("hdfs://blaze-test")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?,
+            )))
+        })?
+        .clone())
+}

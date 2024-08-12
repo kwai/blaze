@@ -24,9 +24,7 @@ use arrow::{
     datatypes::{DataType, SchemaRef},
 };
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
-use blaze_jni_bridge::{
-    conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
-};
+use blaze_jni_bridge::{conf, conf::BooleanConf};
 use bytes::Bytes;
 use datafusion::{
     common::DataFusionError,
@@ -59,11 +57,12 @@ use datafusion_ext_commons::{
 };
 use fmt::Debug;
 use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryStreamExt};
-use object_store::ObjectMeta;
+use hdfs_native_object_store::HdfsObjectStore;
+use object_store::{path::Path, ObjectMeta, ObjectStore};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use crate::common::output::TaskOutputter;
+use crate::{common::output::TaskOutputter, get_hdfs_object_store};
 
 #[no_mangle]
 fn schema_adapter_cast_column(
@@ -274,10 +273,13 @@ impl ExecutionPlan for ParquetExec {
         ));
         self.metrics.register(io_time_metric);
 
-        // get fs object from jni bridge resource
-        let resource_id = jni_new_string!(&self.fs_resource_id)?;
-        let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
-        let fs_provider = Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time));
+        // get fs object from jni bridge resource, and use libhdfs to get file
+        // let resource_id = jni_new_string!(&self.fs_resource_id)?;
+        // let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) ->
+        // JObject)?; let fs_provider =
+        // Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time));
+
+        let hdfs_store = get_hdfs_object_store()?;
 
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,
@@ -298,7 +300,7 @@ impl ExecutionPlan for ParquetExec {
             table_schema: self.base_config.file_schema.clone(),
             metadata_size_hint: None,
             metrics: self.metrics.clone(),
-            parquet_file_reader_factory: Arc::new(FsReaderFactory::new(fs_provider)),
+            parquet_file_reader_factory: Arc::new(HdfsReaderFactory::new(hdfs_store.clone())),
             pushdown_filters: page_filtering_enabled,
             reorder_filters: page_filtering_enabled,
             enable_page_index: page_filtering_enabled,
@@ -382,6 +384,148 @@ impl ParquetFileReaderFactory for FsReaderFactory {
             meta: file_meta.object_meta,
         }));
         Ok(Box::new(reader))
+    }
+}
+
+#[derive(Clone)]
+pub struct HdfsReaderFactory {
+    store: Arc<HdfsObjectStore>,
+}
+
+impl HdfsReaderFactory {
+    pub fn new(store: Arc<HdfsObjectStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl Debug for HdfsReaderFactory {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "HdfsReaderFactory")
+    }
+}
+
+impl ParquetFileReaderFactory for HdfsReaderFactory {
+    fn create_reader(
+        &self,
+        partition_index: usize,
+        file_meta: FileMeta,
+        _metadata_size_hint: Option<usize>,
+        metrics: &ExecutionPlanMetricsSet,
+    ) -> Result<Box<dyn AsyncFileReader + Send>> {
+        let reader = ParquetHdfsFileReaderRef(Arc::new(ParquetHdfsFileReader {
+            store: self.store.clone(),
+            metrics: ParquetFileMetrics::new(
+                partition_index,
+                file_meta
+                    .object_meta
+                    .location
+                    .filename()
+                    .unwrap_or("__default_filename__"),
+                metrics,
+            ),
+            meta: file_meta.object_meta,
+        }));
+        Ok(Box::new(reader))
+    }
+}
+
+struct ParquetHdfsFileReader {
+    store: Arc<dyn ObjectStore>,
+    meta: ObjectMeta,
+    metrics: ParquetFileMetrics,
+}
+
+#[derive(Clone)]
+struct ParquetHdfsFileReaderRef(Arc<ParquetHdfsFileReader>);
+
+impl ParquetHdfsFileReader {
+    async fn read_fully(&self, range: Range<usize>) -> Result<Bytes> {
+        let path = BASE64_URL_SAFE_NO_PAD
+            .decode(self.meta.location.filename().expect("missing filename"))
+            .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            .or_else(|_| {
+                let filename = self.meta.location.filename();
+                df_execution_err!("cannot decode filename: {filename:?}")
+            })?;
+        self.store
+            .get_range(&Path::from(path), range)
+            .await
+            .map_err(|e| DataFusionError::ParquetError(ParquetError::External(Box::new(e))))
+    }
+}
+
+impl AsyncFileReader for ParquetHdfsFileReaderRef {
+    fn get_bytes(
+        &mut self,
+        range: Range<usize>,
+    ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Bytes>> {
+        let inner = self.0.clone();
+        inner.metrics.bytes_scanned.add(range.end - range.start);
+        async move {
+            inner
+                .read_fully(range)
+                .await
+                .map_err(|e| ParquetError::External(Box::new(e)))
+        }
+        .boxed()
+    }
+
+    fn get_metadata(
+        &mut self,
+    ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
+        const METADATA_CACHE_SIZE: usize = 5; // TODO: make it configurable
+
+        type ParquetMetaDataSlot = tokio::sync::OnceCell<Arc<ParquetMetaData>>;
+        type ParquetMetaDataCacheTable = Vec<(ObjectMeta, ParquetMetaDataSlot)>;
+        static METADATA_CACHE: OnceCell<Mutex<ParquetMetaDataCacheTable>> = OnceCell::new();
+
+        let inner = self.0.clone();
+        let meta_size = inner.meta.size;
+        let size_hint = Some(1048576);
+        let cache_slot = (move || {
+            let mut metadata_cache = METADATA_CACHE.get_or_init(|| Mutex::new(Vec::new())).lock();
+
+            // find existed cache slot
+            for (cache_meta, cache_slot) in metadata_cache.iter() {
+                if cache_meta.location == self.0.meta.location {
+                    return cache_slot.clone();
+                }
+            }
+
+            // reserve a new cache slot
+            if metadata_cache.len() >= METADATA_CACHE_SIZE {
+                metadata_cache.remove(0); // remove eldest
+            }
+            let cache_slot = ParquetMetaDataSlot::default();
+            metadata_cache.push((self.0.meta.clone(), cache_slot.clone()));
+            cache_slot
+        })();
+
+        // fetch metadata from file and update to cache
+        async move {
+            cache_slot
+                .get_or_try_init(move || async move {
+                    fetch_parquet_metadata(
+                        move |range| {
+                            let inner = inner.clone();
+                            inner.metrics.bytes_scanned.add(range.end - range.start);
+                            async move {
+                                inner
+                                    .read_fully(range)
+                                    .await
+                                    .map_err(|e| ParquetError::External(Box::new(e)))
+                            }
+                        },
+                        meta_size,
+                        size_hint,
+                    )
+                    .await
+                    .map(|parquet_metadata| Arc::new(parquet_metadata))
+                })
+                .map(|parquet_metadata| parquet_metadata.cloned())
+                .await
+        }
+        .boxed()
     }
 }
 
