@@ -61,6 +61,7 @@ use hdfs_native_object_store::HdfsObjectStore;
 use object_store::{path::Path, ObjectMeta, ObjectStore};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
+use url::Url;
 
 use crate::{common::output::TaskOutputter, get_hdfs_object_store};
 
@@ -414,6 +415,7 @@ impl ParquetFileReaderFactory for HdfsReaderFactory {
     ) -> Result<Box<dyn AsyncFileReader + Send>> {
         let reader = ParquetHdfsFileReaderRef(Arc::new(ParquetHdfsFileReader {
             store: self.store.clone(),
+            file_path: OnceCell::new(),
             metrics: ParquetFileMetrics::new(
                 partition_index,
                 file_meta
@@ -431,6 +433,7 @@ impl ParquetFileReaderFactory for HdfsReaderFactory {
 
 struct ParquetHdfsFileReader {
     store: Arc<dyn ObjectStore>,
+    file_path: OnceCell<Path>,
     meta: ObjectMeta,
     metrics: ParquetFileMetrics,
 }
@@ -440,18 +443,20 @@ struct ParquetHdfsFileReaderRef(Arc<ParquetHdfsFileReader>);
 
 impl ParquetHdfsFileReader {
     async fn read_fully(&self, range: Range<usize>) -> Result<Bytes> {
-        let trim_path = Path::from(self.meta.location.as_ref().trim_start_matches('/'));
-        let path = BASE64_URL_SAFE_NO_PAD
-            .decode(trim_path.filename().expect("missing filename"))
-            .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-            .or_else(|_| {
-                let filename = self.meta.location.filename();
-                df_execution_err!("cannot decode filename: {filename:?}")
-            })?;
-        eprintln!("trim_path is: {:#?}", trim_path.as_ref());
-        eprintln!("decode path is: {:#?}", path);
+        let path = self.file_path.get_or_try_init(|| {
+            let decode_path = BASE64_URL_SAFE_NO_PAD
+                .decode(self.meta.location.filename().expect("missing filename"))
+                .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                .or_else(|_| {
+                    let filename = self.meta.location.filename();
+                    df_execution_err!("cannot decode filename: {filename:?}")
+                })?;
+            let url_path = Url::parse(decode_path.as_str())
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            Ok::<_, DataFusionError>(Path::from(url_path.path()))
+        })?;
         self.store
-            .get_range(&Path::from(path), range)
+            .get_range(path, range)
             .await
             .map_err(|e| DataFusionError::ParquetError(ParquetError::External(Box::new(e))))
     }
