@@ -77,6 +77,7 @@ import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitBase
 import org.apache.spark.sql.execution.blaze.plan.NativeGlobalLimitExec
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitBase
 import org.apache.spark.sql.execution.blaze.plan.NativeLocalLimitExec
+import org.apache.spark.sql.execution.blaze.plan.NativeOrcScanExec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetInsertIntoHiveTableExec
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
@@ -235,6 +236,9 @@ class ShimsImpl extends Shims with Logging {
   override def createNativeParquetScanExec(
       basedFileScan: FileSourceScanExec): NativeParquetScanBase =
     NativeParquetScanExec(basedFileScan)
+
+  override def createNativeOrcScanExec(basedFileScan: FileSourceScanExec): NativeOrcScanBase =
+    NativeOrcScanExec(basedFileScan)
 
   override def createNativeProjectExec(
       projectList: Seq[NamedExpression],

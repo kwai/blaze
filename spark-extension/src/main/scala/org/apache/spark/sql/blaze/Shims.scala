@@ -120,6 +120,8 @@ abstract class Shims {
 
   def createNativeParquetScanExec(basedFileScan: FileSourceScanExec): NativeParquetScanBase
 
+  def createNativeOrcScanExec(basedFileScan: FileSourceScanExec): NativeOrcScanBase
+
   def createNativeProjectExec(
       projectList: Seq[NamedExpression],
       child: SparkPlan,

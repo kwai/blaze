@@ -23,7 +23,6 @@ use arrow::{
     array::{Array, ArrayRef, AsArray, ListArray},
     datatypes::{DataType, SchemaRef},
 };
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use blaze_jni_bridge::{
     conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
 };
@@ -53,17 +52,14 @@ use datafusion::{
         RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::{
-    batch_size, df_execution_err,
-    hadoop_fs::{FsDataInputStream, FsProvider},
-};
+use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
 use fmt::Debug;
 use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryStreamExt};
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use crate::common::output::TaskOutputter;
+use crate::common::{internal_file_reader::InternalFileReader, output::TaskOutputter};
 
 #[no_mangle]
 fn schema_adapter_cast_column(
@@ -368,8 +364,10 @@ impl ParquetFileReaderFactory for FsReaderFactory {
         metrics: &ExecutionPlanMetricsSet,
     ) -> Result<Box<dyn AsyncFileReader + Send>> {
         let reader = ParquetFileReaderRef(Arc::new(ParquetFileReader {
-            fs_provider: self.fs_provider.clone(),
-            input: OnceCell::new(),
+            internal_reader: InternalFileReader::new(
+                self.fs_provider.clone(),
+                file_meta.object_meta.clone(),
+            ),
             metrics: ParquetFileMetrics::new(
                 partition_index,
                 file_meta
@@ -379,16 +377,13 @@ impl ParquetFileReaderFactory for FsReaderFactory {
                     .unwrap_or("__default_filename__"),
                 metrics,
             ),
-            meta: file_meta.object_meta,
         }));
         Ok(Box::new(reader))
     }
 }
 
 struct ParquetFileReader {
-    fs_provider: Arc<FsProvider>,
-    input: OnceCell<Arc<FsDataInputStream>>,
-    meta: ObjectMeta,
+    internal_reader: InternalFileReader,
     metrics: ParquetFileMetrics,
 }
 
@@ -396,29 +391,12 @@ struct ParquetFileReader {
 struct ParquetFileReaderRef(Arc<ParquetFileReader>);
 
 impl ParquetFileReader {
-    fn get_input(&self) -> datafusion::parquet::errors::Result<Arc<FsDataInputStream>> {
-        let input = self
-            .input
-            .get_or_try_init(|| {
-                let path = BASE64_URL_SAFE_NO_PAD
-                    .decode(self.meta.location.filename().expect("missing filename"))
-                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-                    .or_else(|_| {
-                        let filename = self.meta.location.filename();
-                        df_execution_err!("cannot decode filename: {filename:?}")
-                    })?;
-                let fs = self.fs_provider.provide(&path)?;
-                Ok(Arc::new(fs.open(&path)?))
-            })
-            .map_err(|e| ParquetError::External(e))?;
-        Ok(input.clone())
+    fn get_meta(&self) -> ObjectMeta {
+        self.internal_reader.get_meta()
     }
 
-    fn read_fully(&self, range: Range<usize>) -> Result<Bytes> {
-        let mut bytes = vec![0u8; range.len()];
-        self.get_input()?
-            .read_fully(range.start as u64, &mut bytes)?;
-        Ok(Bytes::from(bytes))
+    fn get_internal_reader(&self) -> InternalFileReader {
+        self.internal_reader.clone()
     }
 }
 
@@ -432,6 +410,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
         async move {
             tokio::task::spawn_blocking(move || {
                 inner
+                    .get_internal_reader()
                     .read_fully(range)
                     .map_err(|e| ParquetError::External(Box::new(e)))
             })
@@ -451,14 +430,14 @@ impl AsyncFileReader for ParquetFileReaderRef {
         static METADATA_CACHE: OnceCell<Mutex<ParquetMetaDataCacheTable>> = OnceCell::new();
 
         let inner = self.0.clone();
-        let meta_size = inner.meta.size;
+        let meta_size = inner.get_meta().size;
         let size_hint = Some(1048576);
         let cache_slot = (move || {
             let mut metadata_cache = METADATA_CACHE.get_or_init(|| Mutex::new(Vec::new())).lock();
 
             // find existed cache slot
             for (cache_meta, cache_slot) in metadata_cache.iter() {
-                if cache_meta.location == self.0.meta.location {
+                if cache_meta.location == self.0.get_meta().location {
                     return cache_slot.clone();
                 }
             }
@@ -468,7 +447,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
                 metadata_cache.remove(0); // remove eldest
             }
             let cache_slot = ParquetMetaDataSlot::default();
-            metadata_cache.push((self.0.meta.clone(), cache_slot.clone()));
+            metadata_cache.push((self.0.get_meta().clone(), cache_slot.clone()));
             cache_slot
         })();
 
@@ -483,6 +462,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
                             async move {
                                 tokio::task::spawn_blocking(move || {
                                     inner
+                                        .get_internal_reader()
                                         .read_fully(range)
                                         .map_err(|e| ParquetError::External(Box::new(e)))
                                 })

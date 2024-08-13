@@ -138,7 +138,7 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "chrono",
- "chrono-tz",
+ "chrono-tz 0.8.6",
  "half",
  "hashbrown",
  "num",
@@ -313,8 +313,8 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "xz2",
- "zstd",
- "zstd-safe",
+ "zstd 0.13.2",
+ "zstd-safe 7.1.0",
 ]
 
 [[package]]
@@ -446,7 +446,7 @@ dependencies = [
  "once_cell",
  "panic-message",
  "paste",
- "prost",
+ "prost 0.13.1",
  "tokio",
 ]
 
@@ -474,7 +474,7 @@ dependencies = [
  "datafusion-ext-plans",
  "log",
  "object_store",
- "prost",
+ "prost 0.13.1",
  "tonic-build",
 ]
 
@@ -594,7 +594,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d59ae0466b83e838b81a54256c39d5d7c20b9d7daa10510a242d9b75abd5936e"
 dependencies = [
  "chrono",
- "chrono-tz-build",
+ "chrono-tz-build 0.2.1",
+ "phf",
+]
+
+[[package]]
+name = "chrono-tz"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93698b29de5e97ad0ae26447b344c482a7284c737d9ddc5f9e52b74a336671bb"
+dependencies = [
+ "chrono",
+ "chrono-tz-build 0.3.0",
  "phf",
 ]
 
@@ -603,6 +614,17 @@ name = "chrono-tz-build"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "433e39f13c9a060046954e0592a8d0a4bcb1040125cbf91cb8ee58964cfb350f"
+dependencies = [
+ "parse-zoneinfo",
+ "phf",
+ "phf_codegen",
+]
+
+[[package]]
+name = "chrono-tz-build"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c088aee841df9c3041febbb73934cfc39708749bf96dc827e3359cd39ef11b1"
 dependencies = [
  "parse-zoneinfo",
  "phf",
@@ -751,7 +773,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "ahash",
  "arrow",
@@ -794,13 +816,13 @@ dependencies = [
  "url",
  "uuid",
  "xz2",
- "zstd",
+ "zstd 0.13.2",
 ]
 
 [[package]]
 name = "datafusion-common"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "ahash",
  "arrow",
@@ -819,7 +841,7 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "arrow",
  "chrono",
@@ -839,7 +861,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "ahash",
  "arrow",
@@ -936,6 +958,7 @@ dependencies = [
  "datafusion-ext-functions",
  "derivative",
  "futures",
+ "futures-util",
  "gxhash",
  "hashbrown",
  "itertools 0.13.0",
@@ -945,6 +968,7 @@ dependencies = [
  "num",
  "object_store",
  "once_cell",
+ "orc-rust",
  "panic-message",
  "parking_lot",
  "paste",
@@ -953,13 +977,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
- "zstd",
+ "zstd 0.13.2",
 ]
 
 [[package]]
 name = "datafusion-functions"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "arrow",
  "base64 0.21.7",
@@ -973,7 +997,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions-array"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -986,7 +1010,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "arrow",
  "async-trait",
@@ -1003,7 +1027,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "ahash",
  "arrow",
@@ -1038,7 +1062,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-plan"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "ahash",
  "arrow",
@@ -1068,7 +1092,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "36.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=17b1ad3c7432391b94dd54e48a60db6d5712a7ef#17b1ad3c7432391b94dd54e48a60db6d5712a7ef"
+source = "git+https://github.com/harveyyue/datafusion.git?rev=d33877f8fbc7c57de946dc6081b2b357eedd0df9#d33877f8fbc7c57de946dc6081b2b357eedd0df9"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -1133,6 +1157,12 @@ dependencies = [
  "libc",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fastrand"
@@ -1647,6 +1677,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzokay-native"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "792ba667add2798c6c3e988e630f4eb921b5cbc735044825b7111ef1582c8730"
+dependencies = [
+ "byteorder",
+ "thiserror",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1786,7 +1826,7 @@ dependencies = [
  "itertools 0.12.1",
  "parking_lot",
  "percent-encoding",
- "snafu",
+ "snafu 0.7.5",
  "tokio",
  "tracing",
  "url",
@@ -1798,6 +1838,34 @@ name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
+
+[[package]]
+name = "orc-rust"
+version = "0.3.1"
+source = "git+https://github.com/harveyyue/datafusion-orc.git?rev=507600707a08c4bf7e2605a7ea40a5941456779d#507600707a08c4bf7e2605a7ea40a5941456779d"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "chrono-tz 0.9.0",
+ "datafusion",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "fallible-streaming-iterator",
+ "flate2",
+ "futures",
+ "futures-util",
+ "lz4_flex",
+ "lzokay-native",
+ "num",
+ "object_store",
+ "prost 0.12.6",
+ "snafu 0.8.4",
+ "snap",
+ "tokio",
+ "zstd 0.12.4",
+]
 
 [[package]]
 name = "ordered-float"
@@ -1878,7 +1946,7 @@ dependencies = [
  "thrift",
  "tokio",
  "twox-hash",
- "zstd",
+ "zstd 0.13.2",
 ]
 
 [[package]]
@@ -2007,12 +2075,22 @@ dependencies = [
 
 [[package]]
 name = "prost"
+version = "0.12.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "deb1435c188b76130da55f17a466d252ff7b1418b2ad3e037d127b94e3411f29"
+dependencies = [
+ "bytes",
+ "prost-derive 0.12.6",
+]
+
+[[package]]
+name = "prost"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13db3d3fde688c61e2446b4d843bc27a7e8af269a69440c0308021dc92333cc"
 dependencies = [
  "bytes",
- "prost-derive",
+ "prost-derive 0.13.1",
 ]
 
 [[package]]
@@ -2029,11 +2107,24 @@ dependencies = [
  "once_cell",
  "petgraph",
  "prettyplease",
- "prost",
+ "prost 0.13.1",
  "prost-types",
  "regex",
  "syn 2.0.57",
  "tempfile",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.12.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
+dependencies = [
+ "anyhow",
+ "itertools 0.12.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.57",
 ]
 
 [[package]]
@@ -2055,7 +2146,7 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36c1964ef64b94480df8c92ae14e5764d470014ad951d2f99e5a6c0c7712710c"
 dependencies = [
- "prost",
+ "prost 0.13.1",
 ]
 
 [[package]]
@@ -2312,7 +2403,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4de37ad025c587a29e8f3f5605c00f70b98715ef90b9061a815b9e59e9042d6"
 dependencies = [
  "doc-comment",
- "snafu-derive",
+ "snafu-derive 0.7.5",
+]
+
+[[package]]
+name = "snafu"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b835cb902660db3415a672d862905e791e54d306c6e8189168c7f3d9ae1c79d"
+dependencies = [
+ "snafu-derive 0.8.4",
 ]
 
 [[package]]
@@ -2325,6 +2425,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d1e02fca405f6280643174a50c942219f0bbf4dbf7d480f1dd864d6f211ae5"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.57",
 ]
 
 [[package]]
@@ -3000,11 +3112,30 @@ dependencies = [
 
 [[package]]
 name = "zstd"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a27595e173641171fc74a1232b7b1c7a7cb6e18222c11e9dfb9888fa424c53c"
+dependencies = [
+ "zstd-safe 6.0.6",
+]
+
+[[package]]
+name = "zstd"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fcf2b778a664581e31e389454a7072dab1647606d44f7feea22cd5abb9c9f3f9"
 dependencies = [
- "zstd-safe",
+ "zstd-safe 7.1.0",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "6.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee98ffd0b48ee95e6c5168188e44a54550b1564d9d530ee21d5f0eaed1069581"
+dependencies = [
+ "libc",
+ "zstd-sys",
 ]
 
 [[package]]
