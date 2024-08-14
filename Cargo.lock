@@ -1506,7 +1506,7 @@ dependencies = [
 [[package]]
 name = "hdfs-native"
 version = "0.9.2"
-source = "git+https://github.com/lihao712/hdfs-native.git?branch=read-hadoop-v7#1dbb76e25cfbc647757f5e018e75182bf915bad5"
+source = "git+https://github.com/lihao712/hdfs-native.git?branch=read-hadoop-v8#fb83194fce852b2e37674eeb7f71c322cf944d23"
 dependencies = [
  "aes",
  "base64 0.21.7",
