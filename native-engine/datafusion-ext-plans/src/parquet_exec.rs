@@ -657,32 +657,32 @@ impl AsyncFileReader for ParquetFileReaderRef {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
 
-    use bytes::Bytes;
     use datafusion::{common::Result, error::DataFusionError};
-    use hdfs_native::{Client, WriteOptions};
+    use hdfs_native::Client;
     use hdfs_native_object_store::HdfsObjectStore;
-    use object_store::ObjectStore;
-    use object_store::path::Path;
+    use object_store::{path::Path, ObjectStore};
     use url::Url;
 
     #[tokio::test]
     async fn test_libhdfs() -> Result<()> {
         let hdfs_store = HdfsObjectStore::new(
-            Client::new("hdfs://blaze-test")
-                .map_err(|e| DataFusionError::External(Box::new(e)))?,
+            Client::new("hdfs://blaze-test").map_err(|e| DataFusionError::External(Box::new(e)))?,
         );
         let path = "hdfs://blaze-test/user/hive/data/tpcds-1000/store_returns/part-00003-3dfd5001-97a9-45c8-90df-a490f48c7f15-c000.zstd.parquet";
         let url_path = Url::parse(path).map_err(|e| DataFusionError::External(Box::new(e)))?;
         eprintln!("url path is: {:#?}", url_path.path());
-        let range_path = Path::parse(url_path.path()).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let range_path =
+            Path::parse(url_path.path()).map_err(|e| DataFusionError::External(Box::new(e)))?;
         let range = 3..7;
-        let range_byte = hdfs_store.get_range(&range_path, range.clone()).await.unwrap();
+        let range_byte = hdfs_store
+            .get_range(&range_path, range.clone())
+            .await
+            .unwrap();
         eprintln!("range bytes is: {:#?}", &range_byte);
         // let client =
-        //     Client::new("hdfs://blaze-test").map_err(|e| DataFusionError::External(Box::new(e)))?;
-        // let reader = client
+        //     Client::new("hdfs://blaze-test").map_err(|e|
+        // DataFusionError::External(Box::new(e)))?; let reader = client
         //     .read(url_path.path())
         //     .await
         //     .map_err(|e| DataFusionError::External(Box::new(e)))?;

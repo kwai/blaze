@@ -17,7 +17,7 @@
 #![feature(offset_of)]
 #![feature(async_closure)]
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use datafusion::error::{DataFusionError, Result};
 use hdfs_native::Client;

@@ -89,4 +89,4 @@ parquet = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7471d70f7
 serde_json = { git = "https://github.com/blaze-init/json", branch = "v1.0.96-blaze" }
 
 # hdfs-native: branch=read-hadoop2
-hdfs-native = {git = "https://github.com/lihao712/hdfs-native.git", branch = "read-hadoop-v6"}
+hdfs-native = {git = "https://github.com/lihao712/hdfs-native.git", branch = "read-hadoop-v7"}
