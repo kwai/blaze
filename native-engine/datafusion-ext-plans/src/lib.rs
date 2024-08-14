@@ -17,7 +17,7 @@
 #![feature(offset_of)]
 #![feature(async_closure)]
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use datafusion::error::{DataFusionError, Result};
 use hdfs_native::Client;
@@ -61,10 +61,28 @@ pub mod window;
 
 pub fn get_hdfs_object_store() -> Result<Arc<HdfsObjectStore>> {
     static HDFS_OBJECT_STORE: OnceCell<Arc<HdfsObjectStore>> = OnceCell::new();
+    let config: HashMap<String, String> = HashMap::from([
+        (
+            "dfs.ha.namenodes.blaze-test".to_string(),
+            "nn1,nn2,nn3".to_string(),
+        ),
+        (
+            "dfs.namenode.rpc-address.blaze-test.nn1".to_string(),
+            "10.108.234.143:8020".to_string(),
+        ),
+        (
+            "dfs.namenode.rpc-address.blaze-test.nn2".to_string(),
+            "10.14.35.152:8020".to_string(),
+        ),
+        (
+            "dfs.namenode.rpc-address.blaze-test.nn3".to_string(),
+            "10.14.35.231:8020".to_string(),
+        ),
+    ]);
     Ok(HDFS_OBJECT_STORE
         .get_or_try_init(|| {
             Ok::<_, DataFusionError>(Arc::new(HdfsObjectStore::new(
-                Client::new("hdfs://blaze-test")
+                Client::new_with_config("hdfs://blaze-test", config.clone())
                     .map_err(|e| DataFusionError::External(Box::new(e)))?,
             )))
         })?

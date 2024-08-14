@@ -654,3 +654,75 @@ impl AsyncFileReader for ParquetFileReaderRef {
         .boxed()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+
+    use bytes::Bytes;
+    use datafusion::{common::Result, error::DataFusionError};
+    use hdfs_native::{Client, WriteOptions};
+    use hdfs_native_object_store::HdfsObjectStore;
+    use url::Url;
+
+    #[tokio::test]
+    async fn test_libhdfs() -> Result<()> {
+        let config: HashMap<String, String> = HashMap::from([
+            ("fs.defaultFS".to_string(), "hdfs://blaze-test".to_string()),
+            ("dfs.nameservices".to_string(), "blaze-test".to_string()),
+            (
+                "dfs.ha.namenodes.blaze-test".to_string(),
+                "nn1,nn2,nn3".to_string(),
+            ),
+            (
+                "dfs.namenode.rpc-address.blaze-test.nn1".to_string(),
+                "10.108.234.143:8020".to_string(),
+            ),
+            (
+                "dfs.namenode.rpc-address.blaze-test.nn2".to_string(),
+                "10.14.35.152:8020".to_string(),
+            ),
+            (
+                "dfs.namenode.rpc-address.blaze-test.nn3".to_string(),
+                "10.14.35.231:8020".to_string(),
+            ),
+        ]);
+        let hdfs_store = HdfsObjectStore::new(
+            Client::new_with_config("hdfs://blaze-test", config.clone())
+                .map_err(|e| DataFusionError::External(Box::new(e)))?,
+        );
+        let path = "hdfs://blaze-test/user/hive/data/tpcds-1000/store_returns/part-00003-3dfd5001-97a9-45c8-90df-a490f48c7f15-c000.zstd.parquet";
+        let url_path = Url::parse(path).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        eprintln!("url path is: {:#?}", url_path.path());
+        let parsed_url =
+            Url::parse("hdfs://blaze-test").map_err(|e| DataFusionError::External(Box::new(e)))?;
+        eprintln!("parsed_url is: {:#?}", parsed_url);
+        let client =
+            Client::new("hdfs://blaze-test").map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let reader = client
+            .read(url_path.path())
+            .await
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let mut dir = client
+            .create("/user/hive/test-data/123.text", WriteOptions::default())
+            .await
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let buf = Bytes::from("Hello world");
+        let ans = dir
+            .write(buf)
+            .await
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        eprintln!("ans is: {:#?}", ans);
+        let range = reader
+            .read_range(0, 10)
+            .await
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        eprintln!("range is: {:#?}", range);
+        let info = client.get_file_info(url_path.path()).await.unwrap().owner;
+        // eprintln!("info is: {:#?}", info);
+        // let ans = hdfs_store.get(&Path::from(url_path.path())).await;
+        // let meta = ans.unwrap().meta;
+        // eprintln!("meta location is: {:#?}", meta.location.as_ref());
+        Ok(())
+    }
+}
