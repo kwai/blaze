@@ -180,7 +180,7 @@ object BlazeCallNativeWrapper extends Logging {
       "Initializing native environment (" +
         s"batchSize=${BlazeConf.BATCH_SIZE.intConf()}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
-        s"memoryFraction=${BlazeConf.MEMORY_FRACTION.doubleConf()}")
+        s"memoryFraction=${BlazeConf.MEMORY_FRACTION.doubleConf()})")
     BlazeCallNativeWrapper.loadLibBlaze()
   }
 

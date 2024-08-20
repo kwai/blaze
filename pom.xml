@@ -275,6 +275,20 @@
     </profile>
 
     <profile>
+      <id>spark313</id>
+      <properties>
+        <shimName>spark313</shimName>
+        <shimPkg>spark3</shimPkg>
+        <javaVersion>1.8</javaVersion>
+        <scalaVersion>2.12</scalaVersion>
+        <scalaLongVersion>2.12.15</scalaLongVersion>
+        <scalaTestVersion>3.2.9</scalaTestVersion>
+        <scalafmtVersion>3.0.0</scalafmtVersion>
+        <sparkVersion>3.1.3</sparkVersion>
+      </properties>
+    </profile>
+
+    <profile>
       <id>spark320</id>
       <properties>
         <shimName>spark320</shimName>

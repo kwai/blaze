@@ -107,6 +107,43 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     }
   }
 
+  @enableIf(Seq("spark313").contains(System.getProperty("blaze.shim")))
+  override def getReader[K, C](
+      handle: ShuffleHandle,
+      startMapIndex: Int,
+      endMapIndex: Int,
+      startPartition: Int,
+      endPartition: Int,
+      context: TaskContext,
+      metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
+
+    if (isArrowShuffle(handle)) {
+      val address = SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
+        handle.shuffleId,
+        startMapIndex,
+        endMapIndex,
+        startPartition,
+        endPartition)
+      new BlazeBlockStoreShuffleReader(
+        handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
+        address,
+        context,
+        metrics,
+        SparkEnv.get.blockManager,
+        SparkEnv.get.mapOutputTracker,
+        shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
+    } else {
+      sortShuffleManager.getReader(
+        handle,
+        startMapIndex,
+        endMapIndex,
+        startPartition,
+        endPartition,
+        context,
+        metrics)
+    }
+  }
+
   @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
   override def getReader[K, C](
       handle: ShuffleHandle,

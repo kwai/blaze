@@ -116,6 +116,8 @@ class ShimsImpl extends Shims with Logging {
 
   @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
   override def shimVersion: String = "spark303"
+  @enableIf(Seq("spark313").contains(System.getProperty("blaze.shim")))
+  override def shimVersion: String = "spark313"
   @enableIf(Seq("spark320").contains(System.getProperty("blaze.shim")))
   override def shimVersion: String = "spark320"
   @enableIf(Seq("spark324").contains(System.getProperty("blaze.shim")))
@@ -378,7 +380,7 @@ class ShimsImpl extends Shims with Logging {
     MapStatus.apply(SparkEnv.get.blockManager.shuffleServerId, partitionLengths, mapId)
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
   override def commit(
       dep: ShuffleDependency[_, _, _],
       shuffleBlockResolver: IndexShuffleBlockResolver,
@@ -507,7 +509,7 @@ class ShimsImpl extends Shims with Logging {
     exec.isInstanceOf[AQEShuffleReadExec]
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
   private def isAQEShuffleRead(exec: SparkPlan): Boolean = {
     import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
     exec.isInstanceOf[CustomShuffleReaderExec]
@@ -559,6 +561,85 @@ class ShimsImpl extends Shims with Logging {
                   endMapIndex,
                   0,
                   numReducers,
+                  taskContext,
+                  sqlMetricsReporter)
+
+              case PartialReducerPartitionSpec(reducerIndex, startMapIndex, endMapIndex, _) =>
+                SparkEnv.get.shuffleManager.getReader(
+                  shuffleHandle,
+                  startMapIndex,
+                  endMapIndex,
+                  reducerIndex,
+                  reducerIndex + 1,
+                  taskContext,
+                  sqlMetricsReporter)
+
+              case PartialMapperPartitionSpec(mapIndex, startReducerIndex, endReducerIndex) =>
+                SparkEnv.get.shuffleManager.getReader(
+                  shuffleHandle,
+                  mapIndex,
+                  mapIndex + 1,
+                  startReducerIndex,
+                  endReducerIndex,
+                  taskContext,
+                  sqlMetricsReporter)
+            }
+
+            // store fetch iterator in jni resource before native compute
+            val jniResourceId = s"NativeShuffleReadExec:${UUID.randomUUID().toString}"
+            JniBridge.resourcesMap.put(
+              jniResourceId,
+              () => {
+                reader.asInstanceOf[BlazeBlockStoreShuffleReader[_, _]].readIpc()
+              })
+
+            pb.PhysicalPlanNode
+              .newBuilder()
+              .setIpcReader(
+                pb.IpcReaderExecNode
+                  .newBuilder()
+                  .setSchema(nativeSchema)
+                  .setNumPartitions(shuffledRDD.getNumPartitions)
+                  .setIpcProviderResourceId(jniResourceId)
+                  .build())
+              .build()
+          })
+    }
+  }
+
+  @enableIf(Seq("spark313").contains(System.getProperty("blaze.shim")))
+  private def executeNativeAQEShuffleReader(exec: SparkPlan): NativeRDD = {
+    import org.apache.spark.sql.execution.adaptive.CustomShuffleReaderExec
+
+    exec match {
+      case CustomShuffleReaderExec(child, _) if isNative(child) =>
+        val shuffledRDD = exec.execute().asInstanceOf[ShuffledRowRDD]
+        val shuffleHandle = shuffledRDD.dependency.shuffleHandle
+
+        val inputRDD = executeNative(child)
+        val nativeShuffle = getUnderlyingNativePlan(child).asInstanceOf[NativeShuffleExchangeExec]
+        val nativeSchema: pb.Schema = nativeShuffle.nativeSchema
+        val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
+
+        new NativeRDD(
+          shuffledRDD.sparkContext,
+          metrics,
+          shuffledRDD.partitions,
+          new OneToOneDependency(shuffledRDD) :: Nil,
+          true,
+          (partition, taskContext) => {
+
+            // use reflection to get partitionSpec because ShuffledRowRDDPartition is private
+            val sqlMetricsReporter = taskContext.taskMetrics().createTempShuffleReadMetrics()
+            val spec = FieldUtils
+              .readDeclaredField(partition, "spec", true)
+              .asInstanceOf[ShufflePartitionSpec]
+            val reader = spec match {
+              case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
+                SparkEnv.get.shuffleManager.getReader(
+                  shuffleHandle,
+                  startReducerIndex,
+                  endReducerIndex,
                   taskContext,
                   sqlMetricsReporter)
 
@@ -700,7 +781,7 @@ class ShimsImpl extends Shims with Logging {
   override def getSqlContext(sparkPlan: SparkPlan): SQLContext =
     sparkPlan.session.sqlContext
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
   override def getSqlContext(sparkPlan: SparkPlan): SQLContext = sparkPlan.sqlContext
 
   override def createNativeExprWrapper(
@@ -711,7 +792,7 @@ class ShimsImpl extends Shims with Logging {
   }
 
   @enableIf(
-    Seq("spark303", "spark320", "spark324", "spark333").contains(
+    Seq("spark303", "spark313", "spark320", "spark324", "spark333").contains(
       System.getProperty("blaze.shim")))
   private def convertPromotePrecision(
       e: Expression,
@@ -751,7 +832,9 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @enableIf(Seq("spark303", "spark320", "spark324").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark303", "spark313", "spark320", "spark324").contains(
+      System.getProperty("blaze.shim")))
   private def convertBloomFilterAgg(agg: AggregateFunction): Option[pb.PhysicalAggExprNode] = None
 
   @enableIf(Seq("spark333", "spark351").contains(System.getProperty("blaze.shim")))
@@ -775,7 +858,9 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @enableIf(Seq("spark303", "spark320", "spark324").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark303", "spark313", "spark320", "spark324").contains(
+      System.getProperty("blaze.shim")))
   private def convertBloomFilterMightContain(
       e: Expression,
       isPruningExpr: Boolean,
@@ -792,7 +877,7 @@ case class ForceNativeExecutionWrapper(override val child: SparkPlan)
   override def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

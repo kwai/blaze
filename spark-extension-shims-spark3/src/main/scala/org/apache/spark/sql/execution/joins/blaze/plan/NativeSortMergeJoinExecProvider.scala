@@ -71,7 +71,7 @@ case object NativeSortMergeJoinExecProvider {
     NativeSortMergeJoinExec(left, right, leftKeys, rightKeys, joinType)
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
   def provide(
       left: SparkPlan,
       right: SparkPlan,
