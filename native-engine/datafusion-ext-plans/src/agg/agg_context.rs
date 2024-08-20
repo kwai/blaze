@@ -347,10 +347,8 @@ impl AggContext {
         input_arrays: &[Vec<ArrayRef>],
         row_idx: usize,
     ) -> Result<()> {
-        if self.need_partial_update {
-            for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_update(acc, &input_arrays[*idx], row_idx)?;
-            }
+        for (idx, agg) in &self.need_partial_update_aggs {
+            agg.partial_update(acc, &input_arrays[*idx], row_idx)?;
         }
         Ok(())
     }
@@ -360,10 +358,8 @@ impl AggContext {
         accs: &mut [RefAccumStateRow],
         input_arrays: &[Vec<ArrayRef>],
     ) -> Result<()> {
-        if self.need_partial_update {
-            for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_batch_update(accs, &input_arrays[*idx])?;
-            }
+        for (idx, agg) in &self.need_partial_update_aggs {
+            agg.partial_batch_update(accs, &input_arrays[*idx])?;
         }
         Ok(())
     }
@@ -373,10 +369,8 @@ impl AggContext {
         acc: &mut RefAccumStateRow,
         input_arrays: &[Vec<ArrayRef>],
     ) -> Result<()> {
-        if self.need_partial_update {
-            for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_update_all(acc, &input_arrays[*idx])?;
-            }
+        for (idx, agg) in &self.need_partial_update_aggs {
+            agg.partial_update_all(acc, &input_arrays[*idx])?;
         }
         Ok(())
     }
@@ -387,13 +381,11 @@ impl AggContext {
         acc_array: &BinaryArray,
         row_idx: usize,
     ) -> Result<()> {
-        if self.need_partial_merge {
-            let mut input_acc = self.initial_input_acc.clone();
-            input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
-            for (_, agg) in &self.need_partial_merge_aggs {
-                agg.increase_acc_mem_used(&mut input_acc.as_mut());
-                agg.partial_merge(acc, &mut input_acc.as_mut())?;
-            }
+        let mut input_acc = self.initial_input_acc.clone();
+        input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
+        for (_, agg) in &self.need_partial_merge_aggs {
+            agg.increase_acc_mem_used(&mut input_acc.as_mut());
+            agg.partial_merge(acc, &mut input_acc.as_mut())?;
         }
         Ok(())
     }
@@ -403,25 +395,23 @@ impl AggContext {
         accs: &mut [RefAccumStateRow],
         acc_array: &BinaryArray,
     ) -> Result<()> {
-        if self.need_partial_merge {
-            let mut input_accs = acc_array
-                .iter()
-                .map(|value| {
-                    let mut input_acc = self.initial_input_acc.clone();
-                    input_acc.load_from_bytes(value.unwrap(), &self.acc_dyn_loaders)?;
-                    Ok(input_acc)
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let mut input_ref_accs = input_accs
-                .iter_mut()
-                .map(|acc| acc.as_mut())
-                .collect::<Vec<_>>();
-            for (_, agg) in &self.need_partial_merge_aggs {
-                for input_acc in &mut input_ref_accs {
-                    agg.increase_acc_mem_used(input_acc);
-                }
-                agg.partial_batch_merge(accs, &mut input_ref_accs)?;
+        let mut input_accs = acc_array
+            .iter()
+            .map(|value| {
+                let mut input_acc = self.initial_input_acc.clone();
+                input_acc.load_from_bytes(value.unwrap(), &self.acc_dyn_loaders)?;
+                Ok(input_acc)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut input_ref_accs = input_accs
+            .iter_mut()
+            .map(|acc| acc.as_mut())
+            .collect::<Vec<_>>();
+        for (_, agg) in &self.need_partial_merge_aggs {
+            for input_acc in &mut input_ref_accs {
+                agg.increase_acc_mem_used(input_acc);
             }
+            agg.partial_batch_merge(accs, &mut input_ref_accs)?;
         }
         Ok(())
     }
@@ -431,14 +421,12 @@ impl AggContext {
         acc: &mut RefAccumStateRow,
         acc_array: &BinaryArray,
     ) -> Result<()> {
-        if self.need_partial_merge {
-            let mut input_acc = self.initial_input_acc.clone();
-            for row_idx in 0..acc_array.len() {
-                input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
-                for (_, agg) in &self.need_partial_merge_aggs {
-                    agg.increase_acc_mem_used(&mut input_acc.as_mut());
-                    agg.partial_merge(acc, &mut input_acc.as_mut())?;
-                }
+        let mut input_acc = self.initial_input_acc.clone();
+        for row_idx in 0..acc_array.len() {
+            input_acc.load_from_bytes(acc_array.value(row_idx), &self.acc_dyn_loaders)?;
+            for (_, agg) in &self.need_partial_merge_aggs {
+                agg.increase_acc_mem_used(&mut input_acc.as_mut());
+                agg.partial_merge(acc, &mut input_acc.as_mut())?;
             }
         }
         Ok(())

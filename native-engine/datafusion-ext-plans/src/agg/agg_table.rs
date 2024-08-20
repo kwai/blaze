@@ -23,10 +23,6 @@ use arrow::{
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use async_trait::async_trait;
-use blaze_jni_bridge::{
-    conf::{IntConf, BATCH_SIZE},
-    is_jni_bridge_inited,
-};
 use bytes::Buf;
 use datafusion::{
     common::Result,
@@ -35,6 +31,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
+    batch_size,
     bytes_arena::{BytesArena, BytesArenaAddr},
     downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
@@ -180,14 +177,18 @@ impl AggTable {
             .collect();
 
         // partial update
-        let input_arrays = self.agg_ctx.create_input_arrays(&input_batch)?;
-        self.agg_ctx
-            .partial_batch_update_input(&mut accs, &input_arrays)?;
+        if self.agg_ctx.need_partial_update {
+            let input_arrays = self.agg_ctx.create_input_arrays(&input_batch)?;
+            self.agg_ctx
+                .partial_batch_update_input(&mut accs, &input_arrays)?;
+        }
 
         // partial merge
-        let acc_array = self.agg_ctx.get_input_acc_array(&input_batch)?;
-        self.agg_ctx
-            .partial_batch_merge_input(&mut accs, acc_array)?;
+        if self.agg_ctx.need_partial_merge {
+            let acc_array = self.agg_ctx.get_input_acc_array(&input_batch)?;
+            self.agg_ctx
+                .partial_batch_merge_input(&mut accs, acc_array)?;
+        }
 
         // create output batch
         let grouping_columns = self
@@ -218,11 +219,7 @@ impl AggTable {
         let in_mem = self.renew_in_mem_table(InMemMode::PartialSkipped).await;
         let spills = std::mem::take(&mut *self.spills.lock().await);
         let target_batch_mem_size = suggested_output_batch_mem_size();
-        let batch_size = if is_jni_bridge_inited() {
-            BATCH_SIZE.value()? as usize
-        } else {
-            10000 // default value used under testing (which jni is not inited)
-        };
+        let batch_size = batch_size();
 
         log::info!(
             "{} starts outputting ({} spills)",
@@ -634,14 +631,18 @@ impl HashingData {
             .collect::<Vec<_>>();
 
         // partial update
-        let input_arrays = self.agg_ctx.create_input_arrays(&batch)?;
-        self.agg_ctx
-            .partial_batch_update_input(&mut accs, &input_arrays)?;
+        if self.agg_ctx.need_partial_update {
+            let input_arrays = self.agg_ctx.create_input_arrays(&batch)?;
+            self.agg_ctx
+                .partial_batch_update_input(&mut accs, &input_arrays)?;
+        }
 
         // partial merge
-        let acc_array = self.agg_ctx.get_input_acc_array(&batch)?;
-        self.agg_ctx
-            .partial_batch_merge_input(&mut accs, acc_array)?;
+        if self.agg_ctx.need_partial_merge {
+            let acc_array = self.agg_ctx.get_input_acc_array(&batch)?;
+            self.agg_ctx
+                .partial_batch_merge_input(&mut accs, acc_array)?;
+        }
         Ok(())
     }
 
@@ -772,14 +773,18 @@ impl MergingData {
                     .collect::<Vec<_>>();
 
                 // partial update
-                let input_arrays = self.agg_ctx.create_input_arrays(&batch)?;
-                self.agg_ctx
-                    .partial_batch_update_input(&mut accs, &input_arrays)?;
+                if self.agg_ctx.need_partial_update {
+                    let input_arrays = self.agg_ctx.create_input_arrays(&batch)?;
+                    self.agg_ctx
+                        .partial_batch_update_input(&mut accs, &input_arrays)?;
+                }
 
                 // partial merge
-                let acc_array = self.agg_ctx.get_input_acc_array(&batch)?;
-                self.agg_ctx
-                    .partial_batch_merge_input(&mut accs, acc_array)?;
+                if self.agg_ctx.need_partial_merge {
+                    let acc_array = self.agg_ctx.get_input_acc_array(&batch)?;
+                    self.agg_ctx
+                        .partial_batch_merge_input(&mut accs, acc_array)?;
+                }
                 Ok(acc_addrs)
             })
             .collect::<Result<Vec<_>>>()?;

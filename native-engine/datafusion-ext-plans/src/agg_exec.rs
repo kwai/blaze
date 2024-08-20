@@ -266,10 +266,14 @@ async fn execute_agg_no_grouping(
 
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = baseline_metrics.elapsed_compute().timer();
-        let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
-        let acc_array = agg_ctx.get_input_acc_array(&input_batch)?;
-        agg_ctx.partial_update_input_all(&mut acc.as_mut(), &input_arrays)?;
-        agg_ctx.partial_merge_input_all(&mut acc.as_mut(), acc_array)?;
+        if agg_ctx.need_partial_update {
+            let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
+            agg_ctx.partial_update_input_all(&mut acc.as_mut(), &input_arrays)?;
+        }
+        if agg_ctx.need_partial_update {
+            let acc_array = agg_ctx.get_input_acc_array(&input_batch)?;
+            agg_ctx.partial_merge_input_all(&mut acc.as_mut(), acc_array)?;
+        }
     }
 
     // output
@@ -353,8 +357,12 @@ async fn execute_agg_sorted(
                     }
                 }
                 let acc = &mut current_record.as_mut().unwrap().1.as_mut();
-                agg_ctx.partial_update_input(acc, &input_arrays, row_idx)?;
-                agg_ctx.partial_merge_input(acc, acc_array, row_idx)?;
+                if agg_ctx.need_partial_update {
+                    agg_ctx.partial_update_input(acc, &input_arrays, row_idx)?;
+                }
+                if agg_ctx.need_partial_merge {
+                    agg_ctx.partial_merge_input(acc, acc_array, row_idx)?;
+                }
             }
             timer.stop();
         }
