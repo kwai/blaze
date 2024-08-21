@@ -15,11 +15,10 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.nio.ByteBuffer
+import org.apache.spark.TaskContext
+import org.apache.spark.shuffle.BaseShuffleHandle
 
-trait RssPartitionWriterBase {
-  def write(partitionId: Int, buffer: ByteBuffer): Unit
-  def flush(): Unit
-  def close(): Unit
-  def getPartitionLengthMap: Array[Long]
-}
+abstract class BlazeRssShuffleReaderBase[K, C](
+    handle: BaseShuffleHandle[K, _, C],
+    context: TaskContext)
+    extends BlazeBlockStoreShuffleReaderBase[K, C](handle, context) {}
