@@ -26,7 +26,7 @@ use arrow::{
 };
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
-use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion::common::Result;
 
 use crate::{
     broadcast_join_exec::Joiner,
@@ -82,7 +82,6 @@ pub struct FullJoiner<const P: JoinerParams> {
     output_sender: Arc<WrappedRecordBatchSender>,
     map: Arc<JoinHashMap>,
     map_joined: BitVec,
-    send_output_time: Time,
     output_rows: AtomicUsize,
 }
 
@@ -98,7 +97,6 @@ impl<const P: JoinerParams> FullJoiner<P> {
             output_sender,
             map,
             map_joined,
-            send_output_time: Time::default(),
             output_rows: AtomicUsize::new(0),
         }
     }
@@ -128,10 +126,7 @@ impl<const P: JoinerParams> FullJoiner<P> {
             },
         )?;
         self.output_rows.fetch_add(output_batch.num_rows(), Relaxed);
-
-        let timer = self.send_output_time.timer();
-        self.output_sender.send(Ok(output_batch), None).await;
-        drop(timer);
+        self.output_sender.send(Ok(output_batch)).await;
         Ok(())
     }
 
@@ -321,10 +316,6 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
             self.as_mut().flush(pcols, bcols).await?;
         }
         Ok(())
-    }
-
-    fn total_send_output_time(&self) -> usize {
-        self.send_output_time.value()
     }
 
     fn num_output_rows(&self) -> usize {

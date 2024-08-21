@@ -16,7 +16,7 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
-use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion::common::Result;
 use datafusion_ext_commons::suggested_output_batch_mem_size;
 
 use crate::{
@@ -50,7 +50,6 @@ pub struct SemiJoiner<const P: JoinerParams> {
     join_params: JoinParams,
     output_sender: Arc<WrappedRecordBatchSender>,
     indices: Vec<Idx>,
-    send_output_time: Time,
     output_rows: usize,
 }
 
@@ -70,7 +69,6 @@ impl<const P: JoinerParams> SemiJoiner<P> {
             join_params,
             output_sender,
             indices: vec![],
-            send_output_time: Time::new(),
             output_rows: 0,
         }
     }
@@ -120,10 +118,7 @@ impl<const P: JoinerParams> SemiJoiner<P> {
 
         if output_batch.num_rows() > 0 {
             self.output_rows += output_batch.num_rows();
-
-            let timer = self.send_output_time.timer();
-            self.output_sender.send(Ok(output_batch), None).await;
-            drop(timer);
+            self.output_sender.send(Ok(output_batch)).await;
         }
         Ok(())
     }
@@ -240,10 +235,6 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
             self.flush(curs).await?;
         }
         Ok(())
-    }
-
-    fn total_send_output_time(&self) -> usize {
-        self.send_output_time.value()
     }
 
     fn num_output_rows(&self) -> usize {

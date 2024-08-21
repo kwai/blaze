@@ -48,6 +48,7 @@ use crate::{
     common::{
         batch_statisitcs::{stat_input, InputBatchStatistics},
         output::TaskOutputter,
+        timer_helper::TimerHelper,
     },
     memmgr::MemManager,
 };
@@ -277,7 +278,9 @@ async fn execute_agg_no_grouping(
     // necessary to record elapsed computed time.
     let output_schema = agg_ctx.output_schema.clone();
     context.output_with_sender("Agg", output_schema, move |sender| async move {
-        let mut timer = baseline_metrics.elapsed_compute().timer();
+        sender.exclude_time(baseline_metrics.elapsed_compute());
+
+        let _timer = baseline_metrics.elapsed_compute().timer();
         let agg_columns = agg_ctx.build_agg_columns(vec![(&[], acc.as_mut())])?;
         let batch = RecordBatch::try_new_with_options(
             agg_ctx.output_schema.clone(),
@@ -285,7 +288,7 @@ async fn execute_agg_no_grouping(
             &RecordBatchOptions::new().with_row_count(Some(1)),
         )?;
         baseline_metrics.record_output(1);
-        sender.send(Ok(batch), Some(&mut timer)).await;
+        sender.send(Ok(batch)).await;
         log::info!("[partition={partition_id}] aggregate exec (no grouping) outputting one record");
         Ok(())
     })
@@ -310,10 +313,11 @@ async fn execute_agg_sorted(
 
     let output_schema = agg_ctx.output_schema.clone();
     context.output_with_sender("Agg", output_schema, move |sender| async move {
+        sender.exclude_time(baseline_metrics.elapsed_compute());
+
+        let _timer = baseline_metrics.elapsed_compute().timer();
         let mut staging_records = vec![];
         let mut current_record: Option<(SlimBytes, OwnedAccumStateRow)> = None;
-        let mut timer = baseline_metrics.elapsed_compute().timer();
-        timer.stop();
 
         macro_rules! flush_staging {
             () => {{
@@ -326,12 +330,14 @@ async fn execute_agg_sorted(
                 )?;
                 let num_rows = batch.num_rows();
                 baseline_metrics.record_output(num_rows);
-                sender.send(Ok(batch), Some(&mut timer)).await;
+                sender.send(Ok(batch)).await;
             }};
         }
-        while let Some(input_batch) = coalesced.next().await.transpose()? {
-            timer.restart();
-
+        while let Some(input_batch) = baseline_metrics
+            .elapsed_compute()
+            .exclude_timer_async(async { coalesced.next().await.transpose() })
+            .await?
+        {
             // compute grouping rows
             let grouping_rows = agg_ctx.create_grouping_rows(&input_batch)?;
 
@@ -356,10 +362,8 @@ async fn execute_agg_sorted(
                 agg_ctx.partial_update_input(acc, &input_arrays, row_idx)?;
                 agg_ctx.partial_merge_input(acc, acc_array, row_idx)?;
             }
-            timer.stop();
         }
 
-        timer.restart();
         if let Some(record) = current_record {
             staging_records.push(record);
         }

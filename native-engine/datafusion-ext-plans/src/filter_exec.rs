@@ -185,11 +185,13 @@ async fn execute_filter(
         CachedExprsEvaluator::try_new(predicates, vec![], input_schema.clone())?;
 
     context.output_with_sender("Filter", input_schema, move |sender| async move {
+        sender.exclude_time(metrics.elapsed_compute());
+
         while let Some(batch) = input.next().await.transpose()? {
-            let mut timer = metrics.elapsed_compute().timer();
+            let _timer = metrics.elapsed_compute().timer();
             let filtered_batch = cached_exprs_evaluator.filter(&batch)?;
             metrics.record_output(filtered_batch.num_rows());
-            sender.send(Ok(filtered_batch), Some(&mut timer)).await;
+            sender.send(Ok(filtered_batch)).await;
         }
         Ok(())
     })

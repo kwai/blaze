@@ -536,6 +536,7 @@ async fn external_sort(
     let sorter_cloned = sorter.clone();
 
     let output = context.output_with_sender("Sort", input.schema(), |sender| async move {
+        sender.exclude_time(sorter.baseline_metrics.elapsed_compute());
         sorter.output(sender).await?;
         Ok(())
     })?;
@@ -572,7 +573,7 @@ impl ExternalSorter {
     }
 
     async fn output(self: Arc<Self>, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
-        let mut timer = self.baseline_metrics.elapsed_compute().timer();
+        let _timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);
 
         let data = std::mem::take(&mut *self.data.lock().await);
@@ -601,7 +602,7 @@ impl ExternalSorter {
                     .prune_sort_keys_from_batch
                     .restore(pruned_batch, key_store)?;
                 self.baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch), Some(&mut timer)).await;
+                sender.send(Ok(batch)).await;
             }
             self.update_mem_used(0).await?;
             return Ok(());
@@ -635,7 +636,7 @@ impl ExternalSorter {
 
             self.update_mem_used(cursors_mem_used).await?;
             self.baseline_metrics.record_output(batch.num_rows());
-            sender.send(Ok(batch), Some(&mut timer)).await;
+            sender.send(Ok(batch)).await;
         }
         self.update_mem_used(0).await?;
         Ok(())

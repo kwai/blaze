@@ -17,7 +17,7 @@
 
 //! Execution plan for reading Parquet files
 
-use std::{any::Any, fmt, fmt::Formatter, ops::Range, sync::Arc};
+use std::{any::Any, fmt, fmt::Formatter, ops::Range, pin::Pin, sync::Arc};
 
 use arrow::{
     array::{Array, ArrayRef, AsArray, ListArray},
@@ -261,7 +261,7 @@ impl ExecutionPlan for ParquetExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
-        let elapsed_compute = baseline_metrics.elapsed_compute();
+        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
         let io_time = Time::default();
@@ -305,30 +305,15 @@ impl ExecutionPlan for ParquetExec {
             enable_bloom_filter: bloom_filter_enabled,
         };
 
-        let baseline_metrics_cloned = baseline_metrics.clone();
         let mut file_stream =
             FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?;
         if conf::IGNORE_CORRUPTED_FILES.value()? {
             file_stream = file_stream.with_on_error(OnError::Skip);
         }
-        let mut stream = Box::pin(file_stream);
-        let context_cloned = context.clone();
+        let stream = Box::pin(file_stream);
         let timed_stream = Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(async move {
-                context_cloned.output_with_sender(
-                    "ParquetScan",
-                    stream.schema(),
-                    move |sender| async move {
-                        let mut timer = baseline_metrics_cloned.elapsed_compute().timer();
-                        while let Some(batch) = stream.next().await.transpose()? {
-                            sender.send(Ok(batch), Some(&mut timer)).await;
-                        }
-                        Ok(())
-                    },
-                )
-            })
-            .try_flatten(),
+            once(execute_parquet_scan(context, stream, baseline_metrics)).try_flatten(),
         ));
         Ok(timed_stream)
     }
@@ -340,6 +325,23 @@ impl ExecutionPlan for ParquetExec {
     fn statistics(&self) -> Result<Statistics> {
         Ok(self.projected_statistics.clone())
     }
+}
+
+async fn execute_parquet_scan(
+    context: Arc<TaskContext>,
+    mut stream: Pin<Box<FileStream<ParquetOpener>>>,
+    baseline_metrics: BaselineMetrics,
+) -> Result<SendableRecordBatchStream> {
+    let schema = stream.schema();
+    context.output_with_sender("ParquetScan", schema, move |sender| async move {
+        sender.exclude_time(baseline_metrics.elapsed_compute());
+
+        let _timer = baseline_metrics.elapsed_compute().timer();
+        while let Some(batch) = stream.next().await.transpose()? {
+            sender.send(Ok(batch)).await;
+        }
+        Ok(())
+    })
 }
 
 #[derive(Clone)]

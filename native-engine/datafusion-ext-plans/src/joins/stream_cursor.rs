@@ -31,7 +31,7 @@ use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 
 use crate::{
-    common::batch_selection::take_batch_opt,
+    common::{batch_selection::take_batch_opt, timer_helper::TimerHelper},
     joins::{Idx, JoinParams},
 };
 
@@ -58,6 +58,7 @@ pub struct StreamCursor {
 impl StreamCursor {
     pub fn try_new(
         stream: SendableRecordBatchStream,
+        poll_time: Time,
         join_params: &JoinParams,
         join_side: JoinSide,
         projection: &[usize],
@@ -100,7 +101,7 @@ impl StreamCursor {
             stream,
             key_exprs,
             key_converter,
-            poll_time: Time::new(),
+            poll_time,
             projection: projection.to_vec(),
             projected_batch_schema: projected_null_batch.schema(),
             projected_batches: vec![projected_null_batch],
@@ -124,12 +125,11 @@ impl StreamCursor {
         let should_load_next_batch = self.cur_idx.0 >= self.projected_batches.len();
         if should_load_next_batch {
             Some(async move {
-                while let Some(batch) = {
-                    let timer = self.poll_time.timer();
-                    let batch = self.stream.next().await.transpose()?;
-                    drop(timer);
-                    batch
-                } {
+                while let Some(batch) = self
+                    .poll_time
+                    .with_timer_async(async { self.stream.next().await.transpose() })
+                    .await?
+                {
                     if batch.num_rows() == 0 {
                         continue;
                     }
@@ -217,11 +217,6 @@ impl StreamCursor {
     #[inline]
     pub fn set_min_reserved_idx(&mut self, idx: Idx) {
         self.min_reserved_idx = idx;
-    }
-
-    #[inline]
-    pub fn total_poll_time(&self) -> usize {
-        self.poll_time.value()
     }
 }
 
