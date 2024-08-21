@@ -35,7 +35,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    bytes_arena::{BytesArena, BytesArenaAddr},
+    bytes_arena::{BytesArena, BytesArenaRef},
     downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     io::{read_bytes_slice, read_len, write_len},
@@ -241,11 +241,7 @@ impl AggTable {
                 .hashing_data
                 .map
                 .into_iter()
-                .map(|(key_addr, acc_addr)| {
-                    let key = in_mem.hashing_data.map_key_store.get(key_addr);
-                    let acc = in_mem.hashing_data.acc_store.get(acc_addr);
-                    (key, acc)
-                })
+                .map(|(key_addr, acc_addr)| (key_addr, in_mem.hashing_data.acc_store.get(acc_addr)))
                 .collect::<Vec<_>>();
 
             while !records.is_empty() {
@@ -303,17 +299,12 @@ impl AggTable {
             () => {{
                 let mut staging_records = vec![];
                 let cur_hashing = hashing.renew();
+                let _map_key_store = cur_hashing.map_key_store;
                 let map = cur_hashing.map;
-                let map_key_store = cur_hashing.map_key_store;
                 let acc_store = cur_hashing.acc_store;
                 for (key_addr, value) in map {
-                    let key = unsafe {
-                        // safety:
-                        // map_key_store will be append-only while processing the same bucket
-                        std::mem::transmute::<_, &[u8]>(map_key_store.get(key_addr))
-                    };
                     let acc = acc_store.get(value);
-                    staging_records.push((key, acc));
+                    staging_records.push((key_addr, acc));
                 }
                 let batch = self.agg_ctx.convert_records_to_batch(staging_records)?;
                 self.baseline_metrics.record_output(batch.num_rows());
@@ -352,8 +343,8 @@ impl AggTable {
                 let hash = gx_hash::<GX_HASH_SEED_POST_MERGING>(&key);
                 match hashing.map.find_or_find_insert_slot(
                     hash,
-                    |v| key.as_ref() == hashing.map_key_store.get(v.0),
-                    |v| gx_hash::<GX_HASH_SEED_POST_MERGING>(hashing.map_key_store.get(v.0)),
+                    |v| key.as_ref() == v.0.as_ref(),
+                    |v| gx_hash::<GX_HASH_SEED_POST_MERGING>(&v.0),
                 ) {
                     Ok(found) => unsafe {
                         // safety - access hashbrown raw table
@@ -546,7 +537,7 @@ pub struct HashingData {
     task_ctx: Arc<TaskContext>,
     acc_store: AccStore,
     map_key_store: BytesArena,
-    map: RawTable<(BytesArenaAddr, u32)>, // keys addr to accs store addr
+    map: RawTable<(BytesArenaRef, u32)>, // keys to accs store addr
     num_input_records: usize,
     spill_metrics: SpillMetrics,
 }
@@ -607,11 +598,8 @@ impl HashingData {
                 .map
                 .find_or_find_insert_slot(
                     hash,
-                    |v| {
-                        v.0.unpack().len == row.as_ref().len()
-                            && self.map_key_store.get(v.0) == row.as_ref()
-                    },
-                    |v| gx_hash::<GX_HASH_SEED>(self.map_key_store.get(v.0)),
+                    |v| v.0.as_ref() == row.as_ref(),
+                    |v| gx_hash::<GX_HASH_SEED>(&v.0),
                 )
                 .unwrap_or_else(|slot| {
                     let key_addr = self.map_key_store.add(row.as_ref());
@@ -651,10 +639,9 @@ impl HashingData {
             .map
             .into_iter()
             .map(|(key_addr, acc_addr)| {
-                let key = self.map_key_store.get(key_addr);
                 let acc = self.acc_store.get(acc_addr);
-                let bucket_id = gx_merging_bucket_id(key);
-                (key, acc, bucket_id)
+                let bucket_id = gx_merging_bucket_id(&key_addr);
+                (key_addr, acc, bucket_id)
             })
             .collect::<Vec<_>>();
         radix_sort_unstable_by_key(&mut bucketed_records, |v| v.2);

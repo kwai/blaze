@@ -93,20 +93,37 @@ impl AccStore {
                 .push(Vec::with_capacity(ACC_STORE_BLOCK_SIZE * self.dyns_len()));
         }
         let idx1 = idx / ACC_STORE_BLOCK_SIZE;
-        self.fixed_store[idx1].extend_from_slice(acc.fixed());
-        self.dyn_store[idx1].extend(
-            acc.dyns()
-                .iter()
-                .map(|v| v.as_ref().map(|v| v.clone_boxed())),
-        );
+
+        if self.fixed_len() > 0 {
+            self.fixed_store[idx1].extend_from_slice(acc.fixed());
+        }
+        if self.dyns_len() > 0 {
+            self.dyn_store[idx1].extend(
+                acc.dyns()
+                    .iter()
+                    .map(|v| v.as_ref().map(|v| v.clone_boxed())),
+            );
+        }
         idx as u32
     }
 
     pub fn get(&self, idx: u32) -> RefAccumStateRow {
         let idx1 = idx as usize / ACC_STORE_BLOCK_SIZE;
         let idx2 = idx as usize % ACC_STORE_BLOCK_SIZE;
-        let fixed_ptr = self.fixed_store[idx1][idx2 * self.fixed_len()..].as_ptr() as *mut u8;
-        let dyns_ptr = self.dyn_store[idx1][idx2 * self.dyns_len()..].as_ptr() as *mut DynVal;
+
+        let fixed_ptr: *mut u8 = if self.fixed_len() > 0 {
+            self.fixed_store[idx1][idx2 * self.fixed_len()..].as_ptr() as *mut u8
+        } else {
+            1 as *mut u8 // requires non-null ptr, this value is never accessed
+        };
+
+        let dyns_ptr: *mut DynVal = if self.dyns_len() > 0 {
+            self.dyn_store[idx1][idx2 * self.dyns_len()..].as_ptr() as *mut DynVal
+        } else {
+            1 as *mut DynVal // requires non-null ptr, this value is never
+                             // accessed
+        };
+
         unsafe {
             // safety: skip borrow/mutable checking
             RefAccumStateRow {
