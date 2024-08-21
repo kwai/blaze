@@ -18,7 +18,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{compute::concat_batches, datatypes::SchemaRef};
+use arrow::{array::RecordBatch, compute::concat_batches, datatypes::SchemaRef};
 use datafusion::{
     common::Result,
     execution::{SendableRecordBatchStream, TaskContext},
@@ -116,6 +116,16 @@ impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
     }
 }
 
+pub fn collect_hash_map(
+    data_schema: SchemaRef,
+    data_batches: Vec<RecordBatch>,
+    keys: Vec<Arc<dyn PhysicalExpr>>,
+) -> Result<JoinHashMap> {
+    let data_batch = concat_batches(&data_schema, data_batches.iter())?;
+    let hash_map = JoinHashMap::try_from_data_batch(data_batch, &keys)?;
+    Ok(hash_map)
+}
+
 async fn execute_build_hash_map(
     context: Arc<TaskContext>,
     mut input: SendableRecordBatchStream,
@@ -132,11 +142,10 @@ async fn execute_build_hash_map(
     while let Some(batch) = input.next_batch(Some(&mut timer)).await? {
         data_batches.push(batch);
     }
-    let data_batch = concat_batches(&data_schema, data_batches.iter())?;
 
     // build hash map
     let hash_map_schema = join_hash_map_schema(&data_schema);
-    let hash_map = JoinHashMap::try_from_data_batch(data_batch, &keys)?;
+    let hash_map = collect_hash_map(data_schema, data_batches, keys)?;
     drop(timer);
 
     // output hash map batches as stream

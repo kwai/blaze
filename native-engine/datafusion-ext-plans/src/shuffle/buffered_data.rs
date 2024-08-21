@@ -23,7 +23,7 @@ use datafusion_ext_commons::{
     array_size::ArraySize,
     compute_suggested_batch_size_for_output,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-    rdxsort::radix_sort_u16_ranged_by,
+    rdxsort::radix_sort_unstable_by_key,
     staging_mem_size_for_partial_sort,
 };
 use jni::objects::GlobalRef;
@@ -116,7 +116,8 @@ impl BufferedData {
             // write all batches with this part id
             let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w), true);
             while iter.cur_part_id() == cur_part_id {
-                writer.write_batch(iter.next_batch())?;
+                let batch = iter.next_batch();
+                writer.write_batch(batch.num_rows(), batch.columns())?;
             }
             offset += writer.finish_into_inner()?.count();
             offsets.push(offset);
@@ -156,7 +157,8 @@ impl BufferedData {
 
             // write all batches with this part id
             while iter.cur_part_id() == cur_part_id {
-                writer.write_batch(iter.next_batch())?;
+                let batch = iter.next_batch();
+                writer.write_batch(batch.num_rows(), batch.columns())?;
             }
             writer.finish_into_inner()?;
         }
@@ -260,7 +262,6 @@ fn sort_batches_by_partition_id(
     batches: Vec<RecordBatch>,
     partitioning: &Partitioning,
 ) -> Result<(Vec<u32>, RecordBatch)> {
-    let num_rows = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
     let num_partitions = partitioning.partition_count();
     let schema = batches[0].schema();
 
@@ -277,12 +278,11 @@ fn sort_batches_by_partition_id(
         })
         .collect::<Vec<_>>();
 
-    // use quick sort if there are too many partitions or too few rows, otherwise
-    // use radix sort
-    if num_partitions < 65536 && num_rows >= num_partitions {
-        radix_sort_u16_ranged_by(&mut indices, num_partitions, |v| v.0 as u16);
+    // sort indices by radix sort
+    if num_partitions < 65536 {
+        radix_sort_unstable_by_key(&mut indices, |v| v.0 as u16);
     } else {
-        indices.sort_unstable_by_key(|v| v.0);
+        radix_sort_unstable_by_key(&mut indices, |v| v.0);
     }
 
     // get sorted batches

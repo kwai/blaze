@@ -20,6 +20,7 @@ use std::{
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use datafusion::{
     common::{DataFusionError, Result},
     physical_plan::{metrics::ExecutionPlanMetricsSet, Partitioning},
@@ -127,7 +128,14 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // we are likely to spill more frequently because the cost of spilling a shuffle
         // repartition is lower than other consumers.
-        if self.mem_used_percent() > 0.8 {
+        let mem_used_percent = self.mem_used_percent();
+        if mem_used_percent > 0.8 {
+            log::info!(
+                "{} memory usage: {}, percent: {:.3}, spilling...",
+                self.name(),
+                ByteSize(mem_used as u64),
+                mem_used_percent,
+            );
             self.spill().await?;
         }
         Ok(())
@@ -158,15 +166,11 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     .open(&data_file)?;
 
                 let offsets = data.write(&mut output_data, &partitioning)?;
-                output_data.sync_data()?;
-                output_data.flush()?;
 
                 let mut output_index = File::create(&index_file)?;
                 for offset in offsets {
                     output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
                 }
-                output_index.sync_data()?;
-                output_index.flush()?;
                 Ok::<(), DataFusionError>(())
             })
             .await
@@ -260,8 +264,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     min_spill.skip_empty_partitions();
                 }
             }
-            output_data.sync_data()?;
-            output_data.flush()?;
 
             // add one extra offset at last to ease partition length computation
             offsets.resize(num_output_partitions + 1, output_data.stream_position()?);
@@ -270,8 +272,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             for offset in offsets {
                 output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
             }
-            output_index.sync_data()?;
-            output_index.flush()?;
             Ok::<(), DataFusionError>(())
         })
         .await

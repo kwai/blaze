@@ -26,6 +26,7 @@ import org.apache.spark.sql.blaze.BlazeConvertStrategy.childOrderingRequiredTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.joinSmallerSideTag
 import org.apache.spark.sql.blaze.NativeConverters.StubExpr
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -132,6 +133,8 @@ object BlazeConverters extends Logging {
       exec
         .getTagValue(childOrderingRequiredTag)
         .foreach(newExec.setTagValue(childOrderingRequiredTag, _))
+      exec.getTagValue(joinSmallerSideTag).foreach(newExec.setTagValue(joinSmallerSideTag, _))
+
       if (!isNeverConvert(newExec)) {
         newExec = convertSparkPlan(newExec)
       }
@@ -336,6 +339,40 @@ object BlazeConverters extends Logging {
   }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
+    val requireOrdering = exec.getTagValue(childOrderingRequiredTag).contains(true)
+
+    // force shuffled-hash join
+    if (!requireOrdering
+      && BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()
+      && exec.children.forall(_.isInstanceOf[NativeSortBase])) {
+      val (leftKeys, rightKeys, joinType, condition, left, right) =
+        (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
+      logDebug(
+        s"Converting SortMergeJoinExec (with forceShuffledHashJoin): ${Shims.get.simpleStringWithNodeId(exec)}")
+      logDebug(s"  leftKeys: $leftKeys")
+      logDebug(s"  rightKeys: $rightKeys")
+      logDebug(s"  joinType: $joinType")
+      logDebug(s"  condition: $condition")
+      assert(condition.isEmpty, "join condition is not supported")
+
+      val buildSide = exec.getTagValue(joinSmallerSideTag) match {
+        case Some(org.apache.spark.sql.execution.blaze.plan.BuildLeft) =>
+          org.apache.spark.sql.execution.blaze.plan.BuildLeft
+        case Some(org.apache.spark.sql.execution.blaze.plan.BuildRight) =>
+          org.apache.spark.sql.execution.blaze.plan.BuildRight
+        case None =>
+          logWarning("JoinSmallerSideTag is missing, defaults to BuildRight")
+          org.apache.spark.sql.execution.blaze.plan.BuildRight
+      }
+      return Shims.get.createNativeShuffledHashJoinExec(
+        addRenameColumnsExec(convertToNative(left.children(0))),
+        addRenameColumnsExec(convertToNative(right.children(0))),
+        leftKeys,
+        rightKeys,
+        joinType,
+        buildSide)
+    }
+
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")

@@ -115,15 +115,15 @@ import com.thoughtworks.enableIf
 class ShimsImpl extends Shims with Logging {
 
   @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
-  def shimVersion: String = "spark303"
+  override def shimVersion: String = "spark303"
   @enableIf(Seq("spark320").contains(System.getProperty("blaze.shim")))
-  def shimVersion: String = "spark320"
+  override def shimVersion: String = "spark320"
   @enableIf(Seq("spark324").contains(System.getProperty("blaze.shim")))
-  def shimVersion: String = "spark324"
+  override def shimVersion: String = "spark324"
   @enableIf(Seq("spark333").contains(System.getProperty("blaze.shim")))
-  def shimVersion: String = "spark333"
+  override def shimVersion: String = "spark333"
   @enableIf(Seq("spark351").contains(System.getProperty("blaze.shim")))
-  def shimVersion: String = "spark351"
+  override def shimVersion: String = "spark351"
 
   @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
   override def initExtension(): Unit = {
@@ -717,18 +717,10 @@ class ShimsImpl extends Shims with Logging {
       e: Expression,
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode] = {
-    import org.apache.spark.sql.catalyst.expressions.{Cast, PromotePrecision}
+    import org.apache.spark.sql.catalyst.expressions.PromotePrecision
     e match {
       case PromotePrecision(_1) =>
-        Some(_1 match {
-          case cast: Cast if cast.dataType == _1.dataType =>
-            NativeConverters.convertExprWithFallback(_1, isPruningExpr, fallback)
-          case _ =>
-            NativeConverters.convertExprWithFallback(
-              Cast(_1, _1.dataType),
-              isPruningExpr,
-              fallback)
-        })
+        Some(NativeConverters.convertExprWithFallback(_1, isPruningExpr, fallback))
       case _ => None
     }
   }

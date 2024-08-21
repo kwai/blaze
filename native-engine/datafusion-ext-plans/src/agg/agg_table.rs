@@ -39,7 +39,7 @@ use datafusion_ext_commons::{
     downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     io::{read_bytes_slice, read_len, write_len},
-    rdxsort::radix_sort_u16_ranged_by,
+    rdxsort::radix_sort_unstable_by_key,
     slim_bytes::SlimBytes,
     staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
 };
@@ -657,21 +657,24 @@ impl HashingData {
                 (key, acc, bucket_id)
             })
             .collect::<Vec<_>>();
-
-        let bucket_counts =
-            radix_sort_u16_ranged_by(&mut bucketed_records, NUM_SPILL_BUCKETS, |v| v.2);
+        radix_sort_unstable_by_key(&mut bucketed_records, |v| v.2);
 
         let mut writer = spill.get_compressed_writer();
         let mut beg = 0;
 
         for i in 0..NUM_SPILL_BUCKETS {
-            if bucket_counts[i] > 0 {
+            let bucket_count = bucketed_records[beg..]
+                .iter()
+                .take_while(|(_, _, bucket_id)| *bucket_id == i as u16)
+                .count();
+
+            if bucket_count > 0 {
                 // write bucket id and number of records in this bucket
                 write_len(i, &mut writer)?;
-                write_len(bucket_counts[i], &mut writer)?;
+                write_len(bucket_count, &mut writer)?;
 
                 // write records in this bucket
-                for (key, acc, _) in &mut bucketed_records[beg..][..bucket_counts[i]] {
+                for (key, acc, _) in &mut bucketed_records[beg..][..bucket_count] {
                     // write key
                     let key = key.as_ref();
                     write_len(key.len(), &mut writer)?;
@@ -680,7 +683,7 @@ impl HashingData {
                     // write value
                     acc.save(&mut writer, &self.agg_ctx.acc_dyn_savers)?;
                 }
-                beg += bucket_counts[i];
+                beg += bucket_count;
             }
         }
         write_len(NUM_SPILL_BUCKETS, &mut writer)?; // EOF
@@ -792,7 +795,7 @@ impl MergingData {
                 })
             })
             .collect::<Vec<_>>();
-        radix_sort_u16_ranged_by(&mut sorted, NUM_SPILL_BUCKETS, |v| v.2);
+        radix_sort_unstable_by_key(&mut sorted, |v| v.2);
 
         // store serialized records
         // let acc_store = acc_store.lock();

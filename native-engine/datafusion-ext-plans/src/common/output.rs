@@ -14,7 +14,6 @@
 
 use std::{
     future::Future,
-    io::{Cursor, Write},
     panic::AssertUnwindSafe,
     sync::{Arc, Weak},
 };
@@ -33,7 +32,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     df_execution_err,
-    io::{read_one_batch, write_one_batch},
+    io::{read_one_batch, recover_named_batch, write_one_batch},
 };
 use futures::{FutureExt, StreamExt};
 use once_cell::sync::OnceCell;
@@ -196,16 +195,15 @@ impl TaskOutputter for Arc<TaskContext> {
                     // write all batches to spill, releasing all holding memory
                     while let Some(batch) = stream.next().await.transpose()? {
                         let _timer = baseline_metrics.elapsed_compute().timer();
-                        let mut buf = vec![];
-                        write_one_batch(&batch, &mut Cursor::new(&mut buf))?;
-                        spill_writer.write_all(&buf)?;
+                        write_one_batch(batch.num_rows(), batch.columns(), &mut spill_writer)?;
                     }
                     let mut timer = baseline_metrics.elapsed_compute().timer();
                     drop(spill_writer);
 
                     // read all batches from spill and output
                     let mut spill_reader = spill.get_compressed_reader();
-                    while let Some(batch) = read_one_batch(&mut spill_reader, &schema)? {
+                    while let Some((num_rows, cols)) = read_one_batch(&mut spill_reader)? {
+                        let batch = recover_named_batch(num_rows, &cols, schema.clone())?;
                         sender.send(Ok(batch), Some(&mut timer)).await;
                     }
                     return Ok(());

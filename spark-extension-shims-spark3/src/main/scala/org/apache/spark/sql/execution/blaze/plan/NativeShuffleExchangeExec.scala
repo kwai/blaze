@@ -69,8 +69,6 @@ case class NativeShuffleExchangeExec(
       writeMetrics ++
       Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))).toMap
 
-  Math.max(child.outputPartitioning.numPartitions * outputPartitioning.numPartitions, 1)
-
   // 'mapOutputStatisticsFuture' is only needed when enable AQE.
   @transient override lazy val mapOutputStatisticsFuture: Future[MapOutputStatistics] = {
     if (inputRDD.getNumPartitions == 0) {
