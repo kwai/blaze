@@ -37,7 +37,7 @@ impl Write for RssWriter {
         let buf = jni_new_direct_byte_buffer!(&buf)?;
         jni_call!(
             BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj())
-                .write(self.partition_id as i32, buf.as_obj(), buf_len as i32) -> ()
+                .write(self.partition_id as i32, buf.as_obj()) -> ()
         )?;
         Ok(buf_len)
     }

@@ -569,7 +569,11 @@ object NativeConverters extends Logging {
           }
           val resultType = (lhs.dataType, rhs.dataType) match {
             case (lhsType: DecimalType, rhsType: DecimalType) =>
-              resultDecimalType(lhsType.precision, lhsType.scale, rhsType.precision, rhsType.scale)
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
           }
 
           buildExprNode {
@@ -606,7 +610,11 @@ object NativeConverters extends Logging {
           }
           val resultType = (lhs.dataType, rhs.dataType) match {
             case (lhsType: DecimalType, rhsType: DecimalType) =>
-              resultDecimalType(lhsType.precision, lhsType.scale, rhsType.precision, rhsType.scale)
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
           }
 
           buildExprNode {
@@ -642,7 +650,11 @@ object NativeConverters extends Logging {
           }
           val resultType = (lhs.dataType, rhs.dataType) match {
             case (lhsType: DecimalType, rhsType: DecimalType) =>
-              resultDecimalType(lhsType.precision, lhsType.scale, rhsType.precision, rhsType.scale)
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
           }
 
           buildExprNode {
@@ -686,7 +698,11 @@ object NativeConverters extends Logging {
           }
           val resultType = (lhs.dataType, rhs.dataType) match {
             case (lhsType: DecimalType, rhsType: DecimalType) =>
-              resultDecimalType(lhsType.precision, lhsType.scale, rhsType.precision, rhsType.scale)
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
           }
 
           buildExprNode {

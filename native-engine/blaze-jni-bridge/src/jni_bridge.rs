@@ -1251,7 +1251,7 @@ impl<'a> BlazeRssPartitionWriterBase<'_> {
         Ok(BlazeRssPartitionWriterBase {
             class,
             method_write: env
-                .get_method_id(class, "write", "(ILjava/nio/ByteBuffer;I)V")
+                .get_method_id(class, "write", "(ILjava/nio/ByteBuffer;)V")
                 .unwrap(),
             method_write_ret: ReturnType::Primitive(Primitive::Void),
             method_flush: env.get_method_id(class, "flush", "()V").unwrap(),
