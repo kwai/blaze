@@ -23,10 +23,6 @@ use arrow::{
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use async_trait::async_trait;
-use blaze_jni_bridge::{
-    conf::{IntConf, BATCH_SIZE},
-    is_jni_bridge_inited,
-};
 use bytes::Buf;
 use datafusion::{
     common::Result,
@@ -35,6 +31,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
+    batch_size,
     bytes_arena::{BytesArena, BytesArenaRef},
     downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
@@ -108,8 +105,6 @@ impl AggTable {
     }
 
     pub async fn process_input_batch(&self, input_batch: RecordBatch) -> Result<()> {
-        let _timer = self.baseline_metrics.elapsed_compute().timer();
-
         // update memory usage before processing
         let mem_used = self.in_mem.lock().await.mem_used() + input_batch.get_array_mem_size() * 2;
         self.update_mem_used(mem_used).await?;
@@ -164,7 +159,6 @@ impl AggTable {
         input_batch: RecordBatch,
         sender: Arc<WrappedRecordBatchSender>,
     ) -> Result<()> {
-        let mut timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);
 
         let batch_num_rows = input_batch.num_rows();
@@ -207,22 +201,17 @@ impl AggTable {
         )?;
 
         self.baseline_metrics.record_output(output_batch.num_rows());
-        sender.send(Ok(output_batch), Some(&mut timer)).await;
+        sender.send(Ok(output_batch)).await;
         return Ok(());
     }
 
     pub async fn output(&self, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
-        let mut timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);
 
         let in_mem = self.renew_in_mem_table(InMemMode::PartialSkipped).await;
         let spills = std::mem::take(&mut *self.spills.lock().await);
         let target_batch_mem_size = suggested_output_batch_mem_size();
-        let batch_size = if is_jni_bridge_inited() {
-            BATCH_SIZE.value()? as usize
-        } else {
-            10000 // default value used under testing (which jni is not inited)
-        };
+        let batch_size = batch_size();
 
         log::info!(
             "{} starts outputting ({} spills)",
@@ -261,7 +250,7 @@ impl AggTable {
                 let batch_mem_size = batch.get_array_mem_size();
 
                 self.baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch), Some(&mut timer)).await;
+                sender.send(Ok(batch)).await;
 
                 // free memory of the output batch
                 // this is not precise because the used memory is accounted by records and
@@ -308,7 +297,7 @@ impl AggTable {
                 }
                 let batch = self.agg_ctx.convert_records_to_batch(staging_records)?;
                 self.baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch), Some(&mut timer)).await;
+                sender.send(Ok(batch)).await;
             }};
         }
 

@@ -16,7 +16,7 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
-use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion::common::Result;
 use datafusion_ext_commons::suggested_output_batch_mem_size;
 use smallvec::{smallvec, SmallVec};
 
@@ -32,7 +32,6 @@ pub struct FullJoiner<const L_OUTER: bool, const R_OUTER: bool> {
     output_sender: Arc<WrappedRecordBatchSender>,
     lindices: Vec<Idx>,
     rindices: Vec<Idx>,
-    send_output_time: Time,
     output_rows: usize,
 }
 
@@ -48,7 +47,6 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
             output_sender,
             lindices: vec![],
             rindices: vec![],
-            send_output_time: Time::new(),
             output_rows: 0,
         }
     }
@@ -99,10 +97,7 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
 
         if output_batch.num_rows() > 0 {
             self.output_rows += output_batch.num_rows();
-
-            let timer = self.send_output_time.timer();
-            self.output_sender.send(Ok(output_batch), None).await;
-            drop(timer);
+            self.output_sender.send(Ok(output_batch)).await;
         }
         Ok(())
     }
@@ -236,10 +231,6 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
             self.flush(curs).await?;
         }
         Ok(())
-    }
-
-    fn total_send_output_time(&self) -> usize {
-        self.send_output_time.value()
     }
 
     fn num_output_rows(&self) -> usize {

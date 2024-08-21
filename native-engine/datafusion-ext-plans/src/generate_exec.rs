@@ -43,6 +43,7 @@ use crate::{
     common::{
         batch_statisitcs::{stat_input, InputBatchStatistics},
         output::TaskOutputter,
+        timer_helper::TimerHelper,
     },
     generate::Generator,
 };
@@ -210,15 +211,20 @@ async fn execute_generate(
         "Generate",
         output_schema.clone(),
         move |sender| async move {
-            let last_child_outputs: Arc<Mutex<Option<Vec<ArrayRef>>>> = Arc::default();
-            while let Some(batch) = input_stream
-                .next()
-                .await
-                .transpose()
-                .map_err(|err| err.context("generate: polling batches from input error"))?
-            {
-                let mut timer = metrics.elapsed_compute().timer();
+            sender.exclude_time(metrics.elapsed_compute());
 
+            let _timer = metrics.elapsed_compute().timer();
+            let last_child_outputs: Arc<Mutex<Option<Vec<ArrayRef>>>> = Arc::default();
+            while let Some(batch) =
+                metrics
+                    .elapsed_compute()
+                    .exclude_timer_async(async {
+                        input_stream.next().await.transpose().map_err(|err| {
+                            err.context("generate: polling batches from input error")
+                        })
+                    })
+                    .await?
+            {
                 // evaluate child output
                 let child_outputs = child_output_cols
                     .iter()
@@ -312,7 +318,7 @@ async fn execute_generate(
                         start = end;
 
                         metrics.record_output(output_batch.num_rows());
-                        sender.send(Ok(output_batch), Some(&mut timer)).await;
+                        sender.send(Ok(output_batch)).await;
                     }
                 }
             }
@@ -335,7 +341,6 @@ async fn execute_generate(
                 .unwrap_or(0);
 
             if let Some(generated_outputs) = generator.terminate(last_row_id as i32)? {
-                let mut timer = metrics.elapsed_compute().timer();
                 let child_outputs = last_child_outputs
                     .iter()
                     .map(|c| {
@@ -365,7 +370,7 @@ async fn execute_generate(
                     &RecordBatchOptions::new().with_row_count(Some(num_rows)),
                 )?;
                 metrics.record_output(output_batch.num_rows());
-                sender.send(Ok(output_batch), Some(&mut timer)).await;
+                sender.send(Ok(output_batch)).await;
             }
             Ok(())
         },

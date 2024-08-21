@@ -26,7 +26,7 @@ use arrow::{
 };
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
-use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion::common::Result;
 use hashbrown::HashSet;
 
 use crate::{
@@ -98,7 +98,6 @@ pub struct SemiJoiner<const P: JoinerParams> {
     map_joined: BitVec,
     hash_skippable: HashSet<i32>,
     map: Arc<JoinHashMap>,
-    send_output_time: Time,
     output_rows: AtomicUsize,
 }
 
@@ -115,7 +114,6 @@ impl<const P: JoinerParams> SemiJoiner<P> {
             map,
             map_joined,
             hash_skippable: HashSet::new(),
-            send_output_time: Time::new(),
             output_rows: AtomicUsize::new(0),
         }
     }
@@ -139,10 +137,7 @@ impl<const P: JoinerParams> SemiJoiner<P> {
     async fn flush(&self, cols: Vec<ArrayRef>) -> Result<()> {
         let output_batch = RecordBatch::try_new(self.join_params.output_schema.clone(), cols)?;
         self.output_rows.fetch_add(output_batch.num_rows(), Relaxed);
-
-        let timer = self.send_output_time.timer();
-        self.output_sender.send(Ok(output_batch), None).await;
-        drop(timer);
+        self.output_sender.send(Ok(output_batch)).await;
         Ok(())
     }
 }
@@ -284,10 +279,6 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
             return true;
         }
         false
-    }
-
-    fn total_send_output_time(&self) -> usize {
-        self.send_output_time.value()
     }
 
     fn num_output_rows(&self) -> usize {
