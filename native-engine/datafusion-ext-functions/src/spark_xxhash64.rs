@@ -41,8 +41,7 @@ pub fn spark_xxhash64(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
     // use identical seed as spark hash partition
     let spark_xxhash64_default_seed = 42i64;
-    let mut hash_buffer = vec![spark_xxhash64_default_seed; len];
-    create_xxhash64_hashes(&arrays, &mut hash_buffer)?;
+    let hash_buffer = create_xxhash64_hashes(len, &arrays, spark_xxhash64_default_seed);
 
     Ok(ColumnarValue::Array(Arc::new(Int64Array::from(
         hash_buffer,

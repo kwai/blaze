@@ -34,7 +34,7 @@ use itertools::Itertools;
 use slimmer_box::SlimmerBox;
 use smallvec::SmallVec;
 
-use crate::agg::agg_table::gx_hash;
+use crate::agg::agg_table::agg_hash;
 
 pub type DynVal = Option<Box<dyn AggDynValue>>;
 
@@ -94,16 +94,12 @@ impl AccStore {
         }
         let idx1 = idx / ACC_STORE_BLOCK_SIZE;
 
-        if self.fixed_len() > 0 {
-            self.fixed_store[idx1].extend_from_slice(acc.fixed());
-        }
-        if self.dyns_len() > 0 {
-            self.dyn_store[idx1].extend(
-                acc.dyns()
-                    .iter()
-                    .map(|v| v.as_ref().map(|v| v.clone_boxed())),
-            );
-        }
+        self.fixed_store[idx1].extend_from_slice(acc.fixed());
+        self.dyn_store[idx1].extend(
+            acc.dyns()
+                .iter()
+                .map(|v| v.as_ref().map(|v| v.clone_boxed())),
+        );
         idx as u32
     }
 
@@ -111,21 +107,20 @@ impl AccStore {
         let idx1 = idx as usize / ACC_STORE_BLOCK_SIZE;
         let idx2 = idx as usize % ACC_STORE_BLOCK_SIZE;
 
-        let fixed_ptr: *mut u8 = if self.fixed_len() > 0 {
-            self.fixed_store[idx1][idx2 * self.fixed_len()..].as_ptr() as *mut u8
-        } else {
-            1 as *mut u8 // requires non-null ptr, this value is never accessed
-        };
-
-        let dyns_ptr: *mut DynVal = if self.dyns_len() > 0 {
-            self.dyn_store[idx1][idx2 * self.dyns_len()..].as_ptr() as *mut DynVal
-        } else {
-            1 as *mut DynVal // requires non-null ptr, this value is never
-                             // accessed
-        };
-
+        // safety: performance critical, skip borrow/mutable checking
         unsafe {
-            // safety: skip borrow/mutable checking
+            let fixed_ptr = self
+                .fixed_store
+                .get_unchecked(idx1)
+                .get_unchecked(idx2 * self.fixed_len()..)
+                .as_ptr() as *mut u8;
+
+            let dyns_ptr = self
+                .dyn_store
+                .get_unchecked(idx1)
+                .get_unchecked(idx2 * self.dyns_len()..)
+                .as_ptr() as *mut DynVal;
+
             RefAccumStateRow {
                 fixed: std::slice::from_raw_parts_mut(fixed_ptr, self.fixed_len()),
                 dyns: std::slice::from_raw_parts_mut(dyns_ptr, self.dyns_len()),
@@ -518,9 +513,9 @@ pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Re
                                 InternalSet::Small(s) => s.push(pos_len),
                                 InternalSet::Huge(s) => {
                                     let raw = list.ref_raw(pos_len);
-                                    let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                                    let hash = agg_hash::<AGG_DYN_SET_HASH_SEED>(raw);
                                     s.insert(hash, pos_len, |&pos_len| {
-                                        gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
+                                        agg_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
                                     });
                                 }
                             }
@@ -918,9 +913,9 @@ impl InternalSet {
 
             for &mut pos_len in s {
                 let raw = list.ref_raw(pos_len);
-                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                let hash = agg_hash::<AGG_DYN_SET_HASH_SEED>(raw);
                 huge.insert(hash, pos_len, |&pos_len| {
-                    gx_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
+                    agg_hash::<AGG_DYN_SET_HASH_SEED>(list.ref_raw(pos_len))
                 });
             }
             *self = Self::Huge(huge);
@@ -928,7 +923,7 @@ impl InternalSet {
     }
 }
 
-const AGG_DYN_SET_HASH_SEED: i64 = 0x7BCB48DA4C72B4F2;
+const AGG_DYN_SET_HASH_SEED: u32 = 0x7BCB48DA;
 
 impl AggDynSet {
     pub fn append(&mut self, value: &ScalarValue, nullable: bool) {
@@ -971,11 +966,11 @@ impl AggDynSet {
                 }
             }
             InternalSet::Huge(s) => {
-                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(raw);
+                let hash = agg_hash::<AGG_DYN_SET_HASH_SEED>(raw);
                 match s.find_or_find_insert_slot(
                     hash,
                     |&pos_len| new_len == pos_len.1 as usize && raw == self.list.ref_raw(pos_len),
-                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
+                    |&pos_len| agg_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
                 ) {
                     Ok(_found) => {}
                     Err(slot) => {
@@ -1010,13 +1005,13 @@ impl AggDynSet {
             }
             InternalSet::Huge(s) => {
                 let new_value = self.list.ref_raw(new_pos_len);
-                let hash = gx_hash::<AGG_DYN_SET_HASH_SEED>(new_value);
+                let hash = agg_hash::<AGG_DYN_SET_HASH_SEED>(new_value);
                 match s.find_or_find_insert_slot(
                     hash,
                     |&pos_len| {
                         new_len == pos_len.1 as usize && new_value == self.list.ref_raw(pos_len)
                     },
-                    |&pos_len| gx_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
+                    |&pos_len| agg_hash::<AGG_DYN_SET_HASH_SEED>(self.list.ref_raw(pos_len)),
                 ) {
                     Ok(_found) => {
                         inserted = false;

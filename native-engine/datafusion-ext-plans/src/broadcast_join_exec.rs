@@ -32,10 +32,9 @@ use datafusion::{
     physical_expr::{PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
         joins::utils::JoinOn,
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time},
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Metric, Partitioning,
-        SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{
@@ -51,7 +50,7 @@ use crate::{
         batch_statisitcs::{stat_input, InputBatchStatistics},
         column_pruning::ExecuteWithColumnPruning,
         output::{TaskOutputter, WrappedRecordBatchSender},
-        timer_helper::TimerHelper,
+        timer_helper::{RegisterTimer, TimerHelper},
     },
     joins::{
         bhj::{
@@ -315,6 +314,10 @@ async fn execute_join_with_map(
     join_params: JoinParams,
     broadcast_side: JoinSide,
     metrics: Arc<BaselineMetrics>,
+    probed_side_hash_time: Time,
+    probed_side_search_time: Time,
+    probed_side_compare_time: Time,
+    build_output_time: Time,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
     let _timer = metrics.elapsed_compute().timer();
@@ -345,15 +348,26 @@ async fn execute_join_with_map(
 
     while let Some(batch) = metrics
         .elapsed_compute()
-        .exclude_timer_async(async { probed.next().await.transpose() })
-        .await?
+        .exclude_timer_async(probed.next())
+        .await
+        .transpose()?
     {
-        joiner.as_mut().join(batch).await?;
+        joiner
+            .as_mut()
+            .join(
+                batch,
+                &probed_side_hash_time,
+                &probed_side_search_time,
+                &probed_side_compare_time,
+                &build_output_time,
+            )
+            .await?;
+
         if joiner.can_early_stop() {
             break;
         }
     }
-    joiner.as_mut().finish().await?;
+    joiner.as_mut().finish(&build_output_time).await?;
     metrics.record_output(joiner.num_output_rows());
     Ok(())
 }
@@ -370,18 +384,11 @@ async fn execute_join(
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
     let baseline_metrics = Arc::new(BaselineMetrics::new(&metrics, partition));
-    let build_time = Time::new();
-
-    if !is_built {
-        let build_time_metric = Arc::new(Metric::new(
-            MetricValue::Time {
-                name: "build_hash_map_time".into(),
-                time: build_time.clone(),
-            },
-            Some(partition),
-        ));
-        metrics.register(build_time_metric);
-    }
+    let build_time = metrics.register_timer("build_hash_map_time", partition);
+    let probed_side_hash_time = metrics.register_timer("probed_side_hash_time", partition);
+    let probed_side_search_time = metrics.register_timer("probed_side_search_time", partition);
+    let probed_side_compare_time = metrics.register_timer("probed_side_compare_time", partition);
+    let build_output_time = metrics.register_timer("build_output_time", partition);
 
     let (probed_input, built_input) = match broadcast_side {
         JoinSide::Left => (right, left),
@@ -390,10 +397,6 @@ async fn execute_join(
     let map_keys = match broadcast_side {
         JoinSide::Left => join_params.left_keys.clone(),
         JoinSide::Right => join_params.right_keys.clone(),
-    };
-    let distinct = match broadcast_side {
-        JoinSide::Left => matches!(join_params.join_type, RightSemi | RightAnti),
-        JoinSide::Right => matches!(join_params.join_type, LeftSemi | LeftAnti | Existence),
     };
 
     // fetch two sides asynchronously to eagerly fetch probed side
@@ -413,43 +416,37 @@ async fn execute_join(
                     cached_build_hash_map_id,
                     built_input,
                     &map_keys,
-                    distinct,
                     build_time.clone(),
                 )
                 .await
             } else {
-                build_join_hash_map(built_input, &map_keys, distinct, build_time.clone()).await
+                build_join_hash_map(built_input, &map_keys, build_time.clone()).await
             }
         }
     )?;
 
     baseline_metrics
         .elapsed_compute()
-        .clone()
-        .with_timer_async(async {
-            execute_join_with_map(
-                probed,
-                map,
-                join_params,
-                broadcast_side,
-                baseline_metrics.clone(),
-                sender,
-            )
-            .await
-        })
-        .await?;
-
-    // discount poll time
-    baseline_metrics
-        .elapsed_compute()
         .add_duration(build_time.duration());
-    Ok(())
+
+    execute_join_with_map(
+        probed,
+        map,
+        join_params,
+        broadcast_side,
+        baseline_metrics.clone(),
+        probed_side_hash_time,
+        probed_side_search_time,
+        probed_side_compare_time,
+        build_output_time,
+        sender,
+    )
+    .await
 }
 
 async fn build_join_hash_map(
     input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
-    distinct: bool,
     build_time: Time,
 ) -> Result<Arc<JoinHashMap>> {
     let data_schema = input.schema();
@@ -459,16 +456,13 @@ async fn build_join_hash_map(
     let join_hash_map = build_time.with_timer(|| {
         let data_batch = concat_batches(&data_schema, data_batches.iter())?;
         if data_batch.num_rows() == 0 {
-            return Ok(Arc::new(JoinHashMap::try_new_empty(
+            return Ok(Arc::new(JoinHashMap::create_empty(
                 hash_map_schema,
                 key_exprs,
             )?));
         }
 
-        let mut join_hash_map = JoinHashMap::try_from_data_batch(data_batch, key_exprs)?;
-        if distinct {
-            join_hash_map.distinct()?;
-        }
+        let join_hash_map = JoinHashMap::create_from_data_batch(data_batch, key_exprs)?;
         Ok::<_, DataFusionError>(Arc::new(join_hash_map))
     })?;
     Ok(join_hash_map)
@@ -478,19 +472,17 @@ async fn collect_join_hash_map(
     cached_build_hash_map_id: Option<String>,
     input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
-    distinct: bool,
     build_time: Time,
 ) -> Result<Arc<JoinHashMap>> {
     Ok(match cached_build_hash_map_id {
         Some(cached_id) => {
             get_cached_join_hash_map(&cached_id, || async {
-                collect_join_hash_map_without_caching(input, key_exprs, distinct, build_time).await
+                collect_join_hash_map_without_caching(input, key_exprs, build_time).await
             })
             .await?
         }
         None => {
-            let map = collect_join_hash_map_without_caching(input, key_exprs, distinct, build_time)
-                .await?;
+            let map = collect_join_hash_map_without_caching(input, key_exprs, build_time).await?;
             Arc::new(map)
         }
     })
@@ -499,35 +491,39 @@ async fn collect_join_hash_map(
 async fn collect_join_hash_map_without_caching(
     input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
-    distinct: bool,
     build_time: Time,
 ) -> Result<JoinHashMap> {
     let hash_map_schema = input.schema();
     let hash_map_batches: Vec<RecordBatch> = input.try_collect().await?;
 
     build_time.with_timer(|| {
-        let mut join_hash_map = match hash_map_batches.len() {
-            0 => JoinHashMap::try_new_empty(hash_map_schema, key_exprs)?,
+        let join_hash_map = match hash_map_batches.len() {
+            0 => JoinHashMap::create_empty(hash_map_schema, key_exprs)?,
             1 => {
                 if hash_map_batches[0].num_rows() == 0 {
-                    JoinHashMap::try_new_empty(hash_map_schema, key_exprs)?
+                    JoinHashMap::create_empty(hash_map_schema, key_exprs)?
                 } else {
-                    JoinHashMap::try_from_hash_map_batch(hash_map_batches[0].clone(), key_exprs)?
+                    JoinHashMap::load_from_hash_map_batch(hash_map_batches[0].clone(), key_exprs)?
                 }
             }
             n => return df_execution_err!("expect zero or one hash map batch, got {n}"),
         };
-        if distinct {
-            join_hash_map.distinct()?;
-        }
         Ok(join_hash_map)
     })
 }
 
 #[async_trait]
 pub trait Joiner {
-    async fn join(self: Pin<&mut Self>, probed_batch: RecordBatch) -> Result<()>;
-    async fn finish(self: Pin<&mut Self>) -> Result<()>;
+    async fn join(
+        self: Pin<&mut Self>,
+        probed_batch: RecordBatch,
+        probed_side_hash_time: &Time,
+        probed_side_search_time: &Time,
+        probed_side_compare_time: &Time,
+        build_output_time: &Time,
+    ) -> Result<()>;
+
+    async fn finish(self: Pin<&mut Self>, build_output_time: &Time) -> Result<()>;
 
     fn can_early_stop(&self) -> bool {
         false

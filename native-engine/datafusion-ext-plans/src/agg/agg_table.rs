@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::{
-    hash::Hasher,
     io::{Cursor, Write},
     sync::{Arc, Weak},
 };
@@ -41,7 +40,6 @@ use datafusion_ext_commons::{
     staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
 };
 use futures::lock::Mutex;
-use gxhash::GxHasher;
 use hashbrown::raw::RawTable;
 
 use crate::{
@@ -117,7 +115,7 @@ impl AggTable {
                 InMemMode::Hashing => {
                     in_mem
                         .hashing_data
-                        .update_batch::<GX_HASH_SEED_HASHING>(input_batch)?;
+                        .update_batch::<AGG_HASH_SEED_HASHING>(input_batch)?;
                 }
                 InMemMode::Merging => {
                     in_mem.merging_data.add_batch(input_batch)?;
@@ -329,11 +327,11 @@ impl AggTable {
             // merge records of current bucket
             while min_cursor.cur_bucket_idx == current_bucket_idx {
                 let (key, mut acc) = min_cursor.next_record()?;
-                let hash = gx_hash::<GX_HASH_SEED_POST_MERGING>(&key);
+                let hash = agg_hash::<AGG_HASH_SEED_POST_MERGING>(&key);
                 match hashing.map.find_or_find_insert_slot(
                     hash,
                     |v| key.as_ref() == v.0.as_ref(),
-                    |v| gx_hash::<GX_HASH_SEED_POST_MERGING>(&v.0),
+                    |v| agg_hash::<AGG_HASH_SEED_POST_MERGING>(&v.0),
                 ) {
                     Ok(found) => unsafe {
                         // safety - access hashbrown raw table
@@ -506,21 +504,20 @@ impl InMemTable {
 }
 
 // hasher used in table
-const GX_HASH_SEED_HASHING: i64 = 0x3F6F1B9378DD6AAF;
-const GX_HASH_SEED_MERGING: i64 = 0x7A9A2D4E8C19B4EB;
-const GX_HASH_SEED_POST_MERGING: i64 = 0x1CE19D40EEED6CA2;
+const AGG_HASH_SEED_HASHING: u32 = 0x3F6F1B93;
+const AGG_HASH_SEED_MERGING: u32 = 0x7A9A2D4E;
+const AGG_HASH_SEED_POST_MERGING: u32 = 0x1CE19D40;
 
 #[inline]
-pub fn gx_hash<const SEED: i64>(value: impl AsRef<[u8]>) -> u64 {
-    let mut h = GxHasher::with_seed(SEED);
-    h.write(value.as_ref());
-    h.finish()
+pub fn agg_hash<const SEED: u32>(value: impl AsRef<[u8]>) -> u64 {
+    gxhash::gxhash64(value.as_ref(), SEED as i64)
 }
 
 #[inline]
-pub fn gx_merging_bucket_id(value: impl AsRef<[u8]>) -> u16 {
-    (gx_hash::<GX_HASH_SEED_MERGING>(value) % NUM_SPILL_BUCKETS as u64) as u16
+pub fn agg_merging_bucket_id(value: impl AsRef<[u8]>) -> u16 {
+    (agg_hash::<AGG_HASH_SEED_MERGING>(value) % NUM_SPILL_BUCKETS as u64) as u16
 }
+
 pub struct HashingData {
     agg_ctx: Arc<AggContext>,
     task_ctx: Arc<TaskContext>,
@@ -570,14 +567,14 @@ impl HashingData {
         self.map_key_store.mem_size() + self.acc_store.mem_size() + self.map.capacity() * 32
     }
 
-    fn update_batch<const GX_HASH_SEED: i64>(&mut self, batch: RecordBatch) -> Result<()> {
+    fn update_batch<const GX_HASH_SEED: u32>(&mut self, batch: RecordBatch) -> Result<()> {
         let num_rows = batch.num_rows();
         self.num_input_records += num_rows;
 
         let grouping_rows = self.agg_ctx.create_grouping_rows(&batch)?;
         let hashes: Vec<u64> = grouping_rows
             .iter()
-            .map(|row| gx_hash::<GX_HASH_SEED>(row))
+            .map(|row| agg_hash::<GX_HASH_SEED>(row))
             .collect();
 
         // update hashmap
@@ -588,7 +585,7 @@ impl HashingData {
                 .find_or_find_insert_slot(
                     hash,
                     |v| v.0.as_ref() == row.as_ref(),
-                    |v| gx_hash::<GX_HASH_SEED>(&v.0),
+                    |v| agg_hash::<GX_HASH_SEED>(&v.0),
                 )
                 .unwrap_or_else(|slot| {
                     let key_addr = self.map_key_store.add(row.as_ref());
@@ -629,7 +626,7 @@ impl HashingData {
             .into_iter()
             .map(|(key_addr, acc_addr)| {
                 let acc = self.acc_store.get(acc_addr);
-                let bucket_id = gx_merging_bucket_id(&key_addr);
+                let bucket_id = agg_merging_bucket_id(&key_addr);
                 (key_addr, acc, bucket_id)
             })
             .collect::<Vec<_>>();
@@ -766,7 +763,7 @@ impl MergingData {
             .enumerate()
             .flat_map(|(batch_idx, rows)| {
                 rows.iter().enumerate().map(move |(row_idx, row)| {
-                    let bucket_id = gx_merging_bucket_id(&row);
+                    let bucket_id = agg_merging_bucket_id(&row);
                     (batch_idx as u32, row_idx as u32, bucket_id)
                 })
             })

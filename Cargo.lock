@@ -953,6 +953,7 @@ dependencies = [
  "smallvec",
  "tempfile",
  "tokio",
+ "unchecked-index",
  "uuid",
  "zstd",
 ]

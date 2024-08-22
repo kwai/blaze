@@ -75,7 +75,7 @@ public enum BlazeConf {
     // replace all sort-merge join to shuffled-hash join, only used for benchmarking
     FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false);
 
-    private final String key;
+    public final String key;
     private final Object defaultValue;
 
     BlazeConf(String key, Object defaultValue) {
