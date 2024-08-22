@@ -122,7 +122,7 @@ pub fn collect_hash_map(
     keys: Vec<Arc<dyn PhysicalExpr>>,
 ) -> Result<JoinHashMap> {
     let data_batch = concat_batches(&data_schema, data_batches.iter())?;
-    let hash_map = JoinHashMap::try_from_data_batch(data_batch, &keys)?;
+    let hash_map = JoinHashMap::create_from_data_batch(data_batch, &keys)?;
     Ok(hash_map)
 }
 

@@ -23,11 +23,14 @@ use arrow::{
 /// Compare the values at two arbitrary indices in two arrays.
 pub type DynEqComparator = Box<dyn Fn(usize, usize) -> bool + Send + Sync>;
 
-fn eq_impl<A, F>(l: &A, r: &A, eq: F) -> DynEqComparator
+fn eq_impl<A, F>(l: &A, r: &A, ignores_null: bool, eq: F) -> DynEqComparator
 where
     A: Array + Clone,
     F: Fn(usize, usize) -> bool + Send + Sync + 'static,
 {
+    if ignores_null {
+        return Box::new(eq);
+    }
     let l = l.logical_nulls().filter(|x| x.null_count() > 0);
     let r = r.logical_nulls().filter(|x| x.null_count() > 0);
 
@@ -54,7 +57,11 @@ where
     }
 }
 
-fn eq_primitive<T: ArrowPrimitiveType>(left: &dyn Array, right: &dyn Array) -> DynEqComparator
+fn eq_primitive<T: ArrowPrimitiveType>(
+    left: &dyn Array,
+    right: &dyn Array,
+    ignores_null: bool,
+) -> DynEqComparator
 where
     T::Native: ArrowNativeTypeOp,
 {
@@ -62,28 +69,34 @@ where
     let right = right.as_primitive::<T>();
     let l_values = left.values().clone();
     let r_values = right.values().clone();
-    eq_impl(&left, &right, move |i, j| l_values[i] == r_values[j])
+    eq_impl(&left, &right, ignores_null, move |i, j| {
+        l_values[i] == r_values[j]
+    })
 }
 
-fn eq_boolean(left: &dyn Array, right: &dyn Array) -> DynEqComparator {
+fn eq_boolean(left: &dyn Array, right: &dyn Array, ignores_null: bool) -> DynEqComparator {
     let left = left.as_boolean();
     let right = right.as_boolean();
 
     let l_values = left.values().clone();
     let r_values = right.values().clone();
 
-    eq_impl(left, right, move |i, j| {
+    eq_impl(left, right, ignores_null, move |i, j| {
         l_values.value(i) == r_values.value(j)
     })
 }
 
-fn eq_bytes<T: ByteArrayType>(left: &dyn Array, right: &dyn Array) -> DynEqComparator {
+fn eq_bytes<T: ByteArrayType>(
+    left: &dyn Array,
+    right: &dyn Array,
+    ignores_null: bool,
+) -> DynEqComparator {
     let left = left.as_bytes::<T>();
     let right = right.as_bytes::<T>();
 
     let l = left.clone();
     let r = right.clone();
-    eq_impl(left, right, move |i, j| {
+    eq_impl(left, right, ignores_null, move |i, j| {
         let l: &[u8] = l.value(i).as_ref();
         let r: &[u8] = r.value(j).as_ref();
         l == r
@@ -93,15 +106,20 @@ fn eq_bytes<T: ByteArrayType>(left: &dyn Array, right: &dyn Array) -> DynEqCompa
 fn compare_dict<K: ArrowDictionaryKeyType>(
     left: &dyn Array,
     right: &dyn Array,
+    ignores_null: bool,
 ) -> Result<DynEqComparator, ArrowError> {
     let left = left.as_dictionary::<K>();
     let right = right.as_dictionary::<K>();
 
-    let eq = make_eq_comparator(left.values().as_ref(), right.values().as_ref())?;
+    let eq = make_eq_comparator(
+        left.values().as_ref(),
+        right.values().as_ref(),
+        ignores_null,
+    )?;
     let left_keys = left.keys().values().clone();
     let right_keys = right.keys().values().clone();
 
-    let f = eq_impl(left, right, move |i, j| {
+    let f = eq_impl(left, right, ignores_null, move |i, j| {
         let l = left_keys[i].as_usize();
         let r = right_keys[j].as_usize();
         eq(l, r)
@@ -112,15 +130,20 @@ fn compare_dict<K: ArrowDictionaryKeyType>(
 fn eq_list<O: OffsetSizeTrait>(
     left: &dyn Array,
     right: &dyn Array,
+    ignores_null: bool,
 ) -> Result<DynEqComparator, ArrowError> {
     let left = left.as_list::<O>();
     let right = right.as_list::<O>();
 
-    let eq = make_eq_comparator(left.values().as_ref(), right.values().as_ref())?;
+    let eq = make_eq_comparator(
+        left.values().as_ref(),
+        right.values().as_ref(),
+        ignores_null,
+    )?;
 
     let l_o = left.offsets().clone();
     let r_o = right.offsets().clone();
-    let f = eq_impl(left, right, move |i, j| {
+    let f = eq_impl(left, right, ignores_null, move |i, j| {
         let l_end = l_o[i + 1].as_usize();
         let l_start = l_o[i].as_usize();
 
@@ -138,16 +161,24 @@ fn eq_list<O: OffsetSizeTrait>(
     Ok(f)
 }
 
-fn eq_fixed_list(left: &dyn Array, right: &dyn Array) -> Result<DynEqComparator, ArrowError> {
+fn eq_fixed_list(
+    left: &dyn Array,
+    right: &dyn Array,
+    ignores_null: bool,
+) -> Result<DynEqComparator, ArrowError> {
     let left = left.as_fixed_size_list();
     let right = right.as_fixed_size_list();
-    let eq = make_eq_comparator(left.values().as_ref(), right.values().as_ref())?;
+    let eq = make_eq_comparator(
+        left.values().as_ref(),
+        right.values().as_ref(),
+        ignores_null,
+    )?;
 
     let l_size = left.value_length().to_usize().unwrap();
     let r_size = right.value_length().to_usize().unwrap();
     let size_eq = l_size == r_size;
 
-    let f = eq_impl(left, right, move |i, j| {
+    let f = eq_impl(left, right, ignores_null, move |i, j| {
         let l_start = i * l_size;
         let l_end = l_start + l_size;
         let r_start = j * r_size;
@@ -163,7 +194,11 @@ fn eq_fixed_list(left: &dyn Array, right: &dyn Array) -> Result<DynEqComparator,
     Ok(f)
 }
 
-fn eq_struct(left: &dyn Array, right: &dyn Array) -> Result<DynEqComparator, ArrowError> {
+fn eq_struct(
+    left: &dyn Array,
+    right: &dyn Array,
+    ignores_null: bool,
+) -> Result<DynEqComparator, ArrowError> {
     let left = left.as_struct();
     let right = right.as_struct();
 
@@ -175,10 +210,10 @@ fn eq_struct(left: &dyn Array, right: &dyn Array) -> Result<DynEqComparator, Arr
 
     let columns = left.columns().iter().zip(right.columns());
     let comparators = columns
-        .map(|(l, r)| make_eq_comparator(l, r))
+        .map(|(l, r)| make_eq_comparator(l, r, ignores_null))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let f = eq_impl(left, right, move |i, j| {
+    let f = eq_impl(left, right, ignores_null, move |i, j| {
         for eq in &comparators {
             if eq(i, j) {
                 continue;
@@ -193,39 +228,40 @@ fn eq_struct(left: &dyn Array, right: &dyn Array) -> Result<DynEqComparator, Arr
 pub fn make_eq_comparator(
     left: &dyn Array,
     right: &dyn Array,
+    ignores_null: bool,
 ) -> Result<DynEqComparator, ArrowError> {
     use arrow::{datatypes as arrow_schema, datatypes::DataType::*};
 
     macro_rules! primitive_helper {
         ($t:ty, $left:expr, $right:expr) => {
-            Ok(eq_primitive::<$t>($left, $right))
+            Ok(eq_primitive::<$t>($left, $right, ignores_null))
         };
     }
     downcast_primitive! {
         left.data_type(), right.data_type() => (primitive_helper, left, right),
-        (Boolean, Boolean) => Ok(eq_boolean(left, right)),
-        (Utf8, Utf8) => Ok(eq_bytes::<Utf8Type>(left, right)),
-        (LargeUtf8, LargeUtf8) => Ok(eq_bytes::<LargeUtf8Type>(left, right)),
-        (Binary, Binary) => Ok(eq_bytes::<BinaryType>(left, right)),
-        (LargeBinary, LargeBinary) => Ok(eq_bytes::<LargeBinaryType>(left, right)),
+        (Boolean, Boolean) => Ok(eq_boolean(left, right, ignores_null)),
+        (Utf8, Utf8) => Ok(eq_bytes::<Utf8Type>(left, right, ignores_null)),
+        (LargeUtf8, LargeUtf8) => Ok(eq_bytes::<LargeUtf8Type>(left, right, ignores_null)),
+        (Binary, Binary) => Ok(eq_bytes::<BinaryType>(left, right, ignores_null)),
+        (LargeBinary, LargeBinary) => Ok(eq_bytes::<LargeBinaryType>(left, right, ignores_null)),
         (FixedSizeBinary(_), FixedSizeBinary(_)) => {
             let left = left.as_fixed_size_binary();
             let right = right.as_fixed_size_binary();
 
             let l = left.clone();
             let r = right.clone();
-            Ok(eq_impl(left, right, move |i, j| {
+            Ok(eq_impl(left, right, ignores_null, move |i, j| {
                 l.value(i).eq(r.value(j))
             }))
         },
-        (List(_), List(_)) => eq_list::<i32>(left, right),
-        (LargeList(_), LargeList(_)) => eq_list::<i64>(left, right),
-        (FixedSizeList(_, _), FixedSizeList(_, _)) => eq_fixed_list(left, right),
-        (Struct(_), Struct(_)) => eq_struct(left, right),
+        (List(_), List(_)) => eq_list::<i32>(left, right, ignores_null),
+        (LargeList(_), LargeList(_)) => eq_list::<i64>(left, right, ignores_null),
+        (FixedSizeList(_, _), FixedSizeList(_, _)) => eq_fixed_list(left, right, ignores_null),
+        (Struct(_), Struct(_)) => eq_struct(left, right, ignores_null),
         (Dictionary(l_key, _), Dictionary(r_key, _)) => {
              macro_rules! dict_helper {
                 ($t:ty, $left:expr, $right:expr) => {
-                     compare_dict::<$t>($left, $right)
+                     compare_dict::<$t>($left, $right, ignores_null)
                  };
              }
             downcast_integer! {
@@ -257,7 +293,7 @@ pub mod tests {
         let items = vec![vec![1u8], vec![2u8]];
         let array = FixedSizeBinaryArray::try_from_iter(items.into_iter()).unwrap();
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(false, eq(0, 1));
     }
@@ -269,7 +305,7 @@ pub mod tests {
         let items = vec![vec![2u8]];
         let array2 = FixedSizeBinaryArray::try_from_iter(items.into_iter()).unwrap();
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
     }
@@ -278,7 +314,7 @@ pub mod tests {
     fn test_i32() {
         let array = Int32Array::from(vec![1, 2]);
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(false, (eq)(0, 1));
     }
@@ -288,7 +324,7 @@ pub mod tests {
         let array1 = Int32Array::from(vec![1]);
         let array2 = Int32Array::from(vec![2]);
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
     }
@@ -297,7 +333,7 @@ pub mod tests {
     fn test_f64() {
         let array = Float64Array::from(vec![1.0, 2.0]);
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(false, eq(0, 1));
     }
@@ -306,7 +342,7 @@ pub mod tests {
     fn test_f64_nan() {
         let array = Float64Array::from(vec![1.0, f64::NAN]);
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(true, eq(0, 0));
         assert_eq!(false, eq(0, 1));
@@ -317,7 +353,7 @@ pub mod tests {
     fn test_f64_zeros() {
         let array = Float64Array::from(vec![-0.0, 0.0]);
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(true, eq(0, 1)); // -0.0 == 0.0
         assert_eq!(true, eq(1, 0));
@@ -334,7 +370,7 @@ pub mod tests {
             IntervalDayTimeType::make_value(0, 90_000_000),
         ]);
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(false, eq(0, 1));
         assert_eq!(false, eq(1, 0));
@@ -357,7 +393,7 @@ pub mod tests {
             IntervalYearMonthType::make_value(1, 1),
         ]);
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(false, eq(0, 1));
         assert_eq!(false, eq(1, 0));
@@ -378,7 +414,7 @@ pub mod tests {
             IntervalMonthDayNanoType::make_value(0, 100, 2),
         ]);
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(false, eq(0, 1));
         assert_eq!(false, eq(1, 0));
@@ -398,7 +434,7 @@ pub mod tests {
             .with_precision_and_scale(23, 6)
             .unwrap();
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
         assert_eq!(false, eq(1, 0));
         assert_eq!(false, eq(0, 2));
     }
@@ -415,7 +451,7 @@ pub mod tests {
         .with_precision_and_scale(53, 6)
         .unwrap();
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
         assert_eq!(false, eq(1, 0));
         assert_eq!(false, eq(0, 2));
     }
@@ -425,7 +461,7 @@ pub mod tests {
         let data = vec!["a", "b", "c", "a", "a", "c", "c"];
         let array = data.into_iter().collect::<DictionaryArray<Int16Type>>();
 
-        let eq = make_eq_comparator(&array, &array).unwrap();
+        let eq = make_eq_comparator(&array, &array, false).unwrap();
 
         assert_eq!(false, eq(0, 1));
         assert_eq!(true, eq(3, 4));
@@ -439,7 +475,7 @@ pub mod tests {
         let d2 = vec!["e", "f", "g", "a"];
         let a2 = d2.into_iter().collect::<DictionaryArray<Int16Type>>();
 
-        let eq = make_eq_comparator(&a1, &a2).unwrap();
+        let eq = make_eq_comparator(&a1, &a2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
         assert_eq!(true, eq(0, 3));
@@ -456,7 +492,7 @@ pub mod tests {
         let keys = Int8Array::from_iter_values([0, 1, 1, 3]);
         let array2 = DictionaryArray::new(keys, Arc::new(values));
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
         assert_eq!(false, eq(0, 3));
@@ -475,7 +511,7 @@ pub mod tests {
         let keys = Int8Array::from_iter_values([0, 1, 1, 3]);
         let array2 = DictionaryArray::new(keys, Arc::new(values));
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
         assert_eq!(false, eq(0, 3));
@@ -494,7 +530,7 @@ pub mod tests {
         let keys = Int8Array::from_iter_values([0, 1, 1, 3]);
         let array2 = DictionaryArray::new(keys, Arc::new(values));
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
         assert_eq!(false, eq(0, 3));
@@ -513,7 +549,7 @@ pub mod tests {
         let keys = Int8Array::from_iter_values([0, 1, 1, 3]);
         let array2 = DictionaryArray::new(keys, Arc::new(values));
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
         assert_eq!(false, eq(0, 3));
@@ -532,7 +568,7 @@ pub mod tests {
         let keys = Int8Array::from_iter_values([0, 1, 1, 3]);
         let array2 = DictionaryArray::new(keys, Arc::new(values));
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
         assert_eq!(false, eq(0, 3));
@@ -561,7 +597,7 @@ pub mod tests {
         let keys = Int8Array::from_iter_values([0, 1, 1, 3]);
         let array2 = DictionaryArray::new(keys, Arc::new(values));
 
-        let eq = make_eq_comparator(&array1, &array2).unwrap();
+        let eq = make_eq_comparator(&array1, &array2, false).unwrap();
 
         assert_eq!(false, eq(0, 0));
         assert_eq!(false, eq(0, 3));
@@ -573,7 +609,7 @@ pub mod tests {
     fn test_bytes_impl<T: ByteArrayType>() {
         let offsets = OffsetBuffer::from_lengths([3, 3, 1]);
         let a = GenericByteArray::<T>::new(offsets, b"abcdefa".into(), None);
-        let eq = make_eq_comparator(&a, &a).unwrap();
+        let eq = make_eq_comparator(&a, &a, false).unwrap();
 
         assert_eq!(false, eq(0, 1));
         assert_eq!(false, eq(0, 2));
@@ -618,7 +654,7 @@ pub mod tests {
         ]);
         let b = b.finish();
 
-        let eq = make_eq_comparator(&a, &b).unwrap();
+        let eq = make_eq_comparator(&a, &b, false).unwrap();
         assert_eq!(eq(0, 0), false); // lists contains null never equal
         assert_eq!(eq(0, 1), false);
         assert_eq!(eq(0, 2), false);
@@ -652,7 +688,7 @@ pub mod tests {
         let values = vec![Arc::new(a) as _, Arc::new(b) as _];
         let s2 = StructArray::new(fields.clone(), values, None);
 
-        let eq = make_eq_comparator(&s1, &s2).unwrap();
+        let eq = make_eq_comparator(&s1, &s2, false).unwrap();
         assert_eq!(eq(0, 1), false); // (1, [1, 2]) eq (2, None)
         assert_eq!(eq(0, 0), false); // (1, [1, 2]) eq (None, None)
         assert_eq!(eq(1, 1), false); // (2, [None]) eq (2, None)

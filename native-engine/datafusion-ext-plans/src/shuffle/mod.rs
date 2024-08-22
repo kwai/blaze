@@ -113,18 +113,13 @@ struct ShuffleSpill {
 fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
     match partitioning {
         Partitioning::Hash(exprs, _) => {
-            let mut hashes_buf = vec![];
             let arrays = exprs
                 .iter()
                 .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())?))
                 .collect::<Result<Vec<_>>>()?;
 
-            // use identical seed as spark hash partition
-            hashes_buf.resize(arrays[0].len(), 42);
-
-            // compute hash array
-            create_murmur3_hashes(&arrays, &mut hashes_buf)?;
-            Ok(hashes_buf)
+            // compute hash array, use identical seed as spark hash partition
+            Ok(create_murmur3_hashes(arrays[0].len(), &arrays, 42))
         }
         _ => unreachable!("unsupported partitioning: {:?}", partitioning),
     }

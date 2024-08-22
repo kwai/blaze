@@ -30,6 +30,7 @@ pub enum ProbeSide {
 pub fn make_eq_comparator_multiple_arrays(
     cols1: &[ArrayRef],
     cols2: &[ArrayRef],
+    ignores_null: bool,
 ) -> Result<DynEqComparator> {
     if cols1.len() != cols2.len() {
         return df_execution_err!(
@@ -42,7 +43,7 @@ pub fn make_eq_comparator_multiple_arrays(
     let eqs = cols1
         .iter()
         .zip(cols2)
-        .map(|(col1, col2)| Ok(make_eq_comparator(col1, col2)?))
+        .map(|(col1, col2)| Ok(make_eq_comparator(col1, col2, ignores_null)?))
         .collect::<Result<Vec<_>>>()?;
     Ok(Box::new(move |i, j| eqs.iter().all(|eq| eq(i, j))))
 }

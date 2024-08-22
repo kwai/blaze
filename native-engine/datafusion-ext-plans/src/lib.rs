@@ -48,3 +48,11 @@ pub mod generate;
 pub mod joins;
 mod shuffle;
 pub mod window;
+
+#[macro_export]
+macro_rules! unchecked {
+    ($e:expr) => {{
+        // safety: bypass bounds checking, used in performance critical path
+        unsafe { unchecked_index::unchecked_index($e) }
+    }};
+}

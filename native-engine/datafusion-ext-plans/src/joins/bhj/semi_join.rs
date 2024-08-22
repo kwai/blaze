@@ -20,18 +20,16 @@ use std::{
     },
 };
 
-use arrow::{
-    array::{ArrayRef, BooleanArray, RecordBatch},
-    buffer::NullBuffer,
-};
+use arrow::array::{ArrayRef, BooleanArray, RecordBatch};
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
-use datafusion::common::Result;
-use hashbrown::HashSet;
+use datafusion::{common::Result, physical_plan::metrics::Time};
 
 use crate::{
     broadcast_join_exec::Joiner,
-    common::{batch_selection::take_cols, output::WrappedRecordBatchSender},
+    common::{
+        batch_selection::take_cols, output::WrappedRecordBatchSender, timer_helper::TimerHelper,
+    },
     joins::{
         bhj::{
             make_eq_comparator_multiple_arrays,
@@ -41,7 +39,7 @@ use crate::{
             },
             ProbeSide,
         },
-        join_hash_map::{join_create_hashes, JoinHashMap},
+        join_hash_map::{join_create_hashes, Bucket, JoinHashMap},
         JoinParams,
     },
 };
@@ -96,7 +94,6 @@ pub struct SemiJoiner<const P: JoinerParams> {
     join_params: JoinParams,
     output_sender: Arc<WrappedRecordBatchSender>,
     map_joined: BitVec,
-    hash_skippable: HashSet<i32>,
     map: Arc<JoinHashMap>,
     output_rows: AtomicUsize,
 }
@@ -113,7 +110,6 @@ impl<const P: JoinerParams> SemiJoiner<P> {
             output_sender,
             map,
             map_joined,
-            hash_skippable: HashSet::new(),
             output_rows: AtomicUsize::new(0),
         }
     }
@@ -144,9 +140,14 @@ impl<const P: JoinerParams> SemiJoiner<P> {
 
 #[async_trait]
 impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
-    async fn join(mut self: Pin<&mut Self>, probed_batch: RecordBatch) -> Result<()> {
-        let mut hash_joined_probe_indices: Vec<u32> = vec![];
-        let mut hash_joined_build_indices: Vec<u32> = vec![];
+    async fn join(
+        mut self: Pin<&mut Self>,
+        probed_batch: RecordBatch,
+        probed_side_hash_time: &Time,
+        probed_side_match_time: &Time,
+        probed_side_compare_time: &Time,
+        build_output_time: &Time,
+    ) -> Result<()> {
         let mut probed_joined = bitvec![0; probed_batch.num_rows()];
         let map_joined = unsafe {
             // safety: ignore r/w conflicts with self.map
@@ -154,92 +155,106 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
         };
 
         let probed_key_columns = self.create_probed_key_columns(&probed_batch)?;
-        let probed_hashes = join_create_hashes(probed_batch.num_rows(), &probed_key_columns)?;
-        let probed_valids = probed_key_columns
-            .iter()
-            .map(|col| col.nulls().cloned())
-            .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
-            .flatten();
+        let probed_hashes = probed_side_hash_time
+            .with_timer(|| join_create_hashes(probed_batch.num_rows(), &probed_key_columns));
 
-        let eq = make_eq_comparator_multiple_arrays(&probed_key_columns, self.map.key_columns())?;
+        let map = self.map.clone();
+        let eq = make_eq_comparator_multiple_arrays(&probed_key_columns, map.key_columns(), true)?;
 
-        // join by hash code
-        for (row_idx, &hash) in probed_hashes.iter().enumerate() {
-            // nulls may not be joined
-            if probed_valids
-                .as_ref()
-                .map(|nb| nb.is_null(row_idx))
-                .unwrap_or(false)
-            {
-                continue;
-            }
-
-            // map is join side -- skip hashes those may not be joined
-            if !P.probe_is_join_side && self.hash_skippable.contains(&hash) {
-                continue;
-            }
-
-            let mut maybe_joined = false;
-            if let Some(entries) = self.map.entry_indices(hash) {
-                for map_idx in entries {
-                    // join only once if map side is the join side
-                    if !P.probe_is_join_side && map_joined[map_idx as usize] {
-                        continue;
+        let buckets = probed_side_match_time.with_timer(|| {
+            probed_hashes
+                .iter()
+                .enumerate()
+                .map(|(row_idx, &hash)| {
+                    if probed_key_columns.iter().all(|col| col.is_valid(row_idx)) {
+                        map.lookup(hash)
+                    } else {
+                        JoinHashMap::empty_bucket()
                     }
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let _probed_side_compare_timer = probed_side_compare_time.timer();
+        for (row_idx, bucket) in buckets.into_iter().enumerate() {
+            match bucket {
+                bucket if bucket.is_empty() => {}
+                Bucket::Single(map_idx) => {
                     if eq(row_idx, map_idx as usize) {
-                        hash_joined_probe_indices.push(row_idx as u32);
-                        hash_joined_build_indices.push(map_idx);
                         if P.probe_is_join_side {
                             probed_joined.set(row_idx, true);
                         } else {
                             map_joined.set(map_idx as usize, true);
                         }
                     }
-                    maybe_joined = true;
                 }
-            }
+                Bucket::Range(start, len) => {
+                    let range = map.get_range(start, len.get());
+                    let mut eqs = range
+                        .iter()
+                        .filter(|&map_idx| eq(row_idx, *map_idx as usize));
 
-            // map is join side -- mark the hash as skippable
-            if !P.probe_is_join_side && !maybe_joined {
-                self.hash_skippable.insert(hash);
+                    if let Some(&map_idx) = eqs.next() {
+                        if P.probe_is_join_side {
+                            probed_joined.set(row_idx, true);
+                        } else {
+                            if !map_joined[map_idx as usize] {
+                                map_joined.set(map_idx as usize, true);
+                                for &map_idx in eqs {
+                                    map_joined.set(map_idx as usize, true);
+                                }
+                            }
+                            // otherwise all map records with this key should
+                            // have already been joined
+                        }
+                    }
+                }
             }
         }
 
         if P.probe_is_join_side {
-            let pprojected = match P.probe_side {
-                L => self
-                    .join_params
-                    .projection
-                    .project_left(probed_batch.columns()),
-                R => self
-                    .join_params
-                    .projection
-                    .project_right(probed_batch.columns()),
-            };
-            let pcols = match P.mode {
-                Semi | Anti => {
-                    let probed_indices = probed_joined
-                        .into_iter()
-                        .enumerate()
-                        .filter(|(_, joined)| (P.mode == Semi) ^ !joined)
-                        .map(|(idx, _)| idx as u32)
-                        .collect::<Vec<_>>();
-                    take_cols(&pprojected, probed_indices)?
-                }
-                Existence => {
-                    let exists_col = Arc::new(BooleanArray::from(
-                        probed_joined.into_iter().collect::<Vec<_>>(),
-                    ));
-                    [pprojected, vec![exists_col]].concat()
-                }
-            };
-            self.as_mut().flush(pcols).await?;
+            probed_side_compare_time
+                .exclude_timer_async(async {
+                    let _build_output_timer = build_output_time.timer();
+                    let pprojected = match P.probe_side {
+                        L => self
+                            .join_params
+                            .projection
+                            .project_left(probed_batch.columns()),
+                        R => self
+                            .join_params
+                            .projection
+                            .project_right(probed_batch.columns()),
+                    };
+                    let pcols = match P.mode {
+                        Semi | Anti => {
+                            let probed_indices = probed_joined
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(_, joined)| (P.mode == Semi) ^ !joined)
+                                .map(|(idx, _)| idx as u32)
+                                .collect::<Vec<_>>();
+                            take_cols(&pprojected, probed_indices)?
+                        }
+                        Existence => {
+                            let exists_col = Arc::new(BooleanArray::from(
+                                probed_joined.into_iter().collect::<Vec<_>>(),
+                            ));
+                            [pprojected, vec![exists_col]].concat()
+                        }
+                    };
+                    build_output_time
+                        .exclude_timer_async(self.as_mut().flush(pcols))
+                        .await
+                })
+                .await?;
         }
         Ok(())
     }
 
-    async fn finish(mut self: Pin<&mut Self>) -> Result<()> {
+    async fn finish(mut self: Pin<&mut Self>, build_output_time: &Time) -> Result<()> {
         if !P.probe_is_join_side {
+            let _build_output_timer = build_output_time.timer();
             let mprojected = match P.probe_side {
                 L => self
                     .join_params
@@ -268,7 +283,9 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
                     [mprojected, vec![exists_col]].concat()
                 }
             };
-            self.as_mut().flush(pcols).await?;
+            build_output_time
+                .exclude_timer_async(self.as_mut().flush(pcols))
+                .await?;
         }
         Ok(())
     }

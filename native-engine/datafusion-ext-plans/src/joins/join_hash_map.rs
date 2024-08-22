@@ -14,8 +14,10 @@
 
 use std::{
     fmt::{Debug, Formatter},
-    io::{Cursor, Read, Write},
-    slice::{from_raw_parts, from_raw_parts_mut},
+    hash::{BuildHasher, Hasher},
+    io::Cursor,
+    mem::MaybeUninit,
+    num::NonZero,
     sync::Arc,
 };
 
@@ -24,161 +26,205 @@ use arrow::{
     buffer::NullBuffer,
     datatypes::{DataType, Field, FieldRef, Schema, SchemaRef},
 };
-use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
-use datafusion_ext_commons::spark_hash::create_hashes;
+use datafusion_ext_commons::{
+    frozen_hash_map::FrozenHashMap,
+    io::{read_len, write_len},
+    rdxsort::RadixSortIterExt,
+    spark_hash::create_hashes,
+};
+use hashbrown::HashMap;
+use itertools::Itertools;
 use once_cell::sync::OnceCell;
 
-use crate::joins::bhj::make_eq_comparator_multiple_arrays;
+use crate::unchecked;
 
-pub struct Table {
-    entries: Vec<Entry>,
-    items: Vec<Item>,
+enum MapType {
+    Unfrozen(HashMap<u32, Bucket, SimpleHashBuilder>),
+    Frozen(FrozenHashMap),
 }
 
-#[derive(Clone, Copy, Default, Debug)]
-#[repr(C)]
-struct Entry {
-    offset: u32,
-    len: u32,
+impl MapType {
+    fn get_map(&self) -> &HashMap<u32, Bucket, SimpleHashBuilder> {
+        match self {
+            MapType::Unfrozen(map) => map,
+            MapType::Frozen(map) => map.as_map(),
+        }
+    }
 }
 
-#[derive(Clone, Copy, Default, Debug)]
-#[repr(C)]
-struct Item {
-    idx: u32,
-    hash: i32,
+macro_rules! non_zero {
+    ($e:expr) => {{
+        unsafe { NonZero::new_unchecked($e) }
+    }};
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Bucket {
+    Single(u32),
+    Range(u32, NonZero<u32>),
+}
+
+impl Bucket {
+    pub const fn empty() -> Self {
+        Bucket::Range(0, non_zero!(1))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::empty()
+    }
+}
+
+// SimpleHasher/HashBuilder is specified for hashing a u32 hash codes
+#[derive(Clone, Copy, Default)]
+struct SimpleHashBuilder;
+
+#[derive(Clone, Copy, Default)]
+struct SimpleHasher(u32);
+
+impl BuildHasher for SimpleHashBuilder {
+    type Hasher = SimpleHasher;
+
+    fn build_hasher(&self) -> SimpleHasher {
+        SimpleHasher::default()
+    }
+}
+
+impl Hasher for SimpleHasher {
+    fn finish(&self) -> u64 {
+        self.0 as u64 | (self.0 as u64).reverse_bits()
+    }
+
+    fn write(&mut self, _bytes: &[u8]) {
+        unimplemented!()
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.0 = i
+    }
+}
+
+struct Table {
+    map_container: Box<MapType>,
+
+    // bypass lifetime checking
+    map: MaybeUninit<&'static HashMap<u32, Bucket, SimpleHashBuilder>>,
+    mapped_indices: Vec<u32>,
 }
 
 impl Table {
-    pub fn new_empty() -> Self {
-        let num_entries = Self::num_entries_of_rows(0);
-        Self {
-            entries: vec![Entry::default(); num_entries],
-            items: vec![],
-        }
-    }
-
-    pub fn try_from_key_columns(
-        num_rows: usize,
-        data_batch: RecordBatch,
-        key_columns: &[ArrayRef],
-    ) -> Result<(Self, RecordBatch)> {
+    fn create_from_key_columns(num_rows: usize, key_columns: &[ArrayRef]) -> Result<Self> {
         assert!(
             num_rows < 1073741824,
             "join hash table: number of rows exceeded 2^30: {num_rows}"
         );
 
-        let num_entries = Self::num_entries_of_rows(num_rows);
-        let item_hashes = join_create_hashes(num_rows, &key_columns)?;
-        let item_valids = key_columns
+        let key_valids = key_columns
             .iter()
-            .map(|col| col.nulls().cloned())
+            .map(|col| col.logical_nulls())
             .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
             .flatten();
-        let item_is_valid = |row_idx| match &item_valids {
+        let key_is_valid = |row_idx| match &key_valids {
             Some(nb) => nb.is_valid(row_idx),
             None => true,
         };
 
-        let entries_to_row_indices = (0..num_rows)
+        let mut map = HashMap::with_capacity_and_hasher(num_rows, SimpleHashBuilder);
+        let mut mapped_indices = Vec::with_capacity(num_rows);
+
+        for (hash, chunk) in join_create_hashes(num_rows, key_columns)
             .into_iter()
-            .filter(|&row_idx| item_is_valid(row_idx)) // exclude null keys
-            .map(|row_idx| (row_idx as u32, (item_hashes[row_idx] as usize % num_entries) as u32))
-            .collect::<Vec<_>>();
+            .enumerate()
+            .filter(|(idx, _)| key_is_valid(*idx))
+            .map(|(idx, hash)| (idx as u32, hash))
+            .radix_sorted_unstable_by_key(|&(_idx, hash)| hash)
+            .chunk_by(|(_, hash)| *hash)
+            .into_iter()
+        {
+            let start = mapped_indices.len() as u32;
+            mapped_indices.extend(chunk.map(|(idx, _hash)| idx));
 
-        // init entry offsets
-        let mut entry_counts = vec![0; num_entries];
-        for &(_, entry_idx) in &entries_to_row_indices {
-            entry_counts[entry_idx as usize] += 1;
+            let len = mapped_indices.len() as u32 - start;
+            map.insert_unique_unchecked(
+                hash,
+                match len {
+                    0 => unreachable!(),
+                    1 => {
+                        let single = mapped_indices.pop().unwrap();
+                        Bucket::Single(single)
+                    }
+                    len => Bucket::Range(start, non_zero!(len)),
+                },
+            );
         }
-        let mut entries = vec![Entry::default(); num_entries];
-        let mut offset = 0;
-        for (entry_idx, entry_count) in entry_counts.into_iter().enumerate() {
-            entries[entry_idx].offset = offset;
-            offset += entry_count;
+
+        if map.len() < num_rows / 2 {
+            map.shrink_to_fit();
         }
 
-        let mut items = vec![Item::default(); num_rows];
-        for (row_idx, entry_idx) in entries_to_row_indices {
-            if !item_is_valid(row_idx as usize) {
-                continue;
-            }
-            let entry = &mut entries[entry_idx as usize];
-            entry.len += 1;
-
-            let item_idx = entry.offset + entry.len - 1;
-            items[item_idx as usize] = Item {
-                idx: row_idx,
-                hash: item_hashes[row_idx as usize],
-            };
-        }
-        items.resize(num_rows, Item::default());
-
-        let new = Self { entries, items };
-        Ok((new, data_batch))
+        let mut new = Table {
+            map_container: Box::new(MapType::Unfrozen(map)),
+            map: MaybeUninit::uninit(),
+            mapped_indices,
+        };
+        new.map = MaybeUninit::new(unsafe {
+            // safety: bypass lifetime checking
+            std::mem::transmute(new.map_container.get_map())
+        });
+        Ok(new)
     }
 
-    pub fn try_from_raw_bytes(raw_bytes: &[u8]) -> Result<Self> {
+    pub fn load_from_raw_bytes(raw_bytes: &[u8]) -> Result<Self> {
         let mut cursor = Cursor::new(raw_bytes);
-        let num_rows = cursor.read_u32::<NativeEndian>()? as usize;
-        let num_entries = Self::num_entries_of_rows(num_rows);
 
-        let mut new = Self {
-            entries: vec![Entry::default(); num_entries],
-            items: vec![Item::default(); num_rows],
-        };
+        // read frozen map
+        let frozen = FrozenHashMap::load(&mut cursor)?;
 
-        unsafe {
-            // safety: read integer arrays as raw bytes
-            cursor.read_exact(from_raw_parts_mut(
-                new.entries.as_mut_ptr() as *mut u8,
-                num_entries * 8,
-            ))?;
-            cursor.read_exact(from_raw_parts_mut(
-                new.items.as_mut_ptr() as *mut u8,
-                num_rows * 8,
-            ))?;
+        // read mapped indices
+        let mut mapped_indices = vec![0; read_len(&mut cursor)?];
+        for i in &mut mapped_indices {
+            *i = read_len(&mut cursor)? as u32;
         }
+
+        let mut new = Table {
+            map_container: Box::new(MapType::Frozen(frozen)),
+            map: MaybeUninit::uninit(),
+            mapped_indices,
+        };
+        new.map = MaybeUninit::new(unsafe {
+            // safety: bypass lifetime checking
+            std::mem::transmute(new.map_container.get_map())
+        });
         Ok(new)
     }
 
     pub fn try_into_raw_bytes(self) -> Result<Vec<u8>> {
-        let num_entries = self.entries.len();
-        let num_rows = self.items.len();
-        let mut raw_bytes = Vec::with_capacity(num_entries * 8 + num_rows * 8 + 4);
+        let frozen = FrozenHashMap::construct(&self.map());
+        let mut raw_bytes =
+            Vec::with_capacity((self.mapped_indices.len() + 1) * 8 + frozen.stored_bytes_len());
 
-        raw_bytes.write_u32::<NativeEndian>(num_rows as u32)?;
-        unsafe {
-            // safety: write integer arrays as raw bytes
-            raw_bytes.write_all(from_raw_parts(
-                self.entries.as_ptr() as *const u8,
-                num_entries * 8,
-            ))?;
-            raw_bytes.write_all(from_raw_parts(
-                self.items.as_ptr() as *const u8,
-                num_rows * 8,
-            ))?;
+        // write frozen map
+        frozen.store(&mut raw_bytes)?;
+
+        // write mapped indices
+        write_len(self.mapped_indices.len(), &mut raw_bytes)?;
+        for i in self.mapped_indices {
+            write_len(i as usize, &mut raw_bytes)?;
         }
+
+        raw_bytes.shrink_to_fit();
         Ok(raw_bytes)
     }
 
-    pub fn entry<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {
-        let entry = self.entries[(hash as usize) % self.entries.len()];
-        if entry.len > 0 {
-            Some(
-                self.items[entry.offset as usize..][..entry.len as usize]
-                    .iter()
-                    .filter(move |item| item.hash == hash)
-                    .map(move |item| item.idx),
-            )
-        } else {
-            None
-        }
+    pub fn lookup(&self, hash: u32) -> Bucket {
+        self.map().get(&hash).cloned().unwrap_or(Bucket::empty())
     }
 
-    fn num_entries_of_rows(num_rows: usize) -> usize {
-        num_rows * 5 + 1
+    fn map(&self) -> &HashMap<u32, Bucket, SimpleHashBuilder> {
+        unsafe {
+            // safety: self.map is always initialized after created
+            self.map.assume_init()
+        }
     }
 }
 
@@ -188,6 +234,10 @@ pub struct JoinHashMap {
     table: Table,
 }
 
+// safety: JoinHashMap is Send + Sync
+unsafe impl Send for JoinHashMap {}
+unsafe impl Sync for JoinHashMap {}
+
 impl Debug for JoinHashMap {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "JoinHashMap(..)")
@@ -195,10 +245,10 @@ impl Debug for JoinHashMap {
 }
 
 impl JoinHashMap {
-    pub fn try_from_data_batch(
+    pub fn create_from_data_batch(
         data_batch: RecordBatch,
         key_exprs: &[PhysicalExprRef],
-    ) -> Result<JoinHashMap> {
+    ) -> Result<Self> {
         let key_columns: Vec<ArrayRef> = key_exprs
             .iter()
             .map(|expr| {
@@ -208,21 +258,26 @@ impl JoinHashMap {
             })
             .collect::<Result<_>>()?;
 
-        let (table, data_batch) =
-            Table::try_from_key_columns(data_batch.num_rows(), data_batch, &key_columns)?;
-        Ok(JoinHashMap {
+        let table = Table::create_from_key_columns(data_batch.num_rows(), &key_columns)?;
+
+        Ok(Self {
             data_batch,
             key_columns,
             table,
         })
     }
 
-    pub fn try_from_hash_map_batch(
+    pub fn create_empty(hash_map_schema: SchemaRef, key_exprs: &[PhysicalExprRef]) -> Result<Self> {
+        let data_batch = RecordBatch::new_empty(hash_map_schema);
+        Self::create_from_data_batch(data_batch, key_exprs)
+    }
+
+    pub fn load_from_hash_map_batch(
         hash_map_batch: RecordBatch,
         key_exprs: &[PhysicalExprRef],
     ) -> Result<Self> {
         let mut data_batch = hash_map_batch.clone();
-        let table = Table::try_from_raw_bytes(
+        let table = Table::load_from_raw_bytes(
             data_batch
                 .remove_column(data_batch.num_columns() - 1)
                 .as_binary::<i32>()
@@ -243,78 +298,6 @@ impl JoinHashMap {
         })
     }
 
-    pub fn try_new_empty(
-        hash_map_schema: SchemaRef,
-        key_exprs: &[PhysicalExprRef],
-    ) -> Result<Self> {
-        let table = Table::new_empty();
-        let data_batch = RecordBatch::new_empty(hash_map_schema);
-        let key_columns: Vec<ArrayRef> = key_exprs
-            .iter()
-            .map(|expr| {
-                Ok(expr
-                    .evaluate(&data_batch)?
-                    .into_array(data_batch.num_rows())?)
-            })
-            .collect::<Result<_>>()?;
-        Ok(Self {
-            data_batch,
-            key_columns,
-            table,
-        })
-    }
-
-    pub fn distinct(&mut self) -> Result<()> {
-        let eq = make_eq_comparator_multiple_arrays(&self.key_columns, &self.key_columns)?;
-
-        for entry in self.table.entries.iter_mut().filter(|entry| entry.len > 1) {
-            let entry_offset = entry.offset as usize;
-            let mut entry_end = entry_offset + entry.len as usize;
-            let mut i = entry_offset + 1;
-
-            while i < entry_end {
-                let item_i = self.table.items[i];
-                let mut removed = false;
-
-                for j in entry_offset..i {
-                    let item_j = self.table.items[j];
-                    if item_j.hash == item_i.hash && eq(item_j.idx as usize, item_i.idx as usize) {
-                        // remove an duplicated key, remove it from entry
-                        self.table.items.swap(i, entry_end - 1);
-                        entry_end -= 1;
-                        removed = true;
-                        break;
-                    }
-                }
-                if !removed {
-                    i += 1;
-                }
-            }
-            entry.len = (entry_end - entry_offset) as u32;
-        }
-        Ok(())
-    }
-
-    pub fn data_schema(&self) -> SchemaRef {
-        self.data_batch().schema()
-    }
-
-    pub fn data_batch(&self) -> &RecordBatch {
-        &self.data_batch
-    }
-
-    pub fn key_columns(&self) -> &[ArrayRef] {
-        &self.key_columns
-    }
-
-    pub fn num_entries(&self) -> usize {
-        self.table.entries.len()
-    }
-
-    pub fn entry_indices<'a>(&'a self, hash: i32) -> Option<impl Iterator<Item = u32> + 'a> {
-        self.table.entry(hash)
-    }
-
     pub fn into_hash_map_batch(self) -> Result<RecordBatch> {
         let schema = join_hash_map_schema(&self.data_batch.schema());
         if self.data_batch.num_rows() == 0 {
@@ -330,6 +313,39 @@ impl JoinHashMap {
             schema,
             vec![self.data_batch.columns().to_vec(), vec![table_col]].concat(),
         )?)
+    }
+
+    pub fn data_schema(&self) -> SchemaRef {
+        self.data_batch().schema()
+    }
+
+    pub fn data_batch(&self) -> &RecordBatch {
+        &self.data_batch
+    }
+
+    pub fn key_columns(&self) -> &[ArrayRef] {
+        &self.key_columns
+    }
+
+    pub fn is_all_nulls(&self) -> bool {
+        self.table.map().is_empty()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data_batch.num_rows() == 0
+    }
+
+    pub fn lookup(&self, hash: u32) -> Bucket {
+        self.table.lookup(hash)
+    }
+
+    pub const fn empty_bucket() -> Bucket {
+        Bucket::empty()
+    }
+
+    pub fn get_range(&self, start: u32, len: u32) -> &[u32] {
+        let mapped_indices = unchecked!(&self.table.mapped_indices);
+        &mapped_indices[start as usize..(start + len) as usize]
     }
 }
 
@@ -358,13 +374,11 @@ pub fn join_hash_map_schema(data_schema: &SchemaRef) -> SchemaRef {
 }
 
 #[inline]
-pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Result<Vec<i32>> {
-    const JOIN_HASH_RANDOM_SEED: i32 = 0x30ec4058i32;
-    let mut hashes = vec![JOIN_HASH_RANDOM_SEED; num_rows];
-    create_hashes(key_columns, &mut hashes, |v, h| {
-        gxhash::gxhash32(v, h as i64) as i32
-    })?;
-    Ok(hashes)
+pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Vec<u32> {
+    const JOIN_HASH_RANDOM_SEED: u32 = 0x1E39FA04;
+    create_hashes(num_rows, key_columns, JOIN_HASH_RANDOM_SEED, |v, h| {
+        gxhash::gxhash32(v, h as i64)
+    })
 }
 
 #[inline]

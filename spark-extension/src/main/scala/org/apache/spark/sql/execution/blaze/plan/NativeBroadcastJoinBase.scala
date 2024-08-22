@@ -58,6 +58,10 @@ abstract class NativeBroadcastJoinBase(
           "stage_id",
           "output_rows",
           "elapsed_compute",
+          "probed_side_hash_time",
+          "probed_side_search_time",
+          "probed_side_compare_time",
+          "build_output_time",
           "input_batch_count",
           "input_batch_mem_size",
           "input_row_count"))

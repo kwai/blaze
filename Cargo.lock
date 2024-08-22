@@ -863,8 +863,10 @@ dependencies = [
  "blaze-jni-bridge",
  "byteorder",
  "bytes",
+ "cfg-if",
  "datafusion",
  "futures",
+ "hashbrown",
  "itertools 0.13.0",
  "jni",
  "log",
@@ -953,6 +955,7 @@ dependencies = [
  "smallvec",
  "tempfile",
  "tokio",
+ "unchecked-index",
  "uuid",
  "zstd",
 ]

@@ -140,7 +140,7 @@ impl StreamCursor {
                         .collect::<Result<Vec<_>>>()?;
                     let key_has_nulls = key_columns
                         .iter()
-                        .map(|c| c.nulls().cloned())
+                        .map(|c| c.logical_nulls())
                         .reduce(|lhs, rhs| NullBuffer::union(lhs.as_ref(), rhs.as_ref()))
                         .unwrap_or(None);
                     let keys = Arc::new(self.key_converter.lock().convert_columns(&key_columns)?);
