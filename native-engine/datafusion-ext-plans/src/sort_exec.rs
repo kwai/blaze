@@ -295,7 +295,7 @@ impl BufferedData {
                 .map(|(key, row_idx)| {
                     num_rows += 1;
                     key_writer.write_key(key, &mut sorted_key_store).unwrap();
-                    row_idx as usize
+                    row_idx
                 })
                 .collect::<Vec<_>>();
             sorted_batch = take_batch(batch, cur_sorted_indices)?;

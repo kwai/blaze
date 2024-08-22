@@ -31,7 +31,7 @@ use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 
 use crate::{
-    common::{batch_selection::take_batch_opt, timer_helper::TimerHelper},
+    common::{batch_selection::take_batch, timer_helper::TimerHelper},
     joins::{Idx, JoinParams},
 };
 
@@ -93,7 +93,7 @@ impl StreamCursor {
                     .collect::<Result<Vec<_>>>()?,
             )?,
         );
-        let null_batch = take_batch_opt(empty_batch, [Option::<usize>::None])?;
+        let null_batch = take_batch(empty_batch, vec![Option::<u32>::None])?;
         let projected_null_batch = null_batch.project(projection)?;
         let null_nb = NullBuffer::new_null(1);
 
