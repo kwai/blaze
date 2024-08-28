@@ -164,10 +164,13 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     .create(true)
                     .truncate(true)
                     .open(&data_file)?;
+                let mut output_index = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&index_file)?;
 
                 let offsets = data.write(&mut output_data, &partitioning)?;
-
-                let mut output_index = File::create(&index_file)?;
                 for offset in offsets {
                     output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
                 }

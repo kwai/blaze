@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{io::Write, mem::size_of};
+use std::io::Write;
 
 use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::jni_call;
@@ -25,7 +25,9 @@ use datafusion_ext_commons::{
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     rdxsort::radix_sort_unstable_by_key,
     staging_mem_size_for_partial_sort,
+    streams::coalesce_stream::coalesce_batches_unchecked,
 };
+use itertools::Itertools;
 use jni::objects::GlobalRef;
 
 use crate::{
@@ -37,7 +39,7 @@ pub struct BufferedData {
     partition_id: usize,
     staging_batches: Vec<RecordBatch>,
     sorted_batches: Vec<RecordBatch>,
-    sorted_partition_indices: Vec<Vec<u32>>,
+    sorted_parts: Vec<Vec<PartitionInBatch>>,
     num_rows: usize,
     staging_mem_used: usize,
     sorted_mem_used: usize,
@@ -49,7 +51,7 @@ impl BufferedData {
             partition_id,
             staging_batches: vec![],
             sorted_batches: vec![],
-            sorted_partition_indices: vec![],
+            sorted_parts: vec![],
             num_rows: 0,
             staging_mem_used: 0,
             sorted_mem_used: 0,
@@ -81,13 +83,12 @@ impl BufferedData {
         let staging_batches = std::mem::take(&mut self.staging_batches);
         self.staging_mem_used = 0;
 
-        let (partition_indices, sorted_batch) =
-            sort_batches_by_partition_id(staging_batches, partitioning)?;
+        let (parts, sorted_batch) = sort_batches_by_partition_id(staging_batches, partitioning)?;
 
         self.sorted_mem_used +=
-            sorted_batch.get_array_mem_size() + partition_indices.len() * size_of::<u32>();
+            sorted_batch.get_array_mem_size() + parts.len() * size_of::<PartitionInBatch>();
         self.sorted_batches.push(sorted_batch);
-        self.sorted_partition_indices.push(partition_indices);
+        self.sorted_parts.push(parts);
         Ok(())
     }
 
@@ -103,6 +104,7 @@ impl BufferedData {
         if self.num_rows == 0 {
             return Ok(vec![0; partitioning.partition_count() + 1]);
         }
+        let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w));
         let mut offsets = vec![];
         let mut offset = 0;
         let mut iter = self.into_sorted_batches(partitioning)?;
@@ -114,12 +116,12 @@ impl BufferedData {
             }
 
             // write all batches with this part id
-            let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w), true);
             while iter.cur_part_id() == cur_part_id {
                 let batch = iter.next_batch();
                 writer.write_batch(batch.num_rows(), batch.columns())?;
             }
-            offset += writer.finish_into_inner()?.count();
+            writer.finish_current_buf()?;
+            offset = writer.inner().count();
             offsets.push(offset);
         }
         while offsets.len() <= partitioning.partition_count() {
@@ -150,17 +152,17 @@ impl BufferedData {
 
         while (iter.cur_part_id() as usize) < partitioning.partition_count() {
             let cur_part_id = iter.cur_part_id();
-            let mut writer = IpcCompressionWriter::new(
-                RssWriter::new(rss_partition_writer.clone(), cur_part_id as usize),
-                true,
-            );
+            let mut writer = IpcCompressionWriter::new(RssWriter::new(
+                rss_partition_writer.clone(),
+                cur_part_id as usize,
+            ));
 
             // write all batches with this part id
             while iter.cur_part_id() == cur_part_id {
                 let batch = iter.next_batch();
                 writer.write_batch(batch.num_rows(), batch.columns())?;
             }
-            writer.finish_into_inner()?;
+            writer.finish_current_buf()?;
         }
         jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ())?;
 
@@ -182,14 +184,13 @@ impl BufferedData {
         Ok(PartitionedBatchesIterator {
             batches: self.sorted_batches.clone(),
             cursors: RadixTournamentTree::new(
-                self.sorted_partition_indices
+                self.sorted_parts
                     .into_iter()
                     .enumerate()
                     .map(|(idx, partition_indices)| PartCursor {
                         idx,
-                        part_id: partition_indices[0],
-                        row_idx: 0,
-                        partition_indices,
+                        parts: partition_indices,
+                        parts_idx: 0,
                     })
                     .collect(),
                 partitioning.partition_count(),
@@ -215,31 +216,30 @@ struct PartitionedBatchesIterator {
 
 impl PartitionedBatchesIterator {
     pub fn cur_part_id(&self) -> u32 {
-        self.cursors.peek().part_id
+        self.cursors.peek().rdx() as u32
     }
 
     fn next_batch(&mut self) -> RecordBatch {
         let cur_batch_size = self.batch_size.min(self.num_rows - self.num_output_rows);
         let cur_part_id = self.cur_part_id();
-        let mut indices = Vec::with_capacity(cur_batch_size);
+        let mut slices = vec![];
+        let mut slices_len = 0;
 
         // add rows with same parition id under this cursor
-        while indices.len() < cur_batch_size {
+        while slices_len < cur_batch_size {
             let mut min_cursor = self.cursors.peek_mut();
-            if min_cursor.part_id != cur_part_id {
+            if min_cursor.rdx() as u32 != cur_part_id {
                 break;
             }
-            while indices.len() < cur_batch_size && min_cursor.part_id == cur_part_id {
-                indices.push((min_cursor.idx, min_cursor.row_idx));
-                min_cursor.row_idx += 1;
-                min_cursor.part_id = *min_cursor
-                    .partition_indices
-                    .get(min_cursor.row_idx)
-                    .unwrap_or(&u32::MAX);
-            }
+
+            let cur_part = min_cursor.parts[min_cursor.parts_idx];
+            let cur_slice =
+                self.batches[min_cursor.idx].slice(cur_part.start as usize, cur_part.len as usize);
+            slices_len += cur_slice.num_rows();
+            slices.push(cur_slice);
+            min_cursor.parts_idx += 1;
         }
-        let output_batch = interleave_batches(self.batches[0].schema(), &self.batches, &indices)
-            .expect("error merging sorted batches: interleaving error");
+        let output_batch = coalesce_batches_unchecked(self.batches[0].schema(), &slices);
         self.num_output_rows += output_batch.num_rows();
         output_batch
     }
@@ -247,21 +247,30 @@ impl PartitionedBatchesIterator {
 
 struct PartCursor {
     idx: usize,
-    partition_indices: Vec<u32>,
-    row_idx: usize,
-    part_id: u32,
+    parts: Vec<PartitionInBatch>,
+    parts_idx: usize,
 }
 
 impl KeyForRadixTournamentTree for PartCursor {
     fn rdx(&self) -> usize {
-        self.part_id as usize
+        if self.parts_idx < self.parts.len() {
+            return self.parts[self.parts_idx].part_id as usize;
+        }
+        u32::MAX as usize
     }
+}
+
+#[derive(Clone, Copy)]
+struct PartitionInBatch {
+    part_id: u32,
+    start: u32,
+    len: u32,
 }
 
 fn sort_batches_by_partition_id(
     batches: Vec<RecordBatch>,
     partitioning: &Partitioning,
-) -> Result<(Vec<u32>, RecordBatch)> {
+) -> Result<(Vec<PartitionInBatch>, RecordBatch)> {
     let num_partitions = partitioning.partition_count();
     let schema = batches[0].schema();
 
@@ -291,5 +300,22 @@ fn sort_batches_by_partition_id(
         .map(|(part_id, batch_idx, row_idx)| (part_id, (batch_idx as usize, row_idx as usize)))
         .unzip();
     let sorted_batch = interleave_batches(schema, &batches, &sorted_row_indices)?;
-    return Ok((sorted_partition_indices, sorted_batch));
+
+    let mut start = 0;
+    let partitions = sorted_partition_indices
+        .into_iter()
+        .chunk_by(|part_id| *part_id)
+        .into_iter()
+        .map(|(part_id, chunk)| {
+            let partition = PartitionInBatch {
+                part_id,
+                start,
+                len: chunk.count() as u32,
+            };
+            start += partition.len;
+            partition
+        })
+        .collect();
+
+    return Ok((partitions, sorted_batch));
 }

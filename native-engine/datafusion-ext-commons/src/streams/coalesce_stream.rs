@@ -101,26 +101,8 @@ impl CoalesceStream {
     fn coalesce(&mut self) -> Result<RecordBatch> {
         // better concat_batches() implementation that releases old batch columns asap.
         let schema = self.input.schema();
-
-        // collect all columns
-        let mut all_cols = schema.fields().iter().map(|_| vec![]).collect::<Vec<_>>();
-        for batch in std::mem::take(&mut self.staging_batches) {
-            for i in 0..all_cols.len() {
-                all_cols[i].push(batch.column(i).clone());
-            }
-        }
-
-        // coalesce each column
-        let mut coalesced_cols = vec![];
-        for (cols, field) in all_cols.into_iter().zip(schema.fields()) {
-            let dt = field.data_type();
-            coalesced_cols.push(coalesce_arrays_unchecked(dt, &cols));
-        }
-        let coalesced_batch = RecordBatch::try_new_with_options(
-            schema,
-            coalesced_cols,
-            &RecordBatchOptions::new().with_row_count(Some(self.staging_rows)),
-        )?;
+        let coalesced_batch = coalesce_batches_unchecked(schema, &self.staging_batches);
+        self.staging_batches.clear();
         self.staging_rows = 0;
         self.staging_batches_mem_size = 0;
         Ok(coalesced_batch)
@@ -175,6 +157,30 @@ impl Stream for CoalesceStream {
             }
         }
     }
+}
+
+/// coalesce batches without checking there schemas, invokers must make
+/// sure all arrays have the same schema
+pub fn coalesce_batches_unchecked(schema: SchemaRef, batches: &[RecordBatch]) -> RecordBatch {
+    let num_rows = batches.iter().map(|b| b.num_rows()).sum::<usize>();
+    let num_fields = schema.fields().len();
+    let mut coalesced_cols = vec![];
+
+    for i in 0..num_fields {
+        let data_type = schema.field(i).data_type();
+        let mut cols = Vec::with_capacity(batches.len());
+        for j in 0..batches.len() {
+            cols.push(batches[j].column(i).clone());
+        }
+        coalesced_cols.push(coalesce_arrays_unchecked(data_type, &cols));
+    }
+
+    RecordBatch::try_new_with_options(
+        schema,
+        coalesced_cols,
+        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+    )
+    .expect("error coalescing record batch")
 }
 
 /// coalesce arrays without checking there data types, invokers must make
