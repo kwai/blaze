@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{io::Write, mem::size_of};
+use std::io::Write;
 
 use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::jni_call;
@@ -26,6 +26,7 @@ use datafusion_ext_commons::{
     rdxsort::radix_sort_unstable_by_key,
     staging_mem_size_for_partial_sort,
 };
+use itertools::Itertools;
 use jni::objects::GlobalRef;
 
 use crate::{
@@ -37,7 +38,7 @@ pub struct BufferedData {
     partition_id: usize,
     staging_batches: Vec<RecordBatch>,
     sorted_batches: Vec<RecordBatch>,
-    sorted_partition_indices: Vec<Vec<u32>>,
+    sorted_partition_indices: Vec<Vec<(u32, u32)>>,
     num_rows: usize,
     staging_mem_used: usize,
     sorted_mem_used: usize,
@@ -83,6 +84,14 @@ impl BufferedData {
 
         let (partition_indices, sorted_batch) =
             sort_batches_by_partition_id(staging_batches, partitioning)?;
+
+        // group into chunks
+        let partition_indices = partition_indices
+            .into_iter()
+            .chunk_by(|idx| *idx)
+            .into_iter()
+            .map(|(part_idx, indices)| (part_idx, indices.count() as u32))
+            .collect::<Vec<_>>();
 
         self.sorted_mem_used +=
             sorted_batch.get_array_mem_size() + partition_indices.len() * size_of::<u32>();
@@ -187,9 +196,9 @@ impl BufferedData {
                     .enumerate()
                     .map(|(idx, partition_indices)| PartCursor {
                         idx,
-                        part_id: partition_indices[0],
-                        row_idx: 0,
                         partition_indices,
+                        part_offset: 0,
+                        row_idx: 0,
                     })
                     .collect(),
                 partitioning.partition_count(),
@@ -215,7 +224,7 @@ struct PartitionedBatchesIterator {
 
 impl PartitionedBatchesIterator {
     pub fn cur_part_id(&self) -> u32 {
-        self.cursors.peek().part_id
+        self.cursors.peek().rdx() as u32
     }
 
     fn next_batch(&mut self) -> RecordBatch {
@@ -226,17 +235,18 @@ impl PartitionedBatchesIterator {
         // add rows with same parition id under this cursor
         while indices.len() < cur_batch_size {
             let mut min_cursor = self.cursors.peek_mut();
-            if min_cursor.part_id != cur_part_id {
+            if min_cursor.rdx() as u32 != cur_part_id {
                 break;
             }
-            while indices.len() < cur_batch_size && min_cursor.part_id == cur_part_id {
-                indices.push((min_cursor.idx, min_cursor.row_idx));
-                min_cursor.row_idx += 1;
-                min_cursor.part_id = *min_cursor
-                    .partition_indices
-                    .get(min_cursor.row_idx)
-                    .unwrap_or(&u32::MAX);
-            }
+
+            let cur_row_count = min_cursor.partition_indices[min_cursor.part_offset].1 as usize;
+            indices.extend(
+                (min_cursor.row_idx..)
+                    .take(cur_row_count)
+                    .map(|row_idx| (min_cursor.idx, row_idx)),
+            );
+            min_cursor.row_idx += cur_row_count;
+            min_cursor.part_offset += 1;
         }
         let output_batch = interleave_batches(self.batches[0].schema(), &self.batches, &indices)
             .expect("error merging sorted batches: interleaving error");
@@ -247,14 +257,17 @@ impl PartitionedBatchesIterator {
 
 struct PartCursor {
     idx: usize,
-    partition_indices: Vec<u32>,
+    partition_indices: Vec<(u32, u32)>,
+    part_offset: usize,
     row_idx: usize,
-    part_id: u32,
 }
 
 impl KeyForRadixTournamentTree for PartCursor {
     fn rdx(&self) -> usize {
-        self.part_id as usize
+        if self.part_offset < self.partition_indices.len() {
+            return self.partition_indices[self.part_offset].0 as usize;
+        }
+        u32::MAX as usize
     }
 }
 
