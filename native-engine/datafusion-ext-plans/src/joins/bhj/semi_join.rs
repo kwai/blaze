@@ -39,7 +39,7 @@ use crate::{
             },
             ProbeSide,
         },
-        join_hash_map::{join_create_hashes, Bucket, JoinHashMap},
+        join_hash_map::{join_create_hashes, JoinHashMap, MapValue},
         JoinParams,
     },
 };
@@ -144,7 +144,7 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
         mut self: Pin<&mut Self>,
         probed_batch: RecordBatch,
         probed_side_hash_time: &Time,
-        probed_side_match_time: &Time,
+        probed_side_search_time: &Time,
         probed_side_compare_time: &Time,
         build_output_time: &Time,
     ) -> Result<()> {
@@ -161,7 +161,7 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
         let map = self.map.clone();
         let eq = make_eq_comparator_multiple_arrays(&probed_key_columns, map.key_columns(), true)?;
 
-        let buckets = probed_side_match_time.with_timer(|| {
+        let map_values = probed_side_search_time.with_timer(|| {
             probed_hashes
                 .iter()
                 .enumerate()
@@ -169,17 +169,18 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
                     if probed_key_columns.iter().all(|col| col.is_valid(row_idx)) {
                         map.lookup(hash)
                     } else {
-                        JoinHashMap::empty_bucket()
+                        MapValue::EMPTY
                     }
                 })
                 .collect::<Vec<_>>()
         });
 
         let _probed_side_compare_timer = probed_side_compare_time.timer();
-        for (row_idx, bucket) in buckets.into_iter().enumerate() {
-            match bucket {
-                bucket if bucket.is_empty() => {}
-                Bucket::Single(map_idx) => {
+        for (row_idx, map_value) in map_values.into_iter().enumerate() {
+            match map_value {
+                map_value if map_value.is_empty() => {}
+                map_value if map_value.is_single() => {
+                    let map_idx = map_value.get_single();
                     if eq(row_idx, map_idx as usize) {
                         if P.probe_is_join_side {
                             probed_joined.set(row_idx, true);
@@ -188,8 +189,8 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
                         }
                     }
                 }
-                Bucket::Range(start, len) => {
-                    let range = map.get_range(start, len.get());
+                map_value if map_value.is_range() => {
+                    let range = map.get_range(map_value);
                     let mut eqs = range
                         .iter()
                         .filter(|&map_idx| eq(row_idx, *map_idx as usize));
@@ -209,6 +210,7 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
                         }
                     }
                 }
+                _ => {} // map_value.is_empty()
             }
         }
 

@@ -27,7 +27,6 @@ pub mod bytes_arena;
 pub mod cast;
 pub mod ds;
 pub mod ffi_helper;
-pub mod frozen_hash_map;
 pub mod hadoop_fs;
 pub mod hash;
 pub mod io;

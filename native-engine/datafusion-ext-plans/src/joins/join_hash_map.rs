@@ -14,102 +14,81 @@
 
 use std::{
     fmt::{Debug, Formatter},
-    hash::{BuildHasher, Hasher},
     io::Cursor,
     mem::MaybeUninit,
-    num::NonZero,
     sync::Arc,
 };
 
 use arrow::{
     array::{Array, ArrayRef, AsArray, BinaryBuilder, RecordBatch},
-    buffer::NullBuffer,
     datatypes::{DataType, Field, FieldRef, Schema, SchemaRef},
 };
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
-    frozen_hash_map::FrozenHashMap,
-    io::{read_len, write_len},
+    io::{read_len, read_raw_slice, write_len, write_raw_slice},
     rdxsort::RadixSortIterExt,
     spark_hash::create_hashes,
 };
-use hashbrown::HashMap;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use unchecked_index::UncheckedIndex;
 
 use crate::unchecked;
 
-enum MapType {
-    Unfrozen(HashMap<u32, Bucket, SimpleHashBuilder>),
-    Frozen(FrozenHashMap),
-}
-
-impl MapType {
-    fn get_map(&self) -> &HashMap<u32, Bucket, SimpleHashBuilder> {
-        match self {
-            MapType::Unfrozen(map) => map,
-            MapType::Frozen(map) => map.as_map(),
-        }
-    }
-}
-
-macro_rules! non_zero {
-    ($e:expr) => {{
-        unsafe { NonZero::new_unchecked($e) }
-    }};
-}
-
+// empty:  lead=00, value=0
+// single: lead=10 | hash[0..30], value=idx
+// range:  lead=11 | hash[0..30], value=start, mapped_indices[start-1]=len
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Bucket {
-    Single(u32),
-    Range(u32, NonZero<u32>),
-}
+pub struct MapValue([u32; 2]);
 
-impl Bucket {
-    pub const fn empty() -> Self {
-        Bucket::Range(0, non_zero!(1))
+impl MapValue {
+    pub const EMPTY: MapValue = MapValue([0; 2]);
+
+    pub fn mask_hash(hash: u32) -> u32 {
+        hash & 0x3fffffff
+    }
+
+    pub fn new_single(hash: u32, idx: u32) -> Self {
+        Self([0b10 << 30 | Self::mask_hash(hash), idx])
+    }
+
+    pub fn new_range(hash: u32, start: u32) -> Self {
+        Self([0b11 << 30 | Self::mask_hash(hash), start])
     }
 
     pub fn is_empty(&self) -> bool {
-        *self == Self::empty()
-    }
-}
-
-// SimpleHasher/HashBuilder is specified for hashing a u32 hash codes
-#[derive(Clone, Copy, Default)]
-struct SimpleHashBuilder;
-
-#[derive(Clone, Copy, Default)]
-struct SimpleHasher(u32);
-
-impl BuildHasher for SimpleHashBuilder {
-    type Hasher = SimpleHasher;
-
-    fn build_hasher(&self) -> SimpleHasher {
-        SimpleHasher::default()
-    }
-}
-
-impl Hasher for SimpleHasher {
-    fn finish(&self) -> u64 {
-        self.0 as u64 | (self.0 as u64).reverse_bits()
+        self.0[0] == 0
     }
 
-    fn write(&mut self, _bytes: &[u8]) {
-        unimplemented!()
+    pub fn is_single(&self) -> bool {
+        self.0[0] >> 30 == 0b10
     }
 
-    fn write_u32(&mut self, i: u32) {
-        self.0 = i
+    pub fn is_range(&self) -> bool {
+        self.0[0] >> 30 == 0b11
+    }
+
+    pub fn hash(&self) -> u32 {
+        Self::mask_hash(self.0[0])
+    }
+
+    pub fn get_single(&self) -> u32 {
+        self.0[1]
+    }
+
+    pub fn get_range<'a>(&self, map: &'a JoinHashMap) -> &'a [u32] {
+        let start = self.0[1] as usize;
+        let len = map.table.mapped_indices[start - 1] as usize;
+        let end = start + len;
+        &map.table.mapped_indices[start..end]
     }
 }
 
 struct Table {
-    map_container: Box<MapType>,
-
-    // bypass lifetime checking
-    map: MaybeUninit<&'static HashMap<u32, Bucket, SimpleHashBuilder>>,
-    mapped_indices: Vec<u32>,
+    num_valid_items: usize,
+    map_mod: u32,
+    map: UncheckedIndex<Vec<MapValue>>,
+    mapped_indices: UncheckedIndex<Vec<u32>>,
 }
 
 impl Table {
@@ -119,112 +98,142 @@ impl Table {
             "join hash table: number of rows exceeded 2^30: {num_rows}"
         );
 
-        let key_valids = key_columns
-            .iter()
-            .map(|col| col.logical_nulls())
-            .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
-            .flatten();
-        let key_is_valid = |row_idx| match &key_valids {
-            Some(nb) => nb.is_valid(row_idx),
-            None => true,
-        };
+        let key_is_valid = |row_idx| key_columns.iter().all(|col| col.is_valid(row_idx));
+        let mut mapped_indices = unchecked!(vec![]);
+        let mut num_valid_items = 0;
 
-        let mut map = HashMap::with_capacity_and_hasher(num_rows, SimpleHashBuilder);
-        let mut mapped_indices = Vec::with_capacity(num_rows);
+        let mut hashes = join_create_hashes(num_rows, key_columns);
+        for hash in &mut hashes {
+            *hash = MapValue::mask_hash(*hash);
+        }
 
-        for (hash, chunk) in join_create_hashes(num_rows, key_columns)
+        // collect map items
+        let mut map_items = vec![];
+        for (hash, chunk) in hashes
             .into_iter()
             .enumerate()
             .filter(|(idx, _)| key_is_valid(*idx))
-            .map(|(idx, hash)| (idx as u32, hash))
+            .map(|(idx, hash)| {
+                num_valid_items += 1;
+                (idx as u32, hash)
+            })
             .radix_sorted_unstable_by_key(|&(_idx, hash)| hash)
             .chunk_by(|(_, hash)| *hash)
             .into_iter()
         {
-            let start = mapped_indices.len() as u32;
+            let pos = mapped_indices.len() as u32;
+            mapped_indices.push(0);
             mapped_indices.extend(chunk.map(|(idx, _hash)| idx));
 
+            let start = pos + 1;
             let len = mapped_indices.len() as u32 - start;
-            map.insert_unique_unchecked(
-                hash,
-                match len {
-                    0 => unreachable!(),
-                    1 => {
-                        let single = mapped_indices.pop().unwrap();
-                        Bucket::Single(single)
-                    }
-                    len => Bucket::Range(start, non_zero!(len)),
-                },
-            );
+            mapped_indices[pos as usize] = len;
+
+            map_items.push(match len {
+                0 => unreachable!(),
+                1 => {
+                    let single = mapped_indices.pop().unwrap();
+                    let _len = mapped_indices.pop().unwrap();
+                    MapValue::new_single(hash, single)
+                }
+                _ => MapValue::new_range(hash, start),
+            });
         }
 
-        if map.len() < num_rows / 2 {
-            map.shrink_to_fit();
-        }
+        // build map
+        let map_mod = map_items.len() as u32 * 2 + 1;
+        let mut map = unchecked!(Vec::with_capacity(map_mod as usize + 1024));
 
-        let mut new = Table {
-            map_container: Box::new(MapType::Unfrozen(map)),
-            map: MaybeUninit::uninit(),
+        map.resize(map_mod as usize, MapValue::EMPTY);
+
+        for item in map_items {
+            let mut i = (item.hash() % map_mod) as usize;
+
+            while i < map.len() && !map[i].is_empty() {
+                i += 1;
+            }
+            if i < map.len() {
+                map[i] = item;
+            } else {
+                map.push(item);
+            }
+        }
+        map.push(MapValue::EMPTY);
+
+        Ok(Table {
+            num_valid_items,
+            map_mod,
+            map,
             mapped_indices,
-        };
-        new.map = MaybeUninit::new(unsafe {
-            // safety: bypass lifetime checking
-            std::mem::transmute(new.map_container.get_map())
-        });
-        Ok(new)
+        })
     }
 
     pub fn load_from_raw_bytes(raw_bytes: &[u8]) -> Result<Self> {
         let mut cursor = Cursor::new(raw_bytes);
 
-        // read frozen map
-        let frozen = FrozenHashMap::load(&mut cursor)?;
+        // read map
+        let num_valid_items = read_len(&mut cursor)?;
+        let map_mod = read_len(&mut cursor)? as u32;
+        let map_len = read_len(&mut cursor)?;
+        let mut map = vec![
+            unsafe {
+                // safety: no need to init to zeros
+                #[allow(invalid_value)]
+                MaybeUninit::<MapValue>::uninit().assume_init()
+            };
+            map_len
+        ];
+        read_raw_slice(&mut map, &mut cursor)?;
 
         // read mapped indices
-        let mut mapped_indices = vec![0; read_len(&mut cursor)?];
-        for i in &mut mapped_indices {
-            *i = read_len(&mut cursor)? as u32;
+        let mapped_indices_len = read_len(&mut cursor)?;
+        let mut mapped_indices = Vec::with_capacity(mapped_indices_len);
+        for _ in 0..mapped_indices_len {
+            mapped_indices.push(read_len(&mut cursor)? as u32);
         }
 
-        let mut new = Table {
-            map_container: Box::new(MapType::Frozen(frozen)),
-            map: MaybeUninit::uninit(),
-            mapped_indices,
-        };
-        new.map = MaybeUninit::new(unsafe {
-            // safety: bypass lifetime checking
-            std::mem::transmute(new.map_container.get_map())
-        });
-        Ok(new)
+        Ok(Self {
+            num_valid_items,
+            map_mod,
+            map: unchecked!(map),
+            mapped_indices: unchecked!(mapped_indices),
+        })
     }
 
     pub fn try_into_raw_bytes(self) -> Result<Vec<u8>> {
-        let frozen = FrozenHashMap::construct(&self.map());
-        let mut raw_bytes =
-            Vec::with_capacity((self.mapped_indices.len() + 1) * 8 + frozen.stored_bytes_len());
+        let mut raw_bytes = Vec::with_capacity(
+            (8 + self.mapped_indices.len() + size_of::<u32>())
+                + (24 + self.map.len() * size_of::<MapValue>()),
+        );
 
-        // write frozen map
-        frozen.store(&mut raw_bytes)?;
+        // write map
+        write_len(self.num_valid_items, &mut raw_bytes)?;
+        write_len(self.map_mod as usize, &mut raw_bytes)?;
+        write_len(self.map.len(), &mut raw_bytes)?;
+        write_raw_slice(&self.map, &mut raw_bytes)?;
 
         // write mapped indices
         write_len(self.mapped_indices.len(), &mut raw_bytes)?;
-        for i in self.mapped_indices {
-            write_len(i as usize, &mut raw_bytes)?;
+        for &v in self.mapped_indices.as_slice() {
+            write_len(v as usize, &mut raw_bytes)?;
         }
 
         raw_bytes.shrink_to_fit();
         Ok(raw_bytes)
     }
 
-    pub fn lookup(&self, hash: u32) -> Bucket {
-        self.map().get(&hash).cloned().unwrap_or(Bucket::empty())
-    }
+    pub fn lookup(&self, hash: u32) -> MapValue {
+        let hash = MapValue::mask_hash(hash);
+        let mut i = (hash % self.map_mod) as usize;
 
-    fn map(&self) -> &HashMap<u32, Bucket, SimpleHashBuilder> {
-        unsafe {
-            // safety: self.map is always initialized after created
-            self.map.assume_init()
+        // no need to check bounds as there is a sentinel at the end of map
+        while !self.map[i].is_empty() {
+            if self.map[i].hash() == hash {
+                return self.map[i];
+            }
+            i += 1;
         }
+        MapValue::EMPTY
     }
 }
 
@@ -328,24 +337,19 @@ impl JoinHashMap {
     }
 
     pub fn is_all_nulls(&self) -> bool {
-        self.table.map().is_empty()
+        self.table.num_valid_items == 0
     }
 
     pub fn is_empty(&self) -> bool {
         self.data_batch.num_rows() == 0
     }
 
-    pub fn lookup(&self, hash: u32) -> Bucket {
+    pub fn lookup(&self, hash: u32) -> MapValue {
         self.table.lookup(hash)
     }
 
-    pub const fn empty_bucket() -> Bucket {
-        Bucket::empty()
-    }
-
-    pub fn get_range(&self, start: u32, len: u32) -> &[u32] {
-        let mapped_indices = unchecked!(&self.table.mapped_indices);
-        &mapped_indices[start as usize..(start + len) as usize]
+    pub fn get_range(&self, map_value: MapValue) -> &[u32] {
+        map_value.get_range(self)
     }
 }
 
