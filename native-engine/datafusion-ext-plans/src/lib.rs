@@ -14,6 +14,8 @@
 
 #![feature(get_mut_unchecked)]
 #![feature(adt_const_params)]
+#![feature(portable_simd)]
+#![feature(ptr_as_ref_unchecked)]
 
 // execution plan implementations
 pub mod agg_exec;

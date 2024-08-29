@@ -16,9 +16,10 @@ use std::{
     fmt::{Debug, Formatter},
     io::Cursor,
     mem::MaybeUninit,
+    simd::{cmp::SimdPartialEq, Simd},
     sync::Arc,
 };
-
+use std::cell::UnsafeCell;
 use arrow::{
     array::{Array, ArrayRef, AsArray, BinaryBuilder, RecordBatch},
     datatypes::{DataType, Field, FieldRef, Schema, SchemaRef},
@@ -35,59 +36,60 @@ use unchecked_index::UncheckedIndex;
 
 use crate::unchecked;
 
-// empty:  lead=00, value=0
-// single: lead=10 | hash[0..30], value=idx
-// range:  lead=11 | hash[0..30], value=start, mapped_indices[start-1]=len
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct MapValue([u32; 2]);
+// empty:  lead=0, value=0
+// range:  lead=0, value=start, mapped_indices[start-1]=len
+// single: lead=1, value=idx
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct MapValue(u32);
 
 impl MapValue {
-    pub const EMPTY: MapValue = MapValue([0; 2]);
+    pub const EMPTY: MapValue = MapValue(0);
 
-    pub fn mask_hash(hash: u32) -> u32 {
-        hash & 0x3fffffff
+    pub fn new_single(idx: u32) -> Self {
+        Self(1 << 31 | idx)
     }
 
-    pub fn new_single(hash: u32, idx: u32) -> Self {
-        Self([0b10 << 30 | Self::mask_hash(hash), idx])
-    }
-
-    pub fn new_range(hash: u32, start: u32) -> Self {
-        Self([0b11 << 30 | Self::mask_hash(hash), start])
+    pub fn new_range(start: u32) -> Self {
+        Self(start)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0[0] == 0
+        self.0 == 0
     }
 
     pub fn is_single(&self) -> bool {
-        self.0[0] >> 30 == 0b10
+        self.0 >> 31 == 1
     }
 
     pub fn is_range(&self) -> bool {
-        self.0[0] >> 30 == 0b11
-    }
-
-    pub fn hash(&self) -> u32 {
-        Self::mask_hash(self.0[0])
+        self.0 >> 31 == 0 && !self.is_empty()
     }
 
     pub fn get_single(&self) -> u32 {
-        self.0[1]
+        self.0 & 0x7fffffff
     }
 
     pub fn get_range<'a>(&self, map: &'a JoinHashMap) -> &'a [u32] {
-        let start = self.0[1] as usize;
+        let start = self.0 as usize;
         let len = map.table.mapped_indices[start - 1] as usize;
         let end = start + len;
         &map.table.mapped_indices[start..end]
     }
 }
 
+const MAP_VALUE_GROUP_SIZE: usize = 8;
+const CACHE_MAP_SIZE: usize = 8;
+
+#[derive(Clone, Copy, Default)]
+struct MapValueGroup {
+    hashes: Simd<u32, MAP_VALUE_GROUP_SIZE>,
+    values: [MapValue; MAP_VALUE_GROUP_SIZE],
+}
+
 struct Table {
     num_valid_items: usize,
     map_mod: u32,
-    map: UncheckedIndex<Vec<MapValue>>,
+    map: UncheckedIndex<Vec<MapValueGroup>>,
     mapped_indices: UncheckedIndex<Vec<u32>>,
 }
 
@@ -98,14 +100,10 @@ impl Table {
             "join hash table: number of rows exceeded 2^30: {num_rows}"
         );
 
+        let hashes = join_create_hashes(num_rows, key_columns);
         let key_is_valid = |row_idx| key_columns.iter().all(|col| col.is_valid(row_idx));
         let mut mapped_indices = unchecked!(vec![]);
         let mut num_valid_items = 0;
-
-        let mut hashes = join_create_hashes(num_rows, key_columns);
-        for hash in &mut hashes {
-            *hash = MapValue::mask_hash(*hash);
-        }
 
         // collect map items
         let mut map_items = vec![];
@@ -129,36 +127,42 @@ impl Table {
             let len = mapped_indices.len() as u32 - start;
             mapped_indices[pos as usize] = len;
 
-            map_items.push(match len {
-                0 => unreachable!(),
-                1 => {
-                    let single = mapped_indices.pop().unwrap();
-                    let _len = mapped_indices.pop().unwrap();
-                    MapValue::new_single(hash, single)
-                }
-                _ => MapValue::new_range(hash, start),
-            });
+            map_items.push((
+                hash,
+                match len {
+                    0 => unreachable!(),
+                    1 => {
+                        let single = mapped_indices.pop().unwrap();
+                        let _len = mapped_indices.pop().unwrap();
+                        MapValue::new_single(single)
+                    }
+                    _ => MapValue::new_range(start),
+                },
+            ));
         }
 
         // build map
-        let map_mod = map_items.len() as u32 * 2 + 1;
-        let mut map = unchecked!(Vec::with_capacity(map_mod as usize + 1024));
+        let map_mod = (map_items.len() * 2 / MAP_VALUE_GROUP_SIZE).max(1) as u32;
+        let mut map = unchecked!(Vec::with_capacity(map_mod as usize + 16));
+        map.resize(map_mod as usize, MapValueGroup::default());
 
-        map.resize(map_mod as usize, MapValue::EMPTY);
+        for (hash, item) in map_items {
+            let mut i = (hash % map_mod) as usize;
+            loop {
+                let empty = map[i].hashes.simd_eq(Simd::splat(0));
+                if let Some(j) = empty.first_set() {
+                    map[i].hashes.as_mut_array()[j] = hash;
+                    map[i].values[j] = item;
+                    break;
+                }
 
-        for item in map_items {
-            let mut i = (item.hash() % map_mod) as usize;
-
-            while i < map.len() && !map[i].is_empty() {
                 i += 1;
-            }
-            if i < map.len() {
-                map[i] = item;
-            } else {
-                map.push(item);
+                if i == map.len() {
+                    map.push(MapValueGroup::default());
+                }
             }
         }
-        map.push(MapValue::EMPTY);
+        map.push(MapValueGroup::default()); // sentinel at the end
 
         Ok(Table {
             num_valid_items,
@@ -179,7 +183,7 @@ impl Table {
             unsafe {
                 // safety: no need to init to zeros
                 #[allow(invalid_value)]
-                MaybeUninit::<MapValue>::uninit().assume_init()
+                MaybeUninit::<MapValueGroup>::uninit().assume_init()
             };
             map_len
         ];
@@ -203,7 +207,7 @@ impl Table {
     pub fn try_into_raw_bytes(self) -> Result<Vec<u8>> {
         let mut raw_bytes = Vec::with_capacity(
             (8 + self.mapped_indices.len() + size_of::<u32>())
-                + (24 + self.map.len() * size_of::<MapValue>()),
+                + (24 + self.map.len() * size_of::<MapValueGroup>()),
         );
 
         // write map
@@ -223,17 +227,40 @@ impl Table {
     }
 
     pub fn lookup(&self, hash: u32) -> MapValue {
-        let hash = MapValue::mask_hash(hash);
         let mut i = (hash % self.map_mod) as usize;
 
-        // no need to check bounds as there is a sentinel at the end of map
-        while !self.map[i].is_empty() {
-            if self.map[i].hash() == hash {
-                return self.map[i];
+        loop {
+            let hash_matched = self.map[i].hashes.simd_eq(Simd::splat(hash));
+            let empty = self.map[i].hashes.simd_eq(Simd::splat(0));
+
+            if let Some(pos) = (hash_matched | empty).first_set() {
+                return self.map[i].values[pos];
             }
             i += 1;
         }
-        MapValue::EMPTY
+    }
+}
+
+#[derive(Default)]
+pub struct CacheMap {
+    hashes: [u32; CACHE_MAP_SIZE],
+    values: [MapValue; CACHE_MAP_SIZE],
+}
+
+impl CacheMap {
+    fn with_cache(&mut self, hash: u32, on_update: impl Fn(u32) -> MapValue) -> MapValue {
+        let mut values = &mut self.values;
+        let mut hashes = &mut self.hashes;
+        let i = (hash as usize) % MAP_VALUE_GROUP_SIZE;
+
+        if hashes[i] == hash {
+            return values[i];
+        }
+        let value = on_update(hash);
+        let i = (hash as usize) % MAP_VALUE_GROUP_SIZE;
+        hashes[i] = hash;
+        values[i] = value;
+        value
     }
 }
 
@@ -241,6 +268,7 @@ pub struct JoinHashMap {
     data_batch: RecordBatch,
     key_columns: Vec<ArrayRef>,
     table: Table,
+    cache: UnsafeCell<CacheMap>,
 }
 
 // safety: JoinHashMap is Send + Sync
@@ -273,6 +301,7 @@ impl JoinHashMap {
             data_batch,
             key_columns,
             table,
+            cache: UnsafeCell::default(),
         })
     }
 
@@ -304,6 +333,7 @@ impl JoinHashMap {
             data_batch,
             key_columns,
             table,
+            cache: UnsafeCell::default(),
         })
     }
 
@@ -345,7 +375,11 @@ impl JoinHashMap {
     }
 
     pub fn lookup(&self, hash: u32) -> MapValue {
-        self.table.lookup(hash)
+        let cache = unsafe {
+            // safety: visit unsafe cell bypassing mutability check, cache is used no elsewhere
+            self.cache.get().as_mut_unchecked()
+        };
+        cache.with_cache(hash, |h| self.table.lookup(h))
     }
 
     pub fn get_range(&self, map_value: MapValue) -> &[u32] {
@@ -380,9 +414,15 @@ pub fn join_hash_map_schema(data_schema: &SchemaRef) -> SchemaRef {
 #[inline]
 pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Vec<u32> {
     const JOIN_HASH_RANDOM_SEED: u32 = 0x1E39FA04;
-    create_hashes(num_rows, key_columns, JOIN_HASH_RANDOM_SEED, |v, h| {
+    let mut hashes = create_hashes(num_rows, key_columns, JOIN_HASH_RANDOM_SEED, |v, h| {
         gxhash::gxhash32(v, h as i64)
-    })
+    });
+
+    // use 31-bit non-zero hash
+    for h in &mut hashes {
+        *h |= 0x80000000;
+    }
+    hashes
 }
 
 #[inline]
