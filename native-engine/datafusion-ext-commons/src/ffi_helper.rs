@@ -21,51 +21,7 @@ use arrow_schema::DataType;
 
 pub fn batch_to_ffi(batch: RecordBatch) -> FFI_ArrowArray {
     let struct_array = StructArray::from(batch);
-    FFI_ArrowArray::new(&walkaround_sliced_boolean_array_issue(
+    FFI_ArrowArray::new(&array.to_data(
         struct_array.to_data(),
     ))
-}
-
-/// TODO: we found that FFI with sliced boolean array will cause a data
-/// inconsistency bug.  here we force to copy the sliced boolean array to make
-/// it zero-offset based  to avoid this issue
-pub fn walkaround_sliced_boolean_array_issue(data: ArrayData) -> ArrayData {
-    if data.data_type() == &DataType::Boolean && data.offset() > 0 {
-        let boolean_array = BooleanArray::from(data);
-        return take(
-            &boolean_array,
-            &UInt32Array::from_iter_values(0..boolean_array.len() as u32),
-            None,
-        )
-        .expect("take error")
-        .to_data();
-    }
-    if !data.child_data().is_empty() {
-        let new_child_data = data
-            .child_data()
-            .iter()
-            .map(|child_data| walkaround_sliced_boolean_array_issue(child_data.clone()))
-            .collect::<Vec<_>>();
-        if data
-            .child_data()
-            .iter()
-            .zip(&new_child_data)
-            .any(|(old, new)| !new.ptr_eq(old))
-        {
-            return unsafe {
-                // safety: no need to check, since all fields are the same except child_data
-                ArrayData::new_unchecked(
-                    data.data_type().clone(),
-                    data.len(),
-                    Some(data.null_count()),
-                    data.nulls().map(|nb| nb.buffer()).cloned(),
-                    data.offset(),
-                    data.buffers().to_vec(),
-                    new_child_data,
-                )
-            };
-        }
-        return data;
-    }
-    data
 }
