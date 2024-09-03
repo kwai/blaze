@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        sparkver: [spark303, spark320, spark324, spark333]
+        sparkver: [spark303, spark320, spark324, spark333, spark351]
         blazever: [3.0.1]
 
     steps:
@@ -32,7 +32,7 @@ jobs:
       - uses: ScribeMD/rootless-docker@0.2.2
         if: steps.cache.outputs.cache-hit != 'true'
 
-      - uses: ScribeMD/docker-cache@0.3.6
+      - uses: ScribeMD/docker-cache@0.5.0
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           key: docker-centos7-${{ hashFiles('dev/docker-build/centos7/Dockerfile') }}

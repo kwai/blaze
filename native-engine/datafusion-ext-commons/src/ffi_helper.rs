@@ -13,15 +13,11 @@
 // limitations under the License.
 
 use arrow::{
-    array::{Array, ArrayData, BooleanArray, RecordBatch, StructArray, UInt32Array},
-    compute::take,
+    array::{Array, RecordBatch, StructArray},
     ffi::FFI_ArrowArray,
 };
-use arrow_schema::DataType;
 
 pub fn batch_to_ffi(batch: RecordBatch) -> FFI_ArrowArray {
     let struct_array = StructArray::from(batch);
-    FFI_ArrowArray::new(&array.to_data(
-        struct_array.to_data(),
-    ))
+    FFI_ArrowArray::new(&struct_array.to_data())
 }
