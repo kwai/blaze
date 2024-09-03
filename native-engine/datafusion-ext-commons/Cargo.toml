@@ -29,7 +29,7 @@ radsort = "0.1.1"
 slimmer_box = "0.6.5"
 tempfile = "3"
 thrift = "0.17.0"
-tokio = "1.39"
+tokio = "1.40"
 unchecked-index = "0.2.2"
 
 [dev-dependencies]
