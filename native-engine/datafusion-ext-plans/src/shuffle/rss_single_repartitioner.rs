@@ -32,10 +32,10 @@ pub struct RssSingleShuffleRepartitioner {
 impl RssSingleShuffleRepartitioner {
     pub fn new(rss_partition_writer: GlobalRef) -> Self {
         Self {
-            rss_partition_writer: Arc::new(Mutex::new(IpcCompressionWriter::new(
-                RssWriter::new(rss_partition_writer, 0),
-                true,
-            ))),
+            rss_partition_writer: Arc::new(Mutex::new(IpcCompressionWriter::new(RssWriter::new(
+                rss_partition_writer,
+                0,
+            )))),
         }
     }
 }
@@ -55,7 +55,7 @@ impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        self.rss_partition_writer.lock().flush()?;
+        self.rss_partition_writer.lock().finish_current_buf()?;
         Ok(())
     }
 }

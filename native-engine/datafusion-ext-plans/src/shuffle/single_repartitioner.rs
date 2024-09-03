@@ -57,7 +57,6 @@ impl SingleShuffleRepartitioner {
                     .create(true)
                     .truncate(true)
                     .open(&self.output_data_file)?,
-                true,
             ));
         }
         Ok(output_data.as_mut().unwrap())
@@ -76,12 +75,12 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
 
     async fn shuffle_write(&self) -> Result<()> {
         let _timer = self.metrics.elapsed_compute().timer();
-        let output_data = std::mem::take(&mut *self.output_data.lock().await);
+        let mut output_data = std::mem::take(&mut *self.output_data.lock().await);
 
         // write index file
-        if let Some(output_writer) = output_data {
-            let mut output_file = output_writer.finish_into_inner()?;
-            let offset = output_file.stream_position()?;
+        if let Some(output_writer) = output_data.as_mut() {
+            output_writer.finish_current_buf()?;
+            let offset = output_writer.inner().stream_position()?;
             let mut output_index = File::create(&self.output_index_file)?;
             output_index.write_all(&[0u8; 8])?;
             output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
