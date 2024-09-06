@@ -20,15 +20,25 @@ use std::{
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::{common::Result, physical_plan::metrics::BaselineMetrics};
+use datafusion::{
+    common::Result,
+    physical_plan::metrics::{BaselineMetrics, Time},
+};
 use tokio::sync::Mutex;
 
-use crate::{common::ipc_compression::IpcCompressionWriter, shuffle::ShuffleRepartitioner};
+use crate::{
+    common::{
+        ipc_compression::IpcCompressionWriter,
+        timer_helper::{TimedWriter, TimerHelper},
+    },
+    shuffle::ShuffleRepartitioner,
+};
 
 pub struct SingleShuffleRepartitioner {
     output_data_file: String,
     output_index_file: String,
-    output_data: Arc<Mutex<Option<IpcCompressionWriter<File>>>>,
+    output_data: Arc<Mutex<Option<IpcCompressionWriter<TimedWriter<File>>>>>,
+    output_io_time: Time,
     metrics: BaselineMetrics,
 }
 
@@ -36,27 +46,31 @@ impl SingleShuffleRepartitioner {
     pub fn new(
         output_data_file: String,
         output_index_file: String,
+        output_io_time: Time,
         metrics: BaselineMetrics,
     ) -> Self {
         Self {
             output_data_file,
             output_index_file,
             output_data: Arc::new(Mutex::default()),
+            output_io_time,
             metrics,
         }
     }
 
     fn get_output_writer<'a>(
         &self,
-        output_data: &'a mut Option<IpcCompressionWriter<File>>,
-    ) -> Result<&'a mut IpcCompressionWriter<File>> {
+        output_data: &'a mut Option<IpcCompressionWriter<TimedWriter<File>>>,
+    ) -> Result<&'a mut IpcCompressionWriter<TimedWriter<File>>> {
         if output_data.is_none() {
             *output_data = Some(IpcCompressionWriter::new(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&self.output_data_file)?,
+                self.output_io_time.wrap_writer(
+                    OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(&self.output_data_file)?,
+                ),
             ));
         }
         Ok(output_data.as_mut().unwrap())
@@ -79,16 +93,33 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
 
         // write index file
         if let Some(output_writer) = output_data.as_mut() {
+            let mut output_index = self.output_io_time.wrap_writer(
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&self.output_index_file)?,
+            );
             output_writer.finish_current_buf()?;
-            let offset = output_writer.inner().stream_position()?;
-            let mut output_index = File::create(&self.output_index_file)?;
+            let offset = output_writer.inner_mut().0.stream_position()?;
             output_index.write_all(&[0u8; 8])?;
             output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
         } else {
             // write empty data file and index file
-            let output_data = File::create(&self.output_data_file)?;
-            output_data.set_len(0)?;
-            let mut output_index = File::create(&self.output_index_file)?;
+            let _output_data = self.output_io_time.wrap_writer(
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&self.output_data_file)?,
+            );
+            let mut output_index = self.output_io_time.wrap_writer(
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&self.output_index_file)?,
+            );
             output_index.write_all(&[0u8; 16])?;
         }
         Ok(())

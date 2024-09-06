@@ -14,6 +14,7 @@
 
 use std::{
     future::Future,
+    io::Write,
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
         Arc,
@@ -37,6 +38,8 @@ pub trait TimerHelper {
 
     fn duration(&self) -> Duration;
     fn sub_duration(&self, duration: Duration);
+
+    fn wrap_writer<W: Write>(&self, w: W) -> TimedWriter<W>;
 }
 
 impl TimerHelper for Time {
@@ -84,6 +87,22 @@ impl TimerHelper for Time {
             &*(self as *const Time as *const XTime)
         };
         xtime.nanos.fetch_sub(duration.as_nanos() as usize, Relaxed);
+    }
+
+    fn wrap_writer<W: Write>(&self, w: W) -> TimedWriter<W> {
+        TimedWriter(w, self.clone())
+    }
+}
+
+pub struct TimedWriter<W: Write>(pub W, Time);
+
+impl<W: Write> Write for TimedWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.1.with_timer(|| self.0.write(buf))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.1.with_timer(|| self.0.flush())
     }
 }
 

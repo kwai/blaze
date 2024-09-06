@@ -30,8 +30,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize,
-    spark_hash::{create_murmur3_hashes, pmod},
+    array_size::ArraySize, spark_hash::create_murmur3_hashes,
     streams::coalesce_stream::CoalesceInput,
 };
 use futures::StreamExt;
@@ -125,9 +124,14 @@ fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowRes
     }
 }
 
-fn evaluate_partition_ids(hashes: &[i32], num_partitions: usize) -> Vec<u32> {
-    hashes
-        .iter()
-        .map(|hash| pmod(*hash, num_partitions) as u32)
-        .collect()
+fn evaluate_partition_ids(mut hashes: Vec<i32>, num_partitions: usize) -> Vec<u32> {
+    // evaluate part_id = pmod(hash, num_partitions)
+    for h in &mut hashes {
+        *h = h.rem_euclid(num_partitions as i32);
+    }
+
+    unsafe {
+        // safety: transmute Vec<i32> to Vec<u32>
+        std::mem::transmute(hashes)
+    }
 }

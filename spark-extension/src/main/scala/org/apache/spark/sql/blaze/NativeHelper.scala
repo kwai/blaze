@@ -108,7 +108,10 @@ object NativeHelper extends Logging {
       "mem_spill_size" -> sizeMetric("Native.mem_spill_size"),
       "mem_spill_iotime" -> nanoTimingMetric("Native.mem_spill_iotime"),
       "disk_spill_size" -> sizeMetric("Native.disk_spill_size"),
-      "disk_spill_iotime" -> nanoTimingMetric("Native.disk_spill_iotime"))
+      "disk_spill_iotime" -> nanoTimingMetric("Native.disk_spill_iotime"),
+      "sort_time" -> nanoTimingMetric("Native.sort_time"),
+      "output_io_time" -> nanoTimingMetric("Native.output_io_time"),
+      "shuffle_read_total_time" -> nanoTimingMetric("Native.shuffle_read_total_time"))
 
     if (BlazeConf.INPUT_BATCH_STATISTICS_ENABLE.booleanConf()) {
       metrics ++= TreeMap(

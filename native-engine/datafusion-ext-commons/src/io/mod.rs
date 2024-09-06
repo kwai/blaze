@@ -19,7 +19,7 @@ use arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
+pub use batch_serde::{read_array, write_array};
 use datafusion::common::Result;
 pub use scalar_serde::{read_scalar, write_scalar};
 
@@ -62,7 +62,10 @@ pub fn write_one_batch(num_rows: usize, cols: &[ArrayRef], mut output: impl Writ
     Ok(())
 }
 
-pub fn read_one_batch(mut input: impl Read) -> Result<Option<(usize, Vec<ArrayRef>)>> {
+pub fn read_one_batch(
+    mut input: impl Read,
+    schema: &SchemaRef,
+) -> Result<Option<(usize, Vec<ArrayRef>)>> {
     let batch_data_len = match read_len(&mut input) {
         Ok(len) => len,
         Err(e) => {
@@ -73,7 +76,7 @@ pub fn read_one_batch(mut input: impl Read) -> Result<Option<(usize, Vec<ArrayRe
         }
     };
     let mut input = input.take(batch_data_len as u64);
-    let (num_rows, cols) = batch_serde::read_batch(&mut input)?;
+    let (num_rows, cols) = batch_serde::read_batch(&mut input, schema)?;
 
     // consume trailing bytes
     std::io::copy(&mut input, &mut std::io::sink())?;

@@ -16,31 +16,29 @@
 package org.apache.spark.sql.execution.blaze.shuffle
 
 import java.io.FileInputStream
-import java.io.FilterInputStream
 import java.io.InputStream
-import java.lang.reflect.Field
-import java.lang.reflect.Method
 import java.nio.channels.Channels
 import java.nio.channels.ReadableByteChannel
 import java.nio.ByteBuffer
 
 import scala.annotation.tailrec
 
+import org.apache.commons.lang3.reflect.FieldUtils
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
+import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
 import org.apache.spark.storage.BlockId
 
-import io.netty.buffer.ByteBuf
-import io.netty.buffer.ByteBufInputStream
-
 abstract class BlazeBlockStoreShuffleReaderBase[K, C](
     handle: BaseShuffleHandle[K, _, C],
     context: TaskContext)
-    extends ShuffleReader[K, C] {
+    extends ShuffleReader[K, C]
+    with Logging {
   import BlazeBlockStoreShuffleReaderBase._
 
   protected val dep: ShuffleDependency[K, _, C] = handle.dependency
@@ -61,7 +59,7 @@ abstract class BlazeBlockStoreShuffleReaderBase[K, C](
       "arrow shuffle reader does not support non-native read() method")
 }
 
-object BlazeBlockStoreShuffleReaderBase {
+object BlazeBlockStoreShuffleReaderBase extends Logging {
   def createBlockObject(in: InputStream): BlockObject = {
     getFileSegmentFromInputStream(in) match {
       case Some((path, offset, limit)) =>
@@ -92,42 +90,13 @@ object BlazeBlockStoreShuffleReaderBase {
     }
   }
 
-  private lazy val bufferReleasingInputStreamClass: Class[_] =
-    Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
-  private lazy val delegateFn: Method =
-    bufferReleasingInputStreamClass.getDeclaredMethods.find(_.getName.endsWith("delegate")).get
-  private lazy val inField: Field = classOf[FilterInputStream].getDeclaredField("in")
-  private lazy val limitField: Field = classOf[LimitedInputStream].getDeclaredField("left")
-  private lazy val pathField: Field = classOf[FileInputStream].getDeclaredField("path")
-  delegateFn.setAccessible(true)
-  inField.setAccessible(true)
-  limitField.setAccessible(true)
-  pathField.setAccessible(true)
-
-  private lazy val timeTrackingInputStreamClass: Class[_] =
-    Class.forName("org.apache.spark.storage.TimeTrackingInputStream")
-  private lazy val inputStreamField = {
-    val f = timeTrackingInputStreamClass.getDeclaredField("inputStream")
-    f.setAccessible(true)
-    f
-  }
-
-  private lazy val byteBufInputStreamClass: Class[_] =
-    Class.forName("io.netty.buffer.ByteBufInputStream")
-  private lazy val bufferField = byteBufInputStreamClass.getDeclaredField("buffer")
-  private lazy val startIndexField = byteBufInputStreamClass.getDeclaredField("startIndex")
-  private lazy val endIndexField = byteBufInputStreamClass.getDeclaredField("endIndex")
-  bufferField.setAccessible(true)
-  startIndexField.setAccessible(true)
-  endIndexField.setAccessible(true)
-
   @tailrec
   private def unwrapInputStream(in: InputStream): InputStream = {
+    val bufferReleasingInputStreamClsName = "org.apache.spark.storage.BufferReleasingInputStream"
     in match {
-      case in if bufferReleasingInputStreamClass.isInstance(in) =>
-        unwrapInputStream(delegateFn.invoke(in).asInstanceOf[InputStream])
-      // case in: TimeTrackingInputStream =>
-      //  unwrapInputStream(inputStreamField.get(in).asInstanceOf[InputStream])
+      case in if bufferReleasingInputStreamClsName.endsWith(in.getClass.getName) =>
+        val inner = MethodUtils.invokeMethod(in, true, "delegate").asInstanceOf[InputStream]
+        unwrapInputStream(inner)
       case in => in
     }
   }
@@ -135,12 +104,13 @@ object BlazeBlockStoreShuffleReaderBase {
   def getFileSegmentFromInputStream(in: InputStream): Option[(String, Long, Long)] = {
     unwrapInputStream(in) match {
       case in: LimitedInputStream =>
-        val limit = limitField.getLong(in)
-        inField.get(in) match {
+        val left = FieldUtils.readDeclaredField(in, "left", true).asInstanceOf[Long]
+        val inner = FieldUtils.readField(in, "in", true).asInstanceOf[InputStream]
+        inner match {
           case in: FileInputStream =>
-            val path = pathField.get(in).asInstanceOf[String]
+            val path = FieldUtils.readDeclaredField(in, "path", true).asInstanceOf[String]
             val offset = in.getChannel.position()
-            Some((path, offset, limit))
+            Some((path, offset, left))
           case _ =>
             None
         }
@@ -150,12 +120,16 @@ object BlazeBlockStoreShuffleReaderBase {
   }
 
   def getByteBufferFromInputStream(in: InputStream): Option[ByteBuffer] = {
+    val byteBufferClsName = "io.netty.buffer.ByteBufInputStream"
     unwrapInputStream(in) match {
-      case in: ByteBufInputStream =>
-        Some(bufferField.get(in).asInstanceOf[ByteBuf].internalNioBuffer(0, in.available()))
+      case in if byteBufferClsName.endsWith(in.getClass.getName) =>
+        val buffer = FieldUtils.readDeclaredField(in, "buffer", true)
+        val nioBuffer = MethodUtils.invokeMethod(buffer, "nioBuffer").asInstanceOf[ByteBuffer]
+        Some(nioBuffer)
+
       case in: InputStreamToByteBuffer =>
         Some(in.toByteBuffer)
-      case _ =>
+      case in =>
         None
     }
   }

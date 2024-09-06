@@ -16,7 +16,10 @@ use std::sync::Weak;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::{common::Result, physical_plan::Partitioning};
+use datafusion::{
+    common::Result,
+    physical_plan::{metrics::Time, Partitioning},
+};
 use datafusion_ext_commons::df_execution_err;
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
@@ -39,11 +42,12 @@ impl RssSortShuffleRepartitioner {
         partition_id: usize,
         rss_partition_writer: GlobalRef,
         partitioning: Partitioning,
+        sort_time: Time,
     ) -> Self {
         Self {
             name: format!("RssSortShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
-            data: Mutex::new(BufferedData::new(partition_id)),
+            data: Mutex::new(BufferedData::new(partition_id, sort_time)),
             partitioning,
             rss: rss_partition_writer,
         }

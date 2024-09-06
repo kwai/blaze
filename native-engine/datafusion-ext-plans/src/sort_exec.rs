@@ -48,7 +48,7 @@ use datafusion_ext_commons::{
     compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
     downcast_any,
     ds::loser_tree::{ComparableForLoserTree, LoserTree},
-    io::{read_len, read_one_batch, recover_named_batch, write_len, write_one_batch},
+    io::{read_len, read_one_batch, write_len, write_one_batch},
     streams::coalesce_stream::CoalesceInput,
 };
 use futures::{lock::Mutex, stream::once, StreamExt, TryStreamExt};
@@ -732,8 +732,12 @@ impl<'a> SpillCursor<'a> {
     }
 
     fn load_next_batch(&mut self) -> Result<bool> {
-        if let Some((num_rows, cols)) = read_one_batch(&mut self.input)? {
-            let batch = recover_named_batch(num_rows, &cols, self.pruned_schema.clone())?;
+        if let Some((num_rows, cols)) = read_one_batch(&mut self.input, &self.pruned_schema)? {
+            let batch = RecordBatch::try_new_with_options(
+                self.pruned_schema.clone(),
+                cols,
+                &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+            )?;
             self.cur_mem_used += batch.get_array_mem_size();
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;

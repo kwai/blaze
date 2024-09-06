@@ -61,6 +61,14 @@ macro_rules! unchecked {
 }
 
 #[macro_export]
+macro_rules! assume {
+    ($e:expr) => {{
+        // safety: use assume
+        unsafe { std::intrinsics::assume($e) }
+    }};
+}
+
+#[macro_export]
 macro_rules! prefetch_read_data {
     ($e:expr) => {{
         // safety: use prefetch

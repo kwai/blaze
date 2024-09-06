@@ -16,7 +16,7 @@ use std::{
     any::Any,
     fmt::{Debug, Formatter},
     fs::File,
-    io::{BufReader, Read, Seek, SeekFrom},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -24,7 +24,7 @@ use std::{
 };
 
 use arrow::{
-    array::{Array, ArrayRef},
+    array::{Array, ArrayRef, RecordBatch, RecordBatchOptions},
     datatypes::SchemaRef,
 };
 use async_trait::async_trait;
@@ -45,7 +45,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize, batch_size, df_execution_err, io::recover_named_batch,
+    array_size::ArraySize, batch_size, df_execution_err,
     streams::coalesce_stream::coalesce_arrays_unchecked, suggested_output_batch_mem_size,
 };
 use futures::{stream::once, TryStreamExt};
@@ -195,7 +195,7 @@ pub async fn read_ipc(
             .or_else(|err| df_execution_err!("{err}"))??;
 
             // get ipc reader
-            let reader = Arc::new(Mutex::new(match next {
+            let mut reader = Box::pin(match next {
                 Some(block) if jni_call!(BlazeBlockObject(block.as_obj()).hasFileSegment() -> bool)? => {
                     get_file_reader(block.as_obj())?
                 }
@@ -204,15 +204,9 @@ pub async fn read_ipc(
                 }
                 Some(block) => get_channel_reader(block.as_obj())?,
                 None => break,
-            }));
+            });
 
-            while let Some((num_rows, cols)) = {
-                let reader_cloned = reader.clone();
-                tokio::task::spawn_blocking(move || reader_cloned.clone().lock().read_batch())
-                    .await
-                    .or_else(|err| df_execution_err!("{err}"))??
-            } {
-
+            while let Some((num_rows, cols)) = reader.as_mut().read_batch(&schema)? {
                 let (cur_staging_num_rows, cur_staging_mem_size) = {
                     let staging_cols_cloned = staging_cols.clone();
                     let mut staging_cols = staging_cols_cloned.lock();
@@ -235,10 +229,10 @@ pub async fn read_ipc(
                         .into_iter()
                         .map(|cols| coalesce_arrays_unchecked(cols[0].data_type(), &cols))
                         .collect::<Vec<_>>();
-                    let batch = recover_named_batch(
-                        cur_staging_num_rows,
-                        &coalesced_cols,
+                    let batch = RecordBatch::try_new_with_options(
                         schema.clone(),
+                        coalesced_cols,
+                        &RecordBatchOptions::new().with_row_count(Some(cur_staging_num_rows))
                     )?;
                     staging_num_rows.store(0, SeqCst);
                     staging_mem_size.store(0, SeqCst);
@@ -255,10 +249,10 @@ pub async fn read_ipc(
                 .into_iter()
                 .map(|cols| coalesce_arrays_unchecked(cols[0].data_type(), &cols))
                 .collect::<Vec<_>>();
-            let batch = recover_named_batch(
-                cur_staging_num_rows,
-                &coalesced_cols,
+            let batch = RecordBatch::try_new_with_options(
                 schema.clone(),
+                coalesced_cols,
+                &RecordBatchOptions::new().with_row_count(Some(cur_staging_num_rows))
             )?;
             size_counter.add(batch.get_array_mem_size());
             baseline_metrics.record_output(batch.num_rows());
@@ -270,6 +264,8 @@ pub async fn read_ipc(
 
 fn get_channel_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Read + Send>>> {
     let channel_reader = ReadableByteChannelReader::try_new(block)?;
+
+    log::info!("start ipc channel reader");
     Ok(IpcCompressionReader::new(Box::new(
         BufReader::with_capacity(65536, channel_reader),
     )))
@@ -280,8 +276,9 @@ fn get_file_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Read +
     let path = jni_get_string!(path.as_obj().into())?;
     let offset = jni_call!(BlazeBlockObject(block).getFileOffset() -> i64)?;
     let length = jni_call!(BlazeBlockObject(block).getFileLength() -> i64)?;
-    let mut file = File::open(path)?;
+    let mut file = File::open(&path)?;
     file.seek(SeekFrom::Start(offset as u64))?;
+
     Ok(IpcCompressionReader::new(Box::new(
         BufReader::with_capacity(65536, file.take(length as u64)),
     )))
@@ -360,9 +357,7 @@ impl Drop for ReadableByteChannelReader {
 struct DirectByteBufferReader {
     block: GlobalRef,
     byte_buffer: GlobalRef,
-    data: &'static [u8],
-    pos: usize,
-    remaining: usize,
+    inner: Cursor<&'static [u8]>,
 }
 
 impl DirectByteBufferReader {
@@ -370,12 +365,12 @@ impl DirectByteBufferReader {
         let block_global_ref = jni_new_global_ref!(block)?;
         let byte_buffer_global_ref = jni_new_global_ref!(byte_buffer)?;
         let data = jni_get_direct_buffer!(byte_buffer_global_ref.as_obj())?;
+        let pos = jni_call!(JavaBuffer(byte_buffer).position() -> i32)? as usize;
+        let remaining = jni_call!(JavaBuffer(byte_buffer).remaining() -> i32)? as usize;
         Ok(Self {
             block: block_global_ref,
             byte_buffer: byte_buffer_global_ref,
-            data,
-            pos: 0,
-            remaining: data.len(),
+            inner: Cursor::new(&data[pos..][..remaining]),
         })
     }
 
@@ -383,19 +378,11 @@ impl DirectByteBufferReader {
         jni_call!(JavaAutoCloseable(self.block.as_obj()).close() -> ())?;
         Ok(())
     }
-
-    fn read_impl(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let read_len = buf.len().min(self.remaining);
-        buf[..read_len].copy_from_slice(&self.data[..read_len]);
-        self.pos += read_len;
-        self.remaining -= read_len;
-        Ok(read_len)
-    }
 }
 
 impl Read for DirectByteBufferReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.read_impl(buf).map_err(std::io::Error::other)
+        self.inner.read(buf)
     }
 }
 
