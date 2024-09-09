@@ -21,7 +21,7 @@ use std::{
 };
 
 use arrow::{
-    array::{new_null_array, Array, ArrayRef, RecordBatch},
+    array::{new_null_array, Array, ArrayRef, RecordBatch, UInt32Array},
     buffer::NullBuffer,
 };
 use async_trait::async_trait;
@@ -30,11 +30,13 @@ use datafusion::{common::Result, physical_plan::metrics::Time};
 
 use crate::{
     broadcast_join_exec::Joiner,
-    common::{batch_selection::take_cols, output::WrappedRecordBatchSender},
+    common::{
+        batch_selection::take_cols, output::WrappedRecordBatchSender, timer_helper::TimerHelper,
+    },
     joins::{
         bhj::{
             full_join::ProbeSide::{L, R},
-            make_eq_comparator_multiple_arrays, ProbeSide,
+            EqComparator, ProbeSide,
         },
         join_hash_map::{join_create_hashes, JoinHashMap},
         JoinParams,
@@ -82,7 +84,6 @@ pub struct FullJoiner<const P: JoinerParams> {
     output_sender: Arc<WrappedRecordBatchSender>,
     map: Arc<JoinHashMap>,
     map_joined: BitVec,
-    send_output_time: Time,
     output_rows: AtomicUsize,
 }
 
@@ -98,7 +99,6 @@ impl<const P: JoinerParams> FullJoiner<P> {
             output_sender,
             map,
             map_joined,
-            send_output_time: Time::default(),
             output_rows: AtomicUsize::new(0),
         }
     }
@@ -128,22 +128,28 @@ impl<const P: JoinerParams> FullJoiner<P> {
             },
         )?;
         self.output_rows.fetch_add(output_batch.num_rows(), Relaxed);
-
-        let timer = self.send_output_time.timer();
-        self.output_sender.send(Ok(output_batch), None).await;
-        drop(timer);
+        self.output_sender.send(Ok(output_batch)).await;
         Ok(())
     }
 
     async fn flush_hash_joined(
         mut self: Pin<&mut Self>,
         probed_batch: &RecordBatch,
-        probed_joined: &mut BitVec,
         hash_joined_probe_indices: Vec<u32>,
-        hash_joined_build_indices: Vec<u32>,
+        hash_joined_build_inner_indices: Vec<u32>,
+        hash_joined_build_outer_indices: Vec<Option<u32>>,
+        build_output_time: &Time,
     ) -> Result<()> {
+        let _build_output_timer = build_output_time.timer();
         let probe_indices = hash_joined_probe_indices;
-        let build_indices = hash_joined_build_indices;
+        let build_indices: UInt32Array = if P.probe_side_outer {
+            hash_joined_build_outer_indices.into()
+        } else {
+            hash_joined_build_inner_indices.into()
+        };
+
+        assert_eq!(probe_indices.len(), build_indices.len());
+
         let pprojected = match P.probe_side {
             L => self
                 .join_params
@@ -164,129 +170,149 @@ impl<const P: JoinerParams> FullJoiner<P> {
                 .projection
                 .project_left(self.map.data_batch().columns()),
         };
-        for &idx in &probe_indices {
-            probed_joined.set(idx as usize, true);
-        }
-        let pcols = if probe_indices.len() == probed_batch.num_rows() && probed_joined.all() {
-            // fast path for the case where every probed records have 1-to-1 joined
+
+        // fast path for the case where every probed records have 1-to-1 joined
+        let pcols = if probe_indices.len() == probed_batch.num_rows()
+            && probe_indices
+                .iter()
+                .zip(0..probed_batch.num_rows() as u32)
+                .all(|(&idx, i)| idx == i)
+        {
             pprojected
         } else {
             take_cols(&pprojected, probe_indices)?
         };
 
-        for &idx in &build_indices {
-            self.map_joined.set(idx as usize, true);
+        if P.build_side_outer {
+            for idx in build_indices.iter().flatten() {
+                self.map_joined.set(idx as usize, true);
+            }
         }
         let bcols = take_cols(&mprojected, build_indices)?;
 
-        self.flush(pcols, bcols).await?;
+        build_output_time
+            .exclude_timer_async(self.flush(pcols, bcols))
+            .await?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl<const P: JoinerParams> Joiner for FullJoiner<P> {
-    async fn join(mut self: Pin<&mut Self>, probed_batch: RecordBatch) -> Result<()> {
-        let mut hash_joined_probe_indices: Vec<u32> = vec![];
-        let mut hash_joined_build_indices: Vec<u32> = vec![];
-        let mut probed_joined = bitvec![0; probed_batch.num_rows()];
+    async fn join(
+        mut self: Pin<&mut Self>,
+        probed_batch: RecordBatch,
+        probed_side_hash_time: &Time,
+        probed_side_search_time: &Time,
+        probed_side_compare_time: &Time,
+        build_output_time: &Time,
+    ) -> Result<()> {
+        let mut hash_joined_probe_indices = vec![];
+        let mut hash_joined_build_inner_indices = vec![];
+        let mut hash_joined_build_outer_indices = vec![];
+
         let batch_size = self.join_params.batch_size.max(probed_batch.num_rows());
         let probed_key_columns = self.create_probed_key_columns(&probed_batch)?;
-        let probed_hashes = join_create_hashes(probed_batch.num_rows(), &probed_key_columns)?;
+        let probed_hashes = probed_side_hash_time
+            .with_timer(|| join_create_hashes(probed_batch.num_rows(), &probed_key_columns));
+
+        let map = self.map.clone();
+        let eq = EqComparator::try_new(&probed_key_columns, map.key_columns())?;
+
         let probed_valids = probed_key_columns
             .iter()
-            .map(|col| col.nulls().cloned())
+            .map(|col| col.logical_nulls())
             .reduce(|nb1, nb2| NullBuffer::union(nb1.as_ref(), nb2.as_ref()))
             .flatten();
 
-        let eq = make_eq_comparator_multiple_arrays(&probed_key_columns, self.map.key_columns())?;
+        let map_values = probed_side_search_time.with_timer(|| {
+            let probed_hashes = if let Some(probed_valids) = &probed_valids {
+                probed_hashes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(row_idx, &hash)| probed_valids.is_valid(row_idx).then_some(hash))
+                    .collect()
+            } else {
+                probed_hashes
+            };
+            map.lookup_many(probed_hashes)
+        });
 
-        // join by hash code
-        for (row_idx, &hash) in probed_hashes.iter().enumerate() {
-            // nulls may not be joined
+        let _probed_side_compare_timer = probed_side_compare_time.timer();
+        let mut hashes_idx = 0;
+
+        for row_idx in 0..probed_batch.num_rows() {
+            let mut joined = false;
+
             if probed_valids
                 .as_ref()
-                .map(|nb| nb.is_null(row_idx))
-                .unwrap_or(false)
+                .map(|nb| nb.is_valid(row_idx))
+                .unwrap_or(true)
             {
-                continue;
+                let map_value = map_values[hashes_idx];
+                hashes_idx += 1;
+
+                let mut join = |map_idx| {
+                    if eq.eq(row_idx, map_idx as usize) {
+                        if P.probe_side_outer {
+                            hash_joined_probe_indices.push(row_idx as u32);
+                            hash_joined_build_outer_indices.push(Some(map_idx));
+                        } else {
+                            hash_joined_probe_indices.push(row_idx as u32);
+                            hash_joined_build_inner_indices.push(map_idx);
+                        }
+                        joined = true;
+                    }
+                };
+
+                match map_value {
+                    map_value if map_value.is_single() => {
+                        join(map_value.get_single());
+                    }
+                    map_value if map_value.is_range() => {
+                        for &map_idx in map.get_range(map_value) {
+                            join(map_idx);
+                        }
+                    }
+                    _ => {} // map_value.is_empty
+                }
             }
 
-            let mut maybe_joined = false;
-            if let Some(entries) = self.map.entry_indices(hash) {
-                for map_idx in entries {
-                    if eq(row_idx, map_idx as usize) {
-                        hash_joined_probe_indices.push(row_idx as u32);
-                        hash_joined_build_indices.push(map_idx);
-                    }
-                }
-                maybe_joined = true;
+            if P.probe_side_outer && !joined {
+                hash_joined_probe_indices.push(row_idx as u32);
+                hash_joined_build_outer_indices.push(None);
             }
-            if maybe_joined && hash_joined_probe_indices.len() > batch_size {
-                self.as_mut()
-                    .flush_hash_joined(
+
+            if hash_joined_probe_indices.len() > batch_size {
+                probed_side_compare_time
+                    .exclude_timer_async(self.as_mut().flush_hash_joined(
                         &probed_batch,
-                        &mut probed_joined,
                         std::mem::take(&mut hash_joined_probe_indices),
-                        std::mem::take(&mut hash_joined_build_indices),
-                    )
+                        std::mem::take(&mut hash_joined_build_inner_indices),
+                        std::mem::take(&mut hash_joined_build_outer_indices),
+                        build_output_time,
+                    ))
                     .await?;
             }
         }
 
         if !hash_joined_probe_indices.is_empty() {
-            self.as_mut()
-                .flush_hash_joined(
+            probed_side_compare_time
+                .exclude_timer_async(self.as_mut().flush_hash_joined(
                     &probed_batch,
-                    &mut probed_joined,
                     hash_joined_probe_indices,
-                    hash_joined_build_indices,
-                )
+                    hash_joined_build_inner_indices,
+                    hash_joined_build_outer_indices,
+                    build_output_time,
+                ))
                 .await?;
-        }
-
-        // output unjoined rows of probed side
-        if P.probe_side_outer {
-            let probed_unjoined_indices = probed_joined
-                .iter()
-                .enumerate()
-                .filter(|(_, joined)| !**joined)
-                .map(|(idx, _)| idx as u32)
-                .collect::<Vec<_>>();
-
-            let pprojected = match P.probe_side {
-                L => self
-                    .join_params
-                    .projection
-                    .project_left(probed_batch.columns()),
-                R => self
-                    .join_params
-                    .projection
-                    .project_right(probed_batch.columns()),
-            };
-            let mprojected = match P.probe_side {
-                L => self
-                    .join_params
-                    .projection
-                    .project_right(self.map.data_batch().columns()),
-                R => self
-                    .join_params
-                    .projection
-                    .project_left(self.map.data_batch().columns()),
-            };
-
-            let bcols = mprojected
-                .iter()
-                .map(|col| new_null_array(col.data_type(), probed_unjoined_indices.len()))
-                .collect::<Vec<_>>();
-
-            let pcols = take_cols(&pprojected, probed_unjoined_indices)?;
-            self.as_mut().flush(pcols, bcols).await?;
         }
         Ok(())
     }
 
-    async fn finish(mut self: Pin<&mut Self>) -> Result<()> {
+    async fn finish(mut self: Pin<&mut Self>, build_output_time: &Time) -> Result<()> {
+        let _build_output_timer = build_output_time.timer();
+
         // output unjoined rows of probed side
         let map_joined = std::mem::take(&mut self.map_joined);
         if P.build_side_outer {
@@ -318,13 +344,18 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
                 .map(|field| new_null_array(field.data_type(), map_unjoined_indices.len()))
                 .collect::<Vec<_>>();
             let bcols = take_cols(&mprojected, map_unjoined_indices)?;
-            self.as_mut().flush(pcols, bcols).await?;
+            build_output_time
+                .exclude_timer_async(self.as_mut().flush(pcols, bcols))
+                .await?;
         }
         Ok(())
     }
 
-    fn total_send_output_time(&self) -> usize {
-        self.send_output_time.value()
+    fn can_early_stop(&self) -> bool {
+        if !P.probe_side_outer {
+            return self.map.is_all_nulls();
+        }
+        false
     }
 
     fn num_output_rows(&self) -> usize {

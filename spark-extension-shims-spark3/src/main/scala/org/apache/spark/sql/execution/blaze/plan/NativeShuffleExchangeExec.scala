@@ -143,6 +143,9 @@ case class NativeShuffleExchangeExec(
     }
   }
 
+  // for databricks testing
+  val causedBroadcastJoinBuildOOM = false
+
   @enableIf(Seq("spark351").contains(System.getProperty("blaze.shim")))
   override def advisoryPartitionSize: Option[Long] = None
 

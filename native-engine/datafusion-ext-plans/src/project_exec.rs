@@ -218,13 +218,15 @@ async fn execute_project_with_filtering(
     )?;
 
     context.output_with_sender("Project", output_schema, move |sender| async move {
+        sender.exclude_time(baseline_metrics.elapsed_compute());
+
         while let Some(batch) = input.next().await.transpose()? {
-            let mut timer = baseline_metrics.elapsed_compute().timer();
+            let _timer = baseline_metrics.elapsed_compute().timer();
             let output_batch = cached_expr_evaluator.filter_project(&batch)?;
             drop(batch);
 
             baseline_metrics.record_output(output_batch.num_rows());
-            sender.send(Ok(output_batch), Some(&mut timer)).await;
+            sender.send(Ok(output_batch)).await;
         }
         Ok(())
     })

@@ -28,6 +28,30 @@ use crate::cast::cast;
 mod batch_serde;
 mod scalar_serde;
 
+pub fn write_raw_slice<T: Sized + Copy>(
+    values: &[T],
+    mut output: impl Write,
+) -> std::io::Result<()> {
+    let raw_item_size = size_of::<T>();
+    let raw_slice = unsafe {
+        // safety: transmute copyable slice to bytes slice
+        std::slice::from_raw_parts(values.as_ptr() as *const u8, raw_item_size * values.len())
+    };
+    output.write_all(raw_slice)
+}
+
+pub fn read_raw_slice<T: Sized + Copy>(
+    values: &mut [T],
+    mut input: impl Read,
+) -> std::io::Result<()> {
+    let raw_item_size = size_of::<T>();
+    let raw_slice = unsafe {
+        // safety: transmute copyable slice to bytes slice
+        std::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, raw_item_size * values.len())
+    };
+    input.read_exact(raw_slice)
+}
+
 pub fn write_one_batch(num_rows: usize, cols: &[ArrayRef], mut output: impl Write) -> Result<()> {
     assert!(cols.iter().all(|col| col.len() == num_rows));
 

@@ -16,6 +16,7 @@ use std::{
     future::Future,
     panic::AssertUnwindSafe,
     sync::{Arc, Weak},
+    time::Instant,
 };
 
 use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
@@ -25,7 +26,7 @@ use datafusion::{
     common::Result,
     execution::context::TaskContext,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, ScopedTimerGuard},
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, ScopedTimerGuard, Time},
         stream::RecordBatchReceiverStream,
         SendableRecordBatchStream,
     },
@@ -39,7 +40,10 @@ use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
 
-use crate::memmgr::{metrics::SpillMetrics, spill::try_new_spill, MemConsumer, MemManager};
+use crate::{
+    common::timer_helper::TimerHelper,
+    memmgr::{metrics::SpillMetrics, spill::try_new_spill, MemConsumer, MemManager},
+};
 
 fn working_senders() -> &'static Mutex<Vec<Weak<WrappedRecordBatchSender>>> {
     static WORKING_SENDERS: OnceCell<Mutex<Vec<Weak<WrappedRecordBatchSender>>>> = OnceCell::new();
@@ -49,6 +53,7 @@ fn working_senders() -> &'static Mutex<Vec<Weak<WrappedRecordBatchSender>>> {
 pub struct WrappedRecordBatchSender {
     task_context: Arc<TaskContext>,
     sender: Sender<Result<RecordBatch>>,
+    exclude_time: OnceCell<Time>,
 }
 
 impl WrappedRecordBatchSender {
@@ -56,10 +61,19 @@ impl WrappedRecordBatchSender {
         let wrapped = Arc::new(Self {
             task_context,
             sender,
+            exclude_time: OnceCell::new(),
         });
         let mut working_senders = working_senders().lock();
         working_senders.push(Arc::downgrade(&wrapped));
         wrapped
+    }
+
+    pub fn exclude_time(&self, exclude_time: &Time) {
+        assert!(
+            self.exclude_time.get().is_none(),
+            "already used a exclude_time"
+        );
+        self.exclude_time.get_or_init(|| exclude_time.clone());
     }
 
     pub fn cancel_task(task_context: &Arc<TaskContext>) {
@@ -80,21 +94,24 @@ impl WrappedRecordBatchSender {
             .collect();
     }
 
-    pub async fn send(
-        &self,
-        batch_result: Result<RecordBatch>,
-        mut stop_timer: Option<&mut ScopedTimerGuard<'_>>,
-    ) {
+    pub async fn send(&self, batch_result: Result<RecordBatch>) {
         // panic if we meet an error
         let batch = batch_result
             .unwrap_or_else(|err| panic!("output_with_sender: received an error: {err}"));
 
-        stop_timer.iter_mut().for_each(|timer| timer.stop());
+        let exclude_time = self.exclude_time.get().cloned();
+        let send_time = exclude_time.as_ref().map(|_| Instant::now());
         self.sender
             .send(Ok(batch))
             .await
             .unwrap_or_else(|err| panic!("output_with_sender: send error: {err}"));
-        stop_timer.iter_mut().for_each(|timer| timer.restart());
+
+        send_time.inspect(|send_time| {
+            exclude_time
+                .as_ref()
+                .unwrap()
+                .sub_duration(send_time.elapsed());
+        });
     }
 }
 
@@ -177,6 +194,8 @@ impl TaskOutputter for Arc<TaskContext> {
         let spill_metrics = SpillMetrics::new(&metrics, partition);
 
         self.output_with_sender(desc, schema.clone(), move |sender| async move {
+            sender.exclude_time(baseline_metrics.elapsed_compute());
+
             while let Some(batch) = {
                 // if consumer is holding too much memory, we will create a spill
                 // to receive all of its outputs and release all memory.
@@ -185,6 +204,7 @@ impl TaskOutputter for Arc<TaskContext> {
                     && MemManager::get().num_consumers() > 1
                     && MemManager::get().mem_used_percent() > 0.8
                 {
+                    let _timer = baseline_metrics.elapsed_compute().timer();
                     log::info!(
                         "spilling output result of {}[partition={partition}",
                         mem_consumer.name(),
@@ -193,24 +213,26 @@ impl TaskOutputter for Arc<TaskContext> {
                     let mut spill_writer = spill.get_compressed_writer();
 
                     // write all batches to spill, releasing all holding memory
-                    while let Some(batch) = stream.next().await.transpose()? {
-                        let _timer = baseline_metrics.elapsed_compute().timer();
+                    while let Some(batch) = baseline_metrics
+                        .elapsed_compute()
+                        .exclude_timer_async(async { stream.next().await.transpose() })
+                        .await?
+                    {
                         write_one_batch(batch.num_rows(), batch.columns(), &mut spill_writer)?;
                     }
-                    let mut timer = baseline_metrics.elapsed_compute().timer();
                     drop(spill_writer);
 
                     // read all batches from spill and output
                     let mut spill_reader = spill.get_compressed_reader();
                     while let Some((num_rows, cols)) = read_one_batch(&mut spill_reader)? {
                         let batch = recover_named_batch(num_rows, &cols, schema.clone())?;
-                        sender.send(Ok(batch), Some(&mut timer)).await;
+                        sender.send(Ok(batch)).await;
                     }
                     return Ok(());
                 }
                 stream.next().await.transpose()
             }? {
-                sender.send(Ok(batch), None).await;
+                sender.send(Ok(batch)).await;
             }
             Ok(())
         })

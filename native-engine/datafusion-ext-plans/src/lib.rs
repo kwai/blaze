@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(get_mut_unchecked)]
 #![feature(adt_const_params)]
+#![feature(core_intrinsics)]
+#![feature(get_mut_unchecked)]
+#![feature(portable_simd)]
+#![feature(ptr_as_ref_unchecked)]
 
 // execution plan implementations
 pub mod agg_exec;
@@ -48,3 +51,20 @@ pub mod generate;
 pub mod joins;
 mod shuffle;
 pub mod window;
+
+#[macro_export]
+macro_rules! unchecked {
+    ($e:expr) => {{
+        // safety: bypass bounds checking, used in performance critical path
+        unsafe { unchecked_index::unchecked_index($e) }
+    }};
+}
+
+#[macro_export]
+macro_rules! prefetch_read_data {
+    ($e:expr) => {{
+        // safety: use prefetch
+        let locality = 3;
+        unsafe { std::intrinsics::prefetch_read_data($e, locality) }
+    }};
+}

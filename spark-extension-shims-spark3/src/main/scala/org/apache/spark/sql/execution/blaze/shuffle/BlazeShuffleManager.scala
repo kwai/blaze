@@ -36,7 +36,8 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
         " Shuffle will continue to spill to disk when necessary.")
   }
 
-  override val shuffleBlockResolver = new IndexShuffleBlockResolver(conf)
+  override val shuffleBlockResolver: ShuffleBlockResolver =
+    sortShuffleManager.shuffleBlockResolver
 
   /**
    * (override) Obtains a [[ShuffleHandle]] to pass to tasks.

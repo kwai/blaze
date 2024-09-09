@@ -12,13 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    any::Any,
-    fmt::Formatter,
-    pin::Pin,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{any::Any, fmt::Formatter, pin::Pin, sync::Arc};
 
 use arrow::{compute::SortOptions, datatypes::SchemaRef};
 use async_trait::async_trait;
@@ -29,7 +23,7 @@ use datafusion::{
     physical_expr::{PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
         joins::utils::JoinOn,
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
         Statistics,
@@ -44,6 +38,7 @@ use crate::{
     common::{
         column_pruning::ExecuteWithColumnPruning,
         output::{TaskOutputter, WrappedRecordBatchSender},
+        timer_helper::TimerHelper,
     },
     cur_forward,
     joins::{
@@ -246,17 +241,20 @@ pub async fn execute_join(
     metrics: Arc<BaselineMetrics>,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
-    let start_time = Instant::now();
+    let _timer = metrics.elapsed_compute().timer();
+    let poll_time = Time::new();
 
     let mut curs = (
         StreamCursor::try_new(
             lstream,
+            poll_time.clone(),
             &join_params,
             JoinSide::Left,
             &join_params.projection.left,
         )?,
         StreamCursor::try_new(
             rstream,
+            poll_time.clone(),
             &join_params,
             JoinSide::Right,
             &join_params.projection.right,
@@ -284,14 +282,8 @@ pub async fn execute_join(
     joiner.as_mut().join(&mut curs).await?;
     metrics.record_output(joiner.num_output_rows());
 
-    // discount poll input and send output batch time
-    let mut join_time_ns = (Instant::now() - start_time).as_nanos() as u64;
-    join_time_ns -= joiner.total_send_output_time() as u64;
-    join_time_ns -= curs.0.total_poll_time() as u64;
-    join_time_ns -= curs.1.total_poll_time() as u64;
-    metrics
-        .elapsed_compute()
-        .add_duration(Duration::from_nanos(join_time_ns));
+    // discount poll time
+    metrics.elapsed_compute().sub_duration(poll_time.duration());
     Ok(())
 }
 
@@ -309,6 +301,5 @@ macro_rules! compare_cursor {
 #[async_trait]
 pub trait Joiner {
     async fn join(self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()>;
-    fn total_send_output_time(&self) -> usize;
     fn num_output_rows(&self) -> usize;
 }

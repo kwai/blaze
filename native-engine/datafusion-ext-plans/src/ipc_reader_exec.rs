@@ -171,7 +171,9 @@ pub async fn read_ipc(
 ) -> Result<SendableRecordBatchStream> {
     log::info!("[partition={partition_id}] start ipc reading");
     context.output_with_sender("IpcReader", schema.clone(), move |sender| async move {
-        let mut timer = baseline_metrics.elapsed_compute().timer();
+        sender.exclude_time(baseline_metrics.elapsed_compute());
+
+        let _timer = baseline_metrics.elapsed_compute().timer();
         let batch_size = batch_size();
         let staging_cols: Arc<Mutex<Vec<Vec<ArrayRef>>>> = Arc::new(Mutex::new(vec![]));
         let staging_num_rows = AtomicUsize::new(0);
@@ -242,7 +244,7 @@ pub async fn read_ipc(
                     staging_mem_size.store(0, SeqCst);
                     size_counter.add(batch.get_array_mem_size());
                     baseline_metrics.record_output(batch.num_rows());
-                    sender.send(Ok(batch), Some(&mut timer)).await;
+                    sender.send(Ok(batch)).await;
                 }
             }
         }
@@ -260,7 +262,7 @@ pub async fn read_ipc(
             )?;
             size_counter.add(batch.get_array_mem_size());
             baseline_metrics.record_output(batch.num_rows());
-            sender.send(Ok(batch), Some(&mut timer)).await;
+            sender.send(Ok(batch)).await;
         }
         Ok(())
     })

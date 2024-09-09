@@ -15,7 +15,6 @@
  */
 package org.apache.spark.sql.blaze
 
-import org.apache.gluten.extension.BlazeStrategyOverrides
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.ConfigEntry
@@ -38,9 +37,6 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
     assert(BlazeSparkSessionExtension.blazeEnabledKey != null)
     Shims.get.onApplyingExtension()
 
-    extensions.injectPlannerStrategy(sparkSession => {
-      BlazeStrategyOverrides(sparkSession)
-    })
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)
     })

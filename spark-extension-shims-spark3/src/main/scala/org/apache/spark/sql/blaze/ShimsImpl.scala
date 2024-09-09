@@ -129,6 +129,10 @@ class ShimsImpl extends Shims with Logging {
   override def initExtension(): Unit = {
     ValidateSparkPlanInjector.inject()
 
+    if (BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()) {
+      ForceApplyShuffledHashJoinInjector.inject()
+    }
+
     // disable MultiCommutativeOp suggested in spark3.4+
     if (shimVersion >= "spark340") {
       val confName = "spark.sql.analyzer.canonicalization.multiCommutativeOpMemoryOptThreshold"
@@ -137,7 +141,11 @@ class ShimsImpl extends Shims with Logging {
   }
 
   @enableIf(Seq("spark303", "spark320").contains(System.getProperty("blaze.shim")))
-  override def initExtension(): Unit = {}
+  override def initExtension(): Unit = {
+    if (BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()) {
+      logWarning(s"${BlazeConf.FORCE_SHUFFLED_HASH_JOIN.key} is not supported in $shimVersion")
+    }
+  }
 
   override def createConvertToNativeExec(child: SparkPlan): ConvertToNativeBase =
     ConvertToNativeExec(child)

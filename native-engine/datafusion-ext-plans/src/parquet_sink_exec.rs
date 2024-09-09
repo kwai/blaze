@@ -240,7 +240,7 @@ async fn execute_parquet_sink(
     let schema = input.schema();
     let part_writer: Arc<Mutex<Option<PartWriter>>> = Arc::default();
 
-    context.output_with_sender("ParquetSink", schema.clone(), move |sender| async move {
+    context.output_with_sender("ParquetSink", schema, move |sender| async move {
         macro_rules! part_writer_init {
             ($batch:expr, $part_values:expr) => {{
                 log::info!(
@@ -250,7 +250,7 @@ async fn execute_parquet_sink(
                 let parquet_sink_context_cloned = parquet_sink_context.clone();
                 *part_writer.lock() = Some({
                     // send identity batch, after that we can achieve a new output file
-                    sender.send(Ok($batch.slice(0, 1)), None).await;
+                    sender.send(Ok($batch.slice(0, 1))).await;
                     tokio::task::spawn_blocking(move || {
                         PartWriter::try_new(partition_id, parquet_sink_context_cloned, $part_values)
                     })

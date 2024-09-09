@@ -31,7 +31,7 @@ use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 
 use crate::{
-    common::batch_selection::take_batch_opt,
+    common::{batch_selection::take_batch, timer_helper::TimerHelper},
     joins::{Idx, JoinParams},
 };
 
@@ -58,6 +58,7 @@ pub struct StreamCursor {
 impl StreamCursor {
     pub fn try_new(
         stream: SendableRecordBatchStream,
+        poll_time: Time,
         join_params: &JoinParams,
         join_side: JoinSide,
         projection: &[usize],
@@ -92,7 +93,7 @@ impl StreamCursor {
                     .collect::<Result<Vec<_>>>()?,
             )?,
         );
-        let null_batch = take_batch_opt(empty_batch, [Option::<usize>::None])?;
+        let null_batch = take_batch(empty_batch, vec![Option::<u32>::None])?;
         let projected_null_batch = null_batch.project(projection)?;
         let null_nb = NullBuffer::new_null(1);
 
@@ -100,7 +101,7 @@ impl StreamCursor {
             stream,
             key_exprs,
             key_converter,
-            poll_time: Time::new(),
+            poll_time,
             projection: projection.to_vec(),
             projected_batch_schema: projected_null_batch.schema(),
             projected_batches: vec![projected_null_batch],
@@ -124,12 +125,11 @@ impl StreamCursor {
         let should_load_next_batch = self.cur_idx.0 >= self.projected_batches.len();
         if should_load_next_batch {
             Some(async move {
-                while let Some(batch) = {
-                    let timer = self.poll_time.timer();
-                    let batch = self.stream.next().await.transpose()?;
-                    drop(timer);
-                    batch
-                } {
+                while let Some(batch) = self
+                    .poll_time
+                    .with_timer_async(async { self.stream.next().await.transpose() })
+                    .await?
+                {
                     if batch.num_rows() == 0 {
                         continue;
                     }
@@ -140,7 +140,7 @@ impl StreamCursor {
                         .collect::<Result<Vec<_>>>()?;
                     let key_has_nulls = key_columns
                         .iter()
-                        .map(|c| c.nulls().cloned())
+                        .map(|c| c.logical_nulls())
                         .reduce(|lhs, rhs| NullBuffer::union(lhs.as_ref(), rhs.as_ref()))
                         .unwrap_or(None);
                     let keys = Arc::new(self.key_converter.lock().convert_columns(&key_columns)?);
@@ -217,11 +217,6 @@ impl StreamCursor {
     #[inline]
     pub fn set_min_reserved_idx(&mut self, idx: Idx) {
         self.min_reserved_idx = idx;
-    }
-
-    #[inline]
-    pub fn total_poll_time(&self) -> usize {
-        self.poll_time.value()
     }
 }
 

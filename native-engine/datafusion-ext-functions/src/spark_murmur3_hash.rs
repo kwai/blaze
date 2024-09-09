@@ -41,12 +41,9 @@ pub fn spark_murmur3_hash(args: &[ColumnarValue]) -> Result<ColumnarValue> {
 
     // use identical seed as spark hash partition
     let spark_murmur3_default_seed = 42i32;
-    let mut hash_buffer = vec![spark_murmur3_default_seed; len];
-    create_murmur3_hashes(&arrays, &mut hash_buffer)?;
+    let hashes = create_murmur3_hashes(len, &arrays, spark_murmur3_default_seed);
 
-    Ok(ColumnarValue::Array(Arc::new(Int32Array::from(
-        hash_buffer,
-    ))))
+    Ok(ColumnarValue::Array(Arc::new(Int32Array::from(hashes))))
 }
 
 #[cfg(test)]

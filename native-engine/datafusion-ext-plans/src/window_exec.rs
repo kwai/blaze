@@ -155,11 +155,11 @@ async fn execute_window(
 
     // start processing input batches
     let output_schema = context.output_schema.clone();
-    task_context.output_with_sender("Window", output_schema, |sender| async move {
-        while let Some(batch) = input.next().await.transpose()? {
-            let elapsed_time = metrics.elapsed_compute().clone();
-            let mut timer = elapsed_time.timer();
+    task_context.output_with_sender("Window", output_schema.clone(), |sender| async move {
+        sender.exclude_time(metrics.elapsed_compute());
 
+        while let Some(batch) = input.next().await.transpose()? {
+            let _timer = metrics.elapsed_compute().timer();
             let window_cols: Vec<ArrayRef> = processors
                 .iter_mut()
                 .map(|processor| {
@@ -190,7 +190,7 @@ async fn execute_window(
             )?;
 
             metrics.record_output(output_batch.num_rows());
-            sender.send(Ok(output_batch), Some(&mut timer)).await;
+            sender.send(Ok(output_batch)).await;
         }
         Ok(())
     })
