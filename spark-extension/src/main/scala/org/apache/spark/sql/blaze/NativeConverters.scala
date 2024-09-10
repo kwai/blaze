@@ -51,9 +51,12 @@ import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Days
 import org.apache.spark.sql.catalyst.expressions.GetJsonObject
 import org.apache.spark.sql.catalyst.expressions.LeafExpression
+import org.apache.spark.sql.catalyst.expressions.Month
 import org.apache.spark.sql.catalyst.expressions.XxHash64
+import org.apache.spark.sql.catalyst.expressions.Year
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
@@ -869,6 +872,10 @@ object NativeConverters extends Logging {
         buildExtScalarFunction("Murmur3Hash", children, IntegerType)
       case XxHash64(children, 42L) =>
         buildExtScalarFunction("XxHash64", children, LongType)
+
+      case Year(child) => buildExtScalarFunction("Year", child :: Nil, DateType)
+      case Month(child) => buildExtScalarFunction("Month", child :: Nil, DateType)
+      case Days(child) => buildExtScalarFunction("Day", child :: Nil, DateType)
 
       // startswith is converted to scalar function in pruning-expr mode
       case StartsWith(expr, Literal(prefix, StringType)) if isPruningExpr =>
