@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::error::Error;
+
 pub use datafusion;
 pub use jni::{
     self,
@@ -389,14 +391,10 @@ pub struct JavaClasses<'a> {
     pub cClass: JavaClass<'a>,
     pub cJavaThrowable: JavaThrowable<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
-    pub cJavaChannels: JavaChannels<'a>,
     pub cJavaReadableByteChannel: JavaReadableByteChannel<'a>,
     pub cJavaBoolean: JavaBoolean<'a>,
     pub cJavaAutoCloseable: JavaAutoCloseable<'a>,
     pub cJavaLong: JavaLong<'a>,
-    pub cJavaList: JavaList<'a>,
-    pub cJavaMap: JavaMap<'a>,
-    pub cJavaFile: JavaFile<'a>,
     pub cJavaURI: JavaURI<'a>,
     pub cJavaBuffer: JavaBuffer<'a>,
 
@@ -431,66 +429,67 @@ static JNI_JAVA_CLASSES: OnceCell<JavaClasses> = OnceCell::new();
 
 impl JavaClasses<'static> {
     pub fn init(env: &JNIEnv) {
-        JNI_JAVA_CLASSES.get_or_init(|| {
+        if let Err(err) = JNI_JAVA_CLASSES.get_or_try_init(|| -> Result<_, Box<dyn Error>> {
             log::info!("Initializing JavaClasses...");
             let env = unsafe { std::mem::transmute::<_, &'static JNIEnv>(env) };
-            let jni_bridge = JniBridge::new(env).unwrap();
+            let jni_bridge = JniBridge::new(env)?;
             let classloader = env
                 .call_static_method_unchecked(
                     jni_bridge.class,
                     jni_bridge.method_getContextClassLoader,
                     jni_bridge.method_getContextClassLoader_ret.clone(),
                     &[],
-                )
-                .unwrap()
-                .l()
-                .unwrap();
+                )?
+                .l()?;
 
             let java_classes = JavaClasses {
-                jvm: env.get_java_vm().unwrap(),
-                classloader: get_global_ref_jobject(env, classloader).unwrap(),
+                jvm: env.get_java_vm()?,
+                classloader: get_global_ref_jobject(env, classloader)?,
                 cJniBridge: jni_bridge,
-                cJniUtil: JniUtil::new(env).unwrap(),
+                cJniUtil: JniUtil::new(env)?,
 
-                cClass: JavaClass::new(env).unwrap(),
-                cJavaThrowable: JavaThrowable::new(env).unwrap(),
-                cJavaRuntimeException: JavaRuntimeException::new(env).unwrap(),
-                cJavaChannels: JavaChannels::new(env).unwrap(),
-                cJavaReadableByteChannel: JavaReadableByteChannel::new(env).unwrap(),
-                cJavaBoolean: JavaBoolean::new(env).unwrap(),
-                cJavaLong: JavaLong::new(env).unwrap(),
-                cJavaAutoCloseable: JavaAutoCloseable::new(env).unwrap(),
-                cJavaList: JavaList::new(env).unwrap(),
-                cJavaMap: JavaMap::new(env).unwrap(),
-                cJavaFile: JavaFile::new(env).unwrap(),
-                cJavaURI: JavaURI::new(env).unwrap(),
-                cJavaBuffer: JavaBuffer::new(env).unwrap(),
+                cClass: JavaClass::new(env)?,
+                cJavaThrowable: JavaThrowable::new(env)?,
+                cJavaRuntimeException: JavaRuntimeException::new(env)?,
+                cJavaReadableByteChannel: JavaReadableByteChannel::new(env)?,
+                cJavaBoolean: JavaBoolean::new(env)?,
+                cJavaLong: JavaLong::new(env)?,
+                cJavaAutoCloseable: JavaAutoCloseable::new(env)?,
+                cJavaURI: JavaURI::new(env)?,
+                cJavaBuffer: JavaBuffer::new(env)?,
 
-                cScalaIterator: ScalaIterator::new(env).unwrap(),
-                cScalaTuple2: ScalaTuple2::new(env).unwrap(),
-                cScalaFunction0: ScalaFunction0::new(env).unwrap(),
-                cScalaFunction1: ScalaFunction1::new(env).unwrap(),
-                cScalaFunction2: ScalaFunction2::new(env).unwrap(),
+                cScalaIterator: ScalaIterator::new(env)?,
+                cScalaTuple2: ScalaTuple2::new(env)?,
+                cScalaFunction0: ScalaFunction0::new(env)?,
+                cScalaFunction1: ScalaFunction1::new(env)?,
+                cScalaFunction2: ScalaFunction2::new(env)?,
 
-                cHadoopFileSystem: HadoopFileSystem::new(env).unwrap(),
-                cHadoopPath: HadoopPath::new(env).unwrap(),
-                cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env).unwrap(),
+                cHadoopFileSystem: HadoopFileSystem::new(env)?,
+                cHadoopPath: HadoopPath::new(env)?,
+                cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env)?,
 
-                cSparkFileSegment: SparkFileSegment::new(env).unwrap(),
-                cSparkSQLMetric: SparkSQLMetric::new(env).unwrap(),
-                cSparkMetricNode: SparkMetricNode::new(env).unwrap(),
-                cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env).unwrap(),
-                cSparkUDTFWrapperContext: SparkUDTFWrapperContext::new(env).unwrap(),
-                cBlazeConf: BlazeConf::new(env).unwrap(),
-                cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env).unwrap(),
-                cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
-                cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env).unwrap(),
-                cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils::new(env).unwrap(),
-                cBlazeBlockObject: BlazeBlockObject::new(env).unwrap(),
+                cSparkFileSegment: SparkFileSegment::new(env)?,
+                cSparkSQLMetric: SparkSQLMetric::new(env)?,
+                cSparkMetricNode: SparkMetricNode::new(env)?,
+                cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env)?,
+                cSparkUDTFWrapperContext: SparkUDTFWrapperContext::new(env)?,
+                cBlazeConf: BlazeConf::new(env)?,
+                cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env)?,
+                cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env)?,
+                cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env)?,
+                cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils::new(env)?,
+                cBlazeBlockObject: BlazeBlockObject::new(env)?,
             };
             log::info!("Initializing JavaClasses finished");
-            java_classes
-        });
+            Ok(java_classes)
+        }) {
+            log::error!("Initializing JavaClasses error: {err:?}");
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_describe();
+                let _ = env.exception_clear();
+            }
+            env.fatal_error("Initializing JavaClasses error, cannot continue");
+        }
     }
 
     pub fn inited() -> bool {
@@ -691,29 +690,6 @@ impl<'a> JavaRuntimeException<'a> {
 }
 
 #[allow(non_snake_case)]
-pub struct JavaChannels<'a> {
-    pub class: JClass<'a>,
-    pub method_newChannel: JStaticMethodID,
-    pub method_newChannel_ret: ReturnType,
-}
-impl<'a> JavaChannels<'a> {
-    pub const SIG_TYPE: &'static str = "java/nio/channels/Channels";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaChannels<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaChannels {
-            class,
-            method_newChannel: env.get_static_method_id(
-                class,
-                "newChannel",
-                "(Ljava/io/InputStream;)Ljava/nio/channels/ReadableByteChannel;",
-            )?,
-            method_newChannel_ret: ReturnType::Object,
-        })
-    }
-}
-
-#[allow(non_snake_case)]
 pub struct JavaReadableByteChannel<'a> {
     pub class: JClass<'a>,
     pub method_read: JMethodID,
@@ -789,79 +765,6 @@ impl<'a> JavaAutoCloseable<'a> {
             class,
             method_close: env.get_method_id(class, "close", "()V")?,
             method_close_ret: ReturnType::Primitive(Primitive::Void),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct JavaList<'a> {
-    pub class: JClass<'a>,
-    pub method_size: JMethodID,
-    pub method_size_ret: ReturnType,
-    pub method_get: JMethodID,
-    pub method_get_ret: ReturnType,
-}
-impl<'a> JavaList<'a> {
-    pub const SIG_TYPE: &'static str = "java/util/List";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaList<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaList {
-            class,
-            method_size: env.get_method_id(class, "size", "()I")?,
-            method_size_ret: ReturnType::Primitive(Primitive::Int),
-            method_get: env.get_method_id(class, "get", "(I)Ljava/lang/Object;")?,
-            method_get_ret: ReturnType::Object,
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct JavaMap<'a> {
-    pub class: JClass<'a>,
-    pub method_get: JMethodID,
-    pub method_get_ret: ReturnType,
-    pub method_put: JMethodID,
-    pub method_put_ret: ReturnType,
-}
-impl<'a> JavaMap<'a> {
-    pub const SIG_TYPE: &'static str = "java/util/Map";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaMap<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaMap {
-            class,
-            method_get: env
-                .get_method_id(class, "get", "(Ljava/lang/Object;)Ljava/lang/Object;")
-                .unwrap(),
-            method_get_ret: ReturnType::Object,
-            method_put: env
-                .get_method_id(
-                    class,
-                    "put",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
-                )
-                .unwrap(),
-            method_put_ret: ReturnType::Primitive(Primitive::Void),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct JavaFile<'a> {
-    pub class: JClass<'a>,
-    pub method_getPath: JMethodID,
-    pub method_getPath_ret: ReturnType,
-}
-impl<'a> JavaFile<'a> {
-    pub const SIG_TYPE: &'static str = "java/io/File";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JavaFile<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JavaFile {
-            class,
-            method_getPath: env.get_method_id(class, "getPath", "()Ljava/lang/String;")?,
-            method_getPath_ret: ReturnType::Object,
         })
     }
 }
@@ -1165,17 +1068,13 @@ impl<'a> SparkMetricNode<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(SparkMetricNode {
             class,
-            method_getChild: env
-                .get_method_id(
-                    class,
-                    "getChild",
-                    "(I)Lorg/apache/spark/sql/blaze/MetricNode;",
-                )
-                .unwrap(),
+            method_getChild: env.get_method_id(
+                class,
+                "getChild",
+                "(I)Lorg/apache/spark/sql/blaze/MetricNode;",
+            )?,
             method_getChild_ret: ReturnType::Object,
-            method_add: env
-                .get_method_id(class, "add", "(Ljava/lang/String;J)V")
-                .unwrap(),
+            method_add: env.get_method_id(class, "add", "(Ljava/lang/String;J)V")?,
             method_add_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1203,29 +1102,31 @@ impl<'a> BlazeConf<'_> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeConf {
             class,
-            method_booleanConf: env
-                .get_static_method_id(class, "booleanConf", "(Ljava/lang/String;)Z")
-                .unwrap(),
+            method_booleanConf: env.get_static_method_id(
+                class,
+                "booleanConf",
+                "(Ljava/lang/String;)Z",
+            )?,
             method_booleanConf_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_intConf: env
-                .get_static_method_id(class, "intConf", "(Ljava/lang/String;)I")
-                .unwrap(),
+            method_intConf: env.get_static_method_id(class, "intConf", "(Ljava/lang/String;)I")?,
             method_intConf_ret: ReturnType::Primitive(Primitive::Int),
-            method_longConf: env
-                .get_static_method_id(class, "longConf", "(Ljava/lang/String;)J")
-                .unwrap(),
+            method_longConf: env.get_static_method_id(
+                class,
+                "longConf",
+                "(Ljava/lang/String;)J",
+            )?,
             method_longConf_ret: ReturnType::Primitive(Primitive::Long),
-            method_doubleConf: env
-                .get_static_method_id(class, "doubleConf", "(Ljava/lang/String;)D")
-                .unwrap(),
+            method_doubleConf: env.get_static_method_id(
+                class,
+                "doubleConf",
+                "(Ljava/lang/String;)D",
+            )?,
             method_doubleConf_ret: ReturnType::Primitive(Primitive::Double),
-            method_stringConf: env
-                .get_static_method_id(
-                    class,
-                    "stringConf",
-                    "(Ljava/lang/String;)Ljava/lang/String;",
-                )
-                .unwrap(),
+            method_stringConf: env.get_static_method_id(
+                class,
+                "stringConf",
+                "(Ljava/lang/String;)Ljava/lang/String;",
+            )?,
             method_stringConf_ret: ReturnType::Object,
         })
     }
@@ -1250,13 +1151,11 @@ impl<'a> BlazeRssPartitionWriterBase<'_> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeRssPartitionWriterBase {
             class,
-            method_write: env
-                .get_method_id(class, "write", "(ILjava/nio/ByteBuffer;)V")
-                .unwrap(),
+            method_write: env.get_method_id(class, "write", "(ILjava/nio/ByteBuffer;)V")?,
             method_write_ret: ReturnType::Primitive(Primitive::Void),
-            method_flush: env.get_method_id(class, "flush", "()V").unwrap(),
+            method_flush: env.get_method_id(class, "flush", "()V")?,
             method_flush_ret: ReturnType::Primitive(Primitive::Void),
-            method_close: env.get_method_id(class, "close", "()V").unwrap(),
+            method_close: env.get_method_id(class, "close", "()V")?,
             method_close_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1277,7 +1176,7 @@ impl<'a> SparkUDFWrapperContext<'a> {
         Ok(SparkUDFWrapperContext {
             class,
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
-            method_eval: env.get_method_id(class, "eval", "(JJ)V").unwrap(),
+            method_eval: env.get_method_id(class, "eval", "(JJ)V")?,
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1300,9 +1199,9 @@ impl<'a> SparkUDTFWrapperContext<'a> {
         Ok(SparkUDTFWrapperContext {
             class,
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
-            method_eval: env.get_method_id(class, "eval", "(JJ)V").unwrap(),
+            method_eval: env.get_method_id(class, "eval", "(JJ)V")?,
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
-            method_terminate: env.get_method_id(class, "terminate", "(IJ)V").unwrap(),
+            method_terminate: env.get_method_id(class, "terminate", "(IJ)V")?,
             method_terminate_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1329,25 +1228,23 @@ impl<'a> BlazeCallNativeWrapper<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeCallNativeWrapper {
             class,
-            method_getRawTaskDefinition: env
-                .get_method_id(class, "getRawTaskDefinition", "()[B")
-                .unwrap(),
+            method_getRawTaskDefinition: env.get_method_id(
+                class,
+                "getRawTaskDefinition",
+                "()[B",
+            )?,
             method_getRawTaskDefinition_ret: ReturnType::Array,
-            method_getMetrics: env
-                .get_method_id(
-                    class,
-                    "getMetrics",
-                    "()Lorg/apache/spark/sql/blaze/MetricNode;",
-                )
-                .unwrap(),
+            method_getMetrics: env.get_method_id(
+                class,
+                "getMetrics",
+                "()Lorg/apache/spark/sql/blaze/MetricNode;",
+            )?,
             method_getMetrics_ret: ReturnType::Object,
-            method_importSchema: env.get_method_id(class, "importSchema", "(J)V").unwrap(),
+            method_importSchema: env.get_method_id(class, "importSchema", "(J)V")?,
             method_importSchema_ret: ReturnType::Primitive(Primitive::Void),
-            method_importBatch: env.get_method_id(class, "importBatch", "(J)V").unwrap(),
+            method_importBatch: env.get_method_id(class, "importBatch", "(J)V")?,
             method_importBatch_ret: ReturnType::Primitive(Primitive::Void),
-            method_setError: env
-                .get_method_id(class, "setError", "(Ljava/lang/Throwable;)V")
-                .unwrap(),
+            method_setError: env.get_method_id(class, "setError", "(Ljava/lang/Throwable;)V")?,
             method_setError_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1378,29 +1275,23 @@ impl<'a> BlazeOnHeapSpillManager<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeOnHeapSpillManager {
             class,
-            method_isOnHeapAvailable: env
-                .get_method_id(class, "isOnHeapAvailable", "()Z")
-                .unwrap(),
+            method_isOnHeapAvailable: env.get_method_id(class, "isOnHeapAvailable", "()Z")?,
             method_isOnHeapAvailable_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_newSpill: env.get_method_id(class, "newSpill", "()I").unwrap(),
+            method_newSpill: env.get_method_id(class, "newSpill", "()I")?,
             method_newSpill_ret: ReturnType::Primitive(Primitive::Int),
-            method_writeSpill: env
-                .get_method_id(class, "writeSpill", "(ILjava/nio/ByteBuffer;)V")
-                .unwrap(),
+            method_writeSpill: env.get_method_id(
+                class,
+                "writeSpill",
+                "(ILjava/nio/ByteBuffer;)V",
+            )?,
             method_writeSpill_ret: ReturnType::Primitive(Primitive::Void),
-            method_readSpill: env
-                .get_method_id(class, "readSpill", "(ILjava/nio/ByteBuffer;)I")
-                .unwrap(),
+            method_readSpill: env.get_method_id(class, "readSpill", "(ILjava/nio/ByteBuffer;)I")?,
             method_readSpill_ret: ReturnType::Primitive(Primitive::Int),
-            method_getSpillDiskUsage: env
-                .get_method_id(class, "getSpillDiskUsage", "(I)J")
-                .unwrap(),
+            method_getSpillDiskUsage: env.get_method_id(class, "getSpillDiskUsage", "(I)J")?,
             method_getSpillDiskUsage_ret: ReturnType::Primitive(Primitive::Long),
-            method_getSpillDiskIOTime: env
-                .get_method_id(class, "getSpillDiskIOTime", "(I)J")
-                .unwrap(),
+            method_getSpillDiskIOTime: env.get_method_id(class, "getSpillDiskIOTime", "(I)J")?,
             method_getSpillDiskIOTime_ret: ReturnType::Primitive(Primitive::Long),
-            method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V").unwrap(),
+            method_releaseSpill: env.get_method_id(class, "releaseSpill", "(I)V")?,
             method_releaseSpill_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1422,13 +1313,17 @@ impl<'a> BlazeNativeParquetSinkUtils<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeNativeParquetSinkUtils {
             class,
-            method_getTaskOutputPath: env
-                .get_static_method_id(class, "getTaskOutputPath", "()Ljava/lang/String;")
-                .unwrap(),
+            method_getTaskOutputPath: env.get_static_method_id(
+                class,
+                "getTaskOutputPath",
+                "()Ljava/lang/String;",
+            )?,
             method_getTaskOutputPath_ret: ReturnType::Object,
-            method_completeOutput: env
-                .get_static_method_id(class, "completeOutput", "(Ljava/lang/String;JJ)V")
-                .unwrap(),
+            method_completeOutput: env.get_static_method_id(
+                class,
+                "completeOutput",
+                "(Ljava/lang/String;JJ)V",
+            )?,
             method_completeOutput_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
@@ -1460,29 +1355,27 @@ impl<'a> BlazeBlockObject<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(BlazeBlockObject {
             class,
-            method_hasFileSegment: env.get_method_id(class, "hasFileSegment", "()Z").unwrap(),
+            method_hasFileSegment: env.get_method_id(class, "hasFileSegment", "()Z")?,
             method_hasFileSegment_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_hasByteBuffer: env.get_method_id(class, "hasByteBuffer", "()Z").unwrap(),
+            method_hasByteBuffer: env.get_method_id(class, "hasByteBuffer", "()Z")?,
             method_hasByteBuffer_ret: ReturnType::Primitive(Primitive::Boolean),
-            method_getFilePath: env
-                .get_method_id(class, "getFilePath", "()Ljava/lang/String;")
-                .unwrap(),
+            method_getFilePath: env.get_method_id(class, "getFilePath", "()Ljava/lang/String;")?,
             method_getFilePath_ret: ReturnType::Object,
-            method_getFileOffset: env.get_method_id(class, "getFileOffset", "()J").unwrap(),
+            method_getFileOffset: env.get_method_id(class, "getFileOffset", "()J")?,
             method_getFileOffset_ret: ReturnType::Primitive(Primitive::Long),
-            method_getFileLength: env.get_method_id(class, "getFileLength", "()J").unwrap(),
+            method_getFileLength: env.get_method_id(class, "getFileLength", "()J")?,
             method_getFileLength_ret: ReturnType::Primitive(Primitive::Long),
-            method_getByteBuffer: env
-                .get_method_id(class, "getByteBuffer", "()Ljava/nio/ByteBuffer;")
-                .unwrap(),
+            method_getByteBuffer: env.get_method_id(
+                class,
+                "getByteBuffer",
+                "()Ljava/nio/ByteBuffer;",
+            )?,
             method_getByteBuffer_ret: ReturnType::Object,
-            method_getChannel: env
-                .get_method_id(
-                    class,
-                    "getChannel",
-                    "()Ljava/nio/channels/ReadableByteChannel;",
-                )
-                .unwrap(),
+            method_getChannel: env.get_method_id(
+                class,
+                "getChannel",
+                "()Ljava/nio/channels/ReadableByteChannel;",
+            )?,
             method_getChannel_ret: ReturnType::Object,
         })
     }
