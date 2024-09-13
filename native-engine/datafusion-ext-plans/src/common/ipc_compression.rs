@@ -17,7 +17,7 @@
 
 use std::io::{BufReader, Read, Take, Write};
 
-use arrow::array::ArrayRef;
+use arrow::{array::ArrayRef, datatypes::SchemaRef};
 use blaze_jni_bridge::{conf, conf::StringConf, is_jni_bridge_inited};
 use datafusion::common::Result;
 use datafusion_ext_commons::{
@@ -82,6 +82,10 @@ impl<W: Write> IpcCompressionWriter<W> {
     pub fn inner(&self) -> &W {
         &self.output
     }
+
+    pub fn inner_mut(&mut self) -> &mut W {
+        &mut self.output
+    }
 }
 
 pub struct IpcCompressionReader<R: Read + 'static> {
@@ -104,7 +108,7 @@ impl<R: Read> IpcCompressionReader<R> {
         }
     }
 
-    pub fn read_batch(&mut self) -> Result<Option<(usize, Vec<ArrayRef>)>> {
+    pub fn read_batch(&mut self, schema: &SchemaRef) -> Result<Option<(usize, Vec<ArrayRef>)>> {
         struct Reader<'a, R: Read + 'static>(&'a mut IpcCompressionReader<R>);
         impl<'a, R: Read> Read for Reader<'a, R> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -143,7 +147,7 @@ impl<R: Read> IpcCompressionReader<R> {
                 }
             }
         }
-        read_one_batch(&mut Reader(self))
+        read_one_batch(&mut Reader(self), schema)
     }
 }
 
@@ -281,7 +285,10 @@ impl VecBuffer {
 mod tests {
     use std::{error::Error, io::Cursor, sync::Arc};
 
-    use arrow::array::StringArray;
+    use arrow::{
+        array::StringArray,
+        datatypes::{DataType, Field, Schema},
+    };
 
     use super::*;
 
@@ -291,19 +298,21 @@ mod tests {
         let mut writer = IpcCompressionWriter::new(&mut buf);
 
         let test_array1: ArrayRef = Arc::new(StringArray::from(vec![Some("hello"), Some("world")]));
-        writer.write_batch(2, &[test_array1.clone()])?;
         let test_array2: ArrayRef = Arc::new(StringArray::from(vec![Some("foo"), Some("bar")]));
+        let schema = Arc::new(Schema::new(vec![Field::new("", DataType::Utf8, false)]));
+
+        writer.write_batch(2, &[test_array1.clone()])?;
         writer.write_batch(2, &[test_array2.clone()])?;
         writer.finish_current_buf()?;
 
         let mut reader = IpcCompressionReader::new(Cursor::new(buf));
-        let (num_rows1, arrays1) = reader.read_batch()?.unwrap();
+        let (num_rows1, arrays1) = reader.read_batch(&schema)?.unwrap();
         assert_eq!(num_rows1, 2);
         assert_eq!(arrays1, &[test_array1]);
-        let (num_rows2, arrays2) = reader.read_batch()?.unwrap();
+        let (num_rows2, arrays2) = reader.read_batch(&schema)?.unwrap();
         assert_eq!(num_rows2, 2);
         assert_eq!(arrays2, &[test_array2]);
-        assert!(reader.read_batch()?.is_none());
+        assert!(reader.read_batch(&schema)?.is_none());
         Ok(())
     }
 }

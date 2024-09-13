@@ -109,6 +109,7 @@ abstract class NativeShuffleExchangeBase(
           val shuffleReadMetrics = TaskContext.get.taskMetrics().createTempShuffleReadMetrics()
           new SQLShuffleReadMetricsReporter(shuffleReadMetrics, metrics).incRecordsRead(v)
           TaskContext.get.taskMetrics().mergeShuffleReadMetrics()
+        case ("elapsed_compute", v) => metrics("shuffle_read_total_time") += v
         case _ =>
       }))
 
@@ -167,10 +168,9 @@ abstract class NativeShuffleExchangeBase(
     val nativeInputRDD = rdd.asInstanceOf[NativeRDD]
     val numPartitions = outputPartitioning.numPartitions
     val nativeMetrics = MetricNode(
-      Map(),
+      metrics,
       nativeInputRDD.metrics :: Nil,
       Some({
-        case ("stage_id", v) => metrics("stage_id") += v
         case ("data_size", v) => metrics("dataSize") += v
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
@@ -178,11 +178,6 @@ abstract class NativeShuffleExchangeBase(
         case ("elapsed_compute", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
-        case ("mem_spill_count", v) if v > 0 => metrics("mem_spill_count").add(v)
-        case ("mem_spill_size", v) if v > 0 => metrics("mem_spill_size").add(v)
-        case ("mem_spill_iotime", v) if v > 0 => metrics("mem_spill_iotime").add(v)
-        case ("disk_spill_size", v) if v > 0 => metrics("disk_spill_size").add(v)
-        case ("disk_spill_iotime", v) if v > 0 => metrics("disk_spill_iotime").add(v)
         case _ =>
       }))
     val nativeHashExprs = this.nativeHashExprs

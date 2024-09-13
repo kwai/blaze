@@ -423,7 +423,7 @@ object BlazeConverters extends Logging {
     } catch {
       case _ if BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf() =>
         logWarning(
-            "in forceShuffledHashJoin mode, hash joins are likely too run OOM because of " +
+          "in forceShuffledHashJoin mode, hash joins are likely too run OOM because of " +
             "small on-heap memory configuration. to avoid this, we will fall back this " +
             "ShuffledHashJoin to SortMergeJoin. ")
 
@@ -451,12 +451,8 @@ object BlazeConverters extends Logging {
           }
         }
 
-        val smj = SortMergeJoinExec(leftKeys,
-          rightKeys,
-          joinType,
-          condition,
-          leftSorted,
-          rightSorted)
+        val smj =
+          SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, leftSorted, rightSorted)
         smj.setTagValue(convertToNonNativeTag, true)
         smj
     }

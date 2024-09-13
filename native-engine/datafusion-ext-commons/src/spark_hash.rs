@@ -412,13 +412,6 @@ fn hash_one<T: num::PrimInt>(
     }
 }
 
-pub fn pmod(hash: i32, n: usize) -> usize {
-    let n = n as i32;
-    let r = hash % n;
-    let result = if r < 0 { (r + n) % n } else { r };
-    result as usize
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -547,25 +540,6 @@ mod tests {
             -235771157374669727,
         ];
         assert_eq!(hashes, expected);
-    }
-
-    #[test]
-    fn test_pmod() {
-        let i: Vec<i32> = [
-            0x99f0149d_u32,
-            0x9c67b85d,
-            0xc8008529,
-            0xa05b5d7b,
-            0xcd1e64fb,
-        ]
-        .into_iter()
-        .map(|v| v as i32)
-        .collect();
-        let result = i.into_iter().map(|i| pmod(i, 200)).collect::<Vec<usize>>();
-
-        // expected partition from Spark with n=200
-        let expected = vec![69, 5, 193, 171, 115];
-        assert_eq!(result, expected);
     }
 
     #[test]

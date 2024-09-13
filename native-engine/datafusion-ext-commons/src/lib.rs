@@ -89,7 +89,7 @@ pub fn batch_size() -> usize {
 
 // bigger for better radix sort performance
 pub const fn staging_mem_size_for_partial_sort() -> usize {
-    8388608
+    1048576
 }
 
 // use bigger batch memory size writing shuffling data

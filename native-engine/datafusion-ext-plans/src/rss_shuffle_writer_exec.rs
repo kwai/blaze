@@ -33,6 +33,7 @@ use datafusion::{
 use futures::{stream::once, TryStreamExt};
 
 use crate::{
+    common::timer_helper::RegisterTimer,
     memmgr::MemManager,
     shuffle::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
@@ -125,10 +126,12 @@ impl ExecutionPlan for RssShuffleWriterExec {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
             Partitioning::Hash(..) => {
+                let sort_time = self.metrics.register_timer("sort_time", partition);
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
                     self.partitioning.clone(),
+                    sort_time,
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner

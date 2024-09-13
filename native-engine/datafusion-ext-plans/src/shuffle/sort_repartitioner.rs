@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::{BufReader, Read, Seek, Write},
     sync::Weak,
 };
@@ -23,7 +23,10 @@ use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
     common::{DataFusionError, Result},
-    physical_plan::{metrics::ExecutionPlanMetricsSet, Partitioning},
+    physical_plan::{
+        metrics::{ExecutionPlanMetricsSet, Time},
+        Partitioning,
+    },
 };
 use datafusion_ext_commons::{
     df_execution_err,
@@ -32,6 +35,7 @@ use datafusion_ext_commons::{
 use futures::lock::Mutex;
 
 use crate::{
+    common::timer_helper::TimerHelper,
     memmgr::{
         metrics::SpillMetrics,
         spill::{try_new_spill, Spill},
@@ -49,6 +53,7 @@ pub struct SortShuffleRepartitioner {
     spills: Mutex<Vec<ShuffleSpill>>,
     partitioning: Partitioning,
     num_output_partitions: usize,
+    output_io_time: Time,
     spill_metrics: SpillMetrics,
 }
 
@@ -58,6 +63,8 @@ impl SortShuffleRepartitioner {
         output_data_file: String,
         output_index_file: String,
         partitioning: Partitioning,
+        sort_time: Time,
+        output_io_time: Time,
         metrics: &ExecutionPlanMetricsSet,
     ) -> Self {
         let num_output_partitions = partitioning.partition_count();
@@ -66,10 +73,11 @@ impl SortShuffleRepartitioner {
             mem_consumer_info: None,
             output_data_file,
             output_index_file,
-            data: Mutex::new(BufferedData::new(partition_id)),
+            data: Mutex::new(BufferedData::new(partition_id, sort_time)),
             spills: Mutex::default(),
             partitioning,
             num_output_partitions,
+            output_io_time,
             spill_metrics: SpillMetrics::new(metrics, partition_id),
         }
     }
@@ -158,22 +166,33 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         // no spills - directly write current batches into final file
         if spills.is_empty() {
             let partitioning = self.partitioning.clone();
+            let output_io_time = self.output_io_time.clone();
             tokio::task::spawn_blocking(move || {
-                let mut output_data = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&data_file)?;
-                let mut output_index = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&index_file)?;
+                let mut output_data = output_io_time.wrap_writer(
+                    OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(&data_file)?,
+                );
+                let mut output_index = output_io_time.wrap_writer(
+                    OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(&index_file)?,
+                );
 
+                // write data file
                 let offsets = data.write(&mut output_data, &partitioning)?;
+
+                // write index file
+                let mut offsets_data = vec![];
                 for offset in offsets {
-                    output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+                    offsets_data.extend_from_slice(&(offset as i64).to_le_bytes()[..]);
                 }
+                output_index.write_all(&offsets_data)?;
+
                 Ok::<(), DataFusionError>(())
             })
             .await
@@ -216,13 +235,22 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let mut offsets = vec![0];
 
         // append partition in each spills
+        let output_io_time = self.output_io_time.clone();
         tokio::task::spawn_blocking(move || {
-            let mut output_data = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(data_file)?;
-            let mut cur_partition_id = 0;
+            let mut output_data = output_io_time.wrap_writer(
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&data_file)?,
+            );
+            let mut output_index = output_io_time.wrap_writer(
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&index_file)?,
+            );
 
             if !spills.is_empty() {
                 // select partitions from spills
@@ -243,6 +271,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     num_output_partitions,
                 );
 
+                let mut cur_partition_id = 0;
                 loop {
                     let mut min_spill = cursors.peek_mut();
                     if min_spill.cur + 1 >= min_spill.offsets.len() {
@@ -250,7 +279,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     }
 
                     while cur_partition_id < min_spill.cur {
-                        offsets.push(output_data.stream_position()?);
+                        offsets.push(output_data.0.stream_position()?);
                         cur_partition_id += 1;
                     }
                     let (spill_offset_start, spill_offset_end) = (
@@ -269,12 +298,15 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             }
 
             // add one extra offset at last to ease partition length computation
-            offsets.resize(num_output_partitions + 1, output_data.stream_position()?);
+            offsets.resize(num_output_partitions + 1, output_data.0.stream_position()?);
 
-            let mut output_index = File::create(index_file)?;
+            // write index file
+            let mut offsets_data = vec![];
             for offset in offsets {
-                output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
+                offsets_data.extend_from_slice(&(offset as i64).to_le_bytes()[..]);
             }
+            output_index.write_all(&offsets_data)?;
+
             Ok::<(), DataFusionError>(())
         })
         .await
