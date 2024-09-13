@@ -9,7 +9,7 @@
     <relativePath>../</relativePath>
   </parent>
   <groupId>org.blaze</groupId>
-  <artifactId>spark-extension-shims-${shimPkg}</artifactId>
+  <artifactId>spark-extension-shims-spark3</artifactId>
   <packaging>jar</packaging>
 
   <dependencies>
