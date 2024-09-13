@@ -74,6 +74,7 @@ _Currently we have supported these shims:
 * spark324 - for spark3.2.x
 * spark333 - for spark3.3.x
 * spark351 - for spark3.5.x.
+
 _You could either build Blaze in dev mode for debugging or in release mode to unlock the full potential of
 Blaze._
 
