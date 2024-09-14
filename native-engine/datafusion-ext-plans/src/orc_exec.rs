@@ -177,9 +177,10 @@ impl ExecutionPlan for OrcExec {
                     "OrcScan",
                     stream.schema(),
                     move |sender| async move {
-                        let mut timer = baseline_metrics_cloned.elapsed_compute().timer();
+                        sender.exclude_time(baseline_metrics_cloned.elapsed_compute());
+                        let _timer = baseline_metrics_cloned.elapsed_compute().timer();
                         while let Some(batch) = stream.next().await.transpose()? {
-                            sender.send(Ok(batch), Some(&mut timer)).await;
+                            sender.send(Ok(batch)).await;
                         }
                         Ok(())
                     },
