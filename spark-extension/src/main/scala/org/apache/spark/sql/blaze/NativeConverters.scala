@@ -22,6 +22,8 @@ import java.io.ObjectOutputStream
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.math.max
+import scala.math.min
 
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
@@ -49,14 +51,18 @@ import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Days
 import org.apache.spark.sql.catalyst.expressions.GetJsonObject
 import org.apache.spark.sql.catalyst.expressions.LeafExpression
+import org.apache.spark.sql.catalyst.expressions.Month
 import org.apache.spark.sql.catalyst.expressions.XxHash64
+import org.apache.spark.sql.catalyst.expressions.Year
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.AtomicType
 import org.apache.spark.sql.types.BinaryType
@@ -554,7 +560,25 @@ object NativeConverters extends Logging {
         val lhs = e.left
         val rhs = e.right
         val resultType = e.dataType
-        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
+        if (lhs.dataType.isInstanceOf[DecimalType] && rhs.dataType.isInstanceOf[DecimalType]) {
+          def resultDecimalType(p1: Int, s1: Int, p2: Int, s2: Int): DecimalType = {
+            val resultScale = max(s1, s2)
+            val resultPrecision = max(p1 - s1, p2 - s2) + resultScale + 1
+            if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+              DecimalType.adjustPrecisionScale(resultPrecision, resultScale)
+            } else {
+              DecimalType.bounded(resultPrecision, resultScale)
+            }
+          }
+          val resultType = (lhs.dataType, rhs.dataType) match {
+            case (lhsType: DecimalType, rhsType: DecimalType) =>
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
+          }
+
           buildExprNode {
             _.setCast(pb.PhysicalCastNode
               .newBuilder()
@@ -576,7 +600,26 @@ object NativeConverters extends Logging {
         val lhs = e.left
         val rhs = e.right
         val resultType = e.dataType
-        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
+        if (lhs.dataType.isInstanceOf[DecimalType] && rhs.dataType.isInstanceOf[DecimalType]) {
+          // copied from spark3.5
+          def resultDecimalType(p1: Int, s1: Int, p2: Int, s2: Int): DecimalType = {
+            val resultScale = max(s1, s2)
+            val resultPrecision = max(p1 - s1, p2 - s2) + resultScale + 1
+            if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+              DecimalType.adjustPrecisionScale(resultPrecision, resultScale)
+            } else {
+              DecimalType.bounded(resultPrecision, resultScale)
+            }
+          }
+          val resultType = (lhs.dataType, rhs.dataType) match {
+            case (lhsType: DecimalType, rhsType: DecimalType) =>
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
+          }
+
           buildExprNode {
             _.setCast(pb.PhysicalCastNode
               .newBuilder()
@@ -597,8 +640,26 @@ object NativeConverters extends Logging {
       case e: Multiply =>
         val lhs = e.left
         val rhs = e.right
-        val resultType = e.dataType
-        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
+        if (lhs.dataType.isInstanceOf[DecimalType] && rhs.dataType.isInstanceOf[DecimalType]) {
+          // copied from spark3.5
+          def resultDecimalType(p1: Int, s1: Int, p2: Int, s2: Int): DecimalType = {
+            val resultScale = s1 + s2
+            val resultPrecision = p1 + p2 + 1
+            if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+              DecimalType.adjustPrecisionScale(resultPrecision, resultScale)
+            } else {
+              DecimalType.bounded(resultPrecision, resultScale)
+            }
+          }
+          val resultType = (lhs.dataType, rhs.dataType) match {
+            case (lhsType: DecimalType, rhsType: DecimalType) =>
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
+          }
+
           buildExprNode {
             _.setCast(pb.PhysicalCastNode
               .newBuilder()
@@ -619,8 +680,34 @@ object NativeConverters extends Logging {
       case e: Divide =>
         val lhs = e.left
         val rhs = e.right
-        if (lhs.dataType.isInstanceOf[DecimalType] || rhs.dataType.isInstanceOf[DecimalType]) {
-          val resultType = e.dataType
+        if (lhs.dataType.isInstanceOf[DecimalType] && rhs.dataType.isInstanceOf[DecimalType]) {
+          // copied from spark3.5
+          def resultDecimalType(p1: Int, s1: Int, p2: Int, s2: Int): DecimalType = {
+            if (SQLConf.get.decimalOperationsAllowPrecisionLoss) {
+              val intDig = p1 - s1 + s2
+              val scale = max(DecimalType.MINIMUM_ADJUSTED_SCALE, s1 + p2 + 1)
+              val prec = intDig + scale
+              DecimalType.adjustPrecisionScale(prec, scale)
+            } else {
+              var intDig = min(DecimalType.MAX_SCALE, p1 - s1 + s2)
+              var decDig = min(DecimalType.MAX_SCALE, max(6, s1 + p2 + 1))
+              val diff = (intDig + decDig) - DecimalType.MAX_SCALE
+              if (diff > 0) {
+                decDig -= diff / 2 + 1
+                intDig = DecimalType.MAX_SCALE - decDig
+              }
+              DecimalType.bounded(intDig + decDig, decDig)
+            }
+          }
+          val resultType = (lhs.dataType, rhs.dataType) match {
+            case (lhsType: DecimalType, rhsType: DecimalType) =>
+              resultDecimalType(
+                lhsType.precision,
+                lhsType.scale,
+                rhsType.precision,
+                rhsType.scale)
+          }
+
           buildExprNode {
             _.setCast(pb.PhysicalCastNode
               .newBuilder()
@@ -785,6 +872,10 @@ object NativeConverters extends Logging {
         buildExtScalarFunction("Murmur3Hash", children, IntegerType)
       case XxHash64(children, 42L) =>
         buildExtScalarFunction("XxHash64", children, LongType)
+
+      case Year(child) => buildExtScalarFunction("Year", child :: Nil, DateType)
+      case Month(child) => buildExtScalarFunction("Month", child :: Nil, DateType)
+      case Days(child) => buildExtScalarFunction("Day", child :: Nil, DateType)
 
       // startswith is converted to scalar function in pruning-expr mode
       case StartsWith(expr, Literal(prefix, StringType)) if isPruningExpr =>

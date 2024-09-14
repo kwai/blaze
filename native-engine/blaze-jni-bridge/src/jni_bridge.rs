@@ -93,44 +93,32 @@ macro_rules! jni_map_error_with_env {
                         ex,
                         $crate::jni_bridge::JavaClasses::get()
                             .cJavaThrowable
-                            .method_getMessage,
+                            .method_toString,
                         $crate::jni_bridge::JavaClasses::get()
                             .cJavaThrowable
-                            .method_getMessage_ret
+                            .method_toString_ret
                             .clone(),
                         &[],
                     )
                     .unwrap()
                     .l()
                     .unwrap();
-                if !message_obj.is_null() {
-                    let message = $env
-                        .get_string(message_obj.into())
-                        .map(|s| String::from(s))
-                        .unwrap();
-                    Err(
-                        $crate::jni_bridge::datafusion::error::DataFusionError::External(
-                            format!(
-                                "Java exception thrown at {}:{}: {}",
-                                file!(),
-                                line!(),
-                                message
-                            )
-                            .into(),
-                        ),
-                    )
-                } else {
-                    Err(
-                        $crate::jni_bridge::datafusion::error::DataFusionError::External(
-                            format!(
-                                "Java exception thrown at {}:{}: (no message)",
-                                file!(),
-                                line!()
-                            )
-                            .into(),
-                        ),
-                    )
-                }
+                let message = $env
+                    .get_string(message_obj.into())
+                    .map(|s| String::from(s))
+                    .unwrap();
+
+                Err(
+                    $crate::jni_bridge::datafusion::error::DataFusionError::External(
+                        format!(
+                            "Java exception thrown at {}:{}: {}",
+                            file!(),
+                            line!(),
+                            message
+                        )
+                        .into(),
+                    ),
+                )
             }
             Err(err) => Err(
                 $crate::jni_bridge::datafusion::error::DataFusionError::External(
@@ -200,6 +188,20 @@ macro_rules! jni_new_object {
 }
 
 #[macro_export]
+macro_rules! jni_get_direct_buffer {
+    ($value:expr) => {{
+        let pos = jni_call!(JavaBuffer($value).position() -> i32)? as usize;
+        let remaining = jni_call!(JavaBuffer($value).remaining() -> i32)? as usize;
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
+            $crate::jni_map_error_with_env!(env, env.get_direct_buffer_address($value.into()))
+                .map(|s| unsafe {
+                    std::slice::from_raw_parts(s.add(pos), remaining)
+                })
+        })
+    }};
+}
+
+#[macro_export]
 macro_rules! jni_get_string {
     ($value:expr) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
@@ -214,6 +216,20 @@ macro_rules! jni_get_object_class {
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
             $crate::jni_map_error_with_env!(env, env.get_object_class($value))
                 .map(|s| $crate::jni_bridge::LocalRef(s.into()))
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! jni_get_byte_array_region {
+    ($value:expr, $start:expr, $buf:expr) => {{
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
+            $crate::jni_map_error_with_env!(
+                env,
+                env.get_byte_array_region($value, $start as i32, unsafe {
+                    std::mem::transmute::<_, &mut [i8]>($buf)
+                })
+            )
         })
     }};
 }
@@ -404,6 +420,7 @@ pub struct JavaClasses<'a> {
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
     pub cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils<'a>,
+    pub cBlazeBlockObject: BlazeBlockObject<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -469,6 +486,7 @@ impl JavaClasses<'static> {
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env).unwrap(),
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env).unwrap(),
                 cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils::new(env).unwrap(),
+                cBlazeBlockObject: BlazeBlockObject::new(env).unwrap(),
             };
             log::info!("Initializing JavaClasses finished");
             java_classes
@@ -635,8 +653,8 @@ impl<'a> JavaClass<'a> {
 #[allow(non_snake_case)]
 pub struct JavaThrowable<'a> {
     pub class: JClass<'a>,
-    pub method_getMessage: JMethodID,
-    pub method_getMessage_ret: ReturnType,
+    pub method_toString: JMethodID,
+    pub method_toString_ret: ReturnType,
 }
 impl<'a> JavaThrowable<'a> {
     pub const SIG_TYPE: &'static str = "java/lang/Throwable";
@@ -645,8 +663,8 @@ impl<'a> JavaThrowable<'a> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
         Ok(JavaThrowable {
             class,
-            method_getMessage: env.get_method_id(class, "getMessage", "()Ljava/lang/String;")?,
-            method_getMessage_ret: ReturnType::Object,
+            method_toString: env.get_method_id(class, "toString", "()Ljava/lang/String;")?,
+            method_toString_ret: ReturnType::Object,
         })
     }
 }
@@ -872,6 +890,14 @@ pub struct JavaBuffer<'a> {
     pub method_hasRemaining_ret: ReturnType,
     pub method_position: JMethodID,
     pub method_position_ret: ReturnType,
+    pub method_remaining: JMethodID,
+    pub method_remaining_ret: ReturnType,
+    pub method_isDirect: JMethodID,
+    pub method_isDirect_ret: ReturnType,
+    pub method_hasArray: JMethodID,
+    pub method_hasArray_ret: ReturnType,
+    pub method_array: JMethodID,
+    pub method_array_ret: ReturnType,
 }
 impl<'a> JavaBuffer<'a> {
     pub const SIG_TYPE: &'static str = "java/nio/Buffer";
@@ -884,6 +910,14 @@ impl<'a> JavaBuffer<'a> {
             method_hasRemaining_ret: ReturnType::Primitive(Primitive::Boolean),
             method_position: env.get_method_id(class, "position", "()I")?,
             method_position_ret: ReturnType::Primitive(Primitive::Int),
+            method_remaining: env.get_method_id(class, "remaining", "()I")?,
+            method_remaining_ret: ReturnType::Primitive(Primitive::Int),
+            method_isDirect: env.get_method_id(class, "isDirect", "()Z")?,
+            method_isDirect_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_hasArray: env.get_method_id(class, "hasArray", "()Z")?,
+            method_hasArray_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_array: env.get_method_id(class, "array", "()Ljava/lang/Object;")?,
+            method_array_ret: ReturnType::Object,
         })
     }
 }
@@ -1217,7 +1251,7 @@ impl<'a> BlazeRssPartitionWriterBase<'_> {
         Ok(BlazeRssPartitionWriterBase {
             class,
             method_write: env
-                .get_method_id(class, "write", "(ILjava/nio/ByteBuffer;I)V")
+                .get_method_id(class, "write", "(ILjava/nio/ByteBuffer;)V")
                 .unwrap(),
             method_write_ret: ReturnType::Primitive(Primitive::Void),
             method_flush: env.get_method_id(class, "flush", "()V").unwrap(),
@@ -1396,6 +1430,60 @@ impl<'a> BlazeNativeParquetSinkUtils<'a> {
                 .get_static_method_id(class, "completeOutput", "(Ljava/lang/String;JJ)V")
                 .unwrap(),
             method_completeOutput_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeBlockObject<'a> {
+    pub class: JClass<'a>,
+    pub method_hasFileSegment: JMethodID,
+    pub method_hasFileSegment_ret: ReturnType,
+    pub method_hasByteBuffer: JMethodID,
+    pub method_hasByteBuffer_ret: ReturnType,
+    pub method_getFilePath: JMethodID,
+    pub method_getFilePath_ret: ReturnType,
+    pub method_getFileOffset: JMethodID,
+    pub method_getFileOffset_ret: ReturnType,
+    pub method_getFileLength: JMethodID,
+    pub method_getFileLength_ret: ReturnType,
+    pub method_getByteBuffer: JMethodID,
+    pub method_getByteBuffer_ret: ReturnType,
+    pub method_getChannel: JMethodID,
+    pub method_getChannel_ret: ReturnType,
+}
+
+impl<'a> BlazeBlockObject<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/execution/blaze/shuffle/BlockObject";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeBlockObject<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeBlockObject {
+            class,
+            method_hasFileSegment: env.get_method_id(class, "hasFileSegment", "()Z").unwrap(),
+            method_hasFileSegment_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_hasByteBuffer: env.get_method_id(class, "hasByteBuffer", "()Z").unwrap(),
+            method_hasByteBuffer_ret: ReturnType::Primitive(Primitive::Boolean),
+            method_getFilePath: env
+                .get_method_id(class, "getFilePath", "()Ljava/lang/String;")
+                .unwrap(),
+            method_getFilePath_ret: ReturnType::Object,
+            method_getFileOffset: env.get_method_id(class, "getFileOffset", "()J").unwrap(),
+            method_getFileOffset_ret: ReturnType::Primitive(Primitive::Long),
+            method_getFileLength: env.get_method_id(class, "getFileLength", "()J").unwrap(),
+            method_getFileLength_ret: ReturnType::Primitive(Primitive::Long),
+            method_getByteBuffer: env
+                .get_method_id(class, "getByteBuffer", "()Ljava/nio/ByteBuffer;")
+                .unwrap(),
+            method_getByteBuffer_ret: ReturnType::Object,
+            method_getChannel: env
+                .get_method_id(
+                    class,
+                    "getChannel",
+                    "()Ljava/nio/channels/ReadableByteChannel;",
+                )
+                .unwrap(),
+            method_getChannel_ret: ReturnType::Object,
         })
     }
 }

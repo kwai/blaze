@@ -70,9 +70,12 @@ public enum BlazeConf {
     PARQUET_ENABLE_BLOOM_FILTER("spark.blaze.parquet.enable.bloomFilter", false),
 
     // spark io compression codec
-    SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4");
+    SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4"),
 
-    private final String key;
+    // replace all sort-merge join to shuffled-hash join, only used for benchmarking
+    FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false);
+
+    public final String key;
     private final Object defaultValue;
 
     BlazeConf(String key, Object defaultValue) {

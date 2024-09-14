@@ -18,4 +18,6 @@ pub mod cached_exprs_evaluator;
 pub mod column_pruning;
 pub mod internal_file_reader;
 pub mod ipc_compression;
+pub mod make_eq_comparator;
 pub mod output;
+pub mod timer_helper;

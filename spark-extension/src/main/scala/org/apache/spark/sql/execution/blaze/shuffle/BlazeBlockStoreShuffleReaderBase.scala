@@ -15,46 +15,42 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.io.File
 import java.io.FileInputStream
-import java.io.FilterInputStream
 import java.io.InputStream
-import java.lang.reflect.Field
-import java.lang.reflect.Method
 import java.nio.channels.Channels
+import java.nio.channels.ReadableByteChannel
+import java.nio.ByteBuffer
 
+import scala.annotation.tailrec
+
+import org.apache.commons.lang3.reflect.FieldUtils
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.InterruptibleIterator
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
-
+import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.storage.BlockId
-import org.apache.spark.storage.FileSegment
 
 abstract class BlazeBlockStoreShuffleReaderBase[K, C](
     handle: BaseShuffleHandle[K, _, C],
     context: TaskContext)
-    extends ShuffleReader[K, C] {
+    extends ShuffleReader[K, C]
+    with Logging {
   import BlazeBlockStoreShuffleReaderBase._
 
   protected val dep: ShuffleDependency[K, _, C] = handle.dependency
   protected def readBlocks(): Iterator[(BlockId, InputStream)]
 
-  def readIpc(): Iterator[Object] = { // FileSegment | ReadableByteChannel
+  def readIpc(): Iterator[BlockObject] = {
     val ipcIterator = readBlocks().map { case (_, inputStream) =>
-      getFileSegmentFromInputStream(inputStream) match {
-        case Some(fileSegment) =>
-          fileSegment
-        case None =>
-          Channels.newChannel(inputStream)
-      }
+      createBlockObject(inputStream)
     }
 
     // An interruptible iterator must be used here in order to support task cancellation
-    new InterruptibleIterator[Object](context, ipcIterator)
+    new InterruptibleIterator[BlockObject](context, ipcIterator)
   }
 
   /** Read the combined key-values for this reduce task */
@@ -63,33 +59,58 @@ abstract class BlazeBlockStoreShuffleReaderBase[K, C](
       "arrow shuffle reader does not support non-native read() method")
 }
 
-object BlazeBlockStoreShuffleReaderBase {
-  private val bufferReleasingInputStreamClass: Class[_] =
-    Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
-  private val delegateFn: Method =
-    bufferReleasingInputStreamClass.getDeclaredMethods.find(_.getName.endsWith("delegate")).get
-  private val inField: Field = classOf[FilterInputStream].getDeclaredField("in")
-  private val limitField: Field = classOf[LimitedInputStream].getDeclaredField("left")
-  private val pathField: Field = classOf[FileInputStream].getDeclaredField("path")
-  delegateFn.setAccessible(true)
-  inField.setAccessible(true)
-  limitField.setAccessible(true)
-  pathField.setAccessible(true)
-
-  def getFileSegmentFromInputStream(in: InputStream): Option[FileSegment] = {
-    if (!bufferReleasingInputStreamClass.isInstance(in)) {
-      return None
+object BlazeBlockStoreShuffleReaderBase extends Logging {
+  def createBlockObject(in: InputStream): BlockObject = {
+    getFileSegmentFromInputStream(in) match {
+      case Some((path, offset, limit)) =>
+        return new BlockObject {
+          override def hasFileSegment: Boolean = true
+          override def getFilePath: String = path
+          override def getFileOffset: Long = offset
+          override def getFileLength: Long = limit
+          override def close(): Unit = in.close()
+        }
+      case None =>
     }
-    delegateFn.invoke(in) match {
+
+    getByteBufferFromInputStream(in) match {
+      case Some(buf) =>
+        return new BlockObject {
+          override def hasByteBuffer: Boolean = true
+          override def getByteBuffer: ByteBuffer = buf
+          override def close(): Unit = in.close()
+        }
+      case None =>
+    }
+
+    val channel = Channels.newChannel(in)
+    new BlockObject {
+      override def getChannel: ReadableByteChannel = channel
+      override def close(): Unit = channel.close()
+    }
+  }
+
+  @tailrec
+  private def unwrapInputStream(in: InputStream): InputStream = {
+    val bufferReleasingInputStreamClsName = "org.apache.spark.storage.BufferReleasingInputStream"
+    in match {
+      case in if bufferReleasingInputStreamClsName.endsWith(in.getClass.getName) =>
+        val inner = MethodUtils.invokeMethod(in, true, "delegate").asInstanceOf[InputStream]
+        unwrapInputStream(inner)
+      case in => in
+    }
+  }
+
+  def getFileSegmentFromInputStream(in: InputStream): Option[(String, Long, Long)] = {
+    unwrapInputStream(in) match {
       case in: LimitedInputStream =>
-        val limit = limitField.getLong(in)
-        inField.get(in) match {
+        val left = FieldUtils.readDeclaredField(in, "left", true).asInstanceOf[Long]
+        val inner = FieldUtils.readField(in, "in", true).asInstanceOf[InputStream]
+        inner match {
           case in: FileInputStream =>
-            val path = pathField.get(in).asInstanceOf[String]
+            val path = FieldUtils.readDeclaredField(in, "path", true).asInstanceOf[String]
             val offset = in.getChannel.position()
-            val fileSegment =
-              Shims.get.createFileSegment(new File(path), offset, limit, 0)
-            Some(fileSegment)
+            Some((path, offset, left))
           case _ =>
             None
         }
@@ -97,4 +118,33 @@ object BlazeBlockStoreShuffleReaderBase {
         None
     }
   }
+
+  def getByteBufferFromInputStream(in: InputStream): Option[ByteBuffer] = {
+    val byteBufferClsName = "io.netty.buffer.ByteBufInputStream"
+    unwrapInputStream(in) match {
+      case in if byteBufferClsName.endsWith(in.getClass.getName) =>
+        val buffer = FieldUtils.readDeclaredField(in, "buffer", true)
+        val nioBuffer = MethodUtils.invokeMethod(buffer, "nioBuffer").asInstanceOf[ByteBuffer]
+        Some(nioBuffer)
+
+      case in: InputStreamToByteBuffer =>
+        Some(in.toByteBuffer)
+      case in =>
+        None
+    }
+  }
+}
+
+trait InputStreamToByteBuffer {
+  def toByteBuffer: ByteBuffer
+}
+
+trait BlockObject extends AutoCloseable {
+  def hasFileSegment: Boolean = false
+  def hasByteBuffer: Boolean = false
+  def getFilePath: String = throw new UnsupportedOperationException
+  def getFileOffset: Long = throw new UnsupportedOperationException
+  def getFileLength: Long = throw new UnsupportedOperationException
+  def getByteBuffer: ByteBuffer = throw new UnsupportedOperationException
+  def getChannel: ReadableByteChannel = throw new UnsupportedOperationException
 }

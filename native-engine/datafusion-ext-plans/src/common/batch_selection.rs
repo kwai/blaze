@@ -13,56 +13,32 @@
 // limitations under the License.
 
 use arrow::{
-    array::{ArrayRef, PrimitiveArray, UInt32Array},
+    array::{ArrayRef, ArrowPrimitiveType, PrimitiveArray},
     datatypes::SchemaRef,
     error::Result as ArrowResult,
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use datafusion::common::Result;
 
-pub fn take_batch<T: num::PrimInt>(
+pub fn take_batch<T: ArrowPrimitiveType>(
     batch: RecordBatch,
-    indices: impl IntoIterator<Item = T>,
+    indices: impl Into<PrimitiveArray<T>>,
 ) -> Result<RecordBatch> {
-    let indices: UInt32Array =
-        PrimitiveArray::from_iter(indices.into_iter().map(|idx| idx.to_u32().unwrap()));
-    take_batch_internal(batch, indices)
+    take_batch_internal(batch, indices.into())
 }
 
-pub fn take_batch_opt<T: num::PrimInt>(
+pub fn take_cols<T: ArrowPrimitiveType>(
+    cols: &[ArrayRef],
+    indices: impl Into<PrimitiveArray<T>>,
+) -> Result<Vec<ArrayRef>> {
+    take_cols_internal(cols, &indices.into())
+}
+
+fn take_batch_internal<T: ArrowPrimitiveType>(
     batch: RecordBatch,
-    indices: impl IntoIterator<Item = Option<T>>,
+    indices: impl Into<PrimitiveArray<T>>,
 ) -> Result<RecordBatch> {
-    let indices: UInt32Array = PrimitiveArray::from_iter(
-        indices
-            .into_iter()
-            .map(|opt| opt.map(|idx| idx.to_u32().unwrap())),
-    );
-    take_batch_internal(batch, indices)
-}
-
-pub fn take_cols<T: num::PrimInt>(
-    cols: &[ArrayRef],
-    indices: impl IntoIterator<Item = T>,
-) -> Result<Vec<ArrayRef>> {
-    let indices: UInt32Array =
-        PrimitiveArray::from_iter(indices.into_iter().map(|idx| idx.to_u32().unwrap()));
-    take_cols_internal(cols, &indices)
-}
-
-pub fn take_cols_opt<T: num::PrimInt>(
-    cols: &[ArrayRef],
-    indices: impl IntoIterator<Item = Option<T>>,
-) -> Result<Vec<ArrayRef>> {
-    let indices: UInt32Array = PrimitiveArray::from_iter(
-        indices
-            .into_iter()
-            .map(|opt| opt.map(|idx| idx.to_u32().unwrap())),
-    );
-    take_cols_internal(cols, &indices)
-}
-
-fn take_batch_internal(batch: RecordBatch, indices: UInt32Array) -> Result<RecordBatch> {
+    let indices = indices.into();
     let taken_num_batch_rows = indices.len();
     let schema = batch.schema();
     let cols = batch.columns();
@@ -78,7 +54,10 @@ fn take_batch_internal(batch: RecordBatch, indices: UInt32Array) -> Result<Recor
     Ok(taken)
 }
 
-fn take_cols_internal(cols: &[ArrayRef], indices: &UInt32Array) -> Result<Vec<ArrayRef>> {
+fn take_cols_internal<T: ArrowPrimitiveType>(
+    cols: &[ArrayRef],
+    indices: &PrimitiveArray<T>,
+) -> Result<Vec<ArrayRef>> {
     let cols = cols
         .into_iter()
         .map(|c| Ok(arrow::compute::take(&c, indices, None)?))

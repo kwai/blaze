@@ -36,7 +36,6 @@ mod tests {
     use crate::{
         broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
         broadcast_join_exec::BroadcastJoinExec,
-        hash_join_exec::HashJoinExec,
         joins::join_utils::{JoinType, JoinType::*},
         sort_merge_join_exec::SortMergeJoinExec,
     };
@@ -215,6 +214,7 @@ mod tests {
                     on,
                     join_type,
                     JoinSide::Right,
+                    true,
                     None,
                 )?)
             }
@@ -230,24 +230,29 @@ mod tests {
                     on,
                     join_type,
                     JoinSide::Left,
+                    true,
                     None,
                 )?)
             }
-            SHJLeftProbed => Arc::new(HashJoinExec::try_new(
-                schema,
-                left,
-                right,
-                on,
-                join_type,
-                JoinSide::Left,
-            )?),
-            SHJRightProbed => Arc::new(HashJoinExec::try_new(
+            SHJLeftProbed => Arc::new(BroadcastJoinExec::try_new(
                 schema,
                 left,
                 right,
                 on,
                 join_type,
                 JoinSide::Right,
+                false,
+                None,
+            )?),
+            SHJRightProbed => Arc::new(BroadcastJoinExec::try_new(
+                schema,
+                left,
+                right,
+                on,
+                join_type,
+                JoinSide::Left,
+                false,
+                None,
             )?),
         };
         let columns = columns(&join.schema());
@@ -492,14 +497,14 @@ mod tests {
     async fn join_full_one() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
-                ("a1", &vec![1, 2, 3]),
-                ("b1", &vec![4, 5, 7]), // 7 does not exist on the right
-                ("c1", &vec![7, 8, 9]),
+                ("a1", &vec![1, 2, 2, 3]),
+                ("b1", &vec![4, 5, 5, 7]), // 7 does not exist on the right
+                ("c1", &vec![7, 8, 80, 9]),
             );
             let right = build_table(
-                ("a2", &vec![10, 20, 30]),
-                ("b2", &vec![4, 5, 6]),
-                ("c2", &vec![70, 80, 90]),
+                ("a2", &vec![10, 20, 20, 30]),
+                ("b2", &vec![4, 5, 5, 6]),
+                ("c2", &vec![70, 80, 800, 90]),
             );
             let on: JoinOn = vec![(
                 Arc::new(Column::new_with_schema("b1", &left.schema())?),
@@ -508,14 +513,17 @@ mod tests {
 
             let (_, batches) = join_collect(test_type, left, right, on, Full).await?;
             let expected = vec![
-                "+----+----+----+----+----+----+",
-                "| a1 | b1 | c1 | a2 | b2 | c2 |",
-                "+----+----+----+----+----+----+",
-                "|    |    |    | 30 | 6  | 90 |",
-                "| 1  | 4  | 7  | 10 | 4  | 70 |",
-                "| 2  | 5  | 8  | 20 | 5  | 80 |",
-                "| 3  | 7  | 9  |    |    |    |",
-                "+----+----+----+----+----+----+",
+                "+----+----+----+----+----+-----+",
+                "| a1 | b1 | c1 | a2 | b2 | c2  |",
+                "+----+----+----+----+----+-----+",
+                "|    |    |    | 30 | 6  | 90  |",
+                "| 1  | 4  | 7  | 10 | 4  | 70  |",
+                "| 2  | 5  | 8  | 20 | 5  | 80  |",
+                "| 2  | 5  | 8  | 20 | 5  | 800 |",
+                "| 2  | 5  | 80 | 20 | 5  | 80  |",
+                "| 2  | 5  | 80 | 20 | 5  | 800 |",
+                "| 3  | 7  | 9  |    |    |     |",
+                "+----+----+----+----+----+-----+",
             ];
             assert_batches_sorted_eq!(expected, &batches);
         }

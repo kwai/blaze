@@ -90,23 +90,34 @@ object NativeHelper extends Logging {
   }
 
   def getDefaultNativeMetrics(sc: SparkContext): Map[String, SQLMetric] = {
+    def metric(name: String) = SQLMetrics.createMetric(sc, name)
+    def nanoTimingMetric(name: String) = SQLMetrics.createNanoTimingMetric(sc, name)
+    def sizeMetric(name: String) = SQLMetrics.createSizeMetric(sc, name)
+
     var metrics = TreeMap(
-      "stage_id" -> SQLMetrics.createMetric(sc, "stageId"),
-      "output_rows" -> SQLMetrics.createMetric(sc, "Native.output_rows"),
-      "output_batches" -> SQLMetrics.createMetric(sc, "Native.output_batches"),
-      "elapsed_compute" -> SQLMetrics.createNanoTimingMetric(sc, "Native.elapsed_compute"),
-      "join_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.join_time"),
-      "mem_spill_count" -> SQLMetrics.createMetric(sc, "Native.mem_spill_count"),
-      "mem_spill_size" -> SQLMetrics.createSizeMetric(sc, "Native.mem_spill_size"),
-      "mem_spill_iotime" -> SQLMetrics.createNanoTimingMetric(sc, "Native.mem_spill_iotime"),
-      "disk_spill_size" -> SQLMetrics.createSizeMetric(sc, "Native.disk_spill_size"),
-      "disk_spill_iotime" -> SQLMetrics.createNanoTimingMetric(sc, "Native.disk_spill_iotime"))
+      "stage_id" -> metric("stageId"),
+      "output_rows" -> metric("Native.output_rows"),
+      "output_batches" -> metric("Native.output_batches"),
+      "elapsed_compute" -> nanoTimingMetric("Native.elapsed_compute"),
+      "build_hash_map_time" -> nanoTimingMetric("Native.build_hash_map_time"),
+      "probed_side_hash_time" -> nanoTimingMetric("Native.probed_side_hash_time"),
+      "probed_side_search_time" -> nanoTimingMetric("Native.probed_side_search_time"),
+      "probed_side_compare_time" -> nanoTimingMetric("Native.probed_side_compare_time"),
+      "build_output_time" -> nanoTimingMetric("Native.build_output_time"),
+      "mem_spill_count" -> metric("Native.mem_spill_count"),
+      "mem_spill_size" -> sizeMetric("Native.mem_spill_size"),
+      "mem_spill_iotime" -> nanoTimingMetric("Native.mem_spill_iotime"),
+      "disk_spill_size" -> sizeMetric("Native.disk_spill_size"),
+      "disk_spill_iotime" -> nanoTimingMetric("Native.disk_spill_iotime"),
+      "sort_time" -> nanoTimingMetric("Native.sort_time"),
+      "output_io_time" -> nanoTimingMetric("Native.output_io_time"),
+      "shuffle_read_total_time" -> nanoTimingMetric("Native.shuffle_read_total_time"))
 
     if (BlazeConf.INPUT_BATCH_STATISTICS_ENABLE.booleanConf()) {
       metrics ++= TreeMap(
-        "input_batch_count" -> SQLMetrics.createMetric(sc, "Native.input_batches"),
-        "input_row_count" -> SQLMetrics.createMetric(sc, "Native.input_rows"),
-        "input_batch_mem_size" -> SQLMetrics.createSizeMetric(sc, "Native.input_mem_bytes"))
+        "input_batch_count" -> metric("Native.input_batches"),
+        "input_row_count" -> metric("Native.input_rows"),
+        "input_batch_mem_size" -> sizeMetric("Native.input_mem_bytes"))
     }
     metrics
   }

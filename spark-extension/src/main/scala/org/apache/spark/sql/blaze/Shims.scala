@@ -53,6 +53,8 @@ import org.apache.spark.storage.FileSegment
 
 abstract class Shims {
 
+  def shimVersion: String
+
   def initExtension(): Unit = {}
 
   def onApplyingExtension(): Unit = {}

@@ -33,7 +33,10 @@ use datafusion_ext_commons::df_execution_err;
 use futures::{stream::once, TryStreamExt};
 
 use crate::{
-    common::batch_statisitcs::{stat_input, InputBatchStatistics},
+    common::{
+        batch_statisitcs::{stat_input, InputBatchStatistics},
+        timer_helper::RegisterTimer,
+    },
     memmgr::MemManager,
     shuffle::{
         single_repartitioner::SingleShuffleRepartitioner,
@@ -110,19 +113,24 @@ impl ExecutionPlan for ShuffleWriterExec {
     ) -> Result<SendableRecordBatchStream> {
         // record uncompressed data size
         let data_size_metric = MetricBuilder::new(&self.metrics).counter("data_size", partition);
+        let output_time = self.metrics.register_timer("output_io_time", partition);
 
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
                 self.output_data_file.clone(),
                 self.output_index_file.clone(),
+                output_time,
                 BaselineMetrics::new(&self.metrics, partition),
             )),
             Partitioning::Hash(..) => {
+                let sort_time = self.metrics.register_timer("sort_time", partition);
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     partition,
                     self.output_data_file.clone(),
                     self.output_index_file.clone(),
                     self.partitioning.clone(),
+                    sort_time,
+                    output_time,
                     &self.metrics,
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);

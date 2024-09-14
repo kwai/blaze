@@ -25,7 +25,9 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.childOrderingRequiredTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertToNonNativeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
+import org.apache.spark.sql.blaze.BlazeConvertStrategy.joinSmallerSideTag
 import org.apache.spark.sql.blaze.NativeConverters.StubExpr
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -134,6 +136,8 @@ object BlazeConverters extends Logging {
       exec
         .getTagValue(childOrderingRequiredTag)
         .foreach(newExec.setTagValue(childOrderingRequiredTag, _))
+      exec.getTagValue(joinSmallerSideTag).foreach(newExec.setTagValue(joinSmallerSideTag, _))
+
       if (!isNeverConvert(newExec)) {
         newExec = convertSparkPlan(newExec)
       }
@@ -341,6 +345,40 @@ object BlazeConverters extends Logging {
   }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
+    val requireOrdering = exec.getTagValue(childOrderingRequiredTag).contains(true)
+
+    // force shuffled-hash join
+    if (!requireOrdering
+      && BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()
+      && exec.children.forall(_.isInstanceOf[NativeSortBase])) {
+      val (leftKeys, rightKeys, joinType, condition, left, right) =
+        (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
+      logDebug(
+        s"Converting SortMergeJoinExec (with forceShuffledHashJoin): ${Shims.get.simpleStringWithNodeId(exec)}")
+      logDebug(s"  leftKeys: $leftKeys")
+      logDebug(s"  rightKeys: $rightKeys")
+      logDebug(s"  joinType: $joinType")
+      logDebug(s"  condition: $condition")
+      assert(condition.isEmpty, "join condition is not supported")
+
+      val buildSide = exec.getTagValue(joinSmallerSideTag) match {
+        case Some(org.apache.spark.sql.execution.blaze.plan.BuildLeft) =>
+          org.apache.spark.sql.execution.blaze.plan.BuildLeft
+        case Some(org.apache.spark.sql.execution.blaze.plan.BuildRight) =>
+          org.apache.spark.sql.execution.blaze.plan.BuildRight
+        case None =>
+          logWarning("JoinSmallerSideTag is missing, defaults to BuildRight")
+          org.apache.spark.sql.execution.blaze.plan.BuildRight
+      }
+      return Shims.get.createNativeShuffledHashJoinExec(
+        addRenameColumnsExec(convertToNative(left.children(0))),
+        addRenameColumnsExec(convertToNative(right.children(0))),
+        leftKeys,
+        rightKeys,
+        joinType,
+        buildSide)
+    }
+
     val (leftKeys, rightKeys, joinType, condition, left, right) =
       (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
@@ -373,18 +411,56 @@ object BlazeConverters extends Logging {
     logDebug(s"  joinType: $joinType")
     logDebug(s"  condition: $condition")
     logDebug(s"  buildSide: $buildSide")
-    assert(condition.isEmpty, "join condition is not supported")
 
-    Shims.get.createNativeShuffledHashJoinExec(
-      addRenameColumnsExec(convertToNative(left)),
-      addRenameColumnsExec(convertToNative(right)),
-      leftKeys,
-      rightKeys,
-      joinType,
-      buildSide match {
-        case BuildLeft => org.apache.spark.sql.execution.blaze.plan.BuildLeft
-        case BuildRight => org.apache.spark.sql.execution.blaze.plan.BuildRight
-      })
+    try {
+      assert(condition.isEmpty, "join condition is not supported")
+      Shims.get.createNativeShuffledHashJoinExec(
+        addRenameColumnsExec(convertToNative(left)),
+        addRenameColumnsExec(convertToNative(right)),
+        leftKeys,
+        rightKeys,
+        joinType,
+        buildSide match {
+          case BuildLeft => org.apache.spark.sql.execution.blaze.plan.BuildLeft
+          case BuildRight => org.apache.spark.sql.execution.blaze.plan.BuildRight
+        })
+
+    } catch {
+      case _ if BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf() =>
+        logWarning(
+          "in forceShuffledHashJoin mode, hash joins are likely too run OOM because of " +
+            "small on-heap memory configuration. to avoid this, we will fall back this " +
+            "ShuffledHashJoin to SortMergeJoin. ")
+
+        val leftOrder = leftKeys.map(SortOrder(_, Ascending))
+        val rightOrder = rightKeys.map(SortOrder(_, Ascending))
+        val leftSorted =
+          if (left.outputOrdering.startsWith(leftOrder)) {
+            left
+          } else {
+            val leftSorted = SortExec(leftOrder, global = false, left)
+            if (Shims.get.isNative(left)) {
+              convertSortExec(leftSorted)
+            } else {
+              leftSorted
+            }
+          }
+        val rightSorted = if (right.outputOrdering.startsWith(rightOrder)) {
+          right
+        } else {
+          val rightSorted = SortExec(rightOrder, global = false, right)
+          if (Shims.get.isNative(right)) {
+            convertSortExec(rightSorted)
+          } else {
+            rightSorted
+          }
+        }
+
+        val smj =
+          SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, leftSorted, rightSorted)
+        smj.setTagValue(convertToNonNativeTag, true)
+        smj
+    }
   }
 
   def convertBroadcastHashJoinExec(exec: BroadcastHashJoinExec): SparkPlan = {
@@ -568,7 +644,7 @@ object BlazeConverters extends Logging {
             s"Error projecting resultExpressions, failback to non-native projection: " +
               s"${e.getMessage}")
           val proj = ProjectExec(exec.resultExpressions, nativeAggr)
-          proj.setTagValue(convertibleTag, true)
+          proj.setTagValue(convertToNonNativeTag, true)
           return proj
       }
     }
@@ -625,7 +701,7 @@ object BlazeConverters extends Logging {
             s"Error projecting resultExpressions, failback to non-native projection: " +
               s"${e.getMessage}")
           val proj = ProjectExec(exec.resultExpressions, nativeAggr)
-          proj.setTagValue(convertibleTag, true)
+          proj.setTagValue(convertToNonNativeTag, true)
           return proj
       }
     }
@@ -679,7 +755,7 @@ object BlazeConverters extends Logging {
             s"Error projecting resultExpressions, failback to non-native projection: " +
               s"${e.getMessage}")
           val proj = ProjectExec(exec.resultExpressions, nativeAggr)
-          proj.setTagValue(convertibleTag, true)
+          proj.setTagValue(convertToNonNativeTag, true)
           return proj
       }
     }

@@ -50,14 +50,16 @@ case class NativeShuffleExchangeExec(
     mutable.LinkedHashMap(
       NativeHelper
         .getDefaultNativeMetrics(sparkContext)
-        .filterKeys(
-          Set(
-            "stage_id",
-            "mem_spill_count",
-            "mem_spill_size",
-            "mem_spill_iotime",
-            "disk_spill_size",
-            "disk_spill_iotime"))
+        .filterKeys(Set(
+          "stage_id",
+          "mem_spill_count",
+          "mem_spill_size",
+          "mem_spill_iotime",
+          "disk_spill_size",
+          "disk_spill_iotime",
+          "sort_time",
+          "output_io_time",
+          "shuffle_read_total_time"))
         .toSeq: _*)).toMap
 
   lazy val readMetrics: Map[String, SQLMetric] =
@@ -68,8 +70,6 @@ case class NativeShuffleExchangeExec(
       readMetrics ++
       writeMetrics ++
       Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))).toMap
-
-  Math.max(child.outputPartitioning.numPartitions * outputPartitioning.numPartitions, 1)
 
   // 'mapOutputStatisticsFuture' is only needed when enable AQE.
   @transient override lazy val mapOutputStatisticsFuture: Future[MapOutputStatistics] = {
@@ -145,6 +145,9 @@ case class NativeShuffleExchangeExec(
     }
   }
 
+  // for databricks testing
+  val causedBroadcastJoinBuildOOM = false
+
   @enableIf(Seq("spark351").contains(System.getProperty("blaze.shim")))
   override def advisoryPartitionSize: Option[Long] = None
 
@@ -155,7 +158,7 @@ case class NativeShuffleExchangeExec(
     outputPartitioning != SinglePartition
 
   @enableIf(
-    Seq("spark320", "spark324", "spark333", "spark351").contains(
+    Seq("spark313", "spark320", "spark324", "spark333", "spark351").contains(
       System.getProperty("blaze.shim")))
   override def shuffleOrigin =
     org.apache.spark.sql.execution.exchange.ENSURE_REQUIREMENTS
@@ -166,7 +169,7 @@ case class NativeShuffleExchangeExec(
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

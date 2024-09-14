@@ -259,9 +259,7 @@ impl BufferedData {
         for (key_collector, batch) in
             self.into_sorted_batches::<SqueezeKeyCollector>(sub_batch_size, sorter)?
         {
-            let mut buf = vec![];
-            write_one_batch(&batch, &mut Cursor::new(&mut buf))?;
-            writer.write_all(&buf)?;
+            write_one_batch(batch.num_rows(), batch.columns(), &mut writer)?;
             writer.write_all(&key_collector.store)?;
         }
         Ok(())
@@ -297,7 +295,7 @@ impl BufferedData {
                 .map(|(key, row_idx)| {
                     num_rows += 1;
                     key_writer.write_key(key, &mut sorted_key_store).unwrap();
-                    row_idx as usize
+                    row_idx
                 })
                 .collect::<Vec<_>>();
             sorted_batch = take_batch(batch, cur_sorted_indices)?;
@@ -538,6 +536,7 @@ async fn external_sort(
     let sorter_cloned = sorter.clone();
 
     let output = context.output_with_sender("Sort", input.schema(), |sender| async move {
+        sender.exclude_time(sorter.baseline_metrics.elapsed_compute());
         sorter.output(sender).await?;
         Ok(())
     })?;
@@ -574,7 +573,7 @@ impl ExternalSorter {
     }
 
     async fn output(self: Arc<Self>, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
-        let mut timer = self.baseline_metrics.elapsed_compute().timer();
+        let _timer = self.baseline_metrics.elapsed_compute().timer();
         self.set_spillable(false);
 
         let data = std::mem::take(&mut *self.data.lock().await);
@@ -603,7 +602,7 @@ impl ExternalSorter {
                     .prune_sort_keys_from_batch
                     .restore(pruned_batch, key_store)?;
                 self.baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch), Some(&mut timer)).await;
+                sender.send(Ok(batch)).await;
             }
             self.update_mem_used(0).await?;
             return Ok(());
@@ -637,7 +636,7 @@ impl ExternalSorter {
 
             self.update_mem_used(cursors_mem_used).await?;
             self.baseline_metrics.record_output(batch.num_rows());
-            sender.send(Ok(batch), Some(&mut timer)).await;
+            sender.send(Ok(batch)).await;
         }
         self.update_mem_used(0).await?;
         Ok(())
@@ -733,7 +732,12 @@ impl<'a> SpillCursor<'a> {
     }
 
     fn load_next_batch(&mut self) -> Result<bool> {
-        if let Some(batch) = read_one_batch(&mut self.input, &self.pruned_schema)? {
+        if let Some((num_rows, cols)) = read_one_batch(&mut self.input, &self.pruned_schema)? {
+            let batch = RecordBatch::try_new_with_options(
+                self.pruned_schema.clone(),
+                cols,
+                &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+            )?;
             self.cur_mem_used += batch.get_array_mem_size();
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;
@@ -930,9 +934,11 @@ fn merge_spills(
     )?;
 
     while let Some((key_collector, pruned_batch)) = merger.next().transpose()? {
-        let mut buf = vec![];
-        write_one_batch(&pruned_batch, &mut Cursor::new(&mut buf))?;
-        output_writer.write_all(&buf)?;
+        write_one_batch(
+            pruned_batch.num_rows(),
+            pruned_batch.columns(),
+            &mut output_writer,
+        )?;
         output_writer.write_all(&key_collector.store)?;
     }
     drop(output_writer);

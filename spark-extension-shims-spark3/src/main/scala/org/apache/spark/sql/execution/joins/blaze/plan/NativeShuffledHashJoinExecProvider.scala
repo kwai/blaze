@@ -74,6 +74,52 @@ case object NativeShuffledHashJoinExecProvider {
     NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
   }
 
+  @enableIf(Seq("spark313").contains(System.getProperty("blaze.shim")))
+  def provide(
+      left: SparkPlan,
+      right: SparkPlan,
+      leftKeys: Seq[Expression],
+      rightKeys: Seq[Expression],
+      joinType: JoinType,
+      buildSide: BuildSide): NativeShuffledHashJoinBase = {
+
+    import org.apache.spark.sql.execution.blaze.plan.BuildLeft
+    import org.apache.spark.sql.execution.blaze.plan.BuildRight
+    import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
+
+    case class NativeShuffledHashJoinExec(
+        override val left: SparkPlan,
+        override val right: SparkPlan,
+        leftKeys: Seq[Expression],
+        rightKeys: Seq[Expression],
+        joinType: JoinType,
+        buildSide: BuildSide)
+        extends NativeShuffledHashJoinBase(
+          left,
+          right,
+          leftKeys,
+          rightKeys,
+          joinType,
+          buildSide) {
+
+      override val (output, outputPartitioning, outputOrdering) = {
+        val sparkBuildSide = buildSide match {
+          case BuildLeft => org.apache.spark.sql.catalyst.optimizer.BuildLeft
+          case BuildRight => org.apache.spark.sql.catalyst.optimizer.BuildRight
+        }
+        val shj =
+          ShuffledHashJoinExec(leftKeys, rightKeys, joinType, sparkBuildSide, None, left, right)
+        (shj.output, shj.outputPartitioning, shj.outputOrdering)
+      }
+
+      override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+        copy(left = newChildren(0), right = newChildren(1))
+
+      override def nodeName: String = "NativeShuffledHashJoinExec"
+    }
+    NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
+  }
+
   @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
   def provide(
       left: SparkPlan,

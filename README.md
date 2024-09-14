@@ -68,11 +68,18 @@ cd blaze
 4. Build the project.
 
 _Specify shims package of which spark version that you would like to run on._
+_Currently we have supported these shims:
+* spark303 - for spark3.0.x
+* spark313 - for spark3.1.x
+* spark324 - for spark3.2.x
+* spark333 - for spark3.3.x
+* spark351 - for spark3.5.x.
+
 _You could either build Blaze in dev mode for debugging or in release mode to unlock the full potential of
 Blaze._
 
 ```shell
-SHIM=spark333 # or spark303/spark320/spark324/spark351
+SHIM=spark333 # or spark303/spark313/spark320/spark324/spark333/spark351
 MODE=release # or pre
 mvn package -P"${SHIM}" -P"${MODE}"
 ```

@@ -14,8 +14,6 @@
 
 //! Functionality used both on logical and physical plans
 
-use std::sync::Arc;
-
 use arrow::{
     array::*,
     datatypes::{
@@ -23,105 +21,17 @@ use arrow::{
         Int8Type, TimeUnit,
     },
 };
-use datafusion::error::Result;
 
-use crate::{
-    df_execution_err,
-    hash::{mur::spark_compatible_murmur3_hash, xxhash::spark_compatible_xxhash64_hash},
-};
+use crate::hash::{mur::spark_compatible_murmur3_hash, xxhash::spark_compatible_xxhash64_hash};
 
-macro_rules! hash_array {
-    ($array_type:ident, $column:ident, $hashes:ident, $h:expr) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        if array.null_count() == 0 {
-            for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash = $h(&array.value(i).as_ref(), *hash);
-            }
-        } else {
-            for (i, hash) in $hashes.iter_mut().enumerate() {
-                if !array.is_null(i) {
-                    *hash = $h(&array.value(i).as_ref(), *hash);
-                }
-            }
-        }
-    };
-}
-
-macro_rules! hash_array_primitive {
-    ($array_type:ident, $column:ident, $ty:ident, $hashes:ident, $h:expr) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        let values = array.values();
-
-        if array.null_count() == 0 {
-            for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
-                *hash = $h((*value as $ty).to_le_bytes().as_ref(), *hash);
-            }
-        } else {
-            for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
-                if !array.is_null(i) {
-                    *hash = $h((*value as $ty).to_le_bytes().as_ref(), *hash);
-                }
-            }
-        }
-    };
-}
-
-macro_rules! hash_array_decimal {
-    ($array_type:ident, $column:ident, $hashes:ident, $h:expr) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-
-        if array.null_count() == 0 {
-            for (i, hash) in $hashes.iter_mut().enumerate() {
-                *hash = $h(array.value(i).to_le_bytes().as_ref(), *hash);
-            }
-        } else {
-            for (i, hash) in $hashes.iter_mut().enumerate() {
-                if !array.is_null(i) {
-                    *hash = $h(array.value(i).to_le_bytes().as_ref(), *hash);
-                }
-            }
-        }
-    };
-}
-
-/// Hash the values in a dictionary array
-fn create_hashes_dictionary<K: ArrowDictionaryKeyType, T: num::PrimInt>(
-    array: &ArrayRef,
-    hashes_buffer: &mut [T],
-    h: impl Fn(&[u8], T) -> T + Copy,
-) -> Result<()> {
-    let dict_array = array.as_any().downcast_ref::<DictionaryArray<K>>().unwrap();
-
-    // Hash each dictionary value once, and then use that computed
-    // hash for each key value to avoid a potentially expensive
-    // redundant hashing for large dictionary elements (e.g. strings)
-    let dict_values = Arc::clone(dict_array.values());
-    let mut dict_hashes = vec![T::zero(); dict_values.len()];
-    create_hashes(&[dict_values], &mut dict_hashes, h)?;
-
-    for (hash, key) in hashes_buffer.iter_mut().zip(dict_array.keys().iter()) {
-        if let Some(key) = key {
-            if let Some(idx) = key.to_usize() {
-                *hash = dict_hashes[idx];
-            } else {
-                let dt = dict_array.data_type();
-                df_execution_err!(
-                    "Can not convert key value {key:?} to usize in dictionary of type {dt:?}"
-                )?;
-            }
-        } // no update for Null, consistent with other hashes
-    }
-    Ok(())
-}
-
-pub fn create_murmur3_hashes(arrays: &[ArrayRef], hashes_buffer: &mut [i32]) -> Result<()> {
-    create_hashes(arrays, hashes_buffer, |data: &[u8], seed: i32| {
+pub fn create_murmur3_hashes(len: usize, arrays: &[ArrayRef], seed: i32) -> Vec<i32> {
+    create_hashes(len, arrays, seed, |data: &[u8], seed: i32| {
         spark_compatible_murmur3_hash(data, seed)
     })
 }
 
-pub fn create_xxhash64_hashes(arrays: &[ArrayRef], hashes_buffer: &mut [i64]) -> Result<()> {
-    create_hashes(arrays, hashes_buffer, |data: &[u8], seed: i64| {
+pub fn create_xxhash64_hashes(len: usize, arrays: &[ArrayRef], seed: i64) -> Vec<i64> {
+    create_hashes(len, arrays, seed, |data: &[u8], seed: i64| {
         spark_compatible_xxhash64_hash(data, seed)
     })
 }
@@ -131,22 +41,114 @@ pub fn create_xxhash64_hashes(arrays: &[ArrayRef], hashes_buffer: &mut [i64]) ->
 ///
 /// The number of rows to hash is determined by `hashes_buffer.len()`.
 /// `hashes_buffer` should be pre-sized appropriately
+#[inline]
 pub fn create_hashes<T: num::PrimInt>(
+    len: usize,
     arrays: &[ArrayRef],
-    hashes_buffer: &mut [T],
+    seed: T,
     h: impl Fn(&[u8], T) -> T + Copy,
-) -> Result<()> {
-    for col in arrays {
-        hash_array(col, hashes_buffer, h)?;
+) -> Vec<T> {
+    if arrays.is_empty() {
+        return vec![seed; len];
     }
-    Ok(())
+    let mut hash_buffer = vec![T::zero(); len];
+
+    // hash first column
+    hash_array(&arrays[0], &mut hash_buffer, seed, true, h);
+
+    // hash rest columns
+    for col in arrays.iter().skip(1) {
+        hash_array(col, &mut hash_buffer, seed, false, h);
+    }
+    hash_buffer
 }
 
+#[inline]
 fn hash_array<T: num::PrimInt>(
     array: &ArrayRef,
     hashes_buffer: &mut [T],
+    initial_seed: T,
+    is_initial: bool,
     h: impl Fn(&[u8], T) -> T + Copy,
-) -> Result<()> {
+) {
+    assert_eq!(array.len(), hashes_buffer.len());
+
+    macro_rules! initial_seed_or {
+        ($h:expr) => {{
+            if is_initial {
+                initial_seed
+            } else {
+                $h
+            }
+        }};
+    }
+
+    macro_rules! hash_array {
+        ($array_type:ident, $column:ident, $hashes:ident, $h:expr) => {
+            let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+            if array.null_count() == 0 {
+                for (i, hash) in $hashes.iter_mut().enumerate() {
+                    *hash = $h(&array.value(i).as_ref(), initial_seed_or!(*hash));
+                }
+            } else {
+                for (i, hash) in $hashes.iter_mut().enumerate() {
+                    if !array.is_null(i) {
+                        *hash = $h(&array.value(i).as_ref(), initial_seed_or!(*hash));
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! hash_array_primitive {
+        ($array_type:ident, $column:ident, $ty:ident, $hashes:ident, $h:expr) => {
+            let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+            let values = array.values();
+
+            if array.null_count() == 0 {
+                for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
+                    *hash = $h(
+                        (*value as $ty).to_le_bytes().as_ref(),
+                        initial_seed_or!(*hash),
+                    );
+                }
+            } else {
+                for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
+                    if !array.is_null(i) {
+                        *hash = $h(
+                            (*value as $ty).to_le_bytes().as_ref(),
+                            initial_seed_or!(*hash),
+                        );
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! hash_array_decimal {
+        ($array_type:ident, $column:ident, $hashes:ident, $h:expr) => {
+            let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+
+            if array.null_count() == 0 {
+                for (i, hash) in $hashes.iter_mut().enumerate() {
+                    *hash = $h(
+                        array.value(i).to_le_bytes().as_ref(),
+                        initial_seed_or!(*hash),
+                    );
+                }
+            } else {
+                for (i, hash) in $hashes.iter_mut().enumerate() {
+                    if !array.is_null(i) {
+                        *hash = $h(
+                            array.value(i).to_le_bytes().as_ref(),
+                            initial_seed_or!(*hash),
+                        );
+                    }
+                }
+            }
+        };
+    }
+
     match array.data_type() {
         DataType::Null => {}
         DataType::Boolean => {
@@ -157,7 +159,7 @@ fn hash_array<T: num::PrimInt>(
                         (if array.value(i) { 1u32 } else { 0u32 })
                             .to_le_bytes()
                             .as_ref(),
-                        *hash,
+                        initial_seed_or!(*hash),
                     );
                 }
             } else {
@@ -167,7 +169,7 @@ fn hash_array<T: num::PrimInt>(
                             (if array.value(i) { 1u32 } else { 0u32 })
                                 .to_le_bytes()
                                 .as_ref(),
-                            *hash,
+                            initial_seed_or!(*hash),
                         );
                     }
                 }
@@ -224,44 +226,69 @@ fn hash_array<T: num::PrimInt>(
         DataType::Decimal128(..) => {
             hash_array_decimal!(Decimal128Array, array, hashes_buffer, h);
         }
-        DataType::Dictionary(index_type, _) => match &**index_type {
-            DataType::Int8 => create_hashes_dictionary::<Int8Type, _>(array, hashes_buffer, h)?,
-            DataType::Int16 => create_hashes_dictionary::<Int16Type, _>(array, hashes_buffer, h)?,
-            DataType::Int32 => create_hashes_dictionary::<Int32Type, _>(array, hashes_buffer, h)?,
-            DataType::Int64 => create_hashes_dictionary::<Int64Type, _>(array, hashes_buffer, h)?,
-            other => df_execution_err!("Unsupported dictionary type in hasher hashing: {other}")?,
+        DataType::Dictionary(index_type, _) => match index_type.as_ref() {
+            DataType::Int8 => create_hashes_dictionary::<Int8Type, _>(
+                array,
+                hashes_buffer,
+                initial_seed,
+                is_initial,
+                h,
+            ),
+            DataType::Int16 => create_hashes_dictionary::<Int16Type, _>(
+                array,
+                hashes_buffer,
+                initial_seed,
+                is_initial,
+                h,
+            ),
+            DataType::Int32 => create_hashes_dictionary::<Int32Type, _>(
+                array,
+                hashes_buffer,
+                initial_seed,
+                is_initial,
+                h,
+            ),
+            DataType::Int64 => create_hashes_dictionary::<Int64Type, _>(
+                array,
+                hashes_buffer,
+                initial_seed,
+                is_initial,
+                h,
+            ),
+            other => panic!("Unsupported dictionary type in hasher hashing: {other}"),
         },
         _ => {
             for idx in 0..array.len() {
-                hash_one(array, idx, &mut hashes_buffer[idx], h)?;
+                hash_one(array, idx, &mut hashes_buffer[idx], h);
             }
         }
     }
-    Ok(())
 }
 
-macro_rules! hash_one_primitive {
-    ($array_type:ident, $column:ident, $ty:ident, $hash:ident, $idx:ident, $h:expr) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        *$hash = $h(
-            (array.value($idx as usize) as $ty).to_le_bytes().as_ref(),
-            *$hash,
-        );
-    };
-}
+/// Hash the values in a dictionary array
+#[inline]
+fn create_hashes_dictionary<K: ArrowDictionaryKeyType, T: num::PrimInt>(
+    array: &ArrayRef,
+    hashes_buffer: &mut [T],
+    initial_seed: T,
+    is_initial: bool,
+    h: impl Fn(&[u8], T) -> T + Copy,
+) {
+    let dict_array = array.as_any().downcast_ref::<DictionaryArray<K>>().unwrap();
 
-macro_rules! hash_one_binary {
-    ($array_type:ident, $column:ident, $hash:ident, $idx:ident, $h:expr) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        *$hash = $h(&array.value($idx as usize).as_ref(), *$hash);
-    };
-}
+    if is_initial {
+        hashes_buffer.fill(initial_seed);
+    }
 
-macro_rules! hash_one_decimal {
-    ($array_type:ident, $column:ident, $hash:ident, $idx:ident, $h:expr) => {
-        let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
-        *$hash = $h(array.value($idx as usize).to_le_bytes().as_ref(), *$hash);
-    };
+    // Hash each dictionary value once, and then use that computed
+    // hash for each key value to avoid a potentially expensive
+    // redundant hashing for large dictionary elements (e.g. strings)
+    let dict_values = dict_array.values();
+    for (hash, key) in hashes_buffer.iter_mut().zip(dict_array.keys().iter()) {
+        if let Some(key) = key {
+            hash_one(dict_values, key.as_usize(), hash, h);
+        }
+    }
 }
 
 fn hash_one<T: num::PrimInt>(
@@ -269,7 +296,31 @@ fn hash_one<T: num::PrimInt>(
     idx: usize,
     hash: &mut T,
     h: impl Fn(&[u8], T) -> T + Copy,
-) -> Result<()> {
+) {
+    macro_rules! hash_one_primitive {
+        ($array_type:ident, $column:ident, $ty:ident, $hash:ident, $idx:ident, $h:expr) => {
+            let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+            *$hash = $h(
+                (array.value($idx as usize) as $ty).to_le_bytes().as_ref(),
+                *$hash,
+            );
+        };
+    }
+
+    macro_rules! hash_one_binary {
+        ($array_type:ident, $column:ident, $hash:ident, $idx:ident, $h:expr) => {
+            let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+            *$hash = $h(&array.value($idx as usize).as_ref(), *$hash);
+        };
+    }
+
+    macro_rules! hash_one_decimal {
+        ($array_type:ident, $column:ident, $hash:ident, $idx:ident, $h:expr) => {
+            let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
+            *$hash = $h(array.value($idx as usize).to_le_bytes().as_ref(), *$hash);
+        };
+    }
+
     if col.is_valid(idx) {
         match col.data_type() {
             DataType::Null => {}
@@ -337,7 +388,7 @@ fn hash_one<T: num::PrimInt>(
                 let list_array = col.as_any().downcast_ref::<ListArray>().unwrap();
                 let value_array = list_array.value(idx);
                 for i in 0..value_array.len() {
-                    hash_one(&value_array, i, hash, h)?;
+                    hash_one(&value_array, i, hash, h);
                 }
             }
             DataType::Map(..) => {
@@ -346,27 +397,19 @@ fn hash_one<T: num::PrimInt>(
                 let key_array = kv_array.column(0);
                 let value_array = kv_array.column(1);
                 for i in 0..kv_array.len() {
-                    hash_one(key_array, i, hash, h)?;
-                    hash_one(value_array, i, hash, h)?;
+                    hash_one(key_array, i, hash, h);
+                    hash_one(value_array, i, hash, h);
                 }
             }
             DataType::Struct(_) => {
                 let struct_array = col.as_any().downcast_ref::<StructArray>().unwrap();
                 for col in struct_array.columns() {
-                    hash_one(col, idx, hash, h)?;
+                    hash_one(col, idx, hash, h);
                 }
             }
-            other => df_execution_err!("Unsupported data type in hasher: {other}")?,
+            other => panic!("Unsupported data type in hasher: {other}"),
         }
     }
-    Ok(())
-}
-
-pub fn pmod(hash: i32, n: usize) -> usize {
-    let n = n as i32;
-    let r = hash % n;
-    let result = if r < 0 { (r + n) % n } else { r };
-    result as usize
 }
 
 #[cfg(test)]
@@ -401,8 +444,7 @@ mod tests {
             Some(i8::MAX),
             Some(i8::MIN),
         ])) as ArrayRef;
-        let mut hashes = vec![42; 5];
-        create_murmur3_hashes(&[i], &mut hashes).unwrap();
+        let hashes = create_murmur3_hashes(5, &[i], 42);
 
         // generated with Spark Murmur3_x86_32
         let expected: Vec<i32> = [
@@ -421,17 +463,20 @@ mod tests {
     #[test]
     fn test_i32() {
         let i = Arc::new(Int32Array::from(vec![Some(1)])) as ArrayRef;
-        let mut hashes = vec![42; 1];
-        create_murmur3_hashes(&[i], &mut hashes).unwrap();
+        let hashes = create_murmur3_hashes(1, &[i], 42);
+        assert_eq!(hashes, vec![-559580957]);
 
         let j = Arc::new(Int32Array::from(vec![Some(2)])) as ArrayRef;
-        create_murmur3_hashes(&[j], &mut hashes).unwrap();
+        let hashes = create_murmur3_hashes(1, &[j], 42);
+        assert_eq!(hashes, vec![1765031574]);
 
         let m = Arc::new(Int32Array::from(vec![Some(3)])) as ArrayRef;
-        create_murmur3_hashes(&[m], &mut hashes).unwrap();
+        let hashes = create_murmur3_hashes(1, &[m], 42);
+        assert_eq!(hashes, vec![-1823081949]);
 
         let n = Arc::new(Int32Array::from(vec![Some(4)])) as ArrayRef;
-        create_murmur3_hashes(&[n], &mut hashes).unwrap();
+        let hashes = create_murmur3_hashes(1, &[n], 42);
+        assert_eq!(hashes, vec![-397064898]);
     }
 
     #[test]
@@ -445,8 +490,7 @@ mod tests {
         ])) as ArrayRef;
 
         // generated with Murmur3Hash(Seq(Literal(1L)), 42).eval() since Spark is tested
-        let mut hashes = vec![42; 5];
-        create_murmur3_hashes(&[i.clone()], &mut hashes).unwrap();
+        let hashes = create_murmur3_hashes(5, &[i.clone()], 42);
         let expected: Vec<i32> = [
             0x99f0149d_u32,
             0x9c67b85d,
@@ -461,8 +505,7 @@ mod tests {
 
         // generated with XxHash64(Seq(Literal(1L)), 42).eval() since Spark is tested
         // against this as well
-        let mut hashes = vec![42; 5];
-        create_xxhash64_hashes(&[i.clone()], &mut hashes).unwrap();
+        let hashes = create_xxhash64_hashes(5, &[i.clone()], 42);
         let expected = vec![
             -7001672635703045582,
             -5252525462095825812,
@@ -479,8 +522,7 @@ mod tests {
 
         // generated with Murmur3Hash(Seq(Literal("")), 42).eval() since Spark is tested
         // against this as well
-        let mut hashes = vec![42; 5];
-        create_murmur3_hashes(&[i.clone()], &mut hashes).unwrap();
+        let hashes = create_murmur3_hashes(5, &[i.clone()], 42);
         let expected: Vec<i32> = [3286402344_u32, 2486176763, 142593372, 885025535, 2395000894]
             .into_iter()
             .map(|v| v as i32)
@@ -489,8 +531,7 @@ mod tests {
 
         // generated with XxHash64(Seq(Literal("")), 42).eval() since Spark is tested
         // against this as well
-        let mut hashes = vec![42; 5];
-        create_xxhash64_hashes(&[i.clone()], &mut hashes).unwrap();
+        let hashes = create_xxhash64_hashes(5, &[i.clone()], 42);
         let expected = vec![
             -4367754540140381902,
             -1798770879548125814,
@@ -499,25 +540,6 @@ mod tests {
             -235771157374669727,
         ];
         assert_eq!(hashes, expected);
-    }
-
-    #[test]
-    fn test_pmod() {
-        let i: Vec<i32> = [
-            0x99f0149d_u32,
-            0x9c67b85d,
-            0xc8008529,
-            0xa05b5d7b,
-            0xcd1e64fb,
-        ]
-        .into_iter()
-        .map(|v| v as i32)
-        .collect();
-        let result = i.into_iter().map(|i| pmod(i, 200)).collect::<Vec<usize>>();
-
-        // expected partition from Spark with n=200
-        let expected = vec![69, 5, 193, 171, 115];
-        assert_eq!(result, expected);
     }
 
     #[test]

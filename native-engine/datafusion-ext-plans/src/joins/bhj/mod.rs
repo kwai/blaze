@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::{
-    array::*,
-    datatypes::{DataType, IntervalUnit, TimeUnit},
-};
+use arrow::{array::*, datatypes::DataType};
 use datafusion::common::Result;
 use datafusion_ext_commons::{df_execution_err, downcast_any};
+
+use crate::common::make_eq_comparator::{make_eq_comparator, DynEqComparator};
 
 pub mod full_join;
 pub mod semi_join;
@@ -28,119 +27,98 @@ pub enum ProbeSide {
     R,
 }
 
-fn filter_joined_indices(
-    key_columns1: &[ArrayRef],
-    key_columns2: &[ArrayRef],
-    indices1: &mut Vec<u32>,
-    indices2: &mut Vec<u32>,
-) -> Result<()> {
-    fn filter_one(
-        key_column1: &ArrayRef,
-        key_column2: &ArrayRef,
-        indices1: &mut Vec<u32>,
-        indices2: &mut Vec<u32>,
-    ) -> Result<()> {
-        macro_rules! filter_atomic {
-            ($cast_type:ty) => {{
-                let col1 = downcast_any!(key_column1, $cast_type)?;
-                let col2 = downcast_any!(key_column2, $cast_type)?;
-                let mut valid_count = 0;
-                for i in 0..indices1.len() {
-                    let idx1 = indices1[i] as usize;
-                    let idx2 = indices2[i] as usize;
-                    if col1.is_valid(idx1) && col2.is_valid(idx2) && {
-                        let v1 = col1.value(idx1);
-                        let v2 = col2.value(idx2);
-                        v1 == v2
-                    } {
-                        indices1[valid_count] = indices1[i];
-                        indices2[valid_count] = indices2[i];
-                        valid_count += 1;
-                    }
-                }
-                indices1.truncate(valid_count);
-                indices2.truncate(valid_count);
-            }};
-        }
+// inlines most common cases with single column
+pub enum EqComparator {
+    Int8(Int8Array, Int8Array),
+    Int16(Int16Array, Int16Array),
+    Int32(Int32Array, Int32Array),
+    Int64(Int64Array, Int64Array),
+    Date32(Date32Array, Date32Array),
+    Date64(Date64Array, Date64Array),
+    String(StringArray, StringArray),
+    Binary(BinaryArray, BinaryArray),
+    Other(DynEqComparator),
+}
 
-        let dt1 = key_column1.data_type();
-        let dt2 = key_column2.data_type();
-        if dt1 != dt2 {
-            return df_execution_err!("join key data type not matched: {dt1:?} <-> {dt2:?}");
-        }
-        match dt1 {
-            DataType::Null => {
-                indices1.clear();
-                indices2.clear();
-            }
-            DataType::Boolean => filter_atomic!(BooleanArray),
-            DataType::Int8 => filter_atomic!(Int8Array),
-            DataType::Int16 => filter_atomic!(Int16Array),
-            DataType::Int32 => filter_atomic!(Int32Array),
-            DataType::Int64 => filter_atomic!(Int64Array),
-            DataType::UInt8 => filter_atomic!(UInt8Array),
-            DataType::UInt16 => filter_atomic!(UInt16Array),
-            DataType::UInt32 => filter_atomic!(UInt32Array),
-            DataType::UInt64 => filter_atomic!(UInt64Array),
-            DataType::Float16 => filter_atomic!(Float16Array),
-            DataType::Float32 => filter_atomic!(Float32Array),
-            DataType::Float64 => filter_atomic!(Float64Array),
-            DataType::Timestamp(unit, _) => match unit {
-                TimeUnit::Second => filter_atomic!(TimestampSecondArray),
-                TimeUnit::Millisecond => filter_atomic!(TimestampMillisecondArray),
-                TimeUnit::Microsecond => filter_atomic!(TimestampMicrosecondArray),
-                TimeUnit::Nanosecond => filter_atomic!(TimestampNanosecondArray),
-            },
-            DataType::Date32 => filter_atomic!(Date32Array),
-            DataType::Date64 => filter_atomic!(Date64Array),
-            DataType::Time32(unit) => match unit {
-                TimeUnit::Second => filter_atomic!(Time32SecondArray),
-                TimeUnit::Millisecond => filter_atomic!(Time32MillisecondArray),
-                TimeUnit::Microsecond => filter_atomic!(Time32MillisecondArray),
-                TimeUnit::Nanosecond => filter_atomic!(Time32MillisecondArray),
-            },
-            DataType::Time64(unit) => match unit {
-                TimeUnit::Microsecond => filter_atomic!(Time64MicrosecondArray),
-                TimeUnit::Nanosecond => filter_atomic!(Time64NanosecondArray),
-                _ => return df_execution_err!("unsupported time64 unit: {unit:?}"),
-            },
-            DataType::Duration(unit) => match unit {
-                TimeUnit::Second => filter_atomic!(DurationSecondArray),
-                TimeUnit::Millisecond => filter_atomic!(DurationMillisecondArray),
-                TimeUnit::Microsecond => filter_atomic!(DurationMicrosecondArray),
-                TimeUnit::Nanosecond => filter_atomic!(DurationNanosecondArray),
-            },
-            DataType::Interval(unit) => match unit {
-                IntervalUnit::YearMonth => filter_atomic!(IntervalYearMonthArray),
-                IntervalUnit::DayTime => filter_atomic!(IntervalDayTimeArray),
-                IntervalUnit::MonthDayNano => filter_atomic!(IntervalMonthDayNanoArray),
-            },
-            DataType::Binary => filter_atomic!(BinaryArray),
-            DataType::FixedSizeBinary(_) => filter_atomic!(FixedSizeBinaryArray),
-            DataType::LargeBinary => filter_atomic!(LargeBinaryArray),
-            DataType::Utf8 => filter_atomic!(StringArray),
-            DataType::LargeUtf8 => filter_atomic!(LargeStringArray),
-            DataType::List(_) => filter_atomic!(ListArray),
-            DataType::FixedSizeList(..) => filter_atomic!(FixedSizeListArray),
-            DataType::LargeList(_) => filter_atomic!(LargeListArray),
-            DataType::Struct(_) => filter_joined_indices(
-                key_column1.as_struct().columns(),
-                key_column2.as_struct().columns(),
-                indices1,
-                indices2,
-            )?,
-            DataType::Decimal128(..) => filter_atomic!(Decimal128Array),
-            DataType::Decimal256(..) => filter_atomic!(Decimal256Array),
-            DataType::Map(..) => filter_atomic!(MapArray),
-            dt => {
-                return df_execution_err!("unsupported data type: {dt:?}");
-            }
-        }
-        Ok(())
+impl EqComparator {
+    pub fn try_new(cols1: &[ArrayRef], cols2: &[ArrayRef]) -> Result<Self> {
+        let mut it = cols1
+            .iter()
+            .zip(cols2)
+            .map(|(col1, col2)| (col1.data_type(), col2.data_type()));
+
+        Ok(match (it.next(), it.next()) {
+            (Some((DataType::Int8, DataType::Int8)), None) => EqComparator::Int8(
+                downcast_any!(&cols1[0], Int8Array)?.clone(),
+                downcast_any!(&cols2[0], Int8Array)?.clone(),
+            ),
+            (Some((DataType::Int16, DataType::Int16)), None) => EqComparator::Int16(
+                downcast_any!(&cols1[0], Int16Array)?.clone(),
+                downcast_any!(&cols2[0], Int16Array)?.clone(),
+            ),
+            (Some((DataType::Int32, DataType::Int32)), None) => EqComparator::Int32(
+                downcast_any!(&cols1[0], Int32Array)?.clone(),
+                downcast_any!(&cols2[0], Int32Array)?.clone(),
+            ),
+            (Some((DataType::Int64, DataType::Int64)), None) => EqComparator::Int64(
+                downcast_any!(&cols1[0], Int64Array)?.clone(),
+                downcast_any!(&cols2[0], Int64Array)?.clone(),
+            ),
+            (Some((DataType::Date32, DataType::Date32)), None) => EqComparator::Date32(
+                downcast_any!(&cols1[0], Date32Array)?.clone(),
+                downcast_any!(&cols2[0], Date32Array)?.clone(),
+            ),
+            (Some((DataType::Date64, DataType::Date64)), None) => EqComparator::Date64(
+                downcast_any!(&cols1[0], Date64Array)?.clone(),
+                downcast_any!(&cols2[0], Date64Array)?.clone(),
+            ),
+            (Some((DataType::Utf8, DataType::Utf8)), None) => EqComparator::String(
+                downcast_any!(&cols1[0], StringArray)?.clone(),
+                downcast_any!(&cols2[0], StringArray)?.clone(),
+            ),
+            (Some((DataType::Binary, DataType::Binary)), None) => EqComparator::Binary(
+                downcast_any!(&cols1[0], BinaryArray)?.clone(),
+                downcast_any!(&cols2[0], BinaryArray)?.clone(),
+            ),
+            _ => EqComparator::Other(Self::make_eq_comparator_multiple_arrays(cols1, cols2)?),
+        })
     }
 
-    for (key_column1, key_column2) in key_columns1.iter().zip(key_columns2) {
-        filter_one(key_column1, key_column2, indices1, indices2)?;
+    #[inline]
+    pub fn eq(&self, i: usize, j: usize) -> bool {
+        unsafe {
+            // safety: performance critical path, use value_unchecked to avoid bounds check
+            match self {
+                EqComparator::Int8(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::Int16(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::Int32(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::Int64(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::Date32(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::Date64(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::String(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::Binary(c1, c2) => c1.value_unchecked(i) == c2.value_unchecked(j),
+                EqComparator::Other(eq) => eq(i, j),
+            }
+        }
     }
-    Ok(())
+
+    fn make_eq_comparator_multiple_arrays(
+        cols1: &[ArrayRef],
+        cols2: &[ArrayRef],
+    ) -> Result<DynEqComparator> {
+        if cols1.len() != cols2.len() {
+            return df_execution_err!(
+                "make_eq_comparator_multiple_arrays: cols1.len ({}) != cols2.len ({})",
+                cols1.len(),
+                cols2.len(),
+            );
+        }
+
+        let eqs = cols1
+            .iter()
+            .zip(cols2)
+            .map(|(col1, col2)| Ok(make_eq_comparator(col1, col2, true)?))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Box::new(move |i, j| eqs.iter().all(|eq| eq(i, j))))
+    }
 }

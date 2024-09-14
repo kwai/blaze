@@ -38,6 +38,7 @@ import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.LocalTableScanExec
+import org.apache.spark.sql.execution.blaze.plan.BuildSide
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.joins.BroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
@@ -46,9 +47,11 @@ object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
 
   val convertibleTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertible")
+  val convertToNonNativeTag: TreeNodeTag[Boolean] = TreeNodeTag("blaze.convertToNonNative")
   val convertStrategyTag: TreeNodeTag[ConvertStrategy] = TreeNodeTag("blaze.convert.strategy")
   val childOrderingRequiredTag: TreeNodeTag[Boolean] = TreeNodeTag(
     "blaze.child.ordering.required")
+  val joinSmallerSideTag: TreeNodeTag[BuildSide] = TreeNodeTag("blaze.join.smallerSide")
 
   def apply(exec: SparkPlan): Unit = {
     exec.foreach(_.setTagValue(convertibleTag, true))
@@ -62,8 +65,13 @@ object BlazeConvertStrategy extends Logging {
 
       val converted = convertSparkPlan(exec.withNewChildren(children))
       converted match {
+        case e if e.getTagValue(convertToNonNativeTag).contains(true) =>
+          exec.setTagValue(convertibleTag, false)
+          exec.setTagValue(convertToNonNativeTag, true)
+
         case e if NativeHelper.isNative(e) || e.getTagValue(convertibleTag).contains(true) =>
           exec.setTagValue(convertibleTag, true)
+
         case _ =>
           exec.setTagValue(convertibleTag, false)
           exec.setTagValue(convertStrategyTag, NeverConvert)
@@ -102,53 +110,59 @@ object BlazeConvertStrategy extends Logging {
     // execute some special strategies
     removeInefficientConverts(exec)
 
+    def isNative(exec: SparkPlan) = {
+      isAlwaysConvert(exec) && !exec.getTagValue(convertToNonNativeTag).contains(true)
+    }
+
     exec.foreachUp {
       case exec if isNeverConvert(exec) || isAlwaysConvert(exec) =>
       // already decided, do nothing
-      case e: ShuffleExchangeExec if isAlwaysConvert(e.child) || !isAggregate(e.child) =>
+      case e: ShuffleExchangeExec if isNative(e.child) || !isAggregate(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: BroadcastExchangeExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: FileSourceScanExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: ProjectExec if isAlwaysConvert(e.child) =>
+      case e: ProjectExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: FilterExec if isAlwaysConvert(e.child) =>
+      case e: FilterExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: SortExec => // prefer native sort even if child is non-native
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: UnionExec
-          if e.children.count(isAlwaysConvert) >= e.children.count(isNeverConvert) =>
+      case e: UnionExec if e.children.count(isNative) >= e.children.count(isNeverConvert) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: SortMergeJoinExec if e.children.exists(isAlwaysConvert) =>
+      case e: SortMergeJoinExec if e.children.exists(isNative) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: ShuffledHashJoinExec if e.children.exists(isAlwaysConvert) =>
+      case e: ShuffledHashJoinExec if e.children.exists(isNative) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: BroadcastHashJoinExec if e.children.forall(isAlwaysConvert) =>
+      case e: BroadcastHashJoinExec if e.children.forall(isNative) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: BroadcastNestedLoopJoinExec if e.children.forall(isAlwaysConvert) =>
+      case e: BroadcastNestedLoopJoinExec if e.children.forall(isNative) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: LocalLimitExec if isAlwaysConvert(e.child) =>
+      case e: LocalLimitExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: GlobalLimitExec if isAlwaysConvert(e.child) =>
+      case e: GlobalLimitExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: TakeOrderedAndProjectExec if isAlwaysConvert(e.child) =>
+      case e: TakeOrderedAndProjectExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: HashAggregateExec if isAlwaysConvert(e.child) =>
+      case e: HashAggregateExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: SortAggregateExec if isAlwaysConvert(e.child) =>
+      case e: SortAggregateExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: ExpandExec if isAlwaysConvert(e.child) =>
+      case e: ExpandExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: WindowExec if isAlwaysConvert(e.child) =>
+      case e: WindowExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: GenerateExec if isAlwaysConvert(e.child) =>
+      case e: GenerateExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: ObjectHashAggregateExec if isAlwaysConvert(e.child) =>
+      case e: ObjectHashAggregateExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: LocalTableScanExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: DataWritingCommandExec if isAlwaysConvert(e.child) =>
+      case e: DataWritingCommandExec if isNative(e.child) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+
+      case e if e.getTagValue(convertToNonNativeTag).contains(true) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 
       case e =>

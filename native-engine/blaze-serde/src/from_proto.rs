@@ -70,7 +70,6 @@ use datafusion_ext_plans::{
     filter_exec::FilterExec,
     generate::{create_generator, create_udtf_generator},
     generate_exec::GenerateExec,
-    hash_join_exec::HashJoinExec,
     ipc_reader_exec::IpcReaderExec,
     ipc_writer_exec::IpcWriterExec,
     limit_exec::LimitExec,
@@ -224,7 +223,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let build_side =
                     protobuf::JoinSide::try_from(hash_join.build_side).expect("invalid BuildSide");
 
-                Ok(Arc::new(HashJoinExec::try_new(
+                Ok(Arc::new(BroadcastJoinExec::try_new(
                     schema,
                     left,
                     right,
@@ -235,6 +234,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     build_side
                         .try_into()
                         .map_err(|_| proto_error("invalid BuildSide"))?,
+                    false,
+                    None,
                 )?))
             }
             PhysicalPlanType::SortMergeJoin(sort_merge_join) => {
@@ -426,6 +427,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     broadcast_side
                         .try_into()
                         .map_err(|_| proto_error("invalid BroadcastSide"))?,
+                    true,
                     Some(cached_build_hash_map_id),
                 )?))
             }

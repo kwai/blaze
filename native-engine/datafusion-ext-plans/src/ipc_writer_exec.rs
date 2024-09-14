@@ -34,7 +34,9 @@ use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
 use futures::{stream::once, StreamExt, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
 
-use crate::common::{ipc_compression::IpcCompressionWriter, output::TaskOutputter};
+use crate::common::{
+    ipc_compression::IpcCompressionWriter, output::TaskOutputter, timer_helper::TimerHelper,
+};
 
 #[derive(Debug)]
 pub struct IpcWriterExec {
@@ -133,7 +135,9 @@ pub async fn write_ipc(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     let schema = input.schema();
-    context.output_with_sender("IpcWrite", schema.clone(), move |_sender| async move {
+    context.output_with_sender("IpcWrite", schema, move |_sender| async move {
+        let _timer = metrics.elapsed_compute().timer();
+
         struct IpcConsumerWrite(GlobalRef);
         impl Write for IpcConsumerWrite {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -149,16 +153,16 @@ pub async fn write_ipc(
             }
         }
 
-        let mut writer = IpcCompressionWriter::new(IpcConsumerWrite(ipc_consumer), true);
-        while let Some(batch) = input.next().await.transpose()? {
-            let _timer = metrics.elapsed_compute().timer();
-            let num_rows = batch.num_rows();
-            writer.write_batch(batch)?;
-            metrics.record_output(num_rows);
+        let mut writer = IpcCompressionWriter::new(IpcConsumerWrite(ipc_consumer));
+        while let Some(batch) = metrics
+            .elapsed_compute()
+            .exclude_timer_async(async { input.next().await.transpose() })
+            .await?
+        {
+            writer.write_batch(batch.num_rows(), batch.columns())?;
+            metrics.record_output(batch.num_rows());
         }
-
-        let _timer = metrics.elapsed_compute().timer();
-        writer.finish_into_inner()?;
+        writer.finish_current_buf()?;
         Ok(())
     })
 }

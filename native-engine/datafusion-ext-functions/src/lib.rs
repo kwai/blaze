@@ -21,6 +21,7 @@ use datafusion_ext_commons::df_unimplemented_err;
 
 mod brickhouse;
 mod spark_check_overflow;
+mod spark_dates;
 pub mod spark_get_json_object;
 mod spark_make_array;
 mod spark_make_decimal;
@@ -51,6 +52,9 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "StringConcatWs" => Arc::new(spark_strings::string_concat_ws),
         "StringLower" => Arc::new(spark_strings::string_lower),
         "StringUpper" => Arc::new(spark_strings::string_upper),
+        "Year" => Arc::new(spark_dates::spark_year),
+        "Month" => Arc::new(spark_dates::spark_month),
+        "Day" => Arc::new(spark_dates::spark_day),
         "BrickhouseArrayUnion" => Arc::new(brickhouse::array_union::array_union),
         _ => df_unimplemented_err!("spark ext function not implemented: {name}")?,
     })

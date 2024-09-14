@@ -19,9 +19,14 @@ use std::{
 };
 
 use arrow::{
-    datatypes::SchemaRef,
+    array::{make_array, new_empty_array, Array, ArrayRef, AsArray, Capacities, MutableArrayData},
+    datatypes::{
+        ArrowNativeType, BinaryType, ByteArrayType, LargeBinaryType, LargeUtf8Type, SchemaRef,
+        Utf8Type,
+    },
     record_batch::{RecordBatch, RecordBatchOptions},
 };
+use arrow_schema::DataType;
 use datafusion::{
     common::Result,
     execution::TaskContext,
@@ -96,26 +101,8 @@ impl CoalesceStream {
     fn coalesce(&mut self) -> Result<RecordBatch> {
         // better concat_batches() implementation that releases old batch columns asap.
         let schema = self.input.schema();
-
-        // collect all columns
-        let mut all_cols = schema.fields().iter().map(|_| vec![]).collect::<Vec<_>>();
-        for batch in std::mem::take(&mut self.staging_batches) {
-            for i in 0..all_cols.len() {
-                all_cols[i].push(batch.column(i).clone());
-            }
-        }
-
-        // coalesce each column
-        let mut coalesced_cols = vec![];
-        for cols in all_cols {
-            let ref_cols = cols.iter().map(|col| col.as_ref()).collect::<Vec<_>>();
-            coalesced_cols.push(arrow::compute::concat(&ref_cols)?);
-        }
-        let coalesced_batch = RecordBatch::try_new_with_options(
-            schema,
-            coalesced_cols,
-            &RecordBatchOptions::new().with_row_count(Some(self.staging_rows)),
-        )?;
+        let coalesced_batch = coalesce_batches_unchecked(schema, &self.staging_batches);
+        self.staging_batches.clear();
         self.staging_rows = 0;
         self.staging_batches_mem_size = 0;
         Ok(coalesced_batch)
@@ -170,4 +157,71 @@ impl Stream for CoalesceStream {
             }
         }
     }
+}
+
+/// coalesce batches without checking there schemas, invokers must make
+/// sure all arrays have the same schema
+pub fn coalesce_batches_unchecked(schema: SchemaRef, batches: &[RecordBatch]) -> RecordBatch {
+    let num_rows = batches.iter().map(|b| b.num_rows()).sum::<usize>();
+    let num_fields = schema.fields().len();
+    let mut coalesced_cols = vec![];
+
+    for i in 0..num_fields {
+        let data_type = schema.field(i).data_type();
+        let mut cols = Vec::with_capacity(batches.len());
+        for j in 0..batches.len() {
+            cols.push(batches[j].column(i).clone());
+        }
+        coalesced_cols.push(coalesce_arrays_unchecked(data_type, &cols));
+    }
+
+    RecordBatch::try_new_with_options(
+        schema,
+        coalesced_cols,
+        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+    )
+    .expect("error coalescing record batch")
+}
+
+/// coalesce arrays without checking there data types, invokers must make
+/// sure all arrays have the same data type
+pub fn coalesce_arrays_unchecked(data_type: &DataType, arrays: &[ArrayRef]) -> ArrayRef {
+    if arrays.is_empty() {
+        return new_empty_array(data_type);
+    }
+    if arrays.len() == 1 {
+        return arrays[0].clone();
+    }
+
+    fn binary_capacity<T: ByteArrayType>(arrays: &[ArrayRef]) -> Capacities {
+        let mut item_capacity = 0;
+        let mut bytes_capacity = 0;
+        for array in arrays {
+            let a = array.as_bytes::<T>();
+
+            // Guaranteed to always have at least one element
+            let offsets = a.value_offsets();
+            bytes_capacity += offsets[offsets.len() - 1].as_usize() - offsets[0].as_usize();
+            item_capacity += a.len();
+        }
+        Capacities::Binary(item_capacity, Some(bytes_capacity))
+    }
+
+    let capacity = match data_type {
+        DataType::Utf8 => binary_capacity::<Utf8Type>(arrays),
+        DataType::LargeUtf8 => binary_capacity::<LargeUtf8Type>(arrays),
+        DataType::Binary => binary_capacity::<BinaryType>(arrays),
+        DataType::LargeBinary => binary_capacity::<LargeBinaryType>(arrays),
+        _ => Capacities::Array(arrays.iter().map(|a| a.len()).sum()),
+    };
+
+    // Concatenates arrays using MutableArrayData
+    let array_data: Vec<_> = arrays.iter().map(|a| a.to_data()).collect::<Vec<_>>();
+    let array_data_refs = array_data.iter().collect();
+    let mut mutable = MutableArrayData::with_capacities(array_data_refs, false, capacity);
+
+    for (i, a) in arrays.iter().enumerate() {
+        mutable.extend(i, 0, a.len())
+    }
+    make_array(mutable.freeze())
 }

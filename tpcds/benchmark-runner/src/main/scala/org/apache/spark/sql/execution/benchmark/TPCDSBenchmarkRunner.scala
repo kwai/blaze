@@ -66,6 +66,7 @@ object TPCDSBenchmarkRunner {
       System.exit(-1)
     }
     Files.createDirectories(outputDir)
+    val logWriter = new PrintWriter(s"$outputDir/log")
 
     // start spark
     val conf: SparkConf = new SparkConf().setAppName(this.getClass.getName)
@@ -83,7 +84,6 @@ object TPCDSBenchmarkRunner {
     }
 
     // run queries
-    val logWriter = new PrintWriter(s"$outputDir/log")
     var numSucceeded = 0
     var numFailed = 0
     for (query <- queriesToRun) {
@@ -99,6 +99,7 @@ object TPCDSBenchmarkRunner {
       }
 
       for (round <- 1 to benchmarkArgs.round) {
+        System.err.println(s"########## running case: $query, round: $round ##########")
         spark.sparkContext.setJobDescription(s"case: $query, round: $round")
         var rows: Array[Row] = Array()
         var succeeded = true

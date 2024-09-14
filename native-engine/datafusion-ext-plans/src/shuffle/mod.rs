@@ -30,8 +30,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize,
-    spark_hash::{create_murmur3_hashes, pmod},
+    array_size::ArraySize, spark_hash::create_murmur3_hashes,
     streams::coalesce_stream::CoalesceInput,
 };
 use futures::StreamExt;
@@ -113,26 +112,26 @@ struct ShuffleSpill {
 fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
     match partitioning {
         Partitioning::Hash(exprs, _) => {
-            let mut hashes_buf = vec![];
             let arrays = exprs
                 .iter()
                 .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())?))
                 .collect::<Result<Vec<_>>>()?;
 
-            // use identical seed as spark hash partition
-            hashes_buf.resize(arrays[0].len(), 42);
-
-            // compute hash array
-            create_murmur3_hashes(&arrays, &mut hashes_buf)?;
-            Ok(hashes_buf)
+            // compute hash array, use identical seed as spark hash partition
+            Ok(create_murmur3_hashes(arrays[0].len(), &arrays, 42))
         }
         _ => unreachable!("unsupported partitioning: {:?}", partitioning),
     }
 }
 
-fn evaluate_partition_ids(hashes: &[i32], num_partitions: usize) -> Vec<u32> {
-    hashes
-        .iter()
-        .map(|hash| pmod(*hash, num_partitions) as u32)
-        .collect()
+fn evaluate_partition_ids(mut hashes: Vec<i32>, num_partitions: usize) -> Vec<u32> {
+    // evaluate part_id = pmod(hash, num_partitions)
+    for h in &mut hashes {
+        *h = h.rem_euclid(num_partitions as i32);
+    }
+
+    unsafe {
+        // safety: transmute Vec<i32> to Vec<u32>
+        std::mem::transmute(hashes)
+    }
 }

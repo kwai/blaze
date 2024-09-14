@@ -32,10 +32,10 @@ pub struct RssSingleShuffleRepartitioner {
 impl RssSingleShuffleRepartitioner {
     pub fn new(rss_partition_writer: GlobalRef) -> Self {
         Self {
-            rss_partition_writer: Arc::new(Mutex::new(IpcCompressionWriter::new(
-                RssWriter::new(rss_partition_writer, 0),
-                true,
-            ))),
+            rss_partition_writer: Arc::new(Mutex::new(IpcCompressionWriter::new(RssWriter::new(
+                rss_partition_writer,
+                0,
+            )))),
         }
     }
 }
@@ -44,14 +44,18 @@ impl RssSingleShuffleRepartitioner {
 impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let rss_partition_writer = self.rss_partition_writer.clone();
-        tokio::task::spawn_blocking(move || rss_partition_writer.lock().write_batch(input))
-            .await
-            .or_else(|err| df_execution_err!("{err}"))??;
+        tokio::task::spawn_blocking(move || {
+            rss_partition_writer
+                .lock()
+                .write_batch(input.num_rows(), input.columns())
+        })
+        .await
+        .or_else(|err| df_execution_err!("{err}"))??;
         Ok(())
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        self.rss_partition_writer.lock().flush()?;
+        self.rss_partition_writer.lock().finish_current_buf()?;
         Ok(())
     }
 }

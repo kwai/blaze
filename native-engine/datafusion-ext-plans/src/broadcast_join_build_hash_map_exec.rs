@@ -18,7 +18,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{compute::concat_batches, datatypes::SchemaRef};
+use arrow::{array::RecordBatch, compute::concat_batches, datatypes::SchemaRef};
 use datafusion::{
     common::Result,
     execution::{SendableRecordBatchStream, TaskContext},
@@ -29,10 +29,10 @@ use datafusion::{
         DisplayAs, DisplayFormatType, ExecutionPlan,
     },
 };
-use futures::{stream::once, TryStreamExt};
+use futures::{stream::once, StreamExt, TryStreamExt};
 
 use crate::{
-    common::output::{NextBatchWithTimer, TaskOutputter},
+    common::{output::TaskOutputter, timer_helper::TimerHelper},
     joins::join_hash_map::{join_hash_map_schema, JoinHashMap},
 };
 
@@ -116,6 +116,16 @@ impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
     }
 }
 
+pub fn collect_hash_map(
+    data_schema: SchemaRef,
+    data_batches: Vec<RecordBatch>,
+    keys: Vec<Arc<dyn PhysicalExpr>>,
+) -> Result<JoinHashMap> {
+    let data_batch = concat_batches(&data_schema, data_batches.iter())?;
+    let hash_map = JoinHashMap::create_from_data_batch(data_batch, &keys)?;
+    Ok(hash_map)
+}
+
 async fn execute_build_hash_map(
     context: Arc<TaskContext>,
     mut input: SendableRecordBatchStream,
@@ -123,28 +133,28 @@ async fn execute_build_hash_map(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     let elapsed_compute = metrics.elapsed_compute().clone();
-    let mut timer = elapsed_compute.timer();
+    let _timer = elapsed_compute.timer();
 
     let mut data_batches = vec![];
     let data_schema = input.schema();
 
     // collect all input batches
-    while let Some(batch) = input.next_batch(Some(&mut timer)).await? {
+    while let Some(batch) = metrics
+        .elapsed_compute()
+        .exclude_timer_async(async { input.next().await.transpose() })
+        .await?
+    {
         data_batches.push(batch);
     }
-    let data_batch = concat_batches(&data_schema, data_batches.iter())?;
 
     // build hash map
     let hash_map_schema = join_hash_map_schema(&data_schema);
-    let hash_map = JoinHashMap::try_from_data_batch(data_batch, &keys)?;
-    drop(timer);
+    let hash_map = collect_hash_map(data_schema, data_batches, keys)?;
 
     // output hash map batches as stream
     context.output_with_sender("BuildHashMap", hash_map_schema, move |sender| async move {
-        let mut timer = elapsed_compute.timer();
-        sender
-            .send(Ok(hash_map.into_hash_map_batch()?), Some(&mut timer))
-            .await;
+        sender.exclude_time(metrics.elapsed_compute());
+        sender.send(Ok(hash_map.into_hash_map_batch()?)).await;
         Ok(())
     })
 }

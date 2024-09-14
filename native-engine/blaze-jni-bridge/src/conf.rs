@@ -79,13 +79,13 @@ pub trait DoubleConf {
 
 pub trait StringConf {
     fn key(&self) -> &'static str;
-    fn value(&self) -> Result<&'static str> {
+    fn value(&self) -> Result<String> {
         let key = jni_new_string!(self.key())?;
         let value = jni_get_string!(
             jni_call_static!(BlazeConf.stringConf(key.as_obj()) -> JObject)?
                 .as_obj()
                 .into()
         )?;
-        Ok(Box::leak(value.into_boxed_str()))
+        Ok(value)
     }
 }

@@ -48,7 +48,7 @@ case class NativeAggExec(
     with BaseAggregateExec {
 
   @enableIf(
-    Seq("spark320", "spark324", "spark333", "spark351").contains(
+    Seq("spark313", "spark320", "spark324", "spark333", "spark351").contains(
       System.getProperty("blaze.shim")))
   override val requiredChildDistributionExpressions: Option[Seq[Expression]] =
     theRequiredChildDistributionExpressions
@@ -79,7 +79,7 @@ case class NativeAggExec(
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

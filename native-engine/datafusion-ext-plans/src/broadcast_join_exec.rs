@@ -18,17 +18,16 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Weak},
-    time::{Duration, Instant},
 };
 
 use arrow::{
     array::RecordBatch,
-    compute::SortOptions,
+    compute::{concat_batches, SortOptions},
     datatypes::{DataType, SchemaRef},
 };
 use async_trait::async_trait;
 use datafusion::{
-    common::{JoinSide, Result, Statistics},
+    common::{DataFusionError, JoinSide, Result, Statistics},
     execution::context::TaskContext,
     physical_expr::{PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
@@ -51,6 +50,7 @@ use crate::{
         batch_statisitcs::{stat_input, InputBatchStatistics},
         column_pruning::ExecuteWithColumnPruning,
         output::{TaskOutputter, WrappedRecordBatchSender},
+        timer_helper::{RegisterTimer, TimerHelper},
     },
     joins::{
         bhj::{
@@ -65,7 +65,7 @@ use crate::{
                 RProbedRightSemiJoiner,
             },
         },
-        join_hash_map::{join_data_schema, JoinHashMap},
+        join_hash_map::{join_data_schema, join_hash_map_schema, JoinHashMap},
         join_utils::{JoinType, JoinType::*},
         JoinParams, JoinProjection,
     },
@@ -79,6 +79,7 @@ pub struct BroadcastJoinExec {
     join_type: JoinType,
     broadcast_side: JoinSide,
     schema: SchemaRef,
+    is_built: bool, // true for BroadcastHashJoin, false for ShuffledHashJoin
     cached_build_hash_map_id: Option<String>,
     metrics: ExecutionPlanMetricsSet,
 }
@@ -91,6 +92,7 @@ impl BroadcastJoinExec {
         on: JoinOn,
         join_type: JoinType,
         broadcast_side: JoinSide,
+        is_built: bool,
         cached_build_hash_map_id: Option<String>,
     ) -> Result<Self> {
         Ok(Self {
@@ -100,6 +102,7 @@ impl BroadcastJoinExec {
             join_type,
             broadcast_side,
             schema,
+            is_built,
             cached_build_hash_map_id,
             metrics: ExecutionPlanMetricsSet::new(),
         })
@@ -143,12 +146,12 @@ impl BroadcastJoinExec {
             self.join_type,
             &self.schema,
             &match self.broadcast_side {
-                JoinSide::Left => join_data_schema(&left_schema),
-                JoinSide::Right => left_schema.clone(),
+                JoinSide::Left if self.is_built => join_data_schema(&left_schema),
+                _ => left_schema.clone(),
             },
             &match self.broadcast_side {
-                JoinSide::Left => right_schema.clone(),
-                JoinSide::Right => join_data_schema(&right_schema),
+                JoinSide::Right if self.is_built => join_data_schema(&right_schema),
+                _ => right_schema.clone(),
             },
             projection,
         )?;
@@ -173,37 +176,44 @@ impl BroadcastJoinExec {
         context: Arc<TaskContext>,
         projection: Vec<usize>,
     ) -> Result<SendableRecordBatchStream> {
-        let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
+        let metrics = self.metrics.clone();
+        let baseline_metrics = Arc::new(BaselineMetrics::new(&metrics, partition));
         let join_params = self.create_join_params(&projection)?;
         let left = self.left.execute(partition, context.clone())?;
         let right = self.right.execute(partition, context.clone())?;
         let broadcast_side = self.broadcast_side;
+        let is_built = self.is_built;
         let cached_build_hash_map_id = self.cached_build_hash_map_id.clone();
 
         // stat probed side
         let input_batch_stat =
             InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?;
-        let (left, right) = match broadcast_side {
-            JoinSide::Left => (left, stat_input(input_batch_stat, right)?),
-            JoinSide::Right => (stat_input(input_batch_stat, left)?, right),
-        };
+        let left = stat_input(input_batch_stat.clone(), left)?;
+        let right = stat_input(input_batch_stat.clone(), right)?;
 
-        let metrics_cloned = metrics.clone();
+        let baseline_metrics_cloned = baseline_metrics.clone();
         let context_cloned = context.clone();
         let output_stream = Box::pin(RecordBatchStreamAdapter::new(
             join_params.projection.schema.clone(),
             futures::stream::once(async move {
                 context_cloned.output_with_sender(
-                    "BroadcastJoin",
+                    if is_built {
+                        "BroadcastJoin"
+                    } else {
+                        "HashJoin"
+                    },
                     join_params.projection.schema.clone(),
                     move |sender| {
+                        sender.exclude_time(baseline_metrics_cloned.elapsed_compute());
                         execute_join(
+                            partition,
                             left,
                             right,
                             join_params,
                             broadcast_side,
                             cached_build_hash_map_id,
-                            metrics_cloned,
+                            is_built,
+                            metrics,
                             sender,
                         )
                     },
@@ -211,7 +221,7 @@ impl BroadcastJoinExec {
             })
             .try_flatten(),
         ));
-        Ok(context.coalesce_with_default_batch_size(output_stream, &metrics)?)
+        Ok(context.coalesce_with_default_batch_size(output_stream, &baseline_metrics)?)
     }
 }
 
@@ -261,6 +271,7 @@ impl ExecutionPlan for BroadcastJoinExec {
             self.on.iter().cloned().collect(),
             self.join_type,
             self.broadcast_side,
+            self.is_built,
             None,
         )?))
     }
@@ -285,180 +296,239 @@ impl ExecutionPlan for BroadcastJoinExec {
 
 impl DisplayAs for BroadcastJoinExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "BroadcastJoin")
+        write!(
+            f,
+            "{}",
+            if self.is_built {
+                "BroadcastJoin"
+            } else {
+                "HashJoin"
+            }
+        )
     }
 }
 
+async fn execute_join_with_map(
+    mut probed: SendableRecordBatchStream,
+    map: Arc<JoinHashMap>,
+    join_params: JoinParams,
+    broadcast_side: JoinSide,
+    metrics: Arc<BaselineMetrics>,
+    probed_side_hash_time: Time,
+    probed_side_search_time: Time,
+    probed_side_compare_time: Time,
+    build_output_time: Time,
+    sender: Arc<WrappedRecordBatchSender>,
+) -> Result<()> {
+    let _timer = metrics.elapsed_compute().timer();
+    let mut joiner: Pin<Box<dyn Joiner + Send>> = match broadcast_side {
+        JoinSide::Left => match join_params.join_type {
+            Inner => Box::pin(RProbedInnerJoiner::new(join_params, map, sender)),
+            Left => Box::pin(RProbedLeftJoiner::new(join_params, map, sender)),
+            Right => Box::pin(RProbedRightJoiner::new(join_params, map, sender)),
+            Full => Box::pin(RProbedFullOuterJoiner::new(join_params, map, sender)),
+            LeftSemi => Box::pin(RProbedLeftSemiJoiner::new(join_params, map, sender)),
+            LeftAnti => Box::pin(RProbedLeftAntiJoiner::new(join_params, map, sender)),
+            RightSemi => Box::pin(RProbedRightSemiJoiner::new(join_params, map, sender)),
+            RightAnti => Box::pin(RProbedRightAntiJoiner::new(join_params, map, sender)),
+            Existence => Box::pin(RProbedExistenceJoiner::new(join_params, map, sender)),
+        },
+        JoinSide::Right => match join_params.join_type {
+            Inner => Box::pin(LProbedInnerJoiner::new(join_params, map, sender)),
+            Left => Box::pin(LProbedLeftJoiner::new(join_params, map, sender)),
+            Right => Box::pin(LProbedRightJoiner::new(join_params, map, sender)),
+            Full => Box::pin(LProbedFullOuterJoiner::new(join_params, map, sender)),
+            LeftSemi => Box::pin(LProbedLeftSemiJoiner::new(join_params, map, sender)),
+            LeftAnti => Box::pin(LProbedLeftAntiJoiner::new(join_params, map, sender)),
+            RightSemi => Box::pin(LProbedRightSemiJoiner::new(join_params, map, sender)),
+            RightAnti => Box::pin(LProbedRightAntiJoiner::new(join_params, map, sender)),
+            Existence => Box::pin(LProbedExistenceJoiner::new(join_params, map, sender)),
+        },
+    };
+
+    while let Some(batch) = metrics
+        .elapsed_compute()
+        .exclude_timer_async(probed.next())
+        .await
+        .transpose()?
+    {
+        joiner
+            .as_mut()
+            .join(
+                batch,
+                &probed_side_hash_time,
+                &probed_side_search_time,
+                &probed_side_compare_time,
+                &build_output_time,
+            )
+            .await?;
+
+        if joiner.can_early_stop() {
+            break;
+        }
+    }
+    joiner.as_mut().finish(&build_output_time).await?;
+    metrics.record_output(joiner.num_output_rows());
+    Ok(())
+}
+
 async fn execute_join(
+    partition: usize,
     left: SendableRecordBatchStream,
     right: SendableRecordBatchStream,
     join_params: JoinParams,
     broadcast_side: JoinSide,
     cached_build_hash_map_id: Option<String>,
-    metrics: Arc<BaselineMetrics>,
+    is_built: bool,
+    metrics: ExecutionPlanMetricsSet,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
-    let start_time = Instant::now();
-    let mut excluded_time_ns = 0;
-    let poll_time = Time::new();
+    let baseline_metrics = Arc::new(BaselineMetrics::new(&metrics, partition));
+    let build_time = metrics.register_timer("build_hash_map_time", partition);
+    let probed_side_hash_time = metrics.register_timer("probed_side_hash_time", partition);
+    let probed_side_search_time = metrics.register_timer("probed_side_search_time", partition);
+    let probed_side_compare_time = metrics.register_timer("probed_side_compare_time", partition);
+    let build_output_time = metrics.register_timer("build_output_time", partition);
 
-    let (mut probed, _keys, mut joiner): (_, _, Pin<Box<dyn Joiner + Send>>) = match broadcast_side
-    {
-        JoinSide::Left => {
-            let right_schema = right.schema();
-            let mut right_peeked = Box::pin(right.peekable());
-            let (_, lmap_result) = futures::join!(
-                // fetch two sides asynchronously
-                async {
-                    let timer = poll_time.timer();
-                    right_peeked.as_mut().peek().await;
-                    drop(timer);
-                },
-                collect_join_hash_map(
-                    cached_build_hash_map_id,
-                    left,
-                    &join_params.left_keys,
-                    matches!(join_params.join_type, RightSemi | RightAnti),
-                    poll_time.clone(),
-                ),
-            );
-            let lmap = lmap_result?;
-            (
-                Box::pin(RecordBatchStreamAdapter::new(right_schema, right_peeked)),
-                join_params.right_keys.clone(),
-                match join_params.join_type {
-                    Inner => Box::pin(RProbedInnerJoiner::new(join_params, lmap, sender)),
-                    Left => Box::pin(RProbedLeftJoiner::new(join_params, lmap, sender)),
-                    Right => Box::pin(RProbedRightJoiner::new(join_params, lmap, sender)),
-                    Full => Box::pin(RProbedFullOuterJoiner::new(join_params, lmap, sender)),
-                    LeftSemi => Box::pin(RProbedLeftSemiJoiner::new(join_params, lmap, sender)),
-                    LeftAnti => Box::pin(RProbedLeftAntiJoiner::new(join_params, lmap, sender)),
-                    RightSemi => Box::pin(RProbedRightSemiJoiner::new(join_params, lmap, sender)),
-                    RightAnti => Box::pin(RProbedRightAntiJoiner::new(join_params, lmap, sender)),
-                    Existence => Box::pin(RProbedExistenceJoiner::new(join_params, lmap, sender)),
-                },
-            )
-        }
-        JoinSide::Right => {
-            let left_schema = left.schema();
-            let mut left_peeked = Box::pin(left.peekable());
-            let (_, rmap_result) = futures::join!(
-                // fetch two sides asynchronizely
-                async {
-                    let timer = poll_time.timer();
-                    left_peeked.as_mut().peek().await;
-                    drop(timer);
-                },
-                collect_join_hash_map(
-                    cached_build_hash_map_id,
-                    right,
-                    &join_params.right_keys,
-                    matches!(join_params.join_type, LeftSemi | LeftAnti | Existence),
-                    poll_time.clone(),
-                ),
-            );
-            let rmap = rmap_result?;
-            (
-                Box::pin(RecordBatchStreamAdapter::new(left_schema, left_peeked)),
-                join_params.left_keys.clone(),
-                match join_params.join_type {
-                    Inner => Box::pin(LProbedInnerJoiner::new(join_params, rmap, sender)),
-                    Left => Box::pin(LProbedLeftJoiner::new(join_params, rmap, sender)),
-                    Right => Box::pin(LProbedRightJoiner::new(join_params, rmap, sender)),
-                    Full => Box::pin(LProbedFullOuterJoiner::new(join_params, rmap, sender)),
-                    LeftSemi => Box::pin(LProbedLeftSemiJoiner::new(join_params, rmap, sender)),
-                    LeftAnti => Box::pin(LProbedLeftAntiJoiner::new(join_params, rmap, sender)),
-                    RightSemi => Box::pin(LProbedRightSemiJoiner::new(join_params, rmap, sender)),
-                    RightAnti => Box::pin(LProbedRightAntiJoiner::new(join_params, rmap, sender)),
-                    Existence => Box::pin(LProbedExistenceJoiner::new(join_params, rmap, sender)),
-                },
-            )
-        }
+    let (probed_input, built_input) = match broadcast_side {
+        JoinSide::Left => (right, left),
+        JoinSide::Right => (left, right),
+    };
+    let map_keys = match broadcast_side {
+        JoinSide::Left => join_params.left_keys.clone(),
+        JoinSide::Right => join_params.right_keys.clone(),
     };
 
-    while let Some(batch) = {
-        let timer = poll_time.timer();
-        let batch = probed.next().await.transpose()?;
-        drop(timer);
-        batch
-    } {
-        joiner.as_mut().join(batch).await?;
-    }
-    joiner.as_mut().finish().await?;
-    metrics.record_output(joiner.num_output_rows());
+    // fetch two sides asynchronously to eagerly fetch probed side
+    let (probed, map) = futures::try_join!(
+        async {
+            let probed_schema = probed_input.schema();
+            let mut probed_peeked = Box::pin(probed_input.peekable());
+            probed_peeked.as_mut().peek().await;
+            Ok(Box::pin(RecordBatchStreamAdapter::new(
+                probed_schema,
+                probed_peeked,
+            )))
+        },
+        async {
+            if is_built {
+                collect_join_hash_map(
+                    cached_build_hash_map_id,
+                    built_input,
+                    &map_keys,
+                    build_time.clone(),
+                )
+                .await
+            } else {
+                build_join_hash_map(built_input, &map_keys, build_time.clone()).await
+            }
+        }
+    )?;
 
-    excluded_time_ns += poll_time.value();
-    excluded_time_ns += joiner.total_send_output_time();
-
-    // discount poll input and send output batch time
-    let mut join_time_ns = (Instant::now() - start_time).as_nanos() as u64;
-    join_time_ns -= excluded_time_ns as u64;
-    metrics
+    baseline_metrics
         .elapsed_compute()
-        .add_duration(Duration::from_nanos(join_time_ns));
-    Ok(())
+        .add_duration(build_time.duration());
+
+    execute_join_with_map(
+        probed,
+        map,
+        join_params,
+        broadcast_side,
+        baseline_metrics.clone(),
+        probed_side_hash_time,
+        probed_side_search_time,
+        probed_side_compare_time,
+        build_output_time,
+        sender,
+    )
+    .await
+}
+
+async fn build_join_hash_map(
+    input: SendableRecordBatchStream,
+    key_exprs: &[PhysicalExprRef],
+    build_time: Time,
+) -> Result<Arc<JoinHashMap>> {
+    let data_schema = input.schema();
+    let hash_map_schema = join_hash_map_schema(&data_schema);
+    let data_batches: Vec<RecordBatch> = input.try_collect().await?;
+
+    let join_hash_map = build_time.with_timer(|| {
+        let data_batch = concat_batches(&data_schema, data_batches.iter())?;
+        if data_batch.num_rows() == 0 {
+            return Ok(Arc::new(JoinHashMap::create_empty(
+                hash_map_schema,
+                key_exprs,
+            )?));
+        }
+
+        let join_hash_map = JoinHashMap::create_from_data_batch(data_batch, key_exprs)?;
+        Ok::<_, DataFusionError>(Arc::new(join_hash_map))
+    })?;
+    Ok(join_hash_map)
 }
 
 async fn collect_join_hash_map(
     cached_build_hash_map_id: Option<String>,
     input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
-    distinct: bool,
-    poll_time: Time,
+    build_time: Time,
 ) -> Result<Arc<JoinHashMap>> {
     Ok(match cached_build_hash_map_id {
         Some(cached_id) => {
             get_cached_join_hash_map(&cached_id, || async {
-                collect_join_hash_map_without_caching(input, key_exprs, distinct, poll_time).await
+                collect_join_hash_map_without_caching(input, key_exprs, build_time).await
             })
             .await?
         }
         None => {
-            let map = collect_join_hash_map_without_caching(input, key_exprs, distinct, poll_time)
-                .await?;
+            let map = collect_join_hash_map_without_caching(input, key_exprs, build_time).await?;
             Arc::new(map)
         }
     })
 }
 
 async fn collect_join_hash_map_without_caching(
-    mut input: SendableRecordBatchStream,
+    input: SendableRecordBatchStream,
     key_exprs: &[PhysicalExprRef],
-    distinct: bool,
-    poll_time: Time,
+    build_time: Time,
 ) -> Result<JoinHashMap> {
-    let mut hash_map_batches = vec![];
-    while let Some(batch) = {
-        let timer = poll_time.timer();
-        let batch = input.next().await.transpose()?;
-        drop(timer);
-        batch
-    } {
-        hash_map_batches.push(batch);
-    }
-    let mut join_hash_map = match hash_map_batches.len() {
-        0 => JoinHashMap::try_new_empty(input.schema(), key_exprs)?,
-        1 => {
-            if hash_map_batches[0].num_rows() == 0 {
-                JoinHashMap::try_new_empty(input.schema(), key_exprs)?
-            } else {
-                JoinHashMap::try_from_hash_map_batch(hash_map_batches[0].clone(), key_exprs)?
+    let hash_map_schema = input.schema();
+    let hash_map_batches: Vec<RecordBatch> = input.try_collect().await?;
+
+    build_time.with_timer(|| {
+        let join_hash_map = match hash_map_batches.len() {
+            0 => JoinHashMap::create_empty(hash_map_schema, key_exprs)?,
+            1 => {
+                if hash_map_batches[0].num_rows() == 0 {
+                    JoinHashMap::create_empty(hash_map_schema, key_exprs)?
+                } else {
+                    JoinHashMap::load_from_hash_map_batch(hash_map_batches[0].clone(), key_exprs)?
+                }
             }
-        }
-        n => return df_execution_err!("expect zero or one hash map batch, got {n}"),
-    };
-    if distinct {
-        join_hash_map.distinct()?;
-    }
-    Ok(join_hash_map)
+            n => return df_execution_err!("expect zero or one hash map batch, got {n}"),
+        };
+        Ok(join_hash_map)
+    })
 }
 
 #[async_trait]
 pub trait Joiner {
-    async fn join(self: Pin<&mut Self>, probed_batch: RecordBatch) -> Result<()>;
-    async fn finish(self: Pin<&mut Self>) -> Result<()>;
+    async fn join(
+        self: Pin<&mut Self>,
+        probed_batch: RecordBatch,
+        probed_side_hash_time: &Time,
+        probed_side_search_time: &Time,
+        probed_side_compare_time: &Time,
+        build_output_time: &Time,
+    ) -> Result<()>;
 
-    fn total_send_output_time(&self) -> usize;
+    async fn finish(self: Pin<&mut Self>, build_output_time: &Time) -> Result<()>;
+
+    fn can_early_stop(&self) -> bool {
+        false
+    }
+
     fn num_output_rows(&self) -> usize;
 }
 

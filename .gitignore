@@ -33,6 +33,7 @@ lib/
 *.orig
 .*.swp
 .*.swo
+*.cache
 
 # macOS
 .DS_Store

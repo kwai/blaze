@@ -40,13 +40,13 @@ case object NativeRenameColumnsExecProvider {
       override protected def outputExpressions: Seq[NamedExpression] = output
 
       override protected def orderingExpressions: Seq[SortOrder] = child.outputOrdering
-
-      override def nodeName: String = "NativeRenameColumnsExec"
     }
     NativeRenameColumnsExec(child, renamedColumnNames)
   }
 
-  @enableIf(Seq("spark320", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark313", "spark320", "spark324", "spark333").contains(
+      System.getProperty("blaze.shim")))
   def provide(child: SparkPlan, renamedColumnNames: Seq[String]): NativeRenameColumnsBase = {
     import org.apache.spark.sql.catalyst.expressions.NamedExpression
     import org.apache.spark.sql.catalyst.expressions.SortOrder
@@ -60,14 +60,18 @@ case object NativeRenameColumnsExecProvider {
         with AliasAwareOutputPartitioning
         with AliasAwareOutputOrdering {
 
+      @enableIf(
+        Seq("spark320", "spark324", "spark333").contains(System.getProperty("blaze.shim")))
       override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
         copy(child = newChild)
+
+      @enableIf(Seq("spark313").contains(System.getProperty("blaze.shim")))
+      override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+        copy(child = newChildren.head)
 
       override protected def outputExpressions: Seq[NamedExpression] = output
 
       override protected def orderingExpressions: Seq[SortOrder] = child.outputOrdering
-
-      override def nodeName: String = "NativeRenameColumnsExec"
     }
     NativeRenameColumnsExec(child, renamedColumnNames)
   }
@@ -81,8 +85,6 @@ case object NativeRenameColumnsExecProvider {
 
       override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
         copy(child = newChildren.head)
-
-      override def nodeName: String = "NativeRenameColumnsExec"
     }
     NativeRenameColumnsExec(child, renamedColumnNames)
   }

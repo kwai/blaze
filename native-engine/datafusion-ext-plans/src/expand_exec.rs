@@ -148,8 +148,10 @@ async fn execute_expand(
     metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     context.output_with_sender("Expand", output_schema.clone(), move |sender| async move {
+        sender.exclude_time(metrics.elapsed_compute());
+
         while let Some(batch) = input.next().await.transpose()? {
-            let mut timer = metrics.elapsed_compute().timer();
+            let _timer = metrics.elapsed_compute().timer();
             let num_rows = batch.num_rows();
 
             for projection in &projections {
@@ -170,7 +172,7 @@ async fn execute_expand(
                     &RecordBatchOptions::new().with_row_count(Some(num_rows)),
                 )?;
                 metrics.record_output(output_batch.num_rows());
-                sender.send(Ok(output_batch), Some(&mut timer)).await;
+                sender.send(Ok(output_batch)).await;
             }
         }
         Ok(())

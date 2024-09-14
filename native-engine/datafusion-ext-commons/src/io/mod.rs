@@ -12,67 +12,94 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 
 use arrow::{
-    array::StructArray,
-    datatypes::{DataType, SchemaRef},
+    array::{Array, ArrayRef, RecordBatchOptions},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-pub use batch_serde::{read_array, read_data_type, write_array, write_data_type};
-use datafusion::common::{cast::as_struct_array, Result};
+pub use batch_serde::{read_array, write_array};
+use datafusion::common::Result;
 pub use scalar_serde::{read_scalar, write_scalar};
+
+use crate::cast::cast;
 
 mod batch_serde;
 mod scalar_serde;
 
-pub fn write_one_batch<W: Write + Seek>(batch: &RecordBatch, output: &mut W) -> Result<()> {
-    if batch.num_rows() == 0 {
-        return Ok(());
-    }
-    // write ipc_length placeholder
-    let start_pos = output.stream_position()?;
-    output.write_all(&[0u8; 8])?;
+pub fn write_raw_slice<T: Sized + Copy>(
+    values: &[T],
+    mut output: impl Write,
+) -> std::io::Result<()> {
+    let raw_item_size = size_of::<T>();
+    let raw_slice = unsafe {
+        // safety: transmute copyable slice to bytes slice
+        std::slice::from_raw_parts(values.as_ptr() as *const u8, raw_item_size * values.len())
+    };
+    output.write_all(raw_slice)
+}
 
-    // write
-    batch_serde::write_batch(batch, output)?;
-    let end_pos = output.stream_position()?;
-    let ipc_length = end_pos - start_pos - 8;
+pub fn read_raw_slice<T: Sized + Copy>(
+    values: &mut [T],
+    mut input: impl Read,
+) -> std::io::Result<()> {
+    let raw_item_size = size_of::<T>();
+    let raw_slice = unsafe {
+        // safety: transmute copyable slice to bytes slice
+        std::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, raw_item_size * values.len())
+    };
+    input.read_exact(raw_slice)
+}
 
-    // fill ipc length
-    output.seek(SeekFrom::Start(start_pos))?;
-    output.write_all(&ipc_length.to_le_bytes()[..])?;
-    output.seek(SeekFrom::Start(end_pos))?;
+pub fn write_one_batch(num_rows: usize, cols: &[ArrayRef], mut output: impl Write) -> Result<()> {
+    assert!(cols.iter().all(|col| col.len() == num_rows));
+
+    let mut batch_data = vec![];
+    batch_serde::write_batch(num_rows, cols, &mut batch_data)?;
+    write_len(batch_data.len(), &mut output)?;
+    output.write_all(&batch_data)?;
     Ok(())
 }
 
-pub fn read_one_batch<R: Read>(input: &mut R, schema: &SchemaRef) -> Result<Option<RecordBatch>> {
-    // read ipc length
-    let mut ipc_length_buf = [0u8; 8];
-    if let Err(e) = input.read_exact(&mut ipc_length_buf) {
-        if e.kind() == std::io::ErrorKind::UnexpectedEof {
-            return Ok(None);
+pub fn read_one_batch(
+    mut input: impl Read,
+    schema: &SchemaRef,
+) -> Result<Option<(usize, Vec<ArrayRef>)>> {
+    let batch_data_len = match read_len(&mut input) {
+        Ok(len) => len,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                return Ok(None);
+            }
+            return Err(e.into());
         }
-        return Err(e.into());
-    }
-    let ipc_length = u64::from_le_bytes(ipc_length_buf);
-    let mut input = Box::new(input.take(ipc_length));
-
-    // read
-    let nameless_batch = batch_serde::read_batch(&mut input)?;
+    };
+    let mut input = input.take(batch_data_len as u64);
+    let (num_rows, cols) = batch_serde::read_batch(&mut input, schema)?;
 
     // consume trailing bytes
     std::io::copy(&mut input, &mut std::io::sink())?;
 
-    // recover schema name
-    return Ok(Some(name_batch(nameless_batch, schema)?));
+    assert!(cols.iter().all(|col| col.len() == num_rows));
+    return Ok(Some((num_rows, cols)));
 }
 
-pub fn name_batch(batch: RecordBatch, name_schema: &SchemaRef) -> Result<RecordBatch> {
-    Ok(RecordBatch::from(as_struct_array(&crate::cast::cast(
-        &StructArray::from(batch),
-        &DataType::Struct(name_schema.fields.clone()),
-    )?)?))
+pub fn recover_named_batch(
+    num_rows: usize,
+    cols: &[ArrayRef],
+    schema: SchemaRef,
+) -> Result<RecordBatch> {
+    let cols = cols
+        .iter()
+        .zip(schema.fields())
+        .map(|(col, field)| Ok(cast(&col, field.data_type())?))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(RecordBatch::try_new_with_options(
+        schema,
+        cols,
+        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+    )?)
 }
 
 pub fn write_len<W: Write>(mut len: usize, output: &mut W) -> std::io::Result<()> {
