@@ -72,8 +72,10 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.blaze.plan.BroadcastLeft
 import org.apache.spark.sql.execution.blaze.plan.BroadcastRight
 import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeBase
+import org.apache.spark.sql.execution.blaze.plan.NativeOrcScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeSortBase
+import org.apache.spark.sql.execution.datasources.orc.OrcFileFormat
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.LongType
 
@@ -286,9 +288,6 @@ object BlazeConverters extends Logging {
       exec.optionalBucketSet,
       exec.dataFilters,
       exec.tableIdentifier)
-    assert(
-      relation.fileFormat.isInstanceOf[ParquetFileFormat],
-      "Cannot convert non-parquet scan exec")
     logDebug(s"Converting FileSourceScanExec: ${Shims.get.simpleStringWithNodeId(exec)}")
     logDebug(s"  relation: ${relation}")
     logDebug(s"  relation.location: ${relation.location}")
@@ -298,7 +297,13 @@ object BlazeConverters extends Logging {
     logDebug(s"  optionalBucketSet: ${optionalBucketSet}")
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
-    addRenameColumnsExec(Shims.get.createNativeParquetScanExec(exec))
+    relation.fileFormat match {
+      case p if p.isInstanceOf[ParquetFileFormat] =>
+        addRenameColumnsExec(Shims.get.createNativeParquetScanExec(exec))
+      case p if p.isInstanceOf[OrcFileFormat] =>
+        addRenameColumnsExec(Shims.get.createNativeOrcScanExec(exec))
+      case _ => throw new NotImplementedError("Cannot convert non parquet/orc scan exec")
+    }
   }
 
   def convertProjectExec(exec: ProjectExec): SparkPlan = {
@@ -838,7 +843,7 @@ object BlazeConverters extends Logging {
       return false
     }
     plan match {
-      case _: NativeParquetScanBase | _: NativeUnionBase => true
+      case _: NativeParquetScanBase | _: NativeOrcScanBase | _: NativeUnionBase => true
       case _: ConvertToNativeBase => needRenameColumns(plan.children.head)
       case exec if NativeHelper.isNative(exec) =>
         NativeHelper.getUnderlyingNativePlan(exec).output != plan.output

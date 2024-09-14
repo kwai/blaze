@@ -73,6 +73,7 @@ use datafusion_ext_plans::{
     ipc_reader_exec::IpcReaderExec,
     ipc_writer_exec::IpcWriterExec,
     limit_exec::LimitExec,
+    orc_exec::OrcExec,
     parquet_exec::ParquetExec,
     parquet_sink_exec::ParquetSinkExec,
     project_exec::ProjectExec,
@@ -176,6 +177,23 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         Arc::new(BinaryExpr::new(a, Operator::And, b))
                     });
                 Ok(Arc::new(ParquetExec::new(
+                    conf,
+                    scan.fs_resource_id.clone(),
+                    Some(predicate),
+                )))
+            }
+            PhysicalPlanType::OrcScan(scan) => {
+                let conf: FileScanConfig = scan.base_conf.as_ref().unwrap().try_into()?;
+                let predicate = scan
+                    .pruning_predicates
+                    .iter()
+                    .filter_map(|predicate| {
+                        try_parse_physical_expr(predicate, &conf.file_schema).ok()
+                    })
+                    .fold(phys_expr::lit(true), |a, b| {
+                        Arc::new(BinaryExpr::new(a, Operator::And, b))
+                    });
+                Ok(Arc::new(OrcExec::new(
                     conf,
                     scan.fs_resource_id.clone(),
                     Some(predicate),

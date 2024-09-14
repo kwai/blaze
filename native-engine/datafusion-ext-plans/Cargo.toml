@@ -42,3 +42,5 @@ tokio = "1.40"
 unchecked-index = "0.2.2"
 uuid = "1.10.0"
 zstd = "0.13.2"
+orc-rust = { workspace = true }
+futures-util = "0.3.30"

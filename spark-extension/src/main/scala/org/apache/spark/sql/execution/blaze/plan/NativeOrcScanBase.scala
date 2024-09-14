@@ -21,13 +21,13 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
-import org.blaze.{protobuf => pb}
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FilePartition
+import org.blaze.{protobuf => pb}
 
-abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
+abstract class NativeOrcScanBase(basedFileScan: FileSourceScanExec)
     extends NativeFileSourceScanBase(basedFileScan) {
 
   override def doExecuteNative(): NativeRDD = {
@@ -48,7 +48,6 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
     val nativeFileSchema = this.nativeFileSchema
     val nativeFileGroups = this.nativeFileGroups
     val nativePartitionSchema = this.nativePartitionSchema
-
     val projection = schema.map(field => basedFileScan.relation.schema.fieldIndex(field.name))
     val broadcastedHadoopConf = this.broadcastedHadoopConf
     val numPartitions = partitions.length
@@ -59,12 +58,12 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
       partitions.asInstanceOf[Array[Partition]],
       Nil,
       rddShuffleReadFull = true,
-      (partition, _context) => {
-        val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
+      (partition, _) => {
+        val resourceId = s"NativeOrcScanExec:${UUID.randomUUID().toString}"
         putJniBridgeResource(resourceId, broadcastedHadoopConf)
 
         val nativeFileGroup = nativeFileGroups(partition.asInstanceOf[FilePartition])
-        val nativeParquetScanConf = pb.FileScanExecConf
+        val nativeFileScanExecConf = pb.FileScanExecConf
           .newBuilder()
           .setNumPartitions(numPartitions)
           .setPartitionIndex(partition.index)
@@ -75,20 +74,20 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
           .setPartitionSchema(nativePartitionSchema)
           .build()
 
-        val nativeParquetScanExecBuilder = pb.ParquetScanExecNode
+        val nativeOrcScanExecBuilder = pb.OrcScanExecNode
           .newBuilder()
-          .setBaseConf(nativeParquetScanConf)
+          .setBaseConf(nativeFileScanExecConf)
           .setFsResourceId(resourceId)
           .addAllPruningPredicates(nativePruningPredicateFilters.asJava)
 
         pb.PhysicalPlanNode
           .newBuilder()
-          .setParquetScan(nativeParquetScanExecBuilder.build())
+          .setOrcScan(nativeOrcScanExecBuilder.build())
           .build()
       },
-      friendlyName = "NativeRDD.ParquetScan")
+      friendlyName = "NativeRDD.OrcScan")
   }
 
   override val nodeName: String =
-    s"NativeParquetScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
+    s"NativeOrcScan ${basedFileScan.tableIdentifier.map(_.unquotedString).getOrElse("")}"
 }

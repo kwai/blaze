@@ -54,6 +54,8 @@ datafusion-ext-plans = { path = "./native-engine/datafusion-ext-plans" }
 # datafusion: branch=v36-blaze
 datafusion = { version = "36.0.0" }
 
+orc-rust = { version = "0.3.1" }
+
 # arrow: branch=v50-blaze
 arrow = { version = "50.0.0", features = ["ffi"]}
 arrow-schema = { version = "50.0.0", features = ["serde"] }
@@ -64,12 +66,13 @@ serde_json = { version = "1.0.96" }
 
 [patch.crates-io]
 # datafusion: branch=v36-blaze
-datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "17b1ad3c7432391b94dd54e48a60db6d5712a7ef"}
-datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "17b1ad3c7432391b94dd54e48a60db6d5712a7ef"}
-datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "17b1ad3c7432391b94dd54e48a60db6d5712a7ef"}
-datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "17b1ad3c7432391b94dd54e48a60db6d5712a7ef"}
-datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "17b1ad3c7432391b94dd54e48a60db6d5712a7ef"}
-datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "17b1ad3c7432391b94dd54e48a60db6d5712a7ef"}
+datafusion = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
+datafusion-common = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
+datafusion-expr = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
+datafusion-execution = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
+datafusion-optimizer = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
+datafusion-physical-expr = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
+orc-rust = { git = "https://github.com/harveyyue/datafusion-orc.git", rev = "507600707a08c4bf7e2605a7ea40a5941456779d"}
 
 # arrow: branch=v50-blaze
 arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7471d70f7ae6edd5d4da82b7d966a8ede720e499"}
