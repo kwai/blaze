@@ -38,7 +38,9 @@ jobs:
           key: docker-centos7-${{ hashFiles('dev/docker-build/centos7/Dockerfile') }}
 
       - name: Build blaze-engine-${{ matrix.sparkver }}
-        run: SHIM=${{ matrix.sparkver }} MODE=release ./release-docker.sh
+        run: |
+          sed -i 's/docker-compose -f/docker compose -f/g' ./release-docker.sh
+          SHIM=${{ matrix.sparkver }} MODE=release ./release-docker.sh
 
       - name: Upload blaze-engine-${{ matrix.sparkver }}
         uses: actions/upload-artifact@v3
