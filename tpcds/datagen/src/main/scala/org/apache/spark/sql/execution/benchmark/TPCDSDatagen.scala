@@ -50,7 +50,7 @@ class Tables(sqlContext: SQLContext, scaleFactor: Int) extends Serializable {
     def df(convertToSchema: Boolean, numPartition: Int): DataFrame = {
       val numDefaultPartitions = sparkContext
         .conf
-        .getInt("tpcds.gen.defaultParallel", defaultValue = 1000)
+        .getInt("spark.tpcds.gen.defaultParallel", defaultValue = 1000)
 
       val partitions = if (partitionColumns.isEmpty) numDefaultPartitions else numPartition
       val generatedData = {
