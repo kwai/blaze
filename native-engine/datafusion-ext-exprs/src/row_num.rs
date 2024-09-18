@@ -71,7 +71,7 @@ impl PhysicalExpr for RowNumExpr {
         Ok(ColumnarValue::Array(Arc::new(array)))
     }
 
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         vec![]
     }
 

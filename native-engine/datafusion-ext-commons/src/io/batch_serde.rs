@@ -162,14 +162,13 @@ fn write_bits_buffer<W: Write>(
 
 fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> Result<Buffer> {
     let buf = read_bytes_slice(input, (bits_len + 7) / 8)?;
-    Ok(Buffer::from(buf))
+    Ok(Buffer::from_vec(buf.into()))
 }
 
 fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     array: &PrimitiveArray<PT>,
     output: &mut W,
 ) -> Result<()> {
-    let _item_size = PT::get_byte_width();
     let offset = array.offset();
     let len = array.len();
     let array_data = array.to_data();
@@ -510,7 +509,7 @@ fn read_bytes_array<R: Read>(
     let offsets_buffer: Buffer = offsets_buffer.into();
 
     let data_len = cur_offset as usize;
-    let data_buffer = Buffer::from(read_bytes_slice(input, data_len)?);
+    let data_buffer = Buffer::from_vec(read_bytes_slice(input, data_len)?.into());
     let array_data = ArrayData::try_new(
         data_type,
         num_rows,

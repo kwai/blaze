@@ -35,13 +35,13 @@ use blaze_jni_bridge::{
 use datafusion::{
     error::{DataFusionError, Result},
     execution::context::TaskContext,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
-        expressions::PhysicalSortExpr,
         metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
         Partitioning::UnknownPartitioning,
-        SendableRecordBatchStream, Statistics,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::{
@@ -50,6 +50,7 @@ use datafusion_ext_commons::{
 };
 use futures::{stream::once, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
+use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::common::{ipc_compression::IpcCompressionReader, output::TaskOutputter};
@@ -60,6 +61,7 @@ pub struct IpcReaderExec {
     pub ipc_provider_resource_id: String,
     pub schema: SchemaRef,
     pub metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 impl IpcReaderExec {
     pub fn new(
@@ -72,6 +74,7 @@ impl IpcReaderExec {
             ipc_provider_resource_id,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }
     }
 }
@@ -84,6 +87,10 @@ impl DisplayAs for IpcReaderExec {
 
 #[async_trait]
 impl ExecutionPlan for IpcReaderExec {
+    fn name(&self) -> &str {
+        "IpcReaderExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -92,15 +99,17 @@ impl ExecutionPlan for IpcReaderExec {
         self.schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        UnknownPartitioning(self.num_partitions)
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                UnknownPartitioning(self.num_partitions),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![]
     }
 

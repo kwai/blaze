@@ -36,8 +36,9 @@ use datafusion::{
     },
     physical_expr::{
         expressions::{CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
-        scatter, PhysicalExpr, PhysicalExprRef,
+        PhysicalExpr, PhysicalExprRef,
     },
+    physical_expr_common::utils::scatter,
     physical_plan::ColumnarValue,
 };
 use datafusion_ext_commons::{cast::cast, uda::UserDefinedArray};
@@ -208,8 +209,14 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
             // short circuiting expression - only first child can be cached
             // first `when` expr can also be cached
             collect_dups(&expr.children()[0], current_count, expr_counts, dups);
-            if expr.as_any().downcast_ref::<CaseExpr>().is_some() {
-                collect_dups(&expr.children()[1], current_count, expr_counts, dups);
+            if let Some(case_expr) = expr.as_any().downcast_ref::<CaseExpr>() {
+                if case_expr.expr().is_some() {
+                    let children = case_expr.children();
+                    if children.len() >= 2 {
+                        // cache first `when` expr
+                        collect_dups(&expr.children()[1], current_count, expr_counts, dups);
+                    }
+                }
             }
         } else {
             expr.children().iter().for_each(|child| {
@@ -254,17 +261,25 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
         {
             // short circuiting expression - only first child can be cached
             // first `when` expr can also be cached
-            let mut children = expr.children();
+            let mut children = expr
+                .children()
+                .iter()
+                .map(|&child| child.clone())
+                .collect::<Vec<_>>();
             children[0] = transform(children[0].clone(), cached_expr_ids, cache)?;
-            if expr.as_any().downcast_ref::<CaseExpr>().is_some() && children.len() >= 2 {
-                children[1] = transform(children[1].clone(), cached_expr_ids, cache)?;
+
+            if let Some(case_expr) = expr.as_any().downcast_ref::<CaseExpr>() {
+                if children.len() >= 2 && case_expr.expr().is_some() {
+                    // cache first `when` expr
+                    children[1] = transform(children[1].clone(), cached_expr_ids, cache)?;
+                }
             }
             expr.clone().with_new_children(children)?
         } else {
             expr.clone().with_new_children(
                 expr.children()
                     .into_iter()
-                    .map(|child| transform(child, cached_expr_ids, cache))
+                    .map(|child| transform(child.clone(), cached_expr_ids, cache))
                     .collect::<Result<_>>()?,
             )?
         };
@@ -349,7 +364,7 @@ impl PhysicalExpr for CachedExpr {
         self.cache.get(self.id, || self.orig_expr.evaluate(batch))
     }
 
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         self.orig_expr.children()
     }
 
@@ -441,12 +456,13 @@ fn prune_expr_cols(expr: &PhysicalExprRef) -> (PhysicalExprRef, Vec<usize>) {
 
                 let mapped_idx = *used_cols_ref.entry(col.index()).or_insert(new_idx);
                 let mapped_col: PhysicalExprRef = Arc::new(Column::new(col.name(), mapped_idx));
-                Ok(Transformed::Yes(mapped_col))
+                Ok(Transformed::yes(mapped_col))
             } else {
-                Ok(Transformed::Yes(expr))
+                Ok(Transformed::yes(expr))
             }
         })
-        .unwrap();
+        .unwrap()
+        .data;
 
     let mapped_cols: Vec<usize> = used_cols
         .take()

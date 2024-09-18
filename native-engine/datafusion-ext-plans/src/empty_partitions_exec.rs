@@ -25,19 +25,21 @@ use async_trait::async_trait;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_expr::PhysicalSortExpr,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::MetricsSet, DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
-        Partitioning::UnknownPartitioning, RecordBatchStream, SendableRecordBatchStream,
-        Statistics,
+        metrics::MetricsSet, DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
+        Partitioning::UnknownPartitioning, PlanProperties, RecordBatchStream,
+        SendableRecordBatchStream, Statistics,
     },
 };
 use futures::Stream;
+use once_cell::sync::OnceCell;
 
 #[derive(Debug, Clone)]
 pub struct EmptyPartitionsExec {
     schema: SchemaRef,
     num_partitions: usize,
+    props: OnceCell<PlanProperties>,
 }
 
 impl EmptyPartitionsExec {
@@ -45,6 +47,7 @@ impl EmptyPartitionsExec {
         Self {
             schema,
             num_partitions,
+            props: OnceCell::new(),
         }
     }
 }
@@ -61,6 +64,10 @@ impl DisplayAs for EmptyPartitionsExec {
 
 #[async_trait]
 impl ExecutionPlan for EmptyPartitionsExec {
+    fn name(&self) -> &str {
+        "EmptyPartitionsExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -69,15 +76,17 @@ impl ExecutionPlan for EmptyPartitionsExec {
         self.schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        UnknownPartitioning(self.num_partitions)
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                UnknownPartitioning(self.num_partitions),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![]
     }
 

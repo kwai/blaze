@@ -197,8 +197,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         Ok(ColumnarValue::Array(imported_array))
     }
 
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        self.params.clone()
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+        self.params.iter().collect()
     }
 
     fn with_new_children(

@@ -33,11 +33,10 @@ use datafusion::{
         physical_plan::FileScanConfig,
     },
     error::DataFusionError,
-    execution::context::ExecutionProps,
-    logical_expr::{BuiltinScalarFunction, ColumnarValue, Operator},
+    logical_expr::{ColumnarValue, Operator, ScalarUDF, Volatility},
     physical_expr::{
         expressions::{in_list, LikeExpr, SCAndExpr, SCOrExpr},
-        functions, ScalarFunctionExpr,
+        ScalarFunctionExpr,
     },
     physical_plan::{
         expressions as phys_expr,
@@ -48,6 +47,7 @@ use datafusion::{
         union::UnionExec,
         ColumnStatistics, ExecutionPlan, Partitioning, PhysicalExpr, Statistics,
     },
+    prelude::create_udf,
 };
 use datafusion_ext_commons::downcast_any;
 use datafusion_ext_exprs::{
@@ -116,7 +116,7 @@ fn bind(
         let new_children = expr_in
             .children()
             .iter()
-            .map(|child_expr| bind(child_expr.clone(), input_schema))
+            .map(|&child_expr| bind(child_expr.clone(), input_schema))
             .collect::<Result<Vec<_>, DataFusionError>>()?;
         Ok(expr_in.with_new_children(new_children)?)
     }
@@ -804,74 +804,75 @@ impl From<&protobuf::BoundReference> for Column {
     }
 }
 
-impl From<&protobuf::ScalarFunction> for BuiltinScalarFunction {
-    fn from(f: &protobuf::ScalarFunction) -> BuiltinScalarFunction {
+impl From<protobuf::ScalarFunction> for Arc<ScalarUDF> {
+    fn from(f: protobuf::ScalarFunction) -> Self {
+        use datafusion::functions as f;
         use protobuf::ScalarFunction;
+
         match f {
-            ScalarFunction::Sqrt => Self::Sqrt,
-            ScalarFunction::Sin => Self::Sin,
-            ScalarFunction::Cos => Self::Cos,
-            ScalarFunction::Tan => Self::Tan,
-            ScalarFunction::Asin => Self::Asin,
-            ScalarFunction::Acos => Self::Acos,
-            ScalarFunction::Atan => Self::Atan,
-            ScalarFunction::Exp => Self::Exp,
-            ScalarFunction::Log => Self::Log,
-            ScalarFunction::Ln => Self::Ln,
-            ScalarFunction::Log10 => Self::Log10,
-            ScalarFunction::Floor => Self::Floor,
-            ScalarFunction::Ceil => Self::Ceil,
-            ScalarFunction::Round => Self::Round,
-            ScalarFunction::Trunc => Self::Trunc,
-            ScalarFunction::Abs => Self::Abs,
-            ScalarFunction::OctetLength => Self::OctetLength,
-            ScalarFunction::Concat => Self::Concat,
-            ScalarFunction::Lower => Self::Lower,
-            ScalarFunction::Upper => Self::Upper,
-            ScalarFunction::Trim => Self::Trim,
-            ScalarFunction::Ltrim => Self::Ltrim,
-            ScalarFunction::Rtrim => Self::Rtrim,
-            ScalarFunction::ToTimestamp => Self::ToTimestamp,
-            ScalarFunction::Array => Self::MakeArray,
-            // ScalarFunction::NullIf => todo!(),
-            ScalarFunction::DatePart => Self::DatePart,
-            ScalarFunction::DateTrunc => Self::DateTrunc,
-            ScalarFunction::Md5 => Self::MD5,
-            ScalarFunction::Sha224 => Self::SHA224,
-            ScalarFunction::Sha256 => Self::SHA256,
-            ScalarFunction::Sha384 => Self::SHA384,
-            ScalarFunction::Sha512 => Self::SHA512,
-            ScalarFunction::Digest => Self::Digest,
-            ScalarFunction::ToTimestampMillis => Self::ToTimestampMillis,
-            ScalarFunction::Log2 => Self::Log2,
-            ScalarFunction::Signum => Self::Signum,
-            ScalarFunction::Ascii => Self::Ascii,
-            ScalarFunction::BitLength => Self::BitLength,
-            ScalarFunction::Btrim => Self::Btrim,
-            ScalarFunction::CharacterLength => Self::CharacterLength,
-            ScalarFunction::Chr => Self::Chr,
-            ScalarFunction::ConcatWithSeparator => Self::ConcatWithSeparator,
-            ScalarFunction::InitCap => Self::InitCap,
-            ScalarFunction::Left => Self::Left,
-            ScalarFunction::Lpad => Self::Lpad,
-            ScalarFunction::Random => Self::Random,
-            ScalarFunction::RegexpReplace => Self::RegexpReplace,
-            ScalarFunction::Repeat => Self::Repeat,
-            ScalarFunction::Replace => Self::Replace,
-            ScalarFunction::Reverse => Self::Reverse,
-            ScalarFunction::Right => Self::Right,
-            ScalarFunction::Rpad => Self::Rpad,
-            ScalarFunction::SplitPart => Self::SplitPart,
-            ScalarFunction::StartsWith => Self::StartsWith,
-            ScalarFunction::Strpos => Self::Strpos,
-            ScalarFunction::Substr => Self::Substr,
-            ScalarFunction::ToHex => Self::ToHex,
-            ScalarFunction::ToTimestampMicros => Self::ToTimestampMicros,
-            ScalarFunction::ToTimestampSeconds => Self::ToTimestampSeconds,
-            ScalarFunction::Now => Self::Now,
-            ScalarFunction::Translate => Self::Translate,
-            ScalarFunction::RegexpMatch => Self::RegexpMatch,
-            ScalarFunction::Coalesce => Self::Coalesce,
+            ScalarFunction::Sqrt => f::math::sqrt(),
+            ScalarFunction::Sin => f::math::sin(),
+            ScalarFunction::Cos => f::math::cos(),
+            ScalarFunction::Tan => f::math::tan(),
+            ScalarFunction::Asin => f::math::asin(),
+            ScalarFunction::Acos => f::math::acos(),
+            ScalarFunction::Atan => f::math::atan(),
+            ScalarFunction::Exp => f::math::exp(),
+            ScalarFunction::Log => f::math::log(),
+            ScalarFunction::Ln => f::math::ln(),
+            ScalarFunction::Log10 => f::math::log10(),
+            ScalarFunction::Floor => f::math::floor(),
+            ScalarFunction::Ceil => f::math::ceil(),
+            ScalarFunction::Round => f::math::round(),
+            ScalarFunction::Trunc => f::math::trunc(),
+            ScalarFunction::Abs => f::math::abs(),
+            ScalarFunction::OctetLength => f::string::octet_length(),
+            ScalarFunction::Concat => f::string::concat(),
+            ScalarFunction::Lower => f::string::lower(),
+            ScalarFunction::Upper => f::string::upper(),
+            ScalarFunction::Trim => f::string::btrim(),
+            ScalarFunction::Ltrim => f::string::ltrim(),
+            ScalarFunction::Rtrim => f::string::rtrim(),
+            ScalarFunction::ToTimestamp => f::datetime::to_timestamp(),
+            ScalarFunction::NullIf => f::core::nullif(),
+            ScalarFunction::DatePart => f::datetime::date_part(),
+            ScalarFunction::DateTrunc => f::datetime::date_trunc(),
+            ScalarFunction::Md5 => f::crypto::md5(),
+            ScalarFunction::Sha224 => f::crypto::sha224(),
+            ScalarFunction::Sha256 => f::crypto::sha256(),
+            ScalarFunction::Sha384 => f::crypto::sha384(),
+            ScalarFunction::Sha512 => f::crypto::sha512(),
+            ScalarFunction::Digest => f::crypto::digest(),
+            ScalarFunction::ToTimestampMillis => f::datetime::to_timestamp_millis(),
+            ScalarFunction::Log2 => f::math::log2(),
+            ScalarFunction::Signum => f::math::signum(),
+            ScalarFunction::Ascii => f::string::ascii(),
+            ScalarFunction::BitLength => f::string::bit_length(),
+            ScalarFunction::Btrim => f::string::btrim(),
+            ScalarFunction::CharacterLength => f::unicode::character_length(),
+            ScalarFunction::Chr => f::string::chr(),
+            ScalarFunction::ConcatWithSeparator => f::string::concat_ws(),
+            ScalarFunction::InitCap => f::string::initcap(),
+            ScalarFunction::Left => f::unicode::left(),
+            ScalarFunction::Lpad => f::unicode::lpad(),
+            ScalarFunction::Random => f::math::random(),
+            ScalarFunction::RegexpReplace => f::regex::regexp_replace(),
+            ScalarFunction::Repeat => f::string::repeat(),
+            ScalarFunction::Replace => f::string::replace(),
+            ScalarFunction::Reverse => f::unicode::reverse(),
+            ScalarFunction::Right => f::unicode::right(),
+            ScalarFunction::Rpad => f::unicode::rpad(),
+            ScalarFunction::SplitPart => f::string::split_part(),
+            ScalarFunction::StartsWith => f::string::starts_with(),
+            ScalarFunction::Strpos => f::unicode::strpos(),
+            ScalarFunction::Substr => f::unicode::substr(),
+            ScalarFunction::ToHex => f::string::to_hex(),
+            ScalarFunction::ToTimestampMicros => f::datetime::to_timestamp_micros(),
+            ScalarFunction::ToTimestampSeconds => f::datetime::to_timestamp_seconds(),
+            ScalarFunction::Now => f::datetime::now(),
+            ScalarFunction::Translate => f::unicode::translate(),
+            ScalarFunction::RegexpMatch => f::regex::regexp_match(),
+            ScalarFunction::Coalesce => f::core::coalesce(),
             ScalarFunction::SparkExtFunctions => {
                 unreachable!()
             }
@@ -998,20 +999,26 @@ fn try_parse_physical_expr(
                     .map(|x| try_parse_physical_expr(x, input_schema))
                     .collect::<Result<Vec<_>, _>>()?;
 
-                let execution_props = ExecutionProps::new();
-                let fun_expr = if scalar_function == protobuf::ScalarFunction::SparkExtFunctions {
-                    datafusion_ext_functions::create_spark_ext_function(&e.name)?
+                let scalar_udf = if scalar_function == protobuf::ScalarFunction::SparkExtFunctions {
+                    let fun = datafusion_ext_functions::create_spark_ext_function(&e.name)?;
+                    Arc::new(create_udf(
+                        "spark_ext_function",
+                        args.iter()
+                            .map(|e| e.data_type(input_schema))
+                            .collect::<Result<Vec<_>, _>>()?,
+                        Arc::new(convert_required!(e.return_type)?),
+                        Volatility::Volatile,
+                        fun,
+                    ))
                 } else {
-                    functions::create_physical_fun(&(&scalar_function).into(), &execution_props)?
+                    let scalar_udf: Arc<ScalarUDF> = scalar_function.into();
+                    scalar_udf
                 };
-
                 Arc::new(ScalarFunctionExpr::new(
-                    &e.name,
-                    fun_expr,
+                    scalar_udf.name(),
+                    scalar_udf.clone(),
                     args,
                     convert_required!(e.return_type)?,
-                    None,
-                    false,
                 ))
             }
             ExprType::SparkUdfWrapperExpr(e) => Arc::new(SparkUDFWrapperExpr::try_new(
@@ -1153,6 +1160,7 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
                 .map(|v| v.try_into())
                 .collect::<Result<Vec<_>, _>>()?,
             range: val.range.as_ref().map(|v| v.try_into()).transpose()?,
+            statistics: None,
             extensions: None,
         })
     }

@@ -76,16 +76,18 @@ pub fn prune_columns(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalExprRef>,
     let mapped_exprs: Vec<PhysicalExprRef> = exprs
         .iter()
         .map(|expr| {
-            expr.clone().transform_down(&|node: PhysicalExprRef| {
-                Ok(Transformed::Yes(
-                    if let Some(column) = node.as_any().downcast_ref::<Column>() {
-                        let mapped_idx = required_columns_mapping[&column.index()];
-                        Arc::new(Column::new(column.name(), mapped_idx))
-                    } else {
-                        node
-                    },
-                ))
-            })
+            expr.clone()
+                .transform_down(&|node: PhysicalExprRef| {
+                    Ok(Transformed::yes(
+                        if let Some(column) = node.as_any().downcast_ref::<Column>() {
+                            let mapped_idx = required_columns_mapping[&column.index()];
+                            Arc::new(Column::new(column.name(), mapped_idx))
+                        } else {
+                            node
+                        },
+                    ))
+                })
+                .map(|r| r.data)
         })
         .collect::<Result<_>>()?;
 

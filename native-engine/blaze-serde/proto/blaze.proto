@@ -215,7 +215,7 @@ enum ScalarFunction {
   Sqrt=17;
   Tan=18;
   Trunc=19;
-  Array=20;
+  NullIf=20;
   RegexpMatch=21;
   BitLength=22;
   Btrim=23;

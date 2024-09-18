@@ -26,17 +26,19 @@ use arrow::{
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::PhysicalSortExpr,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{
     batch_size, slim_bytes::SlimBytes, streams::coalesce_stream::CoalesceInput,
 };
 use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
+use once_cell::sync::OnceCell;
 
 use crate::{
     agg::{
@@ -58,6 +60,7 @@ pub struct AggExec {
     input: Arc<dyn ExecutionPlan>,
     agg_ctx: Arc<AggContext>,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl AggExec {
@@ -82,11 +85,16 @@ impl AggExec {
             input,
             agg_ctx,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 }
 
 impl ExecutionPlan for AggExec {
+    fn name(&self) -> &str {
+        "AggExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -95,16 +103,18 @@ impl ExecutionPlan for AggExec {
         self.agg_ctx.output_schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(
@@ -115,6 +125,7 @@ impl ExecutionPlan for AggExec {
             input: children[0].clone(),
             agg_ctx: self.agg_ctx.clone(),
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }))
     }
 

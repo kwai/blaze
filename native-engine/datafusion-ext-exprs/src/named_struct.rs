@@ -105,8 +105,8 @@ impl PhysicalExpr for NamedStructExpr {
         Ok(ColumnarValue::Array(named_struct))
     }
 
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        self.values.clone()
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+        self.values.iter().collect()
     }
 
     fn with_new_children(

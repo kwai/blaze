@@ -18,16 +18,18 @@ use arrow::datatypes::{DataType, SchemaRef};
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, PhysicalExprRef, PhysicalSortExpr},
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, StreamExt, TryStreamExt};
 use itertools::Itertools;
+use once_cell::sync::OnceCell;
 
 use crate::{
     common::{
@@ -44,6 +46,7 @@ pub struct FilterExec {
     input: Arc<dyn ExecutionPlan>,
     predicates: Vec<PhysicalExprRef>,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl FilterExec {
@@ -66,6 +69,7 @@ impl FilterExec {
             input,
             predicates,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 
@@ -85,6 +89,10 @@ impl DisplayAs for FilterExec {
 }
 
 impl ExecutionPlan for FilterExec {
+    fn name(&self) -> &str {
+        "FilterExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -93,16 +101,18 @@ impl ExecutionPlan for FilterExec {
         self.input.schema()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.input.output_ordering()
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(

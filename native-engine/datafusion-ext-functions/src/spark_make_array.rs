@@ -118,6 +118,7 @@ fn array_array(args: &[ArrayRef]) -> Result<ArrayRef> {
                 output_scalars.push(ScalarValue::List(ScalarValue::new_list(
                     &row_scalars,
                     data_type,
+                    true,
                 )));
             }
             ScalarValue::iter_to_array(output_scalars)?

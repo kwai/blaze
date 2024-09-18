@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::compute::{day_dyn, month_dyn, year_dyn};
+use arrow::compute::{date_part, DatePart};
 use datafusion::{common::Result, physical_plan::ColumnarValue};
 
 pub fn spark_year(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let input = args[0].clone().into_array(1)?;
-    Ok(ColumnarValue::Array(year_dyn(&input)?))
+    Ok(ColumnarValue::Array(date_part(&input, DatePart::Year)?))
 }
 
 pub fn spark_month(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let input = args[0].clone().into_array(1)?;
-    Ok(ColumnarValue::Array(month_dyn(&input)?))
+    Ok(ColumnarValue::Array(date_part(&input, DatePart::Month)?))
 }
 
 pub fn spark_day(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     let input = args[0].clone().into_array(1)?;
-    Ok(ColumnarValue::Array(day_dyn(&input)?))
+    Ok(ColumnarValue::Array(date_part(&input, DatePart::Day)?))
 }
 
 #[cfg(test)]

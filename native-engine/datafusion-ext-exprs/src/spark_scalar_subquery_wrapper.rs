@@ -113,7 +113,7 @@ impl PhysicalExpr for SparkScalarSubqueryWrapperExpr {
         result.cloned()
     }
 
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         vec![]
     }
 

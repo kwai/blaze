@@ -498,7 +498,11 @@ impl TryInto<datafusion::scalar::ScalarValue> for &protobuf::ScalarValue {
                     .map(|val| val.try_into())
                     .collect::<Result<Vec<_>, _>>()?;
                 let scalar_type: DataType = pb_scalar_type.try_into()?;
-                ScalarValue::List(ScalarValue::new_list(&typechecked_values, &scalar_type))
+                ScalarValue::List(ScalarValue::new_list(
+                    &typechecked_values,
+                    &scalar_type,
+                    true,
+                ))
             }
             protobuf::scalar_value::Value::NullValue(v) => {
                 match v.datatype.as_ref().expect("missing scalar data type") {
@@ -633,6 +637,7 @@ impl TryInto<ScalarValue> for &protobuf::ScalarListValue {
         Ok(ScalarValue::List(ScalarValue::new_list(
             &values,
             &element_scalar_type,
+            true,
         )))
     }
 }
