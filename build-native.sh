@@ -15,10 +15,20 @@ else
 fi
 
 checksum() {
+    # Determine whether to use md5sum or md5
+    if command -v md5sum >/dev/null 2>&1; then
+        hash_cmd="md5sum"
+    elif command -v md5 >/dev/null 2>&1; then
+        hash_cmd="md5 -r" # Use md5 -r for macOS to match md5sum format
+    else
+        echo "Neither md5sum nor md5 is available."
+        exit 1
+    fi
+
     find Cargo.toml Cargo.lock native-engine target/$profile/libblaze."$libsuffix" | \
-        xargs md5sum 2>&1 | \
+        xargs $hash_cmd 2>&1 | \
         sort -k1 | \
-        md5sum
+        $hash_cmd
 }
 
 checksum_cache_file="./.build-checksum_$profile-"$libsuffix".cache"
