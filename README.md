@@ -54,29 +54,36 @@ To build Blaze, please follow the steps below:
 The native execution lib is written in Rust. So you're required to install Rust (nightly) first for
 compilation. We recommend you to use [rustup](https://rustup.rs/).
 
-2. Install JDK+Maven
+2. Install Protobuf
+
+Ensure `protoc` is available in PATH environment. protobuf can be installed via linux system package
+manager (or Homebrew on mac), or manually download and build from https://github.com/protocolbuffers/protobuf/releases .
+
+3. Install JDK+Maven
 
 Blaze has been well tested on jdk8 and maven3.5, should work fine with higher versions.
 
-3. Check out the source code.
+4. Check out the source code.
 
 ```shell
 git clone git@github.com:blaze-init/blaze.git
 cd blaze
 ```
 
-4. Build the project.
+5. Build the project.
 
-_Specify shims package of which spark version that you would like to run on._
-_Currently we have supported these shims:
+Specify shims package of which spark version that you would like to run on.
+
+Currently we have supported these shims:
+
 * spark303 - for spark3.0.x
 * spark313 - for spark3.1.x
 * spark324 - for spark3.2.x
 * spark333 - for spark3.3.x
 * spark351 - for spark3.5.x.
 
-_You could either build Blaze in dev mode for debugging or in release mode to unlock the full potential of
-Blaze._
+You could either build Blaze in pre mode for debugging or in release mode to unlock the full potential of
+Blaze.
 
 ```shell
 SHIM=spark333 # or spark303/spark313/spark320/spark324/spark333/spark351
@@ -89,7 +96,7 @@ directory.
 
 ## Build with docker
 
-_You can use the following command to build a centos-7 compatible release:_
+You can use the following command to build a centos-7 compatible release:
 ```shell
 SHIM=spark333 MODE=release ./release-docker.sh
 ```
