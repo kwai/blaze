@@ -24,7 +24,9 @@ import com.thoughtworks.enableIf
 
 case object NativeSortMergeJoinExecProvider {
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   def provide(
       left: SparkPlan,
       right: SparkPlan,

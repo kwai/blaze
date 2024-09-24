@@ -48,7 +48,7 @@ case class NativeBroadcastJoinExec(
   override val condition: Option[Expression] = None
 
   @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override def buildSide: org.apache.spark.sql.catalyst.optimizer.BuildSide =
     broadcastSide match {
@@ -63,7 +63,7 @@ case class NativeBroadcastJoinExec(
   }
 
   @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override def requiredChildDistribution = {
     import org.apache.spark.sql.catalyst.plans.physical.BroadcastDistribution
@@ -80,19 +80,19 @@ case class NativeBroadcastJoinExec(
   }
 
   @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override def supportCodegen: Boolean = false
 
   @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override def inputRDDs() = {
     throw new NotImplementedError("NativeBroadcastJoin dose not support codegen")
   }
 
   @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override protected def prepareRelation(
       ctx: org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext)
@@ -100,7 +100,9 @@ case class NativeBroadcastJoinExec(
     throw new NotImplementedError("NativeBroadcastJoin dose not support codegen")
   }
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildrenInternal(
       newLeft: SparkPlan,
       newRight: SparkPlan): SparkPlan =

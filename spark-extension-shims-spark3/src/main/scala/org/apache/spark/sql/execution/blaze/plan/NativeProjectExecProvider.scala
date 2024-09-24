@@ -21,7 +21,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import com.thoughtworks.enableIf
 
 case object NativeProjectExecProvider {
-  @enableIf(Seq("spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
   def provide(
       projectList: Seq[NamedExpression],
       child: SparkPlan,

@@ -29,7 +29,9 @@ case class NativeGenerateExec(
     override val child: SparkPlan)
     extends NativeGenerateBase(generator, requiredChildOutput, outer, generatorOutput, child) {
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 

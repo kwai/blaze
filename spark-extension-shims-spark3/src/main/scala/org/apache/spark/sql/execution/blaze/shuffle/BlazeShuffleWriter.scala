@@ -22,6 +22,8 @@ import com.thoughtworks.enableIf
 class BlazeShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
     extends BlazeShuffleWriterBase[K, V](metrics) {
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override def getPartitionLengths(): Array[Long] = partitionLengths
 }

@@ -48,12 +48,12 @@ case class NativeAggExec(
     with BaseAggregateExec {
 
   @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override val requiredChildDistributionExpressions: Option[Seq[Expression]] =
     theRequiredChildDistributionExpressions
 
-  @enableIf(Seq("spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.3", "spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
   override val initialInputBufferOffset: Int = theInitialInputBufferOffset
 
   override def output: Seq[Attribute] =
@@ -65,15 +65,21 @@ case class NativeAggExec(
           ExprId.apply(NativeAggBase.AGG_BUF_COLUMN_EXPR_ID))
     }
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override def isStreaming: Boolean = false
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override def numShufflePartitions: Option[Int] = None
 
   override def resultExpressions: Seq[NamedExpression] = output
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 

@@ -42,7 +42,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       ifPartitionNotExists: Boolean,
       outputColumnNames: Seq[String],
       metrics: Map[String, SQLMetric]): InsertIntoHiveTable = {
-    new BlazeInsertIntoHiveTable303(
+    new BlazeInsertIntoHiveTable30(
       table,
       partition,
       query,
@@ -52,7 +52,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       metrics)
   }
 
-  @enableIf(Seq("spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
   override protected def getInsertIntoHiveTableCommand(
       table: CatalogTable,
       partition: Map[String, Option[String]],
@@ -61,7 +61,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       ifPartitionNotExists: Boolean,
       outputColumnNames: Seq[String],
       metrics: Map[String, SQLMetric]): InsertIntoHiveTable = {
-    new BlazeInsertIntoHiveTable351(
+    new BlazeInsertIntoHiveTable34(
       table,
       partition,
       query,
@@ -71,7 +71,9 @@ case class NativeParquetInsertIntoHiveTableExec(
       metrics)
   }
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
@@ -82,7 +84,7 @@ case class NativeParquetInsertIntoHiveTableExec(
   @enableIf(
     Seq("spark-3.0", "spark-3.1", "spark-3.2", "spark-3.3").contains(
       System.getProperty("blaze.shim")))
-  class BlazeInsertIntoHiveTable303(
+  class BlazeInsertIntoHiveTable30(
       table: CatalogTable,
       partition: Map[String, Option[String]],
       query: LogicalPlan,
@@ -200,8 +202,8 @@ case class NativeParquetInsertIntoHiveTableExec(
     }
   }
 
-  @enableIf(Seq("spark-3.5").contains(System.getProperty("blaze.shim")))
-  class BlazeInsertIntoHiveTable351(
+  @enableIf(Seq("spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  class BlazeInsertIntoHiveTable34(
       table: CatalogTable,
       partition: Map[String, Option[String]],
       query: LogicalPlan,
