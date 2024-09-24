@@ -261,9 +261,9 @@
     </profile>
 
     <profile>
-      <id>spark303</id>
+      <id>spark-3.0</id>
       <properties>
-        <shimName>spark303</shimName>
+        <shimName>spark-3.0</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -275,9 +275,9 @@
     </profile>
 
     <profile>
-      <id>spark313</id>
+      <id>spark-3.1</id>
       <properties>
-        <shimName>spark313</shimName>
+        <shimName>spark-3.1</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -289,23 +289,9 @@
     </profile>
 
     <profile>
-      <id>spark320</id>
+      <id>spark-3.2</id>
       <properties>
-        <shimName>spark320</shimName>
-        <shimPkg>spark-extension-shims-spark3</shimPkg>
-        <javaVersion>1.8</javaVersion>
-        <scalaVersion>2.12</scalaVersion>
-        <scalaLongVersion>2.12.15</scalaLongVersion>
-        <scalaTestVersion>3.2.9</scalaTestVersion>
-        <scalafmtVersion>3.0.0</scalafmtVersion>
-        <sparkVersion>3.2.0</sparkVersion>
-      </properties>
-    </profile>
-
-    <profile>
-      <id>spark324</id>
-      <properties>
-        <shimName>spark324</shimName>
+        <shimName>spark-3.2</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -317,9 +303,9 @@
     </profile>
 
     <profile>
-      <id>spark333</id>
+      <id>spark-3.3</id>
       <properties>
-        <shimName>spark333</shimName>
+        <shimName>spark-3.3</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -331,16 +317,16 @@
     </profile>
 
     <profile>
-      <id>spark351</id>
+      <id>spark-3.5</id>
       <properties>
-        <shimName>spark351</shimName>
+        <shimName>spark-3.5</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
         <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
-        <sparkVersion>3.5.1</sparkVersion>
+        <sparkVersion>3.5.2</sparkVersion>
       </properties>
     </profile>
   </profiles>

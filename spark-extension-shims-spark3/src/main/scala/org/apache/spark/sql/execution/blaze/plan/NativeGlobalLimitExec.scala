@@ -22,13 +22,11 @@ import com.thoughtworks.enableIf
 case class NativeGlobalLimitExec(limit: Long, override val child: SparkPlan)
     extends NativeGlobalLimitBase(limit, child) {
 
-  @enableIf(
-    Seq("spark320", "spark324", "spark333", "spark351").contains(
-      System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

@@ -25,9 +25,7 @@ import com.thoughtworks.enableIf
 
 case object NativeShuffledHashJoinExecProvider {
 
-  @enableIf(
-    Seq("spark320", "spark324", "spark333", "spark351").contains(
-      System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
   def provide(
       left: SparkPlan,
       right: SparkPlan,
@@ -74,7 +72,7 @@ case object NativeShuffledHashJoinExecProvider {
     NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
   }
 
-  @enableIf(Seq("spark313").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.1").contains(System.getProperty("blaze.shim")))
   def provide(
       left: SparkPlan,
       right: SparkPlan,
@@ -120,7 +118,7 @@ case object NativeShuffledHashJoinExecProvider {
     NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
   def provide(
       left: SparkPlan,
       right: SparkPlan,

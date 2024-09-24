@@ -148,28 +148,26 @@ case class NativeShuffleExchangeExec(
   // for databricks testing
   val causedBroadcastJoinBuildOOM = false
 
-  @enableIf(Seq("spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.5").contains(System.getProperty("blaze.shim")))
   override def advisoryPartitionSize: Option[Long] = None
 
   // If users specify the num partitions via APIs like `repartition`, we shouldn't change it.
   // For `SinglePartition`, it requires exactly one partition and we can't change it either.
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
   override def canChangeNumPartitions: Boolean =
     outputPartitioning != SinglePartition
 
   @enableIf(
-    Seq("spark313", "spark320", "spark324", "spark333", "spark351").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override def shuffleOrigin =
     org.apache.spark.sql.execution.exchange.ENSURE_REQUIREMENTS
 
-  @enableIf(
-    Seq("spark320", "spark324", "spark333", "spark351").contains(
-      System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark303", "spark313").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

@@ -22,7 +22,7 @@ import com.thoughtworks.enableIf
 
 object InterceptedValidateSparkPlan extends Logging {
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
   def validate(plan: SparkPlan): Unit = {
     import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
     import org.apache.spark.sql.execution.blaze.plan.NativeRenameColumnsBase
@@ -70,13 +70,12 @@ object InterceptedValidateSparkPlan extends Logging {
     }
   }
 
-  @enableIf(Seq("spark303", "spark313", "spark320").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
   def validate(plan: SparkPlan): Unit = {
-    throw new UnsupportedOperationException(
-      "validate is not supported in spark 3.0.3 or 3.1.3 or spark 3.2.0")
+    throw new UnsupportedOperationException("validate is not supported in spark 3.0.3 or 3.1.3")
   }
 
-  @enableIf(Seq("spark324", "spark333", "spark351").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
   private def errorOnInvalidBroadcastQueryStage(plan: SparkPlan): Unit = {
     import org.apache.spark.sql.execution.adaptive.InvalidAQEPlanException
     throw InvalidAQEPlanException("Invalid broadcast query stage", plan)
