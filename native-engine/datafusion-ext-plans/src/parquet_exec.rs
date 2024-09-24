@@ -365,11 +365,12 @@ impl ParquetFileReaderFactory for FsReaderFactory {
         _metadata_size_hint: Option<usize>,
         metrics: &ExecutionPlanMetricsSet,
     ) -> Result<Box<dyn AsyncFileReader + Send>> {
+        let internal_reader = Arc::new(InternalFileReader::try_new(
+            self.fs_provider.clone(),
+            file_meta.object_meta.clone(),
+        )?);
         let reader = ParquetFileReaderRef(Arc::new(ParquetFileReader {
-            internal_reader: InternalFileReader::new(
-                self.fs_provider.clone(),
-                file_meta.object_meta.clone(),
-            ),
+            internal_reader,
             metrics: ParquetFileMetrics::new(
                 partition_index,
                 file_meta
@@ -385,7 +386,7 @@ impl ParquetFileReaderFactory for FsReaderFactory {
 }
 
 struct ParquetFileReader {
-    internal_reader: InternalFileReader,
+    internal_reader: Arc<InternalFileReader>,
     metrics: ParquetFileMetrics,
 }
 
@@ -397,7 +398,7 @@ impl ParquetFileReader {
         self.internal_reader.get_meta()
     }
 
-    fn get_internal_reader(&self) -> InternalFileReader {
+    fn get_internal_reader(&self) -> Arc<InternalFileReader> {
         self.internal_reader.clone()
     }
 }

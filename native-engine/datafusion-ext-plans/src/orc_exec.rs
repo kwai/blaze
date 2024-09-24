@@ -211,10 +211,10 @@ struct OrcOpener {
 
 impl FileOpener for OrcOpener {
     fn open(&self, file_meta: FileMeta) -> Result<FileOpenFuture> {
-        let reader = OrcFileReaderRef(Arc::new(InternalFileReader::new(
+        let reader = OrcFileReaderRef(Arc::new(InternalFileReader::try_new(
             self.fs_provider.clone(),
             file_meta.object_meta.clone(),
-        )));
+        )?));
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
