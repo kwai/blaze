@@ -11,8 +11,7 @@ services:
       - ./../../:/blaze:rw
       - ./../../target-docker:/blaze/target:rw
       - ./../../target-docker/spark-extension-target:/blaze/spark-extension/target:rw
-      - ./../../target-docker/spark-extension-shims-spark303-target:/blaze/spark-extension-shims-spark303/target:rw
-      - ./../../target-docker/spark-extension-shims-spark241kwaiae-target:/blaze/spark-extension-shims-spark241kwaiae/target:rw
+      - ./../../target-docker/spark-extension-shims-spark-3.0-target:/blaze/spark-extension-shims-spark-3.0/target:rw
       - ./../../target-docker/build-helper-proto-target:/blaze/build-helper/proto/target:rw
       - ./../../target-docker/build-helper-assembly-target:/blaze/build-helper/assembly/target:rw
     environment:

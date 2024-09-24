@@ -76,17 +76,17 @@ Specify shims package of which spark version that you would like to run on.
 
 Currently we have supported these shims:
 
-* spark303 - for spark3.0.x
-* spark313 - for spark3.1.x
-* spark324 - for spark3.2.x
-* spark333 - for spark3.3.x
-* spark351 - for spark3.5.x.
+* spark-3.0 - for spark3.0.x
+* spark-3.1 - for spark3.1.x
+* spark-3.2 - for spark3.2.x
+* spark-3.3 - for spark3.3.x
+* spark-3.5 - for spark3.5.x.
 
 You could either build Blaze in pre mode for debugging or in release mode to unlock the full potential of
 Blaze.
 
 ```shell
-SHIM=spark333 # or spark303/spark313/spark320/spark324/spark333/spark351
+SHIM=spark-3.3 # or spark-3.0/spark-3.1/spark-3.2/spark-3.3/spark-3.5
 MODE=release # or pre
 mvn package -P"${SHIM}" -P"${MODE}"
 ```
@@ -98,7 +98,7 @@ directory.
 
 You can use the following command to build a centos-7 compatible release:
 ```shell
-SHIM=spark333 MODE=release ./release-docker.sh
+SHIM=spark-3.3 MODE=release ./release-docker.sh
 ```
 
 ## Run Spark Job with Blaze Accelerator
@@ -132,10 +132,10 @@ comparison with vanilla Spark 3.3.3. The benchmark result shows that Blaze save 
 Stay tuned and join us for more upcoming thrilling numbers.
 
 TPC-DS Query time: ([How can I run TPC-DS benchmark?](./tpcds/README.md))
-![20240701-query-time-tpcds](./benchmark-results/spark333-vs-blaze300-query-time-20240701.png)
+![20240701-query-time-tpcds](./benchmark-results/spark-3.3-vs-blaze300-query-time-20240701.png)
 
 TPC-H Query time:
-![20240701-query-time-tpch](./benchmark-results/spark333-vs-blaze300-query-time-20240701-tpch.png)
+![20240701-query-time-tpch](./benchmark-results/spark-3.3-vs-blaze300-query-time-20240701-tpch.png)
 
 We also encourage you to benchmark Blaze and share the results with us. 🤗
 

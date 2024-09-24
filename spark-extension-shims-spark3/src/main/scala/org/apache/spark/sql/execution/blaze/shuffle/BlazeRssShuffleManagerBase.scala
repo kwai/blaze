@@ -76,7 +76,7 @@ abstract class BlazeRssShuffleManagerBase(conf: SparkConf) extends ShuffleManage
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V]
 
   @enableIf(
-    Seq("spark313", "spark320", "spark324", "spark333", "spark351").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override def getReader[K, C](
       handle: ShuffleHandle,
@@ -108,7 +108,7 @@ abstract class BlazeRssShuffleManagerBase(conf: SparkConf) extends ShuffleManage
     }
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
   override def getReader[K, C](
       handle: ShuffleHandle,
       startPartition: Int,
@@ -123,7 +123,7 @@ abstract class BlazeRssShuffleManagerBase(conf: SparkConf) extends ShuffleManage
     }
   }
 
-  @enableIf(Seq("spark303").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
   override def getReaderForRange[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,
