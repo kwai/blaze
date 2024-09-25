@@ -19,10 +19,11 @@ use std::io::{BufReader, Read, Take, Write};
 
 use arrow::{array::ArrayRef, datatypes::SchemaRef};
 use blaze_jni_bridge::{conf, conf::StringConf, is_jni_bridge_inited};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use datafusion::common::Result;
 use datafusion_ext_commons::{
     df_execution_err,
-    io::{read_len, read_one_batch, write_len, write_one_batch},
+    io::{read_one_batch, write_one_batch},
 };
 use once_cell::sync::OnceCell;
 
@@ -40,6 +41,8 @@ unsafe impl<W: Write> Send for IpcCompressionWriter<W> {}
 impl<W: Write> IpcCompressionWriter<W> {
     pub fn new(output: W) -> Self {
         let mut shared_buf = VecBuffer::default();
+        shared_buf.inner_mut().extend_from_slice(&[0u8; 4]);
+
         let block_writer = IoCompressionWriter::new_with_configured_codec(shared_buf.writer());
         Self {
             output,
@@ -49,8 +52,18 @@ impl<W: Write> IpcCompressionWriter<W> {
         }
     }
 
-    /// Write a batch, returning uncompressed bytes size
+    pub fn set_output(&mut self, output: W) {
+        assert!(
+            self.block_empty,
+            "IpcCompressionWriter must be empty while changing output"
+        );
+        self.output = output;
+    }
+
     pub fn write_batch(&mut self, num_rows: usize, cols: &[ArrayRef]) -> Result<()> {
+        if num_rows == 0 {
+            return Ok(());
+        }
         write_one_batch(num_rows, cols, &mut self.block_writer)?;
         self.block_empty = false;
 
@@ -67,11 +80,15 @@ impl<W: Write> IpcCompressionWriter<W> {
             self.block_writer.finish()?;
 
             // write
-            write_len(self.shared_buf.inner().len(), &mut self.output)?;
+            let block_len = self.shared_buf.inner().len() - 4;
+            self.shared_buf.inner_mut()[0..4]
+                .as_mut()
+                .write_u32::<LittleEndian>(block_len as u32)?;
             self.output.write_all(self.shared_buf.inner())?;
-            self.shared_buf.inner_mut().clear();
 
             // open next buf
+            self.shared_buf.inner_mut().clear();
+            self.shared_buf.inner_mut().extend_from_slice(&[0u8; 4]);
             self.block_writer =
                 IoCompressionWriter::new_with_configured_codec(self.shared_buf.writer());
             self.block_empty = true;
@@ -114,7 +131,7 @@ impl<R: Read> IpcCompressionReader<R> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
                 match std::mem::take(&mut self.0.input) {
                     InputState::BlockStart(mut input) => {
-                        let block_len = match read_len(&mut input) {
+                        let block_len = match input.read_u32::<LittleEndian>() {
                             Ok(block_len) => block_len,
                             Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
                                 return Ok(0);

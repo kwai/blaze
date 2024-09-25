@@ -24,7 +24,7 @@ import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArr
 
 import com.thoughtworks.enableIf
 
-abstract class BlazeRssShuffleManagerBase(conf: SparkConf) extends ShuffleManager with Logging {
+abstract class BlazeRssShuffleManagerBase(_conf: SparkConf) extends ShuffleManager with Logging {
   override def registerShuffle[K, V, C](
       shuffleId: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle

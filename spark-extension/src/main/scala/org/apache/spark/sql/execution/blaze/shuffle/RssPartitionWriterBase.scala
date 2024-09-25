@@ -22,4 +22,5 @@ trait RssPartitionWriterBase {
   def flush(): Unit
   def close(): Unit
   def getPartitionLengthMap: Array[Long]
+  def stop(): Unit
 }

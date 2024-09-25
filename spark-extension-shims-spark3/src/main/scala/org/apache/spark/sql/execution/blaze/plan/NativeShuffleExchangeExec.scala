@@ -31,6 +31,8 @@ import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleWriter
+import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleWriter
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
@@ -133,6 +135,19 @@ case class NativeShuffleExchangeExec(
           mapId,
           context,
           createMetricsReporter(context))
+
+        if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeCelebornShuffleManager]) {
+          return writer
+            .asInstanceOf[BlazeCelebornShuffleWriter[_, _]]
+            .nativeRssShuffleWrite(
+              rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+              dep,
+              mapId.toInt,
+              context,
+              partition,
+              numPartitions)
+        }
+
         writer
           .asInstanceOf[BlazeShuffleWriter[_, _]]
           .nativeShuffleWrite(

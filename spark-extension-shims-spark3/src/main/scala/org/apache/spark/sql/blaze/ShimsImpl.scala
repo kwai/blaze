@@ -95,8 +95,9 @@ import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowBase
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
 import org.apache.spark.sql.execution.blaze.plan._
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReader
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
+import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
@@ -427,6 +428,20 @@ class ShimsImpl extends Shims with Logging {
   override def getShuffleWriteExec(
       input: pb.PhysicalPlanNode,
       nativeOutputPartitioning: pb.PhysicalHashRepartition.Builder): pb.PhysicalPlanNode = {
+
+    if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeCelebornShuffleManager]) {
+      return pb.PhysicalPlanNode
+        .newBuilder()
+        .setRssShuffleWriter(
+          pb.RssShuffleWriterExecNode
+            .newBuilder()
+            .setInput(input)
+            .setOutputPartitioning(nativeOutputPartitioning)
+            .buildPartial()
+        ) // shuffleId is not set at the moment, will be set in ShuffleWriteProcessor
+        .build()
+    }
+
     pb.PhysicalPlanNode
       .newBuilder()
       .setShuffleWriter(
@@ -604,7 +619,7 @@ class ShimsImpl extends Shims with Logging {
             JniBridge.resourcesMap.put(
               jniResourceId,
               () => {
-                reader.asInstanceOf[BlazeBlockStoreShuffleReader[_, _]].readIpc()
+                reader.asInstanceOf[BlazeBlockStoreShuffleReaderBase[_, _]].readIpc()
               })
 
             pb.PhysicalPlanNode
@@ -762,7 +777,7 @@ class ShimsImpl extends Shims with Logging {
             JniBridge.resourcesMap.put(
               jniResourceId,
               () => {
-                reader.asInstanceOf[BlazeBlockStoreShuffleReader[_, _]].readIpc()
+                reader.asInstanceOf[BlazeBlockStoreShuffleReaderBase[_, _]].readIpc()
               })
 
             pb.PhysicalPlanNode
