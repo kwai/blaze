@@ -45,7 +45,8 @@ class BlazeBlockStoreShuffleReader[K, C](
 
   override def readBlocks(): Iterator[(BlockId, InputStream)] = {
     @enableIf(
-      Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+      Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+        System.getProperty("blaze.shim")))
     def fetchIterator = new ShuffleBlockFetcherIterator(
       context,
       blockManager.blockStoreClient,

@@ -80,13 +80,14 @@ Currently we have supported these shims:
 * spark-3.1 - for spark3.1.x
 * spark-3.2 - for spark3.2.x
 * spark-3.3 - for spark3.3.x
+* spark-3.4 - for spark3.4.x
 * spark-3.5 - for spark3.5.x.
 
 You could either build Blaze in pre mode for debugging or in release mode to unlock the full potential of
 Blaze.
 
 ```shell
-SHIM=spark-3.3 # or spark-3.0/spark-3.1/spark-3.2/spark-3.3/spark-3.5
+SHIM=spark-3.3 # or spark-3.0/spark-3.1/spark-3.2/spark-3.3/spark-3.4/spark-3.5
 MODE=release # or pre
 mvn package -P"${SHIM}" -P"${MODE}"
 ```

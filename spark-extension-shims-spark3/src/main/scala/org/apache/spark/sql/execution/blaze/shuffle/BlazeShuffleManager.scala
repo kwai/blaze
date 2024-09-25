@@ -48,7 +48,9 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     sortShuffleManager.registerShuffle(shuffleId, dependency)
   }
 
-  @enableIf(Seq("spark-3.2", "spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @enableIf(
+    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override def getReader[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,
@@ -63,7 +65,8 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 
       @enableIf(Seq("spark-3.2").contains(System.getProperty("blaze.shim")))
       def shuffleMergeFinalized = baseShuffleHandle.dependency.shuffleMergeFinalized
-      @enableIf(Seq("spark-3.3", "spark-3.5").contains(System.getProperty("blaze.shim")))
+      @enableIf(
+        Seq("spark-3.3", "spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
       def shuffleMergeFinalized = baseShuffleHandle.dependency.isShuffleMergeFinalizedMarked
 
       val (blocksByAddress, canEnableBatchFetch) =

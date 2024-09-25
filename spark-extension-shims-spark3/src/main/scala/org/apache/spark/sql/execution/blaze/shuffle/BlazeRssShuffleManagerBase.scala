@@ -76,7 +76,7 @@ abstract class BlazeRssShuffleManagerBase(conf: SparkConf) extends ShuffleManage
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V]
 
   @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.5").contains(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
   override def getReader[K, C](
       handle: ShuffleHandle,

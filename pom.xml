@@ -318,7 +318,21 @@
         <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
-        <sparkVersion>3.3.3</sparkVersion>
+        <sparkVersion>3.3.4</sparkVersion>
+      </properties>
+    </profile>
+
+    <profile>
+      <id>spark-3.4</id>
+      <properties>
+        <shimName>spark-3.4</shimName>
+        <shimPkg>spark-extension-shims-spark3</shimPkg>
+        <javaVersion>1.8</javaVersion>
+        <scalaVersion>2.12</scalaVersion>
+        <scalaLongVersion>2.12.15</scalaLongVersion>
+        <scalaTestVersion>3.2.9</scalaTestVersion>
+        <scalafmtVersion>3.0.0</scalafmtVersion>
+        <sparkVersion>3.4.3</sparkVersion>
       </properties>
     </profile>
 
@@ -332,7 +346,7 @@
         <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
-        <sparkVersion>3.5.2</sparkVersion>
+        <sparkVersion>3.5.3</sparkVersion>
       </properties>
     </profile>
   </profiles>
