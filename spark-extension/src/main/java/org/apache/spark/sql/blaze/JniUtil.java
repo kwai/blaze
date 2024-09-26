@@ -21,7 +21,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.WritableByteChannel;
-
 import org.apache.hadoop.fs.ByteBufferPositionedReadable;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -30,6 +29,7 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 public class JniUtil {
     static ReadImpl readImpl;
     static ReadImpl readFallback = new ReadFailback();
+
     static {
         try {
             readImpl = new ReadUsingByteBufferPositionedReadable();
@@ -37,6 +37,7 @@ public class JniUtil {
             readImpl = readFallback;
         }
     }
+
     public static void readFullyFromFSDataInputStream(FSDataInputStream in, long pos, ByteBuffer buf)
             throws IOException {
         try {
