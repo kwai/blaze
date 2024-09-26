@@ -19,49 +19,49 @@ use std::{ops::Range, sync::Arc};
 
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
-use datafusion::common::DataFusionError;
+use datafusion::common::Result;
 use datafusion_ext_commons::{
     df_execution_err,
-    hadoop_fs::{FsDataInputStream, FsProvider},
+    hadoop_fs::{Fs, FsDataInputStream, FsProvider},
 };
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
 
-#[derive(Clone)]
 pub struct InternalFileReader {
-    fs_provider: Arc<FsProvider>,
+    fs: Fs,
     meta: ObjectMeta,
+    path: String,
     input: OnceCell<Arc<FsDataInputStream>>,
 }
 
 impl InternalFileReader {
-    pub fn new(fs_provider: Arc<FsProvider>, meta: ObjectMeta) -> Self {
-        Self {
-            fs_provider,
+    pub fn try_new(fs_provider: Arc<FsProvider>, meta: ObjectMeta) -> Result<Self> {
+        let path = BASE64_URL_SAFE_NO_PAD
+            .decode(meta.location.filename().expect("missing filename"))
+            .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            .or_else(|_| {
+                let filename = meta.location.filename();
+                df_execution_err!("cannot decode filename: {filename:?}")
+            })?;
+        let fs = fs_provider.provide(&path)?;
+
+        Ok(Self {
+            fs,
             meta,
+            path,
             input: OnceCell::new(),
-        }
+        })
     }
 
-    fn get_input(&self) -> datafusion::common::Result<Arc<FsDataInputStream>> {
+    fn get_input(&self) -> Result<Arc<FsDataInputStream>> {
         let input = self
             .input
-            .get_or_try_init(|| {
-                let path = BASE64_URL_SAFE_NO_PAD
-                    .decode(self.meta.location.filename().expect("missing filename"))
-                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-                    .or_else(|_| {
-                        let filename = self.meta.location.filename();
-                        df_execution_err!("cannot decode filename: {filename:?}")
-                    })?;
-                let fs = self.fs_provider.provide(&path)?;
-                Ok(Arc::new(fs.open(&path)?))
-            })
-            .map_err(|e| DataFusionError::External(e))?;
+            .get_or_try_init(|| self.fs.open(&self.path))
+            .or_else(|e| df_execution_err!("cannot get FSDataInputStream: ${e:?}"))?;
         Ok(input.clone())
     }
 
-    pub fn read_fully(&self, range: Range<usize>) -> datafusion::common::Result<Bytes> {
+    pub fn read_fully(&self, range: Range<usize>) -> Result<Bytes> {
         let mut bytes = vec![0u8; range.len()];
         self.get_input()?
             .read_fully(range.start as u64, &mut bytes)?;

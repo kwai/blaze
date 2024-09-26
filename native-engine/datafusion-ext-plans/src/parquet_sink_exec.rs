@@ -466,7 +466,7 @@ impl PartWriter {
         let fs = parquet_sink_context.fs_provider.provide(&part_file)?;
         let bytes_written = Count::new();
         let rows_written = Count::new();
-        let fout = fs.create(&part_file)?;
+        let fout = Arc::into_inner(fs.create(&part_file)?).expect("Arc::into_inner");
         let data_writer = FSDataWriter::new(fout, &bytes_written);
         let parquet_writer = ArrowWriter::try_new(
             data_writer,

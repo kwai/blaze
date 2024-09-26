@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
 use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
     jni_new_string,
@@ -21,6 +23,7 @@ use jni::objects::{GlobalRef, JObject};
 
 use crate::df_execution_err;
 
+#[derive(Clone)]
 pub struct Fs {
     fs: GlobalRef,
     io_time: Time,
@@ -48,7 +51,7 @@ impl Fs {
         Ok(())
     }
 
-    pub fn open(&self, path: &str) -> Result<FsDataInputStream> {
+    pub fn open(&self, path: &str) -> Result<Arc<FsDataInputStream>> {
         let _timer = self.io_time.timer();
         let path_str = jni_new_string!(path)?;
         let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
@@ -57,13 +60,13 @@ impl Fs {
             HadoopFileSystem(self.fs.as_obj()).open(path.as_obj()) -> JObject
         )?;
 
-        Ok(FsDataInputStream {
+        Ok(Arc::new(FsDataInputStream {
             stream: jni_new_global_ref!(fin.as_obj())?,
             io_time: self.io_time.clone(),
-        })
+        }))
     }
 
-    pub fn create(&self, path: &str) -> Result<FsDataOutputStream> {
+    pub fn create(&self, path: &str) -> Result<Arc<FsDataOutputStream>> {
         let _timer = self.io_time.timer();
         let path_str = jni_new_string!(path)?;
         let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
@@ -72,10 +75,10 @@ impl Fs {
             HadoopFileSystem(self.fs.as_obj()).create(path.as_obj()) -> JObject
         )?;
 
-        Ok(FsDataOutputStream {
+        Ok(Arc::new(FsDataOutputStream {
             stream: jni_new_global_ref!(fin.as_obj())?,
             io_time: self.io_time.clone(),
-        })
+        }))
     }
 }
 
