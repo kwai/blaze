@@ -20,7 +20,7 @@
 [![master-ce7-builds](https://github.com/blaze-init/blaze/actions/workflows/build-ce7-releases.yml/badge.svg?branch=master)](https://github.com/blaze-init/blaze/actions/workflows/build-ce7-releases.yml)
 
 The Blaze accelerator for Apache Spark leverages native vectorized execution to accelerate query processing. It combines
-the power of the [Apache Arrow-DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the Spark distributed
+the power of the [Apache DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the Spark distributed
 computing framework.
 
 Blaze takes a fully optimized physical plan from Spark, mapping it into DataFusion's execution plan, and performs native
@@ -66,7 +66,7 @@ Blaze has been well tested on jdk8 and maven3.5, should work fine with higher ve
 4. Check out the source code.
 
 ```shell
-git clone git@github.com:blaze-init/blaze.git
+git clone git@github.com:kwai/blaze.git
 cd blaze
 ```
 
