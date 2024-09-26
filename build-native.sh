@@ -39,6 +39,7 @@ echo "old build-checksum: $old_checksum"
 echo "new build-checksum: $new_checksum"
 
 if [ "$new_checksum" != "$old_checksum" ]; then
+    export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=native"}
     echo "Running cargo fix..."
     cargo fix --all --allow-dirty --allow-staged --allow-no-vcs
 
@@ -46,7 +47,6 @@ if [ "$new_checksum" != "$old_checksum" ]; then
     cargo fmt --all -q --
 
     echo "Building native with [$profile] profile..."
-    export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=native"}
     cargo build --profile="$profile" --verbose --locked --frozen
 else
     echo "native-engine source code and built libraries not modified, no need to rebuild"
