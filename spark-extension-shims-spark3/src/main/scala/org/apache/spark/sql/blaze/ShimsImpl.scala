@@ -698,7 +698,7 @@ class ShimsImpl extends Shims with Logging {
             JniBridge.resourcesMap.put(
               jniResourceId,
               () => {
-                reader.asInstanceOf[BlazeBlockStoreShuffleReader[_, _]].readIpc()
+                reader.asInstanceOf[BlazeBlockStoreShuffleReaderBase[_, _]].readIpc()
               })
 
             pb.PhysicalPlanNode
