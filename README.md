@@ -126,6 +126,22 @@ spark.executor.memoryOverhead 4096
 spark-sql -f tpcds/q01.sql
 ```
 
+## Integrate with Apache Celeborn
+Blaze has supported Celeborn integration now, use the following configurations to enable shuffling with Celeborn:
+
+```properties
+
+# change celeborn endpoint and storage directory to the correct location
+spark.shuffle.manager org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+spark.serializer org.apache.spark.serializer.KryoSerializer
+spark.celeborn.master.endpoints localhost:9097
+spark.celeborn.client.spark.shuffle.writer hash
+spark.celeborn.client.push.replicate.enabled false
+spark.celeborn.storage.availableTypes HDFS
+spark.celeborn.storage.hdfs.dir hdfs:///home/celeborn
+spark.sql.adaptive.localShuffleReader.enabled false
+```
+
 ## Performance
 
 Check [Benchmark Results](./benchmark-results/20240701-blaze300.md) with the latest date for the performance
