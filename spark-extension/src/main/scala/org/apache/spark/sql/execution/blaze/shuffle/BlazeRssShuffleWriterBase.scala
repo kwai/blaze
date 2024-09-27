@@ -17,6 +17,8 @@ package org.apache.spark.sql.execution.blaze.shuffle
 
 import java.util.UUID
 
+import scala.collection.mutable
+
 import org.apache.spark.SparkEnv
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.blaze.JniBridge
@@ -33,6 +35,8 @@ import org.blaze.protobuf.RssShuffleWriterExecNode
 
 abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends BlazeShuffleWriterBase[K, V](metrics) {
+
+  private val partitionWriters = mutable.ArrayBuffer[RssPartitionWriterBase]()
 
   def getRssPartitionWriter(
       handle: ShuffleHandle,
@@ -53,6 +57,7 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
     if (rssShuffleWriterObject == null) {
       throw new RuntimeException("cannot get RssPartitionWriter")
     }
+    partitionWriters.append(rssShuffleWriterObject)
 
     try {
       val jniResourceId = s"RssPartitionWriter:${UUID.randomUUID().toString}"
@@ -81,5 +86,10 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
       rssShuffleWriterObject.getPartitionLengthMap,
       mapId)
     mapStatus
+  }
+
+  override def stop(success: Boolean): Option[MapStatus] = {
+    partitionWriters.foreach(_.stop())
+    super.stop(success)
   }
 }

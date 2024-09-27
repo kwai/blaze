@@ -137,10 +137,11 @@ impl BufferedData {
             return Ok(());
         }
         let mut iter = self.into_sorted_batches(partitioning)?;
+        let mut writer = IpcCompressionWriter::new(RssWriter::new(rss_partition_writer.clone(), 0));
 
         while (iter.cur_part_id() as usize) < partitioning.partition_count() {
             let cur_part_id = iter.cur_part_id();
-            let mut writer = IpcCompressionWriter::new(RssWriter::new(
+            writer.set_output(RssWriter::new(
                 rss_partition_writer.clone(),
                 cur_part_id as usize,
             ));
