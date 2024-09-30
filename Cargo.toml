@@ -72,7 +72,7 @@ datafusion-expr = { git = "https://github.com/harveyyue/datafusion.git", rev = "
 datafusion-execution = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
 datafusion-optimizer = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
 datafusion-physical-expr = { git = "https://github.com/harveyyue/datafusion.git", rev = "d33877f8fbc7c57de946dc6081b2b357eedd0df9"}
-orc-rust = { git = "https://github.com/harveyyue/datafusion-orc.git", rev = "507600707a08c4bf7e2605a7ea40a5941456779d"}
+orc-rust = { git = "https://github.com/harveyyue/datafusion-orc.git", rev = "f0ff4bcffa762b62e8c57ed4c2f6e1a9547b4abb"}
 
 # arrow: branch=v50-blaze
 arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "7471d70f7ae6edd5d4da82b7d966a8ede720e499"}

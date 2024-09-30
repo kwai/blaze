@@ -221,9 +221,13 @@ impl FileOpener for OrcOpener {
         let schema_adapter = SchemaAdapter::new(projected_schema);
 
         Ok(Box::pin(async move {
-            let builder = ArrowReaderBuilder::try_new_async(reader)
+            let mut builder = ArrowReaderBuilder::try_new_async(reader)
                 .await
                 .map_err(ArrowError::from)?;
+            if let Some(range) = file_meta.range.clone() {
+                let range = range.start as usize..range.end as usize;
+                builder = builder.with_file_byte_range(range);
+            }
             let file_schema = builder.schema();
             let (schema_mapping, adapted_projections) = schema_adapter.map_schema(&file_schema)?;
             // Offset by 1 since index 0 is the root
