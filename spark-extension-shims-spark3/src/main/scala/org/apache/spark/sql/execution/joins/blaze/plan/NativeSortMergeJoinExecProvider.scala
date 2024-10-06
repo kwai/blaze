@@ -79,6 +79,7 @@ case object NativeSortMergeJoinExecProvider {
       rightKeys: Seq[Expression],
       joinType: JoinType): NativeSortMergeJoinBase = {
 
+    import org.apache.spark.sql.catalyst.expressions.Attribute
     import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 
     case class NativeSortMergeJoinExec(
@@ -89,11 +90,13 @@ case object NativeSortMergeJoinExecProvider {
         joinType: JoinType)
         extends NativeSortMergeJoinBase(left, right, leftKeys, rightKeys, joinType) {
 
-      override val (output, outputPartitioning, outputOrdering) = {
-        val smj =
-          SortMergeJoinExec(leftKeys, rightKeys, joinType, None, left, right, isSkewJoin = false)
-        (smj.output, smj.outputPartitioning, smj.outputOrdering)
-      }
+      private def smj: SortMergeJoinExec =
+        SortMergeJoinExec(leftKeys, rightKeys, joinType, None, left, right, isSkewJoin = false)
+
+      override def output: Seq[Attribute] = smj.output
+
+      override val (outputPartitioning, outputOrdering) =
+        (smj.outputPartitioning, smj.outputOrdering)
 
       override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
         copy(left = newChildren(0), right = newChildren(1))

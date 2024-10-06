@@ -83,6 +83,7 @@ case object NativeShuffledHashJoinExecProvider {
       joinType: JoinType,
       buildSide: BuildSide): NativeShuffledHashJoinBase = {
 
+    import org.apache.spark.sql.catalyst.expressions.SortOrder
     import org.apache.spark.sql.execution.blaze.plan.BuildLeft
     import org.apache.spark.sql.execution.blaze.plan.BuildRight
     import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
@@ -94,22 +95,19 @@ case object NativeShuffledHashJoinExecProvider {
         rightKeys: Seq[Expression],
         joinType: JoinType,
         buildSide: BuildSide)
-        extends NativeShuffledHashJoinBase(
-          left,
-          right,
-          leftKeys,
-          rightKeys,
-          joinType,
-          buildSide) {
+        extends NativeShuffledHashJoinBase(left, right, leftKeys, rightKeys, joinType, buildSide)
+        with org.apache.spark.sql.execution.joins.ShuffledJoin {
 
-      override val (output, outputPartitioning, outputOrdering) = {
+      override def condition: Option[Expression] = None
+
+      override def outputOrdering: Seq[SortOrder] = {
         val sparkBuildSide = buildSide match {
           case BuildLeft => org.apache.spark.sql.catalyst.optimizer.BuildLeft
           case BuildRight => org.apache.spark.sql.catalyst.optimizer.BuildRight
         }
         val shj =
           ShuffledHashJoinExec(leftKeys, rightKeys, joinType, sparkBuildSide, None, left, right)
-        (shj.output, shj.outputPartitioning, shj.outputOrdering)
+        shj.outputOrdering
       }
 
       override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
@@ -129,6 +127,7 @@ case object NativeShuffledHashJoinExecProvider {
       joinType: JoinType,
       buildSide: BuildSide): NativeShuffledHashJoinBase = {
 
+    import org.apache.spark.sql.catalyst.expressions.Attribute
     import org.apache.spark.sql.execution.blaze.plan.BuildLeft
     import org.apache.spark.sql.execution.blaze.plan.BuildRight
     import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
@@ -148,15 +147,18 @@ case object NativeShuffledHashJoinExecProvider {
           joinType,
           buildSide) {
 
-      override val (output, outputPartitioning, outputOrdering) = {
+      private def shj: ShuffledHashJoinExec = {
         val sparkBuildSide = buildSide match {
           case BuildLeft => org.apache.spark.sql.execution.joins.BuildLeft
           case BuildRight => org.apache.spark.sql.execution.joins.BuildRight
         }
-        val shj =
-          ShuffledHashJoinExec(leftKeys, rightKeys, joinType, sparkBuildSide, None, left, right)
-        (shj.output, shj.outputPartitioning, shj.outputOrdering)
+        ShuffledHashJoinExec(leftKeys, rightKeys, joinType, sparkBuildSide, None, left, right)
       }
+
+      override def output: Seq[Attribute] = shj.output
+
+      override val (outputPartitioning, outputOrdering) =
+        (shj.outputPartitioning, shj.outputOrdering)
 
       override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
         copy(left = newChildren(0), right = newChildren(1))
