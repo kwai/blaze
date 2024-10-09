@@ -16,7 +16,7 @@
   <properties>
     <revision>3.0.1-SNAPSHOT</revision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <arrowVersion>15.0.2</arrowVersion>
+    <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
     <hadoopClientApiVersion>3.4.0</hadoopClientApiVersion>
   </properties>

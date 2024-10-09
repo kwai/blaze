@@ -21,6 +21,7 @@ use std::{
 
 use arrow::{
     array::*,
+    compute::SortOptions,
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -95,7 +96,8 @@ impl PhysicalExpr for GetMapValueExpr {
                 let as_map_array = array.as_map();
                 let value_data = as_map_array.values().to_data();
                 let key = self.key.to_array()?;
-                let comparator = build_compare(as_map_array.keys(), &key)?;
+                let comparator =
+                    make_comparator(as_map_array.keys(), &key, SortOptions::default())?;
                 let mut mutable =
                     MutableArrayData::new(vec![&value_data], true, as_map_array.len());
 
@@ -125,8 +127,8 @@ impl PhysicalExpr for GetMapValueExpr {
         }
     }
 
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        vec![self.arg.clone()]
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+        vec![&self.arg]
     }
 
     fn with_new_children(
@@ -178,19 +180,21 @@ mod test {
         // Construct key and values
         let key_data = ArrayData::builder(DataType::Int32)
             .len(8)
-            .add_buffer(Buffer::from(&[0, 1, 2, 3, 4, 5, 6, 7].to_byte_slice()))
+            .add_buffer(Buffer::from_slice_ref(
+                &[0, 1, 2, 3, 4, 5, 6, 7].to_byte_slice(),
+            ))
             .build()
             .unwrap();
         let value_data = ArrayData::builder(DataType::UInt32)
             .len(8)
-            .add_buffer(Buffer::from(
+            .add_buffer(Buffer::from_slice_ref(
                 &[0u32, 10, 20, 0, 40, 0, 60, 70].to_byte_slice(),
             ))
-            .null_bit_buffer(Some(Buffer::from(&[0b11010110])))
+            .null_bit_buffer(Some(Buffer::from_slice_ref(&[0b11010110])))
             .build()
             .unwrap();
 
-        let entry_offsets = Buffer::from(&[0, 3, 6, 8].to_byte_slice());
+        let entry_offsets = Buffer::from_slice_ref(&[0, 3, 6, 8].to_byte_slice());
 
         let keys_field = Arc::new(Field::new("keys", DataType::Int32, false));
         let values_field = Arc::new(Field::new("values", DataType::UInt32, true));

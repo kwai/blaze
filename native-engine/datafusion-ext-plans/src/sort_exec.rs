@@ -36,11 +36,12 @@ use async_trait::async_trait;
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, PhysicalSortExpr},
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{
@@ -81,6 +82,7 @@ pub struct SortExec {
     exprs: Vec<PhysicalSortExpr>,
     fetch: Option<usize>,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl SortExec {
@@ -95,6 +97,7 @@ impl SortExec {
             exprs,
             fetch,
             metrics,
+            props: OnceCell::new(),
         }
     }
 }
@@ -112,6 +115,10 @@ impl DisplayAs for SortExec {
 }
 
 impl ExecutionPlan for SortExec {
+    fn name(&self) -> &str {
+        "SortExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -120,28 +127,29 @@ impl ExecutionPlan for SortExec {
         self.input.schema()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        Some(&self.exprs)
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(Arc::new(Self {
-            input: children[0].clone(),
-            exprs: self.exprs.clone(),
-            fetch: self.fetch,
-            metrics: ExecutionPlanMetricsSet::new(),
-        }))
+        Ok(Arc::new(Self::new(
+            children[0].clone(),
+            self.exprs.clone(),
+            self.fetch,
+        )))
     }
 
     fn execute(
@@ -1352,12 +1360,15 @@ mod test {
 mod fuzztest {
     use std::sync::Arc;
 
-    use arrow::{compute::SortOptions, record_batch::RecordBatch};
+    use arrow::{
+        array::{ArrayRef, UInt32Array},
+        compute::{concat_batches, SortOptions},
+        record_batch::RecordBatch,
+    };
     use datafusion::{
-        common::{Result, ScalarValue},
-        logical_expr::ColumnarValue,
-        physical_expr::{expressions::Column, math_expressions::random, PhysicalSortExpr},
-        physical_plan::{coalesce_batches::concat_batches, memory::MemoryExec},
+        common::Result,
+        physical_expr::{expressions::Column, PhysicalSortExpr},
+        physical_plan::memory::MemoryExec,
         prelude::{SessionConfig, SessionContext},
     };
 
@@ -1375,13 +1386,26 @@ mod fuzztest {
         let mut batches = vec![];
         let mut num_rows = 0;
         while num_rows < n {
-            let nulls = ScalarValue::Null
-                .to_array_of_size((n - num_rows).min(10000))
-                .unwrap();
-            let rand_key1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
-            let rand_key2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
-            let rand_val1 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
-            let rand_val2 = random(&[ColumnarValue::Array(nulls.clone())])?.into_array(0)?;
+            let rand_key1: ArrayRef = Arc::new(
+                std::iter::repeat_with(|| rand::random::<u32>())
+                    .take((n - num_rows).min(10000))
+                    .collect::<UInt32Array>(),
+            );
+            let rand_key2: ArrayRef = Arc::new(
+                std::iter::repeat_with(|| rand::random::<u32>())
+                    .take((n - num_rows).min(10000))
+                    .collect::<UInt32Array>(),
+            );
+            let rand_val1: ArrayRef = Arc::new(
+                std::iter::repeat_with(|| rand::random::<u32>())
+                    .take((n - num_rows).min(10000))
+                    .collect::<UInt32Array>(),
+            );
+            let rand_val2: ArrayRef = Arc::new(
+                std::iter::repeat_with(|| rand::random::<u32>())
+                    .take((n - num_rows).min(10000))
+                    .collect::<UInt32Array>(),
+            );
             let batch = RecordBatch::try_from_iter_with_nullable(vec![
                 ("k1", rand_key1, true),
                 ("k2", rand_key2, true),
@@ -1410,7 +1434,7 @@ mod fuzztest {
         )?);
         let sort = Arc::new(SortExec::new(input, sort_exprs.clone(), None));
         let output = datafusion::physical_plan::collect(sort, task_ctx.clone()).await?;
-        let a = concat_batches(&schema, &output, n)?;
+        let a = concat_batches(&schema, &output)?;
 
         let input = Arc::new(MemoryExec::try_new(
             &[batches.clone()],
@@ -1422,7 +1446,7 @@ mod fuzztest {
             input,
         ));
         let output = datafusion::physical_plan::collect(sort, task_ctx.clone()).await?;
-        let b = concat_batches(&schema, &output, n)?;
+        let b = concat_batches(&schema, &output)?;
 
         assert_eq!(a.num_rows(), b.num_rows());
         assert!(a == b);

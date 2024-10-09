@@ -29,12 +29,13 @@ use async_trait::async_trait;
 use datafusion::{
     common::{DataFusionError, JoinSide, Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{PhysicalExprRef, PhysicalSortExpr},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
         joins::utils::JoinOn,
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{
@@ -82,6 +83,7 @@ pub struct BroadcastJoinExec {
     is_built: bool, // true for BroadcastHashJoin, false for ShuffledHashJoin
     cached_build_hash_map_id: Option<String>,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl BroadcastJoinExec {
@@ -105,6 +107,7 @@ impl BroadcastJoinExec {
             is_built,
             cached_build_hash_map_id,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 
@@ -237,6 +240,10 @@ impl ExecuteWithColumnPruning for BroadcastJoinExec {
 }
 
 impl ExecutionPlan for BroadcastJoinExec {
+    fn name(&self) -> &str {
+        "BroadcastJoin"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -245,19 +252,21 @@ impl ExecutionPlan for BroadcastJoinExec {
         self.schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        match self.broadcast_side {
-            JoinSide::Left => self.right.output_partitioning(),
-            JoinSide::Right => self.left.output_partitioning(),
-        }
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                match self.broadcast_side {
+                    JoinSide::Left => self.right.output_partitioning().clone(),
+                    JoinSide::Right => self.left.output_partitioning().clone(),
+                },
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.left.clone(), self.right.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.left, &self.right]
     }
 
     fn with_new_children(

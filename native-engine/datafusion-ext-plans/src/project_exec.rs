@@ -21,16 +21,18 @@ use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use datafusion::{
     common::{Result, Statistics},
     execution::TaskContext,
-    physical_expr::{PhysicalExprRef, PhysicalSortExpr},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
 use futures::{stream::once, FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
+use once_cell::sync::OnceCell;
 
 use crate::{
     common::{
@@ -48,6 +50,7 @@ pub struct ProjectExec {
     input: Arc<dyn ExecutionPlan>,
     schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl ProjectExec {
@@ -73,6 +76,7 @@ impl ProjectExec {
             input,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 }
@@ -91,6 +95,10 @@ impl DisplayAs for ProjectExec {
 }
 
 impl ExecutionPlan for ProjectExec {
+    fn name(&self) -> &str {
+        "ProjectExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -99,16 +107,18 @@ impl ExecutionPlan for ProjectExec {
         self.schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        Partitioning::UnknownPartitioning(self.input.output_partitioning().partition_count())
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(
@@ -181,6 +191,7 @@ impl ExecuteWithColumnPruning for ProjectExec {
             expr: projection.iter().map(|&i| self.expr[i].clone()).collect(),
             schema: Arc::new(self.schema.project(projection)?),
             metrics: self.metrics.clone(),
+            props: OnceCell::new(),
         });
         projected_project.execute(partition, context)
     }

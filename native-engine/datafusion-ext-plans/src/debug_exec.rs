@@ -25,20 +25,22 @@ use async_trait::async_trait;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_expr::PhysicalSortExpr,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-        SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
 use futures::{Stream, StreamExt};
+use once_cell::sync::OnceCell;
 
 #[derive(Debug)]
 pub struct DebugExec {
     input: Arc<dyn ExecutionPlan>,
     debug_id: String,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl DebugExec {
@@ -47,6 +49,7 @@ impl DebugExec {
             input,
             debug_id,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }
     }
 }
@@ -59,6 +62,10 @@ impl DisplayAs for DebugExec {
 
 #[async_trait]
 impl ExecutionPlan for DebugExec {
+    fn name(&self) -> &str {
+        "DebugExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -67,16 +74,18 @@ impl ExecutionPlan for DebugExec {
         self.input.schema()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.input.output_ordering()
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(

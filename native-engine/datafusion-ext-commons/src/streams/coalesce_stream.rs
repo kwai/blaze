@@ -19,12 +19,14 @@ use std::{
 };
 
 use arrow::{
-    array::{make_array, new_empty_array, Array, ArrayRef, AsArray, Capacities, MutableArrayData},
+    array::{
+        make_array, new_empty_array, Array, ArrayRef, AsArray, Capacities, MutableArrayData,
+        RecordBatch, RecordBatchOptions,
+    },
     datatypes::{
         ArrowNativeType, BinaryType, ByteArrayType, LargeBinaryType, LargeUtf8Type, SchemaRef,
         Utf8Type,
     },
-    record_batch::{RecordBatch, RecordBatchOptions},
 };
 use arrow_schema::DataType;
 use datafusion::{

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(incomplete_features)]
+#![allow(internal_features)]
 #![feature(adt_const_params)]
 #![feature(core_intrinsics)]
 #![feature(get_mut_unchecked)]
@@ -50,6 +52,7 @@ pub mod agg;
 pub mod common;
 pub mod generate;
 pub mod joins;
+mod scan;
 mod shuffle;
 pub mod window;
 

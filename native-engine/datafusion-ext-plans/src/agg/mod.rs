@@ -38,7 +38,7 @@ use std::{
 use arrow::{array::*, datatypes::*};
 use datafusion::{
     common::{Result, ScalarValue},
-    logical_expr::aggregate_function,
+    // logical_expr::aggregate_function,
     physical_expr::PhysicalExpr,
 };
 use datafusion_ext_commons::df_execution_err;
@@ -196,6 +196,8 @@ pub fn create_agg(
     children: &[Arc<dyn PhysicalExpr>],
     input_schema: &SchemaRef,
 ) -> Result<Arc<dyn Agg>> {
+    use datafusion::logical_expr::type_coercion::aggregates::*;
+
     Ok(match agg_function {
         AggFunction::Count => {
             let return_type = DataType::Int64;
@@ -203,10 +205,12 @@ pub fn create_agg(
         }
         AggFunction::Sum => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = aggregate_function::AggregateFunction::return_type(
-                &aggregate_function::AggregateFunction::Sum,
-                &[arg_type],
-            )?;
+            let return_type = match arg_type {
+                DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
+                    DataType::Int64
+                }
+                other => sum_return_type(&other)?,
+            };
             Arc::new(sum::AggSum::try_new(
                 Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
                 return_type,
@@ -214,10 +218,7 @@ pub fn create_agg(
         }
         AggFunction::Avg => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = aggregate_function::AggregateFunction::return_type(
-                &aggregate_function::AggregateFunction::Avg,
-                &[arg_type],
-            )?;
+            let return_type = avg_return_type("avg", &arg_type)?;
             Arc::new(avg::AggAvg::try_new(
                 Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
                 return_type,

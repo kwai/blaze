@@ -21,17 +21,17 @@ use arrow::{
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+    physical_expr::{EquivalenceProperties, PhysicalExpr},
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
-        Partitioning::UnknownPartitioning,
-        SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{cast::cast, df_execution_err};
 use futures::{stream::once, StreamExt, TryStreamExt};
+use once_cell::sync::OnceCell;
 
 use crate::common::output::TaskOutputter;
 
@@ -41,6 +41,7 @@ pub struct ExpandExec {
     projections: Vec<Vec<Arc<dyn PhysicalExpr>>>,
     input: Arc<dyn ExecutionPlan>,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl ExpandExec {
@@ -68,6 +69,7 @@ impl ExpandExec {
             projections,
             input,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 }
@@ -79,6 +81,10 @@ impl DisplayAs for ExpandExec {
 }
 
 impl ExecutionPlan for ExpandExec {
+    fn name(&self) -> &str {
+        "ExpandExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -87,16 +93,18 @@ impl ExecutionPlan for ExpandExec {
         self.schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        UnknownPartitioning(0)
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(
@@ -108,6 +116,7 @@ impl ExecutionPlan for ExpandExec {
             projections: self.projections.clone(),
             input: children[0].clone(),
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }))
     }
 
@@ -386,7 +395,7 @@ mod test {
             "| 103.4       |",
             "| 0.6         |",
             "| 1.15        |",
-            "| 0.0         |",
+            "| -0.0        |",
             "| -1.7        |",
             "| -1.2        |",
             "| -0.29999995 |",

@@ -31,12 +31,12 @@ use datafusion::{
         file::properties::{EnabledStatistics, WriterProperties, WriterVersion},
         schema::{parser::parse_message_type, types::SchemaDescriptor},
     },
-    physical_expr::PhysicalSortExpr,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Metric, Partitioning,
-        SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        Metric, PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{
@@ -46,6 +46,7 @@ use datafusion_ext_commons::{
     hadoop_fs::{FsDataOutputStream, FsProvider},
 };
 use futures::{stream::once, StreamExt, TryStreamExt};
+use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::common::output::TaskOutputter;
@@ -57,6 +58,7 @@ pub struct ParquetSinkExec {
     num_dyn_parts: usize,
     props: Vec<(String, String)>,
     metrics: ExecutionPlanMetricsSet,
+    plan_props: OnceCell<PlanProperties>,
 }
 
 impl ParquetSinkExec {
@@ -72,6 +74,7 @@ impl ParquetSinkExec {
             num_dyn_parts,
             props,
             metrics: ExecutionPlanMetricsSet::new(),
+            plan_props: OnceCell::new(),
         }
     }
 }
@@ -83,6 +86,10 @@ impl DisplayAs for ParquetSinkExec {
 }
 
 impl ExecutionPlan for ParquetSinkExec {
+    fn name(&self) -> &str {
+        "ParquetSinkExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -91,16 +98,18 @@ impl ExecutionPlan for ParquetSinkExec {
         self.input.schema()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.plan_props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.input.output_ordering()
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(

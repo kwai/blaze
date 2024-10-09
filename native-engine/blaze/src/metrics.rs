@@ -39,7 +39,7 @@ pub fn update_spark_metric_node(
     )?;
 
     // update children nodes
-    for (i, child_plan) in execution_plan.children().iter().enumerate() {
+    for (i, &child_plan) in execution_plan.children().iter().enumerate() {
         let child_metric_node = jni_call!(
             SparkMetricNode(metric_node).getChild(i as i32) -> JObject
         )?;

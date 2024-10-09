@@ -19,18 +19,14 @@
 
 use std::{any::Any, fmt, fmt::Formatter, ops::Range, pin::Pin, sync::Arc};
 
-use arrow::{
-    array::{Array, ArrayRef, AsArray, ListArray},
-    datatypes::{DataType, SchemaRef},
-};
+use arrow::datatypes::SchemaRef;
 use blaze_jni_bridge::{
     conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
 };
 use bytes::Bytes;
 use datafusion::{
-    common::DataFusionError,
     datasource::physical_plan::{
-        parquet::{page_filter::PagePruningPredicate, ParquetOpener},
+        parquet::{page_filter::PagePruningAccessPlanFilter, ParquetOpener},
         FileMeta, FileScanConfig, FileStream, OnError, ParquetFileMetrics,
         ParquetFileReaderFactory,
     },
@@ -41,87 +37,28 @@ use datafusion::{
         errors::ParquetError,
         file::metadata::ParquetMetaData,
     },
+    physical_expr::EquivalenceProperties,
     physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
-        expressions::PhysicalSortExpr,
         metrics::{
             BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricValue, MetricsSet, Time,
         },
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Metric, Partitioning, PhysicalExpr,
-        RecordBatchStream, SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Metric, Partitioning,
+        PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
+use datafusion_ext_commons::{batch_size, hadoop_fs::FsProvider};
 use fmt::Debug;
 use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryStreamExt};
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use crate::common::{internal_file_reader::InternalFileReader, output::TaskOutputter};
-
-#[no_mangle]
-fn schema_adapter_cast_column(
-    col: &ArrayRef,
-    data_type: &DataType,
-) -> Result<ArrayRef, DataFusionError> {
-    macro_rules! handle_decimal {
-        ($s:ident, $t:ident, $tnative:ty, $prec:expr, $scale:expr) => {{
-            use arrow::{array::*, datatypes::*};
-            type DecimalBuilder = paste::paste! {[<$t Builder>]};
-            type IntType = paste::paste! {[<$s Type>]};
-
-            let col = col.as_primitive::<IntType>();
-            let mut decimal_builder = DecimalBuilder::new();
-            for i in 0..col.len() {
-                if col.is_valid(i) {
-                    decimal_builder.append_value(col.value(i) as $tnative);
-                } else {
-                    decimal_builder.append_null();
-                }
-            }
-            Ok(Arc::new(
-                decimal_builder
-                    .finish()
-                    .with_precision_and_scale($prec, $scale)?,
-            ))
-        }};
-    }
-    match data_type {
-        DataType::Decimal128(prec, scale) => match col.data_type() {
-            DataType::Int8 => handle_decimal!(Int8, Decimal128, i128, *prec, *scale),
-            DataType::Int16 => handle_decimal!(Int16, Decimal128, i128, *prec, *scale),
-            DataType::Int32 => handle_decimal!(Int32, Decimal128, i128, *prec, *scale),
-            DataType::Int64 => handle_decimal!(Int64, Decimal128, i128, *prec, *scale),
-            DataType::Decimal128(p, s) if p == prec && s == scale => Ok(col.clone()),
-            _ => df_execution_err!(
-                "schema_adapter_cast_column unsupported type: {:?} => {:?}",
-                col.data_type(),
-                data_type,
-            ),
-        },
-        DataType::List(to_field) => match col.data_type() {
-            DataType::List(_from_field) => {
-                let col = col.as_list::<i32>();
-                let from_inner = col.values();
-                let to_inner = schema_adapter_cast_column(from_inner, to_field.data_type())?;
-                Ok(Arc::new(ListArray::try_new(
-                    to_field.clone(),
-                    col.offsets().clone(),
-                    to_inner,
-                    col.nulls().cloned(),
-                )?))
-            }
-            _ => df_execution_err!(
-                "schema_adapter_cast_column unsupported type: {:?} => {:?}",
-                col.data_type(),
-                data_type,
-            ),
-        },
-        _ => datafusion_ext_commons::cast::cast_scan_input_array(col.as_ref(), data_type),
-    }
-}
+use crate::{
+    common::{internal_file_reader::InternalFileReader, output::TaskOutputter},
+    scan::BlazeSchemaAdapterFactory,
+};
 
 /// Execution plan for scanning one or more Parquet partitions
 #[derive(Debug, Clone)]
@@ -130,11 +67,11 @@ pub struct ParquetExec {
     base_config: FileScanConfig,
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
-    projected_output_ordering: Vec<Vec<PhysicalSortExpr>>,
     metrics: ExecutionPlanMetricsSet,
     predicate: Option<Arc<dyn PhysicalExpr>>,
     pruning_predicate: Option<Arc<PruningPredicate>>,
-    page_pruning_predicate: Option<Arc<PagePruningPredicate>>,
+    page_pruning_predicate: Option<Arc<PagePruningAccessPlanFilter>>,
+    props: OnceCell<PlanProperties>,
 }
 
 impl ParquetExec {
@@ -162,20 +99,13 @@ impl ParquetExec {
                     }
                 }
             })
-            .filter(|p| !p.allways_true());
+            .filter(|p| !p.always_true());
 
-        let page_pruning_predicate = predicate.as_ref().and_then(|predicate_expr| {
-            match PagePruningPredicate::try_new(predicate_expr, file_schema.clone()) {
-                Ok(pruning_predicate) => Some(Arc::new(pruning_predicate)),
-                Err(e) => {
-                    log::warn!("Could not create page pruning predicate: {}", e);
-                    predicate_creation_errors.add(1);
-                    None
-                }
-            }
-        });
+        let page_pruning_predicate = predicate
+            .as_ref()
+            .map(|p| Arc::new(PagePruningAccessPlanFilter::new(p, file_schema.clone())));
 
-        let (projected_schema, projected_statistics, projected_output_ordering) =
+        let (projected_schema, projected_statistics, _projected_output_ordering) =
             base_config.project();
 
         Self {
@@ -183,11 +113,11 @@ impl ParquetExec {
             base_config,
             projected_schema,
             projected_statistics,
-            projected_output_ordering,
             metrics,
             predicate,
             pruning_predicate,
             page_pruning_predicate,
+            props: OnceCell::new(),
         }
     }
 }
@@ -217,6 +147,10 @@ impl DisplayAs for ParquetExec {
 }
 
 impl ExecutionPlan for ParquetExec {
+    fn name(&self) -> &str {
+        "ParquetExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -225,24 +159,19 @@ impl ExecutionPlan for ParquetExec {
         Arc::clone(&self.projected_schema)
     }
 
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![]
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        Partitioning::UnknownPartitioning(self.base_config.file_groups.len())
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                Partitioning::UnknownPartitioning(self.base_config.file_groups.len()),
+                ExecutionMode::Bounded,
+            )
+        })
     }
-
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.projected_output_ordering
-            .first()
-            .map(|ordering| ordering.as_slice())
-    }
-
-    // in datafusion 20.0.0 ExecutionPlan trait not include relies_on_input_order
-    // fn relies_on_input_order(&self) -> bool {
-    //     false
-    // }
 
     fn with_new_children(
         self: Arc<Self>,
@@ -275,6 +204,7 @@ impl ExecutionPlan for ParquetExec {
         let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
         let fs_provider = Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time));
 
+        let schema_adapter_factory = Arc::new(BlazeSchemaAdapterFactory);
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,
             None => (0..self.base_config.file_schema.fields().len()).collect(),
@@ -299,6 +229,7 @@ impl ExecutionPlan for ParquetExec {
             reorder_filters: page_filtering_enabled,
             enable_page_index: page_filtering_enabled,
             enable_bloom_filter: bloom_filter_enabled,
+            schema_adapter_factory,
         };
 
         let mut file_stream =
@@ -434,7 +365,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
 
         let inner = self.0.clone();
         let meta_size = inner.get_meta().size;
-        let size_hint = Some(1048576);
+        let size_hint = None;
         let cache_slot = (move || {
             let mut metadata_cache = METADATA_CACHE.get_or_init(|| Mutex::new(Vec::new())).lock();
 

@@ -23,22 +23,24 @@ use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_st
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_expr::PhysicalSortExpr,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
         Partitioning::UnknownPartitioning,
-        SendableRecordBatchStream, Statistics,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::streams::ffi_stream::FFIReaderStream;
 use jni::objects::JObject;
+use once_cell::sync::OnceCell;
 
 pub struct FFIReaderExec {
     num_partitions: usize,
     schema: SchemaRef,
     export_iter_provider_resource_id: String,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl FFIReaderExec {
@@ -52,6 +54,7 @@ impl FFIReaderExec {
             export_iter_provider_resource_id,
             schema,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }
     }
 }
@@ -69,6 +72,10 @@ impl DisplayAs for FFIReaderExec {
 }
 
 impl ExecutionPlan for FFIReaderExec {
+    fn name(&self) -> &str {
+        "FFIReaderExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -77,15 +84,17 @@ impl ExecutionPlan for FFIReaderExec {
         self.schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        UnknownPartitioning(self.num_partitions)
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                UnknownPartitioning(self.num_partitions),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![]
     }
 

@@ -22,15 +22,16 @@ use datafusion::{
     arrow::datatypes::SchemaRef,
     error::{DataFusionError, Result},
     execution::context::TaskContext,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
-        expressions::PhysicalSortExpr,
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
-        Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
+        SendableRecordBatchStream, Statistics,
     },
 };
 use futures::{stream::once, TryStreamExt};
+use once_cell::sync::OnceCell;
 
 use crate::{
     common::timer_helper::RegisterTimer,
@@ -46,14 +47,11 @@ use crate::{
 /// order of the resulting partitions.
 #[derive(Debug)]
 pub struct RssShuffleWriterExec {
-    /// Input execution plan
     input: Arc<dyn ExecutionPlan>,
-    /// Partitioning scheme to use
     partitioning: Partitioning,
-    /// scala rssShuffleWriter
     pub rss_partition_writer_resource_id: String,
-    /// Metrics
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl DisplayAs for RssShuffleWriterExec {
@@ -68,26 +66,30 @@ impl DisplayAs for RssShuffleWriterExec {
 
 #[async_trait]
 impl ExecutionPlan for RssShuffleWriterExec {
-    /// Return a reference to Any that can be used for downcasting
+    fn name(&self) -> &str {
+        "RssShuffleWriterExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 
-    /// Get the schema for this execution plan
     fn schema(&self) -> SchemaRef {
         self.input.schema()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.partitioning.clone()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.partitioning.clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(
@@ -172,6 +174,7 @@ impl RssShuffleWriterExec {
             partitioning,
             rss_partition_writer_resource_id,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 }

@@ -21,27 +21,32 @@ use arrow::{datatypes::SchemaRef, error::ArrowError};
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
 use bytes::Bytes;
 use datafusion::{
-    datasource::physical_plan::{
-        FileMeta, FileOpenFuture, FileOpener, FileScanConfig, FileStream, SchemaAdapter,
+    datasource::{
+        physical_plan::{FileMeta, FileOpenFuture, FileOpener, FileScanConfig, FileStream},
+        schema_adapter::SchemaAdapter,
     },
     error::Result,
     execution::context::TaskContext,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
-        expressions::PhysicalSortExpr,
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Metric, Partitioning, PhysicalExpr,
-        RecordBatchStream, SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Metric, Partitioning,
+        PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::{batch_size, hadoop_fs::FsProvider};
+use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use futures_util::{stream::once, TryStreamExt};
+use once_cell::sync::OnceCell;
 use orc_rust::{
     arrow_reader::ArrowReaderBuilder, projection::ProjectionMask, reader::AsyncChunkReader,
 };
 
-use crate::common::{internal_file_reader::InternalFileReader, output::TaskOutputter};
+use crate::{
+    common::{internal_file_reader::InternalFileReader, output::TaskOutputter},
+    scan::BlazeSchemaAdapter,
+};
 
 /// Execution plan for scanning one or more Orc partitions
 #[derive(Debug, Clone)]
@@ -50,9 +55,9 @@ pub struct OrcExec {
     base_config: FileScanConfig,
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
-    projected_output_ordering: Vec<Vec<PhysicalSortExpr>>,
     metrics: ExecutionPlanMetricsSet,
     _predicate: Option<Arc<dyn PhysicalExpr>>,
+    props: OnceCell<PlanProperties>,
 }
 
 impl OrcExec {
@@ -65,7 +70,7 @@ impl OrcExec {
     ) -> Self {
         let metrics = ExecutionPlanMetricsSet::new();
 
-        let (projected_schema, projected_statistics, projected_output_ordering) =
+        let (projected_schema, projected_statistics, _projected_output_ordering) =
             base_config.project();
 
         Self {
@@ -73,9 +78,9 @@ impl OrcExec {
             base_config,
             projected_statistics,
             projected_schema,
-            projected_output_ordering,
             metrics,
             _predicate,
+            props: OnceCell::new(),
         }
     }
 }
@@ -101,6 +106,10 @@ impl DisplayAs for OrcExec {
 }
 
 impl ExecutionPlan for OrcExec {
+    fn name(&self) -> &str {
+        "OrcExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -109,17 +118,17 @@ impl ExecutionPlan for OrcExec {
         Arc::clone(&self.projected_schema)
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        Partitioning::UnknownPartitioning(self.base_config.file_groups.len())
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                Partitioning::UnknownPartitioning(self.base_config.file_groups.len()),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.projected_output_ordering
-            .first()
-            .map(|ordering| ordering.as_slice())
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![]
     }
 
@@ -218,18 +227,20 @@ impl FileOpener for OrcOpener {
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
-        let schema_adapter = SchemaAdapter::new(projected_schema);
+        let schema_adapter = BlazeSchemaAdapter::new(projected_schema);
 
         Ok(Box::pin(async move {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
                 .await
-                .map_err(ArrowError::from)?;
+                .or_else(|err| df_execution_err!("create orc reader error: {err}"))?;
             if let Some(range) = file_meta.range.clone() {
                 let range = range.start as usize..range.end as usize;
                 builder = builder.with_file_byte_range(range);
             }
             let file_schema = builder.schema();
-            let (schema_mapping, adapted_projections) = schema_adapter.map_schema(&file_schema)?;
+            let (schema_mapping, adapted_projections) =
+                schema_adapter.map_schema(file_schema.as_ref())?;
+
             // Offset by 1 since index 0 is the root
             let projection = adapted_projections
                 .iter()

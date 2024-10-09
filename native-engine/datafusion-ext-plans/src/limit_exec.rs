@@ -10,20 +10,22 @@ use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use datafusion::{
     common::Result,
     execution::context::TaskContext,
-    physical_expr::PhysicalSortExpr,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-        SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
 use futures::{Stream, StreamExt};
+use once_cell::sync::OnceCell;
 
 #[derive(Debug)]
 pub struct LimitExec {
     input: Arc<dyn ExecutionPlan>,
     limit: u64,
     pub metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl LimitExec {
@@ -32,6 +34,7 @@ impl LimitExec {
             input,
             limit,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }
     }
 }
@@ -43,6 +46,10 @@ impl DisplayAs for LimitExec {
 }
 
 impl ExecutionPlan for LimitExec {
+    fn name(&self) -> &str {
+        "LimitExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -51,16 +58,18 @@ impl ExecutionPlan for LimitExec {
         self.input.schema()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.input.output_ordering()
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(

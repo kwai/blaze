@@ -20,19 +20,20 @@ use datafusion::{
     common::{DataFusionError, JoinSide},
     error::Result,
     execution::context::TaskContext,
-    physical_expr::{PhysicalExprRef, PhysicalSortExpr},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
         joins::utils::JoinOn,
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
-        Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::{
     batch_size, df_execution_err, streams::coalesce_stream::CoalesceInput,
 };
 use futures::TryStreamExt;
+use once_cell::sync::OnceCell;
 
 use crate::{
     common::{
@@ -62,6 +63,7 @@ pub struct SortMergeJoinExec {
     sort_options: Vec<SortOptions>,
     schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl SortMergeJoinExec {
@@ -81,6 +83,7 @@ impl SortMergeJoinExec {
             join_type,
             sort_options,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 
@@ -177,6 +180,10 @@ impl ExecuteWithColumnPruning for SortMergeJoinExec {
 }
 
 impl ExecutionPlan for SortMergeJoinExec {
+    fn name(&self) -> &str {
+        "SortMergeJoinExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -185,21 +192,18 @@ impl ExecutionPlan for SortMergeJoinExec {
         self.schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.right.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.right.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        match self.join_type {
-            Left | LeftSemi | LeftAnti | Existence => self.left.output_ordering(),
-            Right | RightSemi | RightAnti => self.right.output_ordering(),
-            Inner => self.left.output_ordering(),
-            Full => None,
-        }
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.left.clone(), self.right.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.left, &self.right]
     }
 
     fn with_new_children(

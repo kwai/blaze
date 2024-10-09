@@ -203,6 +203,7 @@ impl Agg for AggCollectList {
                         .into_values(self.arg_type.clone(), false)
                         .collect::<Vec<_>>(),
                     &self.arg_type,
+                    true,
                 )))
             }
             None => ScalarValue::try_from(&self.data_type),

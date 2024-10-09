@@ -27,16 +27,18 @@ use arrow::{
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, PhysicalExpr, PhysicalSortExpr},
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExpr},
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{batch_size, cast::cast, streams::coalesce_stream::CoalesceInput};
 use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
 use num::integer::Roots;
+use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::{
@@ -57,6 +59,7 @@ pub struct GenerateExec {
     input: Arc<dyn ExecutionPlan>,
     output_schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl GenerateExec {
@@ -94,6 +97,7 @@ impl GenerateExec {
             input,
             output_schema,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         })
     }
 
@@ -117,6 +121,10 @@ impl DisplayAs for GenerateExec {
 }
 
 impl ExecutionPlan for GenerateExec {
+    fn name(&self) -> &str {
+        "GenerateExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -125,16 +133,18 @@ impl ExecutionPlan for GenerateExec {
         self.output_schema.clone()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(

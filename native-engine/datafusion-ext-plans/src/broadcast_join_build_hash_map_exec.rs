@@ -22,14 +22,16 @@ use arrow::{array::RecordBatch, compute::concat_batches, datatypes::SchemaRef};
 use datafusion::{
     common::Result,
     execution::{SendableRecordBatchStream, TaskContext},
-    physical_expr::{Partitioning, PhysicalExpr, PhysicalSortExpr},
+    physical_expr::{EquivalenceProperties, Partitioning, PhysicalExpr},
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties,
     },
 };
 use futures::{stream::once, StreamExt, TryStreamExt};
+use once_cell::sync::OnceCell;
 
 use crate::{
     common::{output::TaskOutputter, timer_helper::TimerHelper},
@@ -40,6 +42,7 @@ pub struct BroadcastJoinBuildHashMapExec {
     input: Arc<dyn ExecutionPlan>,
     keys: Vec<Arc<dyn PhysicalExpr>>,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl BroadcastJoinBuildHashMapExec {
@@ -48,6 +51,7 @@ impl BroadcastJoinBuildHashMapExec {
             input,
             keys,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }
     }
 }
@@ -65,6 +69,10 @@ impl DisplayAs for BroadcastJoinBuildHashMapExec {
 }
 
 impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
+    fn name(&self) -> &str {
+        "BroadcastJoinBuildHashMapExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -73,16 +81,20 @@ impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
         join_hash_map_schema(&self.input.schema())
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        Partitioning::UnknownPartitioning(self.input.output_partitioning().partition_count())
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                Partitioning::UnknownPartitioning(
+                    self.input.output_partitioning().partition_count(),
+                ),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(

@@ -22,17 +22,18 @@ use blaze_jni_bridge::{
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_expr::PhysicalSortExpr,
+    physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream,
-        Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
 use futures::{stream::once, StreamExt, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
+use once_cell::sync::OnceCell;
 
 use crate::common::{
     ipc_compression::IpcCompressionWriter, output::TaskOutputter, timer_helper::TimerHelper,
@@ -43,6 +44,7 @@ pub struct IpcWriterExec {
     input: Arc<dyn ExecutionPlan>,
     ipc_consumer_resource_id: String,
     metrics: ExecutionPlanMetricsSet,
+    props: OnceCell<PlanProperties>,
 }
 
 impl IpcWriterExec {
@@ -51,6 +53,7 @@ impl IpcWriterExec {
             input,
             ipc_consumer_resource_id,
             metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
         }
     }
 }
@@ -63,6 +66,10 @@ impl DisplayAs for IpcWriterExec {
 
 #[async_trait]
 impl ExecutionPlan for IpcWriterExec {
+    fn name(&self) -> &str {
+        "IpcWriterExec"
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -71,16 +78,18 @@ impl ExecutionPlan for IpcWriterExec {
         self.input.schema()
     }
 
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
+    fn properties(&self) -> &PlanProperties {
+        self.props.get_or_init(|| {
+            PlanProperties::new(
+                EquivalenceProperties::new(self.schema()),
+                self.input.output_partitioning().clone(),
+                ExecutionMode::Bounded,
+            )
+        })
     }
 
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.input.output_ordering()
-    }
-
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     fn with_new_children(

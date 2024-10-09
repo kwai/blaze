@@ -90,8 +90,8 @@ pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut 
                 write_array(col, output)?;
             }
         }
-        ScalarValue::Map(value, _bool) => {
-            write_scalar(value, nullable, output)?;
+        ScalarValue::Map(v) => {
+            write_array(v.as_ref(), output)?;
         }
         other => df_unimplemented_err!("unsupported scalarValue type: {other}")?,
     }
@@ -186,9 +186,9 @@ pub fn read_scalar<R: Read>(
                 .collect::<Result<Vec<_>>>()?;
             ScalarValue::Struct(Arc::new(StructArray::new(fields.clone(), columns, None)))
         }
-        DataType::Map(field, bool) => {
-            let map_value = read_scalar(input, field.data_type(), field.is_nullable())?;
-            ScalarValue::Map(Box::new(map_value), *bool)
+        DataType::Map(field, _bool) => {
+            let map = read_array(input, field.data_type(), 1)?.as_map().clone();
+            ScalarValue::Map(Arc::new(map))
         }
         other => df_unimplemented_err!("unsupported data type: {other}")?,
     })

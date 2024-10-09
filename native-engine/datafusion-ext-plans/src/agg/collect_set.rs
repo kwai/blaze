@@ -200,6 +200,7 @@ impl Agg for AggCollectSet {
                 Ok(ScalarValue::List(ScalarValue::new_list(
                     &set.into_iter().collect::<Vec<_>>(),
                     &self.arg_type,
+                    true,
                 )))
             }
             None => ScalarValue::try_from(&self.data_type),

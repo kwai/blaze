@@ -17,7 +17,6 @@ fn main() -> Result<(), String> {
     println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
 
     println!("cargo:rerun-if-changed=proto/blaze.proto");
-    tonic_build::configure()
-        .compile(&["proto/blaze.proto"], &["proto"])
+    tonic_build::compile_protos("proto/blaze.proto")
         .map_err(|e| format!("protobuf compilation failed: {}", e))
 }
