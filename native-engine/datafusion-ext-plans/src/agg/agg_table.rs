@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::{
-    io::{Cursor, Write},
+    io::{Cursor, Read, Write},
     sync::{Arc, Weak},
 };
 
@@ -30,29 +30,28 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    batch_size,
-    bytes_arena::{BytesArena, BytesArenaRef},
-    downcast_any,
+    batch_size, downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-    io::{read_bytes_slice, read_len, write_len},
+    io::{read_len, write_len},
     rdxsort::radix_sort_unstable_by_key,
-    slim_bytes::SlimBytes,
     staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
 };
 use futures::lock::Mutex;
-use hashbrown::raw::RawTable;
 
 use crate::{
     agg::{
         acc::{AccStore, AccumStateRow, OwnedAccumStateRow, RefAccumStateRow},
         agg_context::AggContext,
+        agg_hash_map::AggHashMap,
     },
+    assume,
     common::output::WrappedRecordBatchSender,
     memmgr::{
         metrics::SpillMetrics,
         spill::{try_new_spill, Spill, SpillCompressedReader},
         MemConsumer, MemConsumerInfo, MemManager,
     },
+    unchecked,
 };
 
 // reserve memory for each spill
@@ -68,7 +67,6 @@ pub struct AggTable {
     in_mem: Mutex<InMemTable>,
     spills: Mutex<Vec<Box<dyn Spill>>>,
     agg_ctx: Arc<AggContext>,
-    context: Arc<TaskContext>,
     baseline_metrics: BaselineMetrics,
     spill_metrics: SpillMetrics,
 }
@@ -91,12 +89,10 @@ impl AggTable {
                 agg_ctx.clone(),
                 context.clone(),
                 InMemMode::Hashing,
-                spill_metrics.clone(),
             )),
             spills: Mutex::default(),
             name,
             agg_ctx,
-            context,
             baseline_metrics,
             spill_metrics,
         }
@@ -113,9 +109,7 @@ impl AggTable {
             // compute input arrays
             match in_mem.mode {
                 InMemMode::Hashing => {
-                    in_mem
-                        .hashing_data
-                        .update_batch::<AGG_HASH_SEED_HASHING>(input_batch)?;
+                    in_mem.hashing_data.update_batch(input_batch)?;
                 }
                 InMemMode::Merging => {
                     in_mem.merging_data.add_batch(input_batch)?;
@@ -206,7 +200,7 @@ impl AggTable {
     pub async fn output(&self, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
         self.set_spillable(false);
 
-        let in_mem = self.renew_in_mem_table(InMemMode::PartialSkipped).await;
+        let mut in_mem = self.renew_in_mem_table(InMemMode::PartialSkipped).await;
         let spills = std::mem::take(&mut *self.spills.lock().await);
         let target_batch_mem_size = suggested_output_batch_mem_size();
         let batch_size = batch_size();
@@ -224,27 +218,27 @@ impl AggTable {
                 InMemMode::Hashing | InMemMode::PartialSkipped
             ));
             let mut cur_mem_used = in_mem.mem_used();
-            let mut records = in_mem
-                .hashing_data
-                .map
-                .into_iter()
-                .map(|(key_addr, acc_addr)| (key_addr, in_mem.hashing_data.acc_store.get(acc_addr)))
-                .collect::<Vec<_>>();
+            let (_key_store, mut key_addrs) =
+                std::mem::take(&mut in_mem.hashing_data.map).into_keys();
 
-            while !records.is_empty() {
+            while !key_addrs.is_empty() {
+                let mut records = vec![];
                 let mut mem_size = 0;
-                let mut num_rows = 0;
-                for i in (0..records.len()).rev() {
-                    if num_rows >= batch_size || mem_size >= target_batch_mem_size {
+
+                for i in (0..key_addrs.len()).rev() {
+                    if records.len() >= batch_size || mem_size >= target_batch_mem_size {
                         break;
                     }
-                    mem_size += records[i].0.len() + records[i].1.mem_size();
-                    num_rows += 1;
+                    let key = key_addrs[i];
+                    let acc = in_mem.hashing_data.acc_store.get(i as u32);
+                    mem_size += key.len();
+                    mem_size += acc.mem_size();
+                    records.push((key, acc));
                 }
-                let chunk = records.split_off(records.len().saturating_sub(num_rows));
-                records.shrink_to_fit();
+                key_addrs.truncate(key_addrs.len() - records.len());
+                key_addrs.shrink_to_fit();
 
-                let batch = self.agg_ctx.convert_records_to_batch(chunk)?;
+                let batch = self.agg_ctx.convert_records_to_batch(records)?;
                 let batch_mem_size = batch.get_array_mem_size();
 
                 self.baseline_metrics.record_output(batch.num_rows());
@@ -275,29 +269,9 @@ impl AggTable {
         for spill in &mut spills {
             cursors.push(RecordsSpillCursor::try_from_spill(spill, &self.agg_ctx)?);
         }
-        let mut current_bucket_idx = 0;
-        let mut hashing = HashingData::new(
-            self.agg_ctx.clone(),
-            self.context.clone(),
-            &self.spill_metrics,
-        );
-
-        macro_rules! flush_staging {
-            () => {{
-                let mut staging_records = vec![];
-                let cur_hashing = hashing.renew();
-                let _map_key_store = cur_hashing.map_key_store;
-                let map = cur_hashing.map;
-                let acc_store = cur_hashing.acc_store;
-                for (key_addr, value) in map {
-                    let acc = acc_store.get(value);
-                    staging_records.push((key_addr, acc));
-                }
-                let batch = self.agg_ctx.convert_records_to_batch(staging_records)?;
-                self.baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch)).await;
-            }};
-        }
+        let mut map = AggHashMap::default();
+        let mut acc_store = AccStore::new(self.agg_ctx.initial_acc.clone());
+        let mut key = vec![];
 
         // create a radix tournament tree to do the merging
         // the mem-table and at least one spill should be in the tree
@@ -305,50 +279,42 @@ impl AggTable {
             RadixTournamentTree::new(cursors, NUM_SPILL_BUCKETS);
         assert!(cursors.len() > 0);
 
-        loop {
-            // extract min cursor with the loser tree
-            let mut min_cursor = cursors.peek_mut();
+        while cursors.peek().cur_bucket_idx < NUM_SPILL_BUCKETS {
+            let current_bucket_idx = cursors.peek().cur_bucket_idx;
 
-            // meets next bucket -- flush records of current bucket
-            if min_cursor.cur_bucket_idx > current_bucket_idx {
-                if hashing.num_records() >= batch_size
-                    || hashing.mem_used() + self.agg_ctx.acc_dyn_mem_used() >= target_batch_mem_size
-                {
-                    flush_staging!();
+            loop {
+                let mut min_cursor = cursors.peek_mut();
+                if min_cursor.cur_bucket_idx > current_bucket_idx {
+                    break;
                 }
-                current_bucket_idx = min_cursor.cur_bucket_idx;
-            }
 
-            // all cursors are finished
-            if current_bucket_idx == NUM_SPILL_BUCKETS {
-                break;
-            }
-
-            // merge records of current bucket
-            while min_cursor.cur_bucket_idx == current_bucket_idx {
-                let (key, mut acc) = min_cursor.next_record()?;
-                let hash = agg_hash::<AGG_HASH_SEED_POST_MERGING>(&key);
-                match hashing.map.find_or_find_insert_slot(
-                    hash,
-                    |v| key.as_ref() == v.0.as_ref(),
-                    |v| agg_hash::<AGG_HASH_SEED_POST_MERGING>(&v.0),
-                ) {
-                    Ok(found) => unsafe {
-                        // safety - access hashbrown raw table
-                        let old_acc = &mut hashing.acc_store.get(found.as_mut().1);
-                        self.agg_ctx.partial_merge(old_acc, &mut acc.as_mut())?;
-                    },
-                    Err(slot) => unsafe {
-                        // safety - access hashbrown raw table
-                        let key_addr = hashing.map_key_store.add(key.as_ref());
-                        let acc_addr = hashing.acc_store.new_acc_from(&acc);
-                        hashing.map.insert_in_slot(hash, slot, (key_addr, acc_addr));
-                    },
+                // merge records of current bucket
+                while min_cursor.cur_bucket_idx == current_bucket_idx {
+                    let mut acc = min_cursor.next_record(&mut key)?;
+                    map.upsert_one_record(&key, |existed, record_idx| {
+                        if existed {
+                            let mut old_acc = acc_store.get(record_idx);
+                            self.agg_ctx.partial_merge(&mut old_acc, &mut acc.as_mut())
+                        } else {
+                            acc_store.new_acc_from(&acc);
+                            Ok(())
+                        }
+                    })?;
                 }
             }
-        }
-        if hashing.num_records() > 0 {
-            flush_staging!();
+
+            let (_key_store, key_addrs) = map.take_keys();
+            let batch = self.agg_ctx.convert_records_to_batch(
+                key_addrs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(record_idx, key)| (key, acc_store.get(record_idx as u32)))
+                    .collect(),
+            )?;
+            acc_store.clear();
+
+            self.baseline_metrics.record_output(batch.num_rows());
+            sender.send(Ok(batch)).await;
         }
 
         assert!(cursors
@@ -439,13 +405,12 @@ impl InMemTable {
         agg_ctx: Arc<AggContext>,
         task_ctx: Arc<TaskContext>,
         mode: InMemMode,
-        spill_metrics: SpillMetrics,
     ) -> Self {
         Self {
             name,
             id,
-            hashing_data: HashingData::new(agg_ctx.clone(), task_ctx.clone(), &spill_metrics),
-            merging_data: MergingData::new(agg_ctx.clone(), task_ctx.clone(), &spill_metrics),
+            hashing_data: HashingData::new(agg_ctx.clone()),
+            merging_data: MergingData::new(agg_ctx.clone()),
             agg_ctx,
             task_ctx,
             mode,
@@ -457,12 +422,8 @@ impl InMemTable {
         let name = self.name.clone();
         let agg_ctx = self.agg_ctx.clone();
         let task_ctx = self.task_ctx.clone();
-        let spill_metrics = self.hashing_data.spill_metrics.clone();
         let id = self.id + 1;
-        std::mem::replace(
-            self,
-            Self::new(name, id, agg_ctx, task_ctx, mode, spill_metrics),
-        )
+        std::mem::replace(self, Self::new(name, id, agg_ctx, task_ctx, mode))
     }
 
     pub fn mem_used(&self) -> usize {
@@ -503,53 +464,21 @@ impl InMemTable {
     }
 }
 
-// hasher used in table
-const AGG_HASH_SEED_HASHING: u32 = 0x3F6F1B93;
-const AGG_HASH_SEED_MERGING: u32 = 0x7A9A2D4E;
-const AGG_HASH_SEED_POST_MERGING: u32 = 0x1CE19D40;
-
-#[inline]
-pub fn agg_hash<const SEED: u32>(value: impl AsRef<[u8]>) -> u64 {
-    gxhash::gxhash64(value.as_ref(), SEED as i64)
-}
-
-#[inline]
-pub fn agg_merging_bucket_id(value: impl AsRef<[u8]>) -> u16 {
-    (agg_hash::<AGG_HASH_SEED_MERGING>(value) % NUM_SPILL_BUCKETS as u64) as u16
-}
-
 pub struct HashingData {
     agg_ctx: Arc<AggContext>,
-    task_ctx: Arc<TaskContext>,
     acc_store: AccStore,
-    map_key_store: BytesArena,
-    map: RawTable<(BytesArenaRef, u32)>, // keys to accs store addr
+    map: AggHashMap,
     num_input_records: usize,
-    spill_metrics: SpillMetrics,
 }
 
 impl HashingData {
-    fn new(
-        agg_ctx: Arc<AggContext>,
-        task_ctx: Arc<TaskContext>,
-        spill_metrics: &SpillMetrics,
-    ) -> Self {
+    fn new(agg_ctx: Arc<AggContext>) -> Self {
         Self {
             acc_store: AccStore::new(agg_ctx.initial_acc.clone()),
-            map_key_store: Default::default(),
-            map: Default::default(),
+            map: AggHashMap::default(),
             num_input_records: 0,
-            spill_metrics: spill_metrics.clone(),
             agg_ctx,
-            task_ctx,
         }
-    }
-
-    fn renew(&mut self) -> Self {
-        let agg_ctx = self.agg_ctx.clone();
-        let task_ctx = self.task_ctx.clone();
-        let spill_metrics = self.spill_metrics.clone();
-        std::mem::replace(self, Self::new(agg_ctx, task_ctx, &spill_metrics))
     }
 
     fn num_records(&self) -> usize {
@@ -563,48 +492,34 @@ impl HashingData {
     }
 
     fn mem_used(&self) -> usize {
-        // including cost of sorting
-        self.map_key_store.mem_size() + self.acc_store.mem_size() + self.map.capacity() * 32
+        self.map.mem_size() + self.acc_store.mem_size()
     }
 
-    fn update_batch<const GX_HASH_SEED: u32>(&mut self, batch: RecordBatch) -> Result<()> {
+    fn update_batch(&mut self, batch: RecordBatch) -> Result<()> {
         let num_rows = batch.num_rows();
         self.num_input_records += num_rows;
 
         let grouping_rows = self.agg_ctx.create_grouping_rows(&batch)?;
-        let hashes: Vec<u64> = grouping_rows
-            .iter()
-            .map(|row| agg_hash::<GX_HASH_SEED>(row))
-            .collect();
+        let mut record_indices = vec![];
 
-        // update hashmap
-        let mut acc_addrs = Vec::with_capacity(num_rows);
-        for (hash, row) in hashes.into_iter().zip(&grouping_rows) {
-            let found = self
-                .map
-                .find_or_find_insert_slot(
-                    hash,
-                    |v| v.0.as_ref() == row.as_ref(),
-                    |v| agg_hash::<GX_HASH_SEED>(&v.0),
-                )
-                .unwrap_or_else(|slot| {
-                    let key_addr = self.map_key_store.add(row.as_ref());
-                    let acc_addr = self.acc_store.new_acc();
-                    let entry = (key_addr, acc_addr);
-                    unsafe {
-                        // safety: inserting slot is ensured to be valid
-                        self.map.insert_in_slot(hash, slot, entry)
-                    }
-                });
+        self.map.upsert_records(
+            grouping_rows.num_rows(),
+            |i| {
+                assume!(i < grouping_rows.num_rows());
+                grouping_rows.row(i)
+            },
+            |_, existed, record_idx| {
+                if !existed {
+                    self.acc_store.new_acc();
+                }
+                record_indices.push(record_idx);
+                Ok(())
+            },
+        )?;
 
-            acc_addrs.push(unsafe {
-                // safety: accessing hashbrown raw table
-                found.as_ref().1
-            });
-        }
-        let mut accs = acc_addrs
+        let mut accs = record_indices
             .into_iter()
-            .map(|acc_addr| self.acc_store.get(acc_addr))
+            .map(|record_idx| self.acc_store.get(record_idx))
             .collect::<Vec<_>>();
 
         // partial update
@@ -621,16 +536,13 @@ impl HashingData {
 
     fn try_into_spill(self, spill: &mut Box<dyn Spill>) -> Result<()> {
         // sort all records using radix sort on hashcodes of keys
-        let mut bucketed_records = self
-            .map
-            .into_iter()
-            .map(|(key_addr, acc_addr)| {
-                let acc = self.acc_store.get(acc_addr);
-                let bucket_id = agg_merging_bucket_id(&key_addr);
-                (key_addr, acc, bucket_id)
-            })
+        let (_key_store, key_addrs) = self.map.into_keys();
+        let mut bucketed_records = key_addrs
+            .iter()
+            .enumerate()
+            .map(|(record_idx, key)| (record_idx as u32, bucket_id(key)))
             .collect::<Vec<_>>();
-        radix_sort_unstable_by_key(&mut bucketed_records, |v| v.2);
+        radix_sort_unstable_by_key(&mut bucketed_records, |v| v.1);
 
         let mut writer = spill.get_compressed_writer();
         let mut beg = 0;
@@ -638,7 +550,7 @@ impl HashingData {
         for i in 0..NUM_SPILL_BUCKETS {
             let bucket_count = bucketed_records[beg..]
                 .iter()
-                .take_while(|(_, _, bucket_id)| *bucket_id == i as u16)
+                .take_while(|(_, bucket_id)| *bucket_id == i as u16)
                 .count();
 
             if bucket_count > 0 {
@@ -647,13 +559,14 @@ impl HashingData {
                 write_len(bucket_count, &mut writer)?;
 
                 // write records in this bucket
-                for (key, acc, _) in &mut bucketed_records[beg..][..bucket_count] {
+                for &(record_idx, _) in &bucketed_records[beg..][..bucket_count] {
                     // write key
-                    let key = key.as_ref();
+                    let key = unchecked!(&key_addrs)[record_idx as usize].as_ref();
                     write_len(key.len(), &mut writer)?;
                     writer.write_all(key)?;
 
                     // write value
+                    let mut acc = self.acc_store.get(record_idx);
                     acc.save(&mut writer, &self.agg_ctx.acc_dyn_savers)?;
                 }
                 beg += bucket_count;
@@ -667,7 +580,6 @@ impl HashingData {
 
 pub struct MergingData {
     agg_ctx: Arc<AggContext>,
-    task_ctx: Arc<TaskContext>,
     staging_acc_store: AccStore,
     staging_batches: Vec<RecordBatch>,
     raw_records: Vec<Box<[u8]>>,
@@ -675,15 +587,10 @@ pub struct MergingData {
     num_rows: usize,
     staging_mem_used: usize,
     sorted_mem_used: usize,
-    spill_metrics: SpillMetrics,
 }
 
 impl MergingData {
-    fn new(
-        agg_ctx: Arc<AggContext>,
-        task_ctx: Arc<TaskContext>,
-        spill_metrics: &SpillMetrics,
-    ) -> Self {
+    fn new(agg_ctx: Arc<AggContext>) -> Self {
         Self {
             staging_acc_store: AccStore::new(agg_ctx.initial_acc.clone()),
             staging_batches: vec![],
@@ -692,18 +599,8 @@ impl MergingData {
             num_rows: 0,
             staging_mem_used: 0,
             sorted_mem_used: 0,
-            spill_metrics: spill_metrics.clone(),
             agg_ctx,
-            task_ctx,
         }
-    }
-
-    #[allow(dead_code)]
-    fn renew(&mut self) -> Self {
-        let agg_ctx = self.agg_ctx.clone();
-        let task_ctx = self.task_ctx.clone();
-        let spill_metrics = self.spill_metrics.clone();
-        std::mem::replace(self, Self::new(agg_ctx, task_ctx, &spill_metrics))
     }
 
     fn num_records(&self) -> usize {
@@ -763,7 +660,7 @@ impl MergingData {
             .enumerate()
             .flat_map(|(batch_idx, rows)| {
                 rows.iter().enumerate().map(move |(row_idx, row)| {
-                    let bucket_id = agg_merging_bucket_id(&row);
+                    let bucket_id = bucket_id(&row);
                     (batch_idx as u32, row_idx as u32, bucket_id)
                 })
             })
@@ -889,12 +786,13 @@ impl<'a> RecordsSpillCursor<'a> {
         })
     }
 
-    fn next_record(&mut self) -> Result<(SlimBytes, OwnedAccumStateRow)> {
+    fn next_record(&mut self, key_buf: &mut Vec<u8>) -> Result<OwnedAccumStateRow> {
         assert!(self.cur_bucket_idx < NUM_SPILL_BUCKETS);
 
         // read key
         let key_len = read_len(&mut self.input)?;
-        let key = read_bytes_slice(&mut self.input, key_len)?.into();
+        key_buf.resize(key_len, 0);
+        self.input.read_exact(key_buf)?;
 
         // read value
         let mut value = self.agg_ctx.initial_acc.clone();
@@ -908,7 +806,7 @@ impl<'a> RecordsSpillCursor<'a> {
             self.cur_bucket_idx = read_len(&mut self.input)?;
             self.cur_bucket_count = read_len(&mut self.input)?;
         }
-        Ok((key, value))
+        Ok(value)
     }
 }
 
@@ -916,4 +814,10 @@ impl<'a> KeyForRadixTournamentTree for RecordsSpillCursor<'a> {
     fn rdx(&self) -> usize {
         self.cur_bucket_idx
     }
+}
+
+#[inline]
+fn bucket_id(key: impl AsRef<[u8]>) -> u16 {
+    const AGG_HASH_SEED_HASHING: i64 = 0xC732BD66;
+    (gxhash::gxhash32(key.as_ref(), AGG_HASH_SEED_HASHING) % NUM_SPILL_BUCKETS as u32) as u16
 }

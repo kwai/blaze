@@ -14,6 +14,7 @@
 
 pub mod acc;
 pub mod agg_context;
+pub mod agg_hash_map;
 pub mod agg_table;
 pub mod avg;
 pub mod bloom_filter;
