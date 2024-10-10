@@ -144,15 +144,13 @@ spark.sql.adaptive.localShuffleReader.enabled false
 
 ## Performance
 
-Check [Benchmark Results](./benchmark-results/20240701-blaze300.md) with the latest date for the performance
-comparison with vanilla Spark 3.3.3. The benchmark result shows that Blaze save about 50% time on TPC-DS/TPC-H 1TB datasets.
+Check [TPC-H Benchmark Results](./benchmark-results/tpch.md).
+The latest benchmark result shows that Blaze saved more than 50% time on TPC-H 1TB datasets comparing with Vanilla Spark 3.5.
+
 Stay tuned and join us for more upcoming thrilling numbers.
 
-TPC-DS Query time: ([How can I run TPC-DS benchmark?](./tpcds/README.md))
-![20240701-query-time-tpcds](./benchmark-results/spark-3.3-vs-blaze300-query-time-20240701.png)
-
 TPC-H Query time:
-![20240701-query-time-tpch](./benchmark-results/spark-3.3-vs-blaze300-query-time-20240701-tpch.png)
+![tpch-blaze400-spark351.png](./benchmark-results/tpch-blaze400-spark351.png)
 
 We also encourage you to benchmark Blaze and share the results with us. 🤗
 
