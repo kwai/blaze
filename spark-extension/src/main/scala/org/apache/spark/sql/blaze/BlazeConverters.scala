@@ -597,11 +597,30 @@ object BlazeConverters extends Logging {
     // for enabling filter-project optimization in native side
     getPartialAggProjection(exec.aggregateExpressions, exec.groupingExpressions) match {
       case Some((transformedAggregateExprs, transformedGroupingExprs, projections)) =>
-        return convertHashAggregateExec(
-          exec.copy(
-            aggregateExpressions = transformedAggregateExprs,
-            groupingExpressions = transformedGroupingExprs,
-            child = convertProjectExec(ProjectExec(projections, exec.child))))
+        val transformedExec =
+          try {
+            exec.copy(
+              aggregateExpressions = transformedAggregateExprs,
+              groupingExpressions = transformedGroupingExprs,
+              child = convertProjectExec(ProjectExec(projections, exec.child)))
+          } catch {
+            case _: NoSuchMethodError =>
+              import scala.reflect.runtime.universe._
+              import scala.reflect.runtime.currentMirror
+              val mirror = currentMirror.reflect(exec)
+              val copyMethod = typeOf[HashAggregateExec].decl(TermName("copy")).asMethod
+              val params = copyMethod.paramLists.flatten
+              val args = params.map { param =>
+                param.name.toString match {
+                  case "aggregateExpressions" => transformedAggregateExprs
+                  case "groupingExpressions" => transformedGroupingExprs
+                  case "child" => convertProjectExec(ProjectExec(projections, exec.child))
+                  case _ => mirror.reflectField(param.asTerm).get
+                }
+              }
+              mirror.reflectMethod(copyMethod)(args: _*).asInstanceOf[HashAggregateExec]
+          }
+        return convertHashAggregateExec(transformedExec)
       case None => // passthrough
     }
 
