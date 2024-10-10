@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
-        blazever: [3.0.1]
+        blazever: [4.0.0]
 
     steps:
       - uses: actions/checkout@v4
