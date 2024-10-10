@@ -24,18 +24,27 @@ import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.MethodDelegation;
 import net.bytebuddy.pool.TypePool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class ValidateSparkPlanInjector {
+
+    private static final Logger logger = LoggerFactory.getLogger(ValidateSparkPlanInjector.class);
+
     public static void inject() {
-        ByteBuddyAgent.install();
-        TypeDescription typeDescription = TypePool.Default.ofSystemLoader()
-                .describe("org.apache.spark.sql.execution.adaptive.ValidateSparkPlan$")
-                .resolve();
-        new ByteBuddy()
-                .redefine(typeDescription, ClassFileLocator.ForClassLoader.ofSystemLoader())
-                .method(named("apply"))
-                .intercept(MethodDelegation.to(ValidateSparkPlanApplyInterceptor.class))
-                .make()
-                .load(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.Default.INJECTION);
+        try {
+            ByteBuddyAgent.install();
+            TypeDescription typeDescription = TypePool.Default.ofSystemLoader()
+                    .describe("org.apache.spark.sql.execution.adaptive.ValidateSparkPlan$")
+                    .resolve();
+            new ByteBuddy()
+                    .redefine(typeDescription, ClassFileLocator.ForClassLoader.ofSystemLoader())
+                    .method(named("apply"))
+                    .intercept(MethodDelegation.to(ValidateSparkPlanApplyInterceptor.class))
+                    .make()
+                    .load(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.Default.INJECTION);
+        } catch (TypePool.Resolution.NoSuchTypeException e) {
+            logger.warn("No such type of ValidateSparkPlan", e);
+        }
     }
 }
