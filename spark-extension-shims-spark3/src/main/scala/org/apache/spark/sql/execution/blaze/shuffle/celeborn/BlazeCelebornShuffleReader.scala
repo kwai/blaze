@@ -189,7 +189,7 @@ class BlazeCelebornShuffleReader[K, C](
     val end = System.currentTimeMillis()
     logInfo(s"BatchOpenStream for $partCnt cost ${end - startTime}ms")
 
-    val streams = new ConcurrentHashMap[Integer, CelebornInputStream]()
+    val streams = JavaUtils.newConcurrentHashMap[Integer, CelebornInputStream]()
 
     def createInputStream(partitionId: Int): Unit = {
       val locations =
