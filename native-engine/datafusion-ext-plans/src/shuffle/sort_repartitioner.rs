@@ -29,6 +29,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
+    array_size::ArraySize,
     df_execution_err,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
 };
@@ -123,7 +124,7 @@ impl Drop for SortShuffleRepartitioner {
 impl ShuffleRepartitioner for SortShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         // update memory usage before adding to buffered data
-        let mem_used = self.data.lock().await.mem_used() + input.get_array_memory_size() * 2;
+        let mem_used = self.data.lock().await.mem_used() + input.get_array_mem_size() * 2;
         self.update_mem_used(mem_used).await?;
 
         // add batch to buffered data
@@ -155,9 +156,10 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let data = self.data.lock().await.drain();
 
         log::info!(
-            "{} starts outputting ({} spills)",
+            "{} starts outputting ({} spills + in_mem: {})",
             self.name(),
-            spills.len()
+            spills.len(),
+            ByteSize(data.mem_used() as u64)
         );
 
         let data_file = self.output_data_file.clone();

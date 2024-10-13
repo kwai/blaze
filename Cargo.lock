@@ -432,6 +432,7 @@ dependencies = [
  "arrow",
  "blaze-jni-bridge",
  "blaze-serde",
+ "bytesize",
  "datafusion",
  "datafusion-ext-commons",
  "datafusion-ext-plans",

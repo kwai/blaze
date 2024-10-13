@@ -48,15 +48,31 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
 
   def read(buf: ByteBuffer): Int = {
     synchronized {
+      val oldMemUsed = memUsed
       val startPosition = buf.position()
       spillBuf.read(buf)
-      buf.position() - startPosition
+
+      val numBytesRead = buf.position() - startPosition
+
+      // some memory can be released while reading
+      val newMemUsed = memUsed
+      if (newMemUsed < oldMemUsed) {
+        hsm.freeMemory(oldMemUsed - newMemUsed)
+      }
+      numBytesRead
     }
   }
 
   def release(): Unit = {
-    spillBuf.release()
-    spillBuf = null
+    synchronized {
+      val oldMemUsed = memUsed
+      spillBuf.release()
+      spillBuf = null
+
+      if (oldMemUsed > 0) {
+        hsm.freeMemory(oldMemUsed)
+      }
+    }
   }
 
   def spill(): Long = {

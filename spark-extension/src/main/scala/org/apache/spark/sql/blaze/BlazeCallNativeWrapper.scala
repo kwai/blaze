@@ -38,8 +38,10 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.rootAllocator
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
+import org.apache.spark.util.ShutdownHookManager
 import org.apache.spark.util.Utils
 import org.blaze.protobuf.PartitionId
 import org.blaze.protobuf.PhysicalPlanNode
@@ -112,17 +114,21 @@ case class BlazeCallNativeWrapper(
   }
 
   protected def importBatch(ffiArrayPtr: Long): Unit = {
+    if (nativeRuntimePtr == 0) {
+      throw new RuntimeException("Native runtime is finalized")
+    }
+
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         ArrowArray.wrap(ffiArrayPtr),
         VectorSchemaRoot.create(arrowSchema, batchAllocator)) { case (ffiArray, root) =>
+
         Data.importIntoVectorSchemaRoot(batchAllocator, ffiArray, root, dictionaryProvider)
-        batchRows.append(
-          ColumnarHelper
-            .rootAsBatch(root)
-            .rowIterator
-            .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
-            .toSeq: _*)
+        val batch = ColumnarHelper.rootAsBatch(root)
+
+        batchRows.append(ColumnarHelper.batchAsRowIter(batch)
+          .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
+          .toSeq: _*)
       }
     }
   }
@@ -181,7 +187,9 @@ object BlazeCallNativeWrapper extends Logging {
         s"batchSize=${BlazeConf.BATCH_SIZE.intConf()}, " +
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
         s"memoryFraction=${BlazeConf.MEMORY_FRACTION.doubleConf()})")
+
     BlazeCallNativeWrapper.loadLibBlaze()
+    ShutdownHookManager.addShutdownHook(() => JniBridge.onExit())
   }
 
   private def loadLibBlaze(): Unit = {

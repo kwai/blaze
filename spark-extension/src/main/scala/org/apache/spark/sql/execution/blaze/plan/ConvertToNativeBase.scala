@@ -31,7 +31,7 @@ import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeHelper
-import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExportIterator
+import org.apache.spark.sql.execution.blaze.arrowio.ArrowFFIExporter
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.OneToOneDependency
 import org.blaze.protobuf.FFIReaderExecNode
@@ -71,14 +71,10 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       Shims.get.getRDDShuffleReadFull(inputRDD),
       (partition, context) => {
+
         val inputRowIter = inputRDD.compute(partition, context)
         val resourceId = s"ConvertToNativeExec:${UUID.randomUUID().toString}"
-        JniBridge.resourcesMap.put(
-          resourceId,
-          () => {
-            val exportIter = new ArrowFFIExportIterator(inputRowIter, renamedSchema)
-            new InterruptibleIterator(context, exportIter)
-          })
+        JniBridge.resourcesMap.put(resourceId, new ArrowFFIExporter(inputRowIter, renamedSchema))
 
         PhysicalPlanNode
           .newBuilder()

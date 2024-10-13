@@ -548,18 +548,24 @@ async fn get_cached_join_hash_map<Fut: Future<Output = Result<JoinHashMap>> + Se
     type Slot = Arc<tokio::sync::Mutex<Weak<JoinHashMap>>>;
     static CACHED_JOIN_HASH_MAP: OnceCell<Arc<Mutex<HashMap<String, Slot>>>> = OnceCell::new();
 
-    // TODO: remove expired keys from cached join hash map
-    let cached_join_hash_map = CACHED_JOIN_HASH_MAP.get_or_init(|| Arc::default());
-    let slot = cached_join_hash_map
-        .lock()
-        .entry(cached_id.to_string())
-        .or_default()
-        .clone();
+    // remove expire keys and insert new key
+    let slot = {
+        let cached_join_hash_map = CACHED_JOIN_HASH_MAP.get_or_init(|| Arc::default());
+        let mut cached_join_hash_map = cached_join_hash_map.lock();
+
+        cached_join_hash_map.retain(|_, v| Arc::strong_count(v) > 0);
+        cached_join_hash_map
+            .entry(cached_id.to_string())
+            .or_default()
+            .clone()
+    };
 
     let mut slot = slot.lock().await;
     if let Some(cached) = slot.upgrade() {
+        log::info!("got cached broadcast join hash map: ${cached_id}");
         Ok(cached)
     } else {
+        log::info!("collecting broadcast join hash map: ${cached_id}");
         let new = Arc::new(init().await?);
         *slot = Arc::downgrade(&new);
         Ok(new)

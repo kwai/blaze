@@ -18,22 +18,30 @@ use std::{
     sync::Arc,
 };
 
-use arrow::datatypes::SchemaRef;
+use arrow::{
+    array::{Array, RecordBatch, RecordBatchOptions, StructArray},
+    datatypes::{DataType, SchemaRef},
+    ffi::{from_ffi_and_data_type, FFI_ArrowArray},
+};
 use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
         Partitioning::UnknownPartitioning,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::streams::ffi_stream::FFIReaderStream;
-use jni::objects::JObject;
+use datafusion_ext_commons::array_size::ArraySize;
+use futures_util::{stream::once, TryStreamExt};
+use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
+
+use crate::common::output::TaskOutputter;
 
 pub struct FFIReaderExec {
     num_partitions: usize,
@@ -112,23 +120,26 @@ impl ExecutionPlan for FFIReaderExec {
     fn execute(
         &self,
         partition: usize,
-        _context: Arc<TaskContext>,
+        context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let resource_id = jni_new_string!(&self.export_iter_provider_resource_id)?;
-        let export_iter_provider =
-            jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
-        let export_iter_local =
-            jni_call!(ScalaFunction0(export_iter_provider.as_obj()).apply() -> JObject)?;
-        let export_iter = jni_new_global_ref!(export_iter_local.as_obj())?;
+        let exporter = jni_new_global_ref!(
+            jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?.as_obj()
+        )?;
 
         let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
         let size_counter = MetricBuilder::new(&self.metrics).counter("size", partition);
 
-        Ok(Box::pin(FFIReaderStream::new(
-            self.schema.clone(),
-            export_iter,
+        let stream = read_ffi(
+            context,
+            self.schema(),
+            exporter,
             baseline_metrics,
             size_counter,
+        );
+        Ok(Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            once(stream).try_flatten(),
         )))
     }
 
@@ -139,4 +150,44 @@ impl ExecutionPlan for FFIReaderExec {
     fn statistics(&self) -> Result<Statistics> {
         todo!()
     }
+}
+
+async fn read_ffi(
+    context: Arc<TaskContext>,
+    schema: SchemaRef,
+    exporter: GlobalRef,
+    baseline_metrics: BaselineMetrics,
+    size_counter: Count,
+) -> Result<SendableRecordBatchStream> {
+    context.output_with_sender("FFIReader", schema.clone(), move |sender| async move {
+        loop {
+            let batch = {
+                // load batch from ffi
+                let mut ffi_arrow_array = FFI_ArrowArray::empty();
+                let ffi_arrow_array_ptr = &mut ffi_arrow_array as *mut FFI_ArrowArray as i64;
+                let has_next = jni_call!(
+                    BlazeArrowFFIExporter(exporter.as_obj())
+                        .exportNextBatch(ffi_arrow_array_ptr) -> bool
+                )?;
+
+                if !has_next {
+                    break;
+                }
+                let import_data_type = DataType::Struct(schema.fields().clone());
+                let imported =
+                    unsafe { from_ffi_and_data_type(ffi_arrow_array, import_data_type)? };
+                let struct_array = StructArray::from(imported);
+                let batch = RecordBatch::try_new_with_options(
+                    schema.clone(),
+                    struct_array.columns().to_vec(),
+                    &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
+                )?;
+                size_counter.add(batch.get_array_mem_size());
+                baseline_metrics.record_output(batch.num_rows());
+                batch
+            };
+            sender.send(Ok(batch)).await;
+        }
+        Ok(())
+    })
 }

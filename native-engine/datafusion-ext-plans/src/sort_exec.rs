@@ -33,6 +33,7 @@ use arrow::{
     row::{Row, RowConverter, RowParser, Rows, SortField},
 };
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
@@ -284,44 +285,34 @@ impl BufferedData {
         // sort the batch and append to sorter
         let mut sorted_key_store = Vec::with_capacity(key_rows.size());
         let mut key_writer = SortedKeysWriter::default();
-        let mut num_rows = 0;
         let sorted_batch;
 
-        if !sorter.prune_sort_keys_from_batch.is_all_pruned() {
-            let cur_sorted_indices = key_rows
-                .iter()
-                .enumerate()
-                .map(|(row_idx, key)| {
-                    let key = unsafe {
-                        // safety: keys have the same lifetime with key_rows
-                        std::mem::transmute::<_, &'static [u8]>(key.as_ref())
-                    };
-                    (key, row_idx as u32)
-                })
-                .sorted_unstable_by_key(|&(key, ..)| key)
-                .take(sorter.limit)
-                .map(|(key, row_idx)| {
-                    num_rows += 1;
-                    key_writer.write_key(key, &mut sorted_key_store).unwrap();
-                    row_idx
-                })
-                .collect::<Vec<_>>();
-            sorted_batch = take_batch(batch, cur_sorted_indices)?;
-        } else {
-            key_rows
-                .iter()
-                .map(|key| unsafe {
-                    // safety: keys have the same lifetime with key_rows
-                    std::mem::transmute::<_, &'static [u8]>(key.as_ref())
-                })
-                .sorted_unstable()
-                .take(sorter.limit)
-                .for_each(|key| {
-                    num_rows += 1;
-                    key_writer.write_key(key, &mut sorted_key_store).unwrap();
-                });
-            sorted_batch = create_zero_column_batch(num_rows);
+        // sort into indices
+        let num_rows = batch.num_rows().min(sorter.limit);
+        let mut sorted_row_indices: Vec<u32> = (0..batch.num_rows() as u32).collect();
+        sorted_row_indices
+            .sort_unstable_by_key(|&row_idx| unsafe { key_rows.row_unchecked(row_idx as usize) });
+        sorted_row_indices.truncate(num_rows);
+
+        // generate sorted key store
+        for &row_idx in &sorted_row_indices {
+            unsafe {
+                // safety: row_idx is within range
+                let row = key_rows.row_unchecked(row_idx as usize);
+                key_writer
+                    .write_key(row.as_ref(), &mut sorted_key_store)
+                    .unwrap();
+            }
         }
+        sorted_key_store.shrink_to_fit();
+
+        // generate sorted batch
+        sorted_batch = if !sorter.prune_sort_keys_from_batch.is_all_pruned() {
+            take_batch(batch, sorted_row_indices)?
+        } else {
+            create_zero_column_batch(num_rows)
+        };
+
         self.sorted_batches_mem_used += sorted_batch.get_array_mem_size();
         self.sorted_key_stores_mem_used += sorted_key_store.len();
 
@@ -439,6 +430,7 @@ impl BufferedData {
                     create_zero_column_batch(cur_batch_size)
                 };
                 self.num_output_rows += cur_batch_size;
+                key_collector.freeze();
                 Some((key_collector, batch))
             }
         }
@@ -587,9 +579,10 @@ impl ExternalSorter {
         let data = std::mem::take(&mut *self.data.lock().await);
         let spills = std::mem::take(&mut *self.spills.lock().await);
         log::info!(
-            "{} starts outputting ({} spills)",
+            "{} starts outputting ({} spills + in_mem: {})",
             self.name(),
-            spills.len()
+            spills.len(),
+            ByteSize(data.mem_used() as u64)
         );
 
         // no spills -- output in-mem batches
@@ -617,18 +610,31 @@ impl ExternalSorter {
         }
 
         // move in-mem batches into spill, so we can free memory as soon as possible
-        let mut spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
-        let mut spill: Box<dyn Spill> = Box::new(vec![]);
         let sub_batch_size = compute_suggested_batch_size_for_kway_merge(
             self.mem_total_size(),
             self.num_total_rows(),
         );
+        let mut spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
 
-        data.try_into_spill(&self, &mut spill, sub_batch_size)?;
-        let spill_size = downcast_any!(spill, Vec<u8>)?.len();
-        self.update_mem_used(spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
-            .await?;
-        spills.push(spill);
+        if self.mem_used_percent() < 0.25 {
+            // if in-mem data is small, try to spill it into native raw bytes
+            let mut spill: Box<dyn Spill> = Box::new(vec![]);
+            data.try_into_spill(&self, &mut spill, sub_batch_size)?;
+
+            let in_mem_spill = downcast_any!(spill, mut Vec<u8>)?;
+            in_mem_spill.shrink_to_fit();
+
+            let in_mem_spill_size = in_mem_spill.len();
+            spills.push(spill);
+            self.update_mem_used(in_mem_spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
+                .await?;
+        } else {
+            let mut spill = try_new_spill(&self.spill_metrics)?;
+            data.try_into_spill(&self, &mut spill, sub_batch_size)?;
+            spills.push(spill);
+            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
+                .await?;
+        }
 
         let mut merger = ExternalMerger::<SimpleKeyCollector>::try_new(
             &mut spills,
@@ -880,7 +886,8 @@ impl<KC: KeyCollector> ExternalMerger<'_, KC> {
             .min(self.limit - self.num_total_output_rows);
 
         // collect keys
-        let key_collector = std::mem::take(&mut self.staging_key_collector);
+        let mut key_collector = std::mem::take(&mut self.staging_key_collector);
+        key_collector.freeze();
         self.staging_num_rows = 0;
 
         // collect pruned columns
@@ -1153,6 +1160,7 @@ impl PruneSortKeysFromBatch {
 trait KeyCollector: Default {
     fn as_any(&self) -> &dyn Any;
     fn add_key(&mut self, key: &[u8]);
+    fn freeze(&mut self);
     fn is_empty(&self) -> bool;
 }
 
@@ -1183,6 +1191,11 @@ impl KeyCollector for SimpleKeyCollector {
         self.store.extend(key);
     }
 
+    fn freeze(&mut self) {
+        self.lens.shrink_to_fit();
+        self.store.shrink_to_fit();
+    }
+
     fn is_empty(&self) -> bool {
         self.lens.is_empty()
     }
@@ -1203,6 +1216,10 @@ impl KeyCollector for SqueezeKeyCollector {
         self.sorted_key_writer
             .write_key(key, &mut self.store)
             .unwrap()
+    }
+
+    fn freeze(&mut self) {
+        self.store.shrink_to_fit();
     }
 
     fn is_empty(&self) -> bool {

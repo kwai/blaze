@@ -23,6 +23,7 @@ use arrow::{
 };
 use async_trait::async_trait;
 use bytes::Buf;
+use bytesize::ByteSize;
 use datafusion::{
     common::Result,
     execution::context::TaskContext,
@@ -204,9 +205,10 @@ impl AggTable {
         let batch_size = batch_size();
 
         log::info!(
-            "{} starts outputting ({} spills)",
+            "{} starts outputting ({} spills + in_mem: {})",
             self.name(),
-            spills.len()
+            spills.len(),
+            ByteSize(in_mem.mem_used() as u64)
         );
 
         // only one in-mem table, directly output it

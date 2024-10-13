@@ -20,7 +20,7 @@ use datafusion::{
     common::Result,
     physical_plan::{metrics::Time, Partitioning},
 };
-use datafusion_ext_commons::df_execution_err;
+use datafusion_ext_commons::{array_size::ArraySize, df_execution_err};
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
 
@@ -93,7 +93,7 @@ impl Drop for RssSortShuffleRepartitioner {
 impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         // update memory usage before adding to buffered data
-        let mem_used = self.data.lock().await.mem_used() + input.get_array_memory_size() * 2;
+        let mem_used = self.data.lock().await.mem_used() + input.get_array_mem_size() * 2;
         self.update_mem_used(mem_used).await?;
 
         // add batch to buffered data

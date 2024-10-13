@@ -64,12 +64,23 @@ class OnHeapSpillManager(taskContext: TaskContext)
     val memoryUsed = memoryPool.memoryUsed
     val memoryFree = memoryPool.memoryFree
     val memoryUsedRatio = (memoryUsed + 1.0) / (memoryUsed + memoryFree + 1.0)
+    val jvmMemoryFree = Runtime.getRuntime.freeMemory()
+    val jvmMemoryUsed = Runtime.getRuntime.totalMemory() - jvmMemoryFree
+    val jvmMemoryUsedRatio = (jvmMemoryUsed + 1.0) / (jvmMemoryUsed + jvmMemoryFree + 1.0)
+
     logInfo(
       s"current on-heap execution memory usage:" +
         s" used=${Utils.bytesToString(memoryUsed)}," +
         s" free=${Utils.bytesToString(memoryFree)}," +
         s" ratio=$memoryUsedRatio")
-    memoryUsedRatio < 0.9 // we should have at least 10% free memory
+    logInfo(
+      s"current jvm memory usage:" +
+        s" jvm total used: ${Utils.bytesToString(jvmMemoryUsed)}," +
+        s" jvm total free: ${Utils.bytesToString(jvmMemoryFree)}," +
+        s" ratio=$jvmMemoryUsedRatio")
+
+    // we should have at least 10% free memory
+    memoryUsedRatio < 0.9 && jvmMemoryUsedRatio < 0.9
   }
 
   /**

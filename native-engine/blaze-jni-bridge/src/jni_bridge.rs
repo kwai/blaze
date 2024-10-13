@@ -419,6 +419,7 @@ pub struct JavaClasses<'a> {
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
     pub cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils<'a>,
     pub cBlazeBlockObject: BlazeBlockObject<'a>,
+    pub cBlazeArrowFFIExporter: BlazeArrowFFIExporter<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -479,6 +480,7 @@ impl JavaClasses<'static> {
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env)?,
                 cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils::new(env)?,
                 cBlazeBlockObject: BlazeBlockObject::new(env)?,
+                cBlazeArrowFFIExporter: BlazeArrowFFIExporter::new(env)?,
             };
             log::info!("Initializing JavaClasses finished");
             Ok(java_classes)
@@ -1377,6 +1379,27 @@ impl<'a> BlazeBlockObject<'a> {
                 "()Ljava/nio/channels/ReadableByteChannel;",
             )?,
             method_getChannel_ret: ReturnType::Object,
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeArrowFFIExporter<'a> {
+    pub class: JClass<'a>,
+    pub method_exportNextBatch: JMethodID,
+    pub method_exportNextBatch_ret: ReturnType,
+}
+
+impl<'a> BlazeArrowFFIExporter<'a> {
+    pub const SIG_TYPE: &'static str =
+        "org/apache/spark/sql/execution/blaze/arrowio/ArrowFFIExporter";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeArrowFFIExporter<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeArrowFFIExporter {
+            class,
+            method_exportNextBatch: env.get_method_id(class, "exportNextBatch", "(J)Z")?,
+            method_exportNextBatch_ret: ReturnType::Primitive(Primitive::Boolean),
         })
     }
 }

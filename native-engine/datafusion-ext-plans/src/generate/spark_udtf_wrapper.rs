@@ -18,7 +18,10 @@ use std::{
 };
 
 use arrow::{
-    array::{make_array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions},
+    array::{
+        make_array, Array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions,
+        StructArray,
+    },
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
 };
@@ -26,7 +29,7 @@ use blaze_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
-use datafusion_ext_commons::{cast::cast, df_execution_err, ffi_helper::batch_to_ffi};
+use datafusion_ext_commons::{cast::cast, df_execution_err};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
@@ -165,7 +168,8 @@ fn invoke_udtf(
     result_schema: SchemaRef,
 ) -> Result<ArrayRef> {
     // evalute via context
-    let mut export_ffi_array = batch_to_ffi(params_batch);
+    let struct_array = StructArray::from(params_batch);
+    let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
     let mut import_ffi_array = FFI_ArrowArray::empty();
     jni_call!(SparkUDTFWrapperContext(jcontext.as_obj()).eval(
         &mut export_ffi_array as *mut FFI_ArrowArray as i64,
