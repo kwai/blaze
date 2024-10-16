@@ -64,6 +64,7 @@ impl AggBloomFilter {
         estimated_num_items: usize,
         num_bits: usize,
     ) -> Self {
+        assert!(num_bits.is_power_of_two());
         Self {
             child,
             child_data_type,
@@ -198,8 +199,10 @@ impl Agg for AggBloomFilter {
 
     fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
         if let Some(value) = acc.dyn_value_mut(self.accum_state_val_addr) {
-            let bloom_filter = std::mem::take(downcast_any!(value, mut SparkBloomFilter)?);
+            let mut bloom_filter = std::mem::take(downcast_any!(value, mut SparkBloomFilter)?);
+            bloom_filter.shrink_to_fit();
             self.sub_mem_used(bloom_filter.mem_size());
+
             let mut buf = vec![];
             bloom_filter.write_to(&mut buf)?;
             Ok(ScalarValue::Binary(Some(buf)))

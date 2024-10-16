@@ -23,21 +23,20 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    compute_suggested_batch_size_for_output,
+    assume, compute_suggested_batch_size_for_output,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     streams::coalesce_stream::coalesce_arrays_unchecked,
+    unchecked,
 };
 use jni::objects::GlobalRef;
 use unchecked_index::UncheckedIndex;
 
 use crate::{
-    assume,
     common::{
         batch_selection::take_batch, ipc_compression::IpcCompressionWriter,
         timer_helper::TimerHelper,
     },
     shuffle::{evaluate_hashes, evaluate_partition_ids, rss::RssWriter},
-    unchecked,
 };
 
 pub struct BufferedData {

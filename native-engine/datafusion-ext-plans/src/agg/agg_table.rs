@@ -30,11 +30,11 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    batch_size, downcast_any,
+    assume, batch_size, downcast_any,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     io::{read_len, write_len},
     rdxsort::radix_sort_unstable_by_key,
-    staging_mem_size_for_partial_sort, suggested_output_batch_mem_size,
+    staging_mem_size_for_partial_sort, suggested_output_batch_mem_size, unchecked,
 };
 use futures::lock::Mutex;
 
@@ -44,14 +44,12 @@ use crate::{
         agg_context::AggContext,
         agg_hash_map::AggHashMap,
     },
-    assume,
     common::output::WrappedRecordBatchSender,
     memmgr::{
         metrics::SpillMetrics,
         spill::{try_new_spill, Spill, SpillCompressedReader},
         MemConsumer, MemConsumerInfo, MemManager,
     },
-    unchecked,
 };
 
 // reserve memory for each spill

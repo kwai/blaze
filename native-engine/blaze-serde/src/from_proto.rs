@@ -1061,6 +1061,7 @@ fn try_parse_physical_expr(
             }
             ExprType::RowNumExpr(_) => Arc::new(RowNumExpr::default()),
             ExprType::BloomFilterMightContainExpr(e) => Arc::new(BloomFilterMightContainExpr::new(
+                e.uuid.clone(),
                 try_parse_physical_expr_box_required(&e.bloom_filter_expr, input_schema)?,
                 try_parse_physical_expr_box_required(&e.value_expr, input_schema)?,
             )),

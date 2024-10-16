@@ -17,6 +17,8 @@ use std::io::{Read, Write};
 use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use datafusion::common::Result;
 
+use crate::assume;
+
 // native implementation of org.apache.spark.util.sketch.BitArray
 #[derive(Default, Clone)]
 pub struct SparkBitArray {
@@ -61,12 +63,16 @@ impl SparkBitArray {
     pub fn set(&mut self, index: usize) {
         let data_offset = index >> 6;
         let bit_offset = index & 0b00111111;
+
+        assume!(data_offset < self.data.len());
         self.data[data_offset] |= 1 << bit_offset;
     }
 
     pub fn get(&self, index: usize) -> bool {
         let data_offset = index >> 6;
         let bit_offset = index & 0b00111111;
+
+        assume!(data_offset < self.data.len());
         let datum = &self.data[data_offset];
         (datum >> bit_offset) & 1 == 1
     }
@@ -94,6 +100,13 @@ impl SparkBitArray {
 
     pub fn bit_size(&self) -> usize {
         self.data.len() * 64
+    }
+
+    pub fn true_count(&self) -> usize {
+        self.data
+            .iter()
+            .map(|&datum| datum.count_ones() as usize)
+            .sum()
     }
 }
 

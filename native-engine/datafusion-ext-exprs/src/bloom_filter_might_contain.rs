@@ -14,9 +14,10 @@
 
 use std::{
     any::Any,
+    collections::HashMap,
     fmt::{Debug, Display, Formatter},
     hash::Hasher,
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use arrow::{
@@ -32,23 +33,34 @@ use datafusion_ext_commons::{
     cast::cast, df_execution_err, df_unimplemented_err, spark_bloom_filter::SparkBloomFilter,
 };
 use once_cell::sync::OnceCell;
+use parking_lot::Mutex;
 
 pub struct BloomFilterMightContainExpr {
+    uuid: String,
     bloom_filter_expr: Arc<dyn PhysicalExpr>,
     value_expr: Arc<dyn PhysicalExpr>,
-    bloom_filter: OnceCell<SparkBloomFilter>,
+    bloom_filter: OnceCell<Arc<SparkBloomFilter>>,
 }
 
 impl BloomFilterMightContainExpr {
     pub fn new(
+        uuid: String,
         bloom_filter_expr: Arc<dyn PhysicalExpr>,
         value_expr: Arc<dyn PhysicalExpr>,
     ) -> Self {
         Self {
+            uuid,
             bloom_filter_expr,
             value_expr,
             bloom_filter: OnceCell::new(),
         }
+    }
+}
+
+impl Drop for BloomFilterMightContainExpr {
+    fn drop(&mut self) {
+        drop(self.bloom_filter.take());
+        clear_cached_bloom_filter();
     }
 }
 
@@ -93,14 +105,16 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         // init bloom filter
         let bloom_filter = self.bloom_filter.get_or_try_init(|| {
-            match self.bloom_filter_expr.evaluate(batch)? {
-                ColumnarValue::Scalar(ScalarValue::Binary(Some(v))) => {
-                    Ok(SparkBloomFilter::read_from(v.as_slice())?)
+            get_cached_bloom_filter(&self.uuid, || {
+                match self.bloom_filter_expr.evaluate(batch)? {
+                    ColumnarValue::Scalar(ScalarValue::Binary(Some(v))) => {
+                        Ok(SparkBloomFilter::read_from(v.as_slice())?)
+                    }
+                    _ => {
+                        df_execution_err!("bloom_filter_arg must be valid binary scalar value")
+                    }
                 }
-                _ => {
-                    df_execution_err!("bloom_filter_arg must be valid binary scalar value")
-                }
-            }
+            })
         })?;
 
         // process with bloom filter
@@ -108,9 +122,7 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
         let might_contain = match values.data_type() {
             DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
                 let values = cast(&values, &DataType::Int64)?;
-                BooleanArray::from_unary(values.as_primitive::<Int64Type>(), |v| {
-                    bloom_filter.might_contain_long(v)
-                })
+                bloom_filter.might_contain_longs(values.as_primitive::<Int64Type>().values())
             }
             DataType::Utf8 => BooleanArray::from_unary(values.as_string::<i32>(), |v| {
                 bloom_filter.might_contain_binary(v.as_bytes())
@@ -132,6 +144,7 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
         children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
         Ok(Arc::new(Self::new(
+            self.uuid.clone(),
             children[0].clone(),
             children[1].clone(),
         )))
@@ -142,4 +155,37 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
         self.bloom_filter_expr.dyn_hash(state);
         self.value_expr.dyn_hash(state);
     }
+}
+
+type Slot = Arc<Mutex<Weak<SparkBloomFilter>>>;
+static CACHED_BLOOM_FILTER: OnceCell<Arc<Mutex<HashMap<String, Slot>>>> = OnceCell::new();
+
+fn get_cached_bloom_filter(
+    uuid: &str,
+    init: impl FnOnce() -> Result<SparkBloomFilter>,
+) -> Result<Arc<SparkBloomFilter>> {
+    // remove expire keys and insert new key
+    let slot = {
+        let cached_bloom_filter = CACHED_BLOOM_FILTER.get_or_init(|| Arc::default());
+        let mut cached_bloom_filter = cached_bloom_filter.lock();
+        cached_bloom_filter
+            .entry(uuid.to_string())
+            .or_default()
+            .clone()
+    };
+
+    let mut slot = slot.lock();
+    if let Some(cached) = slot.upgrade() {
+        Ok(cached)
+    } else {
+        let new = Arc::new(init()?);
+        *slot = Arc::downgrade(&new);
+        Ok(new)
+    }
+}
+
+fn clear_cached_bloom_filter() {
+    let cached_bloom_filter = CACHED_BLOOM_FILTER.get_or_init(|| Arc::default());
+    let mut cached_bloom_filter = cached_bloom_filter.lock();
+    cached_bloom_filter.retain(|_, v| Arc::strong_count(v) > 0);
 }

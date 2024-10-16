@@ -347,8 +347,9 @@ message RowNumExprNode {
 }
 
 message BloomFilterMightContainExprNode {
-  PhysicalExprNode bloom_filter_expr = 1;
-  PhysicalExprNode value_expr = 2;
+  string uuid = 1;
+  PhysicalExprNode bloom_filter_expr = 2;
+  PhysicalExprNode value_expr = 3;
 }
 
 message FilterExecNode {

@@ -846,16 +846,21 @@ class ShimsImpl extends Shims with Logging {
     import org.apache.spark.sql.catalyst.expressions.aggregate.BloomFilterAggregate
     agg match {
       case BloomFilterAggregate(child, estimatedNumItemsExpression, numBitsExpression, _, _) =>
+        // ensure numBits is a power of 2
         val estimatedNumItems =
           estimatedNumItemsExpression.eval().asInstanceOf[Number].longValue()
         val numBits = numBitsExpression.eval().asInstanceOf[Number].longValue()
+        val numBitsNextPowerOf2 = numBits match {
+          case 1 => 1L
+          case n => Integer.highestOneBit(n.toInt - 1) << 1
+        }
         Some(
           pb.PhysicalAggExprNode
             .newBuilder()
             .setAggFunction(pb.AggFunction.BLOOM_FILTER)
             .addChildren(NativeConverters.convertExpr(child))
             .addChildren(NativeConverters.convertExpr(Literal(estimatedNumItems)))
-            .addChildren(NativeConverters.convertExpr(Literal(numBits)))
+            .addChildren(NativeConverters.convertExpr(Literal(numBitsNextPowerOf2)))
             .build())
       case _ => None
     }
@@ -872,10 +877,12 @@ class ShimsImpl extends Shims with Logging {
     import org.apache.spark.sql.catalyst.expressions.BloomFilterMightContain
     e match {
       case e: BloomFilterMightContain =>
+        val uuid = UUID.randomUUID().toString
         Some(NativeConverters.buildExprNode {
           _.setBloomFilterMightContainExpr(
             pb.BloomFilterMightContainExprNode
               .newBuilder()
+              .setUuid(uuid)
               .setBloomFilterExpr(NativeConverters
                 .convertExprWithFallback(e.bloomFilterExpression, isPruningExpr, fallback))
               .setValueExpr(NativeConverters
