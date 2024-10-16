@@ -76,12 +76,16 @@ import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeOrcScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeSortBase
+import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
+import org.apache.spark.sql.hive.execution.blaze.plan.NativeHiveTableScanBase
 import org.apache.spark.sql.types.LongType
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan", defaultValue = true)
+  val enablePaimonScan: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.paimon.scan", defaultValue = false)
   val enableProject: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.project", defaultValue = true)
   val enableFilter: Boolean =
@@ -152,6 +156,9 @@ object BlazeConverters extends Logging {
       case e: BroadcastExchangeExec => tryConvert(e, convertBroadcastExchangeExec)
       case e: FileSourceScanExec if enableScan => // scan
         tryConvert(e, convertFileSourceScanExec)
+      case e
+          if enablePaimonScan && BlazeHiveConverters.isNativePaimonTableScan(e) => // scan paimon
+        tryConvert(e, BlazeHiveConverters.convertPaimonTableScanExec)
       case e: ProjectExec if enableProject => // project
         tryConvert(e, convertProjectExec)
       case e: FilterExec if enableFilter => // filter
@@ -787,7 +794,7 @@ object BlazeConverters extends Logging {
       } catch {
         case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
           logWarning(
-            s"Error projecting resultExpressions, failback to non-native projection: " +
+            s"Error projecting resultExpressions, fallback to non-native projection: " +
               s"${e.getMessage}")
           val proj = ProjectExec(exec.resultExpressions, nativeAggr)
           proj.setTagValue(convertToNonNativeTag, true)
@@ -878,7 +885,9 @@ object BlazeConverters extends Logging {
       return false
     }
     plan match {
-      case _: NativeParquetScanBase | _: NativeOrcScanBase | _: NativeUnionBase => true
+      case _: NativeParquetScanBase | _: NativeOrcScanBase | _: NativeHiveTableScanBase |
+          _: NativeUnionBase =>
+        true
       case _: ConvertToNativeBase => needRenameColumns(plan.children.head)
       case exec if NativeHelper.isNative(exec) =>
         NativeHelper.getUnderlyingNativePlan(exec).output != plan.output
