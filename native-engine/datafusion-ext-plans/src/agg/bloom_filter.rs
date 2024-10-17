@@ -137,7 +137,12 @@ impl Agg for AggBloomFilter {
         df_unimplemented_err!("AggBloomFilter::partial_update is not implemented")
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        _num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
         let bloom_filter = match acc.dyn_value_mut(self.accum_state_val_addr) {
             Some(v) => downcast_any!(v, mut SparkBloomFilter)?,
             v @ None => {

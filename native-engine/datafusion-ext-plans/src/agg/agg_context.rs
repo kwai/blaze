@@ -371,11 +371,12 @@ impl AggContext {
     pub fn partial_update_input_all(
         &self,
         acc: &mut RefAccumStateRow,
+        num_rows: usize,
         input_arrays: &[Vec<ArrayRef>],
     ) -> Result<()> {
         if self.need_partial_update {
             for (idx, agg) in &self.need_partial_update_aggs {
-                agg.partial_update_all(acc, &input_arrays[*idx])?;
+                agg.partial_update_all(acc, num_rows, &input_arrays[*idx])?;
             }
         }
         Ok(())

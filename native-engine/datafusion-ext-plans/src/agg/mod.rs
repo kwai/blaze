@@ -22,6 +22,7 @@ pub mod brickhouse;
 pub mod collect_list;
 pub mod collect_set;
 pub mod count;
+pub mod count0;
 pub mod first;
 pub mod first_ignores_null;
 pub mod maxmin;
@@ -168,7 +169,13 @@ pub trait Agg: WithAggBufAddrs + WithMemTracking + Send + Sync + Debug {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()>;
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()>;
+
     fn partial_merge(
         &self,
         acc: &mut RefAccumStateRow,
@@ -202,7 +209,11 @@ pub fn create_agg(
     Ok(match agg_function {
         AggFunction::Count => {
             let return_type = DataType::Int64;
-            Arc::new(count::AggCount::try_new(children[0].clone(), return_type)?)
+            if children[0].nullable(input_schema)? {
+                Arc::new(count::AggCount::try_new(children[0].clone(), return_type)?)
+            } else {
+                Arc::new(count0::AggCount0::try_new(return_type)?)
+            }
         }
         AggFunction::Sum => {
             let arg_type = children[0].data_type(input_schema)?;

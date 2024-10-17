@@ -146,7 +146,12 @@ impl Agg for AggFirst {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        _num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
         if !self.is_touched(acc) {
             let value = &values[0];
             if !value.is_empty() {
