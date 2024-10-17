@@ -32,15 +32,13 @@ use datafusion::{
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
         joins::utils::JoinOn,
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time},
+        metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{
-    batch_size, df_execution_err, streams::coalesce_stream::CoalesceInput,
-};
+use datafusion_ext_commons::{batch_size, df_execution_err};
 use futures::{StreamExt, TryStreamExt};
 use hashbrown::HashMap;
 use once_cell::sync::OnceCell;
@@ -48,10 +46,9 @@ use parking_lot::Mutex;
 
 use crate::{
     common::{
-        batch_statisitcs::{stat_input, InputBatchStatistics},
         column_pruning::ExecuteWithColumnPruning,
-        output::{TaskOutputter, WrappedRecordBatchSender},
-        timer_helper::{RegisterTimer, TimerHelper},
+        execution_context::{ExecutionContext, WrappedRecordBatchSender},
+        timer_helper::TimerHelper,
     },
     joins::{
         bhj::{
@@ -179,52 +176,45 @@ impl BroadcastJoinExec {
         context: Arc<TaskContext>,
         projection: Vec<usize>,
     ) -> Result<SendableRecordBatchStream> {
-        let metrics = self.metrics.clone();
-        let baseline_metrics = Arc::new(BaselineMetrics::new(&metrics, partition));
         let join_params = self.create_join_params(&projection)?;
-        let left = self.left.execute(partition, context.clone())?;
-        let right = self.right.execute(partition, context.clone())?;
+        let exec_ctx = ExecutionContext::new(
+            context,
+            partition,
+            join_params.projection.schema.clone(),
+            &self.metrics,
+        );
+        let left = exec_ctx.execute(&self.left)?;
+        let right = exec_ctx.execute(&self.right)?;
         let broadcast_side = self.broadcast_side;
         let is_built = self.is_built;
         let cached_build_hash_map_id = self.cached_build_hash_map_id.clone();
 
         // stat probed side
-        let input_batch_stat =
-            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?;
-        let left = stat_input(input_batch_stat.clone(), left)?;
-        let right = stat_input(input_batch_stat.clone(), right)?;
+        let left = exec_ctx.stat_input(left);
+        let right = exec_ctx.stat_input(right);
 
-        let baseline_metrics_cloned = baseline_metrics.clone();
-        let context_cloned = context.clone();
-        let output_stream = Box::pin(RecordBatchStreamAdapter::new(
-            join_params.projection.schema.clone(),
-            futures::stream::once(async move {
-                context_cloned.output_with_sender(
-                    if is_built {
-                        "BroadcastJoin"
-                    } else {
-                        "HashJoin"
-                    },
-                    join_params.projection.schema.clone(),
-                    move |sender| {
-                        sender.exclude_time(baseline_metrics_cloned.elapsed_compute());
-                        execute_join(
-                            partition,
-                            left,
-                            right,
-                            join_params,
-                            broadcast_side,
-                            cached_build_hash_map_id,
-                            is_built,
-                            metrics,
-                            sender,
-                        )
-                    },
+        let exec_ctx_cloned = exec_ctx.clone();
+        let output_stream = exec_ctx_cloned.clone().output_with_sender(
+            if is_built {
+                "BroadcastJoin"
+            } else {
+                "HashJoin"
+            },
+            move |sender| {
+                sender.exclude_time(exec_ctx_cloned.baseline_metrics().elapsed_compute());
+                execute_join(
+                    left,
+                    right,
+                    join_params,
+                    broadcast_side,
+                    cached_build_hash_map_id,
+                    is_built,
+                    exec_ctx_cloned,
+                    sender,
                 )
-            })
-            .try_flatten(),
-        ));
-        Ok(context.coalesce_with_default_batch_size(output_stream, &baseline_metrics)?)
+            },
+        );
+        Ok(exec_ctx.coalesce_with_default_batch_size(output_stream))
     }
 }
 
@@ -322,14 +312,14 @@ async fn execute_join_with_map(
     map: Arc<JoinHashMap>,
     join_params: JoinParams,
     broadcast_side: JoinSide,
-    metrics: Arc<BaselineMetrics>,
+    exec_ctx: Arc<ExecutionContext>,
     probed_side_hash_time: Time,
     probed_side_search_time: Time,
     probed_side_compare_time: Time,
     build_output_time: Time,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
-    let _timer = metrics.elapsed_compute().timer();
+    let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
     let mut joiner: Pin<Box<dyn Joiner + Send>> = match broadcast_side {
         JoinSide::Left => match join_params.join_type {
             Inner => Box::pin(RProbedInnerJoiner::new(join_params, map, sender)),
@@ -355,11 +345,13 @@ async fn execute_join_with_map(
         },
     };
 
-    while let Some(batch) = metrics
-        .elapsed_compute()
-        .exclude_timer_async(probed.next())
-        .await
-        .transpose()?
+    while !joiner.can_early_stop()
+        && let Some(batch) = exec_ctx
+            .baseline_metrics()
+            .elapsed_compute()
+            .exclude_timer_async(probed.next())
+            .await
+            .transpose()?
     {
         joiner
             .as_mut()
@@ -371,33 +363,29 @@ async fn execute_join_with_map(
                 &build_output_time,
             )
             .await?;
-
-        if joiner.can_early_stop() {
-            break;
-        }
     }
     joiner.as_mut().finish(&build_output_time).await?;
-    metrics.record_output(joiner.num_output_rows());
+    exec_ctx
+        .baseline_metrics()
+        .record_output(joiner.num_output_rows());
     Ok(())
 }
 
 async fn execute_join(
-    partition: usize,
     left: SendableRecordBatchStream,
     right: SendableRecordBatchStream,
     join_params: JoinParams,
     broadcast_side: JoinSide,
     cached_build_hash_map_id: Option<String>,
     is_built: bool,
-    metrics: ExecutionPlanMetricsSet,
+    exec_ctx: Arc<ExecutionContext>,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
-    let baseline_metrics = Arc::new(BaselineMetrics::new(&metrics, partition));
-    let build_time = metrics.register_timer("build_hash_map_time", partition);
-    let probed_side_hash_time = metrics.register_timer("probed_side_hash_time", partition);
-    let probed_side_search_time = metrics.register_timer("probed_side_search_time", partition);
-    let probed_side_compare_time = metrics.register_timer("probed_side_compare_time", partition);
-    let build_output_time = metrics.register_timer("build_output_time", partition);
+    let build_time = exec_ctx.register_timer_metric("build_hash_map_time");
+    let probed_side_hash_time = exec_ctx.register_timer_metric("probed_side_hash_time");
+    let probed_side_search_time = exec_ctx.register_timer_metric("probed_side_search_time");
+    let probed_side_compare_time = exec_ctx.register_timer_metric("probed_side_compare_time");
+    let build_output_time = exec_ctx.register_timer_metric("build_output_time");
 
     let (probed_input, built_input) = match broadcast_side {
         JoinSide::Left => (right, left),
@@ -434,7 +422,8 @@ async fn execute_join(
         }
     )?;
 
-    baseline_metrics
+    exec_ctx
+        .baseline_metrics()
         .elapsed_compute()
         .add_duration(build_time.duration());
 
@@ -443,7 +432,7 @@ async fn execute_join(
         map,
         join_params,
         broadcast_side,
-        baseline_metrics.clone(),
+        exec_ctx,
         probed_side_hash_time,
         probed_side_search_time,
         probed_side_compare_time,

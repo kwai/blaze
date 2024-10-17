@@ -19,6 +19,7 @@
 #![feature(get_mut_unchecked)]
 #![feature(portable_simd)]
 #![feature(ptr_as_ref_unchecked)]
+#![feature(let_chains)]
 
 // execution plan implementations
 pub mod agg_exec;

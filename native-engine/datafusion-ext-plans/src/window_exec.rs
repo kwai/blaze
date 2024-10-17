@@ -17,7 +17,6 @@ use std::{any::Any, fmt::Formatter, sync::Arc};
 use arrow::{
     array::{Array, ArrayRef},
     datatypes::SchemaRef,
-    error::ArrowError,
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use datafusion::{
@@ -25,19 +24,18 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalSortExpr},
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PhysicalExpr, PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{cast::cast, streams::coalesce_stream::CoalesceInput};
-use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
+use datafusion_ext_commons::cast::cast;
+use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
 use crate::{
-    common::output::TaskOutputter,
-    window::{window_context::WindowContext, WindowExpr, WindowFunctionProcessor},
+    common::execution_context::ExecutionContext,
+    window::{window_context::WindowContext, WindowExpr},
 };
 
 #[derive(Debug)]
@@ -121,24 +119,11 @@ impl ExecutionPlan for WindowExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         // at this moment only supports ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        let input = self.input.execute(partition, context.clone())?;
-        let coalesced = context.coalesce_with_default_batch_size(
-            input,
-            &BaselineMetrics::new(&self.metrics, partition),
-        )?;
-
-        let stream = execute_window(
-            coalesced,
-            context.clone(),
-            self.context.clone(),
-            BaselineMetrics::new(&self.metrics, partition),
-        )
-        .map_err(|e| ArrowError::ExternalError(Box::new(e)));
-
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(stream).try_flatten(),
-        )))
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let input = exec_ctx.execute(&self.input)?;
+        let coalesced = exec_ctx.coalesce_with_default_batch_size(input);
+        let window_ctx = self.context.clone();
+        execute_window(coalesced, exec_ctx, window_ctx)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -150,59 +135,54 @@ impl ExecutionPlan for WindowExec {
     }
 }
 
-async fn execute_window(
+fn execute_window(
     mut input: SendableRecordBatchStream,
-    task_context: Arc<TaskContext>,
-    context: Arc<WindowContext>,
-    metrics: BaselineMetrics,
+    exec_ctx: Arc<ExecutionContext>,
+    window_ctx: Arc<WindowContext>,
 ) -> Result<SendableRecordBatchStream> {
-    let mut processors: Vec<Box<dyn WindowFunctionProcessor>> = context
-        .window_exprs
-        .iter()
-        .map(|expr: &WindowExpr| expr.create_processor(&context))
-        .collect::<Result<_>>()?;
-
     // start processing input batches
-    let output_schema = context.output_schema.clone();
-    task_context.output_with_sender("Window", output_schema.clone(), |sender| async move {
-        sender.exclude_time(metrics.elapsed_compute());
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("Window", |sender| async move {
+            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
 
-        while let Some(batch) = input.next().await.transpose()? {
-            let _timer = metrics.elapsed_compute().timer();
-            let window_cols: Vec<ArrayRef> = processors
-                .iter_mut()
-                .map(|processor| {
-                    if context.partition_spec.is_empty() {
-                        processor.process_batch_without_partitions(&context, &batch)
-                    } else {
-                        processor.process_batch(&context, &batch)
-                    }
-                })
-                .collect::<Result<_>>()?;
-
-            let outputs: Vec<ArrayRef> = batch
-                .columns()
+            let mut processors = window_ctx
+                .window_exprs
                 .iter()
-                .chain(&window_cols)
-                .zip(context.output_schema.fields())
-                .map(|(array, field)| {
-                    if array.data_type() != field.data_type() {
-                        return cast(&array, field.data_type());
-                    }
-                    Ok(array.clone())
-                })
-                .collect::<Result<_>>()?;
-            let output_batch = RecordBatch::try_new_with_options(
-                context.output_schema.clone(),
-                outputs,
-                &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-            )?;
+                .map(|expr: &WindowExpr| expr.create_processor(&window_ctx))
+                .collect::<Result<Vec<_>>>()?;
 
-            metrics.record_output(output_batch.num_rows());
-            sender.send(Ok(output_batch)).await;
-        }
-        Ok(())
-    })
+            while let Some(batch) = input.next().await.transpose()? {
+                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+                let window_cols: Vec<ArrayRef> = processors
+                    .iter_mut()
+                    .map(|processor| processor.process_batch(&window_ctx, &batch))
+                    .collect::<Result<_>>()?;
+
+                let outputs: Vec<ArrayRef> = batch
+                    .columns()
+                    .iter()
+                    .chain(&window_cols)
+                    .zip(window_ctx.output_schema.fields())
+                    .map(|(array, field)| {
+                        if array.data_type() != field.data_type() {
+                            return cast(&array, field.data_type());
+                        }
+                        Ok(array.clone())
+                    })
+                    .collect::<Result<_>>()?;
+                let output_batch = RecordBatch::try_new_with_options(
+                    window_ctx.output_schema.clone(),
+                    outputs,
+                    &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+                )?;
+                exec_ctx
+                    .baseline_metrics()
+                    .record_output(output_batch.num_rows());
+                sender.send(output_batch).await;
+            }
+            Ok(())
+        }))
 }
 
 #[cfg(test)]

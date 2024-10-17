@@ -15,24 +15,28 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::{atomic::AtomicUsize, Arc},
+    io::Cursor,
+    sync::Arc,
 };
 
 use arrow::{
-    array::{ArrayRef, AsArray},
+    array::{ArrayRef, AsArray, BinaryBuilder},
     datatypes::{DataType, Int64Type},
 };
-use datafusion::{
-    common::{Result, ScalarValue},
-    physical_expr::PhysicalExpr,
-};
+use byteorder::{ReadBytesExt, WriteBytesExt};
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
 use datafusion_ext_commons::{
     cast::cast, df_unimplemented_err, downcast_any, spark_bloom_filter::SparkBloomFilter,
 };
 
-use crate::agg::{
-    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, RefAccumStateRow},
-    Agg, WithAggBufAddrs, WithMemTracking,
+use crate::{
+    agg::{
+        acc::{AccColumn, AccColumnRef},
+        agg::IdxSelection,
+        Agg,
+    },
+    idx_for, idx_for_zipped,
+    memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
 };
 
 pub struct AggBloomFilter {
@@ -40,21 +44,6 @@ pub struct AggBloomFilter {
     child_data_type: DataType,
     estimated_num_items: usize,
     num_bits: usize,
-    accums_initial: Vec<AccumInitialValue>,
-    accum_state_val_addr: AccumStateValAddr,
-    mem_used_tracker: AtomicUsize,
-}
-
-impl WithAggBufAddrs for AggBloomFilter {
-    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
-        self.accum_state_val_addr = accum_state_val_addrs[0];
-    }
-}
-
-impl WithMemTracking for AggBloomFilter {
-    fn mem_used_tracker(&self) -> &AtomicUsize {
-        &self.mem_used_tracker
-    }
 }
 
 impl AggBloomFilter {
@@ -70,12 +59,6 @@ impl AggBloomFilter {
             child_data_type,
             estimated_num_items,
             num_bits,
-            accums_initial: vec![AccumInitialValue::BloomFilter {
-                estimated_num_items,
-                num_bits,
-            }],
-            accum_state_val_addr: AccumStateValAddr::default(),
-            mem_used_tracker: AtomicUsize::new(0),
         }
     }
 }
@@ -107,10 +90,6 @@ impl Agg for AggBloomFilter {
         true
     }
 
-    fn accums_initial(&self) -> &[AccumInitialValue] {
-        &self.accums_initial
-    }
-
     fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::new(
             exprs[0].clone(),
@@ -120,55 +99,53 @@ impl Agg for AggBloomFilter {
         )))
     }
 
-    fn increase_acc_mem_used(&self, acc: &mut RefAccumStateRow) {
-        self.add_mem_used(
-            acc.dyn_value(self.accum_state_val_addr)
-                .as_ref()
-                .unwrap()
-                .mem_size(),
-        );
+    fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
+        let mut bloom_filters = Box::new(AccBloomFilterColumn {
+            bloom_filters: vec![],
+        });
+        bloom_filters.resize(num_rows);
+        bloom_filters
     }
 
     fn partial_update(
         &self,
-        _acc: &mut RefAccumStateRow,
-        _values: &[ArrayRef],
-        _row_idx: usize,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        partial_args: &[ArrayRef],
+        partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        df_unimplemented_err!("AggBloomFilter::partial_update is not implemented")
-    }
-
-    fn partial_update_all(
-        &self,
-        acc: &mut RefAccumStateRow,
-        _num_rows: usize,
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let bloom_filter = match acc.dyn_value_mut(self.accum_state_val_addr) {
-            Some(v) => downcast_any!(v, mut SparkBloomFilter)?,
-            v @ None => {
-                *v = Some(Box::new(SparkBloomFilter::new_with_expected_num_items(
-                    self.estimated_num_items,
-                    self.num_bits,
-                )));
-                downcast_any!(v.as_mut().unwrap(), mut SparkBloomFilter)?
+        let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
+        let bloom_filter = match acc_idx {
+            IdxSelection::Single(idx) => {
+                let bf = &mut accs.bloom_filters[idx];
+                if bf.is_none() {
+                    *bf = Some(SparkBloomFilter::new_with_expected_num_items(
+                        self.estimated_num_items,
+                        self.num_bits,
+                    ));
+                }
+                bf.as_mut().unwrap()
             }
+            _ => return df_unimplemented_err!("AggBloomFilter only supports one bloom filter"),
         };
+        if partial_arg_idx != IdxSelection::Range(0, partial_args[0].len()) {
+            return df_unimplemented_err!("AggBloomFilter only supports updating the whole array");
+        }
 
         match &self.child_data_type {
             DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
-                let long_values = cast(&values[0], &DataType::Int64)?;
+                let long_values = cast(&partial_args[0], &DataType::Int64)?;
                 for long_value in long_values.as_primitive::<Int64Type>().iter().flatten() {
                     bloom_filter.put_long(long_value);
                 }
             }
             DataType::Utf8 => {
-                for string_value in values[0].as_string::<i32>().iter().flatten() {
+                for string_value in partial_args[0].as_string::<i32>().iter().flatten() {
                     bloom_filter.put_binary(string_value.as_bytes());
                 }
             }
             DataType::Binary => {
-                for binary_value in values[0].as_binary::<i32>().iter().flatten() {
+                for binary_value in partial_args[0].as_binary::<i32>().iter().flatten() {
                     bloom_filter.put_binary(binary_value);
                 }
             }
@@ -181,46 +158,140 @@ impl Agg for AggBloomFilter {
 
     fn partial_merge(
         &self,
-        acc: &mut RefAccumStateRow,
-        merging_acc: &mut RefAccumStateRow,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        merging_accs: &mut AccColumnRef,
+        merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        if let Some(merging_value) = merging_acc.dyn_value_mut(self.accum_state_val_addr) {
-            let w = acc.dyn_value_mut(self.accum_state_val_addr);
-            match w {
-                None => {
-                    let merging_bloom_filter = downcast_any!(merging_value, mut SparkBloomFilter)?;
-                    *w = Some(Box::new(std::mem::take(merging_bloom_filter)));
-                }
-                Some(w) => {
-                    let bloom_filter = downcast_any!(w, mut SparkBloomFilter)?;
-                    let merging_bloom_filter = downcast_any!(merging_value, mut SparkBloomFilter)?;
-                    self.sub_mem_used(merging_bloom_filter.mem_size());
-                    bloom_filter.put_all(&merging_bloom_filter);
+        let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
+        let merging_accs = downcast_any!(merging_accs, mut AccBloomFilterColumn).unwrap();
+
+        idx_for_zipped! {
+            ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                let acc_bloom_filter = &mut accs.bloom_filters[acc_idx];
+                let merging_acc_bloom_filter = std::mem::replace(&mut merging_accs.bloom_filters[merging_acc_idx], None);
+
+                if let Some(merging_acc_bloom_filter) = merging_acc_bloom_filter {
+                    if let Some(acc_bloom_filter) = acc_bloom_filter {
+                        acc_bloom_filter.put_all(&merging_acc_bloom_filter);
+                    } else {
+                        *acc_bloom_filter = Some(merging_acc_bloom_filter);
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
-        if let Some(value) = acc.dyn_value_mut(self.accum_state_val_addr) {
-            let mut bloom_filter = std::mem::take(downcast_any!(value, mut SparkBloomFilter)?);
-            bloom_filter.shrink_to_fit();
-            self.sub_mem_used(bloom_filter.mem_size());
+    fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
+        let mut binary_builder = BinaryBuilder::with_capacity(acc_idx.len(), 0);
+        let mut buf = vec![];
 
-            let mut buf = vec![];
-            bloom_filter.write_to(&mut buf)?;
-            Ok(ScalarValue::Binary(Some(buf)))
-        } else {
-            Ok(ScalarValue::Binary(None))
+        idx_for! {
+            (acc_idx in acc_idx) => {
+                if let Some(bloom_filter) = &mut accs.bloom_filters[acc_idx] {
+                    bloom_filter.shrink_to_fit();
+                    bloom_filter.write_to(&mut buf)?;
+                    binary_builder.append_value(&buf);
+                    buf.clear();
+                } else {
+                    binary_builder.append_null();
+                }
+            }
         }
+        Ok(Arc::new(binary_builder.finish()))
+    }
+}
+
+struct AccBloomFilterColumn {
+    bloom_filters: Vec<Option<SparkBloomFilter>>,
+}
+
+impl AccColumn for AccBloomFilterColumn {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 
-    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
-        let scalars = accs
-            .iter_mut()
-            .map(|acc| self.final_merge(acc))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(ScalarValue::iter_to_array(scalars)?)
+    fn resize(&mut self, len: usize) {
+        self.bloom_filters.resize(len, None);
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.bloom_filters.shrink_to_fit();
+    }
+
+    fn num_records(&self) -> usize {
+        self.bloom_filters.len()
+    }
+
+    fn mem_used(&self) -> usize {
+        self.bloom_filters
+            .iter()
+            .flatten()
+            .map(|bf| bf.mem_size())
+            .sum()
+    }
+
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
+        idx_for! {
+            (idx in idx) => {
+                let w = &mut array[idx];
+                if let Some(bloom_filter) = &self.bloom_filters[idx] {
+                    w.write_u8(1)?;
+                    bloom_filter.write_to(w)?;
+                } else {
+                    w.write_u8(0)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
+        let mut idx = self.num_records();
+        self.resize(idx + array.len());
+
+        for (data, offset) in array.iter().zip(offsets) {
+            let mut cursor = Cursor::new(*data);
+            cursor.set_position(*offset as u64);
+
+            if cursor.read_u8()? == 1 {
+                self.bloom_filters[idx] = Some(SparkBloomFilter::read_from(&mut cursor)?);
+            } else {
+                self.bloom_filters[idx] = None;
+            }
+            *offset = cursor.position() as usize;
+            idx += 1;
+        }
+        Ok(())
+    }
+
+    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
+        idx_for! {
+            (idx in idx) => {
+                if let Some(bloom_filter) = &self.bloom_filters[idx] {
+                    w.write_u8(1)?;
+                    bloom_filter.write_to(w)?;
+                } else {
+                    w.write_u8(0)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
+        let idx = self.num_records();
+        self.resize(idx + num_rows);
+
+        for i in idx..idx + num_rows {
+            if r.read_u8()? == 1 {
+                self.bloom_filters[i] = Some(SparkBloomFilter::read_from(r)?);
+            } else {
+                self.bloom_filters[i] = None;
+            }
+        }
+        Ok(())
     }
 }

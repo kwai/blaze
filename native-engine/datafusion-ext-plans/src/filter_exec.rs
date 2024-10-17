@@ -20,23 +20,20 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
-use futures::{stream::once, StreamExt, TryStreamExt};
+use datafusion_ext_commons::df_execution_err;
+use futures::StreamExt;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 
 use crate::{
     common::{
-        batch_statisitcs::{stat_input, InputBatchStatistics},
-        cached_exprs_evaluator::CachedExprsEvaluator,
-        column_pruning::ExecuteWithColumnPruning,
-        output::TaskOutputter,
+        cached_exprs_evaluator::CachedExprsEvaluator, column_pruning::ExecuteWithColumnPruning,
+        execution_context::ExecutionContext,
     },
     project_exec::ProjectExec,
 };
@@ -131,23 +128,10 @@ impl ExecutionPlan for FilterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let predicates = self.predicates.clone();
-        let metrics = BaselineMetrics::new(&self.metrics, partition);
-        let input = stat_input(
-            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
-            self.input.execute(partition, context.clone())?,
-        )?;
-        let filtered = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(execute_filter(
-                input,
-                context.clone(),
-                predicates,
-                metrics.clone(),
-            ))
-            .try_flatten(),
-        ));
-        let coalesced = context.coalesce_with_default_batch_size(filtered, &metrics)?;
-        Ok(coalesced)
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        let filtered = execute_filter(input, predicates, exec_ctx.clone())?;
+        Ok(exec_ctx.coalesce_with_default_batch_size(filtered))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -184,25 +168,28 @@ impl ExecuteWithColumnPruning for FilterExec {
     }
 }
 
-async fn execute_filter(
+fn execute_filter(
     mut input: SendableRecordBatchStream,
-    context: Arc<TaskContext>,
     predicates: Vec<PhysicalExprRef>,
-    metrics: BaselineMetrics,
+    exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
     let input_schema = input.schema();
     let cached_exprs_evaluator =
         CachedExprsEvaluator::try_new(predicates, vec![], input_schema.clone())?;
 
-    context.output_with_sender("Filter", input_schema, move |sender| async move {
-        sender.exclude_time(metrics.elapsed_compute());
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("Filter", move |sender| async move {
+            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
 
-        while let Some(batch) = input.next().await.transpose()? {
-            let _timer = metrics.elapsed_compute().timer();
-            let filtered_batch = cached_exprs_evaluator.filter(&batch)?;
-            metrics.record_output(filtered_batch.num_rows());
-            sender.send(Ok(filtered_batch)).await;
-        }
-        Ok(())
-    })
+            while let Some(batch) = input.next().await.transpose()? {
+                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+                let filtered_batch = cached_exprs_evaluator.filter(&batch)?;
+                exec_ctx
+                    .baseline_metrics()
+                    .record_output(filtered_batch.num_rows());
+                sender.send(filtered_batch).await;
+            }
+            Ok(())
+        }))
 }

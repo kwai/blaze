@@ -40,25 +40,22 @@ use datafusion::{
     physical_expr::EquivalenceProperties,
     physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
-        metrics::{
-            BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricValue, MetricsSet, Time,
-        },
-        stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Metric, Partitioning,
-        PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::{batch_size, hadoop_fs::FsProvider};
 use fmt::Debug;
-use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryStreamExt};
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 use itertools::Itertools;
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::{
-    common::{internal_file_reader::InternalFileReader, output::TaskOutputter},
-    scan::BlazeSchemaAdapterFactory,
+    common::execution_context::ExecutionContext,
+    scan::{internal_file_reader::InternalFileReader, BlazeSchemaAdapterFactory},
 };
 
 /// Execution plan for scanning one or more Parquet partitions
@@ -183,22 +180,13 @@ impl ExecutionPlan for ParquetExec {
 
     fn execute(
         &self,
-        partition_index: usize,
+        partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
-        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
-
-        let io_time = Time::default();
-        let io_time_metric = Arc::new(Metric::new(
-            MetricValue::Time {
-                name: "io_time".into(),
-                time: io_time.clone(),
-            },
-            Some(partition_index),
-        ));
-        self.metrics.register(io_time_metric);
+        let io_time = exec_ctx.register_timer_metric("io_time");
 
         // get fs object from jni bridge resource
         let resource_id = jni_new_string!(&self.fs_resource_id)?;
@@ -215,7 +203,7 @@ impl ExecutionPlan for ParquetExec {
         let bloom_filter_enabled = conf::PARQUET_ENABLE_BLOOM_FILTER.value()?;
 
         let opener = ParquetOpener {
-            partition_index,
+            partition_index: partition,
             projection: Arc::from(projection),
             batch_size: batch_size(),
             limit: self.base_config.limit,
@@ -233,16 +221,12 @@ impl ExecutionPlan for ParquetExec {
             schema_adapter_factory,
         };
 
-        let mut file_stream =
-            FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?;
+        let mut file_stream = FileStream::new(&self.base_config, partition, opener, &self.metrics)?;
         if conf::IGNORE_CORRUPTED_FILES.value()? {
-            file_stream = file_stream.with_on_error(OnError::Skip);
+            file_stream = file_stream.with_on_error(OnError::Skip)
         }
-        let stream = Box::pin(file_stream);
-        let timed_stream = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(execute_parquet_scan(context, stream, baseline_metrics)).try_flatten(),
-        ));
+
+        let timed_stream = execute_parquet_scan(Box::pin(file_stream), exec_ctx)?;
         Ok(timed_stream)
     }
 
@@ -255,21 +239,20 @@ impl ExecutionPlan for ParquetExec {
     }
 }
 
-async fn execute_parquet_scan(
-    context: Arc<TaskContext>,
+fn execute_parquet_scan(
     mut stream: Pin<Box<FileStream<ParquetOpener>>>,
-    baseline_metrics: BaselineMetrics,
+    exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
-    let schema = stream.schema();
-    context.output_with_sender("ParquetScan", schema, move |sender| async move {
-        sender.exclude_time(baseline_metrics.elapsed_compute());
-
-        let _timer = baseline_metrics.elapsed_compute().timer();
-        while let Some(batch) = stream.next().await.transpose()? {
-            sender.send(Ok(batch)).await;
-        }
-        Ok(())
-    })
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("ParquetScan", move |sender| async move {
+            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
+            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+            while let Some(batch) = stream.next().await.transpose()? {
+                sender.send(batch).await;
+            }
+            Ok(())
+        }))
 }
 
 #[derive(Clone)]

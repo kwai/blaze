@@ -54,6 +54,7 @@ import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.AggExecMode
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.HashAgg
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.NativeAggrInfo
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.SortAgg
+import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.types.BinaryType
 
 abstract class NativeAggBase(
@@ -83,7 +84,10 @@ abstract class NativeAggBase(
         "input_batch_count",
         "input_batch_mem_size",
         "input_row_count"))
-      .toSeq: _*)
+      .toSeq: _*) ++
+    Map("hashing_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.hashing_time")) ++
+    Map("merging_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.merging_time")) ++
+    Map("output_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.output_time"))
 
   override def requiredChildDistribution: List[Distribution] = {
     requiredChildDistributionExpressions match {
@@ -147,11 +151,6 @@ abstract class NativeAggBase(
 
   private def supportsPartialSkipping = (
     BlazeConf.PARTIAL_AGG_SKIPPING_ENABLE.booleanConf()
-      && (child match { // do not trigger skipping after ExpandExec
-        case _: NativeExpandBase => false
-        case c: NativeProjectBase if c.child.isInstanceOf[NativeExpandBase] => false
-        case _ => true
-      })
       && initialInputBufferOffset == 0
       && aggregateExpressions.forall(_.mode == Partial)
       && requiredChildDistribution.forall(_ == UnspecifiedDistribution)

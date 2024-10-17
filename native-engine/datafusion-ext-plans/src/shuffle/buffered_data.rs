@@ -23,9 +23,10 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
-    assume, compute_suggested_batch_size_for_output,
+    assume,
+    coalesce::coalesce_arrays_unchecked,
+    compute_suggested_batch_size_for_output,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-    streams::coalesce_stream::coalesce_arrays_unchecked,
     unchecked,
 };
 use jni::objects::GlobalRef;

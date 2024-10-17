@@ -24,17 +24,15 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
         SendableRecordBatchStream, Statistics,
     },
 };
-use futures::{stream::once, TryStreamExt};
 use once_cell::sync::OnceCell;
 
 use crate::{
-    common::timer_helper::RegisterTimer,
+    common::execution_context::ExecutionContext,
     memmgr::MemManager,
     shuffle::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
@@ -113,22 +111,20 @@ impl ExecutionPlan for RssShuffleWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let resource_id = jni_new_string!(&self.rss_partition_writer_resource_id)?;
         let rss_partition_writer_local = jni_call_static!(
             JniBridge.getResource(resource_id.as_obj()) -> JObject
         )?;
         let rss_partition_writer = jni_new_global_ref!(rss_partition_writer_local.as_obj())?;
 
-        // record uncompressed data size
-        let data_size_metric = MetricBuilder::new(&self.metrics).counter("data_size", partition);
-
-        let input = self.input.execute(partition, context.clone())?;
+        let input = exec_ctx.execute(&self.input)?;
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
             Partitioning::Hash(..) => {
-                let sort_time = self.metrics.register_timer("sort_time", partition);
+                let sort_time = exec_ctx.register_timer_metric("sort_time");
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
@@ -140,17 +136,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             }
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(repartitioner.execute(
-                context.clone(),
-                partition,
-                input,
-                BaselineMetrics::new(&self.metrics, partition),
-                data_size_metric,
-            ))
-            .try_flatten(),
-        )))
+        repartitioner.execute(exec_ctx, input)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

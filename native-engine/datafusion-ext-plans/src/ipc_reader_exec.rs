@@ -37,23 +37,21 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
         Partitioning::UnknownPartitioning,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize, batch_size, df_execution_err,
-    streams::coalesce_stream::coalesce_arrays_unchecked, suggested_output_batch_mem_size,
+    array_size::ArraySize, batch_size, coalesce::coalesce_arrays_unchecked, df_execution_err,
+    suggested_output_batch_mem_size,
 };
-use futures::{stream::once, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use crate::common::{ipc_compression::IpcCompressionReader, output::TaskOutputter};
+use crate::common::{execution_context::ExecutionContext, ipc_compression::IpcCompressionReader};
 
 #[derive(Debug, Clone)]
 pub struct IpcReaderExec {
@@ -129,10 +127,8 @@ impl ExecutionPlan for IpcReaderExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let size_counter = MetricBuilder::new(&self.metrics).counter("size", partition);
-
-        let elapsed_compute = baseline_metrics.elapsed_compute().clone();
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
 
         let blocks_provider = jni_call_static!(
@@ -146,19 +142,7 @@ impl ExecutionPlan for IpcReaderExec {
         assert!(!blocks_local.as_obj().is_null());
 
         let blocks = jni_new_global_ref!(blocks_local.as_obj())?;
-        let ipc_stream = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(read_ipc(
-                partition,
-                context.clone(),
-                self.schema(),
-                blocks,
-                baseline_metrics.clone(),
-                size_counter,
-            ))
-            .try_flatten(),
-        ));
-        Ok(ipc_stream)
+        read_ipc(self.schema(), blocks, exec_ctx)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -170,19 +154,19 @@ impl ExecutionPlan for IpcReaderExec {
     }
 }
 
-pub async fn read_ipc(
-    partition_id: usize,
-    context: Arc<TaskContext>,
+fn read_ipc(
     schema: SchemaRef,
     blocks: GlobalRef,
-    baseline_metrics: BaselineMetrics,
-    size_counter: Count,
+    exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
-    log::info!("[partition={partition_id}] start ipc reading");
-    context.output_with_sender("IpcReader", schema.clone(), move |sender| async move {
-        sender.exclude_time(baseline_metrics.elapsed_compute());
+    let size_counter = exec_ctx.register_counter_metric("size");
+    let partition_id = exec_ctx.partition_id();
 
-        let _timer = baseline_metrics.elapsed_compute().timer();
+    Ok(exec_ctx.clone().output_with_sender("IpcReader", move |sender| async move {
+        sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
+        log::info!("[partition={partition_id}] start ipc reading");
+
+        let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
         let batch_size = batch_size();
         let staging_cols: Arc<Mutex<Vec<Vec<ArrayRef>>>> = Arc::new(Mutex::new(vec![]));
         let staging_num_rows = AtomicUsize::new(0);
@@ -246,8 +230,8 @@ pub async fn read_ipc(
                     staging_num_rows.store(0, SeqCst);
                     staging_mem_size.store(0, SeqCst);
                     size_counter.add(batch.get_array_mem_size());
-                    baseline_metrics.record_output(batch.num_rows());
-                    sender.send(Ok(batch)).await;
+                    exec_ctx.baseline_metrics().record_output(batch.num_rows());
+                    sender.send(batch).await;
                 }
             }
         }
@@ -264,11 +248,11 @@ pub async fn read_ipc(
                 &RecordBatchOptions::new().with_row_count(Some(cur_staging_num_rows))
             )?;
             size_counter.add(batch.get_array_mem_size());
-            baseline_metrics.record_output(batch.num_rows());
-            sender.send(Ok(batch)).await;
+            exec_ctx.baseline_metrics().record_output(batch.num_rows());
+            sender.send(batch).await;
         }
         Ok(())
-    })
+    }))
 }
 
 fn get_channel_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Read + Send>>> {

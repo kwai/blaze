@@ -43,7 +43,7 @@ impl SparkBitArray {
         Self::new(vec![0; data_len])
     }
 
-    pub fn read_from(mut r: impl Read) -> Result<Self> {
+    pub fn read_from(r: &mut impl Read) -> Result<Self> {
         let data_len = r.read_i32::<BE>()? as usize;
         let mut data = vec![0; data_len];
         for datum in &mut data {
@@ -52,7 +52,7 @@ impl SparkBitArray {
         Ok(Self::new(data))
     }
 
-    pub fn write_to(&self, mut w: impl Write) -> Result<()> {
+    pub fn write_to(&self, w: &mut impl Write) -> Result<()> {
         w.write_i32::<BE>(self.data.len() as i32)?;
         for &datum in &self.data {
             w.write_i64::<BE>(datum as i64)?;

@@ -12,13 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    any::Any,
-    fmt::Formatter,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::{any::Any, fmt::Formatter, sync::Arc};
 
 use arrow::{
     datatypes::{Field, Fields, Schema, SchemaRef},
@@ -30,15 +24,15 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
-use crate::agg::AGG_BUF_COLUMN_NAME;
+use crate::{agg::AGG_BUF_COLUMN_NAME, common::execution_context::ExecutionContext};
 
 #[derive(Debug, Clone)]
 pub struct RenameColumnsExec {
@@ -144,13 +138,22 @@ impl ExecutionPlan for RenameColumnsExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let input = self.input.execute(partition, context)?;
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        Ok(Box::pin(RenameColumnsStream::new(
-            input,
-            self.schema(),
-            baseline_metrics,
-        )))
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let mut input = exec_ctx.execute(&self.input)?;
+        Ok(exec_ctx
+            .clone()
+            .output_with_sender("RenameColumns", move |sender| async move {
+                while let Some(batch) = input.next().await.transpose()? {
+                    let batch = RecordBatch::try_new_with_options(
+                        exec_ctx.output_schema(),
+                        batch.columns().to_vec(),
+                        &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+                    )?;
+                    exec_ctx.baseline_metrics().record_output(batch.num_rows());
+                    sender.send(batch).await;
+                }
+                Ok(())
+            }))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -158,57 +161,6 @@ impl ExecutionPlan for RenameColumnsExec {
     }
 
     fn statistics(&self) -> Result<Statistics> {
-        self.input.statistics()
-    }
-}
-
-struct RenameColumnsStream {
-    input: SendableRecordBatchStream,
-    schema: SchemaRef,
-    baseline_metrics: BaselineMetrics,
-}
-
-impl RenameColumnsStream {
-    pub fn new(
-        input: SendableRecordBatchStream,
-        schema: SchemaRef,
-        baseline_metrics: BaselineMetrics,
-    ) -> RenameColumnsStream {
-        RenameColumnsStream {
-            input,
-            schema,
-            baseline_metrics,
-        }
-    }
-}
-
-impl RecordBatchStream for RenameColumnsStream {
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-}
-
-impl Stream for RenameColumnsStream {
-    type Item = Result<RecordBatch>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.input.poll_next_unpin(cx)? {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(batch)) => {
-                let num_rows = batch.num_rows();
-                self.baseline_metrics.record_poll(Poll::Ready(Some(Ok(
-                    RecordBatch::try_new_with_options(
-                        self.schema.clone(),
-                        batch.columns().to_vec(),
-                        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
-                    )?,
-                ))))
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.input.size_hint()
+        todo!()
     }
 }

@@ -33,9 +33,7 @@ use datafusion::{
     error::Result, logical_expr::ColumnarValue, physical_expr::physical_exprs_bag_equal,
     physical_plan::PhysicalExpr,
 };
-use datafusion_ext_commons::{
-    cast::cast, df_execution_err, streams::coalesce_stream::coalesce_arrays_unchecked,
-};
+use datafusion_ext_commons::{cast::cast, coalesce::coalesce_arrays_unchecked, df_execution_err};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 

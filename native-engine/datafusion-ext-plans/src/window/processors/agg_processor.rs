@@ -15,39 +15,30 @@
 use std::sync::Arc;
 
 use arrow::{array::ArrayRef, record_batch::RecordBatch};
-use datafusion::common::{Result, ScalarValue};
-use datafusion_ext_commons::slim_bytes::SlimBytes;
+use datafusion::common::Result;
+use datafusion_ext_commons::coalesce::coalesce_arrays_unchecked;
 
 use crate::{
     agg::{
-        acc::{create_acc_from_initial_value, OwnedAccumStateRow},
-        Agg,
+        acc::AccColumnRef,
+        agg::{Agg, IdxSelection},
     },
     window::{window_context::WindowContext, WindowFunctionProcessor},
 };
 
 pub struct AggProcessor {
-    cur_partition: SlimBytes,
+    cur_partition: Vec<u8>,
     agg: Arc<dyn Agg>,
-    acc_init: OwnedAccumStateRow,
-    acc: OwnedAccumStateRow,
+    acc_col: AccColumnRef,
 }
 
 impl AggProcessor {
     pub fn try_new(agg: Arc<dyn Agg>) -> Result<Self> {
-        let (acc, accum_state_val_addrs) = create_acc_from_initial_value(agg.accums_initial())?;
-
-        let mut agg = agg;
-        unsafe {
-            // safety - accum_state_val_addrs is guaranteed not to be used at this time
-            Arc::get_mut_unchecked(&mut agg).set_accum_state_val_addrs(&accum_state_val_addrs);
-        }
-
+        let acc_col = agg.create_acc_column(1);
         Ok(Self {
             cur_partition: Default::default(),
             agg,
-            acc_init: acc.clone(),
-            acc,
+            acc_col,
         })
     }
 }
@@ -70,7 +61,7 @@ impl WindowFunctionProcessor for AggProcessor {
         for row_idx in 0..batch.num_rows() {
             let same_partition = !context.has_partition() || {
                 let partition_row = partition_rows.row(row_idx);
-                if partition_row.as_ref() != self.cur_partition.as_ref() {
+                if partition_row.as_ref() != &self.cur_partition {
                     self.cur_partition = partition_row.as_ref().into();
                     false
                 } else {
@@ -79,39 +70,23 @@ impl WindowFunctionProcessor for AggProcessor {
             };
 
             if !same_partition {
-                self.acc = self.acc_init.clone();
+                self.acc_col = self.agg.create_acc_column(1);
             }
-            self.agg
-                .partial_update(&mut self.acc.as_mut(), &children_cols, row_idx)
-                .map_err(|err| err.context("window: agg_processor partial_update() error"))?;
-            output.push(self.agg.final_merge(&mut self.acc.clone().as_mut())?);
+
+            self.agg.partial_update(
+                &mut self.acc_col,
+                IdxSelection::Single(0),
+                &children_cols,
+                IdxSelection::Single(row_idx),
+            )?;
+            output.push(
+                self.agg
+                    .final_merge(&mut self.acc_col, IdxSelection::Single(0))?,
+            );
         }
-        Ok(Arc::new(ScalarValue::iter_to_array(output.into_iter())?))
-    }
-
-    fn process_batch_without_partitions(
-        &mut self,
-        _: &WindowContext,
-        batch: &RecordBatch,
-    ) -> Result<ArrayRef> {
-        let mut output = vec![];
-
-        let children_cols: Vec<ArrayRef> = self
-            .agg
-            .exprs()
-            .iter()
-            .map(|expr| {
-                expr.evaluate(batch)
-                    .and_then(|v| v.into_array(batch.num_rows()))
-            })
-            .collect::<Result<_>>()?;
-
-        for row_idx in 0..batch.num_rows() {
-            self.agg
-                .partial_update(&mut self.acc.as_mut(), &children_cols, row_idx)
-                .map_err(|err| err.context("window: agg_processor partial_update() error"))?;
-            output.push(self.agg.final_merge(&mut self.acc.clone().as_mut())?);
-        }
-        Ok(Arc::new(ScalarValue::iter_to_array(output.into_iter())?))
+        Ok(Arc::new(coalesce_arrays_unchecked(
+            self.agg.data_type(),
+            &output,
+        )))
     }
 }

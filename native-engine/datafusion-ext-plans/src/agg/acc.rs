@@ -14,1222 +14,702 @@
 
 use std::{
     any::Any,
-    hash::BuildHasher,
     io::{Cursor, Read, Write},
-    mem::{size_of, size_of_val},
+    sync::Arc,
 };
 
-use arrow::datatypes::DataType;
+use arrow::{
+    array::*,
+    datatypes::{DataType, *},
+};
+use bitvec::vec::BitVec;
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use datafusion::{
     common::{Result, ScalarValue},
-    parquet::data_type::AsBytes,
+    error::DataFusionError,
 };
 use datafusion_ext_commons::{
-    df_execution_err, downcast_any,
-    io::{read_bytes_slice, read_len, read_scalar, read_u8, write_len, write_scalar, write_u8},
-    slim_bytes::SlimBytes,
-    spark_bloom_filter::SparkBloomFilter,
+    assume,
+    io::{read_bytes_into_vec, read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
+    unchecked,
 };
-use hashbrown::raw::RawTable;
-use itertools::Itertools;
-use slimmer_box::SlimmerBox;
 use smallvec::SmallVec;
 
-pub type DynVal = Option<Box<dyn AggDynValue>>;
+use crate::{
+    agg::agg::IdxSelection,
+    common::SliceAsRawBytes,
+    idx_for,
+    memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
+};
 
-const ACC_STORE_BLOCK_SIZE: usize = 65536;
-
-pub struct AccStore {
-    initial: OwnedAccumStateRow,
-    num_accs: usize,
-    fixed_store: Vec<Vec<u8>>,
-    dyn_store: Vec<Vec<DynVal>>,
+pub trait AccColumn: Send {
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn resize(&mut self, len: usize);
+    fn shrink_to_fit(&mut self);
+    fn num_records(&self) -> usize;
+    fn mem_used(&self) -> usize;
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()>;
+    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()>;
+    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()>;
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()>;
 }
 
-impl AccStore {
-    pub fn new(initial: OwnedAccumStateRow) -> Self {
+pub type AccColumnRef = Box<dyn AccColumn>;
+
+pub type AccBytes = SmallVec<u8, 24>;
+const _ACC_BYTES_SIZE_CHECKER: [(); 32] = [(); size_of::<AccBytes>()];
+
+pub struct AccTable {
+    cols: Vec<AccColumnRef>,
+    num_records: usize,
+}
+
+impl AccTable {
+    pub fn new(cols: Vec<Box<dyn AccColumn>>, num_records: usize) -> Self {
+        assert!(cols.iter().all(|c| c.num_records() == num_records));
         Self {
-            initial,
-            num_accs: 0,
-            fixed_store: vec![],
-            dyn_store: vec![],
+            cols,
+            num_records: 0,
         }
     }
 
-    pub fn clear(&mut self) {
-        self.num_accs = 0;
-        self.fixed_store.iter_mut().for_each(|s| s.clear());
-        self.dyn_store.iter_mut().for_each(|s| s.clear());
+    pub fn cols(&self) -> &[AccColumnRef] {
+        &self.cols
     }
 
-    pub fn clear_and_free(&mut self) {
-        self.num_accs = 0;
-        self.fixed_store = vec![];
-        self.dyn_store = vec![];
+    pub fn cols_mut(&mut self) -> &mut [AccColumnRef] {
+        &mut self.cols
+    }
+
+    pub fn num_records(&self) -> usize {
+        self.num_records
+    }
+
+    pub fn resize(&mut self, num_records: usize) {
+        self.cols.iter_mut().for_each(|c| c.resize(num_records));
+        self.num_records = num_records;
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.cols.iter_mut().for_each(|c| c.shrink_to_fit());
     }
 
     pub fn mem_size(&self) -> usize {
-        self.num_accs * (self.fixed_len() + self.dyns_len() * size_of::<DynVal>() + 32)
-    }
-
-    pub fn num_accs(&self) -> usize {
-        self.num_accs
-    }
-
-    pub fn extend(&mut self, num_accs: usize) {
-        while self.num_accs < num_accs {
-            self.new_acc();
-        }
-    }
-
-    pub fn new_acc(&mut self) -> u32 {
-        let initial = unsafe {
-            // safety: ignore borrow checker
-            std::mem::transmute::<_, &OwnedAccumStateRow>(&self.initial)
-        };
-        self.new_acc_from(initial)
-    }
-
-    pub fn new_acc_from(&mut self, acc: &impl AccumStateRow) -> u32 {
-        let idx = self.num_accs;
-        self.num_accs += 1;
-        if self.num_required_blocks() >= self.fixed_store.len() {
-            // add a new block
-            // reserve a whole block to avoid reallocation
-            self.fixed_store
-                .push(Vec::with_capacity(ACC_STORE_BLOCK_SIZE * self.fixed_len()));
-            self.dyn_store
-                .push(Vec::with_capacity(ACC_STORE_BLOCK_SIZE * self.dyns_len()));
-        }
-        let idx1 = idx / ACC_STORE_BLOCK_SIZE;
-
-        self.fixed_store[idx1].extend_from_slice(acc.fixed());
-        self.dyn_store[idx1].extend(
-            acc.dyns()
-                .iter()
-                .map(|v| v.as_ref().map(|v| v.clone_boxed())),
-        );
-        idx as u32
-    }
-
-    pub fn get(&self, idx: u32) -> RefAccumStateRow {
-        let idx1 = idx as usize / ACC_STORE_BLOCK_SIZE;
-        let idx2 = idx as usize % ACC_STORE_BLOCK_SIZE;
-
-        // safety: performance critical, skip borrow/mutable checking
-        unsafe {
-            let fixed_ptr = self
-                .fixed_store
-                .get_unchecked(idx1)
-                .get_unchecked(idx2 * self.fixed_len()..)
-                .as_ptr() as *mut u8;
-
-            let dyns_ptr = self
-                .dyn_store
-                .get_unchecked(idx1)
-                .get_unchecked(idx2 * self.dyns_len()..)
-                .as_ptr() as *mut DynVal;
-
-            RefAccumStateRow {
-                fixed: std::slice::from_raw_parts_mut(fixed_ptr, self.fixed_len()),
-                dyns: std::slice::from_raw_parts_mut(dyns_ptr, self.dyns_len()),
-            }
-        }
-    }
-
-    fn num_required_blocks(&self) -> usize {
-        (self.num_accs + ACC_STORE_BLOCK_SIZE - 1) / ACC_STORE_BLOCK_SIZE
-    }
-
-    fn fixed_len(&self) -> usize {
-        self.initial.fixed.len()
-    }
-
-    fn dyns_len(&self) -> usize {
-        self.initial.dyns.len()
+        self.cols.iter().map(|c| c.mem_used()).sum()
     }
 }
 
-pub struct OwnedAccumStateRow {
-    fixed: SlimBytes,
-    dyns: SlimmerBox<[DynVal]>,
-}
-
-impl OwnedAccumStateRow {
-    pub fn as_mut<'a>(&'a mut self) -> RefAccumStateRow<'a> {
-        RefAccumStateRow {
-            fixed: &mut self.fixed,
-            dyns: &mut self.dyns,
-        }
-    }
-}
-
-impl Clone for OwnedAccumStateRow {
-    fn clone(&self) -> Self {
-        Self {
-            fixed: self.fixed.clone(),
-            dyns: SlimmerBox::from_box(
-                self.dyns
-                    .iter()
-                    .map(|v| v.as_ref().map(|x| x.clone_boxed()))
-                    .collect::<Box<[DynVal]>>(),
-            ),
-        }
-    }
-}
-
-impl AccumStateRow for OwnedAccumStateRow {
-    fn fixed(&self) -> &[u8] {
-        &self.fixed
-    }
-
-    fn fixed_mut(&mut self) -> &mut [u8] {
-        &mut self.fixed
-    }
-
-    fn dyns(&self) -> &[DynVal] {
-        &self.dyns
-    }
-
-    fn dyns_mut(&mut self) -> &mut [DynVal] {
-        &mut self.dyns
-    }
-}
-
-pub struct RefAccumStateRow<'a> {
-    fixed: &'a mut [u8],
-    dyns: &'a mut [DynVal],
-}
-
-impl<'a> AccumStateRow for RefAccumStateRow<'a> {
-    fn fixed(&self) -> &[u8] {
-        self.fixed
-    }
-
-    fn fixed_mut(&mut self) -> &mut [u8] {
-        self.fixed
-    }
-
-    fn dyns(&self) -> &[DynVal] {
-        self.dyns
-    }
-
-    fn dyns_mut(&mut self) -> &mut [DynVal] {
-        self.dyns
-    }
-}
-
-pub trait AccumStateRow {
-    fn fixed(&self) -> &[u8];
-    fn fixed_mut(&mut self) -> &mut [u8];
-    fn dyns(&self) -> &[DynVal];
-    fn dyns_mut(&mut self) -> &mut [DynVal];
-
-    fn mem_size(&self) -> usize {
-        let dyns_mem_size = self
-            .dyns()
-            .iter()
-            .map(|v| size_of_val(v) + v.as_ref().map(|x| x.mem_size()).unwrap_or_default())
-            .sum::<usize>();
-        self.fixed().len() + dyns_mem_size
-    }
-
-    fn is_fixed_valid(&self, addr: AccumStateValAddr) -> bool {
-        let idx = addr.fixed_valid_idx();
-        self.fixed()[self.fixed().len() - 1 - idx / 8] & (1 << (idx % 8)) != 0
-    }
-
-    fn set_fixed_valid(&mut self, addr: AccumStateValAddr, valid: bool) {
-        let idx = addr.fixed_valid_idx();
-        let fixed_len = self.fixed().len();
-        self.fixed_mut()[fixed_len - 1 - idx / 8] |= (valid as u8) << (idx % 8);
-    }
-
-    fn fixed_value<T: Sized + Copy>(&self, addr: AccumStateValAddr) -> T {
-        let offset = addr.fixed_offset();
-        let tptr = self.fixed()[offset..][..size_of::<T>()].as_ptr() as *const T;
-        unsafe { std::ptr::read_unaligned(tptr) }
-    }
-
-    fn set_fixed_value<T: Sized + Copy>(&mut self, addr: AccumStateValAddr, v: T) {
-        let offset = addr.fixed_offset();
-        let tptr = self.fixed_mut()[offset..][..size_of::<T>()].as_ptr() as *mut T;
-        unsafe {
-            std::ptr::write_unaligned(tptr, v);
-        }
-    }
-
-    fn update_fixed_value<T: Sized + Copy>(
-        &mut self,
-        addr: AccumStateValAddr,
-        updater: impl Fn(T) -> T,
-    ) {
-        let offset = addr.fixed_offset();
-        let tptr = self.fixed_mut()[offset..][..size_of::<T>()].as_ptr() as *mut T;
-        unsafe { std::ptr::write_unaligned(tptr, updater(std::ptr::read_unaligned(tptr))) }
-    }
-
-    fn dyn_value(&mut self, addr: AccumStateValAddr) -> &DynVal {
-        &self.dyns_mut()[addr.dyn_idx()]
-    }
-
-    fn dyn_value_mut(&mut self, addr: AccumStateValAddr) -> &mut DynVal {
-        &mut self.dyns_mut()[addr.dyn_idx()]
-    }
-
-    fn load(&mut self, mut r: impl Read, dyn_loders: &[LoadFn]) -> Result<()> {
-        r.read_exact(&mut self.fixed_mut())?;
-        let dyns = self.dyns_mut();
-        if !dyns.is_empty() {
-            let mut reader = LoadReader(Box::new(r));
-            for (v, load) in dyns.iter_mut().zip(dyn_loders) {
-                *v = load(&mut reader)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn load_from_bytes(&mut self, bytes: &[u8], dyn_loaders: &[LoadFn]) -> Result<()> {
-        self.load(Cursor::new(bytes), dyn_loaders)
-    }
-
-    fn save(&mut self, mut w: impl Write, dyn_savers: &[SaveFn]) -> Result<()> {
-        w.write_all(&self.fixed())?;
-        let dyns = self.dyns_mut();
-        if !dyns.is_empty() {
-            let mut writer = SaveWriter(Box::new(&mut w));
-            for (v, save) in dyns.iter_mut().zip(dyn_savers) {
-                save(&mut writer, std::mem::take(v))?;
-            }
-        }
-        Ok(())
-    }
-
-    fn save_to_bytes(&mut self, dyn_savers: &[SaveFn]) -> Result<SlimBytes> {
-        let mut bytes = vec![];
-        self.save(&mut bytes, dyn_savers)?;
-        Ok(bytes.into())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AccumInitialValue {
-    Scalar(ScalarValue),
-    DynList(DataType),
-    DynSet(DataType),
-    BloomFilter {
-        estimated_num_items: usize,
-        num_bits: usize,
+pub enum AccGenericColumn {
+    Prim {
+        raw: Vec<i128>, // for minimum alignment of Decimal128
+        valids: BitVec,
+        prim_size: usize,
+    },
+    Bytes {
+        items: Vec<Option<AccBytes>>,
+        heap_mem_used: usize,
+    },
+    Scalar {
+        items: Vec<ScalarValue>,
+        dt: DataType,
+        heap_mem_used: usize,
     },
 }
 
-pub fn create_acc_from_initial_value(
-    values: &[AccumInitialValue],
-) -> Result<(OwnedAccumStateRow, Box<[AccumStateValAddr]>)> {
-    let mut fixed_count = 0;
-    let mut fixed_valids = vec![];
-    let mut fixed: Vec<u8> = vec![];
-    let mut dyns: Vec<DynVal> = vec![];
-    let mut addrs: Vec<AccumStateValAddr> = vec![];
-
-    macro_rules! handle_fixed {
-        ($v:expr, $nbytes:expr) => {{
-            addrs.push(AccumStateValAddr::new_fixed(fixed_count, fixed.len()));
-            if fixed_count % 8 == 0 {
-                fixed_valids.push(0);
-            }
-            match $v {
-                Some(v) => {
-                    fixed_valids[fixed_count / 8] |= 1 << (fixed_count % 8);
-                    fixed.extend(v.to_ne_bytes());
-                }
-                None => {
-                    fixed.extend(&[0; $nbytes]);
-                }
-            }
-            fixed_count += 1;
-        }};
-    }
-    for value in values {
-        match value {
-            AccumInitialValue::Scalar(scalar) => match scalar {
-                ScalarValue::Null => handle_fixed!(None::<u8>, 0),
-                ScalarValue::Boolean(v) => handle_fixed!(v.map(|x| x as u8), 1),
-                ScalarValue::Float32(v) => handle_fixed!(v, 4),
-                ScalarValue::Float64(v) => handle_fixed!(v, 8),
-                ScalarValue::Decimal128(v, ..) => handle_fixed!(v, 16),
-                ScalarValue::Int8(v) => handle_fixed!(v, 1),
-                ScalarValue::Int16(v) => handle_fixed!(v, 2),
-                ScalarValue::Int32(v) => handle_fixed!(v, 4),
-                ScalarValue::Int64(v) => handle_fixed!(v, 8),
-                ScalarValue::UInt8(v) => handle_fixed!(v, 1),
-                ScalarValue::UInt16(v) => handle_fixed!(v, 2),
-                ScalarValue::UInt32(v) => handle_fixed!(v, 4),
-                ScalarValue::UInt64(v) => handle_fixed!(v, 8),
-                ScalarValue::Date32(v) => handle_fixed!(v, 4),
-                ScalarValue::Date64(v) => handle_fixed!(v, 8),
-                ScalarValue::TimestampSecond(v, _) => handle_fixed!(v, 8),
-                ScalarValue::TimestampMillisecond(v, _) => handle_fixed!(v, 8),
-                ScalarValue::TimestampMicrosecond(v, _) => handle_fixed!(v, 8),
-                ScalarValue::TimestampNanosecond(v, _) => handle_fixed!(v, 8),
-                ScalarValue::Utf8(v) => {
-                    addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                    dyns.push(v.as_ref().map(|s| {
-                        addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                        let v: Box<dyn AggDynValue> = Box::new(AggDynStr::from_str(s));
-                        v
-                    }));
-                }
-                ScalarValue::Binary(v) => {
-                    addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                    dyns.push(v.as_ref().map(|s| {
-                        addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                        let v: Box<dyn AggDynValue> = Box::new(AggDynBinary::from_slice(s));
-                        v
-                    }));
-                }
-                other => {
-                    addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                    dyns.push(match other {
-                        v if v.is_null() => None,
-                        v => Some(Box::new(AggDynScalar::new(v.clone()))),
-                    });
-                }
-            },
-            AccumInitialValue::DynList(_dt) => {
-                addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                dyns.push(Some(Box::new(AggDynList::default())));
-            }
-            AccumInitialValue::DynSet(_dt) => {
-                addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                dyns.push(Some(Box::new(AggDynSet::default())));
-            }
-            AccumInitialValue::BloomFilter {
-                estimated_num_items,
-                num_bits,
-            } => {
-                addrs.push(AccumStateValAddr::new_dyn(dyns.len()));
-                dyns.push(Some(Box::new(
-                    SparkBloomFilter::new_with_expected_num_items(*estimated_num_items, *num_bits),
-                )));
-            }
-        }
+impl AccGenericColumn {
+    pub fn new(dt: &DataType, num_rows: usize) -> Self {
+        let mut new = Self::new_empty(dt);
+        new.resize(num_rows);
+        new
     }
 
-    // reverse fixed_valids and append it to fixed, so no need to change addrs
-    fixed_valids.reverse();
-    fixed.extend(fixed_valids);
-
-    let acc = OwnedAccumStateRow {
-        fixed: fixed.into(),
-        dyns: SlimmerBox::from_box(dyns.into()),
-    };
-    Ok((acc, addrs.into()))
-}
-
-pub struct LoadReader<'a>(pub Box<dyn Read + 'a>);
-pub struct SaveWriter<'a>(pub Box<dyn Write + 'a>);
-pub type LoadFn = Box<dyn Fn(&mut LoadReader) -> Result<DynVal> + Send + Sync>;
-pub type SaveFn = Box<dyn Fn(&mut SaveWriter, DynVal) -> Result<()> + Send + Sync>;
-
-pub fn create_dyn_loaders_from_initial_value(values: &[AccumInitialValue]) -> Result<Vec<LoadFn>> {
-    let mut loaders: Vec<LoadFn> = vec![];
-    for value in values {
-        let loader: LoadFn = match value {
-            AccumInitialValue::Scalar(scalar) => match scalar {
-                ScalarValue::Null => continue,
-                ScalarValue::Boolean(_) => continue,
-                ScalarValue::Float32(_) => continue,
-                ScalarValue::Float64(_) => continue,
-                ScalarValue::Decimal128(_, ..) => continue,
-                ScalarValue::Int8(_) => continue,
-                ScalarValue::Int16(_) => continue,
-                ScalarValue::Int32(_) => continue,
-                ScalarValue::Int64(_) => continue,
-                ScalarValue::UInt8(_) => continue,
-                ScalarValue::UInt16(_) => continue,
-                ScalarValue::UInt32(_) => continue,
-                ScalarValue::UInt64(_) => continue,
-                ScalarValue::Date32(_) => continue,
-                ScalarValue::Date64(_) => continue,
-                ScalarValue::TimestampSecond(..) => continue,
-                ScalarValue::TimestampMillisecond(..) => continue,
-                ScalarValue::TimestampMicrosecond(..) => continue,
-                ScalarValue::TimestampNanosecond(..) => continue,
-                ScalarValue::Utf8(_) => Box::new(|r: &mut LoadReader| {
-                    Ok(match read_len(&mut r.0)? {
-                        0 => None,
-                        n => {
-                            let s = read_bytes_slice(&mut r.0, n - 1)?;
-                            let v = String::from_utf8_lossy(&s);
-                            Some(Box::new(AggDynStr::from_str(&v)))
-                        }
-                    })
-                }),
-                ScalarValue::Binary(_) => Box::new(|r: &mut LoadReader| {
-                    Ok(match read_len(&mut r.0)? {
-                        0 => None,
-                        n => {
-                            let v = read_bytes_slice(&mut r.0, n - 1)?;
-                            Some(Box::new(AggDynBinary::new(SlimBytes::from(v))))
-                        }
-                    })
-                }),
-                other => {
-                    let dt = other.data_type();
-                    Box::new(move |r: &mut LoadReader| {
-                        let valid = read_u8(&mut r.0)? != 0;
-                        if valid {
-                            let scalar = read_scalar(&mut r.0, &dt, false)?;
-                            Ok(Some(Box::new(AggDynScalar::new(scalar))))
-                        } else {
-                            Ok(None)
-                        }
-                    })
-                }
-            },
-            AccumInitialValue::DynList(_dt) => Box::new(move |r: &mut LoadReader| {
-                Ok(match read_len(&mut r.0)? {
-                    0 => None,
-                    n => {
-                        let data_len = n - 1;
-                        let raw = read_bytes_slice(&mut r.0, data_len)?.into_vec();
-                        Some(Box::new(AggDynList { raw }))
-                    }
-                })
-            }),
-            AccumInitialValue::DynSet(_dt) => Box::new(move |r: &mut LoadReader| {
-                Ok(match read_len(&mut r.0)? {
-                    0 => None,
-                    n => {
-                        let data_len = n - 1;
-                        let raw = read_bytes_slice(&mut r.0, data_len)?.into_vec();
-                        let num_items = read_len(&mut r.0)?;
-
-                        let list = AggDynList { raw };
-                        let mut internal_set = if num_items <= 4 {
-                            InternalSet::Small(SmallVec::new())
-                        } else {
-                            InternalSet::Huge(RawTable::with_capacity(num_items))
-                        };
-
-                        let mut pos = 0;
-                        for _ in 0..num_items {
-                            let pos_len = (pos, read_len(&mut r.0)? as u32);
-                            pos += pos_len.1;
-
-                            match &mut internal_set {
-                                InternalSet::Small(s) => s.push(pos_len),
-                                InternalSet::Huge(s) => {
-                                    let raw = list.ref_raw(pos_len);
-                                    let hash = acc_hash(raw);
-                                    s.insert(hash, pos_len, |&pos_len| {
-                                        acc_hash(list.ref_raw(pos_len))
-                                    });
-                                }
-                            }
-                        }
-                        Some(Box::new(AggDynSet {
-                            list,
-                            set: internal_set,
-                        }))
-                    }
-                })
-            }),
-            AccumInitialValue::BloomFilter { .. } => Box::new(move |r: &mut LoadReader| {
-                Ok(match read_len(&mut r.0)? {
-                    0 => None,
-                    _ => Some(Box::new(SparkBloomFilter::read_from(&mut r.0)?)),
-                })
-            }),
-        };
-        loaders.push(loader);
-    }
-    Ok(loaders)
-}
-
-pub fn create_dyn_savers_from_initial_value(values: &[AccumInitialValue]) -> Result<Vec<SaveFn>> {
-    let mut savers: Vec<SaveFn> = vec![];
-    for value in values {
-        let saver = match value {
-            AccumInitialValue::Scalar(scalar) => match scalar {
-                ScalarValue::Null => continue,
-                ScalarValue::Boolean(_) => continue,
-                ScalarValue::Float32(_) => continue,
-                ScalarValue::Float64(_) => continue,
-                ScalarValue::Decimal128(_, ..) => continue,
-                ScalarValue::Int8(_) => continue,
-                ScalarValue::Int16(_) => continue,
-                ScalarValue::Int32(_) => continue,
-                ScalarValue::Int64(_) => continue,
-                ScalarValue::UInt8(_) => continue,
-                ScalarValue::UInt16(_) => continue,
-                ScalarValue::UInt32(_) => continue,
-                ScalarValue::UInt64(_) => continue,
-                ScalarValue::Date32(_) => continue,
-                ScalarValue::Date64(_) => continue,
-                ScalarValue::TimestampSecond(..) => continue,
-                ScalarValue::TimestampMillisecond(..) => continue,
-                ScalarValue::TimestampMicrosecond(..) => continue,
-                ScalarValue::TimestampNanosecond(..) => continue,
-                ScalarValue::Utf8(_) => {
-                    fn f(w: &mut SaveWriter, v: DynVal) -> Result<()> {
-                        match v {
-                            None => write_len(0, &mut w.0)?,
-                            Some(v) => {
-                                let s = downcast_any!(v, AggDynStr)?;
-                                write_len(s.value().as_bytes().len() + 1, &mut w.0)?;
-                                w.0.write_all(s.value().as_bytes())?;
-                            }
-                        }
-                        Ok(())
-                    }
-                    let f: SaveFn = Box::new(f);
-                    f
-                }
-                ScalarValue::Binary(_) => {
-                    fn f(w: &mut SaveWriter, v: DynVal) -> Result<()> {
-                        match v {
-                            None => write_len(0, &mut w.0)?,
-                            Some(v) => {
-                                let s = downcast_any!(v, AggDynBinary)?;
-                                write_len(s.value().as_bytes().len() + 1, &mut w.0)?;
-                                w.0.write_all(s.value().as_bytes())?;
-                            }
-                        }
-                        Ok(())
-                    }
-                    let f: SaveFn = Box::new(f);
-                    f
-                }
-                _other => {
-                    fn f(w: &mut SaveWriter, v: DynVal) -> Result<()> {
-                        if let Some(v) = v {
-                            let scalar = &downcast_any!(v, AggDynScalar)?.value;
-                            if !scalar.is_null() {
-                                write_u8(1, &mut w.0)?;
-                                return write_scalar(scalar, false, &mut w.0);
-                            }
-                        }
-                        return Ok(write_u8(0, &mut w.0)?);
-                    }
-                    let f: SaveFn = Box::new(f);
-                    f
-                }
-            },
-            AccumInitialValue::DynList(_dt) => {
-                fn f(w: &mut SaveWriter, v: DynVal) -> Result<()> {
-                    if let Some(v) = v {
-                        let list = v
-                            .as_any_boxed()
-                            .downcast::<AggDynList>()
-                            .or_else(|_| df_execution_err!("error downcasting to AggDynList"))?;
-                        write_len(list.raw.len() + 1, &mut w.0)?;
-                        w.0.write_all(&list.raw)?;
-                    } else {
-                        write_len(0, &mut w.0)?;
-                    }
-                    Ok(())
-                }
-                let f: SaveFn = Box::new(f);
-                f
-            }
-            AccumInitialValue::DynSet(_dt) => {
-                let f: SaveFn = Box::new(move |w: &mut SaveWriter, v: DynVal| -> Result<()> {
-                    if let Some(v) = v {
-                        let mut set = v
-                            .as_any_boxed()
-                            .downcast::<AggDynSet>()
-                            .or_else(|_| df_execution_err!("error downcasting to AggDynSet"))?;
-                        write_len(set.list.raw.len() + 1, &mut w.0)?;
-                        w.0.write_all(&set.list.raw)?;
-
-                        write_len(set.set.len(), &mut w.0)?;
-                        for len in std::mem::take(&mut set.set)
-                            .into_iter()
-                            .sorted()
-                            .map(|pos_len| pos_len.1)
-                        {
-                            write_len(len as usize, &mut w.0)?;
-                        }
-                    } else {
-                        write_len(0, &mut w.0)?;
-                    }
-                    Ok(())
-                });
-                f
-            }
-            AccumInitialValue::BloomFilter { .. } => {
-                let f: SaveFn = Box::new(move |w: &mut SaveWriter, v: DynVal| -> Result<()> {
-                    if let Some(v) = v {
-                        let bloom_filter = v
-                            .as_any_boxed()
-                            .downcast::<SparkBloomFilter>()
-                            .or_else(|_| {
-                                df_execution_err!("error downcasting to AggDynBloomFilter")
-                            })?;
-                        write_len(1, &mut w.0)?;
-                        bloom_filter.write_to(&mut w.0)?;
-                    } else {
-                        write_len(0, &mut w.0)?;
-                    }
-                    Ok(())
-                });
-                f
-            }
-        };
-        savers.push(saver);
-    }
-    Ok(savers)
-}
-
-#[allow(clippy::borrowed_box)]
-pub trait AggDynValue: Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any>;
-    fn mem_size(&self) -> usize;
-    fn clone_boxed(&self) -> Box<dyn AggDynValue>;
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub struct AggDynScalar {
-    pub value: ScalarValue,
-}
-
-#[allow(clippy::borrowed_box)]
-impl AggDynScalar {
-    pub fn new(value: ScalarValue) -> Self {
-        Self { value }
-    }
-
-    pub fn value(&self) -> &ScalarValue {
-        &self.value
-    }
-
-    pub fn into_value(self) -> ScalarValue {
-        self.value
-    }
-}
-
-impl AggDynValue for AggDynScalar {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-
-    fn mem_size(&self) -> usize {
-        size_of::<Self>() + self.value.size() - size_of_val(&self.value)
-    }
-
-    fn clone_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub struct AggDynBinary {
-    pub value: SlimBytes,
-}
-
-#[allow(clippy::borrowed_box)]
-impl AggDynBinary {
-    pub fn new(value: SlimBytes) -> Self {
-        Self { value }
-    }
-
-    pub fn from_slice(slice: &[u8]) -> Self {
-        Self::new(SlimBytes::from(slice))
-    }
-
-    pub fn value(&self) -> &[u8] {
-        self.value.as_ref()
-    }
-
-    pub fn into_value(self) -> SlimBytes {
-        self.value
-    }
-}
-
-impl AggDynValue for AggDynBinary {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-
-    fn mem_size(&self) -> usize {
-        size_of::<Self>() + self.value().as_bytes().len()
-    }
-
-    fn clone_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub struct AggDynStr {
-    value: SlimmerBox<str>,
-}
-
-#[allow(clippy::borrowed_box)]
-impl AggDynStr {
-    pub fn new(value: SlimmerBox<str>) -> Self {
-        Self { value }
-    }
-
-    pub fn from_str(v: &str) -> Self {
-        Self::new(SlimmerBox::from_box(v.to_owned().into()))
-    }
-
-    pub fn value(&self) -> &str {
-        self.value.as_ref()
-    }
-
-    pub fn into_value(self) -> SlimmerBox<str> {
-        self.value
-    }
-}
-
-impl AggDynValue for AggDynStr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-
-    fn mem_size(&self) -> usize {
-        size_of::<Self>() + self.value().as_bytes().len()
-    }
-
-    fn clone_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct AggDynList {
-    pub raw: Vec<u8>,
-}
-
-impl AggDynList {
-    pub fn append(&mut self, value: &ScalarValue, nullable: bool) {
-        write_scalar(&value, nullable, &mut self.raw).unwrap();
-    }
-
-    pub fn merge(&mut self, other: &mut Self) {
-        self.raw.extend(std::mem::take(&mut other.raw));
-    }
-
-    pub fn into_values(self, dt: DataType, nullable: bool) -> impl Iterator<Item = ScalarValue> {
-        struct ValuesIterator(Cursor<Vec<u8>>, DataType, bool);
-        impl Iterator for ValuesIterator {
-            type Item = ScalarValue;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                if self.0.position() < self.0.get_ref().len() as u64 {
-                    return Some(read_scalar(&mut self.0, &self.1, self.2).unwrap());
-                }
-                None
-            }
-        }
-        ValuesIterator(Cursor::new(self.raw), dt, nullable)
-    }
-
-    fn ref_raw(&self, pos_len: (u32, u32)) -> &[u8] {
-        &self.raw[pos_len.0 as usize..][..pos_len.1 as usize]
-    }
-}
-
-impl AggDynValue for AggDynList {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-
-    fn mem_size(&self) -> usize {
-        size_of::<Self>() + self.raw.capacity()
-    }
-
-    fn clone_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct AggDynSet {
-    list: AggDynList,
-    set: InternalSet,
-}
-
-#[derive(Clone)]
-enum InternalSet {
-    Small(SmallVec<[(u32, u32); 4]>),
-    Huge(RawTable<(u32, u32)>),
-}
-
-impl Default for InternalSet {
-    fn default() -> Self {
-        Self::Small(SmallVec::new())
-    }
-}
-
-impl InternalSet {
-    fn len(&self) -> usize {
-        match self {
-            InternalSet::Small(s) => s.len(),
-            InternalSet::Huge(s) => s.len(),
-        }
-    }
-
-    fn into_iter(self) -> impl Iterator<Item = (u32, u32)> {
-        let iter: Box<dyn Iterator<Item = (u32, u32)>> = match self {
-            InternalSet::Small(s) => Box::new(s.into_iter()),
-            InternalSet::Huge(s) => Box::new(s.into_iter()),
-        };
-        iter
-    }
-
-    fn convert_to_huge_if_needed(&mut self, list: &mut AggDynList) {
-        if let Self::Small(s) = self {
-            let mut huge = RawTable::default();
-
-            for &mut pos_len in s {
-                let raw = list.ref_raw(pos_len);
-                let hash = acc_hash(raw);
-                huge.insert(hash, pos_len, |&pos_len| acc_hash(list.ref_raw(pos_len)));
-            }
-            *self = Self::Huge(huge);
-        }
-    }
-}
-
-#[inline]
-pub fn acc_hash(value: impl AsRef<[u8]>) -> u64 {
-    const ACC_HASH_SEED: u32 = 0x7BCB48DA;
-    const HASHER: foldhash::fast::FixedState =
-        foldhash::fast::FixedState::with_seed(ACC_HASH_SEED as u64);
-    HASHER.hash_one(value.as_ref())
-}
-
-impl AggDynSet {
-    pub fn append(&mut self, value: &ScalarValue, nullable: bool) {
-        let old_raw_len = self.list.raw.len();
-        write_scalar(value, nullable, &mut self.list.raw).unwrap();
-        self.append_raw_inline(old_raw_len);
-    }
-
-    pub fn merge(&mut self, other: &mut Self) {
-        if self.set.len() < other.set.len() {
-            // ensure the probed set is smaller
-            std::mem::swap(self, other);
-        }
-        for pos_len in std::mem::take(&mut other.set).into_iter() {
-            self.append_raw(other.list.ref_raw(pos_len));
-        }
-    }
-
-    pub fn into_values(self, dt: DataType, nullable: bool) -> impl Iterator<Item = ScalarValue> {
-        self.list.into_values(dt, nullable)
-    }
-
-    fn append_raw(&mut self, raw: &[u8]) {
-        let new_len = raw.len();
-        let new_pos_len = (self.list.raw.len() as u32, new_len as u32);
-
-        match &mut self.set {
-            InternalSet::Small(s) => {
-                let mut found = false;
-                for &mut pos_len in &mut *s {
-                    if self.list.ref_raw(pos_len) == raw {
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    s.push(new_pos_len);
-                    self.list.raw.extend(raw);
-                    self.set.convert_to_huge_if_needed(&mut self.list);
-                }
-            }
-            InternalSet::Huge(s) => {
-                let hash = acc_hash(raw);
-                match s.find_or_find_insert_slot(
-                    hash,
-                    |&pos_len| new_len == pos_len.1 as usize && raw == self.list.ref_raw(pos_len),
-                    |&pos_len| acc_hash(self.list.ref_raw(pos_len)),
-                ) {
-                    Ok(_found) => {}
-                    Err(slot) => {
-                        unsafe {
-                            // safety: call unsafe `insert_in_slot` method
-                            self.list.raw.extend(raw);
-                            s.insert_in_slot(hash, slot, new_pos_len);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn append_raw_inline(&mut self, raw_start: usize) {
-        let new_len = self.list.raw.len() - raw_start;
-        let new_pos_len = (raw_start as u32, new_len as u32);
-        let mut inserted = true;
-
-        match &mut self.set {
-            InternalSet::Small(s) => {
-                for &mut pos_len in &mut *s {
-                    if self.list.ref_raw(pos_len) == self.list.ref_raw(new_pos_len) {
-                        inserted = false;
-                        break;
-                    }
-                }
-                if inserted {
-                    s.push(new_pos_len);
-                    self.set.convert_to_huge_if_needed(&mut self.list);
-                }
-            }
-            InternalSet::Huge(s) => {
-                let new_value = self.list.ref_raw(new_pos_len);
-                let hash = acc_hash(new_value);
-                match s.find_or_find_insert_slot(
-                    hash,
-                    |&pos_len| {
-                        new_len == pos_len.1 as usize && new_value == self.list.ref_raw(pos_len)
+    pub fn new_empty(dt: &DataType) -> Self {
+        match dt {
+            _ if dt == &DataType::Null || dt == &DataType::Boolean || dt.is_primitive() => {
+                AccGenericColumn::Prim {
+                    raw: Default::default(),
+                    valids: Default::default(),
+                    prim_size: match dt {
+                        DataType::Null => 0,
+                        DataType::Boolean => 1,
+                        primitive => primitive.primitive_width().unwrap(),
                     },
-                    |&pos_len| acc_hash(self.list.ref_raw(pos_len)),
-                ) {
-                    Ok(_found) => {
-                        inserted = false;
+                }
+            }
+            DataType::Utf8 | DataType::Binary => AccGenericColumn::Bytes {
+                items: Default::default(),
+                heap_mem_used: 0,
+            },
+            _ => AccGenericColumn::Scalar {
+                items: Default::default(),
+                dt: dt.clone(),
+                heap_mem_used: 0,
+            },
+        }
+    }
+
+    pub fn prim_valid(&self, idx: usize) -> bool {
+        assume!(matches!(self, AccGenericColumn::Prim { .. }));
+        match self {
+            AccGenericColumn::Prim { valids, .. } => unsafe {
+                // safety: performance critical, disable bounds checking
+                *valids.get_unchecked(idx)
+            },
+            _ => unreachable!("expect primitive values"),
+        }
+    }
+
+    pub fn set_prim_valid(&mut self, idx: usize, valid: bool) {
+        assume!(matches!(self, AccGenericColumn::Prim { .. }));
+        match self {
+            AccGenericColumn::Prim { valids, .. } => unsafe {
+                // safety: performance critical, disable bounds checking
+                valids.set_unchecked(idx, valid)
+            },
+            _ => unreachable!("expect primitive values"),
+        }
+    }
+
+    pub fn prim_value<T: Copy>(&self, idx: usize) -> T {
+        assume!(matches!(self, AccGenericColumn::Prim { .. }));
+        match self {
+            AccGenericColumn::Prim { raw, .. } => unsafe {
+                // safety: ptr is aligned
+                let ptr_base = raw.as_ptr() as *mut T;
+                *ptr_base.wrapping_add(idx)
+            },
+            _ => panic!("expect primitive values"),
+        }
+    }
+
+    pub fn set_prim_value<T: Copy>(&mut self, idx: usize, v: T) {
+        assume!(matches!(self, AccGenericColumn::Prim { .. }));
+        match self {
+            AccGenericColumn::Prim { raw, .. } => unsafe {
+                // safety: ptr is aligned
+                let ptr_base = raw.as_mut_ptr() as *mut T;
+                *ptr_base.wrapping_add(idx) = v;
+            },
+            _ => panic!("expect primitive values"),
+        }
+    }
+
+    pub fn update_prim_value<T: Copy>(&mut self, idx: usize, f: impl FnOnce(&mut T)) {
+        assume!(matches!(self, AccGenericColumn::Prim { .. }));
+        match self {
+            AccGenericColumn::Prim { raw, .. } => unsafe {
+                // safety: ptr is aligned
+                let ptr_base = raw.as_mut_ptr() as *mut T;
+                f(&mut *ptr_base.wrapping_add(idx))
+            },
+            _ => panic!("expect primitive values"),
+        }
+    }
+
+    pub fn bytes_value(&self, idx: usize) -> Option<&AccBytes> {
+        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
+        match self {
+            AccGenericColumn::Bytes { items, .. } => unsafe {
+                // safety: performance critical, disable bounds checking
+                items.get_unchecked(idx).as_ref()
+            },
+            _ => panic!("expect bytes values"),
+        }
+    }
+
+    pub fn bytes_value_mut(&mut self, idx: usize) -> Option<&mut AccBytes> {
+        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
+        match self {
+            AccGenericColumn::Bytes { items, .. } => unsafe {
+                // safety: performance critical, disable bounds checking
+                items.get_unchecked_mut(idx).as_mut()
+            },
+            _ => panic!("expect bytes values"),
+        }
+    }
+
+    pub fn set_bytes_value(&mut self, idx: usize, v: Option<AccBytes>) {
+        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
+        match self {
+            AccGenericColumn::Bytes { items, .. } => unchecked!(items)[idx] = v,
+            _ => panic!("expect bytes values"),
+        }
+    }
+
+    pub fn take_bytes_value(&mut self, idx: usize) -> Option<AccBytes> {
+        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
+        match self {
+            AccGenericColumn::Bytes { items, .. } => std::mem::take(&mut unchecked!(items)[idx]),
+            _ => panic!("expect bytes values"),
+        }
+    }
+
+    pub fn add_bytes_mem_used(&mut self, mem_used: usize) {
+        match self {
+            AccGenericColumn::Bytes { heap_mem_used, .. } => *heap_mem_used += mem_used,
+            _ => panic!("expect bytes values"),
+        }
+    }
+
+    pub fn scalar_values(&self) -> &[ScalarValue] {
+        match self {
+            AccGenericColumn::Scalar { items, .. } => items,
+            _ => panic!("expect scalar values"),
+        }
+    }
+
+    pub fn scalar_values_mut(&mut self) -> &mut [ScalarValue] {
+        match self {
+            AccGenericColumn::Scalar { items, .. } => items,
+            _ => panic!("expect scalar values"),
+        }
+    }
+
+    pub fn add_scalar_mem_used(&mut self, mem_used: usize) {
+        match self {
+            AccGenericColumn::Scalar { heap_mem_used, .. } => *heap_mem_used += mem_used,
+            _ => panic!("expect scalar values"),
+        }
+    }
+
+    pub fn to_array(&mut self, idx: IdxSelection, dt: &DataType) -> Result<ArrayRef> {
+        macro_rules! handle_prim {
+            ($ty:ident) => {{
+                type TBuilder = paste::paste! {[<$ty Builder>]};
+                let mut builder = TBuilder::with_capacity(idx.len());
+                idx_for! {
+                    (idx in idx) => {
+                        builder.append_option(self
+                            .prim_valid(idx)
+                            .then(|| self.prim_value(idx)));
                     }
-                    Err(slot) => {
-                        unsafe {
-                            // safety: call unsafe `insert_in_slot` method
-                            s.insert_in_slot(hash, slot, new_pos_len);
+                }
+                Ok::<ArrayRef, DataFusionError>(Arc::new(builder.finish()))
+            }};
+        }
+
+        match self {
+            AccGenericColumn::Prim { .. } => match dt {
+                DataType::Null => Ok(Arc::new(NullArray::new(idx.len()))),
+                DataType::Boolean => handle_prim!(Boolean),
+                DataType::Int8 => handle_prim!(Int8),
+                DataType::Int16 => handle_prim!(Int16),
+                DataType::Int32 => handle_prim!(Int32),
+                DataType::Int64 => handle_prim!(Int64),
+                DataType::UInt8 => handle_prim!(UInt8),
+                DataType::UInt16 => handle_prim!(UInt16),
+                DataType::UInt32 => handle_prim!(UInt32),
+                DataType::UInt64 => handle_prim!(UInt64),
+                DataType::Float32 => handle_prim!(Float32),
+                DataType::Float64 => handle_prim!(Float64),
+                DataType::Date32 => handle_prim!(Date32),
+                DataType::Date64 => handle_prim!(Date64),
+                DataType::Timestamp(time_unit, _) => match time_unit {
+                    TimeUnit::Second => handle_prim!(TimestampSecond),
+                    TimeUnit::Millisecond => handle_prim!(TimestampMillisecond),
+                    TimeUnit::Microsecond => handle_prim!(TimestampMicrosecond),
+                    TimeUnit::Nanosecond => handle_prim!(TimestampNanosecond),
+                },
+                DataType::Time32(time_unit) => match time_unit {
+                    TimeUnit::Second => handle_prim!(Time32Second),
+                    TimeUnit::Millisecond => handle_prim!(Time32Millisecond),
+                    _ => panic!("unsupported data type: {dt:?}"),
+                },
+                DataType::Time64(time_unit) => match time_unit {
+                    TimeUnit::Microsecond => handle_prim!(Time64Microsecond),
+                    TimeUnit::Nanosecond => handle_prim!(Time64Nanosecond),
+                    _ => panic!("unsupported data type: {dt:?}"),
+                },
+                DataType::Decimal128(precision, scale) => Ok(Arc::new(
+                    handle_prim!(Decimal128)?
+                        .as_primitive::<Decimal128Type>()
+                        .clone()
+                        .with_precision_and_scale(*precision, *scale)?,
+                )),
+                _ => panic!("unsupported data type: {dt:?}"),
+            },
+            AccGenericColumn::Bytes { items, .. } => match dt {
+                DataType::Utf8 => {
+                    let mut string_builder = StringBuilder::with_capacity(idx.len(), 0);
+                    idx_for! {
+                        (idx in idx) => {
+                            match &items[idx] {
+                                Some(bytes) => {
+                                    string_builder.append_value(unsafe {
+                                        std::str::from_utf8_unchecked(bytes.as_ref())
+                                    })
+                                }
+                                None => string_builder.append_null(),
+                            }
+                        }
+                    }
+                    Ok(Arc::new(string_builder.finish()))
+                }
+                DataType::Binary => {
+                    let mut binary_builder = BinaryBuilder::with_capacity(idx.len(), 0);
+                    idx_for! {
+                        (idx in idx) => {
+                            match &items[idx] {
+                                Some(bytes) => binary_builder.append_value(bytes.as_ref()),
+                                None => binary_builder.append_null(),
+                            }
+                        }
+                    }
+                    Ok(Arc::new(binary_builder.finish()))
+                }
+                _ => panic!("unsupported data type: {dt:?}"),
+            },
+            AccGenericColumn::Scalar { items, .. } => {
+                let mut scalars = Vec::with_capacity(idx.len());
+                idx_for! {
+                    (idx in idx) => {
+                        scalars.push(std::mem::replace(&mut items[idx], ScalarValue::Null));
+                    }
+                }
+                Ok(ScalarValue::iter_to_array(scalars).expect("unsupported data type: {dt:?}"))
+            }
+        }
+    }
+
+    pub fn items_heap_mem_used(&self, idx: IdxSelection) -> usize {
+        let mut heap_mem_used = 0;
+        match self {
+            AccGenericColumn::Prim { .. } => {}
+            AccGenericColumn::Bytes { items, .. } => {
+                idx_for! {
+                    (idx in idx) => {
+                        if let Some(item) = &items[idx] && item.spilled() {
+                            heap_mem_used += item.len();
                         }
                     }
                 }
             }
-        }
-
-        // remove the value from list if not inserted
-        if !inserted {
-            self.list.raw.truncate(raw_start);
-        }
-    }
-}
-
-impl AggDynValue for AggDynSet {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-
-    fn mem_size(&self) -> usize {
-        size_of::<Self>()
-            + self.list.raw.capacity()
-            + match &self.set {
-                InternalSet::Small(_) => 0,
-                InternalSet::Huge(s) => s.capacity() * size_of::<(u32, u32, u8)>(),
+            AccGenericColumn::Scalar { items, .. } => {
+                idx_for! {
+                    (idx in idx) => {
+                        heap_mem_used += items[idx].size() - size_of::<ScalarValue>();
+                    }
+                }
             }
+        }
+        heap_mem_used
     }
 
-    fn clone_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(self.clone())
+    pub fn add_heap_mem_used(&mut self, heap_mem_used: usize) {
+        match self {
+            AccGenericColumn::Prim { .. } => {}
+            AccGenericColumn::Bytes {
+                heap_mem_used: heap_mem_used_ref,
+                ..
+            } => {
+                *heap_mem_used_ref += heap_mem_used;
+            }
+            AccGenericColumn::Scalar {
+                heap_mem_used: heap_mem_used_ref,
+                ..
+            } => {
+                *heap_mem_used_ref += heap_mem_used;
+            }
+        }
     }
 }
 
-impl AggDynValue for SparkBloomFilter {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl AccColumn for AccGenericColumn {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
-    fn as_any_boxed(self: Box<Self>) -> Box<dyn Any> {
-        self
+    fn resize(&mut self, len: usize) {
+        match self {
+            &mut AccGenericColumn::Prim {
+                ref mut raw,
+                ref mut valids,
+                prim_size,
+            } => {
+                unsafe {
+                    // resize without initialization to zeroes
+                    let new_len = (prim_size * len + 15) / 16;
+                    if new_len > raw.len() {
+                        raw.reserve(new_len - raw.len());
+                        raw.set_len(new_len);
+                    } else {
+                        raw.truncate(new_len);
+                        raw.set_len(new_len);
+                    }
+                }
+                valids.resize(len, false);
+            }
+            AccGenericColumn::Bytes {
+                items,
+                heap_mem_used,
+            } => {
+                for idx in len..items.len() {
+                    *heap_mem_used -= items[idx].as_ref().map(|bytes| bytes.len()).unwrap_or(0);
+                }
+                items.resize(len, None);
+            }
+            AccGenericColumn::Scalar {
+                items,
+                dt,
+                heap_mem_used,
+            } => {
+                for idx in len..items.len() {
+                    *heap_mem_used -= items[idx].size() - size_of::<ScalarValue>();
+                }
+                items.resize_with(len, || {
+                    ScalarValue::try_from(&*dt).expect("unsupported data type: {dt:?}")
+                });
+            }
+        }
     }
 
-    fn mem_size(&self) -> usize {
-        SparkBloomFilter::mem_size(self)
+    fn shrink_to_fit(&mut self) {
+        match self {
+            AccGenericColumn::Prim { raw, valids, .. } => {
+                raw.shrink_to_fit();
+                valids.shrink_to_fit();
+            }
+            AccGenericColumn::Bytes { items, .. } => items.shrink_to_fit(),
+            AccGenericColumn::Scalar { items, .. } => items.shrink_to_fit(),
+        }
     }
 
-    fn clone_boxed(&self) -> Box<dyn AggDynValue> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Default, Clone, Copy)]
-pub struct AccumStateValAddr(u64);
-
-impl AccumStateValAddr {
-    #[inline]
-    fn new_fixed(valid_idx: usize, offset: usize) -> Self {
-        Self((valid_idx as u64) << 32 | (offset as u64))
+    fn num_records(&self) -> usize {
+        match self {
+            AccGenericColumn::Prim { valids, .. } => valids.len(),
+            AccGenericColumn::Bytes { items, .. } => items.len(),
+            AccGenericColumn::Scalar { items, .. } => items.len(),
+        }
     }
 
-    #[inline]
-    fn new_dyn(idx: usize) -> Self {
-        Self((idx as u64) | 0x8000_0000_0000_0000)
-    }
-    #[inline]
-    fn fixed_offset(&self) -> usize {
-        (self.0 & 0x0000_0000_ffff_ffff) as usize
-    }
-
-    #[inline]
-    fn fixed_valid_idx(&self) -> usize {
-        ((self.0 & 0x7fff_ffff_0000_0000) >> 32) as usize
-    }
-
-    #[inline]
-    fn dyn_idx(&self) -> usize {
-        (self.0 & 0x7fff_ffff_ffff_ffff) as usize
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use std::{collections::HashSet, io::Cursor};
-
-    use arrow::datatypes::DataType;
-    use datafusion::common::{Result, ScalarValue};
-    use datafusion_ext_commons::downcast_any;
-
-    use crate::agg::acc::{
-        create_acc_from_initial_value, create_dyn_loaders_from_initial_value,
-        create_dyn_savers_from_initial_value, AccumInitialValue, AccumStateRow, AggDynSet,
-        AggDynStr, LoadReader, SaveWriter,
-    };
-
-    #[test]
-    fn test_dyn_set() {
-        let mut dyn_set = AggDynSet::default();
-        dyn_set.append(&ScalarValue::from("Hello"), false);
-        dyn_set.append(&ScalarValue::from("Wooden"), false);
-        dyn_set.append(&ScalarValue::from("Bird"), false);
-        dyn_set.append(&ScalarValue::from("Snake"), false);
-        dyn_set.append(&ScalarValue::from("Wooden"), false);
-        dyn_set.append(&ScalarValue::from("Bird"), false);
-
-        // test merge
-        let mut dyn_set2 = AggDynSet::default();
-        dyn_set2.append(&ScalarValue::from("Hello"), false);
-        dyn_set2.append(&ScalarValue::from("Batman"), false);
-        dyn_set2.append(&ScalarValue::from("Candy"), false);
-        dyn_set.merge(&mut dyn_set2);
-
-        // test save
-        let mut buf = vec![];
-        let mut save_writer = SaveWriter(Box::new(Cursor::new(&mut buf)));
-        let savers =
-            create_dyn_savers_from_initial_value(&[AccumInitialValue::DynSet(DataType::Utf8)])
-                .unwrap();
-        savers[0](&mut save_writer, Some(Box::new(dyn_set))).unwrap();
-        drop(save_writer);
-
-        // test load
-        let mut load_reader = LoadReader(Box::new(Cursor::new(&buf)));
-        let loaders =
-            create_dyn_loaders_from_initial_value(&[AccumInitialValue::DynSet(DataType::Utf8)])
-                .unwrap();
-        let dyn_set = loaders[0](&mut load_reader)
-            .unwrap()
-            .unwrap()
-            .as_any_boxed()
-            .downcast::<AggDynSet>()
-            .unwrap();
-        drop(load_reader);
-
-        let actual_set: HashSet<ScalarValue> = dyn_set.into_values(DataType::Utf8, false).collect();
-        assert_eq!(actual_set.len(), 6);
-        assert!(actual_set.contains(&ScalarValue::from("Hello")));
-        assert!(actual_set.contains(&ScalarValue::from("Wooden")));
-        assert!(actual_set.contains(&ScalarValue::from("Bird")));
-        assert!(actual_set.contains(&ScalarValue::from("Snake")));
-        assert!(actual_set.contains(&ScalarValue::from("Batman")));
-        assert!(actual_set.contains(&ScalarValue::from("Candy")));
+    fn mem_used(&self) -> usize {
+        match self {
+            AccGenericColumn::Prim { raw, valids, .. } => raw.capacity() + valids.capacity() / 8,
+            AccGenericColumn::Bytes {
+                items,
+                heap_mem_used,
+                ..
+            } => heap_mem_used + items.capacity() * size_of::<Option<AccBytes>>(),
+            AccGenericColumn::Scalar {
+                items,
+                heap_mem_used,
+                ..
+            } => heap_mem_used + items.capacity() * size_of::<ScalarValue>(),
+        }
     }
 
-    #[test]
-    fn test_acc() {
-        let data_types = vec![
-            DataType::Null,
-            DataType::Int32,
-            DataType::Int64,
-            DataType::Utf8,
-        ];
-        let scalars = data_types
-            .iter()
-            .map(|dt: &DataType| Ok(AccumInitialValue::Scalar(dt.clone().try_into()?)))
-            .collect::<Result<Vec<AccumInitialValue>>>()
-            .unwrap();
+    fn freeze_to_rows(&self, idx: IdxSelection, array: &mut [Vec<u8>]) -> Result<()> {
+        let mut array_idx = 0;
 
-        let (mut acc, addrs) = create_acc_from_initial_value(&scalars).unwrap();
-        let dyn_loaders = create_dyn_loaders_from_initial_value(&scalars).unwrap();
-        let dyn_savers = create_dyn_savers_from_initial_value(&scalars).unwrap();
-        assert!(!acc.is_fixed_valid(addrs[0]));
-        assert!(!acc.is_fixed_valid(addrs[1]));
-        assert!(!acc.is_fixed_valid(addrs[2]));
+        match self {
+            &AccGenericColumn::Prim {
+                ref raw,
+                ref valids,
+                prim_size,
+            } => {
+                idx_for! {
+                    (i in idx) => {
+                        let w = &mut array[array_idx];
+                        if valids[i] {
+                            w.write_u8(1)?;
+                            w.write_all(&raw.as_raw_bytes()[prim_size * i..][..prim_size])?;
+                        } else {
+                            w.write_u8(0)?;
+                        }
+                        array_idx += 1;
+                    }
+                }
+            }
+            AccGenericColumn::Bytes { items, .. } => {
+                idx_for! {
+                    (i in idx) => {
+                        let w = &mut array[array_idx];
+                        if let Some(v) = &items[i] {
+                            write_len(1 + v.len(), w)?;
+                            w.write_all(v)?;
+                        } else {
+                            w.write_u8(0)?;
+                        }
+                        array_idx += 1;
+                    }
+                }
+            }
+            AccGenericColumn::Scalar { items, .. } => {
+                idx_for! {
+                    (i in idx) => {
+                        let w = &mut array[array_idx];
+                        write_scalar(&items[i], true, w)?;
+                        array_idx += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
-        // set values
-        let mut acc_valued = acc.clone();
-        acc_valued.set_fixed_value(addrs[1], 123456789_i32);
-        acc_valued.set_fixed_value(addrs[2], 1234567890123456789_i64);
-        acc_valued.set_fixed_valid(addrs[1], true);
-        acc_valued.set_fixed_valid(addrs[2], true);
-        *acc_valued.dyn_value_mut(addrs[3]) = Some(Box::new(AggDynStr::from_str("test")));
+    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
+        let mut idx = self.num_records();
+        self.resize(idx + array.len());
 
-        // save + load
-        let bytes = acc_valued.save_to_bytes(&dyn_savers).unwrap();
-        acc.load_from_bytes(&bytes, &dyn_loaders).unwrap();
+        match self {
+            &mut AccGenericColumn::Prim {
+                ref mut raw,
+                ref mut valids,
+                prim_size,
+            } => {
+                for (data, offset) in array.iter().zip(offsets) {
+                    let mut r = Cursor::new(data);
+                    r.set_position(*offset as u64);
 
-        assert!(!acc.is_fixed_valid(addrs[0]));
-        assert!(acc.is_fixed_valid(addrs[1]));
-        assert!(acc.is_fixed_valid(addrs[2]));
-        assert_eq!(acc.fixed_value::<i32>(addrs[1]), 123456789_i32);
-        assert_eq!(acc.fixed_value::<i64>(addrs[2]), 1234567890123456789_i64);
-        assert_eq!(
-            downcast_any!(acc.dyn_value(addrs[3]).as_ref().unwrap(), AggDynStr)
-                .unwrap()
-                .value(),
-            "test",
-        );
+                    let valid = r.read_u8()?;
+                    if valid == 1 {
+                        r.read_exact(&mut raw.as_raw_bytes_mut()[prim_size * idx..][..prim_size])?;
+                        valids.set(idx, true);
+                    } else {
+                        valids.set(idx, false);
+                    }
+                    *offset = r.position() as usize;
+                    idx += 1;
+                }
+            }
+            AccGenericColumn::Bytes {
+                items,
+                heap_mem_used,
+            } => {
+                for (data, offset) in array.iter().zip(offsets) {
+                    let mut r = Cursor::new(data);
+                    r.set_position(*offset as u64);
+
+                    let len = read_len(&mut r)?;
+                    if len > 0 {
+                        let len = len - 1;
+                        *heap_mem_used += len;
+                        let bytes = read_bytes_slice(&mut r, len)?.into();
+                        items[idx] = Some(AccBytes::from_vec(bytes));
+                    } else {
+                        items[idx] = None;
+                    }
+                    *offset = r.position() as usize;
+                    idx += 1;
+                }
+            }
+            AccGenericColumn::Scalar {
+                items,
+                dt,
+                heap_mem_used,
+            } => {
+                for (data, offset) in array.iter().zip(offsets) {
+                    let mut r = Cursor::new(data);
+                    r.set_position(*offset as u64);
+
+                    items[idx] = read_scalar(&mut r, dt, true)?;
+                    *heap_mem_used += items[idx].size() - size_of::<ScalarValue>();
+                    *offset = r.position() as usize;
+                    idx += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
+        match self {
+            &AccGenericColumn::Prim {
+                ref raw,
+                ref valids,
+                prim_size,
+            } => {
+                // write valids
+                let mut bits: BitVec<u8> = BitVec::with_capacity(idx.len());
+                idx_for! {
+                    (idx in idx) => {
+                        bits.push(valids[idx]);
+                    }
+                }
+                w.write_all(bits.as_raw_slice())?;
+
+                // write raw data
+                idx_for! {
+                    (idx in idx) => {
+                        if valids[idx] {
+                            w.write_all(&raw.as_raw_bytes()[prim_size * idx..][..prim_size])?;
+                        }
+                    }
+                }
+            }
+            AccGenericColumn::Bytes { items, .. } => {
+                idx_for! {
+                    (i in idx) => {
+                        if let Some(v) = &items[i] {
+                            write_len(1 + v.len(), w)?;
+                            w.write_all(v)?;
+                        } else {
+                            w.write_u8(0)?;
+                        }
+                    }
+                }
+            }
+            AccGenericColumn::Scalar { items, .. } => {
+                idx_for! {
+                    (i in idx) => {
+                        write_scalar(&items[i], true, w)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
+        let idx = self.num_records();
+        self.resize(idx + num_rows);
+
+        match self {
+            &mut AccGenericColumn::Prim {
+                ref mut raw,
+                ref mut valids,
+                prim_size,
+            } => {
+                let mut valid_buf = vec![];
+                let valid_len = (num_rows + 7) / 8;
+                read_bytes_into_vec(r, &mut valid_buf, valid_len)?;
+                let unfreezed_valids = BitVec::<u8>::from_vec(valid_buf);
+                valids.truncate(idx);
+                valids.extend_from_bitslice(unfreezed_valids.as_bitslice());
+
+                for i in idx..idx + num_rows {
+                    if valids[i] {
+                        r.read_exact(&mut raw.as_raw_bytes_mut()[prim_size * i..][..prim_size])?;
+                    }
+                }
+            }
+            AccGenericColumn::Bytes {
+                items,
+                heap_mem_used,
+            } => {
+                for i in idx..idx + num_rows {
+                    let len = read_len(r)?;
+                    if len > 0 {
+                        let len = len - 1;
+                        let bytes = read_bytes_slice(r, len)?.into();
+                        items[i] = Some(AccBytes::from_vec(bytes));
+                        *heap_mem_used += len;
+                    } else {
+                        items[i] = None;
+                    }
+                }
+            }
+            AccGenericColumn::Scalar {
+                items,
+                dt,
+                heap_mem_used,
+            } => {
+                for i in idx..idx + num_rows {
+                    items[i] = read_scalar(r, dt, true)?;
+                    *heap_mem_used += items[i].size() - size_of::<ScalarValue>();
+                }
+            }
+        }
+        Ok(())
     }
 }

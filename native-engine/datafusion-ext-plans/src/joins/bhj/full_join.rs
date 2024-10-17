@@ -27,11 +27,13 @@ use arrow::{
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
 use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion_ext_commons::likely;
 
 use crate::{
     broadcast_join_exec::Joiner,
     common::{
-        batch_selection::take_cols, output::WrappedRecordBatchSender, timer_helper::TimerHelper,
+        batch_selection::take_cols, execution_context::WrappedRecordBatchSender,
+        timer_helper::TimerHelper,
     },
     joins::{
         bhj::{
@@ -128,7 +130,7 @@ impl<const P: JoinerParams> FullJoiner<P> {
             },
         )?;
         self.output_rows.fetch_add(output_batch.num_rows(), Relaxed);
-        self.output_sender.send(Ok(output_batch)).await;
+        self.output_sender.send(output_batch).await;
         Ok(())
     }
 
@@ -253,7 +255,7 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
                 hashes_idx += 1;
 
                 let mut join = |map_idx| {
-                    if eq.eq(row_idx, map_idx as usize) {
+                    if likely!(eq.eq(row_idx, map_idx as usize)) {
                         if P.probe_side_outer {
                             hash_joined_probe_indices.push(row_idx as u32);
                             hash_joined_build_outer_indices.push(Some(map_idx));

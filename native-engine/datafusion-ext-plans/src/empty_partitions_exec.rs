@@ -12,27 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    any::Any,
-    fmt::Formatter,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::{any::Any, fmt::Formatter, sync::Arc};
 
-use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::MetricsSet, DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
-        Partitioning::UnknownPartitioning, PlanProperties, RecordBatchStream,
+        memory::MemoryStream, metrics::MetricsSet, DisplayAs, DisplayFormatType, ExecutionMode,
+        ExecutionPlan, Partitioning::UnknownPartitioning, PlanProperties,
         SendableRecordBatchStream, Statistics,
     },
 };
-use futures::Stream;
 use once_cell::sync::OnceCell;
 
 #[derive(Debug, Clone)]
@@ -102,7 +95,11 @@ impl ExecutionPlan for EmptyPartitionsExec {
         _partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        Ok(Box::pin(EmptyStream(self.schema.clone())))
+        Ok(Box::pin(MemoryStream::try_new(
+            vec![],
+            self.schema(),
+            None,
+        )?))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -111,21 +108,5 @@ impl ExecutionPlan for EmptyPartitionsExec {
 
     fn statistics(&self) -> Result<Statistics> {
         todo!()
-    }
-}
-
-struct EmptyStream(SchemaRef);
-
-impl RecordBatchStream for EmptyStream {
-    fn schema(&self) -> SchemaRef {
-        self.0.clone()
-    }
-}
-
-impl Stream for EmptyStream {
-    type Item = Result<RecordBatch>;
-
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Ready(None)
     }
 }

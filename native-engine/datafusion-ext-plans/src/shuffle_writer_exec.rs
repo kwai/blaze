@@ -23,21 +23,16 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
         SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::df_execution_err;
-use futures::{stream::once, TryStreamExt};
 use once_cell::sync::OnceCell;
 
 use crate::{
-    common::{
-        batch_statisitcs::{stat_input, InputBatchStatistics},
-        timer_helper::RegisterTimer,
-    },
+    common::execution_context::ExecutionContext,
     memmgr::MemManager,
     shuffle::{
         single_repartitioner::SingleShuffleRepartitioner,
@@ -113,26 +108,22 @@ impl ExecutionPlan for ShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         // record uncompressed data size
-        let data_size_metric = MetricBuilder::new(&self.metrics).counter("data_size", partition);
-        let output_time = self.metrics.register_timer("output_io_time", partition);
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let output_time = exec_ctx.register_timer_metric("output_io_time");
 
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
                 self.output_data_file.clone(),
                 self.output_index_file.clone(),
                 output_time,
-                BaselineMetrics::new(&self.metrics, partition),
             )),
             Partitioning::Hash(..) => {
-                let sort_time = self.metrics.register_timer("sort_time", partition);
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
-                    partition,
+                    exec_ctx.clone(),
                     self.output_data_file.clone(),
                     self.output_index_file.clone(),
                     self.partitioning.clone(),
-                    sort_time,
                     output_time,
-                    &self.metrics,
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
@@ -140,21 +131,8 @@ impl ExecutionPlan for ShuffleWriterExec {
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
 
-        let input = stat_input(
-            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
-            self.input.execute(partition, context.clone())?,
-        )?;
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(repartitioner.execute(
-                context.clone(),
-                partition,
-                input,
-                BaselineMetrics::new(&self.metrics, partition),
-                data_size_metric,
-            ))
-            .try_flatten(),
-        )))
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        repartitioner.execute(exec_ctx, input)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

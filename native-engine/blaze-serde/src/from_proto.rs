@@ -59,7 +59,7 @@ use datafusion_ext_exprs::{
     string_ends_with::StringEndsWithExpr, string_starts_with::StringStartsWithExpr,
 };
 use datafusion_ext_plans::{
-    agg::{create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr},
+    agg::{agg::create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr},
     agg_exec::AggExec,
     broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
     broadcast_join_exec::BroadcastJoinExec,
@@ -536,7 +536,6 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     exec_mode,
                     physical_groupings,
                     physical_aggs,
-                    agg.initial_input_buffer_offset as usize,
                     agg.supports_partial_skipping,
                     input,
                 )?))

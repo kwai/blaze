@@ -20,7 +20,7 @@ use datafusion::common::Result;
 use datafusion_ext_commons::suggested_output_batch_mem_size;
 
 use crate::{
-    common::{batch_selection::interleave_batches, output::WrappedRecordBatchSender},
+    common::{batch_selection::interleave_batches, execution_context::WrappedRecordBatchSender},
     compare_cursor, cur_forward,
     joins::{
         smj::semi_join::SemiJoinSide::{L, R},
@@ -118,7 +118,7 @@ impl<const P: JoinerParams> SemiJoiner<P> {
 
         if output_batch.num_rows() > 0 {
             self.output_rows += output_batch.num_rows();
-            self.output_sender.send(Ok(output_batch)).await;
+            self.output_sender.send(output_batch).await;
         }
         Ok(())
     }

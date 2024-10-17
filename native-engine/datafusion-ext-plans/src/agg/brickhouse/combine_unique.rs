@@ -15,43 +15,29 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::Arc,
 };
 
 use arrow::{
     array::{Array, ArrayRef, AsArray},
     datatypes::DataType,
 };
-use datafusion::{common::Result, physical_expr::PhysicalExpr, scalar::ScalarValue};
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
 
-use crate::agg::{
-    acc::{AccumInitialValue, AccumStateValAddr, RefAccumStateRow},
-    collect_set::AggCollectSet,
-    Agg, WithAggBufAddrs, WithMemTracking,
+use crate::{
+    agg::{acc::AccColumnRef, agg::IdxSelection, collect::AggCollectSet, Agg},
+    idx_for_zipped,
 };
 
 pub struct AggCombineUnique {
-    innert_collect_set: AggCollectSet,
-}
-
-impl WithAggBufAddrs for AggCombineUnique {
-    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
-        self.innert_collect_set
-            .set_accum_state_val_addrs(accum_state_val_addrs);
-    }
-}
-
-impl WithMemTracking for AggCombineUnique {
-    fn mem_used_tracker(&self) -> &AtomicUsize {
-        self.innert_collect_set.mem_used_tracker()
-    }
+    inner_collect_set: AggCollectSet,
 }
 
 impl AggCombineUnique {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, arg_list_inner_type: DataType) -> Result<Self> {
         let return_type = DataType::new_list(arg_list_inner_type.clone(), true);
         Ok(Self {
-            innert_collect_set: AggCollectSet::try_new(child, return_type, arg_list_inner_type)?,
+            inner_collect_set: AggCollectSet::try_new(child, return_type, arg_list_inner_type)?,
         })
     }
 }
@@ -61,7 +47,7 @@ impl Debug for AggCombineUnique {
         write!(
             f,
             "brickhouse.CombineUnique({:?})",
-            self.innert_collect_set.exprs()[0]
+            self.inner_collect_set.exprs()[0]
         )
     }
 }
@@ -72,71 +58,66 @@ impl Agg for AggCombineUnique {
     }
 
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        self.innert_collect_set.exprs()
+        self.inner_collect_set.exprs()
     }
 
     fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             exprs[0].clone(),
-            self.innert_collect_set.arg_type().clone(),
+            self.inner_collect_set.arg_type().clone(),
         )?))
     }
 
     fn data_type(&self) -> &DataType {
-        self.innert_collect_set.data_type()
+        self.inner_collect_set.data_type()
     }
 
     fn nullable(&self) -> bool {
-        self.innert_collect_set.nullable()
+        self.inner_collect_set.nullable()
     }
 
-    fn accums_initial(&self) -> &[AccumInitialValue] {
-        self.innert_collect_set.accums_initial()
-    }
-
-    fn increase_acc_mem_used(&self, acc: &mut RefAccumStateRow) {
-        self.innert_collect_set.increase_acc_mem_used(acc);
+    fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
+        self.inner_collect_set.create_acc_column(num_rows)
     }
 
     fn partial_update(
         &self,
-        acc: &mut RefAccumStateRow,
-        values: &[ArrayRef],
-        row_idx: usize,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        partial_args: &[ArrayRef],
+        partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let list = values[0].as_list::<i32>();
-        if list.is_valid(row_idx) {
-            let num_rows = 0; // unused
-            self.innert_collect_set
-                .partial_update_all(acc, num_rows, &[list.value(row_idx)])?;
+        let list = partial_args[0].as_list::<i32>();
+
+        idx_for_zipped! {
+            ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                if list.is_valid(partial_arg_idx) {
+                    let values = list.value(partial_arg_idx);
+                    let values_len = values.len();
+                    self.inner_collect_set.partial_update(
+                        accs,
+                        IdxSelection::Single(acc_idx),
+                        &[values],
+                        IdxSelection::Range(0, values_len),
+                    )?;
+                 }
+            }
         }
         Ok(())
     }
 
-    fn partial_update_all(
-        &self,
-        acc: &mut RefAccumStateRow,
-        _num_rows: usize,
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let num_rows = 0; // unused
-        self.innert_collect_set
-            .partial_update_all(acc, num_rows, values)
-    }
-
     fn partial_merge(
         &self,
-        acc: &mut RefAccumStateRow,
-        merging_acc: &mut RefAccumStateRow,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        merging_accs: &mut AccColumnRef,
+        merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        self.innert_collect_set.partial_merge(acc, merging_acc)
+        self.inner_collect_set
+            .partial_merge(accs, acc_idx, merging_accs, merging_acc_idx)
     }
 
-    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
-        self.innert_collect_set.final_merge(acc)
-    }
-
-    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
-        self.innert_collect_set.final_batch_merge(accs)
+    fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        self.inner_collect_set.final_merge(accs, acc_idx)
     }
 }

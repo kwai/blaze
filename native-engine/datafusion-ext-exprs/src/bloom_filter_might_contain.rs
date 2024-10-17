@@ -17,6 +17,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     hash::Hasher,
+    io::Cursor,
     sync::{Arc, Weak},
 };
 
@@ -108,7 +109,7 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
             get_cached_bloom_filter(&self.uuid, || {
                 match self.bloom_filter_expr.evaluate(batch)? {
                     ColumnarValue::Scalar(ScalarValue::Binary(Some(v))) => {
-                        Ok(SparkBloomFilter::read_from(v.as_slice())?)
+                        Ok(SparkBloomFilter::read_from(&mut Cursor::new(v.as_slice()))?)
                     }
                     _ => {
                         df_execution_err!("bloom_filter_arg must be valid binary scalar value")

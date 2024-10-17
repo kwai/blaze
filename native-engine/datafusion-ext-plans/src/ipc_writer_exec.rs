@@ -24,19 +24,19 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::streams::coalesce_stream::CoalesceInput;
 use futures::{stream::once, StreamExt, TryStreamExt};
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
 
 use crate::common::{
-    ipc_compression::IpcCompressionWriter, output::TaskOutputter, timer_helper::TimerHelper,
+    execution_context::ExecutionContext, ipc_compression::IpcCompressionWriter,
+    timer_helper::TimerHelper,
 };
 
 #[derive(Debug)]
@@ -107,24 +107,18 @@ impl ExecutionPlan for IpcWriterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let ipc_consumer_local = jni_call_static!(
             JniBridge.getResource(
                 jni_new_string!(&self.ipc_consumer_resource_id)?.as_obj()) -> JObject
         )?;
         let ipc_consumer = jni_new_global_ref!(ipc_consumer_local.as_obj())?;
-        let input = self.input.execute(partition, context.clone())?;
-        let input_coalesced = context.coalesce_with_default_batch_size(input, &baseline_metrics)?;
+        let input = exec_ctx.execute(&self.input)?;
+        let coalesced = exec_ctx.coalesce_with_default_batch_size(input);
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(
             self.schema(),
-            once(write_ipc(
-                input_coalesced,
-                context,
-                ipc_consumer,
-                baseline_metrics,
-            ))
-            .try_flatten(),
+            once(write_ipc(coalesced, exec_ctx, ipc_consumer)).try_flatten(),
         )))
     }
 
@@ -139,39 +133,41 @@ impl ExecutionPlan for IpcWriterExec {
 
 pub async fn write_ipc(
     mut input: SendableRecordBatchStream,
-    context: Arc<TaskContext>,
+    exec_ctx: Arc<ExecutionContext>,
     ipc_consumer: GlobalRef,
-    metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
-    let schema = input.schema();
-    context.output_with_sender("IpcWrite", schema, move |_sender| async move {
-        let _timer = metrics.elapsed_compute().timer();
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("IpcWrite", move |_sender| async move {
+            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
 
-        struct IpcConsumerWrite(GlobalRef);
-        impl Write for IpcConsumerWrite {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                let buf_len = buf.len();
-                let buf = jni_new_direct_byte_buffer!(&buf).map_err(std::io::Error::other)?;
-                jni_call!(ScalaFunction1(self.0.as_obj()).apply(buf.as_obj()) -> JObject)
-                    .map_err(std::io::Error::other)?;
-                Ok(buf_len)
+            struct IpcConsumerWrite(GlobalRef);
+            impl Write for IpcConsumerWrite {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    let buf_len = buf.len();
+                    let buf = jni_new_direct_byte_buffer!(&buf).map_err(std::io::Error::other)?;
+                    jni_call!(ScalaFunction1(self.0.as_obj()).apply(buf.as_obj()) -> JObject)
+                        .map_err(std::io::Error::other)?;
+                    Ok(buf_len)
+                }
+
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
             }
 
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
+            let mut writer = IpcCompressionWriter::new(IpcConsumerWrite(ipc_consumer));
+            while let Some(batch) = exec_ctx
+                .baseline_metrics()
+                .elapsed_compute()
+                .exclude_timer_async(input.next())
+                .await
+                .transpose()?
+            {
+                writer.write_batch(batch.num_rows(), batch.columns())?;
+                exec_ctx.baseline_metrics().record_output(batch.num_rows());
             }
-        }
-
-        let mut writer = IpcCompressionWriter::new(IpcConsumerWrite(ipc_consumer));
-        while let Some(batch) = metrics
-            .elapsed_compute()
-            .exclude_timer_async(async { input.next().await.transpose() })
-            .await?
-        {
-            writer.write_batch(batch.num_rows(), batch.columns())?;
-            metrics.record_output(batch.num_rows());
-        }
-        writer.finish_current_buf()?;
-        Ok(())
-    })
+            writer.finish_current_buf()?;
+            Ok(())
+        }))
 }

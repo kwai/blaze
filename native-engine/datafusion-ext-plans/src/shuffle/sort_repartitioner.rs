@@ -15,7 +15,7 @@
 use std::{
     fs::OpenOptions,
     io::{BufReader, Read, Seek, Write},
-    sync::Weak,
+    sync::{Arc, Weak},
 };
 
 use arrow::record_batch::RecordBatch;
@@ -23,10 +23,7 @@ use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
     common::{DataFusionError, Result},
-    physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, Time},
-        Partitioning,
-    },
+    physical_plan::{metrics::Time, Partitioning},
 };
 use datafusion_ext_commons::{
     array_size::ArraySize,
@@ -36,9 +33,8 @@ use datafusion_ext_commons::{
 use futures::lock::Mutex;
 
 use crate::{
-    common::timer_helper::TimerHelper,
+    common::{execution_context::ExecutionContext, timer_helper::TimerHelper},
     memmgr::{
-        metrics::SpillMetrics,
         spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
@@ -46,6 +42,7 @@ use crate::{
 };
 
 pub struct SortShuffleRepartitioner {
+    exec_ctx: Arc<ExecutionContext>,
     name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     output_data_file: String,
@@ -55,22 +52,22 @@ pub struct SortShuffleRepartitioner {
     partitioning: Partitioning,
     num_output_partitions: usize,
     output_io_time: Time,
-    spill_metrics: SpillMetrics,
 }
 
 impl SortShuffleRepartitioner {
     pub fn new(
-        partition_id: usize,
+        exec_ctx: Arc<ExecutionContext>,
         output_data_file: String,
         output_index_file: String,
         partitioning: Partitioning,
-        sort_time: Time,
         output_io_time: Time,
-        metrics: &ExecutionPlanMetricsSet,
     ) -> Self {
+        let partition_id = exec_ctx.partition_id();
+        let sort_time = exec_ctx.register_timer_metric("sort_time");
         let num_output_partitions = partitioning.partition_count();
         Self {
-            name: format!("SortShufflePartitioner[partition={}]", partition_id),
+            exec_ctx,
+            name: format!("SortShufflePartitioner[partition={partition_id}]"),
             mem_consumer_info: None,
             output_data_file,
             output_index_file,
@@ -79,7 +76,6 @@ impl SortShuffleRepartitioner {
             partitioning,
             num_output_partitions,
             output_io_time,
-            spill_metrics: SpillMetrics::new(metrics, partition_id),
         }
     }
 }
@@ -102,7 +98,7 @@ impl MemConsumer for SortShuffleRepartitioner {
 
     async fn spill(&self) -> Result<()> {
         let data = self.data.lock().await.drain();
-        let mut spill = try_new_spill(&self.spill_metrics)?;
+        let mut spill = try_new_spill(self.exec_ctx.spill_metrics())?;
 
         let offsets = data.write(spill.get_buf_writer(), &self.partitioning)?;
         self.spills

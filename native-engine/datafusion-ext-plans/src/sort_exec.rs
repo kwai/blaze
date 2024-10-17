@@ -39,8 +39,7 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
     },
@@ -51,19 +50,17 @@ use datafusion_ext_commons::{
     downcast_any,
     ds::loser_tree::{ComparableForLoserTree, LoserTree},
     io::{read_len, read_one_batch, write_len, write_one_batch},
-    streams::coalesce_stream::CoalesceInput,
 };
-use futures::{lock::Mutex, stream::once, StreamExt, TryStreamExt};
-use itertools::Itertools;
+use futures::{lock::Mutex, StreamExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex as SyncMutex;
 
 use crate::{
     common::{
         batch_selection::{interleave_batches, take_batch},
-        batch_statisitcs::{stat_input, InputBatchStatistics},
         column_pruning::ExecuteWithColumnPruning,
-        output::{TaskOutputter, WrappedRecordBatchSender},
+        execution_context::{ExecutionContext, WrappedRecordBatchSender},
+        timer_helper::TimerHelper,
     },
     memmgr::{
         metrics::SpillMetrics,
@@ -177,14 +174,13 @@ struct LevelSpill {
 }
 
 struct ExternalSorter {
+    exec_ctx: Arc<ExecutionContext>,
     name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     prune_sort_keys_from_batch: Arc<PruneSortKeysFromBatch>,
     limit: usize,
     data: Arc<Mutex<BufferedData>>,
     spills: Mutex<Vec<LevelSpill>>,
-    baseline_metrics: BaselineMetrics,
-    spill_metrics: SpillMetrics,
     num_total_rows: AtomicUsize,
     mem_total_size: AtomicUsize,
 }
@@ -206,7 +202,7 @@ impl MemConsumer for ExternalSorter {
     }
 
     async fn spill(&self) -> Result<()> {
-        let mut spill = try_new_spill(&self.spill_metrics)?;
+        let mut spill = try_new_spill(&self.exec_ctx.spill_metrics())?;
         let data = std::mem::take(&mut *self.data.lock().await);
         let sub_batch_size = compute_suggested_batch_size_for_kway_merge(
             self.mem_total_size(),
@@ -230,7 +226,7 @@ impl MemConsumer for ExternalSorter {
             if levels[level].len() >= SPILL_MERGING_SIZE {
                 let merged = merge_spills(
                     std::mem::take(&mut levels[level]),
-                    &self.spill_metrics,
+                    self.exec_ctx.spill_metrics(),
                     sub_batch_size,
                     self.limit,
                     self.prune_sort_keys_from_batch.pruned_schema.clone(),
@@ -462,53 +458,47 @@ impl ExecuteWithColumnPruning for SortExec {
         context: Arc<TaskContext>,
         projection: &[usize],
     ) -> Result<SendableRecordBatchStream> {
-        let input_schema = self.input.schema();
-
         let prune_sort_keys_from_batch = Arc::new(PruneSortKeysFromBatch::try_new(
-            input_schema,
+            self.input.schema(),
             projection,
             &self.exprs,
         )?);
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
 
-        let external_sorter = Arc::new(ExternalSorter {
+        let sorter = Arc::new(ExternalSorter {
+            exec_ctx: exec_ctx.clone(),
             name: format!("ExternalSorter[partition={}]", partition),
             mem_consumer_info: None,
             prune_sort_keys_from_batch,
             limit: self.fetch.unwrap_or(usize::MAX),
             data: Default::default(),
             spills: Default::default(),
-            baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
-            spill_metrics: SpillMetrics::new(&self.metrics, partition),
             num_total_rows: Default::default(),
             mem_total_size: Default::default(),
         });
-        MemManager::register_consumer(external_sorter.clone(), true);
+        MemManager::register_consumer(sorter.clone(), true);
 
-        let input = stat_input(
-            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
-            self.input.execute(partition, context.clone())?,
-        )?;
-        let coalesced = context.coalesce_with_default_batch_size(
-            input,
-            &BaselineMetrics::new(&self.metrics, partition),
-        )?;
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
 
-        let output = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(external_sort(
-                coalesced,
-                partition,
-                context.clone(),
-                external_sorter,
-                self.metrics.clone(),
-            ))
-            .try_flatten(),
-        ));
-        let coalesced = context.coalesce_with_default_batch_size(
-            output,
-            &BaselineMetrics::new(&self.metrics, partition),
-        )?;
-        Ok(coalesced)
+        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+        let output = exec_ctx
+            .clone()
+            .output_with_sender("Sort", |sender| async move {
+                let _timer = elapsed_compute.timer();
+                sender.exclude_time(&elapsed_compute);
+
+                while let Some(batch) = elapsed_compute
+                    .exclude_timer_async(coalesced.next())
+                    .await
+                    .transpose()?
+                {
+                    sorter.insert_batch(batch).await?;
+                }
+                sorter.output(sender).await?;
+                Ok(())
+            });
+        Ok(exec_ctx.coalesce_with_default_batch_size(output))
     }
 }
 
@@ -518,39 +508,8 @@ impl Drop for ExternalSorter {
     }
 }
 
-async fn external_sort(
-    mut input: SendableRecordBatchStream,
-    partition_id: usize,
-    context: Arc<TaskContext>,
-    sorter: Arc<ExternalSorter>,
-    metrics: ExecutionPlanMetricsSet,
-) -> Result<SendableRecordBatchStream> {
-    // insert and sort
-    while let Some(batch) = input.next().await.transpose()? {
-        sorter
-            .insert_batch(batch)
-            .await
-            .map_err(|err| err.context("sort: executing insert_batch() error"))?;
-    }
-    let has_spill = sorter.spills.lock().await.is_empty();
-    let sorter_cloned = sorter.clone();
-
-    let output = context.output_with_sender("Sort", input.schema(), |sender| async move {
-        sender.exclude_time(sorter.baseline_metrics.elapsed_compute());
-        sorter.output(sender).await?;
-        Ok(())
-    })?;
-
-    // if running in-memory, buffer output when memory usage is high
-    if !has_spill {
-        return context.output_bufferable_with_spill(partition_id, sorter_cloned, output, metrics);
-    }
-    Ok(output)
-}
-
 impl ExternalSorter {
     async fn insert_batch(self: &Arc<Self>, batch: RecordBatch) -> Result<()> {
-        let _timer = self.baseline_metrics.elapsed_compute().timer();
         if batch.num_rows() == 0 {
             return Ok(());
         }
@@ -572,8 +531,7 @@ impl ExternalSorter {
         Ok(())
     }
 
-    async fn output(self: Arc<Self>, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
-        let _timer = self.baseline_metrics.elapsed_compute().timer();
+    async fn output(self: &Arc<Self>, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
         self.set_spillable(false);
 
         let data = std::mem::take(&mut *self.data.lock().await);
@@ -602,8 +560,10 @@ impl ExternalSorter {
                 let batch = self
                     .prune_sort_keys_from_batch
                     .restore(pruned_batch, key_store)?;
-                self.baseline_metrics.record_output(batch.num_rows());
-                sender.send(Ok(batch)).await;
+                self.exec_ctx
+                    .baseline_metrics()
+                    .record_output(batch.num_rows());
+                sender.send(batch).await;
             }
             self.update_mem_used(0).await?;
             return Ok(());
@@ -629,7 +589,7 @@ impl ExternalSorter {
             self.update_mem_used(in_mem_spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
                 .await?;
         } else {
-            let mut spill = try_new_spill(&self.spill_metrics)?;
+            let mut spill = try_new_spill(&self.exec_ctx.spill_metrics())?;
             data.try_into_spill(&self, &mut spill, sub_batch_size)?;
             spills.push(spill);
             self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
@@ -649,8 +609,10 @@ impl ExternalSorter {
             let cursors_mem_used = merger.cursors_mem_used();
 
             self.update_mem_used(cursors_mem_used).await?;
-            self.baseline_metrics.record_output(batch.num_rows());
-            sender.send(Ok(batch)).await;
+            self.exec_ctx
+                .baseline_metrics()
+                .record_output(batch.num_rows());
+            sender.send(batch).await;
         }
         self.update_mem_used(0).await?;
         Ok(())

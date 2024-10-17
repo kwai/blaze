@@ -19,13 +19,12 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::common::Result;
-use datafusion_ext_commons::slim_bytes::SlimBytes;
 
 use crate::window::{window_context::WindowContext, WindowFunctionProcessor};
 
 pub struct RankProcessor {
-    cur_partition: SlimBytes,
-    cur_order: SlimBytes,
+    cur_partition: Vec<u8>,
+    cur_order: Vec<u8>,
     cur_rank: i32,
     cur_equals: i32,
     is_dense: bool,
@@ -52,7 +51,7 @@ impl WindowFunctionProcessor for RankProcessor {
         for row_idx in 0..batch.num_rows() {
             let same_partition = !context.has_partition() || {
                 let partition_row = partition_rows.row(row_idx);
-                if partition_row.as_ref() != self.cur_partition.as_ref() {
+                if partition_row.as_ref() != &self.cur_partition {
                     self.cur_partition = partition_row.as_ref().into();
                     false
                 } else {
@@ -62,7 +61,7 @@ impl WindowFunctionProcessor for RankProcessor {
             let order_row = order_rows.row(row_idx);
 
             if same_partition {
-                if order_row.as_ref() == self.cur_order.as_ref() {
+                if order_row.as_ref() == &self.cur_order {
                     self.cur_equals += 1;
                 } else {
                     self.cur_rank += if !self.is_dense { self.cur_equals } else { 1 };
@@ -71,29 +70,6 @@ impl WindowFunctionProcessor for RankProcessor {
                 }
             } else {
                 self.cur_rank = 1;
-                self.cur_equals = 1;
-                self.cur_order = order_row.as_ref().into();
-            }
-            builder.append_value(self.cur_rank);
-        }
-        Ok(Arc::new(builder.finish()))
-    }
-
-    fn process_batch_without_partitions(
-        &mut self,
-        context: &WindowContext,
-        batch: &RecordBatch,
-    ) -> Result<ArrayRef> {
-        let order_rows = context.get_order_rows(batch)?;
-        let mut builder = Int32Builder::with_capacity(batch.num_rows());
-
-        for row_idx in 0..batch.num_rows() {
-            let order_row = order_rows.row(row_idx);
-
-            if order_row.as_ref() == self.cur_order.as_ref() {
-                self.cur_equals += 1;
-            } else {
-                self.cur_rank += if !self.is_dense { self.cur_equals } else { 1 };
                 self.cur_equals = 1;
                 self.cur_order = order_row.as_ref().into();
             }

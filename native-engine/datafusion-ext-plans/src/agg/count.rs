@@ -15,54 +15,44 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::{atomic::AtomicUsize, Arc},
+    io::Cursor,
+    sync::Arc,
 };
 
 use arrow::{array::*, datatypes::*};
-use datafusion::{
-    common::{Result, ScalarValue},
-    physical_expr::PhysicalExpr,
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion_ext_commons::{
+    downcast_any,
+    io::{read_len, write_len},
 };
 
-use crate::agg::{
-    acc::{AccumInitialValue, AccumStateRow, AccumStateValAddr, RefAccumStateRow},
-    Agg, WithAggBufAddrs, WithMemTracking,
+use crate::{
+    agg::{
+        acc::{AccColumn, AccColumnRef},
+        agg::{Agg, IdxSelection},
+    },
+    idx_for, idx_for_zipped, idx_with_iter,
+    memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
 };
 
 pub struct AggCount {
-    child: Arc<dyn PhysicalExpr>,
+    children: Vec<Arc<dyn PhysicalExpr>>,
     data_type: DataType,
-    accum_state_val_addr: AccumStateValAddr,
-    mem_used_tracker: AtomicUsize,
-}
-
-impl WithAggBufAddrs for AggCount {
-    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
-        self.accum_state_val_addr = accum_state_val_addrs[0];
-    }
-}
-
-impl WithMemTracking for AggCount {
-    fn mem_used_tracker(&self) -> &AtomicUsize {
-        &self.mem_used_tracker
-    }
 }
 
 impl AggCount {
-    pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
+    pub fn try_new(children: Vec<Arc<dyn PhysicalExpr>>, data_type: DataType) -> Result<Self> {
         assert_eq!(data_type, DataType::Int64);
         Ok(Self {
-            child,
+            children,
             data_type,
-            accum_state_val_addr: AccumStateValAddr::default(),
-            mem_used_tracker: AtomicUsize::new(0),
         })
     }
 }
 
 impl Debug for AggCount {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Count({:?})", self.child)
+        write!(f, "Count({:?})", self.children)
     }
 }
 
@@ -72,12 +62,12 @@ impl Agg for AggCount {
     }
 
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        vec![self.child.clone()]
+        self.children.clone()
     }
 
     fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
-            exprs[0].clone(),
+            exprs.clone(),
             self.data_type.clone(),
         )?))
     }
@@ -90,88 +80,137 @@ impl Agg for AggCount {
         false
     }
 
-    fn accums_initial(&self) -> &[AccumInitialValue] {
-        &[AccumInitialValue::Scalar(ScalarValue::Int64(Some(0)))]
-    }
-
-    fn increase_acc_mem_used(&self, _acc: &mut RefAccumStateRow) {
-        // do nothing
+    fn create_acc_column(&self, num_rows: usize) -> Box<dyn AccColumn> {
+        Box::new(AccCountColumn {
+            values: vec![0; num_rows],
+        })
     }
 
     fn partial_update(
         &self,
-        acc: &mut RefAccumStateRow,
-        values: &[ArrayRef],
-        row_idx: usize,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        partial_args: &[ArrayRef],
+        partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let addr = self.accum_state_val_addr;
-        if values[0].is_valid(row_idx) {
-            acc.update_fixed_value::<i64>(addr, |v| v + 1);
-        }
-        Ok(())
-    }
+        let accs = downcast_any!(accs, mut AccCountColumn).unwrap();
 
-    fn partial_batch_update(
-        &self,
-        accs: &mut [RefAccumStateRow],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let addr = self.accum_state_val_addr;
-        let value = &values[0];
-        for (row_idx, acc) in accs.iter_mut().enumerate() {
-            if value.is_valid(row_idx) {
-                acc.update_fixed_value::<i64>(addr, |v| v + 1);
+        if partial_args.is_empty() {
+            idx_for_zipped! {
+                ((acc_idx, _partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                    accs.values[acc_idx] += 1;
+                }
+            }
+        } else {
+            idx_for_zipped! {
+                ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                    accs.values[acc_idx] += partial_args
+                    .iter()
+                    .all(|arg| arg.is_valid(partial_arg_idx)) as i64;
+                }
             }
         }
         Ok(())
     }
 
-    fn partial_update_all(
-        &self,
-        acc: &mut RefAccumStateRow,
-        _num_rows: usize,
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let addr = self.accum_state_val_addr;
-        let num_valids = values[0].len() - values[0].null_count();
-        acc.update_fixed_value::<i64>(addr, |v| v + num_valids as i64);
-        Ok(())
-    }
-
     fn partial_merge(
         &self,
-        acc1: &mut RefAccumStateRow,
-        acc2: &mut RefAccumStateRow,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        merging_accs: &mut AccColumnRef,
+        merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let addr = self.accum_state_val_addr;
-        let num_valids2 = acc2.fixed_value::<i64>(addr);
-        acc1.update_fixed_value::<i64>(addr, |v| v + num_valids2);
-        Ok(())
-    }
+        let accs = downcast_any!(accs, mut AccCountColumn).unwrap();
+        let merging_accs = downcast_any!(merging_accs, mut AccCountColumn).unwrap();
 
-    fn partial_batch_merge(
-        &self,
-        accs: &mut [RefAccumStateRow],
-        merging_accs: &mut [RefAccumStateRow],
-    ) -> Result<()> {
-        let addr = self.accum_state_val_addr;
-        for (acc, merging_acc) in accs.iter_mut().zip(merging_accs) {
-            let merging_num_valids = merging_acc.fixed_value::<i64>(addr);
-            acc.update_fixed_value::<i64>(addr, |v| v + merging_num_valids);
+        idx_for_zipped! {
+            ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                accs.values[acc_idx] += merging_accs.values[merging_acc_idx];
+            }
         }
         Ok(())
     }
-    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
-        let addr = self.accum_state_val_addr;
-        Ok(ScalarValue::from(acc.fixed_value::<i64>(addr)))
+
+    fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        let accs = downcast_any!(accs, mut AccCountColumn).unwrap();
+
+        idx_with_iter! {
+            (acc_idx_iter @ acc_idx) => {
+                Ok(Arc::new(Int64Array::from_iter_values(
+                    acc_idx_iter.map(|idx| accs.values[idx])
+                )))
+            }
+        }
+    }
+}
+
+pub struct AccCountColumn {
+    pub values: Vec<i64>,
+}
+
+impl AccColumn for AccCountColumn {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 
-    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
-        let addr = self.accum_state_val_addr;
-        Ok(Arc::new(
-            accs.iter()
-                .map(|acc| acc.fixed_value::<i64>(addr))
-                .collect::<Int64Array>(),
-        ))
+    fn resize(&mut self, num_accs: usize) {
+        self.values.resize(num_accs, 0);
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.values.shrink_to_fit();
+    }
+
+    fn num_records(&self) -> usize {
+        self.values.len()
+    }
+
+    fn mem_used(&self) -> usize {
+        self.values.capacity() * size_of::<i64>()
+    }
+
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
+        let mut array_idx = 0;
+
+        idx_for! {
+            (idx in idx) => {
+                write_len(self.values[idx] as usize, &mut array[array_idx])?;
+                array_idx += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
+        let mut idx = self.num_records();
+        self.resize(idx + array.len());
+
+        for (raw, offset) in array.iter().zip(offsets) {
+            let mut cursor = Cursor::new(raw);
+            cursor.set_position(*offset as u64);
+            self.values[idx] = read_len(&mut cursor)? as i64;
+            *offset = cursor.position() as usize;
+            idx += 1;
+        }
+        Ok(())
+    }
+
+    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
+        idx_for! {
+            (idx in idx) => {
+                write_len(self.values[idx] as usize, w)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
+        let idx = self.num_records();
+        self.resize(idx + num_rows);
+
+        for i in idx..idx + num_rows {
+            self.values[i] = read_len(r)? as i64;
+        }
+        Ok(())
     }
 }

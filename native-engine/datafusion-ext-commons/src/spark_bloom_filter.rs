@@ -58,7 +58,7 @@ impl SparkBloomFilter {
         }
     }
 
-    pub fn read_from(mut r: impl std::io::Read) -> Result<Self> {
+    pub fn read_from(r: &mut impl std::io::Read) -> Result<Self> {
         let version = r.read_i32::<BE>()?;
         if version != 1 {
             return df_execution_err!("unsupported version: {}", version);
@@ -71,7 +71,7 @@ impl SparkBloomFilter {
         })
     }
 
-    pub fn write_to(&self, mut w: impl Write) -> Result<()> {
+    pub fn write_to(&self, w: &mut impl Write) -> Result<()> {
         w.write_i32::<BE>(1)?; // version number
         w.write_i32::<BE>(self.num_hash_functions as i32)?;
         self.bits.write_to(w)?;
