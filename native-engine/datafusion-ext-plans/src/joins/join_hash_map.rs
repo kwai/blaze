@@ -143,22 +143,16 @@ impl Table {
         }
 
         // build map
-        let map_mod_bits = (map_items.len() * 2 + 1)
+        let map_mod_bits = (map_items.len().max(128) * 2 / MAP_VALUE_GROUP_SIZE)
             .next_power_of_two()
             .trailing_zeros();
-        let mut map = unchecked!(Vec::with_capacity((1usize << map_mod_bits) + 16));
-        map.resize(1 << map_mod_bits, MapValueGroup::default());
+        let mut map = unchecked!(vec![MapValueGroup::default(); 1usize << map_mod_bits]);
 
         macro_rules! entries {
             [$i:expr] => (map_items[$i].0 % (1 << map_mod_bits))
         }
 
         const PREFETCH_AHEAD: usize = 4;
-        if map_items.len() >= PREFETCH_AHEAD {
-            for i in 1..PREFETCH_AHEAD - 1 {
-                prefetch_read_data!(&map[entries![i] as usize]);
-            }
-        }
         for i in 0..map_items.len() {
             if i + PREFETCH_AHEAD < map_items.len() {
                 prefetch_read_data!(&map[entries![i + PREFETCH_AHEAD] as usize]);
@@ -167,19 +161,15 @@ impl Table {
             let mut e = entries![i] as usize;
             loop {
                 let empty = map[e].hashes.simd_eq(Simd::splat(0));
-                if let Some(j) = empty.first_set() {
-                    map[e].hashes.as_mut_array()[j] = map_items[i].0;
-                    map[e].values[j] = map_items[i].1;
+                if let Some(empty_pos) = empty.first_set() {
+                    map[e].hashes.as_mut_array()[empty_pos] = map_items[i].0;
+                    map[e].values[empty_pos] = map_items[i].1;
                     break;
                 }
-
                 e += 1;
-                if e == map.len() {
-                    map.push(MapValueGroup::default());
-                }
+                e %= 1 << map_mod_bits;
             }
         }
-        map.push(MapValueGroup::default()); // sentinel at the end
 
         Ok(Table {
             num_valid_items,
@@ -195,14 +185,13 @@ impl Table {
         // read map
         let num_valid_items = read_len(&mut cursor)?;
         let map_mod_bits = read_len(&mut cursor)? as u32;
-        let map_len = read_len(&mut cursor)?;
         let mut map = vec![
             unsafe {
                 // safety: no need to init to zeros
                 #[allow(invalid_value)]
                 MaybeUninit::<MapValueGroup>::uninit().assume_init()
             };
-            map_len
+            1usize << map_mod_bits
         ];
         read_raw_slice(&mut map, &mut cursor)?;
 
@@ -230,7 +219,6 @@ impl Table {
         // write map
         write_len(self.num_valid_items, &mut raw_bytes)?;
         write_len(self.map_mod_bits as usize, &mut raw_bytes)?;
-        write_len(self.map.len(), &mut raw_bytes)?;
         write_raw_slice(&self.map, &mut raw_bytes)?;
 
         // write mapped indices
@@ -288,6 +276,7 @@ impl Table {
                     break;
                 }
                 e += 1;
+                e %= 1 << self.map_mod_bits;
             }
         }
 
