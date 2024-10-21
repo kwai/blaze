@@ -14,6 +14,7 @@
 
 use std::{
     fmt::{Debug, Formatter},
+    hash::{BuildHasher, Hasher},
     io::Cursor,
     mem::MaybeUninit,
     simd::{cmp::SimdPartialEq, Simd},
@@ -434,8 +435,13 @@ pub fn join_hash_map_schema(data_schema: &SchemaRef) -> SchemaRef {
 #[inline]
 pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Vec<u32> {
     const JOIN_HASH_RANDOM_SEED: u32 = 0x1E39FA04;
+    const HASHER: foldhash::fast::FixedState =
+        foldhash::fast::FixedState::with_seed(JOIN_HASH_RANDOM_SEED as u64);
     let mut hashes = create_hashes(num_rows, key_columns, JOIN_HASH_RANDOM_SEED, |v, h| {
-        gxhash::gxhash32(v, h as i64)
+        let mut hasher = HASHER.build_hasher();
+        hasher.write_u32(h);
+        hasher.write(v);
+        hasher.finish() as u32
     });
 
     // use 31-bit non-zero hash

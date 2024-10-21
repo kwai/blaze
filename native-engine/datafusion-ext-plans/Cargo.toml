@@ -22,8 +22,8 @@ datafusion-ext-commons = { workspace = true }
 datafusion-ext-exprs = { workspace = true }
 datafusion-ext-functions = { workspace = true }
 derivative = "2.2.0"
+foldhash = "0.1.3"
 futures = "0.3"
-gxhash = "3.4.1"
 hashbrown = "0.14.5"
 itertools = "0.13.0"
 jni = "0.20.0"

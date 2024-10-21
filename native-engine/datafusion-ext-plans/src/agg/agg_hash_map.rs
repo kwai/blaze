@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::simd::{cmp::SimdPartialEq, Simd};
+use std::{
+    hash::BuildHasher,
+    simd::{cmp::SimdPartialEq, Simd},
+};
 
 use datafusion::common::Result;
 use datafusion_ext_commons::bytes_arena::{BytesArena, BytesArenaRef};
@@ -235,5 +238,7 @@ impl AggHashMap {
 pub fn agg_hash(value: impl AsRef<[u8]>) -> u32 {
     // 32-bits non-zero hash
     const AGG_HASH_SEED_HASHING: i64 = 0x3F6F1B93;
-    gxhash::gxhash32(value.as_ref(), AGG_HASH_SEED_HASHING) | 0x80000000
+    const HASHER: foldhash::fast::FixedState =
+        foldhash::fast::FixedState::with_seed(AGG_HASH_SEED_HASHING as u64);
+    HASHER.hash_one(value.as_ref()) as u32 | 0x80000000
 }

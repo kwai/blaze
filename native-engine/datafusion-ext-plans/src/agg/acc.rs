@@ -14,6 +14,7 @@
 
 use std::{
     any::Any,
+    hash::BuildHasher,
     io::{Cursor, Read, Write},
     mem::{size_of, size_of_val},
 };
@@ -932,7 +933,9 @@ impl InternalSet {
 #[inline]
 pub fn acc_hash(value: impl AsRef<[u8]>) -> u64 {
     const ACC_HASH_SEED: u32 = 0x7BCB48DA;
-    gxhash::gxhash64(value.as_ref(), ACC_HASH_SEED as i64)
+    const HASHER: foldhash::fast::FixedState =
+        foldhash::fast::FixedState::with_seed(ACC_HASH_SEED as u64);
+    HASHER.hash_one(value.as_ref())
 }
 
 impl AggDynSet {

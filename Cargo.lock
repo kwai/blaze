@@ -977,9 +977,9 @@ dependencies = [
  "datafusion-ext-exprs",
  "datafusion-ext-functions",
  "derivative",
+ "foldhash",
  "futures",
  "futures-util",
- "gxhash",
  "hashbrown 0.14.5",
  "itertools 0.13.0",
  "jni",
@@ -1314,6 +1314,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "foldhash"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f81ec6369c545a7d40e4589b5597581fa1c441fe1cce96dd1de43159910a36a2"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1449,15 +1455,6 @@ name = "glob"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
-
-[[package]]
-name = "gxhash"
-version = "3.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a197c9b654827513cf53842c5c6d3da2b4b35a785f8e0eff78bdf8e445aba1bb"
-dependencies = [
- "rustversion",
-]
 
 [[package]]
 name = "half"
