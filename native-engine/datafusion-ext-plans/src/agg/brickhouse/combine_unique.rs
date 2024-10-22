@@ -106,14 +106,22 @@ impl Agg for AggCombineUnique {
     ) -> Result<()> {
         let list = values[0].as_list::<i32>();
         if list.is_valid(row_idx) {
+            let num_rows = 0; // unused
             self.innert_collect_set
-                .partial_update_all(acc, &[list.value(row_idx)])?;
+                .partial_update_all(acc, num_rows, &[list.value(row_idx)])?;
         }
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
-        self.innert_collect_set.partial_update_all(acc, values)
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        _num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
+        let num_rows = 0; // unused
+        self.innert_collect_set
+            .partial_update_all(acc, num_rows, values)
     }
 
     fn partial_merge(

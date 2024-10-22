@@ -146,9 +146,14 @@ impl Agg for AggAvg {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
-        self.agg_sum.partial_update_all(acc, values)?;
-        self.agg_count.partial_update_all(acc, values)?;
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
+        self.agg_sum.partial_update_all(acc, num_rows, values)?;
+        self.agg_count.partial_update_all(acc, num_rows, values)?;
         Ok(())
     }
 

@@ -29,61 +29,54 @@ use crate::agg::{
     Agg, WithAggBufAddrs, WithMemTracking,
 };
 
-pub struct AggCount {
-    child: Arc<dyn PhysicalExpr>,
-    data_type: DataType,
+pub struct AggCount0 {
     accum_state_val_addr: AccumStateValAddr,
     mem_used_tracker: AtomicUsize,
 }
 
-impl WithAggBufAddrs for AggCount {
+impl WithAggBufAddrs for AggCount0 {
     fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
         self.accum_state_val_addr = accum_state_val_addrs[0];
     }
 }
 
-impl WithMemTracking for AggCount {
+impl WithMemTracking for AggCount0 {
     fn mem_used_tracker(&self) -> &AtomicUsize {
         &self.mem_used_tracker
     }
 }
 
-impl AggCount {
-    pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
+impl AggCount0 {
+    pub fn try_new(data_type: DataType) -> Result<Self> {
         assert_eq!(data_type, DataType::Int64);
         Ok(Self {
-            child,
-            data_type,
             accum_state_val_addr: AccumStateValAddr::default(),
             mem_used_tracker: AtomicUsize::new(0),
         })
     }
 }
 
-impl Debug for AggCount {
+impl Debug for AggCount0 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Count({:?})", self.child)
+        write!(f, "Count(0)")
     }
 }
 
-impl Agg for AggCount {
+impl Agg for AggCount0 {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
     fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        vec![self.child.clone()]
+        vec![]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
-        Ok(Arc::new(Self::try_new(
-            exprs[0].clone(),
-            self.data_type.clone(),
-        )?))
+    fn with_new_exprs(&self, _exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+        Ok(Arc::new(Self::try_new(DataType::Int64)?))
     }
 
     fn data_type(&self) -> &DataType {
-        &self.data_type
+        &DataType::Int64
     }
 
     fn nullable(&self) -> bool {
@@ -101,27 +94,22 @@ impl Agg for AggCount {
     fn partial_update(
         &self,
         acc: &mut RefAccumStateRow,
-        values: &[ArrayRef],
-        row_idx: usize,
+        _values: &[ArrayRef],
+        _row_idx: usize,
     ) -> Result<()> {
         let addr = self.accum_state_val_addr;
-        if values[0].is_valid(row_idx) {
-            acc.update_fixed_value::<i64>(addr, |v| v + 1);
-        }
+        acc.update_fixed_value::<i64>(addr, |v| v + 1);
         Ok(())
     }
 
     fn partial_batch_update(
         &self,
         accs: &mut [RefAccumStateRow],
-        values: &[ArrayRef],
+        _values: &[ArrayRef],
     ) -> Result<()> {
         let addr = self.accum_state_val_addr;
-        let value = &values[0];
-        for (row_idx, acc) in accs.iter_mut().enumerate() {
-            if value.is_valid(row_idx) {
-                acc.update_fixed_value::<i64>(addr, |v| v + 1);
-            }
+        for acc in accs.iter_mut() {
+            acc.update_fixed_value::<i64>(addr, |v| v + 1);
         }
         Ok(())
     }
@@ -129,12 +117,11 @@ impl Agg for AggCount {
     fn partial_update_all(
         &self,
         acc: &mut RefAccumStateRow,
-        _num_rows: usize,
-        values: &[ArrayRef],
+        num_rows: usize,
+        _values: &[ArrayRef],
     ) -> Result<()> {
         let addr = self.accum_state_val_addr;
-        let num_valids = values[0].len() - values[0].null_count();
-        acc.update_fixed_value::<i64>(addr, |v| v + num_valids as i64);
+        acc.update_fixed_value::<i64>(addr, |v| v + num_rows as i64);
         Ok(())
     }
 

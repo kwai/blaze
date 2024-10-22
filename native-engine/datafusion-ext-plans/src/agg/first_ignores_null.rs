@@ -133,7 +133,12 @@ impl Agg for AggFirstIgnoresNull {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        _num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
         let partial_updater = self.partial_updater;
         let value = &values[0];
 

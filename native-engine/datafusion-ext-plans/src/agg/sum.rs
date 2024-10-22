@@ -144,7 +144,12 @@ impl Agg for AggSum {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        _num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
         macro_rules! handle {
             ($ty:ident) => {{
                 type TArray = paste! {[<$ty Array>]};

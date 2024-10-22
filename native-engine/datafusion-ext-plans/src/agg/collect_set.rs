@@ -142,7 +142,12 @@ impl Agg for AggCollectSet {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        _num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
         let dyn_set = match acc.dyn_value_mut(self.accum_state_val_addr) {
             Some(dyn_set) => dyn_set,
             w => {

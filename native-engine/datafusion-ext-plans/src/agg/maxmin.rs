@@ -152,7 +152,12 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
         Ok(())
     }
 
-    fn partial_update_all(&self, acc: &mut RefAccumStateRow, values: &[ArrayRef]) -> Result<()> {
+    fn partial_update_all(
+        &self,
+        acc: &mut RefAccumStateRow,
+        _num_rows: usize,
+        values: &[ArrayRef],
+    ) -> Result<()> {
         macro_rules! handle_fixed {
             ($ty:ident, $maxfun:expr) => {{
                 type TArray = paste! {[<$ty Array>]};

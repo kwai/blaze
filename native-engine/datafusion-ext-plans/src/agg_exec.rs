@@ -283,9 +283,10 @@ async fn execute_agg_no_grouping(
 
     while let Some(input_batch) = coalesced.next().await.transpose()? {
         let _timer = baseline_metrics.elapsed_compute().timer();
+        let num_rows = input_batch.num_rows();
         let input_arrays = agg_ctx.create_input_arrays(&input_batch)?;
         let acc_array = agg_ctx.get_input_acc_array(&input_batch)?;
-        agg_ctx.partial_update_input_all(&mut acc.as_mut(), &input_arrays)?;
+        agg_ctx.partial_update_input_all(&mut acc.as_mut(), num_rows, &input_arrays)?;
         agg_ctx.partial_merge_input_all(&mut acc.as_mut(), acc_array)?;
     }
 
