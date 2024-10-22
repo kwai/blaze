@@ -15,10 +15,11 @@
 use std::simd::{cmp::SimdPartialEq, Simd};
 
 use datafusion::common::Result;
-use datafusion_ext_commons::bytes_arena::{BytesArena, BytesArenaRef};
+use datafusion_ext_commons::{
+    bytes_arena::{BytesArena, BytesArenaRef},
+    prefetch_write_data, unchecked, UncheckedIndexIntoInner,
+};
 use unchecked_index::UncheckedIndex;
-
-use crate::{prefetch_write_data, unchecked, UncheckedIndexIntoInner};
 
 const MAP_VALUE_GROUP_SIZE: usize = 8;
 

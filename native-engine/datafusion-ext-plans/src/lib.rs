@@ -20,8 +20,6 @@
 #![feature(portable_simd)]
 #![feature(ptr_as_ref_unchecked)]
 
-use unchecked_index::UncheckedIndex;
-
 // execution plan implementations
 pub mod agg_exec;
 pub mod broadcast_join_build_hash_map_exec;
@@ -57,59 +55,3 @@ pub mod joins;
 mod scan;
 mod shuffle;
 pub mod window;
-
-#[macro_export]
-macro_rules! unchecked {
-    ($e:expr) => {{
-        // safety: bypass bounds checking, used in performance critical path
-        #[allow(unused_unsafe)]
-        unsafe {
-            unchecked_index::unchecked_index($e)
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! assume {
-    ($e:expr) => {{
-        // safety: use assume
-        #[allow(unused_unsafe)]
-        unsafe {
-            std::intrinsics::assume($e)
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! prefetch_read_data {
-    ($e:expr) => {{
-        // safety: use prefetch
-        let locality = 3;
-        #[allow(unused_unsafe)]
-        unsafe {
-            std::intrinsics::prefetch_read_data($e, locality)
-        }
-    }};
-}
-#[macro_export]
-macro_rules! prefetch_write_data {
-    ($e:expr) => {{
-        // safety: use prefetch
-        let locality = 3;
-        #[allow(unused_unsafe)]
-        unsafe {
-            std::intrinsics::prefetch_write_data($e, locality)
-        }
-    }};
-}
-
-pub trait UncheckedIndexIntoInner<T> {
-    fn into_inner(self) -> T;
-}
-
-impl<T: Sized> UncheckedIndexIntoInner<T> for UncheckedIndex<T> {
-    fn into_inner(self) -> T {
-        let no_drop = std::mem::ManuallyDrop::new(self);
-        unsafe { std::ptr::read(&**no_drop) }
-    }
-}

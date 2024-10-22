@@ -27,14 +27,14 @@ use arrow::{
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
     io::{read_len, read_raw_slice, write_len, write_raw_slice},
+    prefetch_read_data,
     rdxsort::RadixSortIterExt,
     spark_hash::create_hashes,
+    unchecked,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use unchecked_index::UncheckedIndex;
-
-use crate::{prefetch_read_data, unchecked};
 
 // empty:  lead=0, value=0
 // range:  lead=0, value=start, mapped_indices[start-1]=len

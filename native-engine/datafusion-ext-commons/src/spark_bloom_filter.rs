@@ -17,6 +17,7 @@ use std::{
     io::Write,
 };
 
+use arrow::array::{BooleanArray, BooleanBufferBuilder};
 use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use datafusion::common::Result;
 
@@ -24,6 +25,7 @@ use crate::{
     df_execution_err,
     hash::mur::{spark_compatible_murmur3_hash, spark_compatible_murmur3_hash_long},
     spark_bit_array::SparkBitArray,
+    unchecked,
 };
 
 #[derive(Default, Clone)]
@@ -89,10 +91,8 @@ impl SparkBloomFilter {
         for i in 1..=self.num_hash_functions as i32 {
             let mut combined_hash = h1 + i * h2;
             // flip all the bits if it's negative (guaranteed positive number)
-            if combined_hash < 0 {
-                combined_hash = !combined_hash;
-            }
-            self.bits.set((combined_hash % bit_size) as usize);
+            combined_hash = combined_hash ^ -((combined_hash < 0) as i32);
+            self.bits.set((combined_hash & (bit_size - 1)) as usize);
         }
     }
 
@@ -106,10 +106,8 @@ impl SparkBloomFilter {
         for i in 1..=self.num_hash_functions as i32 {
             let mut combined_hash = h1 + i * h2;
             // flip all the bits if it's negative (guaranteed positive number)
-            if combined_hash < 0 {
-                combined_hash = !combined_hash;
-            }
-            self.bits.set((combined_hash % bit_size) as usize);
+            combined_hash = combined_hash ^ -((combined_hash < 0) as i32);
+            self.bits.set((combined_hash & (bit_size - 1)) as usize);
         }
     }
 
@@ -121,10 +119,8 @@ impl SparkBloomFilter {
         for i in 1..=self.num_hash_functions as i32 {
             let mut combined_hash = h1 + i * h2;
             // flip all the bits if it's negative (guaranteed positive number)
-            if combined_hash < 0 {
-                combined_hash = !combined_hash;
-            }
-            if !self.bits.get((combined_hash % bit_size) as usize) {
+            combined_hash = combined_hash ^ -((combined_hash < 0) as i32);
+            if !self.bits.get((combined_hash & (bit_size - 1)) as usize) {
                 return false;
             }
         }
@@ -140,19 +136,70 @@ impl SparkBloomFilter {
         for i in 1..=self.num_hash_functions as i32 {
             let mut combined_hash = h1 + i * h2;
             // flip all the bits if it's negative (guaranteed positive number)
-            if combined_hash < 0 {
-                combined_hash = !combined_hash;
-            }
-            if !self.bits.get((combined_hash % bit_size) as usize) {
+            combined_hash = combined_hash ^ -((combined_hash < 0) as i32);
+            if !self.bits.get((combined_hash & (bit_size - 1)) as usize) {
                 return false;
             }
         }
         true
     }
 
+    #[inline]
+    pub fn might_contain_longs(&self, values: &[i64]) -> BooleanArray {
+        let mut buffer = BooleanBufferBuilder::new(0);
+        buffer.resize(values.len());
+
+        let h1s = values
+            .iter()
+            .map(|&v| spark_compatible_murmur3_hash_long(v, 0))
+            .collect::<Vec<_>>();
+        let h2s = values
+            .iter()
+            .zip(&h1s)
+            .map(|(&v, &h1)| spark_compatible_murmur3_hash_long(v, h1))
+            .collect::<Vec<_>>();
+
+        let bit_size = self.bits.bit_size() as i32;
+
+        'next_item: for (i, (h1, h2)) in std::iter::zip(h1s, h2s).enumerate() {
+            for i in 1..=self.num_hash_functions as i32 {
+                let mut combined_hash = h1 + i * h2;
+                // flip all the bits if it's negative (guaranteed positive number)
+                combined_hash = combined_hash ^ -((combined_hash < 0) as i32);
+                if !self.bits.get((combined_hash & (bit_size - 1)) as usize) {
+                    continue 'next_item; // might not contain
+                }
+            }
+            unchecked!(buffer.as_slice_mut())[i / 8] |= 1 << (i % 8); // might contain
+        }
+        BooleanArray::from(buffer.finish())
+    }
+
     pub fn put_all(&mut self, other: &Self) {
         assert_eq!(self.num_hash_functions, other.num_hash_functions);
         self.bits.put_all(&other.bits);
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        let num_bits = self.bits.bit_size();
+
+        // reduce num_bits if true count is too small
+        // so that we can reduce memory usage and improve performance of might_contain()
+        let num_trues = self.bits.true_count();
+        let shrinked_num_bits = (self.num_hash_functions * num_trues * 2)
+            .max(1)
+            .next_power_of_two();
+        if shrinked_num_bits >= num_bits {
+            return;
+        }
+
+        let mut new_bits = SparkBitArray::new_with_num_bits(shrinked_num_bits);
+        for i in 0..num_bits {
+            if self.bits.get(i) {
+                new_bits.set(i % shrinked_num_bits);
+            }
+        }
+        self.bits = new_bits;
     }
 
     fn optimal_num_of_hash_functions(n: usize, m: usize) -> usize {
