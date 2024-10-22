@@ -298,9 +298,9 @@ object BlazeConverters extends Logging {
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
     relation.fileFormat match {
-      case p if p.isInstanceOf[ParquetFileFormat] =>
+      case p if p.getClass().getName().endsWith("ParquetFileFormat") =>
         addRenameColumnsExec(Shims.get.createNativeParquetScanExec(exec))
-      case p if p.isInstanceOf[OrcFileFormat] =>
+      case p if p.getClass().getName().endsWith("OrcFileFormat") =>
         addRenameColumnsExec(Shims.get.createNativeOrcScanExec(exec))
       case _ => throw new NotImplementedError("Cannot convert non parquet/orc scan exec")
     }
