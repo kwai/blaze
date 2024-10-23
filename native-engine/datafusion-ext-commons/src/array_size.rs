@@ -46,7 +46,10 @@ fn get_array_data_mem_size(array_data: &ArrayData) -> usize {
     for buffer in array_data.buffers() {
         mem_size += buffer.len();
     }
-    mem_size += array_data.nulls().map(|nb| nb.len()).unwrap_or_default();
+    mem_size += array_data
+        .nulls()
+        .map(|nb| nb.buffer().len())
+        .unwrap_or_default();
 
     // summing child data size
     for child in array_data.child_data() {

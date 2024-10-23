@@ -140,3 +140,12 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_finalizeNative(
     let runtime = unsafe { Box::from_raw(raw_ptr as usize as *mut NativeExecutionRuntime) };
     runtime.finalize();
 }
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_onExit(_: JNIEnv, _: JClass) {
+    log::info!("exiting native environment");
+    if MemManager::initialized() {
+        MemManager::get().dump_status();
+    }
+}

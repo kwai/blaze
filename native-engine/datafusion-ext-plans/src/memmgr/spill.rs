@@ -36,6 +36,7 @@ pub type SpillCompressedWriter<'a> =
 
 pub trait Spill: Send + Sync {
     fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn get_buf_reader<'a>(&'a self) -> BufReader<Box<dyn Read + Send + 'a>>;
     fn get_buf_writer<'a>(&'a mut self) -> BufWriter<Box<dyn Write + Send + 'a>>;
 
@@ -50,6 +51,10 @@ pub trait Spill: Send + Sync {
 
 impl Spill for Vec<u8> {
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -103,6 +108,10 @@ impl FileSpill {
 
 impl Spill for FileSpill {
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -170,6 +179,10 @@ impl OnHeapSpill {
 
 impl Spill for OnHeapSpill {
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 

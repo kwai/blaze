@@ -139,6 +139,6 @@ impl Array for UserDefinedArray {
     }
 
     fn get_array_memory_size(&self) -> usize {
-        64 * self.items.len() + std::mem::size_of::<Self>() // not precise
+        64 * self.items.len() + size_of::<Self>() // not precise
     }
 }

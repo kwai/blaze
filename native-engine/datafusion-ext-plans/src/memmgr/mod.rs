@@ -56,6 +56,10 @@ impl MemManager {
         });
     }
 
+    pub fn initialized() -> bool {
+        MEM_MANAGER.get().is_some()
+    }
+
     pub fn get() -> &'static MemManager {
         MEM_MANAGER.get().expect("mem manager not initialized")
     }
@@ -74,6 +78,7 @@ impl MemManager {
 
     pub fn register_consumer(mut consumer: Arc<dyn MemConsumer>, spillable: bool) {
         let consumer_info = Arc::new(MemConsumerInfo {
+            name: consumer.name().to_owned(),
             status: Mutex::new(MemConsumerStatus {
                 mem_used: 0,
                 spillable,
@@ -131,6 +136,27 @@ impl MemManager {
         }
         unreachable!("deregistering non-registered memory consumer")
     }
+
+    pub fn dump_status(&self) {
+        let mm_status = self.status.lock();
+        log::info!(
+            "mem manager status: total: {}, mem_used: {}, jvm_direct: {}",
+            ByteSize(self.total as u64),
+            ByteSize(mm_status.total_used as u64),
+            ByteSize(get_mem_jvm_direct_used() as u64),
+        );
+        drop(mm_status);
+
+        for consumer in &*self.consumers.lock() {
+            let consumer_status = consumer.status.lock();
+            log::info!(
+                "* consumer: {}, spillable: {}, mem_used: {}",
+                consumer.name,
+                consumer_status.spillable,
+                ByteSize(consumer_status.mem_used as u64),
+            );
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -158,6 +184,7 @@ impl MemManagerStatus {
 
 #[derive(Debug)]
 pub struct MemConsumerInfo {
+    name: String,
     status: Mutex<MemConsumerStatus>,
 }
 

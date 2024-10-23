@@ -19,6 +19,7 @@ use std::{
 };
 
 use arrow::{
+    array::{Array, StructArray},
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::RecordBatch,
 };
@@ -35,9 +36,7 @@ use datafusion::{
         ExecutionPlan,
     },
 };
-use datafusion_ext_commons::{
-    df_execution_err, ffi_helper::batch_to_ffi, streams::coalesce_stream::CoalesceInput,
-};
+use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
 use datafusion_ext_plans::{common::output::TaskOutputter, parquet_sink_exec::ParquetSinkExec};
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
@@ -178,7 +177,8 @@ impl NativeExecutionRuntime {
                 .or_else(|err| df_execution_err!("receive batch error: {err}"))??
             {
                 Some(batch) => {
-                    let ffi_array = batch_to_ffi(batch);
+                    let struct_array = StructArray::from(batch);
+                    let ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
                     jni_call!(BlazeCallNativeWrapper(self.native_wrapper.as_obj())
                         .importBatch(&ffi_array as *const FFI_ArrowArray as i64) -> ()
                     )?;

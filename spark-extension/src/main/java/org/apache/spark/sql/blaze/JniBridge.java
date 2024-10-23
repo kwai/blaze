@@ -35,6 +35,8 @@ public class JniBridge {
 
     public static native void finalizeNative(long ptr);
 
+    public static native void onExit();
+
     public static ClassLoader getContextClassLoader() {
         return Thread.currentThread().getContextClassLoader();
     }
