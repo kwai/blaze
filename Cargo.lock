@@ -511,6 +511,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79296716171880943b8470b5f8d03aa55eb2e645a4874bdbb28adb49162e012c"
 
 [[package]]
+name = "bytemuck"
+version = "1.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8334215b81e418a0a7bdb8ef0849474f40bb10c8b71f1c4ed315cff49f32494d"
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1940,11 +1946,12 @@ checksum = "1261fe7e33c73b354eab43b1273a57c8f967d0391e80353e51f764ac02cf6775"
 
 [[package]]
 name = "orc-rust"
-version = "0.3.1"
-source = "git+https://github.com/blaze-init/datafusion-orc.git?rev=c54bfb5#c54bfb5bed3e74a51229be54373828e739dd53e6"
+version = "0.4.1"
+source = "git+https://github.com/blaze-init/datafusion-orc.git?rev=9c74ac3#9c74ac3779c2ebb371404d71adb915b49eee1930"
 dependencies = [
  "arrow",
  "async-trait",
+ "bytemuck",
  "bytes",
  "chrono",
  "chrono-tz",
