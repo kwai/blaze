@@ -40,7 +40,7 @@ smallvec = "1.13.2"
 tempfile = "3"
 tokio = "1.41"
 unchecked-index = "0.2.2"
-uuid = "1.10.0"
+uuid = "1.11.0"
 zstd = "0.13.2"
 orc-rust = { workspace = true }
 futures-util = "0.3.31"
