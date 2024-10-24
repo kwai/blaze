@@ -54,7 +54,7 @@ datafusion-ext-plans = { path = "./native-engine/datafusion-ext-plans" }
 # datafusion: branch=v42-blaze
 datafusion = { version = "42.0.0" }
 
-orc-rust = { version = "0.3.1" }
+orc-rust = { version = "0.4.1" }
 
 # arrow: branch=v53-blaze
 arrow = { version = "53.0.0", features = ["ffi"]}
@@ -72,7 +72,7 @@ datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", 
 datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9a09e14"}
 datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9a09e14"}
 datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9a09e14"}
-orc-rust = { git = "https://github.com/blaze-init/datafusion-orc.git", rev = "c54bfb5"}
+orc-rust = { git = "https://github.com/blaze-init/datafusion-orc.git", rev = "9c74ac3"}
 
 # arrow: branch=v53-blaze
 arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "9dbfd9018e"}
