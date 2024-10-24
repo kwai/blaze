@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    hash::BuildHasher,
     io::{Cursor, Read, Write},
     sync::{Arc, Weak},
 };
@@ -819,5 +820,8 @@ impl<'a> KeyForRadixTournamentTree for RecordsSpillCursor<'a> {
 #[inline]
 fn bucket_id(key: impl AsRef<[u8]>) -> u16 {
     const AGG_HASH_SEED_HASHING: i64 = 0xC732BD66;
-    (gxhash::gxhash32(key.as_ref(), AGG_HASH_SEED_HASHING) % NUM_SPILL_BUCKETS as u32) as u16
+    const HASHER: foldhash::fast::FixedState =
+        foldhash::fast::FixedState::with_seed(AGG_HASH_SEED_HASHING as u64);
+    let hash = HASHER.hash_one(key.as_ref()) as u32;
+    (hash % NUM_SPILL_BUCKETS as u32) as u16
 }
