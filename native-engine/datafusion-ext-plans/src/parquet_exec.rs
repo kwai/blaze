@@ -30,7 +30,7 @@ use datafusion::{
         FileMeta, FileScanConfig, FileStream, OnError, ParquetFileMetrics,
         ParquetFileReaderFactory,
     },
-    error::Result,
+    error::{DataFusionError, Result},
     execution::context::TaskContext,
     parquet::{
         arrow::async_reader::{fetch_parquet_metadata, AsyncFileReader},
@@ -51,6 +51,7 @@ use datafusion::{
 use datafusion_ext_commons::{batch_size, hadoop_fs::FsProvider};
 use fmt::Debug;
 use futures::{future::BoxFuture, stream::once, FutureExt, StreamExt, TryStreamExt};
+use itertools::Itertools;
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
@@ -335,6 +336,16 @@ impl ParquetFileReader {
 }
 
 impl AsyncFileReader for ParquetFileReaderRef {
+    fn get_bytes_sync(
+        &mut self,
+        range: Range<usize>,
+    ) -> datafusion::parquet::errors::Result<Bytes> {
+        self.0
+            .get_internal_reader()
+            .read_fully(range)
+            .map_err(|e| ParquetError::External(Box::new(e)))
+    }
+
     fn get_bytes(
         &mut self,
         range: Range<usize>,
@@ -350,6 +361,84 @@ impl AsyncFileReader for ParquetFileReaderRef {
             })
             .await
             .expect("tokio spawn_blocking error")
+        }
+        .boxed()
+    }
+
+    fn get_byte_ranges(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+    ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Vec<Bytes>>> {
+        const MAX_OVER_READ_SIZE: usize = 16384; // TODO: make it configurable
+        let num_ranges = ranges.len();
+        let (sorted_range_indices, sorted_ranges): (Vec<usize>, Vec<Range<usize>>) = ranges
+            .into_iter()
+            .enumerate()
+            .sorted_unstable_by_key(|(_, r)| r.start)
+            .unzip();
+        let mut merged_ranges = vec![];
+
+        for range in sorted_ranges.iter().cloned() {
+            if merged_ranges.is_empty() {
+                merged_ranges.push(range);
+                continue;
+            }
+
+            let last_merged_range = merged_ranges.last_mut().unwrap();
+            if range.start <= last_merged_range.end + MAX_OVER_READ_SIZE {
+                last_merged_range.end = range.end.max(last_merged_range.end);
+            } else {
+                merged_ranges.push(range);
+            }
+        }
+
+        async move {
+            let inner = self.0.clone();
+            let merged_bytes = Arc::new(Mutex::new(Vec::with_capacity(merged_ranges.len())));
+            let merged_bytes_cloned = merged_bytes.clone();
+            let merged_ranges_cloned = merged_ranges.clone();
+            tokio::task::spawn_blocking(move || {
+                let merged_bytes = &mut *merged_bytes_cloned.lock();
+                for range in merged_ranges_cloned {
+                    inner.metrics.bytes_scanned.add(range.len());
+                    if range.is_empty() {
+                        merged_bytes.push(Bytes::new());
+                        continue;
+                    }
+                    let bytes = inner.get_internal_reader().read_fully(range)?;
+                    merged_bytes.push(bytes);
+                }
+                Ok::<_, DataFusionError>(())
+            })
+            .await
+            .expect("tokio spawn_blocking error")
+            .map_err(|e| ParquetError::External(Box::new(e)))?;
+
+            let merged_bytes = &*merged_bytes.lock();
+            let mut sorted_range_bytes = Vec::with_capacity(num_ranges);
+            let mut m = 0;
+            for range in sorted_ranges {
+                if range.is_empty() {
+                    sorted_range_bytes.push(Bytes::new());
+                    continue;
+                }
+                while merged_ranges[m].end <= range.start {
+                    m += 1;
+                }
+                let len = range.len();
+                if len < merged_ranges[m].len() {
+                    let offset = range.start - merged_ranges[m].start;
+                    sorted_range_bytes.push(merged_bytes[m].slice(offset..offset + len));
+                } else {
+                    sorted_range_bytes.push(merged_bytes[m].clone());
+                }
+            }
+
+            let mut range_bytes = Vec::with_capacity(num_ranges);
+            for i in 0..num_ranges {
+                range_bytes.push(sorted_range_bytes[sorted_range_indices[i]].clone());
+            }
+            Ok(range_bytes)
         }
         .boxed()
     }

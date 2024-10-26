@@ -188,15 +188,12 @@ object BlazeCallNativeWrapper extends Logging {
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
         s"memoryFraction=${BlazeConf.MEMORY_FRACTION.doubleConf()})")
 
+    assert(classOf[JniBridge] != null) // preload JNI bridge classes
     BlazeCallNativeWrapper.loadLibBlaze()
     ShutdownHookManager.addShutdownHook(() => JniBridge.onExit())
   }
 
   private def loadLibBlaze(): Unit = {
-    // preload JNI bridge classes
-    Class.forName(classOf[JniBridge].getName)
-    Class.forName(classOf[JniUtil].getName)
-
     val libName = System.mapLibraryName("blaze")
     try {
       val classLoader = classOf[NativeSupports].getClassLoader
