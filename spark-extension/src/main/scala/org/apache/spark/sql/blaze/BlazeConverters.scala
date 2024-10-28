@@ -615,7 +615,7 @@ object BlazeConverters extends Logging {
                   case "aggregateExpressions" => transformedAggregateExprs
                   case "groupingExpressions" => transformedGroupingExprs
                   case "child" => convertProjectExec(ProjectExec(projections, exec.child))
-                  case _ => mirror.reflectField(param.asTerm).get
+                  case _ => mirror.reflectField(typeOf[HashAggregateExec].decl(TermName(param.name.toString)).asTerm).get
                 }
               }
               mirror.reflectMethod(copyMethod)(args: _*).asInstanceOf[HashAggregateExec]
