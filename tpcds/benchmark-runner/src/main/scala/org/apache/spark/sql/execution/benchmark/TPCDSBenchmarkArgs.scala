@@ -24,6 +24,7 @@ class TPCDSBenchmarkArgs(val args: Array[String]) {
   var outputDir: String = _
   var queryFilter: Set[String] = Set.empty
   var round: Int = 2
+  var format: String = "parquet"
 
   parseArgs(args.toList)
   validateArguments()
@@ -53,6 +54,10 @@ class TPCDSBenchmarkArgs(val args: Array[String]) {
           round = value.toInt
           args = tail
 
+        case optName :: value :: tail if optionMatch("--format", optName) =>
+          format = value
+          args = tail
+
         case _ =>
           System.err.println("Unknown/unsupported param " + args)
           printUsageAndExit(1)
@@ -68,6 +73,7 @@ class TPCDSBenchmarkArgs(val args: Array[String]) {
       |  --output-dir    Output directory for results
       |  --query-filter  Queries to filter, e.g., q3,q5,q13
       |  --round         Run each query for a specified number of rounds, default: 2
+      |  --format        Data format, e.g. orc,parquet,default: parquet
       |    """.stripMargin)
     System.exit(exitCode)
   }

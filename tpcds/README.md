@@ -37,6 +37,7 @@ If benchmarking with Blaze, ensure that the Blaze jar package is correctly built
 # use correct SPARK_HOME and data location
 SPARK_HOME=$HOME/software/spark ./bin/run \
     --data-location /user/hive/data/tpcds-1000 \
+    --format parquet \
     --output-dir ./benchmark-result
 ```
 
