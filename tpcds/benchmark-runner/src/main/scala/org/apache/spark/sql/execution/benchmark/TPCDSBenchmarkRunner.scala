@@ -25,8 +25,7 @@ import java.util.Date
 
 import org.apache.commons.io.IOUtils
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 object TPCDSBenchmarkRunner {
   def main(args: Array[String]): Unit = {
@@ -79,7 +78,13 @@ object TPCDSBenchmarkRunner {
       "web_returns", "web_site", "reason", "call_center", "warehouse", "ship_mode", "income_band",
       "time_dim", "web_page")
     tables.par.foreach { tableName =>
-      spark.read.parquet(s"$dataLocation/$tableName").createOrReplaceTempView(tableName)
+      val df: DataFrame = benchmarkArgs.format match {
+        case "orc" => spark.read.orc(s"$dataLocation/$tableName")
+        case "parquet" => spark.read.parquet(s"$dataLocation/$tableName")
+        case _ => throw new RuntimeException(
+          s"Unknown format , avaliable formats: orc,parquet, current input: ${benchmarkArgs.format}")
+      }
+      df.createOrReplaceTempView(tableName)
       tableName -> spark.table(tableName).count()
     }
 
