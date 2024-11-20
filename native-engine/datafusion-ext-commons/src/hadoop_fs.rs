@@ -51,87 +51,79 @@ impl Fs {
         Ok(())
     }
 
-    pub fn open(&self, path: &str) -> Result<Arc<FsDataInputStream>> {
+    pub fn open(&self, path: &str) -> Result<Arc<FsDataInputWrapper>> {
         let _timer = self.io_time.timer();
-        let path_str = jni_new_string!(path)?;
-        let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
-        let path = jni_new_object!(HadoopPath(path_uri.as_obj()))?;
-        let fin = jni_call!(
-            HadoopFileSystem(self.fs.as_obj()).open(path.as_obj()) -> JObject
+        let path = jni_new_string!(path)?;
+        let wrapper = jni_call_static!(
+            JniBridge.openFileAsDataInputWrapper(self.fs.as_obj(), path.as_obj()) -> JObject
         )?;
 
-        Ok(Arc::new(FsDataInputStream {
-            stream: jni_new_global_ref!(fin.as_obj())?,
+        Ok(Arc::new(FsDataInputWrapper {
+            obj: jni_new_global_ref!(wrapper.as_obj())?,
             io_time: self.io_time.clone(),
         }))
     }
 
-    pub fn create(&self, path: &str) -> Result<Arc<FsDataOutputStream>> {
+    pub fn create(&self, path: &str) -> Result<Arc<FsDataOutputWrapper>> {
         let _timer = self.io_time.timer();
-        let path_str = jni_new_string!(path)?;
-        let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
-        let path = jni_new_object!(HadoopPath(path_uri.as_obj()))?;
-        let fin = jni_call!(
-            HadoopFileSystem(self.fs.as_obj()).create(path.as_obj()) -> JObject
+        let path = jni_new_string!(path)?;
+        let wrapper = jni_call_static!(
+            JniBridge.createFileAsDataOutputWrapper(self.fs.as_obj(), path.as_obj()) -> JObject
         )?;
 
-        Ok(Arc::new(FsDataOutputStream {
-            stream: jni_new_global_ref!(fin.as_obj())?,
+        Ok(Arc::new(FsDataOutputWrapper {
+            obj: jni_new_global_ref!(wrapper.as_obj())?,
             io_time: self.io_time.clone(),
         }))
     }
 }
 
-pub struct FsDataInputStream {
-    stream: GlobalRef,
+pub struct FsDataInputWrapper {
+    obj: GlobalRef,
     io_time: Time,
 }
 
-impl FsDataInputStream {
+impl FsDataInputWrapper {
     pub fn read_fully(&self, pos: u64, buf: &mut [u8]) -> Result<()> {
         let _timer = self.io_time.timer();
         let buf = jni_new_direct_byte_buffer!(buf)?;
 
-        jni_call_static!(JniUtil.readFullyFromFSDataInputStream(
-            self.stream.as_obj(), pos as i64, buf.as_obj()) -> ()
-        )?;
+        jni_call!(BlazeFSDataInputWrapper(self.obj.as_obj())
+            .readFully(pos as i64, buf.as_obj()) -> ())?;
         Ok(())
     }
 }
 
-impl Drop for FsDataInputStream {
+impl Drop for FsDataInputWrapper {
     fn drop(&mut self) {
         let _timer = self.io_time.timer();
-        if let Err(e) = jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ()) {
+        if let Err(e) = jni_call!(JavaAutoCloseable(self.obj.as_obj()).close() -> ()) {
             log::warn!("error closing hadoop FSDataInputStream: {:?}", e);
         }
     }
 }
 
-pub struct FsDataOutputStream {
-    stream: GlobalRef,
+pub struct FsDataOutputWrapper {
+    obj: GlobalRef,
     io_time: Time,
 }
 
-impl FsDataOutputStream {
+impl FsDataOutputWrapper {
     pub fn write_fully(&self, buf: &[u8]) -> Result<()> {
         let _timer = self.io_time.timer();
         let buf = jni_new_direct_byte_buffer!(buf)?;
-
-        jni_call_static!(JniUtil.writeFullyToFSDataOutputStream(
-            self.stream.as_obj(), buf.as_obj()) -> ()
-        )?;
+        jni_call!(BlazeFSDataOutputWrapper(self.obj.as_obj()).writeFully(buf.as_obj()) -> ())?;
         Ok(())
     }
 
     pub fn close(self) -> Result<()> {
-        jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ())
+        jni_call!(JavaAutoCloseable(self.obj.as_obj()).close() -> ())
     }
 }
 
-impl Drop for FsDataOutputStream {
+impl Drop for FsDataOutputWrapper {
     fn drop(&mut self) {
-        let _ = jni_call!(JavaAutoCloseable(self.stream.as_obj()).close() -> ());
+        let _ = jni_call!(JavaAutoCloseable(self.obj.as_obj()).close() -> ());
     }
 }
 

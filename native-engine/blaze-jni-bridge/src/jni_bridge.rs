@@ -387,7 +387,6 @@ pub struct JavaClasses<'a> {
     pub classloader: JObject<'a>,
 
     pub cJniBridge: JniBridge<'a>,
-    pub cJniUtil: JniUtil<'a>,
     pub cClass: JavaClass<'a>,
     pub cJavaThrowable: JavaThrowable<'a>,
     pub cJavaRuntimeException: JavaRuntimeException<'a>,
@@ -406,7 +405,6 @@ pub struct JavaClasses<'a> {
 
     pub cHadoopFileSystem: HadoopFileSystem<'a>,
     pub cHadoopPath: HadoopPath<'a>,
-    pub cHadoopFSDataInputStream: HadoopFSDataInputStream<'a>,
 
     pub cSparkFileSegment: SparkFileSegment<'a>,
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
@@ -420,6 +418,8 @@ pub struct JavaClasses<'a> {
     pub cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils<'a>,
     pub cBlazeBlockObject: BlazeBlockObject<'a>,
     pub cBlazeArrowFFIExporter: BlazeArrowFFIExporter<'a>,
+    pub cBlazeFSDataInputWrapper: BlazeFSDataInputWrapper<'a>,
+    pub cBlazeFSDataOutputWrapper: BlazeFSDataOutputWrapper<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -447,7 +447,6 @@ impl JavaClasses<'static> {
                 jvm: env.get_java_vm()?,
                 classloader: get_global_ref_jobject(env, classloader)?,
                 cJniBridge: jni_bridge,
-                cJniUtil: JniUtil::new(env)?,
 
                 cClass: JavaClass::new(env)?,
                 cJavaThrowable: JavaThrowable::new(env)?,
@@ -467,7 +466,6 @@ impl JavaClasses<'static> {
 
                 cHadoopFileSystem: HadoopFileSystem::new(env)?,
                 cHadoopPath: HadoopPath::new(env)?,
-                cHadoopFSDataInputStream: HadoopFSDataInputStream::new(env)?,
 
                 cSparkFileSegment: SparkFileSegment::new(env)?,
                 cSparkSQLMetric: SparkSQLMetric::new(env)?,
@@ -481,6 +479,8 @@ impl JavaClasses<'static> {
                 cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils::new(env)?,
                 cBlazeBlockObject: BlazeBlockObject::new(env)?,
                 cBlazeArrowFFIExporter: BlazeArrowFFIExporter::new(env)?,
+                cBlazeFSDataInputWrapper: BlazeFSDataInputWrapper::new(env)?,
+                cBlazeFSDataOutputWrapper: BlazeFSDataOutputWrapper::new(env)?,
             };
             log::info!("Initializing JavaClasses finished");
             Ok(java_classes)
@@ -527,6 +527,10 @@ pub struct JniBridge<'a> {
     pub method_isTaskRunning_ret: ReturnType,
     pub method_isDriverSide: JStaticMethodID,
     pub method_isDriverSide_ret: ReturnType,
+    pub method_openFileAsDataInputWrapper: JStaticMethodID,
+    pub method_openFileAsDataInputWrapper_ret: ReturnType,
+    pub method_createFileAsDataOutputWrapper: JStaticMethodID,
+    pub method_createFileAsDataOutputWrapper_ret: ReturnType,
     pub method_getDirectMemoryUsed: JStaticMethodID,
     pub method_getDirectMemoryUsed_ret: ReturnType,
     pub method_getDirectWriteSpillToDiskFile: JStaticMethodID,
@@ -584,6 +588,18 @@ impl<'a> JniBridge<'a> {
             method_isTaskRunning: env.get_static_method_id(class, "isTaskRunning", "()Z")?,
             method_isTaskRunning_ret: ReturnType::Primitive(Primitive::Boolean),
             method_isDriverSide: env.get_static_method_id(class, "isDriverSide", "()Z")?,
+            method_openFileAsDataInputWrapper: env.get_static_method_id(
+                class,
+                "openFileAsDataInputWrapper",
+                "(Lorg/apache/hadoop/fs/FileSystem;Ljava/lang/String;)Lorg/apache/spark/blaze/FSDataInputWrapper;",
+            )?,
+            method_openFileAsDataInputWrapper_ret: ReturnType::Object,
+            method_createFileAsDataOutputWrapper: env.get_static_method_id(
+                class,
+                "createFileAsDataOutputWrapper",
+                "(Lorg/apache/hadoop/fs/FileSystem;Ljava/lang/String;)Lorg/apache/spark/blaze/FSDataOutputWrapper;",
+            )?,
+            method_createFileAsDataOutputWrapper_ret: ReturnType::Object,
             method_isDriverSide_ret: ReturnType::Primitive(Primitive::Boolean),
             method_getDirectMemoryUsed: env.get_static_method_id(
                 class,
@@ -597,37 +613,6 @@ impl<'a> JniBridge<'a> {
                 "()Ljava/lang/String;",
             )?,
             method_getDirectWriteSpillToDiskFile_ret: ReturnType::Object,
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct JniUtil<'a> {
-    pub class: JClass<'a>,
-    pub method_readFullyFromFSDataInputStream: JStaticMethodID,
-    pub method_readFullyFromFSDataInputStream_ret: ReturnType,
-    pub method_writeFullyToFSDataOutputStream: JStaticMethodID,
-    pub method_writeFullyToFSDataOutputStream_ret: ReturnType,
-}
-impl<'a> JniUtil<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/JniUtil";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<JniUtil<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(JniUtil {
-            class,
-            method_readFullyFromFSDataInputStream: env.get_static_method_id(
-                class,
-                "readFullyFromFSDataInputStream",
-                "(Lorg/apache/hadoop/fs/FSDataInputStream;JLjava/nio/ByteBuffer;)V",
-            )?,
-            method_readFullyFromFSDataInputStream_ret: ReturnType::Primitive(Primitive::Void),
-            method_writeFullyToFSDataOutputStream: env.get_static_method_id(
-                class,
-                "writeFullyToFSDataOutputStream",
-                "(Lorg/apache/hadoop/fs/FSDataOutputStream;Ljava/nio/ByteBuffer;)V",
-            )?,
-            method_writeFullyToFSDataOutputStream_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -1400,6 +1385,50 @@ impl<'a> BlazeArrowFFIExporter<'a> {
             class,
             method_exportNextBatch: env.get_method_id(class, "exportNextBatch", "(J)Z")?,
             method_exportNextBatch_ret: ReturnType::Primitive(Primitive::Boolean),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeFSDataInputWrapper<'a> {
+    pub class: JClass<'a>,
+    pub method_readFully: JMethodID,
+    pub method_readFully_ret: ReturnType,
+}
+
+impl<'a> BlazeFSDataInputWrapper<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/blaze/FSDataInputWrapper";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeFSDataInputWrapper<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeFSDataInputWrapper {
+            class,
+            method_readFully: env.get_method_id(class, "readFully", "(JLjava/nio/ByteBuffer;)V")?,
+            method_readFully_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeFSDataOutputWrapper<'a> {
+    pub class: JClass<'a>,
+    pub method_writeFully: JMethodID,
+    pub method_writeFully_ret: ReturnType,
+}
+
+impl<'a> BlazeFSDataOutputWrapper<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/blaze/FSDataOutputWrapper";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeFSDataOutputWrapper<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeFSDataOutputWrapper {
+            class,
+            method_writeFully: env.get_method_id(
+                class,
+                "writeFully",
+                "(Ljava/nio/ByteBuffer;)V",
+            )?,
+            method_writeFully_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

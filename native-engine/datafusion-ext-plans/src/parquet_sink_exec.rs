@@ -43,7 +43,7 @@ use datafusion_ext_commons::{
     array_size::ArraySize,
     cast::cast,
     df_execution_err,
-    hadoop_fs::{FsDataOutputStream, FsProvider},
+    hadoop_fs::{FsDataOutputWrapper, FsProvider},
 };
 use futures::{stream::once, StreamExt, TryStreamExt};
 use once_cell::sync::OnceCell;
@@ -542,12 +542,12 @@ fn get_dyn_part_values(
 
 // Write wrapper for FSDataOutputStream
 struct FSDataWriter {
-    inner: FsDataOutputStream,
+    inner: FsDataOutputWrapper,
     bytes_written: Count,
 }
 
 impl FSDataWriter {
-    pub fn new(inner: FsDataOutputStream, bytes_written: &Count) -> Self {
+    pub fn new(inner: FsDataOutputWrapper, bytes_written: &Count) -> Self {
         Self {
             inner,
             bytes_written: bytes_written.clone(),

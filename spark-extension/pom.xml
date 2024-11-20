@@ -55,9 +55,9 @@
       <artifactId>arrow-vector</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-client-api</artifactId>
-      <scope>provided</scope>
+      <groupId>org.blaze</groupId>
+      <artifactId>hadoop-shim</artifactId>
+      <version>${revision}</version>
     </dependency>
     <dependency>
       <groupId>io.netty</groupId>

@@ -22,7 +22,7 @@ use bytes::Bytes;
 use datafusion::common::Result;
 use datafusion_ext_commons::{
     df_execution_err,
-    hadoop_fs::{Fs, FsDataInputStream, FsProvider},
+    hadoop_fs::{Fs, FsDataInputWrapper, FsProvider},
 };
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
@@ -31,7 +31,7 @@ pub struct InternalFileReader {
     fs: Fs,
     meta: ObjectMeta,
     path: String,
-    input: OnceCell<Arc<FsDataInputStream>>,
+    input: OnceCell<Arc<FsDataInputWrapper>>,
 }
 
 impl InternalFileReader {
@@ -53,7 +53,7 @@ impl InternalFileReader {
         })
     }
 
-    fn get_input(&self) -> Result<Arc<FsDataInputStream>> {
+    fn get_input(&self) -> Result<Arc<FsDataInputWrapper>> {
         let input = self
             .input
             .get_or_try_init(|| self.fs.open(&self.path))

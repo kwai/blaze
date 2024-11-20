@@ -19,9 +19,16 @@ import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
+import org.apache.spark.blaze.FSDataInputWrapper;
+import org.apache.spark.blaze.FSDataInputWrapper$;
+import org.apache.spark.blaze.FSDataOutputWrapper;
+import org.apache.spark.blaze.FSDataOutputWrapper$;
 import org.apache.spark.sql.blaze.memory.OnHeapSpillManager;
 import org.apache.spark.sql.blaze.memory.OnHeapSpillManager$;
 
@@ -76,6 +83,18 @@ public class JniBridge {
     public static boolean isDriverSide() {
         TaskContext tc = getTaskContext();
         return tc == null;
+    }
+
+    public static FSDataInputWrapper openFileAsDataInputWrapper(
+            FileSystem fs,
+            String path) throws Exception {
+        return FSDataInputWrapper$.MODULE$.wrap(fs.open(new Path(path)));
+    }
+
+    public static FSDataOutputWrapper createFileAsDataOutputWrapper(
+            FileSystem fs,
+            String path) throws Exception {
+        return FSDataOutputWrapper$.MODULE$.wrap(fs.create(new Path(path)));
     }
 
     private static final List<BufferPoolMXBean> directMXBeans =

@@ -9,6 +9,7 @@
   <modules>
     <module>spark-extension</module>
     <module>${shimPkg}</module>
+    <module>hadoop-shim</module>
     <module>dev/mvn-build-helper/assembly</module>
     <module>dev/mvn-build-helper/proto</module>
   </modules>
@@ -18,7 +19,6 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
-    <hadoopClientApiVersion>3.4.0</hadoopClientApiVersion>
   </properties>
 
   <dependencyManagement>
@@ -42,11 +42,6 @@
         <groupId>org.apache.spark</groupId>
         <artifactId>spark-sql_${scalaVersion}</artifactId>
         <version>${sparkVersion}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.hadoop</groupId>
-        <artifactId>hadoop-client-api</artifactId>
-        <version>${hadoopClientApiVersion}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.arrow</groupId>
