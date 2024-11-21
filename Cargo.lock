@@ -987,7 +987,7 @@ dependencies = [
  "foldhash",
  "futures",
  "futures-util",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.1",
  "itertools 0.13.0",
  "jni",
  "log",
@@ -1499,6 +1499,11 @@ name = "hashbrown"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a9bfc1af68b1726ea47d3d5109de126281def866b33970e10fbab11b5dafab3"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
+]
 
 [[package]]
 name = "heck"
