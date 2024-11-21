@@ -27,11 +27,13 @@ use arrow::{
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
 use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion_ext_commons::likely;
 
 use crate::{
     broadcast_join_exec::Joiner,
     common::{
-        batch_selection::take_cols, output::WrappedRecordBatchSender, timer_helper::TimerHelper,
+        batch_selection::take_cols, execution_context::WrappedRecordBatchSender,
+        timer_helper::TimerHelper,
     },
     joins::{
         bhj::{
@@ -135,7 +137,7 @@ impl<const P: JoinerParams> SemiJoiner<P> {
     async fn flush(&self, cols: Vec<ArrayRef>) -> Result<()> {
         let output_batch = RecordBatch::try_new(self.join_params.output_schema.clone(), cols)?;
         self.output_rows.fetch_add(output_batch.num_rows(), Relaxed);
-        self.output_sender.send(Ok(output_batch)).await;
+        self.output_sender.send(output_batch).await;
         Ok(())
     }
 }
@@ -197,7 +199,7 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
                 match map_value {
                     map_value if map_value.is_single() => {
                         let map_idx = map_value.get_single();
-                        if eq.eq(row_idx, map_idx as usize) {
+                        if likely!(eq.eq(row_idx, map_idx as usize)) {
                             if P.probe_is_join_side {
                                 probed_joined.set(row_idx, true);
                             } else {
@@ -209,7 +211,7 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
                         let range = map.get_range(map_value);
                         let mut eqs = range
                             .iter()
-                            .filter(|&map_idx| eq.eq(row_idx, *map_idx as usize));
+                            .filter(|&map_idx| likely!(eq.eq(row_idx, *map_idx as usize)));
 
                         if let Some(&map_idx) = eqs.next() {
                             if P.probe_is_join_side {

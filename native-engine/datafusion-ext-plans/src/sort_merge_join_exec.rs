@@ -23,22 +23,18 @@ use datafusion::{
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
         joins::utils::JoinOn,
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet, Time},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::{
-    batch_size, df_execution_err, streams::coalesce_stream::CoalesceInput,
-};
-use futures::TryStreamExt;
+use datafusion_ext_commons::{batch_size, df_execution_err};
 use once_cell::sync::OnceCell;
 
 use crate::{
     common::{
         column_pruning::ExecuteWithColumnPruning,
-        output::{TaskOutputter, WrappedRecordBatchSender},
+        execution_context::{ExecutionContext, WrappedRecordBatchSender},
         timer_helper::TimerHelper,
     },
     cur_forward,
@@ -136,25 +132,22 @@ impl SortMergeJoinExec {
         context: Arc<TaskContext>,
         projection: Vec<usize>,
     ) -> Result<SendableRecordBatchStream> {
-        let metrics = Arc::new(BaselineMetrics::new(&self.metrics, partition));
         let join_params = self.create_join_params(&projection)?;
-        let left = self.left.execute(partition, context.clone())?;
-        let right = self.right.execute(partition, context.clone())?;
-
-        let metrics_cloned = metrics.clone();
-        let context_cloned = context.clone();
-        let output_stream = Box::pin(RecordBatchStreamAdapter::new(
+        let exec_ctx = ExecutionContext::new(
+            context,
+            partition,
             join_params.projection.schema.clone(),
-            futures::stream::once(async move {
-                context_cloned.output_with_sender(
-                    "SortMergeJoin",
-                    join_params.projection.schema.clone(),
-                    move |sender| execute_join(left, right, join_params, metrics_cloned, sender),
-                )
-            })
-            .try_flatten(),
-        ));
-        Ok(context.coalesce_with_default_batch_size(output_stream, &metrics)?)
+            &self.metrics,
+        );
+        let exec_ctx_cloned = exec_ctx.clone();
+        let left = exec_ctx.execute(&self.left)?;
+        let right = exec_ctx.execute(&self.right)?;
+        let output = exec_ctx_cloned
+            .clone()
+            .output_with_sender("SortMergeJoin", move |sender| {
+                execute_join(left, right, join_params, exec_ctx_cloned, sender)
+            });
+        Ok(exec_ctx.coalesce_with_default_batch_size(output))
     }
 }
 
@@ -242,10 +235,10 @@ pub async fn execute_join(
     lstream: SendableRecordBatchStream,
     rstream: SendableRecordBatchStream,
     join_params: JoinParams,
-    metrics: Arc<BaselineMetrics>,
+    exec_ctx: Arc<ExecutionContext>,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
-    let _timer = metrics.elapsed_compute().timer();
+    let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
     let poll_time = Time::new();
 
     let mut curs = (
@@ -284,10 +277,15 @@ pub async fn execute_join(
         Existence => Box::pin(ExistenceJoiner::new(join_params, sender)),
     };
     joiner.as_mut().join(&mut curs).await?;
-    metrics.record_output(joiner.num_output_rows());
+    exec_ctx
+        .baseline_metrics()
+        .record_output(joiner.num_output_rows());
 
     // discount poll time
-    metrics.elapsed_compute().sub_duration(poll_time.duration());
+    exec_ctx
+        .baseline_metrics()
+        .elapsed_compute()
+        .sub_duration(poll_time.duration());
     Ok(())
 }
 

@@ -18,7 +18,7 @@ use arrow::{array::ArrayRef, datatypes::FieldRef, record_batch::RecordBatch};
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 
 use crate::{
-    agg::{create_agg, AggFunction},
+    agg::{agg::create_agg, AggFunction},
     window::{
         processors::{
             agg_processor::AggProcessor, rank_processor::RankProcessor,
@@ -44,13 +44,8 @@ pub enum WindowRankType {
     DenseRank,
 }
 
-pub trait WindowFunctionProcessor: Send + Sync {
+pub trait WindowFunctionProcessor: Send {
     fn process_batch(&mut self, context: &WindowContext, batch: &RecordBatch) -> Result<ArrayRef>;
-    fn process_batch_without_partitions(
-        &mut self,
-        context: &WindowContext,
-        batch: &RecordBatch,
-    ) -> Result<ArrayRef>;
 }
 
 #[derive(Debug, Clone)]

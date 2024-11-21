@@ -20,10 +20,7 @@ use std::{
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::{
-    common::Result,
-    physical_plan::metrics::{BaselineMetrics, Time},
-};
+use datafusion::{common::Result, physical_plan::metrics::Time};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -39,22 +36,15 @@ pub struct SingleShuffleRepartitioner {
     output_index_file: String,
     output_data: Arc<Mutex<Option<IpcCompressionWriter<TimedWriter<File>>>>>,
     output_io_time: Time,
-    metrics: BaselineMetrics,
 }
 
 impl SingleShuffleRepartitioner {
-    pub fn new(
-        output_data_file: String,
-        output_index_file: String,
-        output_io_time: Time,
-        metrics: BaselineMetrics,
-    ) -> Self {
+    pub fn new(output_data_file: String, output_index_file: String, output_io_time: Time) -> Self {
         Self {
             output_data_file,
             output_index_file,
             output_data: Arc::new(Mutex::default()),
             output_io_time,
-            metrics,
         }
     }
 
@@ -80,7 +70,6 @@ impl SingleShuffleRepartitioner {
 #[async_trait]
 impl ShuffleRepartitioner for SingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
-        let _timer = self.metrics.elapsed_compute().timer();
         let mut output_data = self.output_data.lock().await;
         let output_writer = self.get_output_writer(&mut *output_data)?;
         output_writer.write_batch(input.num_rows(), input.columns())?;
@@ -88,7 +77,6 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        let _timer = self.metrics.elapsed_compute().timer();
         let mut output_data = std::mem::take(&mut *self.output_data.lock().await);
 
         // write index file

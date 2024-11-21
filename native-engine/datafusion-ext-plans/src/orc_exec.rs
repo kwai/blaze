@@ -29,26 +29,22 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{
-            BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricValue,
-            MetricsSet, Time,
-        },
-        stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Metric, Partitioning,
-        PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use futures_util::{stream::once, TryStreamExt};
+use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use orc_rust::{
     arrow_reader::ArrowReaderBuilder, projection::ProjectionMask, reader::AsyncChunkReader,
 };
 
 use crate::{
-    common::{internal_file_reader::InternalFileReader, output::TaskOutputter},
-    scan::BlazeSchemaAdapter,
+    common::execution_context::ExecutionContext,
+    scan::{internal_file_reader::InternalFileReader, BlazeSchemaAdapter},
 };
 
 /// Execution plan for scanning one or more Orc partitions
@@ -144,19 +140,11 @@ impl ExecutionPlan for OrcExec {
 
     fn execute(
         &self,
-        partition_index: usize,
+        partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition_index);
-        let io_time = Time::default();
-        let io_time_metric = Arc::new(Metric::new(
-            MetricValue::Time {
-                name: "io_time".into(),
-                time: io_time.clone(),
-            },
-            Some(partition_index),
-        ));
-        self.metrics.register(io_time_metric);
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let io_time = exec_ctx.register_timer_metric("io_time");
 
         // get fs object from jni bridge resource
         let resource_id = jni_new_string!(&self.fs_resource_id)?;
@@ -169,37 +157,29 @@ impl ExecutionPlan for OrcExec {
         };
 
         let opener = OrcOpener {
-            partition_index,
             projection,
             batch_size: batch_size(),
             table_schema: self.base_config.file_schema.clone(),
-            metrics: self.metrics.clone(),
             fs_provider,
         };
 
-        let baseline_metrics_cloned = baseline_metrics.clone();
-        let file_stream =
-            FileStream::new(&self.base_config, partition_index, opener, &self.metrics)?;
-        let mut stream = Box::pin(file_stream);
-        let context_cloned = context.clone();
-        let timed_stream = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(async move {
-                context_cloned.output_with_sender(
-                    "OrcScan",
-                    stream.schema(),
-                    move |sender| async move {
-                        sender.exclude_time(baseline_metrics_cloned.elapsed_compute());
-                        let _timer = baseline_metrics_cloned.elapsed_compute().timer();
-                        while let Some(batch) = stream.next().await.transpose()? {
-                            sender.send(Ok(batch)).await;
-                        }
-                        Ok(())
-                    },
-                )
-            })
-            .try_flatten(),
-        ));
+        let mut file_stream = Box::pin(FileStream::new(
+            &self.base_config,
+            partition,
+            opener,
+            exec_ctx.execution_plan_metrics(),
+        )?);
+        let timed_stream =
+            exec_ctx
+                .clone()
+                .output_with_sender("OrcScan", move |sender| async move {
+                    sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
+                    let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+                    while let Some(batch) = file_stream.next().await.transpose()? {
+                        sender.send(batch).await;
+                    }
+                    Ok(())
+                });
         Ok(timed_stream)
     }
 
@@ -213,31 +193,18 @@ impl ExecutionPlan for OrcExec {
 }
 
 struct OrcOpener {
-    partition_index: usize,
     projection: Vec<usize>,
     batch_size: usize,
     table_schema: SchemaRef,
-    metrics: ExecutionPlanMetricsSet,
     fs_provider: Arc<FsProvider>,
 }
 
 impl FileOpener for OrcOpener {
     fn open(&self, file_meta: FileMeta) -> Result<FileOpenFuture> {
-        let reader = OrcFileReaderRef {
-            inner: Arc::new(InternalFileReader::try_new(
-                self.fs_provider.clone(),
-                file_meta.object_meta.clone(),
-            )?),
-            metrics: OrcFileMetrics::new(
-                self.partition_index,
-                file_meta
-                    .object_meta
-                    .location
-                    .filename()
-                    .unwrap_or("missing filename"),
-                &self.metrics.clone(),
-            ),
-        };
+        let reader = OrcFileReaderRef(Arc::new(InternalFileReader::try_new(
+            self.fs_provider.clone(),
+            file_meta.object_meta.clone(),
+        )?));
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
@@ -247,7 +214,7 @@ impl FileOpener for OrcOpener {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
                 .await
                 .or_else(|err| df_execution_err!("create orc reader error: {err}"))?;
-            if let Some(range) = &file_meta.range {
+            if let Some(range) = file_meta.range.clone() {
                 let range = range.start as usize..range.end as usize;
                 builder = builder.with_file_byte_range(range);
             }
@@ -279,14 +246,11 @@ impl FileOpener for OrcOpener {
 }
 
 #[derive(Clone)]
-struct OrcFileReaderRef {
-    inner: Arc<InternalFileReader>,
-    metrics: OrcFileMetrics,
-}
+struct OrcFileReaderRef(Arc<InternalFileReader>);
 
 impl AsyncChunkReader for OrcFileReaderRef {
     fn len(&mut self) -> BoxFuture<'_, std::io::Result<u64>> {
-        async move { Ok(self.inner.get_meta().size as u64) }.boxed()
+        async move { Ok(self.0.get_meta().size as u64) }.boxed()
     }
 
     fn get_bytes(
@@ -294,31 +258,9 @@ impl AsyncChunkReader for OrcFileReaderRef {
         offset_from_start: u64,
         length: u64,
     ) -> BoxFuture<'_, std::io::Result<Bytes>> {
-        let inner = self.inner.clone();
         let offset_from_start = offset_from_start as usize;
         let length = length as usize;
         let range = offset_from_start..(offset_from_start + length);
-        self.metrics.bytes_scanned.add(length);
-        async move {
-            tokio::task::spawn_blocking(move || inner.read_fully(range).map_err(|e| e.into()))
-                .await
-                .expect("tokio spawn_blocking error")
-        }
-        .boxed()
-    }
-}
-
-#[derive(Clone)]
-struct OrcFileMetrics {
-    bytes_scanned: Count,
-}
-
-impl OrcFileMetrics {
-    pub fn new(partition: usize, filename: &str, metrics: &ExecutionPlanMetricsSet) -> Self {
-        let bytes_scanned = MetricBuilder::new(metrics)
-            .with_new_label("filename", filename.to_string())
-            .counter("bytes_scanned", partition);
-
-        Self { bytes_scanned }
+        async move { self.0.read_fully(range).map_err(|e| e.into()) }.boxed()
     }
 }

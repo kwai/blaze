@@ -31,13 +31,12 @@ use datafusion::{
     common::Result,
     error::DataFusionError,
     execution::context::TaskContext,
-    physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet},
-        ExecutionPlan,
-    },
+    physical_plan::{metrics::ExecutionPlanMetricsSet, ExecutionPlan},
 };
-use datafusion_ext_commons::{df_execution_err, streams::coalesce_stream::CoalesceInput};
-use datafusion_ext_plans::{common::output::TaskOutputter, parquet_sink_exec::ParquetSinkExec};
+use datafusion_ext_commons::df_execution_err;
+use datafusion_ext_plans::{
+    common::execution_context::ExecutionContext, parquet_sink_exec::ParquetSinkExec,
+};
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use tokio::runtime::Runtime;
@@ -45,10 +44,9 @@ use tokio::runtime::Runtime;
 use crate::{handle_unwinded_scope, metrics::update_spark_metric_node};
 
 pub struct NativeExecutionRuntime {
+    exec_ctx: Arc<ExecutionContext>,
     native_wrapper: GlobalRef,
     plan: Arc<dyn ExecutionPlan>,
-    task_context: Arc<TaskContext>,
-    partition: usize,
     batch_receiver: Receiver<Result<Option<RecordBatch>>>,
     rt: Runtime,
 }
@@ -60,22 +58,15 @@ impl NativeExecutionRuntime {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<Self> {
-        // execute plan to output stream
-        let stream = plan.execute(partition, context.clone())?;
-        let schema = stream.schema();
-
-        // coalesce
-        let mut stream = if plan.as_any().downcast_ref::<ParquetSinkExec>().is_some() {
-            stream // cannot coalesce parquet sink output
-        } else {
-            context.coalesce_with_default_batch_size(
-                stream,
-                &BaselineMetrics::new(&ExecutionPlanMetricsSet::new(), partition),
-            )?
-        };
+        let exec_ctx = ExecutionContext::new(
+            context.clone(),
+            partition,
+            plan.schema(),
+            &ExecutionPlanMetricsSet::new(),
+        );
 
         // init ffi schema
-        let ffi_schema = FFI_ArrowSchema::try_from(schema.as_ref())?;
+        let ffi_schema = FFI_ArrowSchema::try_from(exec_ctx.output_schema().as_ref())?;
         jni_call!(BlazeCallNativeWrapper(native_wrapper.as_obj())
             .importSchema(&ffi_schema as *const FFI_ArrowSchema as i64) -> ()
         )?;
@@ -98,17 +89,24 @@ impl NativeExecutionRuntime {
 
         let (batch_sender, batch_receiver) = std::sync::mpsc::sync_channel(1);
         let nrt = Self {
+            exec_ctx: exec_ctx.clone(),
             native_wrapper: native_wrapper.clone(),
-            plan,
-            partition,
+            plan: plan.clone(),
             rt,
             batch_receiver,
-            task_context: context,
         };
 
         // spawn batch producer
         let err_sender = batch_sender.clone();
         let consume_stream = async move {
+            // execute and coalesce plan to output stream
+            let stream = exec_ctx.execute(&plan)?;
+            let mut stream = if plan.as_any().downcast_ref::<ParquetSinkExec>().is_some() {
+                stream // cannot coalesce parquet sink output
+            } else {
+                exec_ctx.coalesce_with_default_batch_size(stream)
+            };
+
             while let Some(batch) = AssertUnwindSafe(stream.next())
                 .catch_unwind()
                 .await
@@ -188,7 +186,7 @@ impl NativeExecutionRuntime {
             }
         };
 
-        let partition = self.partition;
+        let partition = self.exec_ctx.partition_id();
         match next_batch() {
             Ok(ret) => return ret,
             Err(err) => {
@@ -203,13 +201,13 @@ impl NativeExecutionRuntime {
     }
 
     pub fn finalize(self) {
-        let partition = self.partition;
+        let partition = self.exec_ctx.partition_id();
 
         log::info!("[partition={partition}] native execution finalizing");
         self.update_metrics().unwrap_or_default();
         drop(self.plan);
 
-        self.task_context.cancel_task(); // cancel all pending streams
+        self.exec_ctx.cancel_task(); // cancel all pending streams
         self.rt.shutdown_background();
         log::info!("[partition={partition}] native execution finalized");
     }

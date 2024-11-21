@@ -1,24 +1,24 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
 };
 
-use arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use arrow::datatypes::SchemaRef;
 use datafusion::{
     common::Result,
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+        metrics::ExecutionPlanMetricsSet, DisplayAs, DisplayFormatType, ExecutionMode,
+        ExecutionPlan, ExecutionPlanProperties, PlanProperties, SendableRecordBatchStream,
+        Statistics,
     },
 };
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use once_cell::sync::OnceCell;
+
+use crate::common::execution_context::ExecutionContext;
 
 #[derive(Debug)]
 pub struct LimitExec {
@@ -84,13 +84,9 @@ impl ExecutionPlan for LimitExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let input_stream = self.input.execute(partition, context)?;
-        Ok(Box::pin(LimitStream {
-            input_stream,
-            limit: self.limit,
-            cur: 0,
-            baseline_metrics: BaselineMetrics::new(&self.metrics, partition),
-        }))
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let input = exec_ctx.execute(&self.input)?;
+        execute_limit(input, self.limit, exec_ctx)
     }
 
     fn statistics(&self) -> Result<Statistics> {
@@ -98,45 +94,26 @@ impl ExecutionPlan for LimitExec {
     }
 }
 
-struct LimitStream {
-    input_stream: SendableRecordBatchStream,
+fn execute_limit(
+    mut input: SendableRecordBatchStream,
     limit: u64,
-    cur: u64,
-    baseline_metrics: BaselineMetrics,
-}
-
-impl RecordBatchStream for LimitStream {
-    fn schema(&self) -> SchemaRef {
-        self.input_stream.schema()
-    }
-}
-
-impl Stream for LimitStream {
-    type Item = Result<RecordBatch>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let rest = self.limit.saturating_sub(self.cur);
-        if rest == 0 {
-            return Poll::Ready(None);
-        }
-
-        match self.input_stream.poll_next_unpin(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
-            Poll::Ready(Some(Ok(batch))) => {
-                let batch = if batch.num_rows() <= rest as usize {
-                    self.cur += batch.num_rows() as u64;
-                    batch
-                } else {
-                    self.cur += rest;
-                    batch.slice(0, rest as usize)
-                };
-                self.baseline_metrics
-                    .record_poll(Poll::Ready(Some(Ok(batch))))
+    exec_ctx: Arc<ExecutionContext>,
+) -> Result<SendableRecordBatchStream> {
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("Limit", move |sender| async move {
+            let mut cur = 0;
+            while let Some(batch) = input.next().await.transpose()? {
+                cur += batch.num_rows() as u64;
+                if cur >= limit {
+                    sender.send(batch.slice(0, limit as usize)).await;
+                    break;
+                }
+                cur += batch.num_rows() as u64;
+                sender.send(batch).await;
             }
-        }
-    }
+            Ok(())
+        }))
 }
 
 #[cfg(test)]

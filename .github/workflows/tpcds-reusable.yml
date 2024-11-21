@@ -120,23 +120,13 @@ jobs:
       - name: Install Blaze JAR
         run: cp blaze-engine-*${{ inputs.sparkver }}*.jar spark-bin-${{ inputs.sparkver }}/jars/
 
-      - name: Run with BHJ
+      - name: Run
         run: |
           export RUST_LOG=ERROR
           export RUST_BACKTRACE=1
           SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
             --conf spark.driver.memory=3g \
-            --conf spark.driver.memoryOverhead=2048 \
-            --query-filter ${{ matrix.query }}
-
-      - name: Run without BHJ
-        run: |
-          export RUST_LOG=ERROR
-          export RUST_BACKTRACE=1
-          SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
-            --conf spark.sql.autoBroadcastJoinThreshold=-1 \
-            --conf spark.driver.memory=3g \
-            --conf spark.driver.memoryOverhead=2048 \
-            --data-location dev/tpcds_1g \
+            --conf spark.driver.memoryOverhead=2536 \
+            --conf spark.sql.broadcastTimeout=900s \
             --query-filter ${{ matrix.query }}

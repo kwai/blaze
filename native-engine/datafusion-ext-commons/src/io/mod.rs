@@ -138,6 +138,22 @@ pub fn read_u8<R: Read>(input: &mut R) -> std::io::Result<u8> {
     Ok(buf[0])
 }
 
+pub fn read_bytes_into_vec<R: Read>(
+    input: &mut R,
+    buf: &mut Vec<u8>,
+    len: usize,
+) -> std::io::Result<()> {
+    buf.reserve(len);
+    unsafe {
+        // safety: space has been reserved
+        input.read_exact(std::slice::from_raw_parts_mut(
+            buf.as_mut_ptr().add(buf.len()),
+            len,
+        ))?;
+        buf.set_len(buf.len() + len);
+    }
+    Ok(())
+}
 pub fn read_bytes_slice<R: Read>(input: &mut R, len: usize) -> std::io::Result<Box<[u8]>> {
     // safety - assume_init() is safe for [u8]
     let mut byte_slice = unsafe { Box::new_uninit_slice(len).assume_init() };

@@ -26,18 +26,16 @@ use once_cell::sync::OnceCell;
 use unchecked_index::UncheckedIndex;
 
 pub mod array_size;
-pub mod bytes_arena;
 pub mod cast;
+pub mod coalesce;
 pub mod ds;
 pub mod hadoop_fs;
 pub mod hash;
 pub mod io;
 pub mod rdxsort;
-pub mod slim_bytes;
 pub mod spark_bit_array;
 pub mod spark_bloom_filter;
 pub mod spark_hash;
-pub mod streams;
 pub mod uda;
 
 #[macro_export]
@@ -92,6 +90,12 @@ pub fn batch_size() -> usize {
 // bigger for better radix sort performance
 pub const fn staging_mem_size_for_partial_sort() -> usize {
     1048576
+}
+
+// bigger for better radix sort performance
+// aggregate merging is row-based, so use bigger memory size
+pub const fn staging_mem_size_for_agg_merge() -> usize {
+    16777216
 }
 
 // use bigger batch memory size writing shuffling data
@@ -172,6 +176,20 @@ macro_rules! prefetch_write_data {
         unsafe {
             std::intrinsics::prefetch_write_data($e, locality)
         }
+    }};
+}
+
+#[macro_export]
+macro_rules! likely {
+    ($e:expr) => {{
+        std::intrinsics::likely($e)
+    }};
+}
+
+#[macro_export]
+macro_rules! unlikely {
+    ($e:expr) => {{
+        std::intrinsics::unlikely($e)
     }};
 }
 

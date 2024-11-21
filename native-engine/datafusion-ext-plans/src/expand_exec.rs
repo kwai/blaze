@@ -23,17 +23,16 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExpr},
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{cast::cast, df_execution_err};
-use futures::{stream::once, StreamExt, TryStreamExt};
+use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
-use crate::common::output::TaskOutputter;
+use crate::common::execution_context::ExecutionContext;
 
 #[derive(Debug, Clone)]
 pub struct ExpandExec {
@@ -125,19 +124,10 @@ impl ExecutionPlan for ExpandExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let input = self.input.execute(partition, context.clone())?;
-        let stream = execute_expand(
-            context,
-            input,
-            self.projections.clone(),
-            self.schema(),
-            baseline_metrics,
-        );
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(stream).try_flatten(),
-        )))
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let input = exec_ctx.execute(&self.input)?;
+        let output = execute_expand(input, self.projections.clone(), exec_ctx)?;
+        Ok(output)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -149,43 +139,46 @@ impl ExecutionPlan for ExpandExec {
     }
 }
 
-async fn execute_expand(
-    context: Arc<TaskContext>,
+fn execute_expand(
     mut input: SendableRecordBatchStream,
     projections: Vec<Vec<Arc<dyn PhysicalExpr>>>,
-    output_schema: SchemaRef,
-    metrics: BaselineMetrics,
+    exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
-    context.output_with_sender("Expand", output_schema.clone(), move |sender| async move {
-        sender.exclude_time(metrics.elapsed_compute());
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("Expand", move |sender| async move {
+            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
 
-        while let Some(batch) = input.next().await.transpose()? {
-            let _timer = metrics.elapsed_compute().timer();
-            let num_rows = batch.num_rows();
+            while let Some(batch) = input.next().await.transpose()? {
+                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+                let num_rows = batch.num_rows();
 
-            for projection in &projections {
-                let arrays = projection
-                    .iter()
-                    .zip(output_schema.fields())
-                    .map(|(expr, field)| {
-                        let array = expr.evaluate(&batch).and_then(|c| c.into_array(num_rows))?;
-                        if array.data_type() != field.data_type() {
-                            return cast(&array, field.data_type());
-                        }
-                        Ok(array)
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let output_batch = RecordBatch::try_new_with_options(
-                    output_schema.clone(),
-                    arrays,
-                    &RecordBatchOptions::new().with_row_count(Some(num_rows)),
-                )?;
-                metrics.record_output(output_batch.num_rows());
-                sender.send(Ok(output_batch)).await;
+                for projection in &projections {
+                    let arrays = projection
+                        .iter()
+                        .zip(exec_ctx.output_schema().fields())
+                        .map(|(expr, field)| {
+                            let array =
+                                expr.evaluate(&batch).and_then(|c| c.into_array(num_rows))?;
+                            if array.data_type() != field.data_type() {
+                                return cast(&array, field.data_type());
+                            }
+                            Ok(array)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let output_batch = RecordBatch::try_new_with_options(
+                        exec_ctx.output_schema(),
+                        arrays,
+                        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                    )?;
+                    exec_ctx
+                        .baseline_metrics()
+                        .record_output(output_batch.num_rows());
+                    sender.send(output_batch).await;
+                }
             }
-        }
-        Ok(())
-    })
+            Ok(())
+        }))
 }
 
 #[cfg(test)]

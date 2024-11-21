@@ -21,7 +21,6 @@ use std::{
 use arrow::{
     array::{new_null_array, Array, ArrayRef, Int32Array, Int32Builder},
     datatypes::{Field, Schema, SchemaRef},
-    error::ArrowError,
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use datafusion::{
@@ -29,24 +28,19 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExpr},
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{batch_size, cast::cast, streams::coalesce_stream::CoalesceInput};
-use futures::{stream::once, StreamExt, TryFutureExt, TryStreamExt};
+use datafusion_ext_commons::{batch_size, cast::cast};
+use futures::StreamExt;
 use num::integer::Roots;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::{
-    common::{
-        batch_statisitcs::{stat_input, InputBatchStatistics},
-        output::TaskOutputter,
-        timer_helper::TimerHelper,
-    },
+    common::{execution_context::ExecutionContext, timer_helper::TimerHelper},
     generate::Generator,
 };
 
@@ -165,35 +159,14 @@ impl ExecutionPlan for GenerateExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let output_schema = self.output_schema.clone();
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let generator = self.generator.clone();
         let outer = self.outer;
         let child_output_cols = self.required_child_output_cols.clone();
-        let metrics = BaselineMetrics::new(&self.metrics, partition);
-        let input = stat_input(
-            InputBatchStatistics::from_metrics_set_and_blaze_conf(&self.metrics, partition)?,
-            self.input.execute(partition, context.clone())?,
-        )?;
-        let output_stream = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(
-                execute_generate(
-                    input,
-                    context.clone(),
-                    output_schema,
-                    generator,
-                    outer,
-                    child_output_cols,
-                    metrics,
-                )
-                .map_err(ArrowError::from),
-            )
-            .try_flatten(),
-        ));
-
-        let metrics = BaselineMetrics::new(&self.metrics, partition);
-        let output_coalesced = context.coalesce_with_default_batch_size(output_stream, &metrics)?;
-        Ok(output_coalesced)
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        let output =
+            execute_generate(input, exec_ctx.clone(), generator, outer, child_output_cols)?;
+        Ok(exec_ctx.coalesce_with_default_batch_size(output))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -205,35 +178,28 @@ impl ExecutionPlan for GenerateExec {
     }
 }
 
-async fn execute_generate(
+fn execute_generate(
     mut input_stream: SendableRecordBatchStream,
-    context: Arc<TaskContext>,
-    output_schema: SchemaRef,
+    exec_ctx: Arc<ExecutionContext>,
     generator: Arc<dyn Generator>,
     outer: bool,
     child_output_cols: Vec<Column>,
-    metrics: BaselineMetrics,
 ) -> Result<SendableRecordBatchStream> {
     let batch_size = batch_size();
     let input_schema = input_stream.schema();
 
-    context.output_with_sender(
-        "Generate",
-        output_schema.clone(),
-        move |sender| async move {
-            sender.exclude_time(metrics.elapsed_compute());
-
-            let _timer = metrics.elapsed_compute().timer();
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("Generate", move |sender| async move {
+            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
+            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
             let last_child_outputs: Arc<Mutex<Option<Vec<ArrayRef>>>> = Arc::default();
-            while let Some(batch) =
-                metrics
-                    .elapsed_compute()
-                    .exclude_timer_async(async {
-                        input_stream.next().await.transpose().map_err(|err| {
-                            err.context("generate: polling batches from input error")
-                        })
-                    })
-                    .await?
+            while let Some(batch) = exec_ctx
+                .baseline_metrics()
+                .elapsed_compute()
+                .exclude_timer_async(input_stream.next())
+                .await
+                .transpose()?
             {
                 // evaluate child output
                 let child_outputs = child_output_cols
@@ -312,7 +278,7 @@ async fn execute_generate(
                         let outputs: Vec<ArrayRef> = child_outputs
                             .iter()
                             .chain(&generated_outputs)
-                            .zip(output_schema.fields())
+                            .zip(exec_ctx.output_schema().fields())
                             .map(|(array, field)| {
                                 if array.data_type() != field.data_type() {
                                     return cast(&array, field.data_type());
@@ -321,14 +287,16 @@ async fn execute_generate(
                             })
                             .collect::<Result<_>>()?;
                         let output_batch = RecordBatch::try_new_with_options(
-                            output_schema.clone(),
+                            exec_ctx.output_schema(),
                             outputs,
                             &RecordBatchOptions::new().with_row_count(Some(num_rows)),
                         )?;
                         start = end;
 
-                        metrics.record_output(output_batch.num_rows());
-                        sender.send(Ok(output_batch)).await;
+                        exec_ctx
+                            .baseline_metrics()
+                            .record_output(output_batch.num_rows());
+                        sender.send(output_batch).await;
                     }
                 }
             }
@@ -366,7 +334,7 @@ async fn execute_generate(
                 let outputs: Vec<ArrayRef> = child_outputs
                     .iter()
                     .chain(&generated_outputs.cols)
-                    .zip(output_schema.fields())
+                    .zip(exec_ctx.output_schema().fields())
                     .map(|(array, field)| {
                         if array.data_type() != field.data_type() {
                             return cast(&array, field.data_type());
@@ -375,16 +343,17 @@ async fn execute_generate(
                     })
                     .collect::<Result<_>>()?;
                 let output_batch = RecordBatch::try_new_with_options(
-                    output_schema.clone(),
+                    exec_ctx.output_schema(),
                     outputs,
                     &RecordBatchOptions::new().with_row_count(Some(num_rows)),
                 )?;
-                metrics.record_output(output_batch.num_rows());
-                sender.send(Ok(output_batch)).await;
+                exec_ctx
+                    .baseline_metrics()
+                    .record_output(output_batch.num_rows());
+                sender.send(output_batch).await;
             }
             Ok(())
-        },
-    )
+        }))
 }
 
 #[cfg(test)]

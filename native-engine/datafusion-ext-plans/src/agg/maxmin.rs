@@ -17,24 +17,21 @@ use std::{
     cmp::Ordering,
     fmt::{Debug, Formatter},
     marker::PhantomData,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::Arc,
 };
 
 use arrow::{array::*, datatypes::*};
-use datafusion::{
-    common::{Result, ScalarValue},
-    physical_expr::PhysicalExpr,
-};
-use datafusion_ext_commons::{df_execution_err, downcast_any};
+use datafusion::{common::Result, physical_expr::PhysicalExpr, scalar::ScalarValue};
+use datafusion_ext_commons::downcast_any;
 use paste::paste;
 
-use crate::agg::{
-    acc::{
-        AccumInitialValue, AccumStateRow, AccumStateValAddr, AggDynBinary, AggDynScalar, AggDynStr,
-        AggDynValue, RefAccumStateRow,
+use crate::{
+    agg::{
+        acc::{AccBytes, AccColumnRef, AccGenericColumn},
+        agg::IdxSelection,
+        Agg,
     },
-    default_final_batch_merge_with_addr, default_final_merge_with_addr, Agg, WithAggBufAddrs,
-    WithMemTracking,
+    idx_for_zipped,
 };
 
 pub type AggMax = AggMaxMin<AggMaxParams>;
@@ -43,44 +40,14 @@ pub type AggMin = AggMaxMin<AggMinParams>;
 pub struct AggMaxMin<P: AggMaxMinParams> {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
-    accums_initial: Vec<AccumInitialValue>,
-    accum_state_val_addr: AccumStateValAddr,
-    partial_updater: fn(&AggMaxMin<P>, &mut RefAccumStateRow, &ArrayRef, usize),
-    partial_batch_updater: fn(&AggMaxMin<P>, &mut [RefAccumStateRow], &ArrayRef),
-    partial_buf_merger: fn(&AggMaxMin<P>, &mut RefAccumStateRow, &mut RefAccumStateRow),
-    mem_used_tracker: AtomicUsize,
     _phantom: PhantomData<P>,
-}
-
-impl<P: AggMaxMinParams> WithAggBufAddrs for AggMaxMin<P> {
-    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
-        self.accum_state_val_addr = accum_state_val_addrs[0];
-    }
-}
-
-impl<P: AggMaxMinParams> WithMemTracking for AggMaxMin<P> {
-    fn mem_used_tracker(&self) -> &AtomicUsize {
-        &self.mem_used_tracker
-    }
 }
 
 impl<P: AggMaxMinParams> AggMaxMin<P> {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
-        let accums_initial = vec![AccumInitialValue::Scalar(ScalarValue::try_from(
-            &data_type,
-        )?)];
-        let partial_updater = get_partial_updater::<P>(&data_type)?;
-        let partial_batch_updater = get_partial_batch_updater::<P>(&data_type)?;
-        let partial_buf_merger = get_partial_buf_merger::<P>(&data_type)?;
         Ok(Self {
             child,
             data_type,
-            accums_initial,
-            accum_state_val_addr: AccumStateValAddr::default(),
-            partial_updater,
-            partial_batch_updater,
-            partial_buf_merger,
-            mem_used_tracker: AtomicUsize::new(0),
             _phantom: Default::default(),
         })
     }
@@ -116,518 +83,220 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
         true
     }
 
-    fn accums_initial(&self) -> &[AccumInitialValue] {
-        &self.accums_initial
-    }
-
-    fn increase_acc_mem_used(&self, acc: &mut RefAccumStateRow) {
-        if self.data_type.is_primitive()
-            || matches!(self.data_type, DataType::Null | DataType::Boolean)
-        {
-            return;
-        }
-        if let Some(v) = acc.dyn_value(self.accum_state_val_addr) {
-            self.add_mem_used(v.mem_size());
-        }
+    fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
+        Box::new(AccGenericColumn::new(&self.data_type, num_rows))
     }
 
     fn partial_update(
         &self,
-        acc: &mut RefAccumStateRow,
-        values: &[ArrayRef],
-        row_idx: usize,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        partial_args: &[ArrayRef],
+        partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let partial_updater = self.partial_updater;
-        partial_updater(self, acc, &values[0], row_idx);
-        Ok(())
-    }
+        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        let old_heap_mem_used = accs.items_heap_mem_used(acc_idx);
 
-    fn partial_batch_update(
-        &self,
-        accs: &mut [RefAccumStateRow],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let partial_batch_updater = self.partial_batch_updater;
-        partial_batch_updater(self, accs, &values[0]);
-        Ok(())
-    }
-
-    fn partial_update_all(
-        &self,
-        acc: &mut RefAccumStateRow,
-        _num_rows: usize,
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        macro_rules! handle_fixed {
-            ($ty:ident, $maxfun:expr) => {{
+        macro_rules! handle_prim {
+            ($ty:ident) => {{
                 type TArray = paste! {[<$ty Array>]};
-                let value = values[0].as_any().downcast_ref::<TArray>().unwrap();
-                if let Some(max) = $maxfun(value) {
-                    partial_update_prim::<P, _>(acc, self.accum_state_val_addr, max);
+                let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
+                idx_for_zipped! {
+                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                         if !partial_arg.is_valid(partial_arg_idx) {
+                             continue;
+                         }
+                         let partial_value = partial_arg.value(partial_arg_idx);
+
+                         if !accs.prim_valid(acc_idx) {
+                             accs.set_prim_valid(acc_idx, true);
+                             accs.set_prim_value(acc_idx, partial_arg.value(partial_arg_idx));
+                             continue;
+                         }
+                         if partial_value.partial_cmp(&accs.prim_value(acc_idx)) == Some(P::ORD) {
+                             accs.set_prim_value(acc_idx, partial_value);
+                         }
+                     }
                 }
             }};
         }
 
-        match values[0].data_type() {
-            DataType::Null => {}
-            DataType::Boolean => handle_fixed!(Boolean, P::maxmin_boolean),
-            DataType::Float32 => handle_fixed!(Float32, P::maxmin),
-            DataType::Float64 => handle_fixed!(Float64, P::maxmin),
-            DataType::Int8 => handle_fixed!(Int8, P::maxmin),
-            DataType::Int16 => handle_fixed!(Int16, P::maxmin),
-            DataType::Int32 => handle_fixed!(Int32, P::maxmin),
-            DataType::Int64 => handle_fixed!(Int64, P::maxmin),
-            DataType::UInt8 => handle_fixed!(UInt8, P::maxmin),
-            DataType::UInt16 => handle_fixed!(UInt16, P::maxmin),
-            DataType::UInt32 => handle_fixed!(UInt32, P::maxmin),
-            DataType::UInt64 => handle_fixed!(UInt64, P::maxmin),
-            DataType::Date32 => handle_fixed!(Date32, P::maxmin),
-            DataType::Date64 => handle_fixed!(Date64, P::maxmin),
-            DataType::Timestamp(TimeUnit::Second, _) => {
-                handle_fixed!(TimestampSecond, P::maxmin)
-            }
-            DataType::Timestamp(TimeUnit::Millisecond, _) => {
-                handle_fixed!(TimestampMillisecond, P::maxmin)
-            }
-            DataType::Timestamp(TimeUnit::Microsecond, _) => {
-                handle_fixed!(TimestampMicrosecond, P::maxmin)
-            }
-            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-                handle_fixed!(TimestampNanosecond, P::maxmin)
-            }
-            DataType::Decimal128(..) => handle_fixed!(Decimal128, P::maxmin),
-            DataType::Utf8 => {
-                let value = downcast_any!(values[0], StringArray)?;
-                if let Some(max) = P::maxmin_string(value) {
-                    match acc.dyn_value_mut(self.accum_state_val_addr) {
-                        Some(w) => {
-                            let w = downcast_any!(w.as_mut(), mut AggDynStr)?;
-                            if max.partial_cmp(w.value()) == Some(P::ORD) {
-                                *w = AggDynStr::from_str(max);
-                            }
+        macro_rules! handle_bytes {
+            ($ty:ident) => {{
+                type TArray = paste::paste! {[<$ty Array>]};
+                let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
+                idx_for_zipped! {
+                    ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if !partial_arg.is_valid(partial_arg_idx) {
+                            continue;
                         }
-                        w @ None => {
-                            *w = Some(Box::new(AggDynStr::from_str(max)));
+                        let partial_value: &[u8] = partial_arg.value(partial_arg_idx).as_ref();
+                        if accs.bytes_value(acc_idx).is_none() {
+                            accs.set_bytes_value(acc_idx, Some(AccBytes::from(partial_value)));
+                            continue;
+                        }
+                        let acc_value = accs.bytes_value(acc_idx).unwrap();
+                        if partial_value.partial_cmp(acc_value.as_ref()) == Some(P::ORD) {
+                            accs.set_bytes_value(acc_idx, Some(AccBytes::from(partial_value)));
                         }
                     }
                 }
-            }
-            DataType::Binary => {
-                let value = downcast_any!(values[0], BinaryArray)?;
-                if let Some(max) = P::maxmin_binary(value) {
-                    match acc.dyn_value_mut(self.accum_state_val_addr) {
-                        Some(w) => {
-                            let w = downcast_any!(w.as_mut(), mut AggDynBinary)?;
-                            if max.partial_cmp(w.value()) == Some(P::ORD) {
-                                *w = AggDynBinary::from_slice(max);
-                            }
-                        }
-                        w @ None => {
-                            *w = Some(Box::new(AggDynBinary::from_slice(max)));
-                        }
-                    }
-                }
-            }
-            _ => {
-                let scalars = (0..values[0].len())
-                    .into_iter()
-                    .map(|i| ScalarValue::try_from_array(&values[0], i))
-                    .collect::<Result<Vec<_>>>()?;
-                let max_scalar = if P::ORD == Ordering::Greater {
-                    scalars
-                        .into_iter()
-                        .max_by(|v1, v2| v1.partial_cmp(v2).unwrap_or(Ordering::Equal))
-                } else {
-                    scalars
-                        .into_iter()
-                        .min_by(|v1, v2| v1.partial_cmp(v2).unwrap_or(Ordering::Equal))
-                };
+            }};
+        }
 
-                if let Some(max_scalar) = max_scalar {
-                    match acc.dyn_value_mut(self.accum_state_val_addr) {
-                        Some(w) => {
-                            let w = downcast_any!(w.as_mut(), mut AggDynScalar)?;
-                            if max_scalar.partial_cmp(w.value()) == Some(P::ORD) {
-                                *w = AggDynScalar::new(max_scalar);
+        match self.data_type {
+            DataType::Null => {}
+            DataType::Boolean => handle_prim!(Boolean),
+            DataType::Int8 => handle_prim!(Int8),
+            DataType::Int16 => handle_prim!(Int16),
+            DataType::Int32 => handle_prim!(Int32),
+            DataType::Int64 => handle_prim!(Int64),
+            DataType::UInt8 => handle_prim!(UInt8),
+            DataType::UInt16 => handle_prim!(UInt16),
+            DataType::UInt32 => handle_prim!(UInt32),
+            DataType::UInt64 => handle_prim!(UInt64),
+            DataType::Float32 => handle_prim!(Float32),
+            DataType::Float64 => handle_prim!(Float64),
+            DataType::Date32 => handle_prim!(Date32),
+            DataType::Date64 => handle_prim!(Date64),
+            DataType::Timestamp(time_unit, _) => match time_unit {
+                TimeUnit::Second => handle_prim!(TimestampSecond),
+                TimeUnit::Millisecond => handle_prim!(TimestampMillisecond),
+                TimeUnit::Microsecond => handle_prim!(TimestampMicrosecond),
+                TimeUnit::Nanosecond => handle_prim!(TimestampNanosecond),
+            },
+            DataType::Decimal128(..) => handle_prim!(Decimal128),
+            DataType::Utf8 => handle_bytes!(String),
+            DataType::Binary => handle_bytes!(Binary),
+            _ => {
+                idx_for_zipped! {
+                    ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        let partial_arg_scalar = ScalarValue::try_from_array(&partial_args[0], partial_arg_idx)?;
+                        if !partial_arg_scalar.is_null() {
+                            let acc_scalar = &mut accs.scalar_values_mut()[acc_idx];
+                            if !acc_scalar.is_null() {
+                                if partial_arg_scalar.partial_cmp(acc_scalar) == Some(P::ORD) {
+                                    *acc_scalar = partial_arg_scalar;
+                                }
+                            } else {
+                                *acc_scalar = partial_arg_scalar;
                             }
-                        }
-                        w @ None => {
-                            *w = Some(Box::new(AggDynScalar::new(max_scalar)));
+                            continue;
                         }
                     }
                 }
             }
         }
+
+        let new_heap_mem_used = accs.items_heap_mem_used(acc_idx);
+        accs.add_heap_mem_used(new_heap_mem_used - old_heap_mem_used);
         Ok(())
     }
 
     fn partial_merge(
         &self,
-        acc1: &mut RefAccumStateRow,
-        acc2: &mut RefAccumStateRow,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        merging_accs: &mut AccColumnRef,
+        merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let partial_buf_merger = self.partial_buf_merger;
-        partial_buf_merger(self, acc1, acc2);
-        Ok(())
-    }
+        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        let merging_accs = downcast_any!(merging_accs, mut AccGenericColumn).unwrap();
+        let old_mem_used = accs.items_heap_mem_used(acc_idx);
 
-    fn partial_batch_merge(
-        &self,
-        accs: &mut [RefAccumStateRow],
-        merging_accs: &mut [RefAccumStateRow],
-    ) -> Result<()> {
-        let partial_buf_merger = self.partial_buf_merger;
-        for (acc, merging_acc) in accs.iter_mut().zip(merging_accs) {
-            partial_buf_merger(self, acc, merging_acc);
+        macro_rules! handle_prim {
+            ($ty:ty) => {{
+                idx_for_zipped! {
+                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if !merging_accs.prim_valid(merging_acc_idx) {
+                            continue;
+                        }
+                        if !accs.prim_valid(acc_idx) {
+                            accs.set_prim_valid(acc_idx, true);
+                            accs.set_prim_value(acc_idx, merging_accs.prim_value::<$ty>(merging_acc_idx));
+                            continue;
+                        }
+                        if merging_accs.prim_value::<$ty>(merging_acc_idx).partial_cmp(&accs.prim_value::<$ty>(acc_idx)) == Some(P::ORD) {
+                            accs.set_prim_value(acc_idx, merging_accs.prim_value::<$ty>(merging_acc_idx));
+                        }
+                    }
+                }
+            }}
         }
+
+        match self.data_type {
+            DataType::Null => {}
+            DataType::Boolean => handle_prim!(bool),
+            DataType::Int8 => handle_prim!(i8),
+            DataType::Int16 => handle_prim!(i16),
+            DataType::Int32 => handle_prim!(i32),
+            DataType::Int64 => handle_prim!(i64),
+            DataType::UInt8 => handle_prim!(u8),
+            DataType::UInt16 => handle_prim!(u16),
+            DataType::UInt32 => handle_prim!(u32),
+            DataType::UInt64 => handle_prim!(u64),
+            DataType::Float32 => handle_prim!(f32),
+            DataType::Float64 => handle_prim!(f64),
+            DataType::Date32 => handle_prim!(u32),
+            DataType::Date64 => handle_prim!(u64),
+            DataType::Timestamp(..) => handle_prim!(u64),
+            DataType::Decimal128(..) => handle_prim!(u128),
+            DataType::Utf8 | DataType::Binary => {
+                idx_for_zipped! {
+                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        let merging_value = merging_accs.take_bytes_value(merging_acc_idx);
+                        if merging_value.is_none() {
+                            continue;
+                        }
+                        let merging_value = merging_value.unwrap();
+                        let acc_value = accs.bytes_value_mut(acc_idx);
+                        if acc_value.is_none() {
+                            accs.set_bytes_value(acc_idx, Some(merging_value));
+                            continue;
+                        }
+                        let acc_value = acc_value.unwrap();
+                        if merging_value.as_ref().partial_cmp(acc_value.as_ref()) == Some(P::ORD) {
+                            accs.set_bytes_value(acc_idx, Some(merging_value));
+                        }
+                    }
+                }
+            }
+            _ => {
+                idx_for_zipped! {
+                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        let acc_value = &mut accs.scalar_values_mut()[acc_idx];
+                        let merging_acc_value = std::mem::replace(
+                            &mut merging_accs.scalar_values_mut()[merging_acc_idx],
+                            ScalarValue::Null,
+                        );
+                        if !merging_acc_value.is_null() {
+                            if !acc_value.is_null() {
+                                if merging_acc_value.partial_cmp(acc_value) == Some(P::ORD) {
+                                    *acc_value = merging_acc_value;
+                                }
+                            } else {
+                                *acc_value = merging_acc_value;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let new_mem_used = accs.items_heap_mem_used(acc_idx);
+        accs.add_heap_mem_used(new_mem_used - old_mem_used);
         Ok(())
     }
 
-    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
-        default_final_merge_with_addr(self, acc, self.accum_state_val_addr)
-    }
-
-    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
-        default_final_batch_merge_with_addr(self, accs, self.accum_state_val_addr)
-    }
-}
-
-fn partial_update_prim<P: AggMaxMinParams, T: Copy + PartialEq + PartialOrd>(
-    acc: &mut RefAccumStateRow,
-    addr: AccumStateValAddr,
-    v: T,
-) {
-    if acc.is_fixed_valid(addr) {
-        acc.update_fixed_value::<T>(addr, |w| {
-            if v.partial_cmp(&w) == Some(P::ORD) {
-                v
-            } else {
-                w
-            }
-        });
-    } else {
-        acc.set_fixed_value::<T>(addr, v);
-        acc.set_fixed_valid(addr, true);
-    }
-}
-
-fn get_partial_updater<P: AggMaxMinParams>(
-    dt: &DataType,
-) -> Result<fn(&AggMaxMin<P>, &mut RefAccumStateRow, &ArrayRef, usize)> {
-    macro_rules! fn_fixed {
-        ($ty:ident) => {{
-            Ok(|this, acc, v, i| {
-                type TArray = paste! {[<$ty Array>]};
-                let value = v.as_any().downcast_ref::<TArray>().unwrap();
-                if value.is_valid(i) {
-                    partial_update_prim::<P, _>(acc, this.accum_state_val_addr, value.value(i));
-                }
-            })
-        }};
-    }
-    match dt {
-        DataType::Null => Ok(|_, _, _, _| ()),
-        DataType::Boolean => fn_fixed!(Boolean),
-        DataType::Float32 => fn_fixed!(Float32),
-        DataType::Float64 => fn_fixed!(Float64),
-        DataType::Int8 => fn_fixed!(Int8),
-        DataType::Int16 => fn_fixed!(Int16),
-        DataType::Int32 => fn_fixed!(Int32),
-        DataType::Int64 => fn_fixed!(Int64),
-        DataType::UInt8 => fn_fixed!(UInt8),
-        DataType::UInt16 => fn_fixed!(UInt16),
-        DataType::UInt32 => fn_fixed!(UInt32),
-        DataType::UInt64 => fn_fixed!(UInt64),
-        DataType::Date32 => fn_fixed!(Date32),
-        DataType::Date64 => fn_fixed!(Date64),
-        DataType::Timestamp(TimeUnit::Second, _) => fn_fixed!(TimestampSecond),
-        DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
-        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
-        DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(..) => fn_fixed!(Decimal128),
-        DataType::Utf8 => Ok(|this, acc, v, i| {
-            let value = downcast_any!(v, StringArray).unwrap();
-            if value.is_valid(i) {
-                let v = value.value(i);
-                match acc.dyn_value_mut(this.accum_state_val_addr) {
-                    Some(wv) => {
-                        let wv = downcast_any!(wv, mut AggDynStr).unwrap();
-                        if v.partial_cmp(wv.value()) == Some(P::ORD) {
-                            this.add_mem_used(v.as_bytes().len());
-                            *wv = AggDynStr::from_str(v);
-                        }
-                    }
-                    w @ None => {
-                        this.add_mem_used(v.as_bytes().len());
-                        *w = Some(Box::new(AggDynStr::from_str(v)));
-                    }
-                }
-            }
-        }),
-        DataType::Binary => Ok(|this, acc, v, i| {
-            let value = downcast_any!(v, BinaryArray).unwrap();
-            if value.is_valid(i) {
-                let v = value.value(i);
-                match acc.dyn_value_mut(this.accum_state_val_addr) {
-                    Some(wv) => {
-                        let wv = downcast_any!(wv, mut AggDynBinary).unwrap();
-                        if v.partial_cmp(wv.value()) == Some(P::ORD) {
-                            this.add_mem_used(v.len());
-                            *wv = AggDynBinary::from_slice(v);
-                        }
-                    }
-                    w @ None => {
-                        this.add_mem_used(v.len());
-                        *w = Some(Box::new(AggDynBinary::from_slice(v)));
-                    }
-                }
-            }
-        }),
-        _ => Ok(|this, acc, v, i| {
-            if v.is_valid(i) {
-                let v = ScalarValue::try_from_array(v, i)
-                    .expect(&format!("error cast to ScalarValue, dt={}", v.data_type()));
-                match acc.dyn_value_mut(this.accum_state_val_addr) {
-                    Some(wv) => {
-                        let wv = downcast_any!(wv, mut AggDynScalar).unwrap();
-                        if v.partial_cmp(wv.value()) == Some(P::ORD) {
-                            this.add_mem_used(v.size());
-                            *wv = AggDynScalar::new(v);
-                        }
-                    }
-                    w @ None => {
-                        this.add_mem_used(v.size());
-                        *w = Some(Box::new(AggDynScalar::new(v)));
-                    }
-                }
-            }
-        }),
-    }
-}
-
-fn get_partial_batch_updater<P: AggMaxMinParams>(
-    dt: &DataType,
-) -> Result<fn(&AggMaxMin<P>, &mut [RefAccumStateRow], &ArrayRef)> {
-    macro_rules! fn_fixed {
-        ($ty:ident) => {{
-            Ok(|this, accs, v| {
-                type TArray = paste! {[<$ty Array>]};
-                let value = v.as_any().downcast_ref::<TArray>().unwrap();
-                for (acc, value) in accs.iter_mut().zip(value.iter()) {
-                    if let Some(value) = value {
-                        partial_update_prim::<P, _>(acc, this.accum_state_val_addr, value);
-                    }
-                }
-            })
-        }};
-    }
-    match dt {
-        DataType::Null => Ok(|_, _, _| ()),
-        DataType::Boolean => fn_fixed!(Boolean),
-        DataType::Float32 => fn_fixed!(Float32),
-        DataType::Float64 => fn_fixed!(Float64),
-        DataType::Int8 => fn_fixed!(Int8),
-        DataType::Int16 => fn_fixed!(Int16),
-        DataType::Int32 => fn_fixed!(Int32),
-        DataType::Int64 => fn_fixed!(Int64),
-        DataType::UInt8 => fn_fixed!(UInt8),
-        DataType::UInt16 => fn_fixed!(UInt16),
-        DataType::UInt32 => fn_fixed!(UInt32),
-        DataType::UInt64 => fn_fixed!(UInt64),
-        DataType::Date32 => fn_fixed!(Date32),
-        DataType::Date64 => fn_fixed!(Date64),
-        DataType::Timestamp(TimeUnit::Second, _) => fn_fixed!(TimestampSecond),
-        DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
-        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
-        DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(..) => fn_fixed!(Decimal128),
-        DataType::Utf8 => Ok(|this, accs, v| {
-            let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-            for (acc, v) in accs.iter_mut().zip(value.iter()) {
-                if let Some(v) = v {
-                    match acc.dyn_value_mut(this.accum_state_val_addr) {
-                        Some(wv) => {
-                            let wv = downcast_any!(wv, mut AggDynStr).unwrap();
-                            if v.partial_cmp(wv.value()) == Some(P::ORD) {
-                                this.add_mem_used(v.as_bytes().len());
-                                *wv = AggDynStr::from_str(v);
-                            }
-                        }
-                        w @ None => {
-                            *w = Some(Box::new(AggDynStr::from_str(v)));
-                        }
-                    }
-                }
-            }
-        }),
-        DataType::Binary => Ok(|this, accs, v| {
-            let value = v.as_any().downcast_ref::<BinaryArray>().unwrap();
-            for (acc, v) in accs.iter_mut().zip(value.iter()) {
-                if let Some(v) = v {
-                    match acc.dyn_value_mut(this.accum_state_val_addr) {
-                        Some(wv) => {
-                            let wv = downcast_any!(wv, mut AggDynBinary).unwrap();
-                            if v.partial_cmp(wv.value()) == Some(P::ORD) {
-                                this.add_mem_used(v.len());
-                                *wv = AggDynBinary::from_slice(v);
-                            }
-                        }
-                        w @ None => {
-                            *w = Some(Box::new(AggDynBinary::from_slice(v)));
-                        }
-                    }
-                }
-            }
-        }),
-        _ => Ok(|this, accs, v| {
-            for (row_idx, acc) in accs.iter_mut().enumerate() {
-                let v = ScalarValue::try_from_array(v, row_idx)
-                    .expect(&format!("error cast to ScalarValue, dt={}", v.data_type()));
-                if !v.is_null() {
-                    match acc.dyn_value_mut(this.accum_state_val_addr) {
-                        Some(wv) => {
-                            let wv = downcast_any!(wv, mut AggDynScalar).unwrap();
-                            if v.partial_cmp(wv.value()) == Some(P::ORD) {
-                                this.add_mem_used(v.size());
-                                *wv = AggDynScalar::new(v);
-                            }
-                        }
-                        w @ None => {
-                            *w = Some(Box::new(AggDynScalar::new(v)));
-                        }
-                    }
-                }
-            }
-        }),
-    }
-}
-
-fn get_partial_buf_merger<P: AggMaxMinParams>(
-    dt: &DataType,
-) -> Result<fn(&AggMaxMin<P>, &mut RefAccumStateRow, &mut RefAccumStateRow)> {
-    macro_rules! fn_fixed {
-        ($ty:ident) => {{
-            Ok(|this, acc1, acc2| {
-                type TType = paste! {[<$ty Type>]};
-                type TNative = <TType as ArrowPrimitiveType>::Native;
-                if acc2.is_fixed_valid(this.accum_state_val_addr) {
-                    let v = acc2.fixed_value::<TNative>(this.accum_state_val_addr);
-                    partial_update_prim::<P, _>(acc1, this.accum_state_val_addr, v);
-                }
-            })
-        }};
-    }
-    match dt {
-        DataType::Null => Ok(|_, _, _| ()),
-        DataType::Boolean => Ok(|this, acc1, acc2| {
-            if acc2.is_fixed_valid(this.accum_state_val_addr) {
-                let v = acc2.fixed_value::<bool>(this.accum_state_val_addr);
-                partial_update_prim::<P, _>(acc1, this.accum_state_val_addr, v);
-            }
-        }),
-        DataType::Float32 => fn_fixed!(Float32),
-        DataType::Float64 => fn_fixed!(Float64),
-        DataType::Int8 => fn_fixed!(Int8),
-        DataType::Int16 => fn_fixed!(Int16),
-        DataType::Int32 => fn_fixed!(Int32),
-        DataType::Int64 => fn_fixed!(Int64),
-        DataType::UInt8 => fn_fixed!(UInt8),
-        DataType::UInt16 => fn_fixed!(UInt16),
-        DataType::UInt32 => fn_fixed!(UInt32),
-        DataType::UInt64 => fn_fixed!(UInt64),
-        DataType::Date32 => fn_fixed!(Date32),
-        DataType::Date64 => fn_fixed!(Date64),
-        DataType::Timestamp(TimeUnit::Second, _) => fn_fixed!(TimestampSecond),
-        DataType::Timestamp(TimeUnit::Millisecond, _) => fn_fixed!(TimestampMillisecond),
-        DataType::Timestamp(TimeUnit::Microsecond, _) => fn_fixed!(TimestampMicrosecond),
-        DataType::Timestamp(TimeUnit::Nanosecond, _) => fn_fixed!(TimestampNanosecond),
-        DataType::Decimal128(..) => fn_fixed!(Decimal128),
-        DataType::Utf8 => Ok(|this, acc1, acc2| {
-            let s1 = acc1.dyn_value_mut(this.accum_state_val_addr);
-            let s2 = std::mem::take(acc2.dyn_value_mut(this.accum_state_val_addr));
-            match (s1, s2) {
-                (Some(w), Some(v)) => {
-                    let w = downcast_any!(w, mut AggDynStr).unwrap();
-                    let v = v
-                        .as_any_boxed()
-                        .downcast::<AggDynStr>()
-                        .or_else(|_| df_execution_err!("error downcasting to AggSynStr"))
-                        .unwrap();
-                    if v.value().partial_cmp(w.value()) == Some(P::ORD) {
-                        this.sub_mem_used(w.mem_size()); // w will be dropped
-                        *w = AggDynStr::new(v.into_value());
-                    } else {
-                        this.sub_mem_used(v.mem_size()); // v will be dropped
-                    }
-                }
-                (Some(_), None) => {}
-                (s1 @ None, s2 @ _) => *s1 = s2,
-            }
-        }),
-        DataType::Binary => Ok(|this, acc1, acc2| {
-            let s1 = acc1.dyn_value_mut(this.accum_state_val_addr);
-            let s2 = std::mem::take(acc2.dyn_value_mut(this.accum_state_val_addr));
-            match (s1, s2) {
-                (Some(w), Some(v)) => {
-                    let w = downcast_any!(w, mut AggDynBinary).unwrap();
-                    let v = v
-                        .as_any_boxed()
-                        .downcast::<AggDynBinary>()
-                        .or_else(|_| df_execution_err!("error downcasting to AggSynBinary"))
-                        .unwrap();
-                    if v.value().partial_cmp(w.value()) == Some(P::ORD) {
-                        this.sub_mem_used(w.mem_size()); // w will be dropped
-                        *w = AggDynBinary::new(v.into_value());
-                    } else {
-                        this.sub_mem_used(v.mem_size()); // v will be dropped
-                    }
-                }
-                (Some(_), None) => {}
-                (s1 @ None, s2 @ _) => *s1 = s2,
-            }
-        }),
-        _ => Ok(|this, acc1, acc2| {
-            let s1 = acc1.dyn_value_mut(this.accum_state_val_addr);
-            let s2 = std::mem::take(acc2.dyn_value_mut(this.accum_state_val_addr));
-            match (s1, s2) {
-                (Some(w), Some(v)) => {
-                    let w = downcast_any!(w, mut AggDynScalar).unwrap();
-                    let v = v
-                        .as_any_boxed()
-                        .downcast::<AggDynScalar>()
-                        .or_else(|_| df_execution_err!("error downcasting to AggSynBinary"))
-                        .unwrap();
-                    if v.value().partial_cmp(w.value()) == Some(P::ORD) {
-                        this.sub_mem_used(w.mem_size()); // w will be dropped
-                        *w = AggDynScalar::new(v.into_value());
-                    } else {
-                        this.sub_mem_used(v.mem_size()); // v will be dropped
-                    }
-                }
-                (Some(_), None) => {}
-                (s1 @ None, s2 @ _) => *s1 = s2,
-            }
-        }),
+    fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        accs.to_array(acc_idx, &self.data_type)
     }
 }
 
 pub trait AggMaxMinParams: 'static + Send + Sync {
     const NAME: &'static str;
     const ORD: Ordering;
-
-    fn maxmin_boolean(v: &BooleanArray) -> Option<bool>;
-    fn maxmin<T>(array: &PrimitiveArray<T>) -> Option<<T as ArrowPrimitiveType>::Native>
-    where
-        T: ArrowNumericType,
-        <T as ArrowPrimitiveType>::Native: ArrowNativeType;
-
-    fn maxmin_string<T>(array: &GenericByteArray<GenericStringType<T>>) -> Option<&str>
-    where
-        T: OffsetSizeTrait;
-
-    fn maxmin_binary<T>(array: &GenericByteArray<GenericBinaryType<T>>) -> Option<&[u8]>
-    where
-        T: OffsetSizeTrait;
 }
 
 pub struct AggMaxParams;
@@ -636,81 +305,9 @@ pub struct AggMinParams;
 impl AggMaxMinParams for AggMaxParams {
     const NAME: &'static str = "max";
     const ORD: Ordering = Ordering::Greater;
-
-    fn maxmin_boolean(v: &BooleanArray) -> Option<bool> {
-        arrow::compute::max_boolean(v)
-    }
-
-    fn maxmin<T>(array: &PrimitiveArray<T>) -> Option<<T as ArrowPrimitiveType>::Native>
-    where
-        T: ArrowNumericType,
-        <T as ArrowPrimitiveType>::Native: ArrowNativeType,
-    {
-        match array.data_type() {
-            DataType::Float32 => array
-                .iter()
-                .flatten()
-                .max_by(|a, b| a.partial_cmp(b).unwrap()),
-            DataType::Float64 => array
-                .iter()
-                .flatten()
-                .max_by(|a, b| a.partial_cmp(b).unwrap()),
-            _ => arrow::compute::max(array),
-        }
-    }
-
-    fn maxmin_string<T>(array: &GenericByteArray<GenericStringType<T>>) -> Option<&str>
-    where
-        T: OffsetSizeTrait,
-    {
-        arrow::compute::max_string(array)
-    }
-
-    fn maxmin_binary<T>(array: &GenericByteArray<GenericBinaryType<T>>) -> Option<&[u8]>
-    where
-        T: OffsetSizeTrait,
-    {
-        arrow::compute::max_binary(array)
-    }
 }
 
 impl AggMaxMinParams for AggMinParams {
     const NAME: &'static str = "min";
     const ORD: Ordering = Ordering::Less;
-
-    fn maxmin_boolean(v: &BooleanArray) -> Option<bool> {
-        arrow::compute::min_boolean(v)
-    }
-
-    fn maxmin<T>(array: &PrimitiveArray<T>) -> Option<<T as ArrowPrimitiveType>::Native>
-    where
-        T: ArrowNumericType,
-        <T as ArrowPrimitiveType>::Native: ArrowNativeType,
-    {
-        match array.data_type() {
-            DataType::Float32 => array
-                .iter()
-                .flatten()
-                .min_by(|a, b| a.partial_cmp(b).unwrap()),
-            DataType::Float64 => array
-                .iter()
-                .flatten()
-                .min_by(|a, b| a.partial_cmp(b).unwrap()),
-            _ => arrow::compute::min(array),
-        }
-    }
-
-    fn maxmin_string<T>(array: &GenericByteArray<GenericStringType<T>>) -> Option<&str>
-    where
-        T: OffsetSizeTrait,
-    {
-        arrow::compute::min_string(array)
-    }
-
-    fn maxmin_binary<T>(array: &GenericByteArray<GenericBinaryType<T>>) -> Option<&[u8]>
-    where
-        T: OffsetSizeTrait,
-    {
-        arrow::compute::min_binary(array)
-    }
 }

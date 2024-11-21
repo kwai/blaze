@@ -21,7 +21,7 @@ use datafusion_ext_commons::suggested_output_batch_mem_size;
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    common::{batch_selection::interleave_batches, output::WrappedRecordBatchSender},
+    common::{batch_selection::interleave_batches, execution_context::WrappedRecordBatchSender},
     compare_cursor, cur_forward,
     joins::{Idx, JoinParams, StreamCursors},
     sort_merge_join_exec::Joiner,
@@ -97,7 +97,7 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
 
         if output_batch.num_rows() > 0 {
             self.output_rows += output_batch.num_rows();
-            self.output_sender.send(Ok(output_batch)).await;
+            self.output_sender.send(output_batch).await;
         }
         Ok(())
     }
@@ -140,8 +140,8 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                     self.lindices.push(lidx);
                     self.rindices.push(ridx);
 
-                    let mut equal_lindices: SmallVec<[Idx; 16]> = smallvec![lidx];
-                    let mut equal_rindices: SmallVec<[Idx; 16]> = smallvec![ridx];
+                    let mut equal_lindices: SmallVec<Idx, 16> = smallvec![lidx];
+                    let mut equal_rindices: SmallVec<Idx, 16> = smallvec![ridx];
                     let mut last_lidx = lidx;
                     let mut last_ridx = ridx;
                     lidx = curs.0.cur_idx;

@@ -15,24 +15,28 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::Arc,
 };
 
 use arrow::{array::*, datatypes::*};
 use datafusion::{
     common::{
         cast::{as_decimal128_array, as_int64_array},
-        Result, ScalarValue,
+        Result,
     },
     physical_expr::PhysicalExpr,
 };
-use datafusion_ext_commons::df_unimplemented_err;
+use datafusion_ext_commons::downcast_any;
 
-use crate::agg::{
-    acc::{AccumInitialValue, AccumStateValAddr, RefAccumStateRow},
-    count::AggCount,
-    sum::AggSum,
-    Agg, WithAggBufAddrs, WithMemTracking,
+use crate::{
+    agg::{
+        acc::{AccColumn, AccColumnRef},
+        agg::IdxSelection,
+        count::AggCount,
+        sum::AggSum,
+        Agg,
+    },
+    memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
 };
 
 pub struct AggAvg {
@@ -40,41 +44,17 @@ pub struct AggAvg {
     data_type: DataType,
     agg_sum: AggSum,
     agg_count: AggCount,
-    accums_initial: Vec<AccumInitialValue>,
-    final_merger: fn(ScalarValue, i64) -> ScalarValue,
-    mem_used_tracker: AtomicUsize,
-}
-
-impl WithAggBufAddrs for AggAvg {
-    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
-        self.agg_sum
-            .set_accum_state_val_addrs(accum_state_val_addrs);
-        self.agg_count
-            .set_accum_state_val_addrs(&accum_state_val_addrs[1..]);
-    }
-}
-
-impl WithMemTracking for AggAvg {
-    fn mem_used_tracker(&self) -> &AtomicUsize {
-        &self.mem_used_tracker
-    }
 }
 
 impl AggAvg {
     pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
         let agg_sum = AggSum::try_new(child.clone(), data_type.clone())?;
-        let agg_count = AggCount::try_new(child.clone(), DataType::Int64)?;
-        let accums_initial = [agg_sum.accums_initial(), agg_count.accums_initial()].concat();
-        let final_merger = get_final_merger(&data_type)?;
-
+        let agg_count = AggCount::try_new(vec![child.clone()], DataType::Int64)?;
         Ok(Self {
             child,
             data_type,
             agg_sum,
             agg_count,
-            accums_initial,
-            final_merger,
-            mem_used_tracker: AtomicUsize::new(0),
         })
     }
 }
@@ -109,10 +89,6 @@ impl Agg for AggAvg {
         true
     }
 
-    fn accums_initial(&self) -> &[AccumInitialValue] {
-        &self.accums_initial
-    }
-
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // cast arg1 to target data type
         Ok(vec![datafusion_ext_commons::cast::cast(
@@ -121,75 +97,56 @@ impl Agg for AggAvg {
         )?])
     }
 
-    fn increase_acc_mem_used(&self, _acc: &mut RefAccumStateRow) {
-        // do nothing
+    fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
+        Box::new(AccAvgColumn {
+            sum: self.agg_sum.create_acc_column(num_rows),
+            count: self.agg_count.create_acc_column(num_rows),
+        })
     }
 
     fn partial_update(
         &self,
-        acc: &mut RefAccumStateRow,
-        values: &[ArrayRef],
-        row_idx: usize,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        partial_args: &[ArrayRef],
+        partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        self.agg_sum.partial_update(acc, values, row_idx)?;
-        self.agg_count.partial_update(acc, values, row_idx)?;
-        Ok(())
-    }
-
-    fn partial_batch_update(
-        &self,
-        accs: &mut [RefAccumStateRow],
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        self.agg_sum.partial_batch_update(accs, values)?;
-        self.agg_count.partial_batch_update(accs, values)?;
-        Ok(())
-    }
-
-    fn partial_update_all(
-        &self,
-        acc: &mut RefAccumStateRow,
-        num_rows: usize,
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        self.agg_sum.partial_update_all(acc, num_rows, values)?;
-        self.agg_count.partial_update_all(acc, num_rows, values)?;
+        let accs = downcast_any!(accs, mut AccAvgColumn).unwrap();
+        self.agg_sum
+            .partial_update(&mut accs.sum, acc_idx, partial_args, partial_arg_idx)?;
+        self.agg_count
+            .partial_update(&mut accs.count, acc_idx, partial_args, partial_arg_idx)?;
         Ok(())
     }
 
     fn partial_merge(
         &self,
-        acc1: &mut RefAccumStateRow,
-        acc2: &mut RefAccumStateRow,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        merging_accs: &mut AccColumnRef,
+        merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        self.agg_sum.partial_merge(acc1, acc2)?;
-        self.agg_count.partial_merge(acc1, acc2)?;
+        let accs = downcast_any!(accs, mut AccAvgColumn).unwrap();
+        let merging_accs = downcast_any!(merging_accs, mut AccAvgColumn).unwrap();
+        self.agg_sum.partial_merge(
+            &mut accs.sum,
+            acc_idx,
+            &mut merging_accs.sum,
+            merging_acc_idx,
+        )?;
+        self.agg_count.partial_merge(
+            &mut accs.count,
+            acc_idx,
+            &mut merging_accs.count,
+            merging_acc_idx,
+        )?;
         Ok(())
     }
 
-    fn partial_batch_merge(
-        &self,
-        accs: &mut [RefAccumStateRow],
-        merging_accs: &mut [RefAccumStateRow],
-    ) -> Result<()> {
-        self.agg_sum.partial_batch_merge(accs, merging_accs)?;
-        self.agg_count.partial_batch_merge(accs, merging_accs)?;
-        Ok(())
-    }
-
-    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
-        let sum = self.agg_sum.final_merge(acc)?;
-        let count = match self.agg_count.final_merge(acc)? {
-            ScalarValue::Int64(Some(count)) => count,
-            _ => unreachable!(),
-        };
-        let final_merger = self.final_merger;
-        Ok(final_merger(sum, count))
-    }
-
-    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
-        let sums = self.agg_sum.final_batch_merge(accs)?;
-        let counts = self.agg_count.final_batch_merge(accs)?;
+    fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        let accs = downcast_any!(accs, mut AccAvgColumn).unwrap();
+        let sums = self.agg_sum.final_merge(&mut accs.sum, acc_idx)?;
+        let counts = self.agg_count.final_merge(&mut accs.count, acc_idx)?;
 
         let counts_zero_free: Int64Array = as_int64_array(&counts)?.unary_opt(|count| {
             let not_zero = !count.is_zero();
@@ -214,52 +171,55 @@ impl Agg for AggAvg {
     }
 }
 
-fn get_final_merger(dt: &DataType) -> Result<fn(ScalarValue, i64) -> ScalarValue> {
-    macro_rules! get_fn {
-        ($ty:ident,f64) => {{
-            Ok(|sum: ScalarValue, count: i64| {
-                let avg = match sum {
-                    ScalarValue::$ty(sum, ..) => ScalarValue::Float64(if !count.is_zero() {
-                        sum.map(|sum| sum as f64 / (count as f64))
-                    } else {
-                        None
-                    }),
-                    _ => unreachable!(),
-                };
-                avg
-            })
-        }};
-        (Decimal128) => {{
-            Ok(|sum: ScalarValue, count: i64| {
-                let avg = match sum {
-                    ScalarValue::Decimal128(sum, prec, scale) => ScalarValue::Decimal128(
-                        if !count.is_zero() {
-                            sum.map(|sum| sum / (count as i128))
-                        } else {
-                            None
-                        },
-                        prec,
-                        scale,
-                    ),
-                    _ => unreachable!(),
-                };
-                avg
-            })
-        }};
+struct AccAvgColumn {
+    sum: AccColumnRef,
+    count: AccColumnRef,
+}
+
+impl AccColumn for AccAvgColumn {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
-    match dt {
-        DataType::Null => Ok(|_, _| ScalarValue::Null),
-        DataType::Float32 => get_fn!(Float32, f64),
-        DataType::Float64 => get_fn!(Float64, f64),
-        DataType::Int8 => get_fn!(Int8, f64),
-        DataType::Int16 => get_fn!(Int16, f64),
-        DataType::Int32 => get_fn!(Int32, f64),
-        DataType::Int64 => get_fn!(Int64, f64),
-        DataType::UInt8 => get_fn!(UInt8, f64),
-        DataType::UInt16 => get_fn!(UInt16, f64),
-        DataType::UInt32 => get_fn!(UInt32, f64),
-        DataType::UInt64 => get_fn!(UInt64, f64),
-        DataType::Decimal128(..) => get_fn!(Decimal128),
-        other => df_unimplemented_err!("unsupported data type in avg(): {other}"),
+
+    fn resize(&mut self, len: usize) {
+        self.sum.resize(len);
+        self.count.resize(len);
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.sum.shrink_to_fit();
+        self.count.shrink_to_fit();
+    }
+
+    fn num_records(&self) -> usize {
+        self.sum.num_records()
+    }
+
+    fn mem_used(&self) -> usize {
+        self.sum.mem_used() + self.count.mem_used()
+    }
+
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
+        self.sum.freeze_to_rows(idx, array)?;
+        self.count.freeze_to_rows(idx, array)?;
+        Ok(())
+    }
+
+    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
+        self.sum.unfreeze_from_rows(array, offsets)?;
+        self.count.unfreeze_from_rows(array, offsets)?;
+        Ok(())
+    }
+
+    fn spill(&self, idx: IdxSelection<'_>, buf: &mut SpillCompressedWriter) -> Result<()> {
+        self.sum.spill(idx, buf)?;
+        self.count.spill(idx, buf)?;
+        Ok(())
+    }
+
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
+        self.sum.unspill(num_rows, r)?;
+        self.count.unspill(num_rows, r)?;
+        Ok(())
     }
 }

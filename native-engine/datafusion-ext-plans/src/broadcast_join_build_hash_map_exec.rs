@@ -24,17 +24,16 @@ use datafusion::{
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::{EquivalenceProperties, Partitioning, PhysicalExpr},
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties,
     },
 };
-use futures::{stream::once, StreamExt, TryStreamExt};
+use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
 use crate::{
-    common::{output::TaskOutputter, timer_helper::TimerHelper},
+    common::{execution_context::ExecutionContext, timer_helper::TimerHelper},
     joins::join_hash_map::{join_hash_map_schema, JoinHashMap},
 };
 
@@ -109,18 +108,9 @@ impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let input = self.input.execute(partition, context.clone())?;
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(execute_build_hash_map(
-                context,
-                input,
-                self.keys.clone(),
-                baseline_metrics,
-            ))
-            .try_flatten(),
-        )))
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let input = exec_ctx.execute(&self.input)?;
+        execute_build_hash_map(input, self.keys.clone(), exec_ctx)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -138,35 +128,32 @@ pub fn collect_hash_map(
     Ok(hash_map)
 }
 
-async fn execute_build_hash_map(
-    context: Arc<TaskContext>,
+fn execute_build_hash_map(
     mut input: SendableRecordBatchStream,
     keys: Vec<Arc<dyn PhysicalExpr>>,
-    metrics: BaselineMetrics,
+    exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
-    let elapsed_compute = metrics.elapsed_compute().clone();
-    let _timer = elapsed_compute.timer();
-
-    let mut data_batches = vec![];
-    let data_schema = input.schema();
-
-    // collect all input batches
-    while let Some(batch) = metrics
-        .elapsed_compute()
-        .exclude_timer_async(async { input.next().await.transpose() })
-        .await?
-    {
-        data_batches.push(batch);
-    }
-
-    // build hash map
-    let hash_map_schema = join_hash_map_schema(&data_schema);
-    let hash_map = collect_hash_map(data_schema, data_batches, keys)?;
-
     // output hash map batches as stream
-    context.output_with_sender("BuildHashMap", hash_map_schema, move |sender| async move {
-        sender.exclude_time(metrics.elapsed_compute());
-        sender.send(Ok(hash_map.into_hash_map_batch()?)).await;
-        Ok(())
-    })
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("BuildHashMap", move |sender| async move {
+            let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+            let _timer = elapsed_compute.timer();
+
+            // collect all input batches
+            let mut data_batches = vec![];
+            while let Some(batch) = elapsed_compute
+                .exclude_timer_async(input.next())
+                .await
+                .transpose()?
+            {
+                data_batches.push(batch);
+            }
+
+            // build hash map
+            let data_schema = input.schema();
+            let hash_map = collect_hash_map(data_schema, data_batches, keys)?;
+            sender.send(hash_map.into_hash_map_batch()?).await;
+            Ok(())
+        }))
 }

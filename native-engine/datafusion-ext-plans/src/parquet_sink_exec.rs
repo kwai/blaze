@@ -33,10 +33,9 @@ use datafusion::{
     },
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricValue, MetricsSet, Time},
-        stream::RecordBatchStreamAdapter,
+        metrics::{Count, ExecutionPlanMetricsSet, MetricsSet, Time},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        Metric, PlanProperties, SendableRecordBatchStream,
+        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{
@@ -45,11 +44,11 @@ use datafusion_ext_commons::{
     df_execution_err,
     hadoop_fs::{FsDataOutputWrapper, FsProvider},
 };
-use futures::{stream::once, StreamExt, TryStreamExt};
+use futures::StreamExt;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use crate::common::output::TaskOutputter;
+use crate::common::execution_context::ExecutionContext;
 
 #[derive(Debug)]
 pub struct ParquetSinkExec {
@@ -129,31 +128,10 @@ impl ExecutionPlan for ParquetSinkExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let metrics = BaselineMetrics::new(&self.metrics, partition);
-        let elapsed_compute = metrics.elapsed_compute().clone();
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
-
-        // register io_time metric
-        let io_time = Time::default();
-        let io_time_metric = Arc::new(Metric::new(
-            MetricValue::Time {
-                name: "io_time".into(),
-                time: io_time.clone(),
-            },
-            Some(partition),
-        ));
-        self.metrics.register(io_time_metric);
-
-        // register bytes_written metric
-        let bytes_written = Count::default();
-        let bytes_written_metric = Arc::new(Metric::new(
-            MetricValue::Count {
-                name: "bytes_written".into(),
-                count: bytes_written.clone(),
-            },
-            Some(partition),
-        ));
-        self.metrics.register(bytes_written_metric);
+        let io_time = exec_ctx.register_timer_metric("io_time");
 
         let parquet_sink_context = Arc::new(ParquetSinkContext::try_new(
             &self.fs_resource_id,
@@ -162,20 +140,8 @@ impl ExecutionPlan for ParquetSinkExec {
             &self.props,
         )?);
 
-        let input = self.input.execute(partition, context.clone())?;
-        let output = Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(execute_parquet_sink(
-                partition,
-                context,
-                parquet_sink_context,
-                input,
-                metrics,
-                bytes_written,
-            ))
-            .try_flatten(),
-        ));
-        Ok(output)
+        let input = exec_ctx.execute(&self.input)?;
+        execute_parquet_sink(parquet_sink_context, input, exec_ctx)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -238,37 +204,41 @@ impl ParquetSinkContext {
     }
 }
 
-async fn execute_parquet_sink(
-    partition_id: usize,
-    context: Arc<TaskContext>,
+fn execute_parquet_sink(
     parquet_sink_context: Arc<ParquetSinkContext>,
     mut input: SendableRecordBatchStream,
-    metrics: BaselineMetrics,
-    bytes_written: Count,
+    exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
-    let schema = input.schema();
+    let partition_id = exec_ctx.partition_id();
     let part_writer: Arc<Mutex<Option<PartWriter>>> = Arc::default();
+    let bytes_written = exec_ctx.register_counter_metric("bytes_written");
 
-    context.output_with_sender("ParquetSink", schema, move |sender| async move {
-        macro_rules! part_writer_init {
-            ($batch:expr, $part_values:expr) => {{
-                log::info!(
-                    "[partition={partition_id}] starts writing partition: {:?}",
-                    $part_values
-                );
-                let parquet_sink_context_cloned = parquet_sink_context.clone();
-                *part_writer.lock() = Some({
-                    // send identity batch, after that we can achieve a new output file
-                    sender.send(Ok($batch.slice(0, 1))).await;
-                    tokio::task::spawn_blocking(move || {
-                        PartWriter::try_new(partition_id, parquet_sink_context_cloned, $part_values)
-                    })
-                    .await
-                    .or_else(|e| df_execution_err!("closing parquet file error: {e}"))??
-                });
-            }};
-        }
-        macro_rules! part_writer_close {
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("ParquetSink", move |sender| async move {
+            macro_rules! part_writer_init {
+                ($batch:expr, $part_values:expr) => {{
+                    log::info!(
+                        "[partition={partition_id}] starts writing partition: {:?}",
+                        $part_values
+                    );
+                    let parquet_sink_context_cloned = parquet_sink_context.clone();
+                    *part_writer.lock() = Some({
+                        // send identity batch, after that we can achieve a new output file
+                        sender.send(($batch.slice(0, 1))).await;
+                        tokio::task::spawn_blocking(move || {
+                            PartWriter::try_new(
+                                partition_id,
+                                parquet_sink_context_cloned,
+                                $part_values,
+                            )
+                        })
+                        .await
+                        .or_else(|e| df_execution_err!("closing parquet file error: {e}"))??
+                    });
+                }};
+            }
+            macro_rules! part_writer_close {
             () => {{
                 let maybe_writer = part_writer.lock().take();
                 if let Some(w) = maybe_writer {
@@ -282,63 +252,63 @@ async fn execute_parquet_sink(
                             file_stat.num_bytes as i64,
                         ) -> ()
                     )?;
-                    metrics.output_rows().add(file_stat.num_rows);
+                    exec_ctx.baseline_metrics().output_rows().add(file_stat.num_rows);
                     bytes_written.add(file_stat.num_bytes);
                 }
             }}
         }
 
-        // write parquet data
-        while let Some(mut batch) = input.next().await.transpose()? {
-            let _timer = metrics.elapsed_compute().timer();
-            if batch.num_rows() == 0 {
-                continue;
-            }
-
-            while batch.num_rows() > 0 {
-                let part_values =
-                    get_dyn_part_values(&batch, parquet_sink_context.num_dyn_parts, 0)?;
-                let part_writer_outdated =
-                    part_writer.lock().as_ref().map(|w| &w.part_values) != Some(&part_values);
-
-                if part_writer_outdated {
-                    part_writer_close!();
-                    part_writer_init!(batch, &part_values);
+            // write parquet data
+            while let Some(mut batch) = input.next().await.transpose()? {
+                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+                if batch.num_rows() == 0 {
                     continue;
                 }
 
-                // compute sub batch size
-                let batch_mem_size = batch.get_array_mem_size();
-                let num_sub_batches = (batch_mem_size / 1048576).max(1);
-                let num_sub_batch_rows = (batch.num_rows() / num_sub_batches).max(16);
+                while batch.num_rows() > 0 {
+                    let part_values =
+                        get_dyn_part_values(&batch, parquet_sink_context.num_dyn_parts, 0)?;
+                    let part_writer_outdated =
+                        part_writer.lock().as_ref().map(|w| &w.part_values) != Some(&part_values);
 
-                // split batch into current part and rest parts, then write current part
-                let m = rfind_part_values(&batch, &part_values)?;
-                let cur_batch = batch.slice(0, m);
-                batch = batch.slice(m, batch.num_rows() - m);
+                    if part_writer_outdated {
+                        part_writer_close!();
+                        part_writer_init!(batch, &part_values);
+                        continue;
+                    }
 
-                // write cur batch
-                let cur_batch = adapt_schema(&cur_batch, &parquet_sink_context.hive_schema)?;
-                let mut offset = 0;
-                while offset < cur_batch.num_rows() {
-                    let part_writer = part_writer.clone();
-                    let sub_batch_size = num_sub_batch_rows.min(cur_batch.num_rows() - offset);
-                    let sub_batch = cur_batch.slice(offset, sub_batch_size);
-                    offset += sub_batch_size;
+                    // compute sub batch size
+                    let batch_mem_size = batch.get_array_mem_size();
+                    let num_sub_batches = (batch_mem_size / 1048576).max(1);
+                    let num_sub_batch_rows = (batch.num_rows() / num_sub_batches).max(16);
 
-                    tokio::task::spawn_blocking(move || {
-                        let mut part_writer = part_writer.lock();
-                        let w = part_writer.as_mut().unwrap();
-                        w.write(&sub_batch)
-                    })
-                    .await
-                    .or_else(|e| df_execution_err!("writing parquet file error: {e}"))??;
+                    // split batch into current part and rest parts, then write current part
+                    let m = rfind_part_values(&batch, &part_values)?;
+                    let cur_batch = batch.slice(0, m);
+                    batch = batch.slice(m, batch.num_rows() - m);
+
+                    // write cur batch
+                    let cur_batch = adapt_schema(&cur_batch, &parquet_sink_context.hive_schema)?;
+                    let mut offset = 0;
+                    while offset < cur_batch.num_rows() {
+                        let part_writer = part_writer.clone();
+                        let sub_batch_size = num_sub_batch_rows.min(cur_batch.num_rows() - offset);
+                        let sub_batch = cur_batch.slice(offset, sub_batch_size);
+                        offset += sub_batch_size;
+
+                        tokio::task::spawn_blocking(move || {
+                            let mut part_writer = part_writer.lock();
+                            let w = part_writer.as_mut().unwrap();
+                            w.write(&sub_batch)
+                        })
+                        .await
+                        .or_else(|e| df_execution_err!("writing parquet file error: {e}"))??;
+                    }
                 }
             }
-        }
-        part_writer_close!();
-        Ok(())
-    })
+            part_writer_close!();
+            Ok(())
+        }))
 }
 
 fn adapt_schema(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {

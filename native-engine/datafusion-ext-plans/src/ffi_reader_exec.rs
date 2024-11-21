@@ -29,19 +29,17 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        stream::RecordBatchStreamAdapter,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
         Partitioning::UnknownPartitioning,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
 use datafusion_ext_commons::array_size::ArraySize;
-use futures_util::{stream::once, TryStreamExt};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
-use crate::common::output::TaskOutputter;
+use crate::common::execution_context::ExecutionContext;
 
 pub struct FFIReaderExec {
     num_partitions: usize,
@@ -127,20 +125,9 @@ impl ExecutionPlan for FFIReaderExec {
             jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?.as_obj()
         )?;
 
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let size_counter = MetricBuilder::new(&self.metrics).counter("size", partition);
-
-        let stream = read_ffi(
-            context,
-            self.schema(),
-            exporter,
-            baseline_metrics,
-            size_counter,
-        );
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            self.schema(),
-            once(stream).try_flatten(),
-        )))
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let output = read_ffi(self.schema(), exporter, exec_ctx)?;
+        Ok(output)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -152,42 +139,43 @@ impl ExecutionPlan for FFIReaderExec {
     }
 }
 
-async fn read_ffi(
-    context: Arc<TaskContext>,
+fn read_ffi(
     schema: SchemaRef,
     exporter: GlobalRef,
-    baseline_metrics: BaselineMetrics,
-    size_counter: Count,
+    exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
-    context.output_with_sender("FFIReader", schema.clone(), move |sender| async move {
-        loop {
-            let batch = {
-                // load batch from ffi
-                let mut ffi_arrow_array = FFI_ArrowArray::empty();
-                let ffi_arrow_array_ptr = &mut ffi_arrow_array as *mut FFI_ArrowArray as i64;
-                let has_next = jni_call!(
-                    BlazeArrowFFIExporter(exporter.as_obj())
-                        .exportNextBatch(ffi_arrow_array_ptr) -> bool
-                )?;
+    let size_counter = exec_ctx.register_counter_metric("size");
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("FFIReader", move |sender| async move {
+            loop {
+                let batch = {
+                    // load batch from ffi
+                    let mut ffi_arrow_array = FFI_ArrowArray::empty();
+                    let ffi_arrow_array_ptr = &mut ffi_arrow_array as *mut FFI_ArrowArray as i64;
+                    let has_next = jni_call!(
+                        BlazeArrowFFIExporter(exporter.as_obj())
+                            .exportNextBatch(ffi_arrow_array_ptr) -> bool
+                    )?;
 
-                if !has_next {
-                    break;
-                }
-                let import_data_type = DataType::Struct(schema.fields().clone());
-                let imported =
-                    unsafe { from_ffi_and_data_type(ffi_arrow_array, import_data_type)? };
-                let struct_array = StructArray::from(imported);
-                let batch = RecordBatch::try_new_with_options(
-                    schema.clone(),
-                    struct_array.columns().to_vec(),
-                    &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
-                )?;
-                size_counter.add(batch.get_array_mem_size());
-                baseline_metrics.record_output(batch.num_rows());
-                batch
-            };
-            sender.send(Ok(batch)).await;
-        }
-        Ok(())
-    })
+                    if !has_next {
+                        break;
+                    }
+                    let import_data_type = DataType::Struct(schema.fields().clone());
+                    let imported =
+                        unsafe { from_ffi_and_data_type(ffi_arrow_array, import_data_type)? };
+                    let struct_array = StructArray::from(imported);
+                    let batch = RecordBatch::try_new_with_options(
+                        schema.clone(),
+                        struct_array.columns().to_vec(),
+                        &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
+                    )?;
+                    size_counter.add(batch.get_array_mem_size());
+                    exec_ctx.baseline_metrics().record_output(batch.num_rows());
+                    batch
+                };
+                sender.send(batch).await;
+            }
+            Ok(())
+        }))
 }

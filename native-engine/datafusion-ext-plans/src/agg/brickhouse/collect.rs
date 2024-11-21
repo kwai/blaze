@@ -15,36 +15,22 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::Arc,
 };
 
 use arrow::{
     array::{Array, ArrayRef, AsArray},
     datatypes::DataType,
 };
-use datafusion::{common::Result, physical_expr::PhysicalExpr, scalar::ScalarValue};
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
 
-use crate::agg::{
-    acc::{AccumInitialValue, AccumStateValAddr, RefAccumStateRow},
-    collect_set::AggCollectSet,
-    Agg, WithAggBufAddrs, WithMemTracking,
+use crate::{
+    agg::{acc::AccColumnRef, agg::IdxSelection, collect::AggCollectSet, Agg},
+    idx_for_zipped,
 };
 
 pub struct AggCollect {
     innert_collect_list: AggCollectSet,
-}
-
-impl WithAggBufAddrs for AggCollect {
-    fn set_accum_state_val_addrs(&mut self, accum_state_val_addrs: &[AccumStateValAddr]) {
-        self.innert_collect_list
-            .set_accum_state_val_addrs(accum_state_val_addrs);
-    }
-}
-
-impl WithMemTracking for AggCollect {
-    fn mem_used_tracker(&self) -> &AtomicUsize {
-        self.innert_collect_list.mem_used_tracker()
-    }
 }
 
 impl AggCollect {
@@ -90,53 +76,48 @@ impl Agg for AggCollect {
         self.innert_collect_list.nullable()
     }
 
-    fn accums_initial(&self) -> &[AccumInitialValue] {
-        self.innert_collect_list.accums_initial()
-    }
-
-    fn increase_acc_mem_used(&self, acc: &mut RefAccumStateRow) {
-        self.innert_collect_list.increase_acc_mem_used(acc);
+    fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
+        self.innert_collect_list.create_acc_column(num_rows)
     }
 
     fn partial_update(
         &self,
-        acc: &mut RefAccumStateRow,
-        values: &[ArrayRef],
-        row_idx: usize,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        partial_args: &[ArrayRef],
+        partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let list = values[0].as_list::<i32>();
-        if list.is_valid(row_idx) {
-            let num_rows = 0; // unused
-            self.innert_collect_list
-                .partial_update_all(acc, num_rows, &[list.value(row_idx)])?;
+        let list = partial_args[0].as_list::<i32>();
+
+        idx_for_zipped! {
+            ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                if list.is_valid(partial_arg_idx) {
+                    let values = list.value(partial_arg_idx);
+                    let values_len = values.len();
+                    self.innert_collect_list.partial_update(
+                        accs,
+                        IdxSelection::Single(acc_idx),
+                        &[values],
+                        IdxSelection::Range(0, values_len),
+                    )?;
+                 }
+            }
         }
         Ok(())
     }
 
-    fn partial_update_all(
-        &self,
-        acc: &mut RefAccumStateRow,
-        _num_rows: usize,
-        values: &[ArrayRef],
-    ) -> Result<()> {
-        let num_rows = 0; // unused
-        self.innert_collect_list
-            .partial_update_all(acc, num_rows, values)
-    }
-
     fn partial_merge(
         &self,
-        acc: &mut RefAccumStateRow,
-        merging_acc: &mut RefAccumStateRow,
+        accs: &mut AccColumnRef,
+        acc_idx: IdxSelection<'_>,
+        merging_accs: &mut AccColumnRef,
+        merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        self.innert_collect_list.partial_merge(acc, merging_acc)
+        self.innert_collect_list
+            .partial_merge(accs, acc_idx, merging_accs, merging_acc_idx)
     }
 
-    fn final_merge(&self, acc: &mut RefAccumStateRow) -> Result<ScalarValue> {
-        self.innert_collect_list.final_merge(acc)
-    }
-
-    fn final_batch_merge(&self, accs: &mut [RefAccumStateRow]) -> Result<ArrayRef> {
-        self.innert_collect_list.final_batch_merge(accs)
+    fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        self.innert_collect_list.final_merge(accs, acc_idx)
     }
 }

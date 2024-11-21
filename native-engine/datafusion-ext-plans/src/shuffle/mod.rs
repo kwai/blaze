@@ -23,19 +23,12 @@ use bytesize::ByteSize;
 use datafusion::{
     common::Result,
     error::DataFusionError,
-    execution::context::TaskContext,
-    physical_plan::{
-        metrics::{BaselineMetrics, Count},
-        Partitioning, SendableRecordBatchStream,
-    },
+    physical_plan::{Partitioning, SendableRecordBatchStream},
 };
-use datafusion_ext_commons::{
-    array_size::ArraySize, spark_hash::create_murmur3_hashes,
-    streams::coalesce_stream::CoalesceInput,
-};
+use datafusion_ext_commons::{array_size::ArraySize, spark_hash::create_murmur3_hashes};
 use futures::StreamExt;
 
-use crate::{common::output::TaskOutputter, memmgr::spill::Spill};
+use crate::{common::execution_context::ExecutionContext, memmgr::spill::Spill};
 
 pub mod single_repartitioner;
 pub mod sort_repartitioner;
@@ -52,55 +45,52 @@ pub trait ShuffleRepartitioner: Send + Sync {
 }
 
 impl dyn ShuffleRepartitioner {
-    pub async fn execute(
+    pub fn execute(
         self: Arc<Self>,
-        context: Arc<TaskContext>,
-        partition: usize,
+        exec_ctx: Arc<ExecutionContext>,
         input: SendableRecordBatchStream,
-        metrics: BaselineMetrics,
-        data_size_metric: Count,
     ) -> Result<SendableRecordBatchStream> {
-        let input_schema = input.schema();
-
-        // coalesce input
-        let mut coalesced = context.coalesce_with_default_batch_size(input, &metrics)?;
+        let data_size_counter = exec_ctx.register_counter_metric("data_size");
+        let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
 
         // process all input batches
-        context.output_with_sender("Shuffle", input_schema, move |_| async move {
+        Ok(exec_ctx.clone().output_with_sender("Shuffle", move |_| async move {
             let batches_num_rows = AtomicUsize::default();
             let batches_mem_size = AtomicUsize::default();
             while let Some(batch) = coalesced.next().await.transpose()? {
-                let _timer = metrics.elapsed_compute().timer();
+                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
                 let batch_num_rows = batch.num_rows();
                 let batch_mem_size = batch.get_array_mem_size();
                 if batches_num_rows.load(SeqCst) == 0 {
                     log::info!(
-                        "[partition={partition}] start shuffle writing, first batch num_rows={}, mem_size={}",
+                        "[partition={}] start shuffle writing, first batch num_rows={}, mem_size={}",
+                        exec_ctx.partition_id(),
                         batch_num_rows,
                         ByteSize(batch_mem_size as u64),
                     );
                 }
                 batches_num_rows.fetch_add(batch_num_rows, SeqCst);
                 batches_mem_size.fetch_add(batch_mem_size, SeqCst);
-                metrics.record_output(batch.num_rows());
+                exec_ctx.baseline_metrics().record_output(batch.num_rows());
                 self.insert_batch(batch)
                     .await
                     .map_err(|err| err.context("shuffle: executing insert_batch() error"))?;
             }
-            data_size_metric.add(batches_mem_size.load(SeqCst));
+            data_size_counter.add(batches_mem_size.load(SeqCst));
 
-            let _timer = metrics.elapsed_compute().timer();
+            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
             log::info!(
-                "[partition={partition}] finishing shuffle writing, num_rows={}, mem_size={}",
+                "[partition={}] finishing shuffle writing, num_rows={}, mem_size={}",
+                exec_ctx.partition_id(),
                 batches_num_rows.load(SeqCst),
                 ByteSize(batches_mem_size.load(SeqCst) as u64),
             );
             self.shuffle_write()
                 .await
                 .map_err(|err| err.context("shuffle: executing shuffle_write() error"))?;
-            log::info!("[partition={partition}] finishing shuffle writing");
+            log::info!("[partition={}] finishing shuffle writing", exec_ctx.partition_id());
             Ok::<_, DataFusionError>(())
-        })
+        }))
     }
 }
 

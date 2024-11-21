@@ -22,10 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use datafusion::physical_plan::{
-    metrics::{ExecutionPlanMetricsSet, MetricValue, Time},
-    Metric,
-};
+use datafusion::physical_plan::metrics::Time;
 use futures::{future::BoxFuture, FutureExt};
 
 pub trait TimerHelper {
@@ -103,23 +100,5 @@ impl<W: Write> Write for TimedWriter<W> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.1.with_timer(|| self.0.flush())
-    }
-}
-
-pub trait RegisterTimer {
-    fn register_timer(&self, name: &str, partition: usize) -> Time;
-}
-
-impl RegisterTimer for ExecutionPlanMetricsSet {
-    fn register_timer(&self, name: &str, partition: usize) -> Time {
-        let time = Time::new();
-        self.register(Arc::new(Metric::new(
-            MetricValue::Time {
-                name: name.to_owned().into(),
-                time: time.clone(),
-            },
-            Some(partition),
-        )));
-        time
     }
 }

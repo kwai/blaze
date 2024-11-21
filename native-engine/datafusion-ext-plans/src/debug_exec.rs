@@ -12,28 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    any::Any,
-    fmt::Formatter,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::{any::Any, fmt::Formatter, sync::Arc};
 
-use arrow::{datatypes::SchemaRef, record_batch::RecordBatch, util::pretty::pretty_format_batches};
+use arrow::{datatypes::SchemaRef, util::pretty::pretty_format_batches};
 use async_trait::async_trait;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet},
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+        PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use once_cell::sync::OnceCell;
+
+use crate::common::execution_context::ExecutionContext;
 
 #[derive(Debug)]
 pub struct DebugExec {
@@ -103,15 +99,22 @@ impl ExecutionPlan for DebugExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let baseline_metrics = BaselineMetrics::new(&self.metrics, partition);
-        let input = self.input.execute(partition, context)?;
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let debug_id = self.debug_id.clone();
 
-        Ok(Box::pin(DebugStream {
-            partition,
-            input,
-            debug_id: self.debug_id.clone(),
-            metrics: Arc::new(baseline_metrics),
-        }))
+        let mut input = exec_ctx.execute(&self.input)?;
+        Ok(
+            exec_ctx.output_with_sender("Debug", move |sender| async move {
+                while let Some(batch) = input.next().await.transpose()? {
+                    let table_str = pretty_format_batches(&[batch.clone()])?
+                        .to_string()
+                        .replace('\n', &format!("\n{debug_id} - "));
+                    log::info!("DebugExec(partition={partition}):\n{table_str}");
+                    sender.send(batch).await;
+                }
+                Ok(())
+            }),
+        )
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -120,39 +123,5 @@ impl ExecutionPlan for DebugExec {
 
     fn statistics(&self) -> Result<Statistics> {
         todo!()
-    }
-}
-
-struct DebugStream {
-    partition: usize,
-    input: SendableRecordBatchStream,
-    debug_id: String,
-    metrics: Arc<BaselineMetrics>,
-}
-
-impl RecordBatchStream for DebugStream {
-    fn schema(&self) -> SchemaRef {
-        self.input.schema()
-    }
-}
-
-impl Stream for DebugStream {
-    type Item = Result<RecordBatch>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let metrics = self.metrics.clone();
-        match metrics.record_poll(self.input.poll_next_unpin(cx))? {
-            Poll::Ready(Some(batch)) => {
-                let mut batches = vec![batch];
-                let table_str = pretty_format_batches(&batches)?
-                    .to_string()
-                    .replace('\n', &format!("\n{} - ", self.debug_id));
-
-                log::info!("DebugExec(partition={}):\n{}", self.partition, table_str);
-                Poll::Ready(Some(Ok(batches.pop().unwrap())))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
