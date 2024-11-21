@@ -15,7 +15,7 @@
 use std::io::Write;
 
 use arrow::{array::ArrayRef, record_batch::RecordBatch};
-use blaze_jni_bridge::jni_call;
+use blaze_jni_bridge::{is_task_running, jni_call};
 use count_write::CountWrite;
 use datafusion::{
     common::Result,
@@ -25,7 +25,7 @@ use datafusion_ext_commons::{
     array_size::ArraySize,
     assume,
     coalesce::coalesce_arrays_unchecked,
-    compute_suggested_batch_size_for_output,
+    compute_suggested_batch_size_for_output, df_execution_err,
     ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     unchecked,
 };
@@ -83,11 +83,7 @@ impl BufferedData {
     // write buffered data to spill/target file, returns uncompressed size and
     // offsets to each partition
     pub fn write<W: Write>(self, mut w: W, partitioning: &Partitioning) -> Result<Vec<u64>> {
-        let partition_id = self.partition_id;
-        log::info!(
-            "[partition={partition_id}] draining all buffered data, total_mem={}",
-            self.mem_used()
-        );
+        log::info!("draining all buffered data, total_mem={}", self.mem_used());
 
         if self.num_rows == 0 {
             return Ok(vec![0; partitioning.partition_count() + 1]);
@@ -98,6 +94,9 @@ impl BufferedData {
         let mut iter = self.into_sorted_batches(partitioning)?;
 
         while (iter.cur_part_id() as usize) < partitioning.partition_count() {
+            if !is_task_running() {
+                df_execution_err!("task completed/killed")?;
+            }
             let cur_part_id = iter.cur_part_id();
             while offsets.len() <= cur_part_id as usize {
                 offsets.push(offset); // fill offsets of empty partitions
@@ -117,7 +116,7 @@ impl BufferedData {
         }
         let compressed_size = offsets.last().cloned().unwrap_or_default();
 
-        log::info!("[partition={partition_id}] all buffered data drained, compressed_size={compressed_size}");
+        log::info!("all buffered data drained, compressed_size={compressed_size}");
         Ok(offsets)
     }
 
@@ -127,19 +126,20 @@ impl BufferedData {
         rss_partition_writer: GlobalRef,
         partitioning: &Partitioning,
     ) -> Result<()> {
-        let partition_id = self.partition_id;
-        log::info!(
-            "[partition={partition_id}] draining all buffered data to rss, total_mem={}",
-            self.mem_used()
-        );
-
         if self.num_rows == 0 {
             return Ok(());
         }
+        log::info!(
+            "draining all buffered data to rss, total_mem={}",
+            self.mem_used()
+        );
         let mut iter = self.into_sorted_batches(partitioning)?;
         let mut writer = IpcCompressionWriter::new(RssWriter::new(rss_partition_writer.clone(), 0));
 
         while (iter.cur_part_id() as usize) < partitioning.partition_count() {
+            if !is_task_running() {
+                df_execution_err!("task completed/killed")?;
+            }
             let cur_part_id = iter.cur_part_id();
             writer.set_output(RssWriter::new(
                 rss_partition_writer.clone(),
@@ -154,8 +154,7 @@ impl BufferedData {
             writer.finish_current_buf()?;
         }
         jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ())?;
-
-        log::info!("[partition={partition_id}] all buffered data drained to rss");
+        log::info!("all buffered data drained to rss");
         Ok(())
     }
 

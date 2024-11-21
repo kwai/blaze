@@ -18,7 +18,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{array::RecordBatch, compute::concat_batches, datatypes::SchemaRef};
+use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use datafusion::{
     common::Result,
     execution::{SendableRecordBatchStream, TaskContext},
@@ -29,6 +29,7 @@ use datafusion::{
         PlanProperties,
     },
 };
+use datafusion_ext_commons::coalesce::coalesce_batches_unchecked;
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
@@ -123,7 +124,7 @@ pub fn collect_hash_map(
     data_batches: Vec<RecordBatch>,
     keys: Vec<Arc<dyn PhysicalExpr>>,
 ) -> Result<JoinHashMap> {
-    let data_batch = concat_batches(&data_schema, data_batches.iter())?;
+    let data_batch = coalesce_batches_unchecked(data_schema, &data_batches);
     let hash_map = JoinHashMap::create_from_data_batch(data_batch, &keys)?;
     Ok(hash_map)
 }

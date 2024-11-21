@@ -12,10 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Instant;
+use std::{cell::Cell, time::Instant};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use once_cell::sync::OnceCell;
+
+thread_local! {
+    pub static THREAD_STAGE_ID: Cell<usize> = Cell::new(0);
+    pub static THREAD_PARTITION_ID: Cell<usize> = Cell::new(0);
+}
 
 const MAX_LEVEL: Level = Level::Info;
 
@@ -43,8 +48,10 @@ impl Log for SimpleLogger {
         if self.enabled(record.metadata()) {
             let elapsed = Instant::now() - self.start_instant;
             let elapsed_sec = elapsed.as_secs_f64();
+            let stage_id = THREAD_STAGE_ID.get();
+            let partition_id = THREAD_PARTITION_ID.get();
             eprintln!(
-                "(+{elapsed_sec:.3}s) [{}] Blaze - {}",
+                "(+{elapsed_sec:.3}s) [{}] (stage: {stage_id}, partition: {partition_id}) - {}",
                 record.level(),
                 record.args()
             );

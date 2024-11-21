@@ -125,7 +125,7 @@ impl ExecutionPlan for ExpandExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-        let input = exec_ctx.execute(&self.input)?;
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
         let output = execute_expand(input, self.projections.clone(), exec_ctx)?;
         Ok(output)
     }

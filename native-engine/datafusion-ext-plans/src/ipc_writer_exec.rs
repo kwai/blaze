@@ -113,7 +113,7 @@ impl ExecutionPlan for IpcWriterExec {
                 jni_new_string!(&self.ipc_consumer_resource_id)?.as_obj()) -> JObject
         )?;
         let ipc_consumer = jni_new_global_ref!(ipc_consumer_local.as_obj())?;
-        let input = exec_ctx.execute(&self.input)?;
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
         let coalesced = exec_ctx.coalesce_with_default_batch_size(input);
 
         Ok(Box::pin(RecordBatchStreamAdapter::new(

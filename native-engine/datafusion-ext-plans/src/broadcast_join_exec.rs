@@ -183,15 +183,11 @@ impl BroadcastJoinExec {
             join_params.projection.schema.clone(),
             &self.metrics,
         );
-        let left = exec_ctx.execute(&self.left)?;
-        let right = exec_ctx.execute(&self.right)?;
+        let left = self.left.clone();
+        let right = self.right.clone();
         let broadcast_side = self.broadcast_side;
         let is_built = self.is_built;
         let cached_build_hash_map_id = self.cached_build_hash_map_id.clone();
-
-        // stat probed side
-        let left = exec_ctx.stat_input(left);
-        let right = exec_ctx.stat_input(right);
 
         let exec_ctx_cloned = exec_ctx.clone();
         let output_stream = exec_ctx_cloned.clone().output_with_sender(
@@ -372,8 +368,8 @@ async fn execute_join_with_map(
 }
 
 async fn execute_join(
-    left: SendableRecordBatchStream,
-    right: SendableRecordBatchStream,
+    left: Arc<dyn ExecutionPlan>,
+    right: Arc<dyn ExecutionPlan>,
     join_params: JoinParams,
     broadcast_side: JoinSide,
     cached_build_hash_map_id: Option<String>,
@@ -387,7 +383,7 @@ async fn execute_join(
     let probed_side_compare_time = exec_ctx.register_timer_metric("probed_side_compare_time");
     let build_output_time = exec_ctx.register_timer_metric("build_output_time");
 
-    let (probed_input, built_input) = match broadcast_side {
+    let (probed_plan, built_plan) = match broadcast_side {
         JoinSide::Left => (right, left),
         JoinSide::Right => (left, right),
     };
@@ -399,6 +395,7 @@ async fn execute_join(
     // fetch two sides asynchronously to eagerly fetch probed side
     let (probed, map) = futures::try_join!(
         async {
+            let probed_input = exec_ctx.stat_input(exec_ctx.execute(&probed_plan)?);
             let probed_schema = probed_input.schema();
             let mut probed_peeked = Box::pin(probed_input.peekable());
             probed_peeked.as_mut().peek().await;
@@ -410,14 +407,16 @@ async fn execute_join(
         async {
             if is_built {
                 collect_join_hash_map(
+                    exec_ctx.clone(),
                     cached_build_hash_map_id,
-                    built_input,
+                    built_plan,
                     &map_keys,
                     build_time.clone(),
                 )
                 .await
             } else {
-                build_join_hash_map(built_input, &map_keys, build_time.clone()).await
+                build_join_hash_map(exec_ctx.clone(), built_plan, &map_keys, build_time.clone())
+                    .await
             }
         }
     )?;
@@ -443,10 +442,12 @@ async fn execute_join(
 }
 
 async fn build_join_hash_map(
-    input: SendableRecordBatchStream,
+    exec_ctx: Arc<ExecutionContext>,
+    built_plan: Arc<dyn ExecutionPlan>,
     key_exprs: &[PhysicalExprRef],
     build_time: Time,
 ) -> Result<Arc<JoinHashMap>> {
+    let input = exec_ctx.execute_with_input_stats(&built_plan)?;
     let data_schema = input.schema();
     let hash_map_schema = join_hash_map_schema(&data_schema);
     let data_batches: Vec<RecordBatch> = input.try_collect().await?;
@@ -467,19 +468,22 @@ async fn build_join_hash_map(
 }
 
 async fn collect_join_hash_map(
+    exec_ctx: Arc<ExecutionContext>,
     cached_build_hash_map_id: Option<String>,
-    input: SendableRecordBatchStream,
+    built_plan: Arc<dyn ExecutionPlan>,
     key_exprs: &[PhysicalExprRef],
     build_time: Time,
 ) -> Result<Arc<JoinHashMap>> {
     Ok(match cached_build_hash_map_id {
         Some(cached_id) => {
             get_cached_join_hash_map(&cached_id, || async {
+                let input = exec_ctx.execute_with_input_stats(&built_plan)?;
                 collect_join_hash_map_without_caching(input, key_exprs, build_time).await
             })
             .await?
         }
         None => {
+            let input = exec_ctx.execute_with_input_stats(&built_plan)?;
             let map = collect_join_hash_map_without_caching(input, key_exprs, build_time).await?;
             Arc::new(map)
         }

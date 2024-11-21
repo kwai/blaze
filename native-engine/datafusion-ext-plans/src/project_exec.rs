@@ -28,7 +28,8 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream,
     },
 };
-use futures::{FutureExt, StreamExt};
+use datafusion_ext_commons::downcast_any;
+use futures::StreamExt;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 
@@ -37,6 +38,7 @@ use crate::{
         cached_exprs_evaluator::CachedExprsEvaluator,
         column_pruning::{prune_columns, ExecuteWithColumnPruning},
         execution_context::ExecutionContext,
+        timer_helper::TimerHelper,
     },
     filter_exec::FilterExec,
 };
@@ -136,20 +138,16 @@ impl ExecutionPlan for ProjectExec {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let exprs: Vec<PhysicalExprRef> = self.expr.iter().map(|(e, _name)| e.clone()).collect();
 
-        let fut = if let Some(filter_exec) = self.input.as_any().downcast_ref::<FilterExec>() {
+        let output = if let Ok(filter_exec) = downcast_any!(self.input, FilterExec) {
             execute_project_with_filtering(
                 filter_exec.children()[0].clone(),
                 exec_ctx.clone(),
                 filter_exec.predicates().to_vec(),
                 exprs,
-            )
-            .boxed()
+            )?
         } else {
-            execute_project_with_filtering(self.input.clone(), exec_ctx.clone(), vec![], exprs)
-                .boxed()
+            execute_project_with_filtering(self.input.clone(), exec_ctx.clone(), vec![], exprs)?
         };
-
-        let output = exec_ctx.build_output_stream(fut);
         Ok(exec_ctx.coalesce_with_default_batch_size(output))
     }
 
@@ -180,7 +178,7 @@ impl ExecuteWithColumnPruning for ProjectExec {
     }
 }
 
-async fn execute_project_with_filtering(
+fn execute_project_with_filtering(
     input: Arc<dyn ExecutionPlan>,
     exec_ctx: Arc<ExecutionContext>,
     filters: Vec<PhysicalExprRef>,
@@ -199,20 +197,27 @@ async fn execute_project_with_filtering(
         .skip(num_exprs)
         .cloned()
         .collect::<Vec<PhysicalExprRef>>();
-    let cached_expr_evaluator =
-        CachedExprsEvaluator::try_new(filters, exprs, exec_ctx.output_schema())?;
+
+    let cached_expr_evaluator = Arc::new(CachedExprsEvaluator::try_new(
+        filters,
+        exprs,
+        exec_ctx.output_schema(),
+    )?);
 
     let mut input = exec_ctx.execute_projected_with_input_stats(&input, &projection)?;
     Ok(exec_ctx
         .clone()
         .output_with_sender("Project", move |sender| async move {
-            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
+            let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+            let _timer = elapsed_compute.timer();
+            sender.exclude_time(&elapsed_compute);
 
-            while let Some(batch) = input.next().await.transpose()? {
-                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+            while let Some(batch) = elapsed_compute
+                .exclude_timer_async(input.next())
+                .await
+                .transpose()?
+            {
                 let output_batch = cached_expr_evaluator.filter_project(&batch)?;
-                drop(batch);
-
                 exec_ctx
                     .baseline_metrics()
                     .record_output(output_batch.num_rows());

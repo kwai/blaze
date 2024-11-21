@@ -246,24 +246,27 @@ impl Table {
     }
 
     pub fn lookup_many(&self, hashes: Vec<u32>) -> Vec<MapValue> {
-        const PREFETCH_AHEAD: usize = 4;
         let mut hashes = unchecked!(hashes);
+        const PREFETCH_AHEAD: usize = 4;
 
         macro_rules! entries {
             [$i:expr] => (hashes[$i] % (1 << self.map_mod_bits))
         }
 
-        if hashes.len() >= PREFETCH_AHEAD {
-            for i in 1..PREFETCH_AHEAD - 1 {
-                prefetch_read_data!(&self.map[entries![i] as usize]);
-            }
+        macro_rules! prefetch_at {
+            ($i:expr) => {{
+                if $i < hashes.len() {
+                    prefetch_read_data!(&self.map[entries!($i) as usize]);
+                }
+            }};
+        }
+
+        for i in 0..PREFETCH_AHEAD {
+            prefetch_at!(i);
         }
 
         for i in 0..hashes.len() {
-            if i + PREFETCH_AHEAD < hashes.len() {
-                prefetch_read_data!(&self.map[entries![i + PREFETCH_AHEAD] as usize]);
-            }
-
+            prefetch_at!(i + PREFETCH_AHEAD);
             let mut e = entries![i] as usize;
             loop {
                 let hash_matched = self.map[e].hashes.simd_eq(Simd::splat(hashes[i]));

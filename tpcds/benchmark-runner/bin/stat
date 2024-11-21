@@ -9,9 +9,10 @@ record="$(
   while read line; do
     case_name="$(echo "$line" | grep -Poi 'case: \K\w+')"
     c_time="$(echo "$line" | grep -Poi 'time: \K[\d.]+')"
+    c_succ="$(echo "$line" | grep -Poi 'succeeded: \K(true|false)')"
 
     if [ "x$case_name" != 'x' ]; then
-      echo "$case_name" "$c_time"
+      echo "$case_name" "$c_time" "$c_succ"
     fi
   done <"$LOG_FILE"
 )"
@@ -21,6 +22,11 @@ echo "$record" | FS='\t' awk 'BEGIN {
 } {
   case_name=$1;
   c_time=$2;
+  c_succ=$3;
+  if (c_succ != "true") {
+    c_time = 999;
+  }
+
   if (!(case_name in m) || m[case_name] * 1.0 > c_time * 1.0) {
     if (!(case_name in m)) {
       c[i++] = case_name;

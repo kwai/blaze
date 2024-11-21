@@ -458,13 +458,12 @@ impl ExecuteWithColumnPruning for SortExec {
         context: Arc<TaskContext>,
         projection: &[usize],
     ) -> Result<SendableRecordBatchStream> {
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let prune_sort_keys_from_batch = Arc::new(PruneSortKeysFromBatch::try_new(
             self.input.schema(),
             projection,
             &self.exprs,
         )?);
-        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-
         let sorter = Arc::new(ExternalSorter {
             exec_ctx: exec_ctx.clone(),
             name: format!("ExternalSorter[partition={}]", partition),
@@ -478,13 +477,13 @@ impl ExecuteWithColumnPruning for SortExec {
         });
         MemManager::register_consumer(sorter.clone(), true);
 
+        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
         let input = exec_ctx.execute_with_input_stats(&self.input)?;
         let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
 
-        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
         let output = exec_ctx
             .clone()
-            .output_with_sender("Sort", |sender| async move {
+            .output_with_sender("Sort", move |sender| async move {
                 let _timer = elapsed_compute.timer();
                 sender.exclude_time(&elapsed_compute);
 
