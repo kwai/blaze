@@ -15,13 +15,11 @@
  */
 package org.apache.spark.sql.blaze.memory
 
-import java.io.RandomAccessFile
+import java.io.{File, RandomAccessFile}
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util
-
 import org.apache.spark.internal.Logging
-
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
 
@@ -85,11 +83,13 @@ class MemBasedSpillBuf extends SpillBuf with Logging {
       }
     }
     val endTimeNs = System.nanoTime
-    new FileBasedSpillBuf(channel, endTimeNs - startTimeNs)
+    new FileBasedSpillBuf(file, channel, endTimeNs - startTimeNs)
   }
 }
 
-class FileBasedSpillBuf(fileChannel: FileChannel, var diskIOTimeNs: Long) extends SpillBuf {
+class FileBasedSpillBuf(file: File, fileChannel: FileChannel, var diskIOTimeNs: Long)
+    extends SpillBuf
+    with Logging {
   private var readPosition: Long = 0
 
   override def write(buf: ByteBuffer): Unit = {
@@ -114,5 +114,8 @@ class FileBasedSpillBuf(fileChannel: FileChannel, var diskIOTimeNs: Long) extend
 
   override def release(): Unit = {
     fileChannel.close()
+    if (!file.delete()) {
+      logWarning(s"Was unable to delete spill file: ${file.getAbsolutePath}")
+    }
   }
 }
