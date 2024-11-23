@@ -22,7 +22,6 @@ import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicReference
 
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.JavaConversions.asScalaIterator
 
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.ArrowSchema
@@ -38,7 +37,6 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
-import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.rootAllocator
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.ShutdownHookManager
@@ -122,13 +120,14 @@ case class BlazeCallNativeWrapper(
       Using.resources(
         ArrowArray.wrap(ffiArrayPtr),
         VectorSchemaRoot.create(arrowSchema, batchAllocator)) { case (ffiArray, root) =>
-
         Data.importIntoVectorSchemaRoot(batchAllocator, ffiArray, root, dictionaryProvider)
         val batch = ColumnarHelper.rootAsBatch(root)
 
-        batchRows.append(ColumnarHelper.batchAsRowIter(batch)
-          .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
-          .toSeq: _*)
+        batchRows.append(
+          ColumnarHelper
+            .batchAsRowIter(batch)
+            .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
+            .toSeq: _*)
       }
     }
   }

@@ -58,7 +58,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeAggBase
 import org.apache.spark.sql.execution.blaze.plan.NativeUnionBase
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins._
@@ -75,7 +74,6 @@ import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeOrcScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeSortBase
-import org.apache.spark.sql.execution.datasources.orc.OrcFileFormat
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.LongType
 
@@ -615,7 +613,11 @@ object BlazeConverters extends Logging {
                   case "aggregateExpressions" => transformedAggregateExprs
                   case "groupingExpressions" => transformedGroupingExprs
                   case "child" => convertProjectExec(ProjectExec(projections, exec.child))
-                  case _ => mirror.reflectField(typeOf[HashAggregateExec].decl(TermName(param.name.toString)).asTerm).get
+                  case _ =>
+                    mirror
+                      .reflectField(
+                        typeOf[HashAggregateExec].decl(TermName(param.name.toString)).asTerm)
+                      .get
                 }
               }
               mirror.reflectMethod(copyMethod)(args: _*).asInstanceOf[HashAggregateExec]
