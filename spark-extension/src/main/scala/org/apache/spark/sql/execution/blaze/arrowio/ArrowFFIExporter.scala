@@ -61,7 +61,6 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
       Using.resources(
         VectorSchemaRoot.create(arrowSchema, batchAllocator),
         ArrowArray.wrap(exportArrowArrayPtr)) { case (root, exportArray) =>
-
         val arrowWriter = ArrowWriter.create(root)
         var rowCount = 0
 

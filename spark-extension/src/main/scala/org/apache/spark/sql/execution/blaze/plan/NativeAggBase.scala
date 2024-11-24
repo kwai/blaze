@@ -85,8 +85,10 @@ abstract class NativeAggBase(
         "input_batch_mem_size",
         "input_row_count"))
       .toSeq: _*) ++
-    Map("hashing_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.hashing_time")) ++
-    Map("merging_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.merging_time")) ++
+    Map(
+      "hashing_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.hashing_time")) ++
+    Map(
+      "merging_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.merging_time")) ++
     Map("output_time" -> SQLMetrics.createNanoTimingMetric(sparkContext, "Native.output_time"))
 
   override def requiredChildDistribution: List[Distribution] = {

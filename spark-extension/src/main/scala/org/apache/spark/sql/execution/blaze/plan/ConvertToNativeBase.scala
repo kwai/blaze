@@ -19,7 +19,6 @@ import java.util.UUID
 
 import scala.collection.immutable.SortedMap
 
-import org.apache.spark.InterruptibleIterator
 import org.apache.spark.sql.blaze.JniBridge
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning

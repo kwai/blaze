@@ -19,7 +19,6 @@ import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
-
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.SparkEnv;
@@ -85,15 +84,11 @@ public class JniBridge {
         return tc == null;
     }
 
-    public static FSDataInputWrapper openFileAsDataInputWrapper(
-            FileSystem fs,
-            String path) throws Exception {
+    public static FSDataInputWrapper openFileAsDataInputWrapper(FileSystem fs, String path) throws Exception {
         return FSDataInputWrapper$.MODULE$.wrap(fs.open(new Path(path)));
     }
 
-    public static FSDataOutputWrapper createFileAsDataOutputWrapper(
-            FileSystem fs,
-            String path) throws Exception {
+    public static FSDataOutputWrapper createFileAsDataOutputWrapper(FileSystem fs, String path) throws Exception {
         return FSDataOutputWrapper$.MODULE$.wrap(fs.create(new Path(path)));
     }
 
