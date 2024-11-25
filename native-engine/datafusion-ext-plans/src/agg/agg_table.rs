@@ -508,10 +508,10 @@ impl HashingData {
             // next bucket
             begin = end;
         }
-
         // EOF
         write_len(NUM_SPILL_BUCKETS, &mut writer)?;
         write_len(0, &mut writer)?;
+        writer.flush()?;
         Ok(())
     }
 }
@@ -621,6 +621,7 @@ impl MergingData {
         // EOF
         write_len(NUM_SPILL_BUCKETS, &mut writer)?;
         write_len(0, &mut writer)?;
+        writer.flush()?;
         Ok(())
     }
 }

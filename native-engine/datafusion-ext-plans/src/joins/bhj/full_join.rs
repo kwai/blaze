@@ -121,7 +121,12 @@ impl<const P: JoinerParams> FullJoiner<P> {
         Ok(probed_key_columns)
     }
 
-    async fn flush(&self, probe_cols: Vec<ArrayRef>, build_cols: Vec<ArrayRef>, num_rows: usize) -> Result<()> {
+    async fn flush(
+        &self,
+        probe_cols: Vec<ArrayRef>,
+        build_cols: Vec<ArrayRef>,
+        num_rows: usize,
+    ) -> Result<()> {
         let output_batch = RecordBatch::try_new_with_options(
             self.join_params.output_schema.clone(),
             match P.probe_side {
