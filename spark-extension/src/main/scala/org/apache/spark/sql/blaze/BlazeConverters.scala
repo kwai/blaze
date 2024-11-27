@@ -267,7 +267,8 @@ object BlazeConverters extends Logging {
     }
     Shims.get.createNativeShuffleExchangeExec(
       outputPartitioning,
-      addRenameColumnsExec(convertedChild))
+      addRenameColumnsExec(convertedChild),
+      exec.shuffleOrigin)
   }
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {

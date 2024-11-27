@@ -17,7 +17,6 @@ package org.apache.spark.sql.blaze
 
 import java.io.File
 import java.util.UUID
-
 import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.ShuffleDependency
@@ -98,8 +97,7 @@ import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
-import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ENSURE_REQUIREMENTS, ReusedExchangeExec, ShuffleOrigin}
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeShuffledHashJoinExecProvider
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeSortMergeJoinExecProvider
@@ -111,7 +109,6 @@ import org.apache.spark.sql.types.StringType
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 import org.blaze.{protobuf => pb}
-
 import com.thoughtworks.enableIf
 
 class ShimsImpl extends Shims with Logging {
@@ -266,8 +263,9 @@ class ShimsImpl extends Shims with Logging {
 
   override def createNativeShuffleExchangeExec(
       outputPartitioning: Partitioning,
-      child: SparkPlan): NativeShuffleExchangeBase =
-    NativeShuffleExchangeExec(outputPartitioning, child)
+      child: SparkPlan,
+      shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS): NativeShuffleExchangeBase =
+    NativeShuffleExchangeExec(outputPartitioning, child, shuffleOrigin)
 
   override def createNativeSortExec(
       sortOrder: Seq[SortOrder],
