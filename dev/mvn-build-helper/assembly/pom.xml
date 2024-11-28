@@ -33,8 +33,11 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.0.0</version>
         <configuration>
-          <executable>./build-native.sh</executable>
-          <commandlineArgs>${releaseMode}</commandlineArgs>
+          <executable>bash</executable>
+          <arguments>
+            <argument>./build-native.sh</argument>
+            <argument>${releaseMode}</argument>
+          </arguments>
           <workingDirectory>../../../</workingDirectory>
           <useMavenLogger>true</useMavenLogger>
         </configuration>

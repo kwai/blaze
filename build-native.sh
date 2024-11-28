@@ -5,10 +5,14 @@ set -e
 cd "$(dirname "$0")"
 profile="$1"
 
+libname=libblaze
 if [ "$(uname)" == "Darwin" ]; then
     libsuffix=dylib
 elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
     libsuffix=so
+elif [ "$(expr substr $(uname -s) 1 10)" == "MINGW64_NT" ]; then
+    libname=blaze
+    libsuffix=dll
 else
     echo "Unsupported platform $(uname)"
     exit 1
@@ -25,7 +29,7 @@ checksum() {
         exit 1
     fi
 
-    find Cargo.toml Cargo.lock native-engine target/$profile/libblaze."$libsuffix" | \
+    find Cargo.toml Cargo.lock native-engine target/$profile/$libname."$libsuffix" | \
         xargs $hash_cmd 2>&1 | \
         sort -k1 | \
         $hash_cmd
@@ -53,8 +57,8 @@ else
 fi
 
 mkdir -p dev/mvn-build-helper/assembly/target/classes
-rm -f dev/mvn-build-helper/assembly/target/classes/libblaze.{dylib,so}
-cp target/$profile/libblaze."$libsuffix" dev/mvn-build-helper/assembly/target/classes
+rm -f dev/mvn-build-helper/assembly/target/classes/$libname.{dylib,so,dll}
+cp target/$profile/$libname."$libsuffix" dev/mvn-build-helper/assembly/target/classes
 
 new_checksum="$(checksum)"
 echo "build-checksum updated: $new_checksum"
