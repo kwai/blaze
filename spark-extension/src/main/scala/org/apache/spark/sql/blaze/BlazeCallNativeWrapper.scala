@@ -199,10 +199,11 @@ object BlazeCallNativeWrapper extends Logging {
       val tempFile = File.createTempFile("libblaze-", ".tmp")
       tempFile.deleteOnExit()
 
-      Utils.tryWithResource(classLoader.getResourceAsStream(libName)) { is =>
+      Utils.tryWithResource {
+        val is = classLoader.getResourceAsStream(libName)
         assert(is != null, s"cannot load $libName")
-        Files.copy(is, tempFile.toPath, StandardCopyOption.REPLACE_EXISTING)
-      }
+        is
+      }(Files.copy(_, tempFile.toPath, StandardCopyOption.REPLACE_EXISTING))
       System.load(tempFile.getAbsolutePath)
 
     } catch {
