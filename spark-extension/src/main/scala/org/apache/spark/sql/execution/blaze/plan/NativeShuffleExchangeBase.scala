@@ -16,9 +16,7 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
@@ -40,11 +38,8 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.SinglePartition
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
-import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.UnsafeRowSerializer
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
+import org.apache.spark.sql.execution.{SQLExecution, SparkPlan, UnsafeRowSerializer}
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
 import org.apache.spark.util.CompletionIterator
@@ -221,6 +216,9 @@ abstract class NativeShuffleExchangeBase(
         override def getPartition(key: Any): Int = key.asInstanceOf[Int]
       },
       schema = Util.getSchema(outputAttributes, useExprId = false))
+    metrics("numPartitions").set(outputPartitioning.numPartitions)
+    val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    SQLMetrics.postDriverMetricUpdates(sparkContext, executionId, metrics("numPartitions") :: Nil)
     dependency
   }
 }
