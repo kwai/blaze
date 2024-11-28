@@ -37,7 +37,6 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import com.thoughtworks.enableIf
-import org.apache.spark.sql.execution.exchange.ShuffleOrigin
 
 case class NativeShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
@@ -175,7 +174,10 @@ case class NativeShuffleExchangeExec(
   @enableIf(
     Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
-  override def shuffleOrigin = _shuffleOrigin.get.asInstanceOf[ShuffleOrigin]
+  override def shuffleOrigin = {
+    import org.apache.spark.sql.execution.exchange.ShuffleOrigin;
+    _shuffleOrigin.get.asInstanceOf[ShuffleOrigin]
+  }
 
   @enableIf(
     Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
