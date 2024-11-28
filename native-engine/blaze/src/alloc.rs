@@ -9,7 +9,8 @@ use std::{
     },
 };
 
-#[global_allocator]
+#[cfg(not(windows))]
+#[cfg_attr(not(windows), global_allocator)]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 // only used for debugging
