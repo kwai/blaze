@@ -97,7 +97,7 @@ import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
-import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ENSURE_REQUIREMENTS, ReusedExchangeExec, ShuffleOrigin}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ReusedExchangeExec}
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeShuffledHashJoinExecProvider
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeSortMergeJoinExecProvider
@@ -264,7 +264,7 @@ class ShimsImpl extends Shims with Logging {
   override def createNativeShuffleExchangeExec(
       outputPartitioning: Partitioning,
       child: SparkPlan,
-      shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS): NativeShuffleExchangeBase =
+      shuffleOrigin: Option[Any] = None): NativeShuffleExchangeBase =
     NativeShuffleExchangeExec(outputPartitioning, child, shuffleOrigin)
 
   override def createNativeSortExec(

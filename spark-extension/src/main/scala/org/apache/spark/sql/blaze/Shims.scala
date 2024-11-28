@@ -33,7 +33,7 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
-import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ENSURE_REQUIREMENTS, ShuffleOrigin}
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Generator
@@ -135,7 +135,7 @@ abstract class Shims {
   def createNativeShuffleExchangeExec(
       outputPartitioning: Partitioning,
       child: SparkPlan,
-      shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS): NativeShuffleExchangeBase
+      shuffleOrigin: Option[Any] = None): NativeShuffleExchangeBase
 
   def createNativeSortExec(
       sortOrder: Seq[SortOrder],

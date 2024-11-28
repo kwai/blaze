@@ -37,12 +37,12 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import com.thoughtworks.enableIf
-import org.apache.spark.sql.execution.exchange.{ENSURE_REQUIREMENTS, ShuffleOrigin}
+import org.apache.spark.sql.execution.exchange.ShuffleOrigin
 
 case class NativeShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
     override val child: SparkPlan,
-    _shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS)
+    _shuffleOrigin: Option[Any] = None)
     extends NativeShuffleExchangeBase(outputPartitioning, child) {
 
   // NOTE: coordinator can be null after serialization/deserialization,
@@ -175,7 +175,7 @@ case class NativeShuffleExchangeExec(
   @enableIf(
     Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
-  override def shuffleOrigin = _shuffleOrigin
+  override def shuffleOrigin = _shuffleOrigin.get.asInstanceOf[ShuffleOrigin]
 
   @enableIf(
     Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
