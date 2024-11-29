@@ -27,31 +27,6 @@
 
   <build>
     <plugins>
-      <!-- build native libs -->
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <version>3.0.0</version>
-        <configuration>
-          <executable>bash</executable>
-          <arguments>
-            <argument>./build-native.sh</argument>
-            <argument>${releaseMode}</argument>
-          </arguments>
-          <workingDirectory>../../../</workingDirectory>
-          <useMavenLogger>true</useMavenLogger>
-        </configuration>
-        <executions>
-          <execution>
-            <id>prepare-native-libs</id>
-            <goals>
-              <goal>exec</goal>
-            </goals>
-            <phase>compile</phase>
-          </execution>
-        </executions>
-      </plugin>
-
       <!-- create uber jar -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

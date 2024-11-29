@@ -91,7 +91,15 @@ Blaze.
 ```shell
 SHIM=spark-3.3 # or spark-3.0/spark-3.1/spark-3.2/spark-3.3/spark-3.4/spark-3.5
 MODE=release # or pre
-mvn package -P"${SHIM}" -P"${MODE}"
+mvn clean package -P"${SHIM}" -P"${MODE}"
+```
+
+Skip build native (native lib is already built, and you can check the native lib in `native-engine/_build/${MODE}`).
+
+```shell
+SHIM=spark-3.3 # or spark-3.0/spark-3.1/spark-3.2/spark-3.3/spark-3.4/spark-3.5
+MODE=release # or pre
+mvn clean package -P"${SHIM}" -P"${MODE}" -DskipBuildNative
 ```
 
 After the build is finished, a fat Jar package that contains all the dependencies will be generated in the `target`

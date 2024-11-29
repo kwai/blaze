@@ -50,3 +50,6 @@ spark-extension/src/generated-sources
 
 # exclude spark241kwaiae shim module
 spark-extension-shims-spark241kwaiae
+
+# exclude native engine build lib directory
+native-engine/_build
