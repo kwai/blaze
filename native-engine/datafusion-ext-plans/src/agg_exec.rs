@@ -187,17 +187,16 @@ fn execute_agg_with_grouping_hash(
         .output_with_sender("Agg", |sender| async move {
             let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
             sender.exclude_time(&elapsed_compute);
+            let _timer = elapsed_compute.timer();
 
             log::info!(
-                "[partition={}] start hash aggregating, supports_partial_skipping={}, num_groupings={}, num_partial={}, num_partial_merge={}, num_final={}",
-                exec_ctx.partition_id(),
+                "start hash aggregating, supports_partial_skipping={}, num_groupings={}, num_partial={}, num_partial_merge={}, num_final={}",
                 agg_ctx.supports_partial_skipping,
                 agg_ctx.groupings.len(),
                 agg_ctx.aggs.iter().filter(|agg| agg.mode.is_partial()).count(),
                 agg_ctx.aggs.iter().filter(|agg| agg.mode.is_partial_merge()).count(),
                 agg_ctx.aggs.iter().filter(|agg| agg.mode.is_final()).count(),
             );
-            let _timer = elapsed_compute.timer();
             let mut partial_skipping_triggered = false;
 
             while let Some(batch) = elapsed_compute
@@ -257,17 +256,21 @@ fn execute_agg_no_grouping(
     Ok(exec_ctx
         .clone()
         .output_with_sender("Agg", move |sender| async move {
-            while let Some(batch) = coalesced.next().await.transpose()? {
-                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+            let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+            sender.exclude_time(&elapsed_compute);
+            let _timer = elapsed_compute.timer();
+
+            while let Some(batch) = elapsed_compute
+                .exclude_timer_async(coalesced.next())
+                .await
+                .transpose()?
+            {
                 agg_ctx.update_batch_to_acc_table(
                     &batch,
                     &mut acc_table,
                     IdxSelection::Single(0),
                 )?;
             }
-
-            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
-            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
 
             let agg_columns = agg_ctx.build_agg_columns(&mut acc_table, IdxSelection::Single(0))?;
             let batch = RecordBatch::try_new_with_options(
@@ -277,10 +280,7 @@ fn execute_agg_no_grouping(
             )?;
             exec_ctx.baseline_metrics().record_output(1);
             sender.send(batch).await;
-            log::info!(
-                "[partition={}] aggregate exec (no grouping) outputting one record",
-                exec_ctx.partition_id(),
-            );
+            log::info!("aggregate exec (no grouping) outputting one record");
             Ok(())
         }))
 }
@@ -299,8 +299,9 @@ fn execute_agg_sorted(
     Ok(exec_ctx
         .clone()
         .output_with_sender("Agg", move |sender| async move {
-            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
-            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+            let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+            sender.exclude_time(&elapsed_compute);
+            let _timer = elapsed_compute.timer();
 
             let mut staging_keys: Vec<OwnedKey> = vec![];
             let mut staging_acc_table = agg_ctx.create_acc_table(0);
@@ -319,9 +320,7 @@ fn execute_agg_sorted(
                     sender.send((batch)).await;
                 }};
             }
-            while let Some(batch) = exec_ctx
-                .baseline_metrics()
-                .elapsed_compute()
+            while let Some(batch) = elapsed_compute
                 .exclude_timer_async(coalesced.next())
                 .await
                 .transpose()?

@@ -12,16 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 use arrow::{array::*, datatypes::*};
-use bigdecimal::{FromPrimitive, ToPrimitive};
-use datafusion::common::{
-    cast::{as_float32_array, as_float64_array},
-    Result,
-};
-use num::{cast::AsPrimitive, Bounded, Integer, Signed};
-use paste::paste;
+use datafusion::common::Result;
 
 use crate::df_execution_err;
 
@@ -44,46 +38,48 @@ pub fn cast_impl(
         (_, &DataType::Null) => Arc::new(NullArray::new(array.len())),
 
         // float to int
-        (&DataType::Float32, &DataType::Int8) => Arc::new(cast_float_to_integer::<_, Int8Type>(
-            as_float32_array(array)?,
-        )),
-        (&DataType::Float32, &DataType::Int16) => Arc::new(cast_float_to_integer::<_, Int16Type>(
-            as_float32_array(array)?,
-        )),
-        (&DataType::Float32, &DataType::Int32) => Arc::new(cast_float_to_integer::<_, Int32Type>(
-            as_float32_array(array)?,
-        )),
-        (&DataType::Float32, &DataType::Int64) => Arc::new(cast_float_to_integer::<_, Int64Type>(
-            as_float32_array(array)?,
-        )),
-        (&DataType::Float64, &DataType::Int8) => Arc::new(cast_float_to_integer::<_, Int8Type>(
-            as_float64_array(array)?,
-        )),
-        (&DataType::Float64, &DataType::Int16) => Arc::new(cast_float_to_integer::<_, Int16Type>(
-            as_float64_array(array)?,
-        )),
-        (&DataType::Float64, &DataType::Int32) => Arc::new(cast_float_to_integer::<_, Int32Type>(
-            as_float64_array(array)?,
-        )),
-        (&DataType::Float64, &DataType::Int64) => Arc::new(cast_float_to_integer::<_, Int64Type>(
-            as_float64_array(array)?,
-        )),
+        // use unchecked casting, which is compatible with spark
+        (&DataType::Float32, &DataType::Int8) => {
+            let input = array.as_primitive::<Float32Type>();
+            let output: Int8Array = arrow::compute::unary(input, |v| v as i8);
+            Arc::new(output)
+        }
+        (&DataType::Float32, &DataType::Int16) => {
+            let input = array.as_primitive::<Float32Type>();
+            let output: Int16Array = arrow::compute::unary(input, |v| v as i16);
+            Arc::new(output)
+        }
+        (&DataType::Float32, &DataType::Int32) => {
+            let input = array.as_primitive::<Float32Type>();
+            let output: Int32Array = arrow::compute::unary(input, |v| v as i32);
+            Arc::new(output)
+        }
+        (&DataType::Float32, &DataType::Int64) => {
+            let input = array.as_primitive::<Float32Type>();
+            let output: Int64Array = arrow::compute::unary(input, |v| v as i64);
+            Arc::new(output)
+        }
+        (&DataType::Float64, &DataType::Int8) => {
+            let input = array.as_primitive::<Float64Type>();
+            let output: Int8Array = arrow::compute::unary(input, |v| v as i8);
+            Arc::new(output)
+        }
+        (&DataType::Float64, &DataType::Int16) => {
+            let input = array.as_primitive::<Float64Type>();
+            let output: Int16Array = arrow::compute::unary(input, |v| v as i16);
+            Arc::new(output)
+        }
+        (&DataType::Float64, &DataType::Int32) => {
+            let input = array.as_primitive::<Float64Type>();
+            let output: Int32Array = arrow::compute::unary(input, |v| v as i32);
+            Arc::new(output)
+        }
+        (&DataType::Float64, &DataType::Int64) => {
+            let input = array.as_primitive::<Float64Type>();
+            let output: Int64Array = arrow::compute::unary(input, |v| v as i64);
+            Arc::new(output)
+        }
 
-        (&DataType::Utf8, &DataType::Int8)
-        | (&DataType::Utf8, &DataType::Int16)
-        | (&DataType::Utf8, &DataType::Int32)
-        | (&DataType::Utf8, &DataType::Int64) => {
-            // spark compatible string to integer cast
-            try_cast_string_array_to_integer(array, cast_type)?
-        }
-        (&DataType::Utf8, &DataType::Decimal128(..)) => {
-            // spark compatible string to decimal cast
-            try_cast_string_array_to_decimal(array, cast_type)?
-        }
-        (&DataType::Decimal128(..), DataType::Utf8) => {
-            // spark compatible decimal to string cast
-            try_cast_decimal_array_to_string(array, cast_type)?
-        }
         (&DataType::Timestamp(..), DataType::Float64) => {
             // timestamp to f64 = timestamp to i64 to f64, only used in agg.sum()
             arrow::compute::cast(
@@ -93,7 +89,13 @@ pub fn cast_impl(
         }
         (&DataType::Boolean, DataType::Utf8) => {
             // spark compatible boolean to string cast
-            try_cast_boolean_array_to_string(array, cast_type)?
+            Arc::new(
+                array
+                    .as_boolean()
+                    .iter()
+                    .map(|value| value.map(|value| if value { "true" } else { "false" }))
+                    .collect::<StringArray>(),
+            )
         }
         (&DataType::List(_), DataType::List(to_field)) => {
             let list = as_list_array(array);
@@ -199,187 +201,22 @@ pub fn cast_impl(
     })
 }
 
-fn try_cast_string_array_to_integer(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
-    macro_rules! cast {
-        ($target_type:ident) => {{
-            type B = paste! {[<$target_type Builder>]};
-            let array = array.as_any().downcast_ref::<StringArray>().unwrap();
-            let mut builder = B::new();
-
-            for v in array.iter() {
-                match v {
-                    Some(s) => builder.append_option(to_integer(s)),
-                    None => builder.append_null(),
-                }
-            }
-            Arc::new(builder.finish())
-        }};
-    }
-
-    Ok(match cast_type {
-        DataType::Int8 => cast!(Int8),
-        DataType::Int16 => cast!(Int16),
-        DataType::Int32 => cast!(Int32),
-        DataType::Int64 => cast!(Int64),
-        _ => arrow::compute::cast(array, cast_type)?,
-    })
-}
-
-fn try_cast_string_array_to_decimal(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
-    if let &DataType::Decimal128(precision, scale) = cast_type {
-        let array = array.as_any().downcast_ref::<StringArray>().unwrap();
-        let mut builder = Decimal128Builder::new();
-
-        for v in array.iter() {
-            match v {
-                Some(s) => match to_decimal(s, precision, scale) {
-                    Some(v) => builder.append_value(v),
-                    None => builder.append_null(),
-                },
-                None => builder.append_null(),
-            }
-        }
-        return Ok(Arc::new(
-            builder
-                .finish()
-                .with_precision_and_scale(precision, scale)?,
-        ));
-    }
-    unreachable!("cast_type must be DataType::Decimal")
-}
-
-fn try_cast_decimal_array_to_string(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
-    if let &DataType::Utf8 = cast_type {
-        let array = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
-        let mut builder = StringBuilder::new();
-        for v in 0..array.len() {
-            if array.is_valid(v) {
-                builder.append_value(array.value_as_string(v))
-            } else {
-                builder.append_null()
-            }
-        }
-        return Ok(Arc::new(builder.finish()));
-    }
-    unreachable!("cast_type must be DataType::Utf8")
-}
-
-fn try_cast_boolean_array_to_string(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
-    if let &DataType::Utf8 = cast_type {
-        let array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-        return Ok(Arc::new(
-            array
-                .iter()
-                .map(|value| value.map(|value| if value { "true" } else { "false" }))
-                .collect::<StringArray>(),
-        ));
-    }
-    unreachable!("cast_type must be DataType::Utf8")
-}
-
-fn cast_float_to_integer<F: ArrowPrimitiveType, T: ArrowPrimitiveType>(
-    array: &PrimitiveArray<F>,
-) -> PrimitiveArray<T>
-where
-    F::Native: AsPrimitive<T::Native>,
-{
-    arrow::compute::unary(array, |v| v.as_())
-}
-
-// this implementation is original copied from spark UTF8String.scala
-fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str) -> Option<T> {
-    let bytes = input.as_bytes();
-
-    if bytes.is_empty() {
-        return None;
-    }
-
-    let b = bytes[0];
-    let negative = b == b'-';
-    let mut offset = 0;
-
-    if negative || b == b'+' {
-        offset += 1;
-        if bytes.len() == 1 {
-            return None;
-        }
-    }
-
-    let separator = b'.';
-    let radix = T::from_usize(10).unwrap();
-    let stop_value = T::min_value() / radix;
-    let mut result = T::zero();
-
-    while offset < bytes.len() {
-        let b = bytes[offset];
-        offset += 1;
-        if b == separator {
-            // We allow decimals and will return a truncated integral in that case.
-            // Therefore we won't throw an exception here (checking the fractional
-            // part happens below.)
-            break;
-        }
-
-        let digit = if b.is_ascii_digit() {
-            b - b'0'
-        } else {
-            return None;
-        };
-
-        // We are going to process the new digit and accumulate the result. However,
-        // before doing this, if the result is already smaller than the
-        // stopValue(Long.MIN_VALUE / radix), then result * 10 will definitely
-        // be smaller than minValue, and we can stop.
-        if result < stop_value {
-            return None;
-        }
-
-        result = result * radix - T::from_u8(digit).unwrap();
-        // Since the previous result is less than or equal to stopValue(Long.MIN_VALUE /
-        // radix), we can just use `result > 0` to check overflow. If result
-        // overflows, we should stop.
-        if result > T::zero() {
-            return None;
-        }
-    }
-
-    // This is the case when we've encountered a decimal separator. The fractional
-    // part will not change the number, but we will verify that the fractional part
-    // is well formed.
-    while offset < bytes.len() {
-        let current_byte = bytes[offset];
-        if !current_byte.is_ascii_digit() {
-            return None;
-        }
-        offset += 1;
-    }
-
-    if !negative {
-        result = -result;
-        if result < T::zero() {
-            return None;
-        }
-    }
-    Some(result)
-}
-
-fn to_decimal(input: &str, precision: u8, scale: i8) -> Option<i128> {
-    let precision = precision as u64;
-    let scale = scale as i64;
-    bigdecimal::BigDecimal::from_str(input)
-        .ok()
-        .map(|decimal| decimal.with_prec(precision).with_scale(scale))
-        .and_then(|decimal| {
-            let (bigint, _exp) = decimal.as_bigint_and_exponent();
-            bigint.to_i128()
-        })
-}
-
 #[cfg(test)]
 mod test {
-    use datafusion::common::cast::as_int32_array;
+    use datafusion::common::cast::{as_decimal128_array, as_float64_array, as_int32_array};
 
     use crate::cast::*;
+
+    #[test]
+    fn test_boolean_to_string() {
+        let bool_array: ArrayRef =
+            Arc::new(BooleanArray::from_iter(vec![None, Some(true), Some(false)]));
+        let casted = cast(&bool_array, &DataType::Utf8).unwrap();
+        assert_eq!(
+            as_string_array(&casted),
+            &StringArray::from_iter(vec![None, Some("true"), Some("false")])
+        );
+    }
 
     #[test]
     fn test_float_to_int() {
@@ -394,10 +231,8 @@ mod test {
             Some(f64::NAN),
         ]));
         let casted = cast(&f64_array, &DataType::Int32).unwrap();
-        let i32_array = as_int32_array(&casted).unwrap();
-
         assert_eq!(
-            i32_array,
+            as_int32_array(&casted).unwrap(),
             &Int32Array::from_iter(vec![
                 None,
                 Some(123),
@@ -407,6 +242,104 @@ mod test {
                 Some(i32::MAX),
                 Some(i32::MIN),
                 Some(0),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_int_to_float() {
+        let i32_array: ArrayRef = Arc::new(Int32Array::from_iter(vec![
+            None,
+            Some(123),
+            Some(987),
+            Some(i32::MAX),
+            Some(i32::MIN),
+        ]));
+        let casted = cast(&i32_array, &DataType::Float64).unwrap();
+        assert_eq!(
+            as_float64_array(&casted).unwrap(),
+            &Float64Array::from_iter(vec![
+                None,
+                Some(123.0),
+                Some(987.0),
+                Some(i32::MAX as f64),
+                Some(i32::MIN as f64),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_int_to_decimal() {
+        let i32_array: ArrayRef = Arc::new(Int32Array::from_iter(vec![
+            None,
+            Some(123),
+            Some(987),
+            Some(i32::MAX),
+            Some(i32::MIN),
+        ]));
+        let casted = cast(&i32_array, &DataType::Decimal128(38, 18)).unwrap();
+        assert_eq!(
+            as_decimal128_array(&casted).unwrap(),
+            &Decimal128Array::from_iter(vec![
+                None,
+                Some(123000000000000000000),
+                Some(987000000000000000000),
+                Some(i32::MAX as i128 * 1000000000000000000),
+                Some(i32::MIN as i128 * 1000000000000000000),
+            ])
+            .with_precision_and_scale(38, 18)
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_string_to_decimal() {
+        let string_array: ArrayRef = Arc::new(StringArray::from_iter(vec![
+            None,
+            Some("123.456"),
+            Some("987.654"),
+            Some("123456789012345.678901234567890"),
+            Some("-123456789012345.678901234567890"),
+        ]));
+        let casted = cast(&string_array, &DataType::Decimal128(38, 18)).unwrap();
+        assert_eq!(
+            as_decimal128_array(&casted).unwrap(),
+            &Decimal128Array::from_iter(vec![
+                None,
+                Some(123456000000000000000i128),
+                Some(987654000000000000000i128),
+                Some(123456789012345678901234567890000i128),
+                Some(-123456789012345678901234567890000i128),
+            ])
+            .with_precision_and_scale(38, 18)
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_decimal_to_string() {
+        let decimal_array: ArrayRef = Arc::new(
+            Decimal128Array::from_iter(vec![
+                None,
+                Some(123000000000000000000),
+                Some(987000000000000000000),
+                Some(987654321000000000000),
+                Some(i32::MAX as i128 * 1000000000000000000),
+                Some(i32::MIN as i128 * 1000000000000000000),
+            ])
+            .with_precision_and_scale(38, 18)
+            .unwrap(),
+        );
+        let casted = cast(&decimal_array, &DataType::Utf8).unwrap();
+        assert_eq!(
+            casted.as_any().downcast_ref::<StringArray>().unwrap(),
+            &StringArray::from_iter(vec![
+                None,
+                Some("123.000000000000000000"),
+                Some("987.000000000000000000"),
+                Some("987.654321000000000000"),
+                Some("2147483647.000000000000000000"),
+                Some("-2147483648.000000000000000000"),
             ])
         );
     }

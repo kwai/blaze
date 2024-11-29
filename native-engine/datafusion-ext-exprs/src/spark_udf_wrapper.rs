@@ -26,14 +26,13 @@ use arrow::{
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use blaze_jni_bridge::{
-    conf, conf::IntConf, is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref,
-    jni_new_object,
+    is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
 use datafusion::{
     error::Result, logical_expr::ColumnarValue, physical_expr::physical_exprs_bag_equal,
     physical_plan::PhysicalExpr,
 };
-use datafusion_ext_commons::{cast::cast, coalesce::coalesce_arrays_unchecked, df_execution_err};
+use datafusion_ext_commons::{cast::cast, df_execution_err};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
@@ -46,8 +45,7 @@ pub struct SparkUDFWrapperExpr {
     pub params: Vec<Arc<dyn PhysicalExpr>>,
     pub import_schema: SchemaRef,
     pub params_schema: OnceCell<SchemaRef>,
-    pub num_threads: usize,
-    jcontexts: Vec<OnceCell<GlobalRef>>,
+    jcontext: OnceCell<GlobalRef>,
 }
 
 impl PartialEq<dyn Any> for SparkUDFWrapperExpr {
@@ -71,7 +69,6 @@ impl SparkUDFWrapperExpr {
         return_nullable: bool,
         params: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Self> {
-        let num_threads = conf::UDF_WRAPPER_NUM_THREADS.value()? as usize;
         Ok(Self {
             serialized,
             return_type: return_type.clone(),
@@ -79,13 +76,12 @@ impl SparkUDFWrapperExpr {
             params,
             import_schema: Arc::new(Schema::new(vec![Field::new("", return_type, true)])),
             params_schema: OnceCell::new(),
-            num_threads,
-            jcontexts: vec![OnceCell::new(); num_threads],
+            jcontext: OnceCell::new(),
         })
     }
 
-    fn jcontext(&self, idx: usize) -> Result<GlobalRef> {
-        self.jcontexts[idx]
+    fn jcontext(&self) -> Result<GlobalRef> {
+        self.jcontext
             .get_or_try_init(|| {
                 let serialized_buf = jni_new_direct_byte_buffer!(&self.serialized)?;
                 let jcontext_local =
@@ -160,38 +156,12 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             &RecordBatchOptions::new().with_row_count(Some(num_rows)),
         )?;
 
-        // invoke UDF through JNI without threads
-        if self.num_threads <= 1 {
-            return Ok(ColumnarValue::Array(invoke_udf(
-                self.jcontext(0)?,
-                params_batch,
-                self.import_schema.clone(),
-            )?));
-        }
-
-        // invoke UDF through JNI with threads
-        let sub_batch_size = num_rows / self.num_threads + 1;
-        let futs = (0..num_rows)
-            .step_by(sub_batch_size)
-            .enumerate()
-            .map(|(thread_id, beg)| {
-                let jcontext = self.jcontext(thread_id)?;
-                let import_schema = self.import_schema.clone();
-                let len = sub_batch_size.min(num_rows.saturating_sub(beg));
-                let params_batch = params_batch.slice(beg, len);
-                Ok(std::thread::spawn(move || {
-                    invoke_udf(jcontext, params_batch, import_schema)
-                }))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let sub_imported_arrays = futs
-            .into_iter()
-            .map(|fut| fut.join().unwrap())
-            .collect::<Result<Vec<_>>>()?;
-        let imported_array =
-            coalesce_arrays_unchecked(sub_imported_arrays[0].data_type(), &sub_imported_arrays);
-        Ok(ColumnarValue::Array(imported_array))
+        // invoke UDF through JNI
+        Ok(ColumnarValue::Array(invoke_udf(
+            self.jcontext()?,
+            params_batch,
+            self.import_schema.clone(),
+        )?))
     }
 
     fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {

@@ -145,6 +145,7 @@ fn read_ffi(
     exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
     let size_counter = exec_ctx.register_counter_metric("size");
+    let exec_ctx_cloned = exec_ctx.clone();
     Ok(exec_ctx
         .clone()
         .output_with_sender("FFIReader", move |sender| async move {
@@ -171,7 +172,9 @@ fn read_ffi(
                         &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
                     )?;
                     size_counter.add(batch.get_array_mem_size());
-                    exec_ctx.baseline_metrics().record_output(batch.num_rows());
+                    exec_ctx_cloned
+                        .baseline_metrics()
+                        .record_output(batch.num_rows());
                     batch
                 };
                 sender.send(batch).await;

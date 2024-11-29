@@ -85,7 +85,7 @@ impl ExecutionPlan for LimitExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-        let input = exec_ctx.execute(&self.input)?;
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
         execute_limit(input, self.limit, exec_ctx)
     }
 

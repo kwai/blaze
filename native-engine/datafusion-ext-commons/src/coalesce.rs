@@ -26,6 +26,11 @@ use arrow_schema::{DataType, SchemaRef};
 /// coalesce batches without checking there schemas, invokers must make
 /// sure all arrays have the same schema
 pub fn coalesce_batches_unchecked(schema: SchemaRef, batches: &[RecordBatch]) -> RecordBatch {
+    match batches.len() {
+        0 => return RecordBatch::new_empty(schema),
+        1 => return batches[0].clone(),
+        _ => {}
+    }
     let num_rows = batches.iter().map(|b| b.num_rows()).sum::<usize>();
     let num_fields = schema.fields().len();
     let mut coalesced_cols = vec![];

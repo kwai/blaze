@@ -140,7 +140,7 @@ impl ExecutionPlan for ParquetSinkExec {
             &self.props,
         )?);
 
-        let input = exec_ctx.execute(&self.input)?;
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
         execute_parquet_sink(parquet_sink_context, input, exec_ctx)
     }
 
@@ -209,7 +209,6 @@ fn execute_parquet_sink(
     mut input: SendableRecordBatchStream,
     exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
-    let partition_id = exec_ctx.partition_id();
     let part_writer: Arc<Mutex<Option<PartWriter>>> = Arc::default();
     let bytes_written = exec_ctx.register_counter_metric("bytes_written");
 
@@ -218,20 +217,13 @@ fn execute_parquet_sink(
         .output_with_sender("ParquetSink", move |sender| async move {
             macro_rules! part_writer_init {
                 ($batch:expr, $part_values:expr) => {{
-                    log::info!(
-                        "[partition={partition_id}] starts writing partition: {:?}",
-                        $part_values
-                    );
+                    log::info!("starts writing partition: {:?}", $part_values);
                     let parquet_sink_context_cloned = parquet_sink_context.clone();
                     *part_writer.lock() = Some({
                         // send identity batch, after that we can achieve a new output file
                         sender.send(($batch.slice(0, 1))).await;
                         tokio::task::spawn_blocking(move || {
-                            PartWriter::try_new(
-                                partition_id,
-                                parquet_sink_context_cloned,
-                                $part_values,
-                            )
+                            PartWriter::try_new(parquet_sink_context_cloned, $part_values)
                         })
                         .await
                         .or_else(|e| df_execution_err!("closing parquet file error: {e}"))??
@@ -415,7 +407,6 @@ struct PartFileStat {
 }
 
 struct PartWriter {
-    partition_id: usize,
     path: String,
     parquet_sink_context: Arc<ParquetSinkContext>,
     parquet_writer: ArrowWriter<FSDataWriter>,
@@ -426,21 +417,18 @@ struct PartWriter {
 
 impl PartWriter {
     fn try_new(
-        partition_id: usize,
         parquet_sink_context: Arc<ParquetSinkContext>,
         part_values: &[ScalarValue],
     ) -> Result<Self> {
         if !part_values.is_empty() {
-            log::info!(
-                "[partition={partition_id}] starts outputting dynamic partition: {part_values:?}"
-            );
+            log::info!("starts outputting dynamic partition: {part_values:?}");
         }
         let part_file = jni_get_string!(
             jni_call_static!(BlazeNativeParquetSinkUtils.getTaskOutputPath() -> JObject)?
                 .as_obj()
                 .into()
         )?;
-        log::info!("[partition={partition_id}] starts writing parquet file: {part_file}");
+        log::info!("starts writing parquet file: {part_file}");
 
         let fs = parquet_sink_context.fs_provider.provide(&part_file)?;
         let bytes_written = Count::new();
@@ -453,7 +441,6 @@ impl PartWriter {
             Some(parquet_sink_context.props.clone()),
         )?;
         Ok(Self {
-            partition_id,
             path: part_file,
             parquet_sink_context,
             parquet_writer,
@@ -473,7 +460,6 @@ impl PartWriter {
     }
 
     fn close(self) -> Result<PartFileStat> {
-        let partition_id = self.partition_id;
         let mut parquet_writer = self.parquet_writer;
         parquet_writer.flush()?;
         let rows_written = parquet_writer
@@ -492,7 +478,7 @@ impl PartWriter {
             num_rows: rows_written,
             num_bytes: bytes_written,
         };
-        log::info!("[partition={partition_id}] finished writing parquet file: {stat:?}");
+        log::info!("finished writing parquet file: {stat:?}");
         Ok(stat)
     }
 }

@@ -54,43 +54,43 @@ impl dyn ShuffleRepartitioner {
         let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
 
         // process all input batches
-        Ok(exec_ctx.clone().output_with_sender("Shuffle", move |_| async move {
-            let batches_num_rows = AtomicUsize::default();
-            let batches_mem_size = AtomicUsize::default();
-            while let Some(batch) = coalesced.next().await.transpose()? {
-                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
-                let batch_num_rows = batch.num_rows();
-                let batch_mem_size = batch.get_array_mem_size();
-                if batches_num_rows.load(SeqCst) == 0 {
-                    log::info!(
-                        "[partition={}] start shuffle writing, first batch num_rows={}, mem_size={}",
-                        exec_ctx.partition_id(),
-                        batch_num_rows,
-                        ByteSize(batch_mem_size as u64),
-                    );
+        Ok(exec_ctx
+            .clone()
+            .output_with_sender("Shuffle", move |_| async move {
+                let batches_num_rows = AtomicUsize::default();
+                let batches_mem_size = AtomicUsize::default();
+                while let Some(batch) = coalesced.next().await.transpose()? {
+                    let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+                    let batch_num_rows = batch.num_rows();
+                    let batch_mem_size = batch.get_array_mem_size();
+                    if batches_num_rows.load(SeqCst) == 0 {
+                        log::info!(
+                            "start shuffle writing, first batch num_rows={}, mem_size={}",
+                            batch_num_rows,
+                            ByteSize(batch_mem_size as u64),
+                        );
+                    }
+                    batches_num_rows.fetch_add(batch_num_rows, SeqCst);
+                    batches_mem_size.fetch_add(batch_mem_size, SeqCst);
+                    exec_ctx.baseline_metrics().record_output(batch.num_rows());
+                    self.insert_batch(batch)
+                        .await
+                        .map_err(|err| err.context("shuffle: executing insert_batch() error"))?;
                 }
-                batches_num_rows.fetch_add(batch_num_rows, SeqCst);
-                batches_mem_size.fetch_add(batch_mem_size, SeqCst);
-                exec_ctx.baseline_metrics().record_output(batch.num_rows());
-                self.insert_batch(batch)
-                    .await
-                    .map_err(|err| err.context("shuffle: executing insert_batch() error"))?;
-            }
-            data_size_counter.add(batches_mem_size.load(SeqCst));
+                data_size_counter.add(batches_mem_size.load(SeqCst));
 
-            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
-            log::info!(
-                "[partition={}] finishing shuffle writing, num_rows={}, mem_size={}",
-                exec_ctx.partition_id(),
-                batches_num_rows.load(SeqCst),
-                ByteSize(batches_mem_size.load(SeqCst) as u64),
-            );
-            self.shuffle_write()
-                .await
-                .map_err(|err| err.context("shuffle: executing shuffle_write() error"))?;
-            log::info!("[partition={}] finishing shuffle writing", exec_ctx.partition_id());
-            Ok::<_, DataFusionError>(())
-        }))
+                let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+                log::info!(
+                    "finishing shuffle writing, num_rows={}, mem_size={}",
+                    batches_num_rows.load(SeqCst),
+                    ByteSize(batches_mem_size.load(SeqCst) as u64),
+                );
+                self.shuffle_write()
+                    .await
+                    .map_err(|err| err.context("shuffle: executing shuffle_write() error"))?;
+                log::info!("finishing shuffle writing");
+                Ok::<_, DataFusionError>(())
+            }))
     }
 }
 

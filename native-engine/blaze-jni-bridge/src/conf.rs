@@ -30,12 +30,9 @@ macro_rules! define_conf {
 
 define_conf!(IntConf, BATCH_SIZE);
 define_conf!(DoubleConf, MEMORY_FRACTION);
+define_conf!(IntConf, TOKIO_NUM_WORKER_THREADS);
 define_conf!(BooleanConf, SMJ_INEQUALITY_JOIN_ENABLE);
-define_conf!(BooleanConf, BHJ_FALLBACKS_TO_SMJ_ENABLE);
-define_conf!(IntConf, BHJ_FALLBACKS_TO_SMJ_ROWS_THRESHOLD);
-define_conf!(IntConf, BHJ_FALLBACKS_TO_SMJ_MEM_THRESHOLD);
 define_conf!(BooleanConf, CASE_CONVERT_FUNCTIONS_ENABLE);
-define_conf!(IntConf, UDF_WRAPPER_NUM_THREADS);
 define_conf!(BooleanConf, INPUT_BATCH_STATISTICS_ENABLE);
 define_conf!(BooleanConf, IGNORE_CORRUPTED_FILES);
 define_conf!(BooleanConf, PARTIAL_AGG_SKIPPING_ENABLE);

@@ -27,26 +27,14 @@ public enum BlazeConf {
     /// actual off-heap memory usage is expected to be spark.executor.memoryOverhead * fraction.
     MEMORY_FRACTION("spark.blaze.memoryFraction", 0.6),
 
-    /// fallbacks to SortMergeJoin when executing BroadcastHashJoin with big broadcasted table.
-    /// not available in blaze 3.0+
-    BHJ_FALLBACKS_TO_SMJ_ENABLE("spark.blaze.enable.bhjFallbacksToSmj", false),
-
-    /// fallbacks to SortMergeJoin when BroadcastHashJoin has a broadcasted table with rows more
-    /// than this threshold. requires spark.blaze.enable.bhjFallbacksToSmj = true.
-    /// not available in blaze 3.0+
-    BHJ_FALLBACKS_TO_SMJ_ROWS_THRESHOLD("spark.blaze.bhjFallbacksToSmj.rows", 1000000),
-
-    /// fallbacks to SortMergeJoin when BroadcastHashJoin has a broadcasted table with memory usage
-    /// more than this threshold. requires spark.blaze.enable.bhjFallbacksToSmj = true.
-    BHJ_FALLBACKS_TO_SMJ_MEM_THRESHOLD("spark.blaze.bhjFallbacksToSmj.mem.bytes", 134217728),
+    /// number of worker threads used in tokio runtime, 0 to use default available parallism value.
+    /// for cpus those support hyperthreading, it is recommended to set this value to the number
+    /// of available physical cores.
+    TOKIO_NUM_WORKER_THREADS("spark.blaze.tokio.num.worker.threads", 1),
 
     /// enable converting upper/lower functions to native, special cases may provide different
     /// outputs from spark due to different unicode versions.
     CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", true),
-
-    /// number of threads evaluating UDFs
-    /// improves performance for special case that UDF concurrency matters
-    UDF_WRAPPER_NUM_THREADS("spark.blaze.udfWrapperNumThreads", 1),
 
     /// enable extra metrics of input batch statistics
     INPUT_BATCH_STATISTICS_ENABLE("spark.blaze.enableInputBatchStatistics", true),

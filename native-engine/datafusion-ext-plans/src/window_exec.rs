@@ -120,7 +120,7 @@ impl ExecutionPlan for WindowExec {
     ) -> Result<SendableRecordBatchStream> {
         // at this moment only supports ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-        let input = exec_ctx.execute(&self.input)?;
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
         let coalesced = exec_ctx.coalesce_with_default_batch_size(input);
         let window_ctx = self.context.clone();
         execute_window(coalesced, exec_ctx, window_ctx)

@@ -15,7 +15,9 @@
 use std::{
     future::Future,
     panic::AssertUnwindSafe,
+    pin::Pin,
     sync::{Arc, Weak},
+    task::{ready, Context, Poll},
     time::Instant,
 };
 
@@ -23,7 +25,7 @@ use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use blaze_jni_bridge::{conf, conf::BooleanConf, is_jni_bridge_inited, is_task_running};
 use datafusion::{
     common::Result,
-    execution::{SendableRecordBatchStream, TaskContext},
+    execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext},
     physical_plan::{
         metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, Time},
         stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter},
@@ -34,8 +36,8 @@ use datafusion_ext_commons::{
     array_size::ArraySize, batch_size, coalesce::coalesce_batches_unchecked, df_execution_err,
     suggested_output_batch_mem_size,
 };
-use futures::StreamExt;
-use futures_util::{FutureExt, TryStreamExt};
+use futures::{Stream, StreamExt};
+use futures_util::FutureExt;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
@@ -110,65 +112,103 @@ impl ExecutionContext {
 
     pub fn coalesce_with_default_batch_size(
         self: &Arc<Self>,
-        mut input: SendableRecordBatchStream,
+        input: SendableRecordBatchStream,
     ) -> SendableRecordBatchStream {
-        let baseline_metrics = self.baseline_metrics().clone();
-        let schema = input.schema();
-        let mut staging_batches = vec![];
-        let mut staging_rows = 0;
-        let mut staging_batches_mem_size = 0;
-        let mem_size_limit = suggested_output_batch_mem_size();
-        let batch_size_limit = batch_size();
+        pub struct CoalesceStream {
+            input: SendableRecordBatchStream,
+            staging_batches: Vec<RecordBatch>,
+            staging_rows: usize,
+            staging_batches_mem_size: usize,
+            batch_size: usize,
+            elapsed_compute: Time,
+        }
 
-        self.output_with_sender("CoalesceStream", move |sender| async move {
-            while let Some(batch) = input.next().await.transpose()? {
-                if batch.num_rows() == 0 {
-                    continue;
+        impl CoalesceStream {
+            pub fn new(
+                input: SendableRecordBatchStream,
+                batch_size: usize,
+                elapsed_compute: Time,
+            ) -> Self {
+                Self {
+                    input,
+                    staging_batches: vec![],
+                    staging_rows: 0,
+                    staging_batches_mem_size: 0,
+                    batch_size,
+                    elapsed_compute,
                 }
-                let elapsed_compute = baseline_metrics.elapsed_compute().clone();
-                let _timer = elapsed_compute.timer();
+            }
 
-                staging_rows += batch.num_rows();
-                staging_batches_mem_size += batch.get_array_mem_size();
-                staging_batches.push(batch);
+            fn coalesce(&mut self) -> Result<RecordBatch> {
+                // better concat_batches() implementation that releases old batch columns asap.
+                let schema = self.input.schema();
+                let coalesced_batch = coalesce_batches_unchecked(schema, &self.staging_batches);
+                self.staging_batches.clear();
+                self.staging_rows = 0;
+                self.staging_batches_mem_size = 0;
+                Ok(coalesced_batch)
+            }
 
-                let (batch_size_limit, mem_size_limit) = if staging_batches.len() > 1 {
-                    (batch_size_limit, mem_size_limit)
+            fn should_flush(&self) -> bool {
+                let size_limit = suggested_output_batch_mem_size();
+                let (batch_size_limit, mem_size_limit) = if self.staging_batches.len() > 1 {
+                    (self.batch_size, size_limit)
                 } else {
-                    (batch_size_limit / 2, mem_size_limit / 2)
+                    (self.batch_size / 2, size_limit / 2)
                 };
+                self.staging_rows >= batch_size_limit
+                    || self.staging_batches_mem_size > mem_size_limit
+            }
+        }
 
-                let should_flush =
-                    staging_rows >= batch_size_limit || staging_batches_mem_size >= mem_size_limit;
-                if should_flush {
-                    let coalesced = coalesce_batches_unchecked(
-                        schema.clone(),
-                        &std::mem::take(&mut staging_batches),
-                    );
-                    staging_rows = 0;
-                    staging_batches_mem_size = 0;
-                    sender.send(coalesced).await;
+        impl RecordBatchStream for CoalesceStream {
+            fn schema(&self) -> SchemaRef {
+                self.input.schema()
+            }
+        }
+
+        impl Stream for CoalesceStream {
+            type Item = Result<RecordBatch>;
+
+            fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+                let elapsed_time = self.elapsed_compute.clone();
+                loop {
+                    match ready!(self.input.poll_next_unpin(cx)).transpose()? {
+                        Some(batch) => {
+                            let _timer = elapsed_time.timer();
+                            let num_rows = batch.num_rows();
+                            if num_rows > 0 {
+                                self.staging_rows += batch.num_rows();
+                                self.staging_batches_mem_size += batch.get_array_mem_size();
+                                self.staging_batches.push(batch);
+                                if self.should_flush() {
+                                    let coalesced = self.coalesce()?;
+                                    return Poll::Ready(Some(Ok(coalesced)));
+                                }
+                                continue;
+                            }
+                        }
+                        None if !self.staging_batches.is_empty() => {
+                            let _timer = elapsed_time.timer();
+                            let coalesced = self.coalesce()?;
+                            return Poll::Ready(Some(Ok(coalesced)));
+                        }
+                        None => {
+                            return Poll::Ready(None);
+                        }
+                    }
                 }
             }
-            if staging_rows > 0 {
-                let coalesced = coalesce_batches_unchecked(
-                    schema.clone(),
-                    &std::mem::take(&mut staging_batches),
-                );
-                sender.send(coalesced).await;
-            }
-            Ok(())
-        })
-    }
+        }
 
-    pub fn build_output_stream(
-        self: &Arc<Self>,
-        fut: impl Future<Output = Result<SendableRecordBatchStream>> + Send + 'static,
-    ) -> SendableRecordBatchStream {
-        Box::pin(RecordBatchStreamAdapter::new(
-            self.output_schema(),
-            futures_util::stream::once(fut).try_flatten(),
-        ))
+        Box::pin(CoalesceStream {
+            input,
+            staging_batches: vec![],
+            staging_rows: 0,
+            staging_batches_mem_size: 0,
+            batch_size: batch_size(),
+            elapsed_compute: self.baseline_metrics().elapsed_compute().clone(),
+        })
     }
 
     pub fn execute_with_input_stats(
@@ -255,7 +295,6 @@ impl ExecutionContext {
             });
 
             if let Err(err) = result {
-                let err_message = err.to_string();
                 err_sender
                     .send(df_execution_err!("{err}"))
                     .await
@@ -266,16 +305,12 @@ impl ExecutionContext {
                 if !task_running {
                     panic!("output_with_sender[{desc}] canceled due to task finished/killed");
                 } else {
-                    panic!("output_with_sender[{desc}] error: {err_message}");
+                    panic!("output_with_sender[{desc}] error: {}", err.to_string());
                 }
             }
             Ok(())
         });
         stream_builder.build()
-    }
-
-    pub fn cancel_task(self: &Arc<Self>) {
-        WrappedRecordBatchSender::cancel_task(self);
     }
 }
 
@@ -345,24 +380,6 @@ impl WrappedRecordBatchSender {
         self.exclude_time.get_or_init(|| exclude_time.clone());
     }
 
-    pub fn cancel_task(exec_ctx: &Arc<ExecutionContext>) {
-        let mut working_senders = working_senders().lock();
-        *working_senders = std::mem::take(&mut *working_senders)
-            .into_iter()
-            .filter(|wrapped| match wrapped.upgrade() {
-                Some(wrapped) if Arc::ptr_eq(&wrapped.exec_ctx, exec_ctx) => {
-                    wrapped
-                        .sender
-                        .try_send(df_execution_err!("task completed/cancelled"))
-                        .unwrap_or_default();
-                    false
-                }
-                Some(_) => true, // do not modify senders from other tasks
-                None => false,   // already released
-            })
-            .collect();
-    }
-
     pub async fn send(&self, batch: RecordBatch) {
         let exclude_time = self.exclude_time.get().cloned();
         let send_time = exclude_time.as_ref().map(|_| Instant::now());
@@ -378,4 +395,22 @@ impl WrappedRecordBatchSender {
                 .sub_duration(send_time.elapsed());
         });
     }
+}
+
+pub fn cancel_all_tasks(task_ctx: &Arc<TaskContext>) {
+    let mut working_senders = working_senders().lock();
+    *working_senders = std::mem::take(&mut *working_senders)
+        .into_iter()
+        .filter(|wrapped| match wrapped.upgrade() {
+            Some(wrapped) if Arc::ptr_eq(&wrapped.exec_ctx.task_ctx, task_ctx) => {
+                wrapped
+                    .sender
+                    .try_send(df_execution_err!("task completed/cancelled"))
+                    .unwrap_or_default();
+                false
+            }
+            Some(_) => true, // do not modify senders from other tasks
+            None => false,   // already released
+        })
+        .collect();
 }

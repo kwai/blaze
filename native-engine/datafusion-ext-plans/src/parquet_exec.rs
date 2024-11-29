@@ -223,7 +223,7 @@ impl ExecutionPlan for ParquetExec {
 
         let mut file_stream = FileStream::new(&self.base_config, partition, opener, &self.metrics)?;
         if conf::IGNORE_CORRUPTED_FILES.value()? {
-            file_stream = file_stream.with_on_error(OnError::Skip)
+            file_stream = file_stream.with_on_error(OnError::Skip);
         }
 
         let timed_stream = execute_parquet_scan(Box::pin(file_stream), exec_ctx)?;

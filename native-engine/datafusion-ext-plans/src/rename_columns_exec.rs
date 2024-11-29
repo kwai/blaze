@@ -25,6 +25,7 @@ use datafusion::{
     physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
@@ -139,21 +140,23 @@ impl ExecutionPlan for RenameColumnsExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-        let mut input = exec_ctx.execute(&self.input)?;
-        Ok(exec_ctx
-            .clone()
-            .output_with_sender("RenameColumns", move |sender| async move {
-                while let Some(batch) = input.next().await.transpose()? {
-                    let batch = RecordBatch::try_new_with_options(
-                        exec_ctx.output_schema(),
-                        batch.columns().to_vec(),
-                        &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-                    )?;
-                    exec_ctx.baseline_metrics().record_output(batch.num_rows());
-                    sender.send(batch).await;
-                }
-                Ok(())
-            }))
+        let input = exec_ctx.execute(&self.input)?;
+        let output = input.map(move |batch| {
+            let input_batch = batch?;
+            let output_batch = RecordBatch::try_new_with_options(
+                exec_ctx.output_schema(),
+                input_batch.columns().to_vec(),
+                &RecordBatchOptions::new().with_row_count(Some(input_batch.num_rows())),
+            )?;
+            exec_ctx
+                .baseline_metrics()
+                .record_output(output_batch.num_rows());
+            Ok(output_batch)
+        });
+        Ok(Box::pin(RecordBatchStreamAdapter::new(
+            self.schema(),
+            output,
+        )))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

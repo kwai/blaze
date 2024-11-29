@@ -24,58 +24,84 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use blaze_jni_bridge::{
-    is_task_running, jni_bridge::JavaClasses, jni_call, jni_call_static, jni_exception_check,
-    jni_exception_occurred, jni_new_global_ref, jni_new_object, jni_new_string,
+    conf::{IntConf, TOKIO_NUM_WORKER_THREADS},
+    is_task_running,
+    jni_bridge::JavaClasses,
+    jni_call, jni_call_static, jni_convert_byte_array, jni_exception_check, jni_exception_occurred,
+    jni_new_global_ref, jni_new_object, jni_new_string,
 };
+use blaze_serde::protobuf::TaskDefinition;
 use datafusion::{
     common::Result,
     error::DataFusionError,
     execution::context::TaskContext,
-    physical_plan::{metrics::ExecutionPlanMetricsSet, ExecutionPlan},
+    physical_plan::{
+        displayable, empty::EmptyExec, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
+    },
 };
-use datafusion_ext_commons::df_execution_err;
+use datafusion_ext_commons::{df_execution_err, downcast_any};
 use datafusion_ext_plans::{
-    common::execution_context::ExecutionContext, parquet_sink_exec::ParquetSinkExec,
+    common::execution_context::{cancel_all_tasks, ExecutionContext},
+    ipc_writer_exec::IpcWriterExec,
+    parquet_sink_exec::ParquetSinkExec,
+    shuffle_writer_exec::ShuffleWriterExec,
 };
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
-use tokio::runtime::Runtime;
+use prost::Message;
+use tokio::{runtime::Runtime, task::JoinHandle};
 
-use crate::{handle_unwinded_scope, metrics::update_spark_metric_node};
+use crate::{
+    handle_unwinded_scope,
+    logging::{THREAD_PARTITION_ID, THREAD_STAGE_ID},
+    metrics::update_spark_metric_node,
+};
 
 pub struct NativeExecutionRuntime {
     exec_ctx: Arc<ExecutionContext>,
     native_wrapper: GlobalRef,
     plan: Arc<dyn ExecutionPlan>,
     batch_receiver: Receiver<Result<Option<RecordBatch>>>,
-    rt: Runtime,
+    tokio_runtime: Runtime,
+    join_handle: JoinHandle<()>,
 }
 
 impl NativeExecutionRuntime {
-    pub fn start(
-        native_wrapper: GlobalRef,
-        plan: Arc<dyn ExecutionPlan>,
-        partition: usize,
-        context: Arc<TaskContext>,
-    ) -> Result<Self> {
+    pub fn start(native_wrapper: GlobalRef, context: Arc<TaskContext>) -> Result<Self> {
+        // decode plan
+        let native_wrapper_cloned = native_wrapper.clone();
+        let raw_task_definition = jni_call!(
+            BlazeCallNativeWrapper(native_wrapper_cloned.as_obj()).getRawTaskDefinition() -> JObject
+        )?;
+        let raw_task_definition = jni_convert_byte_array!(raw_task_definition.as_obj())?;
+        let task_definition = TaskDefinition::decode(raw_task_definition.as_slice())
+            .or_else(|err| df_execution_err!("cannot decode execution plan: {err:?}"))?;
+
+        let task_id = &task_definition.task_id.expect("task_id is empty");
+        let stage_id = task_id.stage_id as usize;
+        let partition_id = task_id.partition_id as usize;
+        let plan = &task_definition.plan.expect("plan is empty");
+        drop(raw_task_definition);
+
+        // get execution plan
+        let execution_plan: Arc<dyn ExecutionPlan> = plan
+            .try_into()
+            .or_else(|err| df_execution_err!("cannot create execution plan: {err:?}"))?;
+
         let exec_ctx = ExecutionContext::new(
             context.clone(),
-            partition,
-            plan.schema(),
+            partition_id,
+            execution_plan.schema(),
             &ExecutionPlanMetricsSet::new(),
         );
-
-        // init ffi schema
-        let ffi_schema = FFI_ArrowSchema::try_from(exec_ctx.output_schema().as_ref())?;
-        jni_call!(BlazeCallNativeWrapper(native_wrapper.as_obj())
-            .importSchema(&ffi_schema as *const FFI_ArrowSchema as i64) -> ()
-        )?;
 
         // create tokio runtime
         // propagate classloader and task context to spawned children threads
         let spark_task_context = jni_call_static!(JniBridge.getTaskContext() -> JObject)?;
         let spark_task_context_global = jni_new_global_ref!(spark_task_context.as_obj())?;
-        let rt = tokio::runtime::Builder::new_multi_thread()
+        let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name(format!("blaze-native-stage-{stage_id}-part-{partition_id}"))
+            .worker_threads(TOKIO_NUM_WORKER_THREADS.value()? as usize)
             .on_thread_start(move || {
                 let classloader = JavaClasses::get().classloader;
                 let _ = jni_call_static!(
@@ -84,29 +110,42 @@ impl NativeExecutionRuntime {
                 let _ = jni_call_static!(
                     JniBridge.setTaskContext(spark_task_context_global.as_obj()) -> ()
                 );
+                THREAD_STAGE_ID.set(stage_id);
+                THREAD_PARTITION_ID.set(partition_id);
             })
             .build()?;
 
-        let (batch_sender, batch_receiver) = std::sync::mpsc::sync_channel(1);
-        let nrt = Self {
-            exec_ctx: exec_ctx.clone(),
-            native_wrapper: native_wrapper.clone(),
-            plan: plan.clone(),
-            rt,
-            batch_receiver,
-        };
-
         // spawn batch producer
+        let (batch_sender, batch_receiver) = std::sync::mpsc::sync_channel(1);
         let err_sender = batch_sender.clone();
+        let execution_plan_cloned = execution_plan.clone();
+        let exec_ctx_cloned = exec_ctx.clone();
+        let native_wrapper_cloned = native_wrapper.clone();
         let consume_stream = async move {
-            // execute and coalesce plan to output stream
-            let stream = exec_ctx.execute(&plan)?;
-            let mut stream = if plan.as_any().downcast_ref::<ParquetSinkExec>().is_some() {
-                stream // cannot coalesce parquet sink output
-            } else {
-                exec_ctx.coalesce_with_default_batch_size(stream)
-            };
+            // execute plan to output stream
+            let displayable = displayable(execution_plan_cloned.as_ref())
+                .set_show_schema(true)
+                .indent(true)
+                .to_string();
+            log::info!("start executing plan:\n{displayable}");
+            let mut stream = exec_ctx_cloned.execute(&execution_plan_cloned)?;
 
+            // coalesce output stream if necessary
+            if downcast_any!(execution_plan_cloned, EmptyExec).is_err()
+                && downcast_any!(execution_plan_cloned, ParquetSinkExec).is_err()
+                && downcast_any!(execution_plan_cloned, IpcWriterExec).is_err()
+                && downcast_any!(execution_plan_cloned, ShuffleWriterExec).is_err()
+            {
+                stream = exec_ctx_cloned.coalesce_with_default_batch_size(stream);
+            }
+
+            // init ffi schema
+            let ffi_schema = FFI_ArrowSchema::try_from(stream.schema().as_ref())?;
+            jni_call!(BlazeCallNativeWrapper(native_wrapper_cloned.as_obj())
+                .importSchema(&ffi_schema as *const FFI_ArrowSchema as i64) -> ()
+            )?;
+
+            // produce batches
             while let Some(batch) = AssertUnwindSafe(stream.next())
                 .catch_unwind()
                 .await
@@ -125,46 +164,52 @@ impl NativeExecutionRuntime {
             batch_sender
                 .send(Ok(None))
                 .or_else(|err| df_execution_err!("send batch error: {err}"))?;
-            log::info!("[partition={partition}] finished");
+            log::info!("task finished");
             Ok::<_, DataFusionError>(())
         };
-        nrt.rt.spawn(async move {
+
+        let native_wrapper_cloned = native_wrapper.clone();
+        let join_handle = tokio_runtime.spawn(async move {
             consume_stream.await.unwrap_or_else(|err| {
                 handle_unwinded_scope(|| {
                     let task_running = is_task_running();
                     if !task_running {
-                        log::warn!(
-                            "[partition={partition}] task completed before native execution done"
-                        );
+                        log::warn!("task completed before native execution done");
                         return Ok(());
                     }
 
                     let cause = if jni_exception_check!()? {
-                        let err_text = format!(
-                            "[partition={partition}] native execution panics with exception: {err}"
-                        );
+                        let err_text = format!("native execution panics with exception: {err}");
                         err_sender.send(df_execution_err!("{err_text}"))?;
                         log::error!("{err_text}");
                         Some(jni_exception_occurred!()?)
                     } else {
-                        let err_text =
-                            format!("[partition={partition}] native execution panics: {err}");
+                        let err_text = format!("native execution panics: {err}");
                         err_sender.send(df_execution_err!("{err_text}"))?;
                         log::error!("{err_text}");
                         None
                     };
 
                     set_error(
-                        &native_wrapper,
-                        &format!("[partition={partition}] panics: {err}"),
+                        &native_wrapper_cloned,
+                        &format!("task panics: {err}"),
                         cause.map(|e| e.as_obj()),
                     )?;
-                    log::info!("[partition={partition}] exited abnormally.");
+                    log::info!("task exited abnormally.");
                     Ok::<_, Box<dyn Error>>(())
                 })
             });
         });
-        Ok(nrt)
+
+        let native_execution_runtime = Self {
+            exec_ctx: exec_ctx.clone(),
+            native_wrapper: native_wrapper.clone(),
+            plan: execution_plan.clone(),
+            tokio_runtime,
+            batch_receiver,
+            join_handle,
+        };
+        Ok(native_execution_runtime)
     }
 
     pub fn next_batch(&self) -> bool {
@@ -186,13 +231,12 @@ impl NativeExecutionRuntime {
             }
         };
 
-        let partition = self.exec_ctx.partition_id();
         match next_batch() {
             Ok(ret) => return ret,
             Err(err) => {
                 let _ = set_error(
                     &self.native_wrapper,
-                    &format!("[partition={partition}] poll record batch error: {err}"),
+                    &format!("poll record batch error: {err}"),
                     None,
                 );
                 return false;
@@ -203,13 +247,15 @@ impl NativeExecutionRuntime {
     pub fn finalize(self) {
         let partition = self.exec_ctx.partition_id();
 
-        log::info!("[partition={partition}] native execution finalizing");
+        log::info!("(partition={partition}) native execution finalizing");
         self.update_metrics().unwrap_or_default();
         drop(self.plan);
+        drop(self.batch_receiver);
 
-        self.exec_ctx.cancel_task(); // cancel all pending streams
-        self.rt.shutdown_background();
-        log::info!("[partition={partition}] native execution finalized");
+        cancel_all_tasks(&self.exec_ctx.task_ctx()); // cancel all pending streams
+        self.join_handle.abort();
+        self.tokio_runtime.shutdown_background();
+        log::info!("(partition={partition}) native execution finalized");
     }
 
     fn update_metrics(&self) -> Result<()> {

@@ -75,19 +75,29 @@ impl Table {
 
     fn upsert_many(&mut self, keys: Vec<impl AggHashMapKey>) -> Vec<u32> {
         let mut hashes = unchecked!(keys.iter().map(agg_hash).collect::<Vec<_>>());
+        const PREFETCH_AHEAD: usize = 4;
 
         macro_rules! entries {
             ($i:expr) => {{
-                (hashes[$i] % (1 << self.map_mod_bits)) as usize
+                (hashes[$i] % (1 << self.map_mod_bits))
             }};
         }
 
+        macro_rules! prefetch_at {
+            ($i:expr) => {{
+                if $i < hashes.len() {
+                    prefetch_write_data!(&self.map[entries!($i) as usize]);
+                }
+            }};
+        }
+
+        for i in 0..PREFETCH_AHEAD {
+            prefetch_at!(i);
+        }
+
         for (i, key) in keys.into_iter().enumerate() {
-            const PREFETCH_AHEAD: usize = 4;
-            if i + PREFETCH_AHEAD < hashes.len() {
-                prefetch_write_data!(&self.map[entries!(i + PREFETCH_AHEAD)]);
-            }
-            hashes[i] = self.upsert_one_impl(key, hashes[i], entries!(i));
+            prefetch_at!(i + PREFETCH_AHEAD);
+            hashes[i] = self.upsert_one_impl(key, hashes[i], entries!(i) as usize);
         }
 
         // safety: transmute to Vec<u32>
