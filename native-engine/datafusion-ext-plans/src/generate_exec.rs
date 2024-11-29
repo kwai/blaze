@@ -33,7 +33,7 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{batch_size, cast::cast};
+use datafusion_ext_commons::{arrow::cast::cast, batch_size};
 use futures::StreamExt;
 use num::integer::Roots;
 use once_cell::sync::OnceCell;

@@ -344,7 +344,7 @@ object NativeConverters extends Logging {
 
     } catch {
       case e: NotImplementedError =>
-        logWarning(s"native expression fallbacks to spark: $e")
+        logWarning(s"Falling back expression: $e")
 
         // bind all convertible children
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()

@@ -23,7 +23,7 @@ pub use batch_serde::{read_array, write_array};
 use datafusion::common::Result;
 pub use scalar_serde::{read_scalar, write_scalar};
 
-use crate::cast::cast;
+use crate::arrow::cast::cast;
 
 mod batch_serde;
 mod scalar_serde;

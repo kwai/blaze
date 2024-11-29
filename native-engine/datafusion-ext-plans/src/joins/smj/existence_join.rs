@@ -17,10 +17,12 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{ArrayRef, RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
-use datafusion_ext_commons::suggested_output_batch_mem_size;
+use datafusion_ext_commons::{
+    arrow::selection::create_batch_interleaver, suggested_output_batch_mem_size,
+};
 
 use crate::{
-    common::{batch_selection::interleave_batches, execution_context::WrappedRecordBatchSender},
+    common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
     joins::{Idx, JoinParams, StreamCursors},
     sort_merge_join_exec::Joiner,
@@ -65,11 +67,8 @@ impl ExistenceJoiner {
     async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
         let indices = std::mem::take(&mut self.indices);
         let num_rows = indices.len();
-        let cols = interleave_batches(
-            curs.0.projected_batch_schema.clone(),
-            &curs.0.projected_batches,
-            &indices,
-        )?;
+        let batch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
+        let cols = batch_interleaver(&indices)?;
 
         let exists = std::mem::take(&mut self.exists);
         let exists_col: ArrayRef = Arc::new(arrow::array::BooleanArray::from(exists));

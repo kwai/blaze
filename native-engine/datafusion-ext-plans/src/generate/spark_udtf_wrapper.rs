@@ -29,7 +29,7 @@ use blaze_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
-use datafusion_ext_commons::{cast::cast, df_execution_err};
+use datafusion_ext_commons::{arrow::cast::cast, df_execution_err};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 

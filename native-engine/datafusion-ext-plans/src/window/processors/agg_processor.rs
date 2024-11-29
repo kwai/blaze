@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use arrow::{array::ArrayRef, record_batch::RecordBatch};
 use datafusion::common::Result;
-use datafusion_ext_commons::coalesce::coalesce_arrays_unchecked;
+use datafusion_ext_commons::arrow::coalesce::coalesce_arrays_unchecked;
 
 use crate::{
     agg::{

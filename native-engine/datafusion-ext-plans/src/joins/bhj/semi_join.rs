@@ -27,21 +27,21 @@ use arrow::{
 use async_trait::async_trait;
 use bitvec::{bitvec, prelude::BitVec};
 use datafusion::{common::Result, physical_plan::metrics::Time};
-use datafusion_ext_commons::likely;
+use datafusion_ext_commons::{
+    arrow::{eq_comparator::EqComparator, selection::take_cols},
+    likely,
+};
 
 use crate::{
     broadcast_join_exec::Joiner,
-    common::{
-        batch_selection::take_cols, execution_context::WrappedRecordBatchSender,
-        timer_helper::TimerHelper,
-    },
+    common::{execution_context::WrappedRecordBatchSender, timer_helper::TimerHelper},
     joins::{
         bhj::{
             semi_join::{
                 ProbeSide::{L, R},
                 SemiMode::{Anti, Existence, Semi},
             },
-            EqComparator, ProbeSide,
+            ProbeSide,
         },
         join_hash_map::{join_create_hashes, JoinHashMap},
         JoinParams,

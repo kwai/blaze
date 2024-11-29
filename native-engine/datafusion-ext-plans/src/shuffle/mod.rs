@@ -25,7 +25,7 @@ use datafusion::{
     error::DataFusionError,
     physical_plan::{Partitioning, SendableRecordBatchStream},
 };
-use datafusion_ext_commons::{array_size::ArraySize, spark_hash::create_murmur3_hashes};
+use datafusion_ext_commons::{arrow::array_size::ArraySize, spark_hash::create_murmur3_hashes};
 use futures::StreamExt;
 
 use crate::{common::execution_context::ExecutionContext, memmgr::spill::Spill};

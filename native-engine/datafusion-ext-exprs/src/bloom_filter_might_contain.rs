@@ -31,7 +31,7 @@ use datafusion::{
     physical_expr::PhysicalExpr,
 };
 use datafusion_ext_commons::{
-    cast::cast, df_execution_err, df_unimplemented_err, spark_bloom_filter::SparkBloomFilter,
+    arrow::cast::cast, df_execution_err, df_unimplemented_err, spark_bloom_filter::SparkBloomFilter,
 };
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;

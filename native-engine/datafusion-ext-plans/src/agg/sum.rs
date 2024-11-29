@@ -75,7 +75,7 @@ impl Agg for AggSum {
 
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // cast arg1 to target data type
-        Ok(vec![datafusion_ext_commons::cast::cast(
+        Ok(vec![datafusion_ext_commons::arrow::cast::cast(
             &partial_inputs[0],
             &self.data_type,
         )?])

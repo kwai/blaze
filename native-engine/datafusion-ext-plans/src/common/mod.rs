@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod batch_selection;
 pub mod cached_exprs_evaluator;
 pub mod column_pruning;
 pub mod execution_context;
 pub mod ipc_compression;
-pub mod make_eq_comparator;
 pub mod timer_helper;
 
 pub trait SliceAsRawBytes {

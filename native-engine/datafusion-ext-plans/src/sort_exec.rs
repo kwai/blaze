@@ -35,7 +35,7 @@ use arrow::{
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
-    common::{Result, Statistics},
+    common::{DataFusionError, Result, Statistics},
     execution::context::TaskContext,
     physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
     physical_plan::{
@@ -45,10 +45,13 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize,
+    algorithm::loser_tree::{ComparableForLoserTree, LoserTree},
+    arrow::{
+        array_size::ArraySize,
+        selection::{create_batch_interleaver, take_batch, BatchInterleaver},
+    },
     compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
     downcast_any,
-    ds::loser_tree::{ComparableForLoserTree, LoserTree},
     io::{read_len, read_one_batch, write_len, write_one_batch},
 };
 use futures::{lock::Mutex, StreamExt};
@@ -57,7 +60,6 @@ use parking_lot::Mutex as SyncMutex;
 
 use crate::{
     common::{
-        batch_selection::{interleave_batches, take_batch},
         column_pruning::ExecuteWithColumnPruning,
         execution_context::{ExecutionContext, WrappedRecordBatchSender},
         timer_helper::TimerHelper,
@@ -202,13 +204,21 @@ impl MemConsumer for ExternalSorter {
     }
 
     async fn spill(&self) -> Result<()> {
-        let mut spill = try_new_spill(&self.exec_ctx.spill_metrics())?;
         let data = std::mem::take(&mut *self.data.lock().await);
         let sub_batch_size = compute_suggested_batch_size_for_kway_merge(
             self.mem_total_size(),
             self.num_total_rows(),
         );
-        data.try_into_spill(self, &mut spill, sub_batch_size)?;
+
+        let limit = self.limit;
+        let spill_metrics = self.exec_ctx.spill_metrics().clone();
+        let spill = tokio::task::spawn_blocking(move || {
+            let mut spill = try_new_spill(&spill_metrics)?;
+            data.try_into_spill(&mut spill, sub_batch_size, limit)?;
+            Ok::<_, DataFusionError>(spill)
+        })
+        .await
+        .expect("tokio error")?;
 
         self.spills
             .lock()
@@ -256,13 +266,13 @@ struct BufferedData {
 impl BufferedData {
     fn try_into_spill(
         self,
-        sorter: &ExternalSorter,
         spill: &mut Box<dyn Spill>,
         sub_batch_size: usize,
+        limit: usize,
     ) -> Result<()> {
         let mut writer = spill.get_compressed_writer();
         for (key_collector, batch) in
-            self.into_sorted_batches::<SqueezeKeyCollector>(sub_batch_size, sorter)?
+            self.into_sorted_batches::<SqueezeKeyCollector>(sub_batch_size, limit)?
         {
             write_one_batch(batch.num_rows(), batch.columns(), &mut writer)?;
             writer.write_all(&key_collector.store)?;
@@ -320,7 +330,7 @@ impl BufferedData {
     fn into_sorted_batches<'a, KC: KeyCollector>(
         self,
         batch_size: usize,
-        sorter: &ExternalSorter,
+        limit: usize,
     ) -> Result<impl Iterator<Item = (KC, RecordBatch)>> {
         struct Cursor {
             idx: usize,
@@ -386,7 +396,8 @@ impl BufferedData {
 
         struct SortedBatchesIterator<KC: KeyCollector> {
             cursors: LoserTree<Cursor>,
-            batches: Vec<RecordBatch>,
+            batch_interleaver: BatchInterleaver,
+            is_all_pruned: bool,
             batch_size: usize,
             num_output_rows: usize,
             limit: usize,
@@ -401,8 +412,6 @@ impl BufferedData {
                     return None;
                 }
                 let cur_batch_size = self.batch_size.min(self.limit - self.num_output_rows);
-                let batch_schema = self.batches[0].schema();
-                let is_all_pruned = self.batches[0].num_columns() == 0;
                 let mut indices = Vec::with_capacity(cur_batch_size);
                 let mut key_collector = KC::default();
                 let mut min_cursor = self.cursors.peek_mut();
@@ -419,9 +428,9 @@ impl BufferedData {
                         min_cursor.adjust();
                     }
                 }
-                let batch = if !is_all_pruned {
-                    interleave_batches(batch_schema, &self.batches, &indices)
-                        .expect("error merging sorted batches: interleaving error")
+                let batch = if !self.is_all_pruned {
+                    let batch_interleaver = &self.batch_interleaver;
+                    batch_interleaver(&indices).expect("interleaving error")
                 } else {
                     create_zero_column_batch(cur_batch_size)
                 };
@@ -440,11 +449,17 @@ impl BufferedData {
                 .collect(),
         );
 
+        // external merge data are visited in sequence and do not require memory
+        // prefetching
+        let batch_interleaver = create_batch_interleaver(&self.sorted_batches, false)?;
+        let is_all_pruned = self.sorted_batches[0].columns().is_empty();
+
         Ok(Box::new(SortedBatchesIterator {
             cursors,
             batch_size,
-            batches: self.sorted_batches,
-            limit: sorter.limit.min(self.num_rows),
+            batch_interleaver,
+            is_all_pruned,
+            limit: limit.min(self.num_rows),
             num_output_rows: 0,
             _phantom: PhantomData,
         }))
@@ -554,7 +569,7 @@ impl ExternalSorter {
             );
 
             for (key_store, pruned_batch) in
-                data.into_sorted_batches::<SimpleKeyCollector>(sub_batch_size, &self)?
+                data.into_sorted_batches::<SimpleKeyCollector>(sub_batch_size, self.limit)?
             {
                 let batch = self
                     .prune_sort_keys_from_batch
@@ -577,8 +592,14 @@ impl ExternalSorter {
 
         if self.mem_used_percent() < 0.25 {
             // if in-mem data is small, try to spill it into native raw bytes
-            let mut spill: Box<dyn Spill> = Box::new(vec![]);
-            data.try_into_spill(&self, &mut spill, sub_batch_size)?;
+            let limit = self.limit;
+            let mut spill = tokio::task::spawn_blocking(move || {
+                let mut spill: Box<dyn Spill> = Box::new(vec![]);
+                data.try_into_spill(&mut spill, sub_batch_size, limit)?;
+                Ok::<_, DataFusionError>(spill)
+            })
+            .await
+            .expect("tokio error")?;
 
             let in_mem_spill = downcast_any!(spill, mut Vec<u8>)?;
             in_mem_spill.shrink_to_fit();
@@ -588,8 +609,15 @@ impl ExternalSorter {
             self.update_mem_used(in_mem_spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
                 .await?;
         } else {
-            let mut spill = try_new_spill(&self.exec_ctx.spill_metrics())?;
-            data.try_into_spill(&self, &mut spill, sub_batch_size)?;
+            let limit = self.limit;
+            let spill_metrics = self.exec_ctx.spill_metrics().clone();
+            let spill = tokio::task::spawn_blocking(move || {
+                let mut spill = try_new_spill(&spill_metrics)?;
+                data.try_into_spill(&mut spill, sub_batch_size, limit)?;
+                Ok::<_, DataFusionError>(spill)
+            })
+            .await
+            .expect("tokio error")?;
             spills.push(spill);
             self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
                 .await?;
@@ -875,7 +903,8 @@ impl<KC: KeyCollector> ExternalMerger<'_, KC> {
                     (base_idx + batch_idx, row_idx)
                 })
                 .collect::<Vec<_>>();
-            interleave_batches(pruned_schema, &batches, &staging_indices)?
+            let batch_interleaver = create_batch_interleaver(&batches, true)?;
+            batch_interleaver(&staging_indices)?
         } else {
             RecordBatch::try_new_with_options(
                 pruned_schema.clone(),

@@ -245,7 +245,7 @@ object BlazeConverters extends Logging {
 
     } catch {
       case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
-        logWarning(s"Error converting exec: ${exec.getClass.getSimpleName}: ${e.getMessage}", e)
+        logWarning(s"Falling back exec: ${exec.getClass.getSimpleName}: ${e.getMessage}")
         exec.setTagValue(convertibleTag, false)
         exec.setTagValue(convertStrategyTag, NeverConvert)
         exec

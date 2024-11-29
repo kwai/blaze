@@ -143,7 +143,7 @@ mod test {
     use itertools::Itertools;
     use rand::Rng;
 
-    use crate::ds::loser_tree::{ComparableForLoserTree, LoserTree};
+    use crate::algorithm::loser_tree::{ComparableForLoserTree, LoserTree};
 
     #[test]
     fn fuzztest() {

@@ -205,7 +205,7 @@ pub fn cast_impl(
 mod test {
     use datafusion::common::cast::{as_decimal128_array, as_float64_array, as_int32_array};
 
-    use crate::cast::*;
+    use super::*;
 
     #[test]
     fn test_boolean_to_string() {

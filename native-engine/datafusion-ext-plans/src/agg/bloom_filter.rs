@@ -26,7 +26,7 @@ use arrow::{
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 use datafusion_ext_commons::{
-    cast::cast, df_unimplemented_err, downcast_any, spark_bloom_filter::SparkBloomFilter,
+    arrow::cast::cast, df_unimplemented_err, downcast_any, spark_bloom_filter::SparkBloomFilter,
 };
 
 use crate::{

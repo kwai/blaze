@@ -17,11 +17,13 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
-use datafusion_ext_commons::suggested_output_batch_mem_size;
+use datafusion_ext_commons::{
+    arrow::selection::create_batch_interleaver, suggested_output_batch_mem_size,
+};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    common::{batch_selection::interleave_batches, execution_context::WrappedRecordBatchSender},
+    common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
     joins::{Idx, JoinParams, StreamCursors},
     sort_merge_join_exec::Joiner,
@@ -79,16 +81,11 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
         let num_rows = lindices.len();
         assert_eq!(lindices.len(), rindices.len());
 
-        let lcols = interleave_batches(
-            curs.0.projected_batch_schema.clone(),
-            &curs.0.projected_batches,
-            &lindices,
-        )?;
-        let rcols = interleave_batches(
-            curs.1.projected_batch_schema.clone(),
-            &curs.1.projected_batches,
-            &rindices,
-        )?;
+        let lbatch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
+        let rbatch_interleaver = create_batch_interleaver(&curs.1.projected_batches, false)?;
+        let lcols = lbatch_interleaver(&lindices)?;
+        let rcols = rbatch_interleaver(&rindices)?;
+
         let output_batch = RecordBatch::try_new_with_options(
             self.join_params.projection.schema.clone(),
             [lcols.columns(), rcols.columns()].concat(),

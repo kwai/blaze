@@ -22,21 +22,15 @@ use datafusion::{
     physical_plan::{metrics::Time, Partitioning},
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize,
-    assume,
-    coalesce::coalesce_arrays_unchecked,
-    compute_suggested_batch_size_for_output, df_execution_err,
-    ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-    unchecked,
+    algorithm::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
+    arrow::{array_size::ArraySize, coalesce::coalesce_arrays_unchecked, selection::take_batch},
+    assume, compute_suggested_batch_size_for_output, df_execution_err, unchecked,
 };
 use jni::objects::GlobalRef;
 use unchecked_index::UncheckedIndex;
 
 use crate::{
-    common::{
-        batch_selection::take_batch, ipc_compression::IpcCompressionWriter,
-        timer_helper::TimerHelper,
-    },
+    common::{ipc_compression::IpcCompressionWriter, timer_helper::TimerHelper},
     shuffle::{evaluate_hashes, evaluate_partition_ids, rss::RssWriter},
 };
 
@@ -45,8 +39,7 @@ pub struct BufferedData {
     sorted_batches: Vec<RecordBatch>,
     sorted_parts: Vec<Vec<PartitionInBatch>>,
     num_rows: usize,
-    staging_mem_used: usize,
-    sorted_mem_used: usize,
+    mem_used: usize,
     sort_time: Time,
 }
 
@@ -57,8 +50,7 @@ impl BufferedData {
             sorted_batches: vec![],
             sorted_parts: vec![],
             num_rows: 0,
-            staging_mem_used: 0,
-            sorted_mem_used: 0,
+            mem_used: 0,
             sort_time,
         }
     }
@@ -73,7 +65,7 @@ impl BufferedData {
         let (parts, sorted_batch) = self
             .sort_time
             .with_timer(|| sort_batch_by_partition_id(batch, partitioning))?;
-        self.sorted_mem_used +=
+        self.mem_used +=
             sorted_batch.get_array_mem_size() + parts.len() * size_of::<PartitionInBatch>();
         self.sorted_batches.push(sorted_batch);
         self.sorted_parts.push(parts);
@@ -164,30 +156,33 @@ impl BufferedData {
     ) -> Result<PartitionedBatchesIterator> {
         let sub_batch_size =
             compute_suggested_batch_size_for_output(self.mem_used(), self.num_rows);
-
         Ok(PartitionedBatchesIterator {
             batches: unchecked!(self.sorted_batches.clone()),
             cursors: RadixTournamentTree::new(
                 self.sorted_parts
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, partition_indices)| PartCursor {
-                        idx,
-                        parts: partition_indices,
-                        parts_idx: 0,
+                    .map(|(idx, partition_indices)| {
+                        let mut cur = PartCursor {
+                            idx,
+                            parts: partition_indices,
+                            parts_idx: 0,
+                        };
+                        cur.skip_empty_parts();
+                        cur
                     })
                     .collect(),
                 partitioning.partition_count(),
             ),
             num_output_rows: 0,
             num_rows: self.num_rows,
-            num_cols: self.sorted_batches[0].schema().fields().len(),
+            num_cols: self.sorted_batches[0].num_columns(),
             batch_size: sub_batch_size,
         })
     }
 
     pub fn mem_used(&self) -> usize {
-        self.staging_mem_used + self.sorted_mem_used
+        self.mem_used
     }
 }
 
@@ -227,7 +222,10 @@ impl PartitionedBatchesIterator {
                 );
             }
             slices_len += cur_part.len as usize;
+
+            // forward to next non-empty partition
             min_cursor.parts_idx += 1;
+            min_cursor.skip_empty_parts();
         }
 
         let output_slices = slices
@@ -246,18 +244,22 @@ struct PartCursor {
     parts_idx: usize,
 }
 
+impl PartCursor {
+    fn skip_empty_parts(&mut self) {
+        while self.parts_idx < self.parts.len() && self.parts[self.parts_idx].len == 0 {
+            self.parts_idx += 1;
+        }
+    }
+}
+
 impl KeyForRadixTournamentTree for PartCursor {
     fn rdx(&self) -> usize {
-        if self.parts_idx < self.parts.len() {
-            return self.parts[self.parts_idx].part_id as usize;
-        }
-        u32::MAX as usize
+        self.parts_idx.min(self.parts.len())
     }
 }
 
 #[derive(Clone, Copy, Default)]
 struct PartitionInBatch {
-    part_id: u32,
     start: u32,
     len: u32,
 }
@@ -282,8 +284,7 @@ fn sort_batch_by_partition_id(
         assume!((part_id as usize) < partitions.len());
         partitions[part_id as usize].len += 1;
     }
-    for (part_id, part) in &mut partitions.iter_mut().enumerate() {
-        part.part_id = part_id as u32;
+    for part in &mut partitions {
         part.start = start;
         start += part.len;
     }
@@ -300,11 +301,6 @@ fn sort_batch_by_partition_id(
         bucket_starts[part_id as usize] += 1;
         sorted_row_indices[start as usize] = row_idx as u32;
     }
-
-    // remove empty partitions
-    partitions.retain(|part| part.len > 0);
-    partitions.shrink_to_fit();
-
     let sorted_batch = take_batch(batch, sorted_row_indices)?;
     return Ok((partitions, sorted_batch));
 }

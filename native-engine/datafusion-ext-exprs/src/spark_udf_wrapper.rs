@@ -32,7 +32,7 @@ use datafusion::{
     error::Result, logical_expr::ColumnarValue, physical_expr::physical_exprs_bag_equal,
     physical_plan::PhysicalExpr,
 };
-use datafusion_ext_commons::{cast::cast, df_execution_err};
+use datafusion_ext_commons::{arrow::cast::cast, df_execution_err};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 

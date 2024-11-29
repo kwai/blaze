@@ -41,7 +41,7 @@ use datafusion::{
     physical_expr_common::utils::scatter,
     physical_plan::ColumnarValue,
 };
-use datafusion_ext_commons::{cast::cast, uda::UserDefinedArray};
+use datafusion_ext_commons::{arrow::cast::cast, uda::UserDefinedArray};
 use itertools::Itertools;
 use parking_lot::Mutex;
 

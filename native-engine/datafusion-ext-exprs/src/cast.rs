@@ -69,13 +69,13 @@ impl PhysicalExpr for TryCastExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         Ok(match self.expr.evaluate(batch)? {
-            ColumnarValue::Array(array) => {
-                ColumnarValue::Array(datafusion_ext_commons::cast::cast(&array, &self.cast_type)?)
-            }
+            ColumnarValue::Array(array) => ColumnarValue::Array(
+                datafusion_ext_commons::arrow::cast::cast(&array, &self.cast_type)?,
+            ),
             ColumnarValue::Scalar(scalar) => {
                 let array = scalar.to_array()?;
                 ColumnarValue::Scalar(ScalarValue::try_from_array(
-                    &datafusion_ext_commons::cast::cast(&array, &self.cast_type)?,
+                    &datafusion_ext_commons::arrow::cast::cast(&array, &self.cast_type)?,
                     0,
                 )?)
             }

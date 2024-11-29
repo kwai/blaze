@@ -118,7 +118,6 @@ impl ExecutionPlan for RssShuffleWriterExec {
         )?;
         let rss_partition_writer = jni_new_global_ref!(rss_partition_writer_local.as_obj())?;
 
-        let input = exec_ctx.execute_with_input_stats(&self.input)?;
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
@@ -136,6 +135,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             }
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
         repartitioner.execute(exec_ctx, input)
     }
 
