@@ -69,5 +69,10 @@
       <artifactId>scalatest_${scalaVersion}</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.thoughtworks.enableIf</groupId>
+      <artifactId>enableif_${scalaVersion}</artifactId>
+      <version>1.2.0</version>
+    </dependency>
   </dependencies>
 </project>

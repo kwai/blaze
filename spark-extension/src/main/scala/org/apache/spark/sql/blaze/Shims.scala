@@ -16,7 +16,6 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
-
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.apache.spark.SparkContext
@@ -135,7 +134,8 @@ abstract class Shims {
 
   def createNativeShuffleExchangeExec(
       outputPartitioning: Partitioning,
-      child: SparkPlan): NativeShuffleExchangeBase
+      child: SparkPlan,
+      shuffleOrigin: Option[Any] = None): NativeShuffleExchangeBase
 
   def createNativeSortExec(
       sortOrder: Seq[SortOrder],

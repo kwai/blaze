@@ -15,9 +15,10 @@
  */
 package org.apache.spark.sql.blaze
 
+import com.thoughtworks.enableIf
+
 import scala.annotation.tailrec
 import scala.collection.mutable
-
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
 import org.apache.spark.broadcast.Broadcast
@@ -267,8 +268,17 @@ object BlazeConverters extends Logging {
     }
     Shims.get.createNativeShuffleExchangeExec(
       outputPartitioning,
-      addRenameColumnsExec(convertedChild))
+      addRenameColumnsExec(convertedChild),
+      getShuffleOrigin(exec))
   }
+
+  @enableIf(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
+  def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = Some(exec.shuffleOrigin)
+
+  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = None
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
     val (
