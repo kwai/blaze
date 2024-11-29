@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" style="height: 100%">
+  <head>
+    <meta charset="utf-8">
+  </head>
+  <body style="height: 100%; margin: 0">
+    <div id="container" style="height: 100%" />
+      <script type="text/javascript" src="https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+      <script type="text/javascript" src="./benchmark-tpcds-results.js"></script>
+      <script type="text/javascript">
+        <!--
+        function parseCaseNames(resultStr) {
+          return resultStr.split(/\s+/).filter(s => s.startsWith('q'));
+        }
+
+        function parseResultValues(resultStr) {
+          return resultStr.split(/\s+/).filter(s => s.match(/\d+(\.\d+)/)).slice(0, -1);
+        }
+
+        var caseNames = parseCaseNames(sparkResults);
+        var sparkResultValues = parseResultValues(sparkResults);
+        var blazeResultValues = parseResultValues(blazeResults);
+
+        var dom = document.getElementById('container');
+        var myChart = echarts.init(dom, null, {
+          renderer: 'canvas',
+          useDirtyRect: false
+        });
+        var app = {};
+        var option = {
+          title: {
+            text: 'Blaze TPC-DS 1TB Benchmark'
+          },
+          toolbox: {
+            feature: {
+              saveAsImage: {
+                show: true,
+              }
+            }
+          },
+          tooltip: {
+            trigger: 'axis',
+            axisPointer: {
+              type: 'shadow'
+            }
+          },
+          legend: {},
+          grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            containLabel: true
+          },
+          yAxis: {
+            type: 'value',
+            boundaryGap: [0, 0.01]
+          },
+          xAxis: {
+            type: 'category',
+            data: caseNames,
+          },
+          series: [
+            {
+              name: 'Spark-3.5',
+              type: 'bar',
+              barWidth: 4,
+              data: sparkResultValues,
+              markLine: {
+                data: [{ type: 'average', name: 'Average' }],
+              },
+            }, {
+              name: 'Blaze-4.0.1-preview (5651e6e)',
+              type: 'bar',
+              barWidth: 4,
+              data: blazeResultValues,
+              markLine: {
+                data: [{ type: 'average', name: 'Average' }],
+              },
+            }
+          ]
+        };
+        myChart.setOption(option);
+        window.addEventListener('resize', myChart.resize);
+        -->
+      </script>
+  </body>
+</html>
