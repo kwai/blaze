@@ -70,7 +70,9 @@ case class NativeShuffleExchangeExec(
     (mutable.LinkedHashMap[String, SQLMetric]() ++
       readMetrics ++
       writeMetrics ++
-      Map("dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"))).toMap
+      Map(
+        "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
+        "numPartitions" -> SQLMetrics.createMetric(sparkContext, "number of partitions"))).toMap
 
   // 'mapOutputStatisticsFuture' is only needed when enable AQE.
   @transient override lazy val mapOutputStatisticsFuture: Future[MapOutputStatistics] = {
