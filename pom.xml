@@ -73,6 +73,34 @@
         <artifactId>scalatest_${scalaVersion}</artifactId>
         <version>${scalaTestVersion}</version>
       </dependency>
+
+      <dependency>
+        <groupId>org.apache.spark</groupId>
+        <artifactId>spark-core_${scalaVersion}</artifactId>
+        <version>${sparkVersion}</version>
+        <type>test-jar</type>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.spark</groupId>
+        <artifactId>spark-catalyst_${scalaVersion}</artifactId>
+        <version>${sparkVersion}</version>
+        <type>test-jar</type>
+        <scope>test</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>arrow-memory-netty</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.spark</groupId>
+        <artifactId>spark-sql_${scalaVersion}</artifactId>
+        <version>${sparkVersion}</version>
+        <type>test-jar</type>
+        <scope>test</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -269,7 +297,7 @@
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
         <scalaLongVersion>2.12.17</scalaLongVersion>
-        <scalaTestVersion>3.2.9</scalaTestVersion>
+        <scalaTestVersion>3.0.8</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.0.3</sparkVersion>
         <celebornVersion>0.5.2</celebornVersion>

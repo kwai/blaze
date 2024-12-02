@@ -75,4 +75,57 @@
       <version>1.2.0</version>
     </dependency>
   </dependencies>
+
+  <build>
+    <resources>
+      <resource>
+        <directory>${project.basedir}/../native-engine/_build/${releaseMode}</directory>
+        <includes>
+          <include>libblaze.so</include>
+          <include>libblaze.dylib</include>
+          <include>blaze.dll</include>
+        </includes>
+      </resource>
+    </resources>
+  </build>
+
+  <profiles>
+    <profile>
+      <id>build-native</id>
+      <activation>
+        <property>
+          <name>!skipBuildNative</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <!-- build native libs -->
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>3.0.0</version>
+            <configuration>
+              <executable>bash</executable>
+              <arguments>
+                <argument>./build-native.sh</argument>
+                <argument>${releaseMode}</argument>
+              </arguments>
+              <workingDirectory>../</workingDirectory>
+              <useMavenLogger>true</useMavenLogger>
+            </configuration>
+            <executions>
+              <execution>
+                <id>prepare-native-libs</id>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <phase>generate-resources</phase>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
 </project>

@@ -56,9 +56,9 @@ else
     echo "native-engine source code and built libraries not modified, no need to rebuild"
 fi
 
-mkdir -p dev/mvn-build-helper/assembly/target/classes
-rm -f dev/mvn-build-helper/assembly/target/classes/$libname.{dylib,so,dll}
-cp target/$profile/$libname."$libsuffix" dev/mvn-build-helper/assembly/target/classes
+mkdir -p native-engine/_build/$profile
+rm -f native-engine/_build/$profile/*
+cp target/$profile/$libname."$libsuffix" native-engine/_build/$profile
 
 new_checksum="$(checksum)"
 echo "build-checksum updated: $new_checksum"

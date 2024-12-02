@@ -83,5 +83,21 @@
       <artifactId>enableif_${scalaVersion}</artifactId>
       <version>1.2.0</version>
     </dependency>
+
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-core_${scalaVersion}</artifactId>
+      <type>test-jar</type>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-catalyst_${scalaVersion}</artifactId>
+      <type>test-jar</type>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-sql_${scalaVersion}</artifactId>
+      <type>test-jar</type>
+    </dependency>
   </dependencies>
 </project>
