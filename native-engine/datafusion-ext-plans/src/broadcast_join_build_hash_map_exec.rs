@@ -29,7 +29,7 @@ use datafusion::{
         PlanProperties,
     },
 };
-use datafusion_ext_commons::coalesce::coalesce_batches_unchecked;
+use datafusion_ext_commons::arrow::coalesce::coalesce_batches_unchecked;
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
 

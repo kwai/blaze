@@ -154,7 +154,7 @@ mod test {
     use itertools::Itertools;
     use rand::Rng;
 
-    use crate::ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree};
+    use crate::algorithm::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree};
 
     #[test]
     fn fuzztest() {

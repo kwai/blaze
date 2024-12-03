@@ -39,8 +39,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize,
-    cast::cast,
+    arrow::{array_size::ArraySize, cast::cast},
     df_execution_err,
     hadoop_fs::{FsDataOutputWrapper, FsProvider},
 };

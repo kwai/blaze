@@ -26,9 +26,9 @@ use datafusion::{
     physical_plan::{metrics::Time, Partitioning},
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize,
+    algorithm::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
+    arrow::array_size::ArraySize,
     df_execution_err,
-    ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
 };
 use futures::lock::Mutex;
 

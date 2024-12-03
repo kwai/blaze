@@ -33,8 +33,8 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize, batch_size, coalesce::coalesce_batches_unchecked, df_execution_err,
-    suggested_output_batch_mem_size,
+    arrow::{array_size::ArraySize, coalesce::coalesce_batches_unchecked},
+    batch_size, df_execution_err, suggested_output_batch_mem_size,
 };
 use futures::{Stream, StreamExt};
 use futures_util::FutureExt;

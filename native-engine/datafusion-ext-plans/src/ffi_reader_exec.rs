@@ -35,7 +35,7 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::array_size::ArraySize;
+use datafusion_ext_commons::arrow::array_size::ArraySize;
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 

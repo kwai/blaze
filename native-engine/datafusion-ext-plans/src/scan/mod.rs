@@ -184,6 +184,6 @@ fn schema_adapter_cast_column(col: &ArrayRef, data_type: &DataType) -> Result<Ar
                 data_type,
             ),
         },
-        _ => datafusion_ext_commons::cast::cast_scan_input_array(col.as_ref(), data_type),
+        _ => datafusion_ext_commons::arrow::cast::cast_scan_input_array(col.as_ref(), data_type),
     }
 }

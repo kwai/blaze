@@ -45,8 +45,8 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    array_size::ArraySize, batch_size, coalesce::coalesce_arrays_unchecked, df_execution_err,
-    suggested_output_batch_mem_size,
+    arrow::{array_size::ArraySize, coalesce::coalesce_arrays_unchecked},
+    batch_size, df_execution_err, suggested_output_batch_mem_size,
 };
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;

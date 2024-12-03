@@ -29,7 +29,7 @@ use datafusion::{
         PhysicalExpr, PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::cast::cast;
+use datafusion_ext_commons::arrow::cast::cast;
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
 

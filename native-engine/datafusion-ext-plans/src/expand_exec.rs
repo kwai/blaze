@@ -28,7 +28,7 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{cast::cast, df_execution_err};
+use datafusion_ext_commons::{arrow::cast::cast, df_execution_err};
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
 

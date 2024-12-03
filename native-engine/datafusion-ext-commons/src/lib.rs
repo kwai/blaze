@@ -25,14 +25,11 @@ use blaze_jni_bridge::{
 use once_cell::sync::OnceCell;
 use unchecked_index::UncheckedIndex;
 
-pub mod array_size;
-pub mod cast;
-pub mod coalesce;
-pub mod ds;
+pub mod algorithm;
+pub mod arrow;
 pub mod hadoop_fs;
 pub mod hash;
 pub mod io;
-pub mod rdxsort;
 pub mod spark_bit_array;
 pub mod spark_bloom_filter;
 pub mod spark_hash;

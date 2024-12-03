@@ -20,7 +20,7 @@ use datafusion::{
     common::Result,
     physical_plan::{metrics::Time, Partitioning},
 };
-use datafusion_ext_commons::{array_size::ArraySize, df_execution_err};
+use datafusion_ext_commons::{arrow::array_size::ArraySize, df_execution_err};
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
 

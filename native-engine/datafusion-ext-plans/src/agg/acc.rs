@@ -444,7 +444,11 @@ impl AccColumn for AccGenericColumn {
                 heap_mem_used,
             } => {
                 for idx in len..items.len() {
-                    *heap_mem_used -= items[idx].as_ref().map(|bytes| bytes.len()).unwrap_or(0);
+                    if let Some(bytes) = &items[idx]
+                        && bytes.spilled()
+                    {
+                        *heap_mem_used -= bytes.len();
+                    }
                 }
                 items.resize(len, None);
             }
@@ -583,9 +587,14 @@ impl AccColumn for AccGenericColumn {
                     let len = read_len(&mut r)?;
                     if len > 0 {
                         let len = len - 1;
-                        *heap_mem_used += len;
-                        let bytes = read_bytes_slice(&mut r, len)?.into();
-                        items[idx] = Some(AccBytes::from_vec(bytes));
+                        let bytes = AccBytes::from({
+                            let vec: Vec<u8> = read_bytes_slice(&mut r, len)?.into();
+                            vec
+                        });
+                        if bytes.spilled() {
+                            *heap_mem_used += bytes.len();
+                        }
+                        items[idx] = Some(bytes);
                     } else {
                         items[idx] = None;
                     }

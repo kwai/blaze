@@ -26,12 +26,12 @@ use datafusion::{
     physical_expr::PhysicalExprRef,
     physical_plan::metrics::Time,
 };
-use datafusion_ext_commons::array_size::ArraySize;
+use datafusion_ext_commons::arrow::{array_size::ArraySize, selection::take_batch};
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 
 use crate::{
-    common::{batch_selection::take_batch, timer_helper::TimerHelper},
+    common::timer_helper::TimerHelper,
     joins::{Idx, JoinParams},
 };
 

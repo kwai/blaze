@@ -17,10 +17,12 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
-use datafusion_ext_commons::suggested_output_batch_mem_size;
+use datafusion_ext_commons::{
+    arrow::selection::create_batch_interleaver, suggested_output_batch_mem_size,
+};
 
 use crate::{
-    common::{batch_selection::interleave_batches, execution_context::WrappedRecordBatchSender},
+    common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
     joins::{
         smj::semi_join::SemiJoinSide::{L, R},
@@ -99,16 +101,14 @@ impl<const P: JoinerParams> SemiJoiner<P> {
         let num_rows = indices.len();
 
         let cols = match P.join_side {
-            L => interleave_batches(
-                curs.0.projected_batch_schema.clone(),
-                &curs.0.projected_batches,
-                &indices,
-            )?,
-            R => interleave_batches(
-                curs.1.projected_batch_schema.clone(),
-                &curs.1.projected_batches,
-                &indices,
-            )?,
+            L => {
+                let batch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
+                batch_interleaver(&indices)?
+            }
+            R => {
+                let batch_interleaver = create_batch_interleaver(&curs.1.projected_batches, false)?;
+                batch_interleaver(&indices)?
+            }
         };
         let output_batch = RecordBatch::try_new_with_options(
             self.join_params.projection.schema.clone(),

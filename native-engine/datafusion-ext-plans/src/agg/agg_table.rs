@@ -21,12 +21,17 @@ use std::{
 use arrow::{record_batch::RecordBatch, row::Rows};
 use async_trait::async_trait;
 use bytesize::ByteSize;
-use datafusion::{common::Result, physical_plan::metrics::Time};
+use datafusion::{
+    common::{DataFusionError, Result},
+    physical_plan::metrics::Time,
+};
 use datafusion_ext_commons::{
+    algorithm::{
+        rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
+        rdxsort::radix_sort_unstable_by_key,
+    },
     batch_size, df_execution_err, downcast_any,
-    ds::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
     io::{read_bytes_slice, read_len, write_len},
-    rdxsort::radix_sort_unstable_by_key,
 };
 use futures::lock::Mutex;
 use smallvec::SmallVec;
@@ -151,7 +156,7 @@ impl AggTable {
         // only one in-mem table, directly output it
         if spills.is_empty() {
             let num_records = in_mem.num_records();
-            let mut cur_mem_used = in_mem.mem_used();
+            let mem_used = in_mem.mem_used();
             let mut keys = in_mem.hashing_data.map.take_keys();
             let mut acc_table = in_mem.hashing_data.acc_table;
 
@@ -181,7 +186,7 @@ impl AggTable {
                 // free memory of the output batch
                 // this is not precise because the used memory is accounted by records and
                 // not freed by batches.
-                cur_mem_used = cur_mem_used * keys.len() / num_records;
+                let cur_mem_used = mem_used * keys.len() / num_records;
                 self.update_mem_used(cur_mem_used).await?;
             }
             self.update_mem_used(0).await?;
@@ -192,8 +197,13 @@ impl AggTable {
         let mut spills = spills;
         let mut cursors = vec![];
         if in_mem.num_records() > 0 {
-            let mut spill: Box<dyn Spill> = Box::new(vec![]);
-            in_mem.try_into_spill(&mut spill)?; // spill staging records
+            let spill = tokio::task::spawn_blocking(|| {
+                let mut spill: Box<dyn Spill> = Box::new(vec![]);
+                in_mem.try_into_spill(&mut spill)?; // spill staging records
+                Ok::<_, DataFusionError>(spill)
+            })
+            .await
+            .expect("tokio error")?;
             let spill_size = downcast_any!(spill, Vec<u8>)?.len();
             self.update_mem_used(spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
                 .await?;
@@ -286,9 +296,17 @@ impl MemConsumer for AggTable {
                 next_in_mem_mode = InMemMode::Hashing
             }
         }
-        let mut spill = try_new_spill(&self.exec_ctx.spill_metrics())?;
-        in_mem.renew(next_in_mem_mode).try_into_spill(&mut spill)?;
-        spills.push(spill);
+        let cur_in_mem = in_mem.renew(next_in_mem_mode);
+
+        let spill_metrics = self.exec_ctx.spill_metrics().clone();
+        let cur_spill = tokio::task::spawn_blocking(move || {
+            let mut spill = try_new_spill(&spill_metrics)?;
+            cur_in_mem.try_into_spill(&mut spill)?;
+            Ok::<_, DataFusionError>(spill)
+        })
+        .await
+        .expect("tokio error")?;
+        spills.push(cur_spill);
         drop(spills);
         drop(in_mem);
         self.update_mem_used(0).await?;
@@ -364,7 +382,8 @@ impl InMemTable {
     pub fn mem_used(&self) -> usize {
         let hashing_used = self.hashing_data.mem_used();
         let merging_used = self.merging_data.mem_used();
-        hashing_used + merging_used
+        let sorting_indices_used = self.num_records() * 16;
+        hashing_used + merging_used + sorting_indices_used
     }
 
     pub fn num_records(&self) -> usize {
@@ -465,13 +484,13 @@ impl HashingData {
 
         let mut writer = spill.get_compressed_writer();
         let mut begin = 0;
+        let mut end;
         while begin < entries.len() {
             let cur_bucket_id = entries[begin].0;
-            let end = entries[begin + 1..]
-                .iter()
-                .position(|(bucket_id, ..)| *bucket_id != cur_bucket_id)
-                .map(|pos| begin + 1 + pos)
-                .unwrap_or(entries.len());
+            end = begin + 1;
+            while end < entries.len() && entries[end].0 == cur_bucket_id {
+                end += 1;
+            }
 
             write_len(cur_bucket_id as usize, &mut writer)?;
             write_len(end - begin, &mut writer)?;
@@ -523,7 +542,8 @@ impl MergingData {
     }
 
     fn mem_used(&self) -> usize {
-        self.key_rows_mem_size + self.acc_table.mem_size()
+        let entries_mem_size = self.entries.capacity() * size_of::<(u32, u32, u32, u32)>();
+        entries_mem_size + self.key_rows_mem_size + self.acc_table.mem_size()
     }
 
     fn add_batch(&mut self, batch: RecordBatch) -> Result<()> {
@@ -568,13 +588,13 @@ impl MergingData {
 
         let mut writer = spill.get_compressed_writer();
         let mut begin = 0;
+        let mut end;
         while begin < entries.len() {
             let cur_bucket_id = entries[begin].0;
-            let end = entries[begin + 1..]
-                .iter()
-                .position(|(bucket_id, ..)| *bucket_id != cur_bucket_id)
-                .map(|pos| begin + 1 + pos)
-                .unwrap_or(entries.len());
+            end = begin + 1;
+            while end < entries.len() && entries[end].0 == cur_bucket_id {
+                end += 1;
+            }
 
             write_len(cur_bucket_id as usize, &mut writer)?;
             write_len(end - begin, &mut writer)?;

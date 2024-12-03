@@ -27,9 +27,9 @@ use arrow::{
 };
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
+    algorithm::rdxsort::RadixSortIterExt,
     io::{read_len, read_raw_slice, write_len, write_raw_slice},
     prefetch_read_data,
-    rdxsort::RadixSortIterExt,
     spark_hash::create_hashes,
     unchecked,
 };
