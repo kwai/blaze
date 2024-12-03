@@ -17,6 +17,7 @@ package org.apache.spark.sql.blaze;
 
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
+import java.net.URI;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.fs.FileSystem;
@@ -85,11 +86,12 @@ public class JniBridge {
     }
 
     public static FSDataInputWrapper openFileAsDataInputWrapper(FileSystem fs, String path) throws Exception {
-        return FSDataInputWrapper$.MODULE$.wrap(fs.open(new Path(path)));
+        // the path is a URI string, so we need to convert it to a URI object, ref: org.apache.spark.paths.SparkPath.toPath
+        return FSDataInputWrapper$.MODULE$.wrap(fs.open(new Path(new URI(path))));
     }
 
     public static FSDataOutputWrapper createFileAsDataOutputWrapper(FileSystem fs, String path) throws Exception {
-        return FSDataOutputWrapper$.MODULE$.wrap(fs.create(new Path(path)));
+        return FSDataOutputWrapper$.MODULE$.wrap(fs.create(new Path(new URI(path))));
     }
 
     private static final List<BufferPoolMXBean> directMXBeans =
