@@ -109,7 +109,7 @@ abstract class NativeBroadcastJoinBase(
   }
 
   // check whether native converting is supported
-  nativeSchema
+  assert(nativeSchema.getColumnsCount > 0, "Native schema of BroadcastJoin cannot be empty.")
   nativeJoinType
   nativeJoinOn
   nativeBroadcastSide
