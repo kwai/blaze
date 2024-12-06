@@ -61,7 +61,10 @@ public enum BlazeConf {
     SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4"),
 
     // replace all sort-merge join to shuffled-hash join, only used for benchmarking
-    FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false);
+    FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false),
+
+    // spark spill compression codec
+    SPILL_COMPRESSION_CODEC("spark.blaze.spill.compression.codec", "lz4");
 
     public final String key;
     private final Object defaultValue;
