@@ -21,7 +21,7 @@ use std::{
 };
 
 use arrow::{
-    array::{new_null_array, Array, ArrayRef, RecordBatch, UInt32Array},
+    array::{new_null_array, Array, ArrayRef, RecordBatch, RecordBatchOptions, UInt32Array},
     buffer::NullBuffer,
 };
 use async_trait::async_trait;
@@ -121,13 +121,14 @@ impl<const P: JoinerParams> FullJoiner<P> {
         Ok(probed_key_columns)
     }
 
-    async fn flush(&self, probe_cols: Vec<ArrayRef>, build_cols: Vec<ArrayRef>) -> Result<()> {
-        let output_batch = RecordBatch::try_new(
+    async fn flush(&self, probe_cols: Vec<ArrayRef>, build_cols: Vec<ArrayRef>, num_rows: usize) -> Result<()> {
+        let output_batch = RecordBatch::try_new_with_options(
             self.join_params.output_schema.clone(),
             match P.probe_side {
                 L => [probe_cols, build_cols].concat(),
                 R => [build_cols, probe_cols].concat(),
             },
+            &RecordBatchOptions::new().with_row_count(Some(num_rows)),
         )?;
         self.output_rows.fetch_add(output_batch.num_rows(), Relaxed);
         self.output_sender.send(output_batch).await;
@@ -193,7 +194,7 @@ impl<const P: JoinerParams> FullJoiner<P> {
         let bcols = take_cols(&mprojected, build_indices)?;
 
         build_output_time
-            .exclude_timer_async(self.flush(pcols, bcols))
+            .exclude_timer_async(self.flush(pcols, bcols, probed_batch.num_rows()))
             .await?;
         Ok(())
     }
@@ -340,14 +341,15 @@ impl<const P: JoinerParams> Joiner for FullJoiner<P> {
                     .project_left(self.map.data_batch().columns()),
             };
 
+            let num_rows = map_unjoined_indices.len();
             let pcols = pschema
                 .fields()
                 .iter()
-                .map(|field| new_null_array(field.data_type(), map_unjoined_indices.len()))
+                .map(|field| new_null_array(field.data_type(), num_rows))
                 .collect::<Vec<_>>();
             let bcols = take_cols(&mprojected, map_unjoined_indices)?;
             build_output_time
-                .exclude_timer_async(self.as_mut().flush(pcols, bcols))
+                .exclude_timer_async(self.as_mut().flush(pcols, bcols, num_rows))
                 .await?;
         }
         Ok(())
