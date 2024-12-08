@@ -86,7 +86,8 @@ public class JniBridge {
     }
 
     public static FSDataInputWrapper openFileAsDataInputWrapper(FileSystem fs, String path) throws Exception {
-        // the path is a URI string, so we need to convert it to a URI object, ref: org.apache.spark.paths.SparkPath.toPath
+        // the path is a URI string, so we need to convert it to a URI object, ref:
+        // org.apache.spark.paths.SparkPath.toPath
         return FSDataInputWrapper$.MODULE$.wrap(fs.open(new Path(new URI(path))));
     }
 

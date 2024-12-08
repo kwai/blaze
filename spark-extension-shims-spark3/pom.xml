@@ -26,7 +26,13 @@
     <dependency>
       <groupId>org.scala-lang.modules</groupId>
       <artifactId>scala-java8-compat_2.12</artifactId>
-      <version>0.9.1</version>
+      <version>1.0.2</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.scala-lang</groupId>
+          <artifactId>scala-library</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.spark</groupId>
