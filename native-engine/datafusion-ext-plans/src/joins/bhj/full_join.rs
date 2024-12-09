@@ -121,7 +121,12 @@ impl<const P: JoinerParams> FullJoiner<P> {
         Ok(probed_key_columns)
     }
 
-    async fn flush(&self, probe_cols: Vec<ArrayRef>, build_cols: Vec<ArrayRef>, num_rows: usize) -> Result<()> {
+    async fn flush(
+        &self,
+        probe_cols: Vec<ArrayRef>,
+        build_cols: Vec<ArrayRef>,
+        num_rows: usize,
+    ) -> Result<()> {
         let output_batch = RecordBatch::try_new_with_options(
             self.join_params.output_schema.clone(),
             match P.probe_side {
@@ -150,6 +155,7 @@ impl<const P: JoinerParams> FullJoiner<P> {
         } else {
             hash_joined_build_inner_indices.into()
         };
+        let num_rows = probe_indices.len();
 
         assert_eq!(probe_indices.len(), build_indices.len());
 
@@ -194,7 +200,7 @@ impl<const P: JoinerParams> FullJoiner<P> {
         let bcols = take_cols(&mprojected, build_indices)?;
 
         build_output_time
-            .exclude_timer_async(self.flush(pcols, bcols, probed_batch.num_rows()))
+            .exclude_timer_async(self.flush(pcols, bcols, num_rows))
             .await?;
         Ok(())
     }
