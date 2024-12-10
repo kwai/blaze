@@ -51,7 +51,7 @@ import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Days
+import org.apache.spark.sql.catalyst.expressions.DayOfMonth
 import org.apache.spark.sql.catalyst.expressions.GetJsonObject
 import org.apache.spark.sql.catalyst.expressions.LeafExpression
 import org.apache.spark.sql.catalyst.expressions.Month
@@ -875,7 +875,7 @@ object NativeConverters extends Logging {
 
       case Year(child) => buildExtScalarFunction("Year", child :: Nil, DateType)
       case Month(child) => buildExtScalarFunction("Month", child :: Nil, DateType)
-      case Days(child) => buildExtScalarFunction("Day", child :: Nil, DateType)
+      case DayOfMonth(child) => buildExtScalarFunction("Day", child :: Nil, DateType)
 
       // startswith is converted to scalar function in pruning-expr mode
       case StartsWith(expr, Literal(prefix, StringType)) if isPruningExpr =>

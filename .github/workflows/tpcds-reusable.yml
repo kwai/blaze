@@ -73,7 +73,15 @@ jobs:
       - name: Setup ${{ inputs.sparkver }}
         if: steps.cache-spark.outputs.cache-hit != 'true'
         run: |
-          wget -c ${{ inputs.sparkurl }}
+          wget_retry=0  # wget with retry
+          while ! wget -c ${{ inputs.sparkurl }}; do
+            if [ $wget_retry -ge 5 ]; then
+              exit 1
+            fi
+            let wget_retry+=1
+            sleep 5
+          done
+
           mkdir -p spark-bin-${{ inputs.sparkver }}
           cd spark-bin-${{ inputs.sparkver }} && tar -xf ../spark-*.tgz --strip-component=1
 
