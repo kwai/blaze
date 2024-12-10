@@ -35,7 +35,7 @@ class BlazeSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
     logInfo("org.apache.spark.BlazeSparkSessionExtension enabled")
 
     assert(BlazeSparkSessionExtension.blazeEnabledKey != null)
-    Shims.get.onApplyingExtension()
+    Shims.get.onApplyingExtension(extensions)
 
     extensions.injectColumnar(sparkSession => {
       BlazeColumnarOverrides(sparkSession)

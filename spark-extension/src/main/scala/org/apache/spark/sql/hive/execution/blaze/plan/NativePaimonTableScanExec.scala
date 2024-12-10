@@ -16,6 +16,7 @@
 package org.apache.spark.sql.hive.execution.blaze.plan
 
 import java.util.UUID
+
 import scala.collection.JavaConverters._
 import scala.collection.Seq
 
@@ -42,6 +43,8 @@ import org.apache.spark.sql.hive.blaze.PaimonUtil
 import org.apache.spark.sql.hive.execution.HiveTableScanExec
 import org.apache.spark.sql.types.StructType
 import org.blaze.{protobuf => pb}
+
+import com.thoughtworks.enableIf
 
 case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
     extends NativeHiveTableScanBase(basedHiveScan)
@@ -124,6 +127,14 @@ case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
   override val nodeName: String =
     s"NativePaimonTableScan $tableName"
 
+  @enableIf(Seq("spark-241kwaiae").contains(System.getProperty("blaze.shim")))
+  override def getFilePartitions(): Array[FilePartition] = {
+    throw new UnsupportedOperationException("spark-adaptive not supported")
+  }
+
+  @enableIf(
+    Seq("spark-3.0", "spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override def getFilePartitions(): Array[FilePartition] = {
     val currentTimeMillis = System.currentTimeMillis()
     val sparkSession = Shims.get.getSqlContext(basedHiveScan).sparkSession

@@ -13,13 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.execution.blaze.shuffle
+package org.apache.spark.sql.execution.blaze.plan
 
-import java.nio.ByteBuffer
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.statsEstimation.Statistics
+import org.apache.spark.sql.execution.SparkPlan
 
-trait RssPartitionWriterBase {
-  def write(partitionId: Int, buffer: ByteBuffer): Unit
-  def flush(): Unit
-  def close(): Unit
-  def getPartitionLengthMap: Array[Long]
+case class NativeParquetScanExec(basedFileScan: FileSourceScanExec)
+    extends NativeParquetScanBase(basedFileScan) {
+  override def computeStats(): Statistics = basedFileScan.computeStats()
+
+  override def simpleString: String =
+    s"$nodeName (${basedFileScan.simpleString})"
 }

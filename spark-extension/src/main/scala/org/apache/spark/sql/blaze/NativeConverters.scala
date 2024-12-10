@@ -425,9 +425,13 @@ object NativeConverters extends Logging {
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): pb.PhysicalExprNode = {
 
-    val buildBinaryExprNode = this.buildBinaryExprNode(_, _, _, isPruningExpr, fallback)
-    val buildScalarFunction = this.buildScalarFunctionNode(_, _, _, isPruningExpr, fallback)
-    val buildExtScalarFunction = this.buildExtScalarFunctionNode(_, _, _, isPruningExpr, fallback)
+    val buildBinaryExprNode: (Expression, Expression, String) => pb.PhysicalExprNode =
+      this.buildBinaryExprNode(_, _, _, isPruningExpr, fallback)
+    val buildScalarFunction
+        : (pb.ScalarFunction, Seq[Expression], DataType) => pb.PhysicalExprNode =
+      this.buildScalarFunctionNode(_, _, _, isPruningExpr, fallback)
+    val buildExtScalarFunction: (String, Seq[Expression], DataType) => pb.PhysicalExprNode =
+      this.buildExtScalarFunctionNode(_, _, _, isPruningExpr, fallback)
 
     sparkExpr match {
       case e: NativeExprWrapperBase => e.wrapped

@@ -17,6 +17,7 @@ package org.apache.spark.sql.blaze
 
 import java.io.File
 import java.util.UUID
+
 import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.ShuffleDependency
@@ -108,9 +109,11 @@ import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 import org.blaze.{protobuf => pb}
+
 import com.thoughtworks.enableIf
 import org.apache.spark.sql.execution.blaze.shuffle.uniffle.BlazeUniffleShuffleManager
 
@@ -146,12 +149,7 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
-  override def initExtension(): Unit = {
-    if (BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()) {
-      logWarning(s"${BlazeConf.FORCE_SHUFFLED_HASH_JOIN.key} is not supported in $shimVersion")
-    }
-  }
+  override def onApplyingExtension(extension: SparkSessionExtensions): Unit = {}
 
   override def createConvertToNativeExec(child: SparkPlan): ConvertToNativeBase =
     ConvertToNativeExec(child)

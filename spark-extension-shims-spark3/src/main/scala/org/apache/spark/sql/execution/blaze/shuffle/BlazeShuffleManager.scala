@@ -15,6 +15,7 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkEnv
@@ -46,6 +47,21 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
       shuffleId: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
     sortShuffleManager.registerShuffle(shuffleId, dependency)
+  }
+
+  def registerShuffle[K, V, C](
+      shuffleId: Int,
+      numMaps: Int,
+      dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
+
+    val registerShuffleMethod = sortShuffleManager.getClass.getMethod(
+      "registerShuffle",
+      classOf[Int],
+      classOf[Int],
+      classOf[ShuffleDependency[K, V, C]])
+    registerShuffleMethod
+      .invoke(sortShuffleManager, Int.box(shuffleId), Int.box(numMaps), dependency)
+      .asInstanceOf[ShuffleHandle]
   }
 
   @enableIf(

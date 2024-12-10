@@ -308,6 +308,22 @@
     </profile>
 
     <profile>
+      <id>spark-241kwaiae</id>
+      <properties>
+        <shimName>spark-241kwaiae</shimName>
+        <shimPkg>spark-extension-shims-spark241kwaiae</shimPkg>
+        <javaVersion>1.8</javaVersion>
+        <scalaVersion>2.11</scalaVersion>
+        <scalaLongVersion>2.11.12</scalaLongVersion>
+        <scalaTestVersion>3.0.8</scalaTestVersion>
+        <scalafmtVersion>3.0.0-RC1</scalafmtVersion>
+        <celebornVersion>0.5.2</celebornVersion>
+        <sparkVersion>2.4.1U1.9.44-master-BETA-SNAPSHOT</sparkVersion>
+        <kwaiRssShuffleSdkVersion>1.3.75-RELEASE</kwaiRssShuffleSdkVersion>
+      </properties>
+    </profile>
+
+    <profile>
       <id>spark-3.0</id>
       <properties>
         <shimName>spark-3.0</shimName>

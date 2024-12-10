@@ -13,13 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.execution.blaze.shuffle
+package org.apache.spark.sql.execution.blaze.plan
 
-import java.nio.ByteBuffer
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.execution.SparkPlan
 
-trait RssPartitionWriterBase {
-  def write(partitionId: Int, buffer: ByteBuffer): Unit
-  def flush(): Unit
-  def close(): Unit
-  def getPartitionLengthMap: Array[Long]
+case class NativeProjectExec(
+    projectList: Seq[NamedExpression],
+    override val child: SparkPlan,
+    addTypeCast: Boolean = false)
+    extends NativeProjectBase(projectList, child, addTypeCast) {
+
+  override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
+    copy(child = newChildren.head)
 }

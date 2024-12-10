@@ -15,11 +15,7 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.nio.ByteBuffer
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 
-trait RssPartitionWriterBase {
-  def write(partitionId: Int, buffer: ByteBuffer): Unit
-  def flush(): Unit
-  def close(): Unit
-  def getPartitionLengthMap: Array[Long]
-}
+class BlazeShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
+    extends BlazeShuffleWriterBase[K, V](metrics) {}

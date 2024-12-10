@@ -41,9 +41,10 @@ import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.blaze.{protobuf => pb}
-
 import java.net.URI
 import java.security.PrivilegedExceptionAction
+
+import com.thoughtworks.enableIf
 
 abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
     extends LeafExecNode
@@ -153,6 +154,9 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
 
   override protected def doCanonicalize(): SparkPlan = basedHiveScan.canonicalized
 
+  @enableIf(
+    Seq("spark-3.0", "spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
   override def simpleString(maxFields: Int): String =
     s"$nodeName (${basedHiveScan.simpleString(maxFields)})"
 }

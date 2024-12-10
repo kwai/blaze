@@ -15,11 +15,22 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.nio.ByteBuffer
+import org.apache.spark.shuffle.ShuffleHandle
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.sql.blaze.Shims
 
-trait RssPartitionWriterBase {
-  def write(partitionId: Int, buffer: ByteBuffer): Unit
-  def flush(): Unit
-  def close(): Unit
-  def getPartitionLengthMap: Array[Long]
+class BlazeRssShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
+    extends BlazeRssShuffleWriterBase[K, V](metrics) {
+
+  override def getRssPartitionWriter(
+    handle: ShuffleHandle,
+    mapId: Int,
+    metrics: ShuffleWriteMetricsReporter,
+    numPartitions: Int): RssPartitionWriterBase = {
+
+    val rssShuffleWriterObject = Shims.get
+    .getRssPartitionWriter(handle, mapId, metrics, numPartitions)
+    assert(rssShuffleWriterObject.isDefined)
+    rssShuffleWriterObject.get
+  }
 }
