@@ -101,9 +101,10 @@ abstract class NativeShuffleExchangeBase(
       Nil,
       Some({
         case ("output_rows", v) =>
-          val shuffleReadMetrics = TaskContext.get.taskMetrics().createTempShuffleReadMetrics()
+          val taskMetrics = TaskContext.get.taskMetrics()
+          val shuffleReadMetrics = taskMetrics.createTempShuffleReadMetrics()
           new SQLShuffleReadMetricsReporter(shuffleReadMetrics, metrics).incRecordsRead(v)
-          TaskContext.get.taskMetrics().mergeShuffleReadMetrics()
+          taskMetrics.mergeShuffleReadMetrics()
         case ("elapsed_compute", v) => metrics("shuffle_read_total_time") += v
         case _ =>
       }))

@@ -95,7 +95,18 @@ object BlazeBlockStoreShuffleReaderBase extends Logging {
     val bufferReleasingInputStreamClsName = "org.apache.spark.storage.BufferReleasingInputStream"
     in match {
       case in if bufferReleasingInputStreamClsName.endsWith(in.getClass.getName) =>
-        val inner = MethodUtils.invokeMethod(in, true, "delegate").asInstanceOf[InputStream]
+        val inner =
+          try {
+            MethodUtils.invokeMethod(in, true, "delegate").asInstanceOf[InputStream]
+          } catch {
+            case _: NoSuchMethodException =>
+              MethodUtils
+                .invokeMethod(
+                  in,
+                  true,
+                  "org$apache$spark$storage$BufferReleasingInputStream$$delegate")
+                .asInstanceOf[InputStream]
+          }
         unwrapInputStream(inner)
       case in => in
     }

@@ -16,6 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import java.io.File
+
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.apache.spark.SparkContext
@@ -47,6 +48,7 @@ import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 
@@ -56,7 +58,7 @@ abstract class Shims {
 
   def initExtension(): Unit = {}
 
-  def onApplyingExtension(): Unit = {}
+  def onApplyingExtension(extension: SparkSessionExtensions): Unit
 
   def createConvertToNativeExec(child: SparkPlan): ConvertToNativeBase
 

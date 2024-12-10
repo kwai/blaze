@@ -277,7 +277,7 @@ object BlazeConverters extends Logging {
       System.getProperty("blaze.shim")))
   def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = Some(exec.shuffleOrigin)
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @enableIf(Seq("spark-241kwaiae", "spark-3.0").contains(System.getProperty("blaze.shim")))
   def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = None
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {
