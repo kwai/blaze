@@ -125,3 +125,16 @@ fn evaluate_partition_ids(mut hashes: Vec<i32>, num_partitions: usize) -> Vec<u3
         std::mem::transmute(hashes)
     }
 }
+
+fn evaluate_robin_partition_ids(partitioning: &Partitioning, batch: &RecordBatch) -> Vec<u32> {
+    let partition_num = partitioning.partition_count();
+    let num_rows = batch.num_rows();
+    let mut vec_u32 = Vec::with_capacity(num_rows);
+    if num_rows == 0 {
+        return vec_u32;
+    }
+    for i in 0..num_rows {
+        vec_u32.push((i % partition_num) as u32);
+    }
+    vec_u32
+}

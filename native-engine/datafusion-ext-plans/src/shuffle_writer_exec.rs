@@ -117,7 +117,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 self.output_index_file.clone(),
                 output_time,
             )),
-            Partitioning::Hash(..) => {
+            Partitioning::Hash(..) | Partitioning::RoundRobinBatch(..) => {
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     exec_ctx.clone(),
                     self.output_data_file.clone(),

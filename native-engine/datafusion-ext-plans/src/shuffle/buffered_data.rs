@@ -31,7 +31,9 @@ use unchecked_index::UncheckedIndex;
 
 use crate::{
     common::{ipc_compression::IpcCompressionWriter, timer_helper::TimerHelper},
-    shuffle::{evaluate_hashes, evaluate_partition_ids, rss::RssWriter},
+    shuffle::{
+        evaluate_hashes, evaluate_partition_ids, evaluate_robin_partition_ids, rss::RssWriter,
+    },
 };
 
 pub struct BufferedData {
@@ -271,10 +273,16 @@ fn sort_batch_by_partition_id(
     let num_partitions = partitioning.partition_count();
     let num_rows = batch.num_rows();
 
-    // compute partition indices
-    let hashes = evaluate_hashes(partitioning, &batch)
-        .expect(&format!("error evaluating hashes with {partitioning}"));
-    let part_ids = evaluate_partition_ids(hashes, partitioning.partition_count());
+    let part_ids: Vec<u32> = match partitioning {
+        Partitioning::Hash(..) => {
+            // compute partition indices
+            let hashes = evaluate_hashes(partitioning, &batch)
+                .expect(&format!("error evaluating hashes with {partitioning}"));
+            evaluate_partition_ids(hashes, partitioning.partition_count())
+        }
+        Partitioning::RoundRobinBatch(..) => evaluate_robin_partition_ids(partitioning, &batch),
+        _ => unreachable!("unsupported partitioning: {:?}", partitioning),
+    };
 
     // compute partitions
     let mut partitions = vec![PartitionInBatch::default(); num_partitions];
@@ -303,4 +311,89 @@ fn sort_batch_by_partition_id(
     }
     let sorted_batch = take_batch(batch, sorted_row_indices)?;
     return Ok((partitions, sorted_batch));
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use arrow::{
+        array::Int32Array,
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::{
+        common::Result,
+        physical_expr::{expressions::Column, Partitioning, PhysicalExpr},
+    };
+
+    use crate::shuffle::buffered_data::sort_batch_by_partition_id;
+
+    fn build_table_i32(
+        a: (&str, &Vec<i32>),
+        b: (&str, &Vec<i32>),
+        c: (&str, &Vec<i32>),
+    ) -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new(a.0, DataType::Int32, false),
+            Field::new(b.0, DataType::Int32, false),
+            Field::new(c.0, DataType::Int32, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Int32Array::from(a.1.clone())),
+                Arc::new(Int32Array::from(b.1.clone())),
+                Arc::new(Int32Array::from(c.1.clone())),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sort_partition_test() -> Result<()> {
+        let record_batch = build_table_i32(
+            // ("a", &vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 0]),
+            ("a", &vec![19, 18, 17, 16, 15, 14, 13, 12, 11, 10]),
+            ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
+        );
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Int32, false),
+            Field::new("c", DataType::Int32, false),
+        ]));
+
+        let partition_exprs_a: Vec<Arc<dyn PhysicalExpr>> = vec![
+            Arc::new(Column::new_with_schema("a", &schema).unwrap()), // Partition by column "a"
+        ];
+
+        let partition_exprs_b: Vec<Arc<dyn PhysicalExpr>> =
+            vec![Arc::new(Column::new_with_schema("b", &schema).unwrap())];
+
+        let partition_exprs_ab: Vec<Arc<dyn PhysicalExpr>> = vec![
+            Arc::new(Column::new_with_schema("a", &schema).unwrap()),
+            Arc::new(Column::new_with_schema("b", &schema).unwrap()),
+        ];
+
+        let partition_exprs_abc: Vec<Arc<dyn PhysicalExpr>> = vec![
+            Arc::new(Column::new_with_schema("a", &schema).unwrap()),
+            Arc::new(Column::new_with_schema("b", &schema).unwrap()),
+            Arc::new(Column::new_with_schema("c", &schema).unwrap()),
+        ];
+
+        let unknown_partitioning = Partitioning::UnknownPartitioning(5);
+
+        let round_robin_partitioning = Partitioning::RoundRobinBatch(4);
+
+        let hash_partitioning_a = Partitioning::Hash(partition_exprs_a, 3);
+        let hash_partitioning_ab = Partitioning::Hash(partition_exprs_ab, 3);
+        let hash_partitioning_abc = Partitioning::Hash(partition_exprs_abc, 3);
+
+        let result = sort_batch_by_partition_id(record_batch, &hash_partitioning_a);
+
+        Ok(())
+    }
 }
