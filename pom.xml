@@ -15,7 +15,7 @@
   </modules>
 
   <properties>
-    <revision>4.0.0-SNAPSHOT</revision>
+    <revision>4.0.1-SNAPSHOT</revision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
