@@ -200,8 +200,6 @@ abstract class NativeShuffleExchangeBase(
             PhysicalHashRepartition
               .newBuilder()
               .setPartitionCount(numPartitions)
-              .addAllHashExpr(nativeHashExprs.asJava)
-
           case p =>
             throw new NotImplementedError(s"cannot convert partitioning to native: $p")
         }
