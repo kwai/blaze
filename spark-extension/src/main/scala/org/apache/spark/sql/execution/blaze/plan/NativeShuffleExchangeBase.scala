@@ -37,6 +37,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.SinglePartition
+import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
 import org.apache.spark.sql.execution.{SQLExecution, SparkPlan, UnsafeRowSerializer}
@@ -195,6 +196,11 @@ abstract class NativeShuffleExchangeBase(
               .newBuilder()
               .setPartitionCount(numPartitions)
               .addAllHashExpr(nativeHashExprs.asJava)
+          case RoundRobinPartitioning(_) =>
+            PhysicalHashRepartition
+              .newBuilder()
+              .setPartitionCount(numPartitions)
+
           case p =>
             throw new NotImplementedError(s"cannot convert partitioning to native: $p")
         }
