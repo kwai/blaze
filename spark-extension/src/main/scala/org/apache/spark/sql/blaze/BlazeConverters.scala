@@ -259,11 +259,14 @@ object BlazeConverters extends Logging {
 
     assert(
       exec.outputPartitioning.numPartitions == 1 || exec.outputPartitioning
-        .isInstanceOf[HashPartitioning] || exec.outputPartitioning.isInstanceOf[RoundRobinPartitioning],
+        .isInstanceOf[HashPartitioning] || exec.outputPartitioning
+        .isInstanceOf[RoundRobinPartitioning],
       s"partitioning not supported: ${exec.outputPartitioning}")
 
     val convertedChild = outputPartitioning match {
-      case p if p.isInstanceOf[HashPartitioning] || p.isInstanceOf[RoundRobinPartitioning] || p.numPartitions == 1 =>
+      case p
+          if p.isInstanceOf[HashPartitioning] || p
+            .isInstanceOf[RoundRobinPartitioning] || p.numPartitions == 1 =>
         convertToNative(child)
       case _ => child
     }
