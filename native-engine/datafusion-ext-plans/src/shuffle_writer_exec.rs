@@ -57,12 +57,12 @@ impl DisplayAs for ShuffleWriterExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self.partitioning {
             Partitioning::Hash(..) => {
-                write!(f, "ShuffleWriterExec: partitioning={:?} partition type=Hash", self.partitioning, )
+                write!(f, "ShuffleWriterExec: partitioning={:?} partition type=Hash", self.partitioning)
             }
             Partitioning::RoundRobinBatch(..) => {
-                write!(f, "ShuffleWriterExec: partitioning={:?} partition type=RoundRobin", self.partitioning, )
+                write!(f, "ShuffleWriterExec: partitioning={:?} partition type=RoundRobin", self.partitioning)
             }
-            _ =>  write!(f, "ShuffleWriterExec: partitioning={:?} partition type=unknow", self.partitioning, )
+            _ =>  write!(f, "ShuffleWriterExec: partitioning={:?} partition type=unknow", self.partitioning)
         }
     }
 }

@@ -1133,13 +1133,11 @@ pub fn parse_protobuf_hash_partitioning(
                 })
                 .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
 
-            if expr.is_empty() {
-                // expr 是空的，使用 RoundRobin 分区
+            if expr.len() == 0 {
                 Ok(Some(Partitioning::RoundRobinBatch(
                     hash_part.partition_count.try_into().unwrap(),
                 )))
             } else {
-                // expr 不为空，使用 Hash 分区
                 Ok(Some(Partitioning::Hash(
                     expr,
                     hash_part.partition_count.try_into().unwrap(),
