@@ -24,11 +24,9 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use blaze_jni_bridge::{
-    conf::{IntConf, TOKIO_NUM_WORKER_THREADS},
-    is_task_running,
-    jni_bridge::JavaClasses,
-    jni_call, jni_call_static, jni_convert_byte_array, jni_exception_check, jni_exception_occurred,
-    jni_new_global_ref, jni_new_object, jni_new_string,
+    is_task_running, jni_bridge::JavaClasses, jni_call, jni_call_static, jni_convert_byte_array,
+    jni_exception_check, jni_exception_occurred, jni_new_global_ref, jni_new_object,
+    jni_new_string,
 };
 use blaze_serde::protobuf::TaskDefinition;
 use datafusion::{
@@ -49,6 +47,7 @@ use datafusion_ext_plans::{
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use prost::Message;
+use raw_cpuid::CpuId;
 use tokio::{runtime::Runtime, task::JoinHandle};
 
 use crate::{
@@ -95,13 +94,29 @@ impl NativeExecutionRuntime {
             &ExecutionPlanMetricsSet::new(),
         );
 
+        // determine number of tokio worker threads
+        // use the real number of available physical cores
+        let default_parallelism = std::thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(1);
+        let has_htt = CpuId::new()
+            .get_feature_info()
+            .map(|info| info.has_htt())
+            .unwrap_or(false);
+        let mut num_worker_threads = if has_htt {
+            default_parallelism / 2
+        } else {
+            default_parallelism
+        };
+        num_worker_threads = num_worker_threads.max(1);
+
         // create tokio runtime
         // propagate classloader and task context to spawned children threads
         let spark_task_context = jni_call_static!(JniBridge.getTaskContext() -> JObject)?;
         let spark_task_context_global = jni_new_global_ref!(spark_task_context.as_obj())?;
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name(format!("blaze-native-stage-{stage_id}-part-{partition_id}"))
-            .worker_threads(TOKIO_NUM_WORKER_THREADS.value()? as usize)
+            .worker_threads(num_worker_threads)
             .on_thread_start(move || {
                 let classloader = JavaClasses::get().classloader;
                 let _ = jni_call_static!(

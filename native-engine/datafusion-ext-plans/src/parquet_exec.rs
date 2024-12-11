@@ -106,6 +106,8 @@ impl ParquetExec {
         let (projected_schema, projected_statistics, _projected_output_ordering) =
             base_config.project();
 
+        log::warn!("XXX base_config.file_schema: {:?}", file_schema);
+        log::warn!("XXX project_schema: {:?}", projected_schema);
         Self {
             fs_resource_id,
             base_config,

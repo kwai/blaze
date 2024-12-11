@@ -33,6 +33,7 @@ pub struct RadixTournamentTree<T> {
 #[allow(clippy::len_without_is_empty)]
 impl<T: KeyForRadixTournamentTree> RadixTournamentTree<T> {
     pub fn new(values: Vec<T>, num_keys: usize) -> Self {
+        let num_keys = num_keys + 1; // avoid overflow
         let num_values = values.len();
         let mut tree = unsafe {
             // safety:

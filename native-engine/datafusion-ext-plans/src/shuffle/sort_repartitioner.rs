@@ -49,7 +49,6 @@ pub struct SortShuffleRepartitioner {
     output_index_file: String,
     data: Mutex<BufferedData>,
     spills: Mutex<Vec<ShuffleSpill>>,
-    partitioning: Partitioning,
     num_output_partitions: usize,
     output_io_time: Time,
 }
@@ -71,9 +70,8 @@ impl SortShuffleRepartitioner {
             mem_consumer_info: None,
             output_data_file,
             output_index_file,
-            data: Mutex::new(BufferedData::new(partition_id, sort_time)),
+            data: Mutex::new(BufferedData::new(partitioning, partition_id, sort_time)),
             spills: Mutex::default(),
-            partitioning,
             num_output_partitions,
             output_io_time,
         }
@@ -100,7 +98,7 @@ impl MemConsumer for SortShuffleRepartitioner {
         let data = self.data.lock().await.drain();
         let mut spill = try_new_spill(self.exec_ctx.spill_metrics())?;
 
-        let offsets = data.write(spill.get_buf_writer(), &self.partitioning)?;
+        let offsets = data.write(spill.get_buf_writer())?;
         self.spills
             .lock()
             .await
@@ -126,7 +124,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         // add batch to buffered data
         let mem_used = {
             let mut data = self.data.lock().await;
-            data.add_batch(input, &self.partitioning)?;
+            data.add_batch(input)?;
             data.mem_used()
         };
         self.update_mem_used(mem_used).await?;
@@ -163,7 +161,6 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
 
         // no spills - directly write current batches into final file
         if spills.is_empty() {
-            let partitioning = self.partitioning.clone();
             let output_io_time = self.output_io_time.clone();
             tokio::task::spawn_blocking(move || {
                 let mut output_data = output_io_time.wrap_writer(
@@ -182,7 +179,7 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 );
 
                 // write data file
-                let offsets = data.write(&mut output_data, &partitioning)?;
+                let offsets = data.write(&mut output_data)?;
 
                 // write index file
                 let mut offsets_data = vec![];
@@ -221,10 +218,10 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         }
 
         // write rest data into an in-memory buffer
-        if data.mem_used() > 0 {
+        if !data.is_empty() {
             let mut spill = Box::new(vec![]);
             let writer = spill.get_buf_writer();
-            let offsets = data.write(writer, &self.partitioning)?;
+            let offsets = data.write(writer)?;
             self.update_mem_used(spill.len()).await?;
             spills.push(ShuffleSpill { spill, offsets });
         }
