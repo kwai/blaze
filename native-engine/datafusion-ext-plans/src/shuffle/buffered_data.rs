@@ -69,6 +69,7 @@ impl BufferedData {
             .with_timer(|| sort_batch_by_partition_id(batch, partitioning))?;
         self.mem_used +=
             sorted_batch.get_array_mem_size() + parts.len() * size_of::<PartitionInBatch>();
+        log::warn!("add batch: num_rows: {}, mem_used: {} ...", self.num_rows, self.mem_used);
         self.sorted_batches.push(sorted_batch);
         self.sorted_parts.push(parts);
         Ok(())
@@ -388,11 +389,11 @@ mod test {
 
         let round_robin_partitioning = Partitioning::RoundRobinBatch(4);
 
-        let hash_partitioning_a = Partitioning::Hash(partition_exprs_a, 3);
+        let hash_partitioning_a = Partitioning::Hash(partition_exprs_a, 4);
         let hash_partitioning_ab = Partitioning::Hash(partition_exprs_ab, 3);
         let hash_partitioning_abc = Partitioning::Hash(partition_exprs_abc, 3);
 
-        let result = sort_batch_by_partition_id(record_batch, &hash_partitioning_a);
+        let result = sort_batch_by_partition_id(record_batch, &round_robin_partitioning);
 
         Ok(())
     }
