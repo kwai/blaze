@@ -28,7 +28,7 @@ use datafusion::{
 use datafusion_ext_commons::{
     algorithm::{
         rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-        rdxsort::radix_sort_unstable_by_key,
+        rdxsort::radix_sort_by_key,
     },
     batch_size, df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, write_len},
@@ -480,33 +480,31 @@ impl HashingData {
             .enumerate()
             .map(|(record_idx, key)| (bucket_id(key) as u32, record_idx as u32))
             .collect::<Vec<_>>();
-        radix_sort_unstable_by_key(&mut entries, |v| v.0 as u16);
+
+        let mut bucket_counts = vec![0; NUM_SPILL_BUCKETS];
+        radix_sort_by_key(&mut entries, &mut bucket_counts, |(bucket_id, ..)| {
+            *bucket_id as usize
+        });
 
         let mut writer = spill.get_compressed_writer();
-        let mut begin = 0;
-        let mut end;
-        while begin < entries.len() {
-            let cur_bucket_id = entries[begin].0;
-            end = begin + 1;
-            while end < entries.len() && entries[end].0 == cur_bucket_id {
-                end += 1;
+        let mut offset = 0;
+        for (cur_bucket_id, bucket_count) in bucket_counts.into_iter().enumerate() {
+            if bucket_count == 0 {
+                continue;
             }
-
-            write_len(cur_bucket_id as usize, &mut writer)?;
-            write_len(end - begin, &mut writer)?;
+            write_len(cur_bucket_id, &mut writer)?;
+            write_len(bucket_count, &mut writer)?;
             write_spill_bucket(
                 &mut writer,
                 &acc_table,
-                entries[begin..end]
+                entries[offset..][..bucket_count]
                     .iter()
                     .map(|&(_, record_idx)| &key_rows[record_idx as usize]),
-                entries[begin..end]
+                entries[offset..][..bucket_count]
                     .iter()
                     .map(|&(_, record_idx)| record_idx as usize),
             )?;
-
-            // next bucket
-            begin = end;
+            offset += bucket_count;
         }
         // EOF
         write_len(NUM_SPILL_BUCKETS, &mut writer)?;
@@ -584,24 +582,24 @@ impl MergingData {
         let mut entries = self.entries;
         let key_rows = self.key_rows;
         let acc_table = self.acc_table;
-        radix_sort_unstable_by_key(&mut entries, |(bucket_id, ..)| *bucket_id as u16);
+
+        let mut bucket_counts = vec![0; NUM_SPILL_BUCKETS];
+        radix_sort_by_key(&mut entries, &mut bucket_counts, |(bucket_id, ..)| {
+            *bucket_id as usize
+        });
 
         let mut writer = spill.get_compressed_writer();
-        let mut begin = 0;
-        let mut end;
-        while begin < entries.len() {
-            let cur_bucket_id = entries[begin].0;
-            end = begin + 1;
-            while end < entries.len() && entries[end].0 == cur_bucket_id {
-                end += 1;
+        let mut offset = 0;
+        for (cur_bucket_id, bucket_count) in bucket_counts.into_iter().enumerate() {
+            if bucket_count == 0 {
+                continue;
             }
-
-            write_len(cur_bucket_id as usize, &mut writer)?;
-            write_len(end - begin, &mut writer)?;
+            write_len(cur_bucket_id, &mut writer)?;
+            write_len(bucket_count, &mut writer)?;
             write_spill_bucket(
                 &mut writer,
                 &acc_table,
-                entries[begin..end]
+                entries[offset..][..bucket_count]
                     .iter()
                     .map(|&(_, batch_idx, row_idx, _)| {
                         key_rows[batch_idx as usize]
@@ -609,13 +607,11 @@ impl MergingData {
                             .as_ref()
                             .as_raw_bytes()
                     }),
-                entries[begin..end]
+                entries[offset..][..bucket_count]
                     .iter()
                     .map(|&(_, _, _, record_idx)| record_idx as usize),
             )?;
-
-            // next bucket
-            begin = end;
+            offset += bucket_count;
         }
 
         // EOF

@@ -209,8 +209,10 @@ impl AggHashMap {
     }
 
     pub fn upsert_records(&mut self, keys: Vec<impl AggHashMapKey>) -> Vec<u32> {
-        self.map.reserve(keys.len());
-        self.map.upsert_many(keys)
+        tokio::task::block_in_place(|| {
+            self.map.reserve(keys.len());
+            self.map.upsert_many(keys)
+        })
     }
 
     pub fn take_keys(&mut self) -> Vec<OwnedKey> {

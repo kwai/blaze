@@ -27,7 +27,6 @@ use arrow::{
 };
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
-    algorithm::rdxsort::RadixSortIterExt,
     io::{read_len, read_raw_slice, write_len, write_raw_slice},
     prefetch_read_data,
     spark_hash::create_hashes,
@@ -117,7 +116,7 @@ impl Table {
                 num_valid_items += 1;
                 (idx as u32, hash)
             })
-            .radix_sorted_unstable_by_key(|&(_idx, hash)| hash)
+            .sorted_unstable_by_key(|&(idx, hash)| (hash, idx))
             .chunk_by(|(_, hash)| *hash)
             .into_iter()
         {
@@ -403,7 +402,7 @@ impl JoinHashMap {
     }
 
     pub fn lookup_many(&self, hashes: Vec<u32>) -> Vec<MapValue> {
-        self.table.lookup_many(hashes)
+        tokio::task::block_in_place(|| self.table.lookup_many(hashes))
     }
 
     pub fn get_range(&self, map_value: MapValue) -> &[u32] {

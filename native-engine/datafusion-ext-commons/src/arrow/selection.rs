@@ -143,8 +143,13 @@ pub fn create_array_interleaver(
                     });
                 }
             }
-            let v = interleaver.arrays[*a].value(*b);
-            values.push(v)
+            let array = &interleaver.arrays[*a];
+            if array.is_valid(*b) {
+                let v = interleaver.arrays[*a].value(*b);
+                values.push(v)
+            } else {
+                values.push(Default::default());
+            }
         }
 
         let array = PrimitiveArray::<T>::new(values.into(), nulls);
@@ -172,9 +177,12 @@ pub fn create_array_interleaver(
                     });
                 }
             }
-            let o = interleaver.arrays[*a].value_offsets();
-            let element_len = o[*b + 1].as_usize() - o[*b].as_usize();
-            capacity += element_len;
+            let array = &interleaver.arrays[*a];
+            if array.is_valid(*b) {
+                let o = array.value_offsets();
+                let element_len = o[*b + 1].as_usize() - o[*b].as_usize();
+                capacity += element_len;
+            }
             offsets.append(T::Offset::from_usize(capacity).expect("overflow"));
         }
 
@@ -192,7 +200,10 @@ pub fn create_array_interleaver(
                     });
                 }
             }
-            values.extend_from_slice(interleaver.arrays[*a].value(*b).as_ref());
+            let array = &interleaver.arrays[*a];
+            if array.is_valid(*b) {
+                values.extend_from_slice(interleaver.arrays[*a].value(*b).as_ref());
+            }
         }
 
         // Safety: safe by construction

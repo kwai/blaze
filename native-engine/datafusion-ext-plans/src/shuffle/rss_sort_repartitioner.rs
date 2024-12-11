@@ -20,7 +20,7 @@ use datafusion::{
     common::Result,
     physical_plan::{metrics::Time, Partitioning},
 };
-use datafusion_ext_commons::{arrow::array_size::ArraySize, df_execution_err};
+use datafusion_ext_commons::arrow::array_size::ArraySize;
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
 
@@ -33,7 +33,6 @@ pub struct RssSortShuffleRepartitioner {
     name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     data: Mutex<BufferedData>,
-    partitioning: Partitioning,
     rss: GlobalRef,
 }
 
@@ -47,8 +46,7 @@ impl RssSortShuffleRepartitioner {
         Self {
             name: format!("RssSortShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
-            data: Mutex::new(BufferedData::new(partition_id, sort_time)),
-            partitioning,
+            data: Mutex::new(BufferedData::new(partitioning, partition_id, sort_time)),
             rss: rss_partition_writer,
         }
     }
@@ -73,11 +71,10 @@ impl MemConsumer for RssSortShuffleRepartitioner {
     async fn spill(&self) -> Result<()> {
         let data = self.data.lock().await.drain();
         let rss = self.rss.clone();
-        let partitioning = self.partitioning.clone();
 
-        tokio::task::spawn_blocking(move || data.write_rss(rss, &partitioning))
+        tokio::task::spawn_blocking(move || data.write_rss(rss))
             .await
-            .or_else(|err| df_execution_err!("{err}"))??;
+            .expect("tokio error")?;
         self.update_mem_used(0).await?;
         Ok(())
     }
@@ -99,7 +96,7 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
         // add batch to buffered data
         let mem_used = {
             let mut data = self.data.lock().await;
-            data.add_batch(input, &self.partitioning)?;
+            data.add_batch(input)?;
             data.mem_used()
         };
         self.update_mem_used(mem_used).await?;
@@ -115,7 +112,7 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
 
     async fn shuffle_write(&self) -> Result<()> {
         self.set_spillable(false);
-        let has_data = self.data.lock().await.mem_used() > 0;
+        let has_data = !self.data.lock().await.is_empty();
         if has_data {
             self.spill().await?;
         }
