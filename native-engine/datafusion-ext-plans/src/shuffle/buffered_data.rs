@@ -68,7 +68,6 @@ impl BufferedData {
             .with_timer(|| sort_batch_by_partition_id(batch, partitioning, self.num_rows))?;
         self.mem_used +=
             sorted_batch.get_array_mem_size() + parts.len() * size_of::<PartitionInBatch>();
-        log::warn!("add batch: num_rows: {}, mem_used: {} ...", self.num_rows, self.mem_used);
         self.sorted_batches.push(sorted_batch);
         self.sorted_parts.push(parts);
         Ok(())
