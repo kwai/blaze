@@ -280,7 +280,9 @@ fn sort_batch_by_partition_id(
                 .expect(&format!("error evaluating hashes with {partitioning}"));
             evaluate_partition_ids(hashes, partitioning.partition_count())
         }
-        Partitioning::RoundRobinBatch(..) => evaluate_robin_partition_ids(partitioning, &batch, sum_num_rows-num_rows),
+        Partitioning::RoundRobinBatch(..) => {
+            evaluate_robin_partition_ids(partitioning, &batch, sum_num_rows - num_rows)
+        }
         _ => unreachable!("unsupported partitioning: {:?}", partitioning),
     };
 

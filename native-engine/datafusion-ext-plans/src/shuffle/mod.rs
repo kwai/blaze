@@ -126,7 +126,11 @@ fn evaluate_partition_ids(mut hashes: Vec<i32>, num_partitions: usize) -> Vec<u3
     }
 }
 
-fn evaluate_robin_partition_ids(partitioning: &Partitioning, batch: &RecordBatch, start_rows: usize) -> Vec<u32> {
+fn evaluate_robin_partition_ids(
+    partitioning: &Partitioning,
+    batch: &RecordBatch,
+    start_rows: usize,
+) -> Vec<u32> {
     let partition_num = partitioning.partition_count();
     let num_rows = batch.num_rows();
     let mut vec_u32 = Vec::with_capacity(num_rows);
