@@ -500,14 +500,14 @@ message UnionExecNode {
 
 message ShuffleWriterExecNode {
   PhysicalPlanNode input = 1;
-  PhysicalHashRepartition output_partitioning = 2;
+  PhysicalRepartition output_partitioning = 2;
   string output_data_file = 3;
   string output_index_file = 4;
 }
 
 message RssShuffleWriterExecNode {
   PhysicalPlanNode input = 1;
-  PhysicalHashRepartition output_partitioning = 2;
+  PhysicalRepartition output_partitioning = 2;
   string rss_partition_writer_resource_id = 3;
 }
 
@@ -596,9 +596,20 @@ message FetchLimit {
   uint64 limit = 1;
 }
 
+message PhysicalRepartition {
+  oneof RepartitionType {
+      PhysicalHashRepartition hash_repartition = 1;
+      PhysicalRoundRobinRepartition round_robin_repartition = 2;
+  }
+}
+
 message PhysicalHashRepartition {
   repeated PhysicalExprNode hash_expr = 1;
   uint64 partition_count = 2;
+}
+
+message PhysicalRoundRobinRepartition {
+  uint64 partition_count = 1;
 }
 
 message JoinFilter {
@@ -727,7 +738,7 @@ message TaskDefinition {
   PartitionId task_id = 1;
   PhysicalPlanNode plan = 2;
   // Output partition for shuffle writer
-  PhysicalHashRepartition output_partitioning = 3;
+  PhysicalRepartition output_partitioning = 3;
 }
 
 

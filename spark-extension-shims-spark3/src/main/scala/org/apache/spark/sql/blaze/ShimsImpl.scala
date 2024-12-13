@@ -425,7 +425,7 @@ class ShimsImpl extends Shims with Logging {
 
   override def getShuffleWriteExec(
       input: pb.PhysicalPlanNode,
-      nativeOutputPartitioning: pb.PhysicalHashRepartition.Builder): pb.PhysicalPlanNode = {
+      nativeOutputPartitioning: pb.PhysicalRepartition.Builder): pb.PhysicalPlanNode = {
 
     if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeCelebornShuffleManager]) {
       return pb.PhysicalPlanNode

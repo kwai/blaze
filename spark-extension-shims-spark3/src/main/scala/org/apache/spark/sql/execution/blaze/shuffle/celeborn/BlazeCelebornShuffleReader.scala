@@ -138,14 +138,13 @@ class BlazeCelebornShuffleReader[K, C](
           val hostPort = location.hostAndFetchPort
           if (!workerRequestMap.containsKey(hostPort)) {
             try {
-              val client = shuffleClient.getDataClientFactory().createClient(
-                location.getHost,
-                location.getFetchPort)
+              val client = shuffleClient
+                .getDataClientFactory()
+                .createClient(location.getHost, location.getFetchPort)
               val pbOpenStreamList = PbOpenStreamList.newBuilder()
               pbOpenStreamList.setShuffleKey(shuffleKey)
-              workerRequestMap.put(
-                hostPort,
-                (client, new util.ArrayList[PartitionLocation], pbOpenStreamList))
+              workerRequestMap
+                .put(hostPort, (client, new util.ArrayList[PartitionLocation], pbOpenStreamList))
             } catch {
               case ex: Exception =>
                 shuffleClient.excludeFailedFetchLocation(location.hostAndFetchPort, ex)
@@ -157,7 +156,8 @@ class BlazeCelebornShuffleReader[K, C](
           workerRequestMap.get(hostPort) match {
             case (_, locArr, pbOpenStreamListBuilder) =>
               locArr.add(location)
-              pbOpenStreamListBuilder.addFileName(location.getFileName)
+              pbOpenStreamListBuilder
+                .addFileName(location.getFileName)
                 .addStartIndex(startMapIndex.getOrElse(0))
                 .addEndIndex(endMapIndex.getOrElse(Int.MaxValue))
               pbOpenStreamListBuilder.addReadLocalShuffle(

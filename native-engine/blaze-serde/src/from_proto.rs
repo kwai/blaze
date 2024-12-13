@@ -92,7 +92,8 @@ use crate::{
     error::PlanSerDeError,
     from_proto_binary_op, proto_error, protobuf,
     protobuf::{
-        physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType, GenerateFunction,
+        physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType,
+        physical_repartition::RepartitionType, GenerateFunction,
     },
     Schema,
 };
@@ -282,7 +283,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             PhysicalPlanType::ShuffleWriter(shuffle_writer) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(shuffle_writer.input)?;
 
-                let output_partitioning = parse_protobuf_hash_partitioning(
+                let output_partitioning = parse_protobuf_partitioning(
                     input.clone(),
                     shuffle_writer.output_partitioning.as_ref(),
                 )?;
@@ -298,7 +299,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let input: Arc<dyn ExecutionPlan> =
                     convert_box_required!(rss_shuffle_writer.input)?;
 
-                let output_partitioning = parse_protobuf_hash_partitioning(
+                let output_partitioning = parse_protobuf_partitioning(
                     input.clone(),
                     rss_shuffle_writer.output_partitioning.as_ref(),
                 )?;
@@ -1118,34 +1119,39 @@ fn try_parse_physical_expr_box_required(
     }
 }
 
-pub fn parse_protobuf_hash_partitioning(
+pub fn parse_protobuf_partitioning(
     input: Arc<dyn ExecutionPlan>,
-    partitioning: Option<&protobuf::PhysicalHashRepartition>,
+    partitioning: Option<&protobuf::PhysicalRepartition>,
 ) -> Result<Option<Partitioning>, PlanSerDeError> {
-    match partitioning {
-        Some(hash_part) => {
-            let expr = hash_part
-                .hash_expr
-                .iter()
-                .map(|e| {
-                    try_parse_physical_expr(e, &input.schema())
-                        .and_then(|e| Ok(bind(e, &input.schema())?))
-                })
-                .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
-
-            if expr.len() == 0 {
-                Ok(Some(Partitioning::RoundRobinBatch(
-                    hash_part.partition_count.try_into().unwrap(),
-                )))
-            } else {
+    partitioning.map_or(Ok(None), |p| {
+        let plan = p.repartition_type.as_ref().ok_or_else(|| {
+            proto_error(format!(
+                "partition::from_proto() Unsupported partition '{:?}'",
+                p
+            ))
+        })?;
+        match plan {
+            RepartitionType::HashRepartition(hash_part) => {
+                // let hash_part = p.hash_repartition;
+                let expr = hash_part
+                    .hash_expr
+                    .iter()
+                    .map(|e| {
+                        try_parse_physical_expr(e, &input.schema())
+                            .and_then(|e| Ok(bind(e, &input.schema())?))
+                    })
+                    .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
                 Ok(Some(Partitioning::Hash(
                     expr,
                     hash_part.partition_count.try_into().unwrap(),
                 )))
             }
+
+            RepartitionType::RoundRobinRepartition(round_robin_part) => Ok(Some(
+                Partitioning::RoundRobinBatch(round_robin_part.partition_count.try_into().unwrap()),
+            )),
         }
-        None => Ok(None),
-    }
+    })
 }
 
 impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {

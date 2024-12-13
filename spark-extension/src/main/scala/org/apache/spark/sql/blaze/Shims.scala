@@ -227,7 +227,7 @@ abstract class Shims {
 
   def getShuffleWriteExec(
       input: pb.PhysicalPlanNode,
-      nativeOutputPartitioning: pb.PhysicalHashRepartition.Builder): pb.PhysicalPlanNode
+      nativeOutputPartitioning: pb.PhysicalRepartition.Builder): pb.PhysicalPlanNode
 
   def convertMoreSparkPlan(exec: SparkPlan): Option[SparkPlan]
 

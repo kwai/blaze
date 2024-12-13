@@ -21,7 +21,7 @@ import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
+import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalPlanNode, PhysicalRepartition, PhysicalRoundRobinRepartition, Schema}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleWriteProcessor
@@ -186,20 +186,27 @@ abstract class NativeShuffleExchangeBase(
       nativeInputRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val nativeInputPartition = nativeInputRDD.partitions(partition.index)
+        val repartitionBuilder = PhysicalRepartition.newBuilder()
         val nativeOutputPartitioning = outputPartitioning match {
           case SinglePartition =>
-            PhysicalHashRepartition
-              .newBuilder()
-              .setPartitionCount(1)
+            repartitionBuilder
+              .setHashRepartition(
+                PhysicalHashRepartition
+                  .newBuilder()
+                  .setPartitionCount(1))
           case HashPartitioning(_, _) =>
-            PhysicalHashRepartition
-              .newBuilder()
-              .setPartitionCount(numPartitions)
-              .addAllHashExpr(nativeHashExprs.asJava)
+            repartitionBuilder
+              .setHashRepartition(
+                PhysicalHashRepartition
+                  .newBuilder()
+                  .setPartitionCount(numPartitions)
+                  .addAllHashExpr(nativeHashExprs.asJava))
           case RoundRobinPartitioning(_) =>
-            PhysicalHashRepartition
-              .newBuilder()
-              .setPartitionCount(numPartitions)
+            repartitionBuilder
+              .setRoundRobinRepartition(
+                PhysicalRoundRobinRepartition
+                  .newBuilder()
+                  .setPartitionCount(numPartitions))
           case p =>
             throw new NotImplementedError(s"cannot convert partitioning to native: $p")
         }
