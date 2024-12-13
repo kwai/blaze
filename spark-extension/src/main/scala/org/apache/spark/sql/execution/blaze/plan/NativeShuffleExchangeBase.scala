@@ -21,7 +21,7 @@ import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalPlanNode, PhysicalRepartition, PhysicalRoundRobinRepartition, Schema}
+import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalSingleRepartition, PhysicalRoundRobinRepartition, PhysicalPlanNode, PhysicalRepartition, Schema}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleWriteProcessor
@@ -190,8 +190,8 @@ abstract class NativeShuffleExchangeBase(
         val nativeOutputPartitioning = outputPartitioning match {
           case SinglePartition =>
             repartitionBuilder
-              .setHashRepartition(
-                PhysicalHashRepartition
+              .setSingleRepartition(
+                PhysicalSingleRepartition
                   .newBuilder()
                   .setPartitionCount(1))
           case HashPartitioning(_, _) =>

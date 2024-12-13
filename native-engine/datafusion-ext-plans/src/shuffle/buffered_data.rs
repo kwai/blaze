@@ -357,7 +357,6 @@ mod test {
     #[tokio::test]
     async fn sort_partition_test() -> Result<()> {
         let record_batch = build_table_i32(
-            // ("a", &vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 0]),
             ("a", &vec![19, 18, 17, 16, 15, 14, 13, 12, 11, 10]),
             ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
             ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
@@ -373,27 +372,8 @@ mod test {
             Arc::new(Column::new_with_schema("a", &schema).unwrap()), // Partition by column "a"
         ];
 
-        let partition_exprs_b: Vec<Arc<dyn PhysicalExpr>> =
-            vec![Arc::new(Column::new_with_schema("b", &schema).unwrap())];
-
-        let partition_exprs_ab: Vec<Arc<dyn PhysicalExpr>> = vec![
-            Arc::new(Column::new_with_schema("a", &schema).unwrap()),
-            Arc::new(Column::new_with_schema("b", &schema).unwrap()),
-        ];
-
-        let partition_exprs_abc: Vec<Arc<dyn PhysicalExpr>> = vec![
-            Arc::new(Column::new_with_schema("a", &schema).unwrap()),
-            Arc::new(Column::new_with_schema("b", &schema).unwrap()),
-            Arc::new(Column::new_with_schema("c", &schema).unwrap()),
-        ];
-
-        let unknown_partitioning = Partitioning::UnknownPartitioning(5);
-
         let round_robin_partitioning = Partitioning::RoundRobinBatch(4);
-
         let hash_partitioning_a = Partitioning::Hash(partition_exprs_a, 4);
-        let hash_partitioning_ab = Partitioning::Hash(partition_exprs_ab, 3);
-        let hash_partitioning_abc = Partitioning::Hash(partition_exprs_abc, 3);
 
         let result = sort_batch_by_partition_id(record_batch, &round_robin_partitioning, 3);
 

@@ -598,9 +598,14 @@ message FetchLimit {
 
 message PhysicalRepartition {
   oneof RepartitionType {
-      PhysicalHashRepartition hash_repartition = 1;
-      PhysicalRoundRobinRepartition round_robin_repartition = 2;
+      PhysicalSingleRepartition single_repartition = 1;
+      PhysicalHashRepartition hash_repartition = 2;
+      PhysicalRoundRobinRepartition round_robin_repartition = 3;
   }
+}
+
+message PhysicalSingleRepartition {
+  uint64 partition_count = 1;
 }
 
 message PhysicalHashRepartition {
