@@ -64,9 +64,9 @@ impl BufferedData {
     pub fn add_batch(&mut self, batch: RecordBatch, partitioning: &Partitioning) -> Result<()> {
         let current_num_rows = self.num_rows;
         self.num_rows += batch.num_rows();
-        let (parts, sorted_batch) = self
-            .sort_time
-            .with_timer(|| sort_batch_by_partition_id(batch, partitioning, current_num_rows, self.partition_id))?;
+        let (parts, sorted_batch) = self.sort_time.with_timer(|| {
+            sort_batch_by_partition_id(batch, partitioning, current_num_rows, self.partition_id)
+        })?;
         self.mem_used +=
             sorted_batch.get_array_mem_size() + parts.len() * size_of::<PartitionInBatch>();
         self.sorted_batches.push(sorted_batch);
@@ -270,7 +270,7 @@ fn sort_batch_by_partition_id(
     batch: RecordBatch,
     partitioning: &Partitioning,
     current_num_rows: usize,
-    partition_id: usize
+    partition_id: usize,
 ) -> Result<(Vec<PartitionInBatch>, RecordBatch)> {
     let num_partitions = partitioning.partition_count();
     let num_rows = batch.num_rows();
@@ -283,7 +283,8 @@ fn sort_batch_by_partition_id(
             evaluate_partition_ids(hashes, partitioning.partition_count())
         }
         Partitioning::RoundRobinBatch(..) => {
-            let start_rows = (partition_id * 1000193 + current_num_rows) % partitioning.partition_count();
+            let start_rows =
+                (partition_id * 1000193 + current_num_rows) % partitioning.partition_count();
             evaluate_robin_partition_ids(partitioning, &batch, start_rows)
         }
         _ => unreachable!("unsupported partitioning: {:?}", partitioning),
