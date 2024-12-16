@@ -328,7 +328,11 @@ mod test {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
-    use datafusion::{assert_batches_eq, common::Result, physical_expr::{expressions::Column, Partitioning, PhysicalExpr}};
+    use datafusion::{
+        assert_batches_eq,
+        common::Result,
+        physical_expr::{expressions::Column, Partitioning, PhysicalExpr},
+    };
 
     use crate::shuffle::buffered_data::sort_batch_by_partition_id;
 
@@ -375,7 +379,8 @@ mod test {
         let round_robin_partitioning = Partitioning::RoundRobinBatch(4);
         let hash_partitioning_a = Partitioning::Hash(partition_exprs_a, 4);
 
-        let (parts, sorted_batch) = sort_batch_by_partition_id(record_batch, &round_robin_partitioning, 3, 0)?;
+        let (parts, sorted_batch) =
+            sort_batch_by_partition_id(record_batch, &round_robin_partitioning, 3, 0)?;
 
         let expected = vec![
             "+----+---+---+",
