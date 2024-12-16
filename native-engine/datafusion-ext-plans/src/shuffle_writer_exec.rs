@@ -113,7 +113,7 @@ impl ExecutionPlan for ShuffleWriterExec {
             ExecutionContext::new(context.clone(), partition, self.schema(), &self.metrics);
         let output_time = exec_ctx.register_timer_metric("output_io_time");
 
-        let mut input_stream = exec_ctx.execute_with_input_stats(&self.input)?;
+        let mut input = self.input.clone();
 
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
@@ -144,8 +144,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                         options: Default::default(),
                     })
                     .collect();
-                let sort = SortExec::new(self.input.clone(), sort_expr, None);
-                input_stream = sort.execute(partition, context)?;
+                input = Arc::new(SortExec::new(input, sort_expr, None));
 
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     exec_ctx.clone(),
@@ -160,7 +159,8 @@ impl ExecutionPlan for ShuffleWriterExec {
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
 
-        repartitioner.execute(exec_ctx, input_stream)
+        let input = exec_ctx.execute_with_input_stats(&input)?;
+        repartitioner.execute(exec_ctx, input)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
