@@ -21,7 +21,7 @@ import org.apache.spark.Partitioner
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalPlanNode, Schema}
+import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalSingleRepartition, PhysicalRoundRobinRepartition, PhysicalPlanNode, PhysicalRepartition, Schema}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleWriteProcessor
@@ -37,6 +37,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.SinglePartition
+import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
 import org.apache.spark.sql.execution.{SQLExecution, SparkPlan, UnsafeRowSerializer}
@@ -185,16 +186,27 @@ abstract class NativeShuffleExchangeBase(
       nativeInputRDD.isShuffleReadFull,
       (partition, taskContext) => {
         val nativeInputPartition = nativeInputRDD.partitions(partition.index)
+        val repartitionBuilder = PhysicalRepartition.newBuilder()
         val nativeOutputPartitioning = outputPartitioning match {
           case SinglePartition =>
-            PhysicalHashRepartition
-              .newBuilder()
-              .setPartitionCount(1)
+            repartitionBuilder
+              .setSingleRepartition(
+                PhysicalSingleRepartition
+                  .newBuilder()
+                  .setPartitionCount(1))
           case HashPartitioning(_, _) =>
-            PhysicalHashRepartition
-              .newBuilder()
-              .setPartitionCount(numPartitions)
-              .addAllHashExpr(nativeHashExprs.asJava)
+            repartitionBuilder
+              .setHashRepartition(
+                PhysicalHashRepartition
+                  .newBuilder()
+                  .setPartitionCount(numPartitions)
+                  .addAllHashExpr(nativeHashExprs.asJava))
+          case RoundRobinPartitioning(_) =>
+            repartitionBuilder
+              .setRoundRobinRepartition(
+                PhysicalRoundRobinRepartition
+                  .newBuilder()
+                  .setPartitionCount(numPartitions))
           case p =>
             throw new NotImplementedError(s"cannot convert partitioning to native: $p")
         }

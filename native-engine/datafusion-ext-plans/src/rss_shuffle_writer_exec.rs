@@ -122,7 +122,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
-            Partitioning::Hash(..) => {
+            Partitioning::Hash(..) | Partitioning::RoundRobinBatch(..) => {
                 let sort_time = exec_ctx.register_timer_metric("sort_time");
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,

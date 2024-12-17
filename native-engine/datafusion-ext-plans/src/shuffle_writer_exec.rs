@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_expr::EquivalenceProperties,
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
@@ -38,6 +38,7 @@ use crate::{
         single_repartitioner::SingleShuffleRepartitioner,
         sort_repartitioner::SortShuffleRepartitioner, ShuffleRepartitioner,
     },
+    sort_exec::SortExec,
 };
 
 /// The shuffle writer operator maps each input partition to M output partitions
@@ -108,8 +109,11 @@ impl ExecutionPlan for ShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         // record uncompressed data size
-        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let exec_ctx =
+            ExecutionContext::new(context.clone(), partition, self.schema(), &self.metrics);
         let output_time = exec_ctx.register_timer_metric("output_io_time");
+
+        let mut input = self.input.clone();
 
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => Arc::new(SingleShuffleRepartitioner::new(
@@ -128,10 +132,34 @@ impl ExecutionPlan for ShuffleWriterExec {
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
+            Partitioning::RoundRobinBatch(..) => {
+                let sort_expr: Vec<PhysicalSortExpr> = self
+                    .input
+                    .schema()
+                    .fields()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| PhysicalSortExpr {
+                        expr: Arc::new(Column::new(&field.name(), index)),
+                        options: Default::default(),
+                    })
+                    .collect();
+                input = Arc::new(SortExec::new(input, sort_expr, None));
+
+                let partitioner = Arc::new(SortShuffleRepartitioner::new(
+                    exec_ctx.clone(),
+                    self.output_data_file.clone(),
+                    self.output_index_file.clone(),
+                    self.partitioning.clone(),
+                    output_time,
+                ));
+                MemManager::register_consumer(partitioner.clone(), true);
+                partitioner
+            }
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
 
-        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        let input = exec_ctx.execute_with_input_stats(&input)?;
         repartitioner.execute(exec_ctx, input)
     }
 
