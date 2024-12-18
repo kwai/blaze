@@ -136,7 +136,6 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut C).unwrap();
         let merging_accs = downcast_any!(merging_accs, mut C).unwrap();
-
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
                 accs.merge_items(acc_idx, merging_accs, merging_acc_idx);

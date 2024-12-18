@@ -168,12 +168,8 @@ fn schema_adapter_cast_column(col: &ArrayRef, data_type: &DataType) -> Result<Ar
         },
         DataType::List(to_field) => match col.data_type() {
             DataType::List(_from_field) => {
-                log::warn!("XXX col.dt: {:?}", col.data_type());
-                log::warn!("XXX to_field: {to_field:?}");
-                log::warn!("XXX from_field: {_from_field:?}");
                 let col = col.as_list::<i32>();
                 let from_inner = col.values();
-                log::warn!("XXX from_inner.dt: {:?}", from_inner.data_type());
                 let to_inner = schema_adapter_cast_column(from_inner, to_field.data_type())?;
                 Ok(Arc::new(ListArray::try_new(
                     to_field.clone(),

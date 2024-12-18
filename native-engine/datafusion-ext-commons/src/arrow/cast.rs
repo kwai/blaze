@@ -98,7 +98,6 @@ pub fn cast_impl(
             )
         }
         (&DataType::List(_), DataType::List(to_field)) => {
-            log::info!("XXX cast list to_field={to_field:?}");
             let list = as_list_array(array);
             let items = cast_impl(list.values(), to_field.data_type(), match_struct_fields)?;
             make_array(
