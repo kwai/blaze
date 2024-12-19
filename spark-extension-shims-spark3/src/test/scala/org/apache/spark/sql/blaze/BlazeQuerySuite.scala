@@ -37,4 +37,20 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
     }
   }
 
+  test("test filter with year function") {
+    withTable("t1") {
+      sql("create table t1 using parquet as select '2024-12-18' as event_time")
+      checkAnswer(
+        sql(
+          """
+            |select year, count(*)
+            |from (select event_time, year(event_time) as year from t1) t
+            |where year <= 2024
+            |group by year
+            |""".stripMargin),
+        Seq(Row(2024, 1))
+      )
+    }
+  }
+
 }
