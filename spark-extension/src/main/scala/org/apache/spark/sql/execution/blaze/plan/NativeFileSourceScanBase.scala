@@ -94,7 +94,7 @@ abstract class NativeFileSourceScanBase(basedFileScan: FileSourceScanExec)
         field.copy(nullable = true)
       case field =>
         // avoid converting unsupported type in non-used fields
-        StructField(field.name, NullType, nullable = true)
+        StructField(field.name, field.dataType, nullable = true)
     }))
 
   protected def nativePartitionSchema: pb.Schema =
