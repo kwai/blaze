@@ -19,6 +19,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
+    <paimonVersion>0.9.0</paimonVersion>
   </properties>
 
   <dependencyManagement>
@@ -42,6 +43,11 @@
         <groupId>org.apache.spark</groupId>
         <artifactId>spark-sql_${scalaVersion}</artifactId>
         <version>${sparkVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.paimon</groupId>
+        <artifactId>paimon-core</artifactId>
+        <version>${paimonVersion}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.arrow</groupId>
