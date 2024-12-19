@@ -53,4 +53,13 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
     }
   }
 
+  test("test select multiple spark ext functions with the same signature") {
+    withTable("t1") {
+      sql("create table t1 using parquet as select '2024-12-18' as event_time")
+      checkAnswer(
+        sql("select year(event_time), month(event_time) from t1"),
+        Seq(Row(2024, 12))
+      )
+    }
+  }
 }
