@@ -3,6 +3,8 @@ name: TPC-DS
 on:
   workflow_dispatch:
   push:
+  pull_request:
+    types: [opened, reopened]
 
 jobs:
   test-spark-30:
