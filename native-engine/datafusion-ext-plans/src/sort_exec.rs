@@ -277,6 +277,7 @@ impl BufferedData {
             write_one_batch(batch.num_rows(), batch.columns(), &mut writer)?;
             writer.write_all(&key_collector.store)?;
         }
+        writer.flush()?;
         Ok(())
     }
 
@@ -946,6 +947,7 @@ fn merge_spills(
         )?;
         output_writer.write_all(&key_collector.store)?;
     }
+    output_writer.flush()?;
     drop(output_writer);
     Ok(output_spill)
 }
