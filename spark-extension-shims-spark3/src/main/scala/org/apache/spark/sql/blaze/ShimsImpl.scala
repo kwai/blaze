@@ -18,6 +18,7 @@ package org.apache.spark.sql.blaze
 import java.io.File
 import java.util.UUID
 import org.apache.commons.lang3.reflect.FieldUtils
+import org.apache.hadoop.fs.Path
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
@@ -33,6 +34,7 @@ import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.BlazeConverters.ForceNativeExecutionWrapperBase
 import org.apache.spark.sql.blaze.NativeConverters.NativeExprWrapperBase
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -97,6 +99,7 @@ import org.apache.spark.sql.execution.blaze.plan._
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
+import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ReusedExchangeExec}
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeShuffledHashJoinExecProvider
@@ -817,6 +820,37 @@ class ShimsImpl extends Shims with Logging {
       nullable: Boolean): Expression = {
     NativeExprWrapper(nativeExpr, dataType, nullable)
   }
+
+  @enableIf(
+    Seq("spark-3.0", "spark-3.1", "spark-3.2", "spark-3.3").contains(
+      System.getProperty("blaze.shim")))
+  override def getPartitionedFile(
+      partitionValues: InternalRow,
+      filePath: String,
+      offset: Long,
+      size: Long): PartitionedFile =
+    PartitionedFile(partitionValues, filePath, offset, size)
+
+  @enableIf(Seq("spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  override def getPartitionedFile(
+      partitionValues: InternalRow,
+      filePath: String,
+      offset: Long,
+      size: Long): PartitionedFile = {
+    import org.apache.spark.paths.SparkPath
+    PartitionedFile(partitionValues, SparkPath.fromPath(new Path(filePath)), offset, size)
+  }
+
+  @enableIf(
+    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
+      System.getProperty("blaze.shim")))
+  override def getMinPartitionNum(sparkSession: SparkSession): Int =
+    sparkSession.sessionState.conf.filesMinPartitionNum
+      .getOrElse(sparkSession.sparkContext.defaultParallelism)
+
+  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  override def getMinPartitionNum(sparkSession: SparkSession): Int =
+    sparkSession.sparkContext.defaultParallelism
 
   @enableIf(
     Seq("spark-3.0", "spark-3.1", "spark-3.2", "spark-3.3").contains(

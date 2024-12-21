@@ -216,10 +216,10 @@ case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
       (0L until dataFileMeta.fileSize() by maxSplitBytes).map { offset =>
         val remaining = dataFileMeta.fileSize() - offset
         val size = if (remaining > maxSplitBytes) maxSplitBytes else remaining
-        PartitionedFile(partitionValues, filePath, offset, size)
+        Shims.get.getPartitionedFile(partitionValues, filePath, offset, size)
       }
     } else {
-      Seq(PartitionedFile(partitionValues, filePath, 0, dataFileMeta.fileSize()))
+      Seq(Shims.get.getPartitionedFile(partitionValues, filePath, 0, dataFileMeta.fileSize()))
     }
   }
 
@@ -229,8 +229,7 @@ case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
       selectedSplits: Seq[DataSplit]): Long = {
     val defaultMaxSplitBytes = sparkSession.sessionState.conf.filesMaxPartitionBytes
     val openCostInBytes = sparkSession.sessionState.conf.filesOpenCostInBytes
-    val minPartitionNum = sparkSession.sessionState.conf.filesMinPartitionNum
-      .getOrElse(sparkSession.sparkContext.defaultParallelism)
+    val minPartitionNum = Shims.get.getMinPartitionNum(sparkSession)
     val totalBytes = selectedSplits
       .flatMap(_.dataFiles().asScala.map(_.fileSize() + openCostInBytes))
       .sum
