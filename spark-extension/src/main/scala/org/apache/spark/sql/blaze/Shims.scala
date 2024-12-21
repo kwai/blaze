@@ -46,7 +46,9 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 
@@ -237,6 +239,14 @@ abstract class Shims {
       nativeExpr: pb.PhysicalExprNode,
       dataType: DataType,
       nullable: Boolean): Expression
+
+  def getPartitionedFile(
+      partitionValues: InternalRow,
+      filePath: String,
+      offset: Long,
+      size: Long): PartitionedFile
+
+  def getMinPartitionNum(sparkSession: SparkSession): Int
 
   def postTransform(plan: SparkPlan, sc: SparkContext): Unit = {}
 }
