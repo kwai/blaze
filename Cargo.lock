@@ -984,7 +984,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "rand",
- "smallvec 2.0.0-alpha.8",
+ "smallvec 2.0.0-alpha.9",
  "tempfile",
  "tokio",
  "unchecked-index",
@@ -2612,9 +2612,9 @@ checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
 
 [[package]]
 name = "smallvec"
-version = "2.0.0-alpha.8"
+version = "2.0.0-alpha.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abfdb29d53c8bdb1b13f07f3b8895ba7efef32412fb23f57246f238ed586d369"
+checksum = "5e22442b16a0c1bfae679ffed8ec5e160ae2aa8495cea891f0d2ff7b84fe5c4c"
 
 [[package]]
 name = "snafu"
