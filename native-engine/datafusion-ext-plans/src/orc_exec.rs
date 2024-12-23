@@ -200,31 +200,6 @@ struct OrcOpener {
     fs_provider: Arc<FsProvider>,
 }
 
-impl OrcOpener {
-    fn map_schema(&self, orc_file_meta: FileMetadata) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
-        let projection = self.projection.clone();
-        let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
-
-        let mut projection = Vec::with_capacity(projected_schema.fields().len());
-        let mut field_mappings = vec![None; self.table_schema.fields().len()];
-
-        for nameColumn in orc_file_meta.root_data_type().children() {
-            if let Some((table_idx, _table_field)) =
-            projected_schema.fields().find(nameColumn.name()) {
-                field_mappings[table_idx] = Some(projection.len());
-                projection.push(nameColumn.data_type().column_index());
-            }
-        }
-
-        Ok((
-            Arc::new(BlazeSchemaMapping::new(self.table_schema.clone(),
-                                             field_mappings,
-            )),
-            projection,
-        ))
-    }
-}
-
 impl FileOpener for OrcOpener {
     fn open(&self, file_meta: FileMeta) -> Result<FileOpenFuture> {
         let reader = OrcFileReaderRef(Arc::new(InternalFileReader::try_new(
@@ -232,7 +207,10 @@ impl FileOpener for OrcOpener {
             file_meta.object_meta.clone(),
         )?));
         let batch_size = self.batch_size;
+        let projection = self.projection.clone();
+        let table_schema = self.table_schema;
 
+        let schema_adapter = SchemaAdapter { projection, table_schema };
 
         Ok(Box::pin(async move {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
@@ -243,8 +221,7 @@ impl FileOpener for OrcOpener {
                 builder = builder.with_file_byte_range(range);
             }
 
-            let (schema_mapping, projection) =
-                self.map_schema(builder.file_metadata().clone())?;
+            let (schema_mapping, projection) = schema_adapter.map_schema(builder.file_metadata())?;
 
             let projection_mask =
                 ProjectionMask::roots(builder.file_metadata().root_data_type(), projection);
@@ -281,5 +258,35 @@ impl AsyncChunkReader for OrcFileReaderRef {
         let length = length as usize;
         let range = offset_from_start..(offset_from_start + length);
         async move { self.0.read_fully(range).map_err(|e| e.into()) }.boxed()
+    }
+}
+
+struct SchemaAdapter {
+    table_schema: SchemaRef,
+    projection: Vec<usize>,
+}
+
+impl SchemaAdapter {
+    fn map_schema(&self, orc_file_meta: &FileMetadata) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
+        let projection = self.projection.clone();
+        let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
+
+        let mut projection = Vec::with_capacity(projected_schema.fields().len());
+        let mut field_mappings = vec![None; self.table_schema.fields().len()];
+
+        for nameColumn in orc_file_meta.root_data_type().children() {
+            if let Some((table_idx, _table_field)) =
+            projected_schema.fields().find(nameColumn.name()) {
+                field_mappings[table_idx] = Some(projection.len());
+                projection.push(nameColumn.data_type().column_index());
+            }
+        }
+
+        Ok((
+            Arc::new(BlazeSchemaMapping::new(self.table_schema.clone(),
+                                             field_mappings,
+            )),
+            projection,
+        ))
     }
 }
