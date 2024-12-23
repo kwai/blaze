@@ -46,9 +46,8 @@ use orc_rust::{
 
 use crate::{
     common::execution_context::ExecutionContext,
-    scan::{internal_file_reader::InternalFileReader, BlazeSchemaAdapter},
+    scan::{internal_file_reader::InternalFileReader, BlazeSchemaMapping},
 };
-use crate::scan::BlazeSchemaMapping;
 
 /// Execution plan for scanning one or more Orc partitions
 #[derive(Debug, Clone)]
