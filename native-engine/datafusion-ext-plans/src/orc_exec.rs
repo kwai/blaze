@@ -286,7 +286,7 @@ impl SchemaAdapter {
         }
 
         Ok((
-            Arc::new(BlazeSchemaMapping::new(self.table_schema,
+            Arc::new(BlazeSchemaMapping::new(self.table_schema.clone(),
                                              field_mappings,
             )),
             projection,
