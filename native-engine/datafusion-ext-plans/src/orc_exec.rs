@@ -34,18 +34,21 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
+use datafusion::datasource::schema_adapter::SchemaMapper;
 use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use orc_rust::{
     arrow_reader::ArrowReaderBuilder, projection::ProjectionMask, reader::AsyncChunkReader,
+    reader::metadata::FileMetadata,
 };
 
 use crate::{
     common::execution_context::ExecutionContext,
     scan::{internal_file_reader::InternalFileReader, BlazeSchemaAdapter},
 };
+use crate::scan::BlazeSchemaMapping;
 
 /// Execution plan for scanning one or more Orc partitions
 #[derive(Debug, Clone)]
@@ -199,6 +202,31 @@ struct OrcOpener {
     fs_provider: Arc<FsProvider>,
 }
 
+impl OrcOpener {
+    fn map_schema(&self, orc_file_meta: &FileMetadata) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
+        let projection = self.projection.clone();
+        let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
+
+        let mut projection = Vec::with_capacity(projected_schema.fields().len());
+        let mut field_mappings = vec![None; self.table_schema.fields().len()];
+
+        for nameColumn in orc_file_meta.root_data_type().children() {
+            if let Some((table_idx, _table_field)) =
+            projected_schema.fields().find(nameColumn.name()) {
+                field_mappings[table_idx] = Some(projection.len());
+                projection.push(nameColumn.data_type().column_index());
+            }
+        }
+
+        Ok((
+            Arc::new(BlazeSchemaMapping::new(self.table_schema.clone(),
+                                             field_mappings,
+            )),
+            projection,
+        ))
+    }
+}
+
 impl FileOpener for OrcOpener {
     fn open(&self, file_meta: FileMeta) -> Result<FileOpenFuture> {
         let reader = OrcFileReaderRef(Arc::new(InternalFileReader::try_new(
@@ -206,9 +234,7 @@ impl FileOpener for OrcOpener {
             file_meta.object_meta.clone(),
         )?));
         let batch_size = self.batch_size;
-        let projection = self.projection.clone();
-        let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
-        let schema_adapter = BlazeSchemaAdapter::new(projected_schema);
+
 
         Ok(Box::pin(async move {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
@@ -218,15 +244,10 @@ impl FileOpener for OrcOpener {
                 let range = range.start as usize..range.end as usize;
                 builder = builder.with_file_byte_range(range);
             }
-            let file_schema = builder.schema();
-            let (schema_mapping, adapted_projections) =
-                schema_adapter.map_schema(file_schema.as_ref())?;
 
-            // Offset by 1 since index 0 is the root
-            let projection = adapted_projections
-                .iter()
-                .map(|i| i + 1)
-                .collect::<Vec<_>>();
+            let (schema_mapping, projection) =
+                self.map_schema(builder.file_metadata())?;
+
             let projection_mask =
                 ProjectionMask::roots(builder.file_metadata().root_data_type(), projection);
             let stream = builder
