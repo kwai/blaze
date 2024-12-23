@@ -208,9 +208,9 @@ impl FileOpener for OrcOpener {
         )?));
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
-        let table_schema = self.table_schema;
+        let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
 
-        let schema_adapter = SchemaAdapter { projection, table_schema };
+        let schema_adapter = SchemaAdapter::new(projected_schema, projection);
 
         Ok(Box::pin(async move {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
@@ -267,9 +267,12 @@ struct SchemaAdapter {
 }
 
 impl SchemaAdapter {
+    pub fn new(table_schema: SchemaRef, projection: Vec<usize>) -> Self {
+        Self { table_schema, projection }
+    }
+
     fn map_schema(&self, orc_file_meta: &FileMetadata) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
-        let projection = self.projection.clone();
-        let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
+        let projected_schema = SchemaRef::from(self.table_schema.project(&self.projection)?);
 
         let mut projection = Vec::with_capacity(projected_schema.fields().len());
         let mut field_mappings = vec![None; self.table_schema.fields().len()];
@@ -283,7 +286,7 @@ impl SchemaAdapter {
         }
 
         Ok((
-            Arc::new(BlazeSchemaMapping::new(self.table_schema.clone(),
+            Arc::new(BlazeSchemaMapping::new(self.table_schema,
                                              field_mappings,
             )),
             projection,
