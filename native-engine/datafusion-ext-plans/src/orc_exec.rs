@@ -23,7 +23,6 @@ use bytes::Bytes;
 use datafusion::{
     datasource::{
         physical_plan::{FileMeta, FileOpenFuture, FileOpener, FileScanConfig, FileStream},
-        schema_adapter::SchemaAdapter,
     },
     error::Result,
     execution::context::TaskContext,
@@ -202,7 +201,7 @@ struct OrcOpener {
 }
 
 impl OrcOpener {
-    fn map_schema(&self, orc_file_meta: &FileMetadata) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
+    fn map_schema(&self, orc_file_meta: FileMetadata) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
 
@@ -245,7 +244,7 @@ impl FileOpener for OrcOpener {
             }
 
             let (schema_mapping, projection) =
-                self.map_schema(builder.file_metadata())?;
+                self.map_schema(builder.file_metadata().clone())?;
 
             let projection_mask =
                 ProjectionMask::roots(builder.file_metadata().root_data_type(), projection);
