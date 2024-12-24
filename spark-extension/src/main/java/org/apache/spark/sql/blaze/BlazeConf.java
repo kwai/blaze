@@ -27,11 +27,6 @@ public enum BlazeConf {
     /// actual off-heap memory usage is expected to be spark.executor.memoryOverhead * fraction.
     MEMORY_FRACTION("spark.blaze.memoryFraction", 0.6),
 
-    /// number of worker threads used in tokio runtime, 0 to use default available parallism value.
-    /// for cpus those support hyperthreading, it is recommended to set this value to the number
-    /// of available physical cores.
-    TOKIO_NUM_WORKER_THREADS("spark.blaze.tokio.num.worker.threads", 1),
-
     /// enable converting upper/lower functions to native, special cases may provide different
     /// outputs from spark due to different unicode versions.
     CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", true),

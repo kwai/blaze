@@ -30,7 +30,6 @@ macro_rules! define_conf {
 
 define_conf!(IntConf, BATCH_SIZE);
 define_conf!(DoubleConf, MEMORY_FRACTION);
-define_conf!(IntConf, TOKIO_NUM_WORKER_THREADS);
 define_conf!(BooleanConf, SMJ_INEQUALITY_JOIN_ENABLE);
 define_conf!(BooleanConf, CASE_CONVERT_FUNCTIONS_ENABLE);
 define_conf!(BooleanConf, INPUT_BATCH_STATISTICS_ENABLE);

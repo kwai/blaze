@@ -110,7 +110,7 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
 
                          if !accs.prim_valid(acc_idx) {
                              accs.set_prim_valid(acc_idx, true);
-                             accs.set_prim_value(acc_idx, partial_arg.value(partial_arg_idx));
+                             accs.set_prim_value(acc_idx, partial_value);
                              continue;
                          }
                          if partial_value.partial_cmp(&accs.prim_value(acc_idx)) == Some(P::ORD) {
