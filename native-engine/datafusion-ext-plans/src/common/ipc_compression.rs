@@ -77,7 +77,7 @@ impl<W: Write> IpcCompressionWriter<W> {
     pub fn finish_current_buf(&mut self) -> Result<()> {
         if !self.block_empty {
             // finish current buf
-            self.block_writer.finish()?;
+            self.block_writer.finish_internal()?;
 
             // write
             let block_len = self.shared_buf.inner().len() - 4;
@@ -186,7 +186,11 @@ impl<W: Write> IoCompressionWriter<W> {
         }
     }
 
-    pub fn finish(&mut self) -> Result<()> {
+    pub fn finish(mut self) -> Result<()> {
+        self.finish_internal()
+    }
+
+    fn finish_internal(&mut self) -> Result<()> {
         match self {
             IoCompressionWriter::LZ4(w) => {
                 w.try_finish()
