@@ -3,7 +3,7 @@ Run TPC-DS benchmark with Spark/Blaze
 
 # 1. Generate TPC-DS dataset
 
-Compile datagen tool (derived from [maropu/spark-tpcds-datagen](https://github.com/maropu/spark-tpcds-datagen])).
+Compile datagen tool (derived from [maropu/spark-tpcds-datagen](https://github.com/maropu/spark-tpcds-datagen)).
 ```bash
 cd tpcds/datagen
 mvn package -DskipTests

@@ -39,6 +39,11 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
+      <groupId>org.apache.paimon</groupId>
+      <artifactId>paimon-core</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
       <groupId>org.apache.arrow</groupId>
       <artifactId>arrow-c-data</artifactId>
     </dependency>
@@ -58,11 +63,6 @@
       <groupId>org.blaze</groupId>
       <artifactId>hadoop-shim</artifactId>
       <version>${revision}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.netty</groupId>
-      <artifactId>netty-buffer</artifactId>
-      <version>4.1.100.Final</version>
     </dependency>
     <dependency>
       <groupId>org.scalatest</groupId>

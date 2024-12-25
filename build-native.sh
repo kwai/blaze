@@ -57,7 +57,7 @@ else
 fi
 
 mkdir -p native-engine/_build/$profile
-rm -f native-engine/_build/$profile/*
+rm -rf native-engine/_build/$profile/*
 cp target/$profile/$libname."$libsuffix" native-engine/_build/$profile
 
 new_checksum="$(checksum)"

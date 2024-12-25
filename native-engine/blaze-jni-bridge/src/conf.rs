@@ -30,7 +30,6 @@ macro_rules! define_conf {
 
 define_conf!(IntConf, BATCH_SIZE);
 define_conf!(DoubleConf, MEMORY_FRACTION);
-define_conf!(IntConf, TOKIO_NUM_WORKER_THREADS);
 define_conf!(BooleanConf, SMJ_INEQUALITY_JOIN_ENABLE);
 define_conf!(BooleanConf, CASE_CONVERT_FUNCTIONS_ENABLE);
 define_conf!(BooleanConf, INPUT_BATCH_STATISTICS_ENABLE);
@@ -41,6 +40,7 @@ define_conf!(IntConf, PARTIAL_AGG_SKIPPING_MIN_ROWS);
 define_conf!(BooleanConf, PARQUET_ENABLE_PAGE_FILTERING);
 define_conf!(BooleanConf, PARQUET_ENABLE_BLOOM_FILTER);
 define_conf!(StringConf, SPARK_IO_COMPRESSION_CODEC);
+define_conf!(StringConf, SPILL_COMPRESSION_CODEC);
 
 pub trait BooleanConf {
     fn key(&self) -> &'static str;

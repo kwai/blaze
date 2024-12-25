@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use arrow::{array::*, datatypes::*};
 use datafusion::common::Result;
+use num::{Bounded, FromPrimitive, Integer, Signed};
 
 use crate::df_execution_err;
 
@@ -36,6 +37,11 @@ pub fn cast_impl(
         (&t1, t2) if t1 == t2 => make_array(array.to_data()),
 
         (_, &DataType::Null) => Arc::new(NullArray::new(array.len())),
+
+        // spark compatible str to int
+        (&DataType::Utf8, to_dt) if to_dt.is_signed_integer() => {
+            return try_cast_string_array_to_integer(array, to_dt);
+        }
 
         // float to int
         // use unchecked casting, which is compatible with spark
@@ -201,6 +207,109 @@ pub fn cast_impl(
     })
 }
 
+fn try_cast_string_array_to_integer(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
+    macro_rules! cast {
+        ($target_type:ident) => {{
+            type B = paste::paste! {[<$target_type Builder>]};
+            let array = array.as_any().downcast_ref::<StringArray>().unwrap();
+            let mut builder = B::new();
+
+            for v in array.iter() {
+                match v {
+                    Some(s) => builder.append_option(to_integer(s)),
+                    None => builder.append_null(),
+                }
+            }
+            Arc::new(builder.finish())
+        }};
+    }
+
+    Ok(match cast_type {
+        DataType::Int8 => cast!(Int8),
+        DataType::Int16 => cast!(Int16),
+        DataType::Int32 => cast!(Int32),
+        DataType::Int64 => cast!(Int64),
+        _ => arrow::compute::cast(array, cast_type)?,
+    })
+}
+
+// this implementation is original copied from spark UTF8String.scala
+fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str) -> Option<T> {
+    let bytes = input.as_bytes();
+
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let b = bytes[0];
+    let negative = b == b'-';
+    let mut offset = 0;
+
+    if negative || b == b'+' {
+        offset += 1;
+        if bytes.len() == 1 {
+            return None;
+        }
+    }
+
+    let separator = b'.';
+    let radix = T::from_usize(10).unwrap();
+    let stop_value = T::min_value() / radix;
+    let mut result = T::zero();
+
+    while offset < bytes.len() {
+        let b = bytes[offset];
+        offset += 1;
+        if b == separator {
+            // We allow decimals and will return a truncated integral in that case.
+            // Therefore we won't throw an exception here (checking the fractional
+            // part happens below.)
+            break;
+        }
+
+        let digit = if b.is_ascii_digit() {
+            b - b'0'
+        } else {
+            return None;
+        };
+
+        // We are going to process the new digit and accumulate the result. However,
+        // before doing this, if the result is already smaller than the
+        // stopValue(Long.MIN_VALUE / radix), then result * 10 will definitely
+        // be smaller than minValue, and we can stop.
+        if result < stop_value {
+            return None;
+        }
+
+        result = result * radix - T::from_u8(digit).unwrap();
+        // Since the previous result is less than or equal to stopValue(Long.MIN_VALUE /
+        // radix), we can just use `result > 0` to check overflow. If result
+        // overflows, we should stop.
+        if result > T::zero() {
+            return None;
+        }
+    }
+
+    // This is the case when we've encountered a decimal separator. The fractional
+    // part will not change the number, but we will verify that the fractional part
+    // is well formed.
+    while offset < bytes.len() {
+        let current_byte = bytes[offset];
+        if !current_byte.is_ascii_digit() {
+            return None;
+        }
+        offset += 1;
+    }
+
+    if !negative {
+        result = -result;
+        if result < T::zero() {
+            return None;
+        }
+    }
+    Some(result)
+}
+
 #[cfg(test)]
 mod test {
     use datafusion::common::cast::{as_decimal128_array, as_float64_array, as_int32_array};
@@ -340,6 +449,32 @@ mod test {
                 Some("987.654321000000000000"),
                 Some("2147483647.000000000000000000"),
                 Some("-2147483648.000000000000000000"),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_string_to_bigint() {
+        let string_array: ArrayRef = Arc::new(StringArray::from_iter(vec![
+            None,
+            Some("123"),
+            Some("987"),
+            Some("987.654"),
+            Some("123456789012345"),
+            Some("-123456789012345"),
+            Some("999999999999999999999999999999999"),
+        ]));
+        let casted = cast(&string_array, &DataType::Int64).unwrap();
+        assert_eq!(
+            casted.as_any().downcast_ref::<Int64Array>().unwrap(),
+            &Int64Array::from_iter(vec![
+                None,
+                Some(123),
+                Some(987),
+                Some(987),
+                Some(123456789012345),
+                Some(-123456789012345),
+                None,
             ])
         );
     }

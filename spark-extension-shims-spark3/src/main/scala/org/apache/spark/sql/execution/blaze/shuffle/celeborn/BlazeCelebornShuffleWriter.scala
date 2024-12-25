@@ -18,7 +18,7 @@ package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 import org.apache.celeborn.client.ShuffleClient
 import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.shuffle.celeborn.CelebornShuffleHandle
+import org.apache.spark.shuffle.celeborn.{CelebornShuffleHandle, ExecutorShuffleIdTracker, SparkUtils}
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.TaskContext
@@ -29,7 +29,8 @@ class BlazeCelebornShuffleWriter[K, C](
     shuffleClient: ShuffleClient,
     taskContext: TaskContext,
     handle: CelebornShuffleHandle[K, _, C],
-    metrics: ShuffleWriteMetricsReporter)
+    metrics: ShuffleWriteMetricsReporter,
+    shuffleIdTracker: ExecutorShuffleIdTracker)
     extends BlazeRssShuffleWriterBase[K, C](metrics) {
 
   private val numMappers = handle.numMappers
@@ -41,9 +42,11 @@ class BlazeCelebornShuffleWriter[K, C](
       metrics: ShuffleWriteMetricsReporter,
       numPartitions: Int): RssPartitionWriterBase = {
 
+    val shuffleId = SparkUtils.celebornShuffleId(shuffleClient, handle, taskContext, true)
+    shuffleIdTracker.track(handle.shuffleId, shuffleId)
     new CelebornPartitionWriter(
       shuffleClient,
-      handle.shuffleId,
+      shuffleId,
       encodedAttemptId,
       numMappers,
       numPartitions,

@@ -27,11 +27,6 @@ public enum BlazeConf {
     /// actual off-heap memory usage is expected to be spark.executor.memoryOverhead * fraction.
     MEMORY_FRACTION("spark.blaze.memoryFraction", 0.6),
 
-    /// number of worker threads used in tokio runtime, 0 to use default available parallism value.
-    /// for cpus those support hyperthreading, it is recommended to set this value to the number
-    /// of available physical cores.
-    TOKIO_NUM_WORKER_THREADS("spark.blaze.tokio.num.worker.threads", 1),
-
     /// enable converting upper/lower functions to native, special cases may provide different
     /// outputs from spark due to different unicode versions.
     CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", true),
@@ -61,7 +56,10 @@ public enum BlazeConf {
     SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4"),
 
     // replace all sort-merge join to shuffled-hash join, only used for benchmarking
-    FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false);
+    FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false),
+
+    // spark spill compression codec
+    SPILL_COMPRESSION_CODEC("spark.blaze.spill.compression.codec", "lz4");
 
     public final String key;
     private final Object defaultValue;

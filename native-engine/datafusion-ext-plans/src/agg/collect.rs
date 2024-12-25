@@ -136,7 +136,6 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut C).unwrap();
         let merging_accs = downcast_any!(merging_accs, mut C).unwrap();
-
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
                 accs.merge_items(acc_idx, merging_accs, merging_acc_idx);
@@ -152,7 +151,7 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         idx_for! {
             (acc_idx in acc_idx) => {
                 list.push(ScalarValue::List(ScalarValue::new_list(
-                    &accs.take_values(acc_idx, self.arg_type.clone()),
+                    &accs.take_values(acc_idx),
                     &self.arg_type,
                     true,
                 )));
@@ -168,7 +167,7 @@ pub trait AccCollectionColumn: AccColumn + Send + Sync + 'static {
     fn merge_items(&mut self, idx: usize, other: &mut Self, other_idx: usize);
     fn save_raw(&self, idx: usize, w: &mut impl Write) -> Result<()>;
     fn load_raw(&mut self, idx: usize, r: &mut impl Read) -> Result<()>;
-    fn take_values(&mut self, idx: usize, dt: DataType) -> Vec<ScalarValue>;
+    fn take_values(&mut self, idx: usize) -> Vec<ScalarValue>;
 
     fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
         let mut array_idx = 0;
@@ -192,25 +191,6 @@ pub trait AccCollectionColumn: AccColumn + Send + Sync + 'static {
             self.load_raw(idx, &mut cursor)?;
             *offset = cursor.position() as usize;
             idx += 1;
-        }
-        Ok(())
-    }
-
-    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
-        idx_for! {
-            (idx in idx) => {
-                self.save_raw(idx, w)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        let idx = self.num_records();
-        self.resize(idx + num_rows);
-
-        while idx < self.num_records() {
-            self.load_raw(idx, r)?;
         }
         Ok(())
     }
@@ -265,10 +245,10 @@ impl AccCollectionColumn for AccSetColumn {
         Ok(())
     }
 
-    fn take_values(&mut self, idx: usize, dt: DataType) -> Vec<ScalarValue> {
+    fn take_values(&mut self, idx: usize) -> Vec<ScalarValue> {
         self.mem_used -= self.set[idx].mem_size();
         std::mem::take(&mut self.set[idx])
-            .into_values(dt, false)
+            .into_values(self.dt.clone(), false)
             .collect()
     }
 }
@@ -309,23 +289,37 @@ impl AccColumn for AccSetColumn {
     }
 
     fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
-        AccCollectionColumn::spill(self, idx, w)
+        idx_for! {
+            (idx in idx) => {
+                self.save_raw(idx, w)?;
+            }
+        }
+        Ok(())
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        AccCollectionColumn::unspill(self, num_rows, r)
+        let mut idx = self.num_records();
+        self.resize(idx + num_rows);
+
+        while idx < self.num_records() {
+            self.load_raw(idx, r)?;
+            idx += 1;
+        }
+        Ok(())
     }
 }
 
 pub struct AccListColumn {
     list: Vec<AccList>,
+    dt: DataType,
     mem_used: usize,
 }
 
 impl AccCollectionColumn for AccListColumn {
-    fn empty(_dt: DataType) -> Self {
+    fn empty(dt: DataType) -> Self {
         Self {
             list: vec![],
+            dt,
             mem_used: 0,
         }
     }
@@ -360,10 +354,10 @@ impl AccCollectionColumn for AccListColumn {
         Ok(())
     }
 
-    fn take_values(&mut self, idx: usize, dt: DataType) -> Vec<ScalarValue> {
+    fn take_values(&mut self, idx: usize) -> Vec<ScalarValue> {
         self.mem_used -= self.list[idx].mem_size();
         std::mem::take(&mut self.list[idx])
-            .into_values(dt, false)
+            .into_values(self.dt.clone(), false)
             .collect()
     }
 }
@@ -404,11 +398,23 @@ impl AccColumn for AccListColumn {
     }
 
     fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
-        AccCollectionColumn::spill(self, idx, w)
+        idx_for! {
+            (idx in idx) => {
+                self.save_raw(idx, w)?;
+            }
+        }
+        Ok(())
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        AccCollectionColumn::unspill(self, num_rows, r)
+        let mut idx = self.num_records();
+        self.resize(idx + num_rows);
+
+        while idx < self.num_records() {
+            self.load_raw(idx, r)?;
+            idx += 1;
+        }
+        Ok(())
     }
 }
 
@@ -621,4 +627,100 @@ fn acc_hash(value: impl AsRef<[u8]>) -> u64 {
     const HASHER: foldhash::fast::FixedState =
         foldhash::fast::FixedState::with_seed(ACC_HASH_SEED as u64);
     HASHER.hash_one(value.as_ref())
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::datatypes::DataType;
+    use datafusion::common::ScalarValue;
+
+    use super::*;
+    use crate::memmgr::spill::Spill;
+
+    #[test]
+    fn test_acc_set_append() {
+        let mut acc_set = AccSet::default();
+        let value1 = ScalarValue::Int32(Some(1));
+        let value2 = ScalarValue::Int32(Some(2));
+
+        acc_set.append(&value1, false);
+        acc_set.append(&value2, false);
+
+        assert_eq!(acc_set.list.raw.len(), 8); // 4 bytes for each int32
+        assert_eq!(acc_set.set.len(), 2);
+    }
+
+    #[test]
+    fn test_acc_set_merge() {
+        let mut acc_set1 = AccSet::default();
+        let mut acc_set2 = AccSet::default();
+        let value1 = ScalarValue::Int32(Some(1));
+        let value2 = ScalarValue::Int32(Some(2));
+        let value3 = ScalarValue::Int32(Some(3));
+
+        acc_set1.append(&value1, false);
+        acc_set1.append(&value2, false);
+        acc_set2.append(&value2, false);
+        acc_set2.append(&value3, false);
+
+        acc_set1.merge(&mut acc_set2);
+
+        assert_eq!(acc_set1.list.raw.len(), 12); // 4 bytes for each int32
+        assert_eq!(acc_set1.set.len(), 3);
+    }
+
+    #[test]
+    fn test_acc_set_into_values() {
+        let mut acc_set = AccSet::default();
+        let value1 = ScalarValue::Int32(Some(1));
+        let value2 = ScalarValue::Int32(Some(2));
+
+        acc_set.append(&value1, false);
+        acc_set.append(&value2, false);
+
+        let values: Vec<ScalarValue> = acc_set.into_values(DataType::Int32, false).collect();
+        assert_eq!(values, vec![value1, value2]);
+    }
+
+    #[test]
+    fn test_acc_set_duplicate_append() {
+        let mut acc_set = AccSet::default();
+        let value1 = ScalarValue::Int32(Some(1));
+
+        acc_set.append(&value1, false);
+        acc_set.append(&value1, false);
+
+        assert_eq!(acc_set.list.raw.len(), 4); // 4 bytes for one int32
+        assert_eq!(acc_set.set.len(), 1);
+    }
+
+    #[test]
+    fn test_acc_set_spill() {
+        let mut acc_col = AccSetColumn::empty(DataType::Int32);
+        acc_col.resize(3);
+        acc_col.append_item(1, &ScalarValue::Int32(Some(1)));
+        acc_col.append_item(1, &ScalarValue::Int32(Some(2)));
+        acc_col.append_item(2, &ScalarValue::Int32(Some(3)));
+        acc_col.append_item(2, &ScalarValue::Int32(Some(4)));
+        acc_col.append_item(2, &ScalarValue::Int32(Some(5)));
+        acc_col.append_item(2, &ScalarValue::Int32(Some(6)));
+        acc_col.append_item(2, &ScalarValue::Int32(Some(7)));
+
+        let mut spill: Box<dyn Spill> = Box::new(vec![]);
+        acc_col
+            .spill(
+                IdxSelection::Range(0, 3),
+                &mut spill.get_compressed_writer(),
+            )
+            .unwrap();
+
+        let mut acc_col_unspill = AccSetColumn::empty(DataType::Int32);
+        acc_col_unspill
+            .unspill(3, &mut spill.get_compressed_reader())
+            .unwrap();
+
+        assert_eq!(acc_col.take_values(0), acc_col_unspill.take_values(0));
+        assert_eq!(acc_col.take_values(1), acc_col_unspill.take_values(1));
+        assert_eq!(acc_col.take_values(2), acc_col_unspill.take_values(2));
+    }
 }

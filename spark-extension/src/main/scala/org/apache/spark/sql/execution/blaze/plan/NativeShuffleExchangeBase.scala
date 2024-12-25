@@ -17,9 +17,12 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
 import scala.collection.JavaConverters._
-import org.apache.spark.{OneToOneDependency, Partitioner, RangePartitioner, ShuffleDependency, SparkEnv, TaskContext}
-import org.blaze.protobuf.{IpcReaderExecNode, PhysicalExprNode, PhysicalHashRepartition, PhysicalPlanNode, PhysicalRangeRepartition, PhysicalRepartition, PhysicalRoundRobinRepartition, PhysicalSingleRepartition, PhysicalSortExprNode, Schema, SortExecNode}
-import org.apache.spark.rdd.{PartitionPruningRDD, RDD}
+import org.apache.spark.Partitioner
+import org.apache.spark.ShuffleDependency
+import org.apache.spark.SparkEnv
+import org.apache.spark.TaskContext
+import org.blaze.protobuf.{IpcReaderExecNode, PhysicalHashRepartition, PhysicalSingleRepartition, PhysicalRoundRobinRepartition, PhysicalRangeRepartition, PhysicalPlanNode, PhysicalRepartition, Schema}
+import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleWriteProcessor
 import org.apache.spark.sql.blaze.JniBridge
@@ -31,7 +34,10 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RangePartitioning, RoundRobinPartitioning, SinglePartition}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, BoundReference, NullsFirst, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
+import org.apache.spark.sql.catalyst.plans.physical.SinglePartition
+import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
 import org.apache.spark.sql.execution.{SQLExecution, SparkPlan, UnsafeRowSerializer}

@@ -3,6 +3,11 @@ name: TPC-DS
 on:
   workflow_dispatch:
   push:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
 
 jobs:
   test-spark-30:

@@ -65,13 +65,14 @@ jobs:
     name: Setup Spark
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/cache@v3
+      - uses: actions/cache/save@v4
+        id: cache-spark-bin-save
         with:
           path: spark-bin-${{ inputs.sparkver }}
           key: spark-bin-${{ inputs.sparkver }}
 
       - name: Setup ${{ inputs.sparkver }}
-        if: steps.cache-spark.outputs.cache-hit != 'true'
+        if: steps.cache-spark-bin-save.outputs.cache-hit != 'true'
         run: |
           wget -c ${{ inputs.sparkurl }}
           mkdir -p spark-bin-${{ inputs.sparkver }}
@@ -106,7 +107,7 @@ jobs:
         with:
           name: blaze-engine-${{ inputs.sparkver }}
 
-      - uses: actions/cache@v3
+      - uses: actions/cache/restore@v4
         with:
           path: spark-bin-${{ inputs.sparkver }}
           key: spark-bin-${{ inputs.sparkver }}

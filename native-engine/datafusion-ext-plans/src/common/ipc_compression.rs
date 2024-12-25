@@ -168,17 +168,17 @@ impl<R: Read> IpcCompressionReader<R> {
     }
 }
 
-enum IoCompressionWriter<W: Write> {
+pub enum IoCompressionWriter<W: Write> {
     LZ4(lz4_flex::frame::FrameEncoder<W>),
     ZSTD(zstd::Encoder<'static, W>),
 }
 
 impl<W: Write> IoCompressionWriter<W> {
-    fn new_with_configured_codec(inner: W) -> Self {
+    pub fn new_with_configured_codec(inner: W) -> Self {
         Self::try_new(io_compression_codec(), inner).expect("error creating compression encoder")
     }
 
-    fn try_new(codec: &str, inner: W) -> Result<Self> {
+    pub fn try_new(codec: &str, inner: W) -> Result<Self> {
         match codec {
             "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameEncoder::new(inner))),
             "zstd" => Ok(Self::ZSTD(zstd::Encoder::new(inner, ZSTD_LEVEL)?)),
@@ -186,7 +186,7 @@ impl<W: Write> IoCompressionWriter<W> {
         }
     }
 
-    fn finish(&mut self) -> Result<()> {
+    pub fn finish(&mut self) -> Result<()> {
         match self {
             IoCompressionWriter::LZ4(w) => {
                 w.try_finish()
@@ -216,13 +216,17 @@ impl<W: Write> Write for IoCompressionWriter<W> {
     }
 }
 
-enum IoCompressionReader<R: Read> {
+pub enum IoCompressionReader<R: Read> {
     LZ4(lz4_flex::frame::FrameDecoder<R>),
     ZSTD(zstd::Decoder<'static, BufReader<R>>),
 }
 
 impl<R: Read> IoCompressionReader<R> {
-    fn try_new(codec: &str, inner: R) -> Result<Self> {
+    pub fn new_with_configured_codec(inner: R) -> Self {
+        Self::try_new(io_compression_codec(), inner).expect("error creating compression encoder")
+    }
+
+    pub fn try_new(codec: &str, inner: R) -> Result<Self> {
         match codec {
             "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameDecoder::new(inner))),
             "zstd" => Ok(Self::ZSTD(zstd::Decoder::new(inner)?)),
@@ -230,7 +234,7 @@ impl<R: Read> IoCompressionReader<R> {
         }
     }
 
-    fn finish_into_inner(self) -> Result<R> {
+    pub fn finish_into_inner(self) -> Result<R> {
         match self {
             Self::LZ4(r) => Ok(r.into_inner()),
             Self::ZSTD(r) => Ok(r.finish().into_inner()),
