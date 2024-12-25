@@ -93,7 +93,7 @@ use crate::{
     from_proto_binary_op, proto_error, protobuf,
     protobuf::{
         physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType,
-        physical_repartition::RepartitionType, GenerateFunction,
+        physical_repartition::RepartitionType, GenerateFunction, PhysicalRepartition,
     },
     Schema,
 };
@@ -1121,7 +1121,7 @@ fn try_parse_physical_expr_box_required(
 
 pub fn parse_protobuf_partitioning(
     input: Arc<dyn ExecutionPlan>,
-    partitioning: Option<&protobuf::PhysicalRepartition>,
+    partitioning: Option<&Box<PhysicalRepartition>>,
 ) -> Result<Option<Partitioning>, PlanSerDeError> {
     partitioning.map_or(Ok(None), |p| {
         let plan = p.repartition_type.as_ref().ok_or_else(|| {
@@ -1153,6 +1153,9 @@ pub fn parse_protobuf_partitioning(
             RepartitionType::RoundRobinRepartition(round_robin_part) => Ok(Some(
                 Partitioning::RoundRobinBatch(round_robin_part.partition_count.try_into().unwrap()),
             )),
+            RepartitionType::RangeRepartition(range_part) => {
+
+            }
         }
     })
 }

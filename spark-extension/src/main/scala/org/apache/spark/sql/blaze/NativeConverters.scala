@@ -19,12 +19,10 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.math.max
 import scala.math.min
-
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
@@ -85,7 +83,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
-import org.blaze.protobuf.PhysicalExprNode
+import org.blaze.protobuf.{PhysicalExprNode, ScalarValue}
 
 object NativeConverters extends Logging {
   val udfJsonEnabled: Boolean =
@@ -244,6 +242,12 @@ object NativeConverters extends Logging {
         scalarValueBuilder.setListValue(values)
     }
     scalarValueBuilder.build()
+  }
+
+  def convertValueSeq(scalarValueSeq: Seq[ScalarValue]): pb.ValueSeq = {
+    val values = pb.ValueSeq.newBuilder()
+    scalarValueSeq.foreach(key => values.addKey(key))
+    values.build()
   }
 
   def convertField(sparkField: StructField): pb.Field = {
