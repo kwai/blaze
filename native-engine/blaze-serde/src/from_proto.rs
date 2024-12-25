@@ -1154,9 +1154,9 @@ pub fn parse_protobuf_partitioning(
             RepartitionType::RoundRobinRepartition(round_robin_part) => Ok(Some(
                 Partitioning::RoundRobinBatch(round_robin_part.partition_count.try_into().unwrap()),
             )),
-            RepartitionType::RangeRepartition(range_part) => {
-
-            }
+            RepartitionType::RangeRepartition(range_part) => Ok(Some(
+                Partitioning::RoundRobinBatch(range_part.partition_count.try_into().unwrap()),
+            )),
         }
     })
 }

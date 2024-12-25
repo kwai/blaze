@@ -82,16 +82,6 @@ impl BufferedData {
         )
     }
 
-<<<<<<< HEAD
-    pub fn add_batch(&mut self, batch: RecordBatch, partitioning: &Partitioning) -> Result<()> {
-        let current_num_rows = self.num_rows;
-        self.num_rows += batch.num_rows();
-        let (parts, sorted_batch) = self.sort_time.with_timer(|| {
-            sort_batch_by_partition_id(batch, partitioning, current_num_rows, self.partition_id)
-        })?;
-        self.mem_used +=
-            sorted_batch.get_array_mem_size() + parts.len() * size_of::<PartitionInBatch>();
-=======
     pub fn add_batch(&mut self, batch: RecordBatch) -> Result<()> {
         self.num_rows += batch.num_rows();
         self.staging_num_rows += batch.num_rows();
@@ -121,7 +111,6 @@ impl BufferedData {
         self.staging_mem_used = 0;
 
         self.sorted_mem_used += sorted_batch.get_array_mem_size() + offsets.len() * 4;
->>>>>>> master
         self.sorted_batches.push(sorted_batch);
         self.sorted_offsets.push(offsets);
         Ok(())
@@ -324,31 +313,11 @@ fn sort_batches_by_partition_id(
     partitioning: &Partitioning,
     current_num_rows: usize,
     partition_id: usize,
-<<<<<<< HEAD
-) -> Result<(Vec<PartitionInBatch>, RecordBatch)> {
-=======
 ) -> Result<(Vec<u32>, RecordBatch)> {
->>>>>>> master
     let num_partitions = partitioning.partition_count();
     let mut round_robin_start_rows =
         (partition_id * 1000193 + current_num_rows) % partitioning.partition_count();
 
-<<<<<<< HEAD
-    let part_ids: Vec<u32> = match partitioning {
-        Partitioning::Hash(..) => {
-            // compute partition indices
-            let hashes = evaluate_hashes(partitioning, &batch)
-                .expect(&format!("error evaluating hashes with {partitioning}"));
-            evaluate_partition_ids(hashes, partitioning.partition_count())
-        }
-        Partitioning::RoundRobinBatch(..) => {
-            let start_rows =
-                (partition_id * 1000193 + current_num_rows) % partitioning.partition_count();
-            evaluate_robin_partition_ids(partitioning, &batch, start_rows)
-        }
-        _ => unreachable!("unsupported partitioning: {:?}", partitioning),
-    };
-=======
     // compute partition indices
     let mut partition_indices = batches
         .iter()
@@ -385,7 +354,6 @@ fn sort_batches_by_partition_id(
         &mut part_counts,
         |&(part_id, ..)| part_id as usize,
     );
->>>>>>> master
 
     // compute partitions
     let mut partition_offsets = Vec::with_capacity(num_partitions + 1);
@@ -453,90 +421,6 @@ mod test {
         let round_robin_partitioning = Partitioning::RoundRobinBatch(4);
         let (_parts, sorted_batch) =
             sort_batches_by_partition_id(vec![record_batch], &round_robin_partitioning, 3, 0)?;
-
-        let expected = vec![
-            "+----+---+---+",
-            "| a  | b | c |",
-            "+----+---+---+",
-            "| 18 | 1 | 6 |",
-            "| 14 | 5 | 0 |",
-            "| 10 | 9 | 4 |",
-            "| 17 | 2 | 7 |",
-            "| 13 | 6 | 1 |",
-            "| 16 | 3 | 8 |",
-            "| 12 | 7 | 2 |",
-            "| 19 | 0 | 5 |",
-            "| 15 | 4 | 9 |",
-            "| 11 | 8 | 3 |",
-            "+----+---+---+",
-        ];
-        assert_batches_eq!(expected, &vec![sorted_batch]);
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use std::sync::Arc;
-
-    use arrow::{
-        array::Int32Array,
-        datatypes::{DataType, Field, Schema},
-        record_batch::RecordBatch,
-    };
-    use datafusion::{
-        assert_batches_eq,
-        common::Result,
-        physical_expr::{expressions::Column, Partitioning, PhysicalExpr},
-    };
-
-    use crate::shuffle::buffered_data::sort_batch_by_partition_id;
-
-    fn build_table_i32(
-        a: (&str, &Vec<i32>),
-        b: (&str, &Vec<i32>),
-        c: (&str, &Vec<i32>),
-    ) -> RecordBatch {
-        let schema = Schema::new(vec![
-            Field::new(a.0, DataType::Int32, false),
-            Field::new(b.0, DataType::Int32, false),
-            Field::new(c.0, DataType::Int32, false),
-        ]);
-
-        RecordBatch::try_new(
-            Arc::new(schema),
-            vec![
-                Arc::new(Int32Array::from(a.1.clone())),
-                Arc::new(Int32Array::from(b.1.clone())),
-                Arc::new(Int32Array::from(c.1.clone())),
-            ],
-        )
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn sort_partition_test() -> Result<()> {
-        let record_batch = build_table_i32(
-            ("a", &vec![19, 18, 17, 16, 15, 14, 13, 12, 11, 10]),
-            ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-            ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
-        );
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("a", DataType::Int32, false),
-            Field::new("b", DataType::Int32, false),
-            Field::new("c", DataType::Int32, false),
-        ]));
-
-        let partition_exprs_a: Vec<Arc<dyn PhysicalExpr>> = vec![
-            Arc::new(Column::new_with_schema("a", &schema).unwrap()), // Partition by column "a"
-        ];
-
-        let round_robin_partitioning = Partitioning::RoundRobinBatch(4);
-        let hash_partitioning_a = Partitioning::Hash(partition_exprs_a, 4);
-
-        let (parts, sorted_batch) =
-            sort_batch_by_partition_id(record_batch, &round_robin_partitioning, 3, 0)?;
 
         let expected = vec![
             "+----+---+---+",
