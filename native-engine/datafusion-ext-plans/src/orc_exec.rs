@@ -23,6 +23,7 @@ use bytes::Bytes;
 use datafusion::{
     datasource::{
         physical_plan::{FileMeta, FileOpenFuture, FileOpener, FileScanConfig, FileStream},
+        schema_adapter::SchemaMapper,
     },
     error::Result,
     execution::context::TaskContext,
@@ -33,14 +34,14 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion::datasource::schema_adapter::SchemaMapper;
 use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use orc_rust::{
-    arrow_reader::ArrowReaderBuilder, projection::ProjectionMask, reader::AsyncChunkReader,
-    reader::metadata::FileMetadata,
+    arrow_reader::ArrowReaderBuilder,
+    projection::ProjectionMask,
+    reader::{metadata::FileMetadata, AsyncChunkReader},
 };
 
 use crate::{
@@ -221,7 +222,8 @@ impl FileOpener for OrcOpener {
                 builder = builder.with_file_byte_range(range);
             }
 
-            let (schema_mapping, projection) = schema_adapter.map_schema(builder.file_metadata())?;
+            let (schema_mapping, projection) =
+                schema_adapter.map_schema(builder.file_metadata())?;
 
             let projection_mask =
                 ProjectionMask::roots(builder.file_metadata().root_data_type(), projection);
@@ -268,26 +270,34 @@ struct SchemaAdapter {
 
 impl SchemaAdapter {
     pub fn new(table_schema: SchemaRef, projection: Vec<usize>) -> Self {
-        Self { table_schema, projection }
+        Self {
+            table_schema,
+            projection,
+        }
     }
 
-    fn map_schema(&self, orc_file_meta: &FileMetadata) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
+    fn map_schema(
+        &self,
+        orc_file_meta: &FileMetadata,
+    ) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
         let projected_schema = SchemaRef::from(self.table_schema.project(&self.projection)?);
 
         let mut projection = Vec::with_capacity(projected_schema.fields().len());
         let mut field_mappings = vec![None; self.table_schema.fields().len()];
 
-        for nameColumn in orc_file_meta.root_data_type().children() {
+        for named_column in orc_file_meta.root_data_type().children() {
             if let Some((table_idx, _table_field)) =
-            projected_schema.fields().find(nameColumn.name()) {
+                projected_schema.fields().find(named_column.name())
+            {
                 field_mappings[table_idx] = Some(projection.len());
-                projection.push(nameColumn.data_type().column_index());
+                projection.push(named_column.data_type().column_index());
             }
         }
 
         Ok((
-            Arc::new(BlazeSchemaMapping::new(self.table_schema.clone(),
-                                             field_mappings,
+            Arc::new(BlazeSchemaMapping::new(
+                self.table_schema.clone(),
+                field_mappings,
             )),
             projection,
         ))

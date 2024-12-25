@@ -509,7 +509,7 @@ impl HashingData {
         // EOF
         write_len(NUM_SPILL_BUCKETS, &mut writer)?;
         write_len(0, &mut writer)?;
-        writer.flush()?;
+        writer.finish()?;
         Ok(())
     }
 }
@@ -617,7 +617,7 @@ impl MergingData {
         // EOF
         write_len(NUM_SPILL_BUCKETS, &mut writer)?;
         write_len(0, &mut writer)?;
-        writer.flush()?;
+        writer.finish()?;
         Ok(())
     }
 }

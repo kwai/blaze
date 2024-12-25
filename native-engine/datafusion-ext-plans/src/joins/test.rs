@@ -269,7 +269,7 @@ mod tests {
         SHJRightProbed,
     ];
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_inner_one() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -304,7 +304,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_inner_two() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -344,7 +344,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_inner_two_two() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -385,7 +385,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_inner_with_nulls() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table_i32_nullable(
@@ -425,7 +425,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_left_one() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -459,7 +459,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_right_one() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -493,7 +493,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_full_one() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -530,7 +530,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_anti() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -563,7 +563,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_semi() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -597,7 +597,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_with_duplicated_column_names() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -631,7 +631,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_date32() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_date_table(
@@ -667,7 +667,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_date64() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_date64_table(
@@ -704,7 +704,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_left_sort_order() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -742,7 +742,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_right_sort_order() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left = build_table(
@@ -776,7 +776,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_left_multiple_batches() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left_batch_1 = build_table_i32(
@@ -827,7 +827,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_right_multiple_batches() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let right_batch_1 = build_table_i32(
@@ -878,7 +878,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_full_multiple_batches() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left_batch_1 = build_table_i32(
@@ -931,7 +931,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn join_existence_multiple_batches() -> Result<()> {
         for test_type in ALL_TEST_TYPE {
             let left_batch_1 = build_table_i32(

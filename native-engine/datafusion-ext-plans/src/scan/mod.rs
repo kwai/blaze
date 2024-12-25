@@ -87,7 +87,10 @@ pub struct BlazeSchemaMapping {
 
 impl BlazeSchemaMapping {
     pub fn new(table_schema: SchemaRef, field_mappings: Vec<Option<usize>>) -> Self {
-        Self { table_schema, field_mappings }
+        Self {
+            table_schema,
+            field_mappings,
+        }
     }
 }
 

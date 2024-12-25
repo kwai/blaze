@@ -436,7 +436,7 @@ mod test {
         Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_agg() -> Result<()> {
         MemManager::init(10000);
 
@@ -647,7 +647,7 @@ mod fuzztest {
         memmgr::MemManager,
     };
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn fuzztest() -> Result<()> {
         MemManager::init(1000); // small memory config to trigger spill
         let session_ctx =
