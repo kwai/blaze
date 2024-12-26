@@ -17,6 +17,8 @@ package org.apache.spark.sql.blaze
 
 import org.apache.spark.sql.Row
 
+import scala.collection.mutable.ArrayBuffer
+
 class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSuite {
 
   test("test partition path has url encoded character") {
@@ -61,5 +63,26 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
         Seq(Row(2024, 12))
       )
     }
+  }
+
+  test("test parquet/orc format table with complex data type") {
+    def createTableStatement(format: String): String = {
+      s"""create table test_with_complex_type(
+         |id bigint comment 'pk',
+         |m map<string, string> comment 'test read map type',
+         |l array<string> comment 'test read list type',
+         |s string comment 'string type'
+         |) USING $format
+         |""".stripMargin
+    }
+    Seq("parquet", "orc").foreach(format =>
+      withTable("test_with_complex_type") {
+        sql(createTableStatement(format))
+        sql(
+          "insert into test_with_complex_type select 1 as id, map('zero', '0', 'one', '1') as m, array('test','blaze') as l, 'blaze' as s")
+        checkAnswer(
+          sql("select id,l,m from test_with_complex_type"),
+          Seq(Row(1, ArrayBuffer("test", "blaze"), Map("one" -> "1", "zero" -> "0"))))
+      })
   }
 }
