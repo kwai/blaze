@@ -18,19 +18,16 @@ use std::{
     convert::{TryFrom, TryInto},
     sync::Arc,
 };
-use parking_lot::Mutex as SyncMutex;
 
 use arrow::{
-    array::RecordBatch,
+    array::{ArrayRef, RecordBatch},
     compute::SortOptions,
     datatypes::{Field, FieldRef, SchemaRef},
+    row::{RowConverter, SortField},
 };
-use arrow::array::ArrayRef;
-use arrow::row::{RowConverter, SortField};
-
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use datafusion::{
-    common::stats::Precision,
+    common::{stats::Precision, Result, ScalarValue},
     datasource::{
         listing::{FileRange, PartitionedFile},
         object_store::ObjectStoreUrl,
@@ -53,7 +50,6 @@ use datafusion::{
     },
     prelude::create_udf,
 };
-use datafusion::common::{ScalarValue, Result};
 use datafusion_ext_commons::downcast_any;
 use datafusion_ext_exprs::{
     bloom_filter_might_contain::BloomFilterMightContainExpr, cast::TryCastExpr,
@@ -84,14 +80,15 @@ use datafusion_ext_plans::{
     project_exec::ProjectExec,
     rename_columns_exec::RenameColumnsExec,
     rss_shuffle_writer_exec::RssShuffleWriterExec,
+    shuffle::RePartitioning,
     shuffle_writer_exec::ShuffleWriterExec,
     sort_exec::SortExec,
     sort_merge_join_exec::SortMergeJoinExec,
     window::{WindowExpr, WindowFunction, WindowRankType},
     window_exec::WindowExec,
-    shuffle::RePartitioning
 };
 use object_store::{path::Path, ObjectMeta};
+use parking_lot::Mutex as SyncMutex;
 
 use crate::{
     convert_box_required, convert_required,
@@ -99,11 +96,10 @@ use crate::{
     from_proto_binary_op, proto_error, protobuf,
     protobuf::{
         physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType,
-        physical_repartition::RepartitionType, GenerateFunction, PhysicalRepartition,
+        physical_repartition::RepartitionType, GenerateFunction, PhysicalRepartition, SortExecNode,
     },
     Schema,
 };
-use crate::protobuf::{PhysicalExprNode, SortExecNode};
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -1131,7 +1127,8 @@ fn try_parse_physical_sort_expr(
                 )))
             }
         })
-        .collect::<Result<Vec<_>, _>>().ok()?;
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
     Some(pyhsical_sort_expr)
 }
 
@@ -1166,9 +1163,11 @@ pub fn parse_protobuf_partitioning(
                 )))
             }
 
-            RepartitionType::RoundRobinRepartition(round_robin_part) => Ok(Some(
-                RePartitioning::RoundRobinPartitioning(round_robin_part.partition_count.try_into().unwrap())
-            )),
+            RepartitionType::RoundRobinRepartition(round_robin_part) => {
+                Ok(Some(RePartitioning::RoundRobinPartitioning(
+                    round_robin_part.partition_count.try_into().unwrap(),
+                )))
+            }
 
             RepartitionType::RangeRepartition(range_part) => {
                 let sort = range_part.sort_expr.clone().unwrap();
@@ -1188,35 +1187,21 @@ pub fn parse_protobuf_partitioning(
                         .collect::<Result<Vec<SortField>>>()?,
                 )?));
 
-                // let bound_cols:Vec<ArrayRef>= value_seq
-                //     .iter()
-                //     .map(|x| {
-                //         let key_values= x.key.iter().map(|xx| {
-                //             let value = convert_required!(xx.value)?;
-                //             Ok(Arc::new(Literal::new(value)).value())
-                //             // Arc::new(Literal::new(convert_required!(xx.value)?)).value()
-                //             // Arc::new(Literal::new(convert_required!(xx.value)?)).value()
-                //             // ScalarValue::from(value)
-                //         }).collect::<Result<Vec<ScalarValue>, PlanSerDeError>>();
-                //         ScalarValue::iter_to_array(key_values.unwrap().into_iter())
-                //         // key_values.and_then(|key_values| {
-                //         //     ScalarValue::iter_to_array(key_values.into_iter())
-                //         //         .map_err(|e| PlanSerDeError::from(e))
-                //         // })
-                //     })
-                //     .collect();
-
-                let bound_cols : Vec<ArrayRef>= value_seq
+                let bound_cols: Vec<ArrayRef> = value_seq
                     .iter()
                     .map(|x| {
-                        let key_values= x.key.iter().map(|xx| {
-                            let value = convert_required!(xx.value)?;
-                            Ok(Arc::new(Literal::new(value)).value().clone())
-                        }).collect::<Result<Vec<ScalarValue>, PlanSerDeError>>();
+                        let key_values = x
+                            .key
+                            .iter()
+                            .map(|xx| {
+                                let value = convert_required!(xx.value)?;
+                                Ok(Arc::new(Literal::new(value)).value().clone())
+                            })
+                            .collect::<Result<Vec<ScalarValue>, PlanSerDeError>>();
                         key_values.and_then(|key_values| {
-                                    ScalarValue::iter_to_array(key_values.into_iter())
-                                        .map_err(|e| PlanSerDeError::from(e))
-                                })
+                            ScalarValue::iter_to_array(key_values.into_iter())
+                                .map_err(|e| PlanSerDeError::from(e))
+                        })
                     })
                     .collect::<Result<_, PlanSerDeError>>()?;
 

@@ -36,11 +36,10 @@ use crate::{
     memmgr::MemManager,
     shuffle::{
         single_repartitioner::SingleShuffleRepartitioner,
-        sort_repartitioner::SortShuffleRepartitioner, ShuffleRepartitioner,
+        sort_repartitioner::SortShuffleRepartitioner, RePartitioning, ShuffleRepartitioner,
     },
     sort_exec::SortExec,
 };
-use crate::shuffle::RePartitioning;
 
 /// The shuffle writer operator maps each input partition to M output partitions
 /// based on a partitioning scheme. No guarantees are made about the order of

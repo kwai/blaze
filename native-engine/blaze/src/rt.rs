@@ -47,7 +47,6 @@ use datafusion_ext_plans::{
 use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use prost::Message;
-use raw_cpuid::CpuId;
 use tokio::{runtime::Runtime, task::JoinHandle};
 
 use crate::{

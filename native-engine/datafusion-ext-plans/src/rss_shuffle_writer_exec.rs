@@ -36,10 +36,9 @@ use crate::{
     memmgr::MemManager,
     shuffle::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
-        rss_sort_repartitioner::RssSortShuffleRepartitioner, ShuffleRepartitioner,
+        rss_sort_repartitioner::RssSortShuffleRepartitioner, RePartitioning, ShuffleRepartitioner,
     },
 };
-use crate::shuffle::RePartitioning;
 
 /// The rss shuffle writer operator maps each input partition to M output
 /// partitions based on a partitioning scheme. No guarantees are made about the

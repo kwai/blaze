@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering::SeqCst},
-    Arc,
+use std::{
+    fmt,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
-use arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
-use arrow::row::Rows;
+use arrow::{error::Result as ArrowResult, record_batch::RecordBatch, row::Rows};
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
     common::Result,
     error::DataFusionError,
-    physical_plan::{Partitioning, SendableRecordBatchStream},
+    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+    physical_plan::SendableRecordBatchStream,
 };
-use datafusion::logical_expr::SortExpr;
-use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
 use datafusion_ext_commons::{arrow::array_size::ArraySize, spark_hash::create_murmur3_hashes};
 use futures::StreamExt;
 
@@ -105,10 +105,11 @@ struct ShuffleSpill {
 
 #[derive(Debug, Clone)]
 pub enum RePartitioning {
-    /// Allocate batches using a round-robin algorithm and the specified number of partitions
+    /// Allocate batches using a round-robin algorithm and the specified number
+    /// of partitions
     RoundRobinPartitioning(usize),
-    /// Allocate rows based on a hash of one of more expressions and the specified number of
-    /// partitions
+    /// Allocate rows based on a hash of one of more expressions and the
+    /// specified number of partitions
     HashPartitioning(Vec<Arc<dyn PhysicalExpr>>, usize),
     /// Unknown partitioning scheme with a known number of partitions
     UnknownPartitioning(usize),
@@ -121,8 +122,10 @@ impl RePartitioning {
     pub fn partition_count(&self) -> usize {
         use RePartitioning::*;
         match self {
-            RoundRobinPartitioning(n) | HashPartitioning(_, n) | UnknownPartitioning(n)
-            |RangePartitioning(_, n, _)=> *n,
+            RoundRobinPartitioning(n)
+            | HashPartitioning(_, n)
+            | UnknownPartitioning(n)
+            | RangePartitioning(_, n, _) => *n,
         }
     }
 }

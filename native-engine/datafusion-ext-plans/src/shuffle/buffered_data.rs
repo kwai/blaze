@@ -18,10 +18,7 @@ use arrow::record_batch::RecordBatch;
 use blaze_jni_bridge::{is_task_running, jni_call};
 use bytesize::ByteSize;
 use count_write::CountWrite;
-use datafusion::{
-    common::Result,
-    physical_plan::{metrics::Time, Partitioning},
-};
+use datafusion::{common::Result, physical_plan::metrics::Time};
 use datafusion_ext_commons::{
     algorithm::{
         rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
@@ -39,9 +36,9 @@ use crate::{
     common::{ipc_compression::IpcCompressionWriter, timer_helper::TimerHelper},
     shuffle::{
         evaluate_hashes, evaluate_partition_ids, evaluate_robin_partition_ids, rss::RssWriter,
+        RePartitioning,
     },
 };
-use crate::shuffle::RePartitioning;
 
 pub struct BufferedData {
     partition_id: usize,
@@ -385,7 +382,7 @@ mod test {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
-    use datafusion::{assert_batches_eq, common::Result, physical_expr::Partitioning};
+    use datafusion::{assert_batches_eq, common::Result};
 
     use super::*;
 
