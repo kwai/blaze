@@ -299,3 +299,30 @@ impl<W: Write> Write for IoTimeWriteWrapper<W> {
         self.0.flush()
     }
 }
+
+pub struct OwnedSpillBufReader<'a> {
+    spill: Box<dyn Spill>,
+    buf_reader: BufReader<Box<dyn Read + Send + 'a>>,
+}
+
+impl<'a> OwnedSpillBufReader<'a> {
+    pub fn from(spill: Box<dyn Spill>) -> Self {
+        let buf_reader = unsafe {
+            // safety: bypass ownership and lifetime checker
+            std::mem::transmute(spill.get_buf_reader())
+        };
+        Self { spill, buf_reader }
+    }
+
+    pub fn spill(&self) -> &Box<dyn Spill> {
+        &self.spill
+    }
+
+    pub fn spill_mut(&mut self) -> &mut Box<dyn Spill> {
+        &mut self.spill
+    }
+
+    pub fn buf_reader(&mut self) -> &mut BufReader<Box<dyn Read + Send + 'a>> {
+        &mut self.buf_reader
+    }
+}

@@ -18,10 +18,7 @@
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
 
-use blaze_jni_bridge::{
-    conf::{IntConf, BATCH_SIZE},
-    is_jni_bridge_inited,
-};
+use blaze_jni_bridge::conf::{IntConf, BATCH_SIZE};
 use once_cell::sync::OnceCell;
 use unchecked_index::UncheckedIndex;
 
@@ -71,17 +68,8 @@ macro_rules! downcast_any {
 }
 
 pub fn batch_size() -> usize {
-    const CACHED_BATCH_SIZE: OnceCell<i32> = OnceCell::new();
-    let batch_size = *CACHED_BATCH_SIZE
-        .get_or_try_init(|| {
-            if is_jni_bridge_inited() {
-                BATCH_SIZE.value()
-            } else {
-                Ok(10000) // for testing
-            }
-        })
-        .expect("error getting configured batch size") as usize;
-    batch_size
+    const CACHED_BATCH_SIZE: OnceCell<usize> = OnceCell::new();
+    *CACHED_BATCH_SIZE.get_or_init(|| BATCH_SIZE.value().unwrap_or(10000) as usize)
 }
 
 // bigger for better radix sort performance

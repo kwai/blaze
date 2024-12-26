@@ -62,7 +62,16 @@ public enum BlazeConf {
     FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false),
 
     // spark spill compression codec
-    SPILL_COMPRESSION_CODEC("spark.blaze.spill.compression.codec", "lz4");
+    SPILL_COMPRESSION_CODEC("spark.blaze.spill.compression.codec", "lz4"),
+
+    // enable hash join falling back to sort merge join when hash table is too big
+    SMJ_FALLBACK_ENABLE("spark.blaze.smjfallback.enable", false),
+
+    // smj fallback threshold
+    SMJ_FALLBACK_ROWS_THRESHOLD("spark.blaze.smjfallback.rows.threshold", 10000000),
+
+    // smj fallback threshold
+    SMJ_FALLBACK_MEM_SIZE_THRESHOLD("spark.blaze.smjfallback.mem.threshold", 134217728);
 
     public final String key;
     private final Object defaultValue;

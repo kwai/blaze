@@ -16,13 +16,13 @@ use std::ops::{Deref, DerefMut};
 
 use unchecked_index::UncheckedIndex;
 
-pub trait KeyForRadixTournamentTree {
+pub trait KeyForRadixQueue {
     fn rdx(&self) -> usize;
 }
 
 /// An implementation of the radix tournament tree
 /// with time complexity of sorting all values: O(n + K)
-pub struct RadixTournamentTree<T> {
+pub struct RadixQueue<T> {
     num_keys: usize,
     cur_rdx: usize,
     values: UncheckedIndex<Vec<T>>,
@@ -31,7 +31,7 @@ pub struct RadixTournamentTree<T> {
 }
 
 #[allow(clippy::len_without_is_empty)]
-impl<T: KeyForRadixTournamentTree> RadixTournamentTree<T> {
+impl<T: KeyForRadixQueue> RadixQueue<T> {
     pub fn new(values: Vec<T>, num_keys: usize) -> Self {
         let num_keys = num_keys + 1; // avoid overflow
         let num_values = values.len();
@@ -117,12 +117,12 @@ impl<T: KeyForRadixTournamentTree> RadixTournamentTree<T> {
 
 /// A PeekMut structure to the loser tree, used to get smallest value and auto
 /// adjusting after dropped.
-pub struct RadixTournamentTreePeekMut<'a, T: KeyForRadixTournamentTree> {
-    tree: &'a mut RadixTournamentTree<T>,
+pub struct RadixTournamentTreePeekMut<'a, T: KeyForRadixQueue> {
+    tree: &'a mut RadixQueue<T>,
     dirty: bool,
 }
 
-impl<T: KeyForRadixTournamentTree> Deref for RadixTournamentTreePeekMut<'_, T> {
+impl<T: KeyForRadixQueue> Deref for RadixTournamentTreePeekMut<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -130,7 +130,7 @@ impl<T: KeyForRadixTournamentTree> Deref for RadixTournamentTreePeekMut<'_, T> {
     }
 }
 
-impl<T: KeyForRadixTournamentTree> DerefMut for RadixTournamentTreePeekMut<'_, T> {
+impl<T: KeyForRadixQueue> DerefMut for RadixTournamentTreePeekMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
         &mut self.tree.values[self
@@ -142,7 +142,7 @@ impl<T: KeyForRadixTournamentTree> DerefMut for RadixTournamentTreePeekMut<'_, T
     }
 }
 
-impl<T: KeyForRadixTournamentTree> Drop for RadixTournamentTreePeekMut<'_, T> {
+impl<T: KeyForRadixQueue> Drop for RadixTournamentTreePeekMut<'_, T> {
     fn drop(&mut self) {
         if self.dirty {
             self.tree.adjust_tree();
@@ -155,7 +155,7 @@ mod test {
     use itertools::Itertools;
     use rand::Rng;
 
-    use crate::algorithm::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree};
+    use crate::algorithm::rdx_queue::{KeyForRadixQueue, RadixQueue};
 
     #[test]
     fn fuzztest() {
@@ -184,12 +184,12 @@ mod test {
                 row_idx: usize,
                 values: Vec<u64>,
             }
-            impl KeyForRadixTournamentTree for Cursor {
+            impl KeyForRadixQueue for Cursor {
                 fn rdx(&self) -> usize {
                     self.values.get(self.row_idx).cloned().unwrap_or(u64::MAX) as usize
                 }
             }
-            let mut loser_tree = RadixTournamentTree::new(
+            let mut loser_tree = RadixQueue::new(
                 nodes
                     .into_iter()
                     .map(|node| Cursor {

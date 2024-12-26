@@ -61,6 +61,7 @@ abstract class NativeBroadcastJoinBase(
         "probed_side_search_time",
         "probed_side_compare_time",
         "build_output_time",
+        "fallback_sort_merge_join_time",
         "input_batch_count",
         "input_batch_mem_size",
         "input_row_count"))

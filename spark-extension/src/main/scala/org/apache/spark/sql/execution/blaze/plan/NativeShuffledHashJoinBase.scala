@@ -27,9 +27,7 @@ import org.apache.spark.sql.blaze.NativeConverters
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
-import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.BinaryExecNode
 import org.blaze.{protobuf => pb}
@@ -56,18 +54,11 @@ abstract class NativeShuffledHashJoinBase(
         "probed_side_search_time",
         "probed_side_compare_time",
         "build_output_time",
+        "fallback_sort_merge_join_time",
         "input_batch_count",
         "input_batch_mem_size",
         "input_row_count"))
       .toSeq: _*)
-
-  override def requiredChildOrdering: Seq[Seq[SortOrder]] =
-    requiredOrders(leftKeys) :: requiredOrders(rightKeys) :: Nil
-
-  private def requiredOrders(keys: Seq[Expression]): Seq[SortOrder] = {
-    // This must be ascending in order to agree with the `keyOrdering` defined in `doExecute()`.
-    keys.map(SortOrder(_, Ascending))
-  }
 
   private def nativeSchema = Util.getNativeSchema(output)
 
