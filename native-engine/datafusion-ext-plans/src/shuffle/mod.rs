@@ -25,6 +25,8 @@ use datafusion::{
     error::DataFusionError,
     physical_plan::{Partitioning, SendableRecordBatchStream},
 };
+use datafusion::logical_expr::SortExpr;
+use datafusion::physical_expr::{PhysicalExpr, PhysicalSortExpr};
 use datafusion_ext_commons::{arrow::array_size::ArraySize, spark_hash::create_murmur3_hashes};
 use futures::StreamExt;
 
@@ -98,6 +100,19 @@ struct ShuffleSpill {
     spill: Box<dyn Spill>,
     offsets: Vec<u64>,
 }
+
+pub enum RePartitioning {
+    /// Allocate batches using a round-robin algorithm and the specified number of partitions
+    RoundRobinBatch(usize),
+    /// Allocate rows based on a hash of one of more expressions and the specified number of
+    /// partitions
+    Hash(Vec<Arc<dyn PhysicalExpr>>, usize),
+    /// Unknown partitioning scheme with a known number of partitions
+    UnknownPartitioning(usize),
+    /// Range partitioning
+    RangePartitioning(Vec<PhysicalSortExpr, usize, )
+}
+
 
 fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
     match partitioning {

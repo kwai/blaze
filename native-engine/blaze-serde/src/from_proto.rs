@@ -97,6 +97,7 @@ use crate::{
     },
     Schema,
 };
+use crate::protobuf::SortExecNode;
 
 fn bind(
     expr_in: Arc<dyn PhysicalExpr>,
@@ -1154,8 +1155,61 @@ pub fn parse_protobuf_partitioning(
             RepartitionType::RoundRobinRepartition(round_robin_part) => Ok(Some(
                 Partitioning::RoundRobinBatch(round_robin_part.partition_count.try_into().unwrap()),
             )),
-            RepartitionType::RangeRepartition(range_part) => Ok(Some(
-                Partitioning::RoundRobinBatch(range_part.partition_count.try_into().unwrap()),
+
+            RepartitionType::RangeRepartition(range_part) => {
+                let sort = range_part.sort_expr.unwrap();
+                let exprs = sort
+                    .expr
+                    .iter()
+                    .map(|expr| {
+                        let expr = expr.expr_type.as_ref().ok_or_else(|| {
+                            proto_error(format!(
+                                "physical_plan::from_proto() Unexpected expr {:?}",
+                                self
+                            ))
+                        })?;
+                        if let ExprType::Sort(sort_expr) = expr {
+                            let expr = sort_expr
+                                .expr
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    proto_error(format!(
+                                        "physical_plan::from_proto() Unexpected sort expr {:?}",
+                                        self
+                                    ))
+                                })?
+                                .as_ref();
+                            Ok(PhysicalSortExpr {
+                                expr: bind(
+                                    try_parse_physical_expr(expr, &input.schema())?,
+                                    &input.schema(),
+                                )?,
+                                options: SortOptions {
+                                    descending: !sort_expr.asc,
+                                    nulls_first: sort_expr.nulls_first,
+                                },
+                            })
+                        } else {
+                            Err(PlanSerDeError::General(format!(
+                                "physical_plan::from_proto() {:?}",
+                                self
+                            )))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let value_seq = range_part.value_seq;
+                let bounds = value_seq
+                    .iter()
+                    .map(|x| {
+                        x.key.iter().map(|xx| {
+                            let a = Arc::new(Literal::new(convert_required!(xx.value)?)).value();
+                        })
+
+                    })
+
+            }
+
             )),
         }
     })
