@@ -27,8 +27,8 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     algorithm::{
-        rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-        rdxsort::radix_sort_by_key,
+        rdx_queue::{KeyForRadixQueue, RadixQueue},
+        rdx_sort::radix_sort_by_key,
     },
     batch_size, df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, write_len},
@@ -215,8 +215,8 @@ impl AggTable {
 
         // create a radix tournament tree to do the merging
         // the mem-table and at least one spill should be in the tree
-        let mut cursors: RadixTournamentTree<RecordsSpillCursor> =
-            RadixTournamentTree::new(cursors, NUM_SPILL_BUCKETS);
+        let mut cursors: RadixQueue<RecordsSpillCursor> =
+            RadixQueue::new(cursors, NUM_SPILL_BUCKETS);
         assert!(cursors.len() > 0);
 
         let mut map = AggHashMap::default();
@@ -698,7 +698,7 @@ impl<'a> RecordsSpillCursor<'a> {
     }
 }
 
-impl<'a> KeyForRadixTournamentTree for RecordsSpillCursor<'a> {
+impl<'a> KeyForRadixQueue for RecordsSpillCursor<'a> {
     fn rdx(&self) -> usize {
         self.cur_bucket_idx
     }

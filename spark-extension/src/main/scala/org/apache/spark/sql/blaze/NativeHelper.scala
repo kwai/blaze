@@ -104,6 +104,7 @@ object NativeHelper extends Logging {
       "probed_side_search_time" -> nanoTimingMetric("Native.probed_side_search_time"),
       "probed_side_compare_time" -> nanoTimingMetric("Native.probed_side_compare_time"),
       "build_output_time" -> nanoTimingMetric("Native.build_output_time"),
+      "fallback_sort_merge_join_time" -> nanoTimingMetric("Native.fallback_sort_merge_join_time"),
       "mem_spill_count" -> metric("Native.mem_spill_count"),
       "mem_spill_size" -> sizeMetric("Native.mem_spill_size"),
       "mem_spill_iotime" -> nanoTimingMetric("Native.mem_spill_iotime"),

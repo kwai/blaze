@@ -13,5 +13,5 @@
 // limitations under the License.
 
 pub mod loser_tree;
-pub mod rdx_tournament_tree;
-pub mod rdxsort;
+pub mod rdx_queue;
+pub mod rdx_sort;

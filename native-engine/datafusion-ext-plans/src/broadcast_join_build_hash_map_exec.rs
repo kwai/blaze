@@ -18,13 +18,22 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{array::RecordBatch, datatypes::SchemaRef};
+use arrow::{
+    array::{new_null_array, RecordBatch},
+    datatypes::SchemaRef,
+};
+use arrow_schema::DataType;
+use blaze_jni_bridge::{
+    conf,
+    conf::{BooleanConf, IntConf},
+};
 use datafusion::{
     common::Result,
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::{EquivalenceProperties, Partitioning, PhysicalExpr},
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
+        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties,
     },
@@ -34,8 +43,12 @@ use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
 use crate::{
-    common::{execution_context::ExecutionContext, timer_helper::TimerHelper},
+    common::{
+        execution_context::ExecutionContext, stream_exec::create_record_batch_stream_exec,
+        timer_helper::TimerHelper,
+    },
     joins::join_hash_map::{join_hash_map_schema, JoinHashMap},
+    sort_exec::create_default_ascending_sort_exec,
 };
 
 pub struct BroadcastJoinBuildHashMapExec {
@@ -111,7 +124,8 @@ impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let input = exec_ctx.execute(&self.input)?;
-        execute_build_hash_map(input, self.keys.clone(), exec_ctx)
+        let build_time = exec_ctx.register_timer_metric("build_time");
+        execute_build_hash_map(input, self.keys.clone(), exec_ctx, build_time)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -119,42 +133,97 @@ impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
     }
 }
 
-pub fn collect_hash_map(
-    data_schema: SchemaRef,
-    data_batches: Vec<RecordBatch>,
-    keys: Vec<Arc<dyn PhysicalExpr>>,
-) -> Result<JoinHashMap> {
-    let data_batch = coalesce_batches_unchecked(data_schema, &data_batches);
-    let hash_map = JoinHashMap::create_from_data_batch(data_batch, &keys)?;
-    Ok(hash_map)
-}
-
-fn execute_build_hash_map(
+pub fn execute_build_hash_map(
     mut input: SendableRecordBatchStream,
     keys: Vec<Arc<dyn PhysicalExpr>>,
     exec_ctx: Arc<ExecutionContext>,
+    build_time: Time,
 ) -> Result<SendableRecordBatchStream> {
     // output hash map batches as stream
     Ok(exec_ctx
         .clone()
         .output_with_sender("BuildHashMap", move |sender| async move {
-            let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
-            let _timer = elapsed_compute.timer();
+            sender.exclude_time(&build_time);
+            let _timer = build_time.timer();
 
-            // collect all input batches
-            let mut data_batches = vec![];
-            while let Some(batch) = elapsed_compute
+            let smj_fallback_enabled = conf::SMJ_FALLBACK_ENABLE.value().unwrap_or(false);
+            let smj_fallback_rows_threshold = conf::SMJ_FALLBACK_ROWS_THRESHOLD
+                .value()
+                .unwrap_or(i32::MAX) as usize;
+            let smj_fallback_mem_threshold = conf::SMJ_FALLBACK_MEM_SIZE_THRESHOLD
+                .value()
+                .unwrap_or(i32::MAX) as usize;
+
+            let data_schema = input.schema();
+            let mut staging_batches: Vec<RecordBatch> = vec![];
+            let mut staging_num_rows = 0;
+            let mut stating_mem_size = 0;
+            let mut fallback_to_sorted = false;
+
+            while let Some(batch) = build_time
                 .exclude_timer_async(input.next())
                 .await
                 .transpose()?
             {
-                data_batches.push(batch);
+                staging_batches.push(batch.clone());
+                if smj_fallback_enabled {
+                    staging_num_rows += batch.num_rows();
+                    stating_mem_size += batch.get_array_memory_size();
+
+                    // fallback if staging data is too large
+                    if staging_num_rows > smj_fallback_rows_threshold
+                        || stating_mem_size > smj_fallback_mem_threshold
+                    {
+                        fallback_to_sorted = true;
+                        break;
+                    }
+                }
             }
 
-            // build hash map
-            let data_schema = input.schema();
-            let hash_map = collect_hash_map(data_schema, data_batches, keys)?;
-            sender.send(hash_map.into_hash_map_batch()?).await;
+            // no fallbacks - generate one hashmap batch
+            if !fallback_to_sorted {
+                let data_batch =
+                    coalesce_batches_unchecked(data_schema, &std::mem::take(&mut staging_batches));
+                let hash_map = JoinHashMap::create_from_data_batch(data_batch, &keys)?;
+                sender.send(hash_map.into_hash_map_batch()?).await;
+                exec_ctx
+                    .baseline_metrics()
+                    .elapsed_compute()
+                    .add_duration(build_time.duration());
+                return Ok(());
+            }
+
+            // fallback to sort-merge join
+            // sort all input data
+            let input: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+                data_schema,
+                futures::stream::iter(staging_batches.into_iter().map(|batch| Ok(batch)))
+                    .chain(input),
+            ));
+            let input_exec = create_record_batch_stream_exec(input, exec_ctx.partition_id())?;
+            let sort_exec = create_default_ascending_sort_exec(input_exec, &keys);
+            let mut sorted_stream =
+                sort_exec.execute(exec_ctx.partition_id(), exec_ctx.task_ctx())?;
+
+            // append a null table data column
+            let hash_map_batch_schema = join_hash_map_schema(&sorted_stream.schema());
+            while let Some(batch) = sorted_stream.next().await.transpose()? {
+                let null_table_data_column = new_null_array(&DataType::Binary, batch.num_rows());
+                let sorted_hash_map_batch = RecordBatch::try_new(
+                    hash_map_batch_schema.clone(),
+                    batch
+                        .columns()
+                        .iter()
+                        .cloned()
+                        .chain(Some(null_table_data_column))
+                        .collect(),
+                )?;
+                sender.send(sorted_hash_map_batch).await;
+            }
+            exec_ctx
+                .baseline_metrics()
+                .elapsed_compute()
+                .add_duration(build_time.duration());
             Ok(())
         }))
 }

@@ -37,6 +37,7 @@ mod tests {
         broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
         broadcast_join_exec::BroadcastJoinExec,
         joins::join_utils::{JoinType, JoinType::*},
+        memmgr::MemManager,
         sort_merge_join_exec::SortMergeJoinExec,
     };
 
@@ -186,6 +187,7 @@ mod tests {
         on: JoinOn,
         join_type: JoinType,
     ) -> Result<(Vec<String>, Vec<RecordBatch>)> {
+        MemManager::init(1000000);
         let session_ctx = SessionContext::new();
         let task_ctx = session_ctx.task_ctx();
         let schema = build_join_schema_for_test(&left.schema(), &right.schema(), join_type)?;

@@ -22,7 +22,7 @@ use std::{
 };
 
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
-use blaze_jni_bridge::{conf, conf::BooleanConf, is_jni_bridge_inited, is_task_running};
+use blaze_jni_bridge::{conf, conf::BooleanConf, is_task_running};
 use datafusion::{
     common::Result,
     execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext},
@@ -53,8 +53,8 @@ pub struct ExecutionContext {
     output_schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
     baseline_metrics: BaselineMetrics,
-    spill_metrics: OnceCell<SpillMetrics>,
-    input_stat_metrics: OnceCell<Option<InputBatchStatistics>>,
+    spill_metrics: Arc<OnceCell<SpillMetrics>>,
+    input_stat_metrics: Arc<OnceCell<Option<InputBatchStatistics>>>,
 }
 
 impl ExecutionContext {
@@ -70,8 +70,20 @@ impl ExecutionContext {
             output_schema,
             baseline_metrics: BaselineMetrics::new(&metrics, partition_id),
             metrics: metrics.clone(),
-            spill_metrics: OnceCell::new(),
-            input_stat_metrics: OnceCell::new(),
+            spill_metrics: Arc::default(),
+            input_stat_metrics: Arc::default(),
+        })
+    }
+
+    pub fn with_new_output_schema(&self, output_schema: SchemaRef) -> Arc<Self> {
+        Arc::new(Self {
+            task_ctx: self.task_ctx.clone(),
+            partition_id: self.partition_id,
+            output_schema,
+            metrics: self.metrics.clone(),
+            baseline_metrics: self.baseline_metrics.clone(),
+            spill_metrics: self.spill_metrics.clone(),
+            input_stat_metrics: self.input_stat_metrics.clone(),
         })
     }
 
@@ -326,7 +338,7 @@ impl InputBatchStatistics {
         metrics_set: &ExecutionPlanMetricsSet,
         partition: usize,
     ) -> Result<Option<Self>> {
-        let enabled = is_jni_bridge_inited() && conf::INPUT_BATCH_STATISTICS_ENABLE.value()?;
+        let enabled = conf::INPUT_BATCH_STATISTICS_ENABLE.value().unwrap_or(false);
         Ok(enabled.then_some(Self::from_metrics_set(metrics_set, partition)))
     }
 
