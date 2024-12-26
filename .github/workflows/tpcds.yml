@@ -47,4 +47,4 @@ jobs:
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.3/spark-3.5.3-bin-hadoop3.tgz
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.4/spark-3.5.4-bin-hadoop3.tgz
