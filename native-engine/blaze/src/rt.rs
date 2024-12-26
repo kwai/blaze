@@ -99,11 +99,23 @@ impl NativeExecutionRuntime {
         let default_parallelism = std::thread::available_parallelism()
             .map(|v| v.get())
             .unwrap_or(1);
-        let has_htt = CpuId::new()
-            .get_feature_info()
-            .map(|info| info.has_htt())
-            .unwrap_or(false);
-        let mut num_worker_threads = if has_htt {
+
+        fn cpu_has_htt() -> bool {
+            #[cfg(any(
+                all(target_arch = "x86", not(target_env = "sgx"), target_feature = "sse"),
+                all(target_arch = "x86_64", not(target_env = "sgx"))
+            ))]
+            {
+                let has_htt = CpuId::new()
+                    .get_feature_info()
+                    .map(|info| info.has_htt())
+                    .unwrap_or(false);
+                return has_htt;
+            }
+            false
+        }
+
+        let mut num_worker_threads = if cpu_has_htt() {
             default_parallelism / 2
         } else {
             default_parallelism
