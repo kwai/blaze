@@ -707,12 +707,11 @@ mod tests {
         acc_col.append_item(2, &ScalarValue::Int32(Some(7)));
 
         let mut spill: Box<dyn Spill> = Box::new(vec![]);
+        let mut spill_writer = spill.get_compressed_writer();
         acc_col
-            .spill(
-                IdxSelection::Range(0, 3),
-                &mut spill.get_compressed_writer(),
-            )
+            .spill(IdxSelection::Range(0, 3), &mut spill_writer)
             .unwrap();
+        spill_writer.finish().unwrap();
 
         let mut acc_col_unspill = AccSetColumn::empty(DataType::Int32);
         acc_col_unspill

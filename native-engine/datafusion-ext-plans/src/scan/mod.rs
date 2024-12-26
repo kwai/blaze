@@ -85,6 +85,15 @@ pub struct BlazeSchemaMapping {
     field_mappings: Vec<Option<usize>>,
 }
 
+impl BlazeSchemaMapping {
+    pub fn new(table_schema: SchemaRef, field_mappings: Vec<Option<usize>>) -> Self {
+        Self {
+            table_schema,
+            field_mappings,
+        }
+    }
+}
+
 impl SchemaMapper for BlazeSchemaMapping {
     fn map_batch(&self, batch: RecordBatch) -> Result<RecordBatch> {
         let batch_rows = batch.num_rows();
