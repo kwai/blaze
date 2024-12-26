@@ -40,6 +40,7 @@ use crate::{
     },
     shuffle::{buffered_data::BufferedData, ShuffleRepartitioner, ShuffleSpill},
 };
+use crate::shuffle::RePartitioning;
 
 pub struct SortShuffleRepartitioner {
     exec_ctx: Arc<ExecutionContext>,
@@ -58,7 +59,7 @@ impl SortShuffleRepartitioner {
         exec_ctx: Arc<ExecutionContext>,
         output_data_file: String,
         output_index_file: String,
-        partitioning: Partitioning,
+        partitioning: RePartitioning,
         output_io_time: Time,
     ) -> Self {
         let partition_id = exec_ctx.partition_id();

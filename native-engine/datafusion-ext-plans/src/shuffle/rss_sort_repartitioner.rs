@@ -28,6 +28,7 @@ use crate::{
     memmgr::{MemConsumer, MemConsumerInfo, MemManager},
     shuffle::{buffered_data::BufferedData, ShuffleRepartitioner},
 };
+use crate::shuffle::RePartitioning;
 
 pub struct RssSortShuffleRepartitioner {
     name: String,
@@ -40,7 +41,7 @@ impl RssSortShuffleRepartitioner {
     pub fn new(
         partition_id: usize,
         rss_partition_writer: GlobalRef,
-        partitioning: Partitioning,
+        partitioning: RePartitioning,
         sort_time: Time,
     ) -> Self {
         Self {

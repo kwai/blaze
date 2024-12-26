@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fmt;
 use std::sync::{
     atomic::{AtomicUsize, Ordering::SeqCst},
     Arc,
 };
 
 use arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
+use arrow::row::Rows;
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
@@ -101,22 +103,60 @@ struct ShuffleSpill {
     offsets: Vec<u64>,
 }
 
+#[derive(Debug, Clone)]
 pub enum RePartitioning {
     /// Allocate batches using a round-robin algorithm and the specified number of partitions
-    RoundRobinBatch(usize),
+    RoundRobinPartitioning(usize),
     /// Allocate rows based on a hash of one of more expressions and the specified number of
     /// partitions
-    Hash(Vec<Arc<dyn PhysicalExpr>>, usize),
+    HashPartitioning(Vec<Arc<dyn PhysicalExpr>>, usize),
     /// Unknown partitioning scheme with a known number of partitions
     UnknownPartitioning(usize),
     /// Range partitioning
-    RangePartitioning(Vec<PhysicalSortExpr, usize, )
+    RangePartitioning(Vec<PhysicalSortExpr>, usize, Arc<Rows>),
 }
 
+impl RePartitioning {
+    /// Returns the number of partitions in this partitioning scheme
+    pub fn partition_count(&self) -> usize {
+        use RePartitioning::*;
+        match self {
+            RoundRobinPartitioning(n) | HashPartitioning(_, n) | UnknownPartitioning(n)
+            |RangePartitioning(_, n, _)=> *n,
+        }
+    }
+}
 
-fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
+impl fmt::Display for RePartitioning {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            RePartitioning::RoundRobinPartitioning(size) => write!(f, "RoundRobinBatch({size})"),
+            RePartitioning::HashPartitioning(phy_exprs, size) => {
+                let phy_exprs_str = phy_exprs
+                    .iter()
+                    .map(|e| format!("{e}"))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                write!(f, "Hash([{phy_exprs_str}], {size})")
+            }
+            RePartitioning::UnknownPartitioning(size) => {
+                write!(f, "UnknownPartitioning({size})")
+            }
+            RePartitioning::RangePartitioning(sort_exprs, size, bounds) => {
+                let phy_exprs_str = sort_exprs
+                    .iter()
+                    .map(|e| format!("{e}"))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                write!(f, "Range([{phy_exprs_str}], {size}, {:?})", bounds)
+            }
+        }
+    }
+}
+
+fn evaluate_hashes(partitioning: &RePartitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
     match partitioning {
-        Partitioning::Hash(exprs, _) => {
+        RePartitioning::HashPartitioning(exprs, _) => {
             let arrays = exprs
                 .iter()
                 .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())?))
@@ -142,7 +182,7 @@ fn evaluate_partition_ids(mut hashes: Vec<i32>, num_partitions: usize) -> Vec<u3
 }
 
 fn evaluate_robin_partition_ids(
-    partitioning: &Partitioning,
+    partitioning: &RePartitioning,
     batch: &RecordBatch,
     start_rows: usize,
 ) -> Vec<u32> {

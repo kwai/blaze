@@ -40,6 +40,7 @@ use crate::{
     },
     sort_exec::SortExec,
 };
+use crate::shuffle::RePartitioning;
 
 /// The shuffle writer operator maps each input partition to M output partitions
 /// based on a partitioning scheme. No guarantees are made about the order of
@@ -47,7 +48,7 @@ use crate::{
 #[derive(Debug)]
 pub struct ShuffleWriterExec {
     input: Arc<dyn ExecutionPlan>,
-    partitioning: Partitioning,
+    partitioning: RePartitioning,
     output_data_file: String,
     output_index_file: String,
     metrics: ExecutionPlanMetricsSet,
@@ -78,7 +79,7 @@ impl ExecutionPlan for ShuffleWriterExec {
         self.props.get_or_init(|| {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
-                self.partitioning.clone(),
+                Partitioning::UnknownPartitioning(1),
                 ExecutionMode::Bounded,
             )
         })
@@ -121,7 +122,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 self.output_index_file.clone(),
                 output_time,
             )),
-            Partitioning::Hash(..) => {
+            RePartitioning::HashPartitioning(..) => {
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     exec_ctx.clone(),
                     self.output_data_file.clone(),
@@ -132,7 +133,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
-            Partitioning::RoundRobinBatch(..) => {
+            RePartitioning::RoundRobinPartitioning(..) => {
                 let sort_expr: Vec<PhysicalSortExpr> = self
                     .input
                     .schema()
@@ -176,7 +177,7 @@ impl ShuffleWriterExec {
     /// Create a new ShuffleWriterExec
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
-        partitioning: Partitioning,
+        partitioning: RePartitioning,
         output_data_file: String,
         output_index_file: String,
     ) -> Result<Self> {

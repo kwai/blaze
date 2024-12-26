@@ -41,10 +41,11 @@ use crate::{
         evaluate_hashes, evaluate_partition_ids, evaluate_robin_partition_ids, rss::RssWriter,
     },
 };
+use crate::shuffle::RePartitioning;
 
 pub struct BufferedData {
     partition_id: usize,
-    partitioning: Partitioning,
+    partitioning: RePartitioning,
     staging_batches: Vec<RecordBatch>,
     staging_num_rows: usize,
     staging_mem_used: usize,
@@ -56,7 +57,7 @@ pub struct BufferedData {
 }
 
 impl BufferedData {
-    pub fn new(partitioning: Partitioning, partition_id: usize, sort_time: Time) -> Self {
+    pub fn new(partitioning: RePartitioning, partition_id: usize, sort_time: Time) -> Self {
         Self {
             partition_id,
             partitioning,
@@ -310,7 +311,7 @@ impl KeyForRadixTournamentTree for PartCursor {
 
 fn sort_batches_by_partition_id(
     batches: Vec<RecordBatch>,
-    partitioning: &Partitioning,
+    partitioning: &RePartitioning,
     current_num_rows: usize,
     partition_id: usize,
 ) -> Result<(Vec<u32>, RecordBatch)> {
@@ -326,13 +327,13 @@ fn sort_batches_by_partition_id(
             let part_ids: Vec<u32>;
 
             match partitioning {
-                Partitioning::Hash(..) => {
+                RePartitioning::HashPartitioning(..) => {
                     // compute partition indices
                     let hashes = evaluate_hashes(partitioning, &batch)
                         .expect(&format!("error evaluating hashes with {partitioning}"));
                     part_ids = evaluate_partition_ids(hashes, partitioning.partition_count());
                 }
-                Partitioning::RoundRobinBatch(..) => {
+                RePartitioning::RoundRobinPartitioning(..) => {
                     part_ids =
                         evaluate_robin_partition_ids(partitioning, &batch, round_robin_start_rows);
                     round_robin_start_rows += batch.num_rows();
@@ -418,7 +419,7 @@ mod test {
             ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
         );
 
-        let round_robin_partitioning = Partitioning::RoundRobinBatch(4);
+        let round_robin_partitioning = RePartitioning::RoundRobinPartitioning(4);
         let (_parts, sorted_batch) =
             sort_batches_by_partition_id(vec![record_batch], &round_robin_partitioning, 3, 0)?;
 
