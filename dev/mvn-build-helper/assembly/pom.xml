@@ -15,6 +15,11 @@
   <dependencies>
     <dependency>
       <groupId>org.blaze</groupId>
+      <artifactId>spark-extension</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.blaze</groupId>
       <artifactId>${shimPkg}</artifactId>
       <version>${revision}</version>
     </dependency>
