@@ -137,7 +137,12 @@ class BlazeCelebornShuffleManager(conf: SparkConf, isDriver: Boolean)
     val shuffleIdTracker = FieldUtils
       .readField(celebornShuffleManager, "shuffleIdTracker", true)
       .asInstanceOf[ExecutorShuffleIdTracker]
-    val writer = new BlazeCelebornShuffleWriter(shuffleClient, context, celebornHandle, metrics, shuffleIdTracker)
+    val writer = new BlazeCelebornShuffleWriter(
+      shuffleClient,
+      context,
+      celebornHandle,
+      metrics,
+      shuffleIdTracker)
     writer.asInstanceOf[BlazeRssShuffleWriterBase[K, V]]
   }
 

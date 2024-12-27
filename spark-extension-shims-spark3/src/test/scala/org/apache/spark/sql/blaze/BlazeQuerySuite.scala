@@ -41,25 +41,20 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
     withTable("t1") {
       sql("create table t1 using parquet as select '2024-12-18' as event_time")
       checkAnswer(
-        sql(
-          """
+        sql("""
             |select year, count(*)
             |from (select event_time, year(event_time) as year from t1) t
             |where year <= 2024
             |group by year
             |""".stripMargin),
-        Seq(Row(2024, 1))
-      )
+        Seq(Row(2024, 1)))
     }
   }
 
   test("test select multiple spark ext functions with the same signature") {
     withTable("t1") {
       sql("create table t1 using parquet as select '2024-12-18' as event_time")
-      checkAnswer(
-        sql("select year(event_time), month(event_time) from t1"),
-        Seq(Row(2024, 12))
-      )
+      checkAnswer(sql("select year(event_time), month(event_time) from t1"), Seq(Row(2024, 12)))
     }
   }
 }
