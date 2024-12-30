@@ -39,6 +39,7 @@ use crate::{
         evaluate_robin_partition_ids, rss::RssWriter, RePartitioning,
     },
 };
+use parking_lot::Mutex as SyncMutex;
 
 pub struct BufferedData {
     partition_id: usize,
