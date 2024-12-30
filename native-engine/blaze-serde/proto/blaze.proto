@@ -621,12 +621,9 @@ message PhysicalRoundRobinRepartition {
 message PhysicalRangeRepartition {
   SortExecNode sort_expr = 1;
   uint64 partition_count = 2;
-  repeated ValueSeq value_seq = 3;
+  repeated  ScalarValue list_value= 3;
 }
 
-message ValueSeq {
-  repeated ScalarValue key = 1;
-}
 
 
 message JoinFilter {

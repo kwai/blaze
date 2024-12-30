@@ -1173,7 +1173,7 @@ pub fn parse_protobuf_partitioning(
                 let sort = range_part.sort_expr.clone().unwrap();
                 let exprs = try_parse_physical_sort_expr(&input, &sort).unwrap();
 
-                let value_seq = &range_part.value_seq;
+                let value_list = &range_part.list_value;
 
                 let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
                     exprs
@@ -1187,23 +1187,13 @@ pub fn parse_protobuf_partitioning(
                         .collect::<Result<Vec<SortField>>>()?,
                 )?));
 
-                let bound_cols: Vec<ArrayRef> = value_seq
+                let bound_cols: Vec<ArrayRef> = value_list
                     .iter()
                     .map(|x| {
-                        let key_values = x
-                            .key
-                            .iter()
-                            .map(|xx| {
-                                let value = convert_required!(xx.value)?;
-                                Ok(Arc::new(Literal::new(value)).value().clone())
-                            })
-                            .collect::<Result<Vec<ScalarValue>, PlanSerDeError>>();
-                        key_values.and_then(|key_values| {
-                            ScalarValue::iter_to_array(key_values.into_iter())
-                                .map_err(|e| PlanSerDeError::from(e))
-                        })
+                        let key_values = convert_required!(x.value);
+                        ScalarValue::iter_to_array(key_values)
                     })
-                    .collect::<Result<_, PlanSerDeError>>()?;
+                    .collect::<Result<_, DataFusionError>>()?;
 
                 let bound_rows = sort_row_converter.lock().convert_columns(&bound_cols)?;
                 Ok(Some(RePartitioning::RangePartitioning(

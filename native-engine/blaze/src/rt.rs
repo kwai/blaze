@@ -48,7 +48,7 @@ use futures::{FutureExt, StreamExt};
 use jni::objects::{GlobalRef, JObject};
 use prost::Message;
 use tokio::{runtime::Runtime, task::JoinHandle};
-use raw_cpuid::CpuId;
+
 use crate::{
     handle_unwinded_scope,
     logging::{THREAD_PARTITION_ID, THREAD_STAGE_ID},

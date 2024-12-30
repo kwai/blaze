@@ -31,7 +31,7 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RangePartitioning, RoundRobinPartitioning, SinglePartition}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, NullsFirst, UnsafeProjection, BoundReference}
+import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, BoundReference, NullsFirst, UnsafeProjection}
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
 import org.apache.spark.sql.execution.{SQLExecution, SparkPlan, UnsafeRowSerializer}
@@ -40,6 +40,7 @@ import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
 import org.apache.spark.util.{CompletionIterator, MutablePair}
 import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.ArrayType
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -222,16 +223,24 @@ abstract class NativeShuffleExchangeBase(
           rddForSampling,
           samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
 
-        bounds.map { internal_row =>
-          {
-            val valueSeq = sortingExpressions.zipWithIndex.map { case (field, index) =>
-              NativeConverters.convertValue(
-                internal_row.get(index, field.dataType),
-                field.dataType)
-            }
-            NativeConverters.convertValueSeq(valueSeq)
+//        bounds.map { internal_row =>
+//          {
+//            val valueSeq = sortingExpressions.zipWithIndex.map { case (field, index) =>
+//              NativeConverters.convertValue(
+//                internal_row.get(index, field.dataType),
+//                field.dataType)
+//            }
+//            NativeConverters.convertValueSeq(valueSeq)
+//          }
+//        }.toList
+
+        sortingExpressions.zipWithIndex.map { case (field, index) =>
+          val valueList = bounds.map { internal_row =>
+            internal_row.get(index, field.dataType)
           }
+          NativeConverters.convertValue(valueList, ArrayType(field.dataType))
         }.toList
+
       case _ => null
     }
 
@@ -264,14 +273,13 @@ abstract class NativeShuffleExchangeBase(
                 PhysicalRoundRobinRepartition
                   .newBuilder()
                   .setPartitionCount(numPartitions))
-          // case RangePartition  builder
           case RangePartitioning(_, _) =>
             repartitionBuilder
               .setRangeRepartition(
                 PhysicalRangeRepartition
                   .newBuilder()
-                  .setPartitionCount(numPartitions)
-                  .addAllValueSeq(nativeBounds.asJava)
+                  .setPartitionCount(nativeBounds.length + 1) // reset partition num
+                  .addAllListValue(nativeBounds.asJava)
                   .setSortExpr(nativeSortExecNode))
           case p =>
             throw new NotImplementedError(s"cannot convert partitioning to native: $p")

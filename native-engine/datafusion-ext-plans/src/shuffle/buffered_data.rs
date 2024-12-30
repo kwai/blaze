@@ -35,8 +35,8 @@ use jni::objects::GlobalRef;
 use crate::{
     common::{ipc_compression::IpcCompressionWriter, timer_helper::TimerHelper},
     shuffle::{
-        evaluate_hashes, evaluate_partition_ids, evaluate_robin_partition_ids, rss::RssWriter,
-        RePartitioning,
+        evaluate_hashes, evaluate_partition_ids, evaluate_range_partition_ids,
+        evaluate_robin_partition_ids, rss::RssWriter, RePartitioning,
     },
 };
 
@@ -321,8 +321,7 @@ fn sort_batches_by_partition_id(
         .iter()
         .enumerate()
         .flat_map(|(batch_idx, batch)| {
-            let part_ids: Vec<u32>;
-
+            let mut part_ids: Vec<u32> = Vec::new();
             match partitioning {
                 RePartitioning::HashPartitioning(..) => {
                     // compute partition indices
@@ -335,6 +334,9 @@ fn sort_batches_by_partition_id(
                         evaluate_robin_partition_ids(partitioning, &batch, round_robin_start_rows);
                     round_robin_start_rows += batch.num_rows();
                     round_robin_start_rows %= partitioning.partition_count();
+                }
+                RePartitioning::RangePartitioning(sort_expr, partition_num, bounds) => {
+                    part_ids = evaluate_range_partition_ids(&batch, sort_expr, bounds).unwrap();
                 }
                 _ => unreachable!("unsupported partitioning: {:?}", partitioning),
             };
@@ -378,11 +380,17 @@ mod test {
     use std::sync::Arc;
 
     use arrow::{
-        array::Int32Array,
+        array::{ArrayRef, Int32Array},
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
+        row::{RowConverter, Rows, SortField},
     };
-    use datafusion::{assert_batches_eq, common::Result};
+    use arrow_schema::SortOptions;
+    use datafusion::{
+        assert_batches_eq,
+        common::Result,
+        physical_expr::{expressions::Column, PhysicalSortExpr},
+    };
 
     use super::*;
 
@@ -434,6 +442,122 @@ mod test {
             "| 19 | 0 | 5 |",
             "| 15 | 4 | 9 |",
             "| 11 | 8 | 3 |",
+            "+----+---+---+",
+        ];
+        assert_batches_eq!(expected, &vec![sorted_batch]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_range_partition() -> Result<()> {
+        let record_batch = build_table_i32(
+            ("a", &vec![19, 18, 17, 16, 15, 14, 13, 12, 11, 10]),
+            ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
+        );
+        let sort_exprs = vec![PhysicalSortExpr {
+            expr: Arc::new(Column::new("a", 0)),
+            options: SortOptions::default(),
+        }];
+        let bound1 = Arc::new(Int32Array::from_iter_values([11, 14, 17])) as ArrayRef;
+        let bounds = vec![bound1];
+
+        let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+            sort_exprs
+                .iter()
+                .map(|expr: &PhysicalSortExpr| {
+                    Ok(SortField::new_with_options(
+                        expr.expr.data_type(&record_batch.schema())?,
+                        expr.options,
+                    ))
+                })
+                .collect::<Result<Vec<SortField>>>()?,
+        )?));
+
+        let rows: Rows = sort_row_converter.lock().convert_columns(&bounds).unwrap();
+        let partition_num = rows.num_rows() + 1;
+
+        let range_repartitioning =
+            RePartitioning::RangePartitioning(sort_exprs, partition_num, Arc::from(rows));
+        let (_parts, sorted_batch) =
+            sort_batches_by_partition_id(vec![record_batch], &range_repartitioning, 0, 0)?;
+
+        let expected = vec![
+            "+----+---+---+",
+            "| a  | b | c |",
+            "+----+---+---+",
+            "| 11 | 8 | 3 |",
+            "| 10 | 9 | 4 |",
+            "| 14 | 5 | 0 |",
+            "| 13 | 6 | 1 |",
+            "| 12 | 7 | 2 |",
+            "| 17 | 2 | 7 |",
+            "| 16 | 3 | 8 |",
+            "| 15 | 4 | 9 |",
+            "| 19 | 0 | 5 |",
+            "| 18 | 1 | 6 |",
+            "+----+---+---+",
+        ];
+        assert_batches_eq!(expected, &vec![sorted_batch]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_range_partition_2() -> Result<()> {
+        let record_batch = build_table_i32(
+            ("a", &vec![19, 18, 17, 16, 15, 14, 13, 12, 11, 10]),
+            ("b", &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
+        );
+        let sort_exprs = vec![
+            PhysicalSortExpr {
+                expr: Arc::new(Column::new("a", 0)),
+                options: SortOptions::default(),
+            },
+            PhysicalSortExpr {
+                expr: Arc::new(Column::new("b", 1)),
+                options: SortOptions::default(),
+            },
+        ];
+        let bound1 = Arc::new(Int32Array::from_iter_values([11, 14, 17])) as ArrayRef;
+        let bound2 = Arc::new(Int32Array::from_iter_values([1, 3, 5])) as ArrayRef;
+
+        let bounds = vec![bound1, bound2];
+
+        let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+            sort_exprs
+                .iter()
+                .map(|expr: &PhysicalSortExpr| {
+                    Ok(SortField::new_with_options(
+                        expr.expr.data_type(&record_batch.schema())?,
+                        expr.options,
+                    ))
+                })
+                .collect::<Result<Vec<SortField>>>()?,
+        )?));
+
+        let rows: Rows = sort_row_converter.lock().convert_columns(&bounds).unwrap();
+        let partition_num = rows.num_rows() + 1;
+
+        let range_repartitioning =
+            RePartitioning::RangePartitioning(sort_exprs, partition_num, Arc::from(rows));
+        let (_parts, sorted_batch) =
+            sort_batches_by_partition_id(vec![record_batch], &range_repartitioning, 0, 0)?;
+
+        let expected = vec![
+            "+----+---+---+",
+            "| a  | b | c |",
+            "+----+---+---+",
+            "| 10 | 9 | 4 |",
+            "| 13 | 6 | 1 |",
+            "| 12 | 7 | 2 |",
+            "| 11 | 8 | 3 |",
+            "| 17 | 2 | 7 |",
+            "| 16 | 3 | 8 |",
+            "| 15 | 4 | 9 |",
+            "| 14 | 5 | 0 |",
+            "| 19 | 0 | 5 |",
+            "| 18 | 1 | 6 |",
             "+----+---+---+",
         ];
         assert_batches_eq!(expected, &vec![sorted_batch]);
