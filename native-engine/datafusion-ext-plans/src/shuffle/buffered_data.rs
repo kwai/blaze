@@ -39,7 +39,7 @@ use crate::{
         evaluate_robin_partition_ids, rss::RssWriter, RePartitioning,
     },
 };
-use parking_lot::Mutex as SyncMutex;
+use parking_lot::Mutex;
 
 pub struct BufferedData {
     partition_id: usize,
@@ -463,7 +463,7 @@ mod test {
         let bound1 = Arc::new(Int32Array::from_iter_values([11, 14, 17])) as ArrayRef;
         let bounds = vec![bound1];
 
-        let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+        let sort_row_converter = Arc::new(Mutex::new(RowConverter::new(
             sort_exprs
                 .iter()
                 .map(|expr: &PhysicalSortExpr| {
@@ -525,7 +525,7 @@ mod test {
 
         let bounds = vec![bound1, bound2];
 
-        let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+        let sort_row_converter = Arc::new(Mutex::new(RowConverter::new(
             sort_exprs
                 .iter()
                 .map(|expr: &PhysicalSortExpr| {

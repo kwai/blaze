@@ -39,6 +39,7 @@ import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReader
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
 import org.apache.spark.util.{CompletionIterator, MutablePair}
 import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
+import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
 
@@ -238,7 +239,8 @@ abstract class NativeShuffleExchangeBase(
           val valueList = bounds.map { internal_row =>
             internal_row.get(index, field.dataType)
           }
-          NativeConverters.convertValue(valueList, ArrayType(field.dataType))
+          val arrayData = ArrayData.toArrayData(valueList)
+          NativeConverters.convertValue(arrayData, ArrayType(field.dataType))
         }.toList
 
       case _ => null
