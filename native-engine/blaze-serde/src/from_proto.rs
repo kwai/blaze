@@ -1190,10 +1190,26 @@ pub fn parse_protobuf_partitioning(
                 let bound_cols: Vec<ArrayRef> = value_list
                     .iter()
                     .map(|x| {
-                        let key_values = convert_required!(x.value);
-                        ScalarValue::iter_to_array(key_values)
+                        let xx = x.clone().value.unwrap();
+                        let values_ref = match xx {
+                            protobuf::scalar_value::Value::ListValue(scalar_list) => {
+                                let protobuf::ScalarListValue {
+                                    values,
+                                    datatype: _opt_scalar_type,
+                                } = scalar_list;
+                                let value_vec: Vec<ScalarValue> = values
+                                    .iter()
+                                    .map(|val| val.try_into())
+                                    .collect::<Result<Vec<_>, _>>()
+                                    .map_err(|_| proto_error("partition::from_proto() error"))?;
+                                ScalarValue::iter_to_array(value_vec)
+                                    .map_err(|_| proto_error("partition::from_proto() error"))
+                            }
+                            _ => Err(proto_error("partition::from_proto() bound_list type error")),
+                        };
+                        values_ref
                     })
-                    .collect::<Result<_, DataFusionError>>()?;
+                    .collect::<Result<Vec<ArrayRef>, _>>()?;
 
                 let bound_rows = sort_row_converter.lock().convert_columns(&bound_cols)?;
                 Ok(Some(RePartitioning::RangePartitioning(

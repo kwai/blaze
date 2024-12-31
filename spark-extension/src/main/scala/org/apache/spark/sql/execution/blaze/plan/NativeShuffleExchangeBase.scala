@@ -200,6 +200,7 @@ abstract class NativeShuffleExchangeBase(
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
         case _ =>
       }))
+    var numPartitionsRest = numPartitions;
     // if RangePartitioning => sample and find bounds
     val nativeBounds = outputPartitioning match {
       case RangePartitioning(sortingExpressions, numPartitions) =>
@@ -223,18 +224,7 @@ abstract class NativeShuffleExchangeBase(
           numPartitions,
           rddForSampling,
           samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
-
-//        bounds.map { internal_row =>
-//          {
-//            val valueSeq = sortingExpressions.zipWithIndex.map { case (field, index) =>
-//              NativeConverters.convertValue(
-//                internal_row.get(index, field.dataType),
-//                field.dataType)
-//            }
-//            NativeConverters.convertValueSeq(valueSeq)
-//          }
-//        }.toList
-
+        numPartitionsRest = bounds.length + 1
         sortingExpressions.zipWithIndex.map { case (field, index) =>
           val valueList = bounds.map { internal_row =>
             internal_row.get(index, field.dataType)
@@ -280,7 +270,7 @@ abstract class NativeShuffleExchangeBase(
               .setRangeRepartition(
                 PhysicalRangeRepartition
                   .newBuilder()
-                  .setPartitionCount(nativeBounds.length + 1) // reset partition num
+                  .setPartitionCount(numPartitionsRest) // reset partition num
                   .addAllListValue(nativeBounds.asJava)
                   .setSortExpr(nativeSortExecNode))
           case p =>

@@ -31,6 +31,8 @@ use datafusion_ext_commons::{
     compute_suggested_batch_size_for_output, df_execution_err,
 };
 use jni::objects::GlobalRef;
+#[cfg(test)]
+use parking_lot::Mutex;
 
 use crate::{
     common::{ipc_compression::IpcCompressionWriter, timer_helper::TimerHelper},
@@ -39,7 +41,6 @@ use crate::{
         evaluate_robin_partition_ids, rss::RssWriter, RePartitioning,
     },
 };
-use parking_lot::Mutex;
 
 pub struct BufferedData {
     partition_id: usize,
@@ -336,7 +337,7 @@ fn sort_batches_by_partition_id(
                     round_robin_start_rows += batch.num_rows();
                     round_robin_start_rows %= partitioning.partition_count();
                 }
-                RePartitioning::RangePartitioning(sort_expr, partition_num, bounds) => {
+                RePartitioning::RangePartitioning(sort_expr, _, bounds) => {
                     part_ids = evaluate_range_partition_ids(&batch, sort_expr, bounds).unwrap();
                 }
                 _ => unreachable!("unsupported partitioning: {:?}", partitioning),
