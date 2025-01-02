@@ -210,8 +210,7 @@ impl FileOpener for OrcOpener {
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
-
-        let schema_adapter = SchemaAdapter::new(projected_schema, projection);
+        let schema_adapter = SchemaAdapter::new(projected_schema);
 
         Ok(Box::pin(async move {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
@@ -265,29 +264,23 @@ impl AsyncChunkReader for OrcFileReaderRef {
 
 struct SchemaAdapter {
     table_schema: SchemaRef,
-    projection: Vec<usize>,
 }
 
 impl SchemaAdapter {
-    pub fn new(table_schema: SchemaRef, projection: Vec<usize>) -> Self {
-        Self {
-            table_schema,
-            projection,
-        }
+    pub fn new(table_schema: SchemaRef) -> Self {
+        Self { table_schema }
     }
 
     fn map_schema(
         &self,
         orc_file_meta: &FileMetadata,
     ) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
-        let projected_schema = SchemaRef::from(self.table_schema.project(&self.projection)?);
-
-        let mut projection = Vec::with_capacity(projected_schema.fields().len());
+        let mut projection = Vec::with_capacity(self.table_schema.fields().len());
         let mut field_mappings = vec![None; self.table_schema.fields().len()];
 
         for named_column in orc_file_meta.root_data_type().children() {
             if let Some((table_idx, _table_field)) =
-                projected_schema.fields().find(named_column.name())
+                self.table_schema.fields().find(named_column.name())
             {
                 field_mappings[table_idx] = Some(projection.len());
                 projection.push(named_column.data_type().column_index());
