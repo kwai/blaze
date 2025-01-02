@@ -289,12 +289,12 @@ abstract class NativeShuffleExchangeBase(
       serializer = serializer,
       shuffleWriterProcessor = createNativeShuffleWriteProcessor(metrics, numPartitions),
       partitioner = new Partitioner {
-        override def numPartitions: Int = outputPartitioning.numPartitions
+        override def numPartitions: Int = numPartitionsRest
 
         override def getPartition(key: Any): Int = key.asInstanceOf[Int]
       },
       schema = Util.getSchema(outputAttributes, useExprId = false))
-    metrics("numPartitions").set(outputPartitioning.numPartitions)
+    metrics("numPartitions").set(numPartitionsRest)
     val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
     SQLMetrics.postDriverMetricUpdates(sparkContext, executionId, metrics("numPartitions") :: Nil)
     dependency
