@@ -18,7 +18,6 @@ package org.apache.spark.sql.blaze
 import java.io.File
 import java.util.UUID
 import org.apache.commons.lang3.reflect.FieldUtils
-import org.apache.hadoop.fs.Path
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.SparkEnv
@@ -837,6 +836,7 @@ class ShimsImpl extends Shims with Logging {
       filePath: String,
       offset: Long,
       size: Long): PartitionedFile = {
+    import org.apache.hadoop.fs.Path
     import org.apache.spark.paths.SparkPath
     PartitionedFile(partitionValues, SparkPath.fromPath(new Path(filePath)), offset, size)
   }
