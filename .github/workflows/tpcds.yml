@@ -43,7 +43,7 @@ jobs:
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.4
-      sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.4.4/spark-3.4.4-bin-hadoop3.tgz
+      sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.4.3/spark-3.4.3-bin-hadoop3.tgz
 
   test-spark-35:
     name: Test spark-3.5
