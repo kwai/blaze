@@ -58,7 +58,9 @@ class CelebornPartitionWriter(
   override def flush(): Unit = {}
 
   override def close(): Unit = {
+    val waitStartTime = System.nanoTime();
     shuffleClient.mapperEnd(shuffleId, mapId, encodedAttemptId, numMappers)
+    metrics.incWriteTime(System.nanoTime() - waitStartTime);
   }
 
   override def getPartitionLengthMap: Array[Long] =
