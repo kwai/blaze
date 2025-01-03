@@ -44,6 +44,7 @@ import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
+import org.apache.spark.sql.catalyst.plans.physical.RangePartitioning
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
@@ -267,13 +268,15 @@ object BlazeConverters extends Logging {
     assert(
       exec.outputPartitioning.numPartitions == 1 || exec.outputPartitioning
         .isInstanceOf[HashPartitioning] || exec.outputPartitioning
-        .isInstanceOf[RoundRobinPartitioning],
+        .isInstanceOf[RoundRobinPartitioning] || exec.outputPartitioning
+        .isInstanceOf[RangePartitioning],
       s"partitioning not supported: ${exec.outputPartitioning}")
 
     val convertedChild = outputPartitioning match {
       case p
           if p.isInstanceOf[HashPartitioning] || p
-            .isInstanceOf[RoundRobinPartitioning] || p.numPartitions == 1 =>
+            .isInstanceOf[RoundRobinPartitioning] || p.isInstanceOf[RangePartitioning]
+            || p.numPartitions == 1 =>
         convertToNative(child)
       case _ => child
     }

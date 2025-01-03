@@ -36,7 +36,7 @@ use crate::{
     memmgr::MemManager,
     shuffle::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
-        rss_sort_repartitioner::RssSortShuffleRepartitioner, ShuffleRepartitioner,
+        rss_sort_repartitioner::RssSortShuffleRepartitioner, RePartitioning, ShuffleRepartitioner,
     },
 };
 
@@ -46,7 +46,7 @@ use crate::{
 #[derive(Debug)]
 pub struct RssShuffleWriterExec {
     input: Arc<dyn ExecutionPlan>,
-    partitioning: Partitioning,
+    partitioning: RePartitioning,
     pub rss_partition_writer_resource_id: String,
     metrics: ExecutionPlanMetricsSet,
     props: OnceCell<PlanProperties>,
@@ -80,7 +80,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
         self.props.get_or_init(|| {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
-                self.partitioning.clone(),
+                Partitioning::UnknownPartitioning(1),
                 ExecutionMode::Bounded,
             )
         })
@@ -122,7 +122,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
-            Partitioning::Hash(..) | Partitioning::RoundRobinBatch(..) => {
+            RePartitioning::HashPartitioning(..) | RePartitioning::RoundRobinPartitioning(..) => {
                 let sort_time = exec_ctx.register_timer_metric("sort_time");
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
@@ -152,7 +152,7 @@ impl RssShuffleWriterExec {
     /// Create a new RssShuffleWriterExec
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
-        partitioning: Partitioning,
+        partitioning: RePartitioning,
         rss_partition_writer_resource_id: String,
     ) -> Result<Self> {
         Ok(RssShuffleWriterExec {

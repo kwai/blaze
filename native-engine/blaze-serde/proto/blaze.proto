@@ -601,6 +601,7 @@ message PhysicalRepartition {
       PhysicalSingleRepartition single_repartition = 1;
       PhysicalHashRepartition hash_repartition = 2;
       PhysicalRoundRobinRepartition round_robin_repartition = 3;
+      PhysicalRangeRepartition range_repartition = 4;
   }
 }
 
@@ -616,6 +617,14 @@ message PhysicalHashRepartition {
 message PhysicalRoundRobinRepartition {
   uint64 partition_count = 1;
 }
+
+message PhysicalRangeRepartition {
+  SortExecNode sort_expr = 1;
+  uint64 partition_count = 2;
+  repeated  ScalarValue list_value= 3;
+}
+
+
 
 message JoinFilter {
   PhysicalExprNode expression = 1;

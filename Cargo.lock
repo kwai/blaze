@@ -459,6 +459,7 @@ dependencies = [
  "datafusion-ext-plans",
  "log",
  "object_store",
+ "parking_lot",
  "prost 0.13.4",
  "tonic-build",
 ]

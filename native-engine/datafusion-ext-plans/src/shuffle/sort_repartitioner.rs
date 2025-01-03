@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
     common::{DataFusionError, Result},
-    physical_plan::{metrics::Time, Partitioning},
+    physical_plan::metrics::Time,
 };
 use datafusion_ext_commons::{
     algorithm::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
@@ -38,7 +38,7 @@ use crate::{
         spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
-    shuffle::{buffered_data::BufferedData, ShuffleRepartitioner, ShuffleSpill},
+    shuffle::{buffered_data::BufferedData, RePartitioning, ShuffleRepartitioner, ShuffleSpill},
 };
 
 pub struct SortShuffleRepartitioner {
@@ -58,7 +58,7 @@ impl SortShuffleRepartitioner {
         exec_ctx: Arc<ExecutionContext>,
         output_data_file: String,
         output_index_file: String,
-        partitioning: Partitioning,
+        partitioning: RePartitioning,
         output_io_time: Time,
     ) -> Self {
         let partition_id = exec_ctx.partition_id();

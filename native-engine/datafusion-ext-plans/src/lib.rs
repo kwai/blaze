@@ -54,5 +54,5 @@ pub mod common;
 pub mod generate;
 pub mod joins;
 mod scan;
-mod shuffle;
+pub mod shuffle;
 pub mod window;

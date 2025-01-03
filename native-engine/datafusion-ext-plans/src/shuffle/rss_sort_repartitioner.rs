@@ -16,17 +16,14 @@ use std::sync::Weak;
 
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::{
-    common::Result,
-    physical_plan::{metrics::Time, Partitioning},
-};
+use datafusion::{common::Result, physical_plan::metrics::Time};
 use datafusion_ext_commons::arrow::array_size::ArraySize;
 use futures::lock::Mutex;
 use jni::objects::GlobalRef;
 
 use crate::{
     memmgr::{MemConsumer, MemConsumerInfo, MemManager},
-    shuffle::{buffered_data::BufferedData, ShuffleRepartitioner},
+    shuffle::{buffered_data::BufferedData, RePartitioning, ShuffleRepartitioner},
 };
 
 pub struct RssSortShuffleRepartitioner {
@@ -40,7 +37,7 @@ impl RssSortShuffleRepartitioner {
     pub fn new(
         partition_id: usize,
         rss_partition_writer: GlobalRef,
-        partitioning: Partitioning,
+        partitioning: RePartitioning,
         sort_time: Time,
     ) -> Self {
         Self {
