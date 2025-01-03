@@ -10,7 +10,7 @@ async-trait = "0.1.83"
 blaze-jni-bridge = { workspace = true }
 datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
-itertools = "0.13.0"
+itertools = "0.14.0"
 log = "0.4.22"
 num = "0.4.2"
 paste = "1.0.15"
