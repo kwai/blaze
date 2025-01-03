@@ -15,35 +15,35 @@ jobs:
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.0
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.0.3/spark-3.0.3-bin-hadoop2.7.tgz
+      sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.0.3/spark-3.0.3-bin-hadoop2.7.tgz
 
   test-spark-31:
     name: Test spark-3.1
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.1
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.1.3/spark-3.1.3-bin-hadoop2.7.tgz
+      sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.1.3/spark-3.1.3-bin-hadoop2.7.tgz
 
   test-spark-32:
     name: Test spark-3.2
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.2
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.2.4/spark-3.2.4-bin-hadoop2.7.tgz
+      sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.2.4/spark-3.2.4-bin-hadoop2.7.tgz
 
   test-spark-33:
     name: Test spark-3.3
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.3
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.3.4/spark-3.3.4-bin-hadoop3.tgz
+      sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.3.4/spark-3.3.4-bin-hadoop3.tgz
 
   test-spark-34:
     name: Test spark-3.4
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.4
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.4.4/spark-3.4.4-bin-hadoop3.tgz
+      sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.4.4/spark-3.4.4-bin-hadoop3.tgz
 
   test-spark-35:
     name: Test spark-3.5
