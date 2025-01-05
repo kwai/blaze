@@ -402,7 +402,7 @@ impl JoinHashMap {
     }
 
     pub fn lookup_many(&self, hashes: Vec<u32>) -> Vec<MapValue> {
-        tokio::task::block_in_place(|| self.table.lookup_many(hashes))
+        self.table.lookup_many(hashes)
     }
 
     pub fn get_range(&self, map_value: MapValue) -> &[u32] {

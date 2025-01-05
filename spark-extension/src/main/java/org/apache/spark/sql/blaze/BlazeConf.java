@@ -55,6 +55,9 @@ public enum BlazeConf {
     // spark io compression codec
     SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4"),
 
+    // number of cpus per task
+    SPARK_TASK_CPUS("spark.task.cpus", 1),
+
     // replace all sort-merge join to shuffled-hash join, only used for benchmarking
     FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false),
 
