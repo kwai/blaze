@@ -40,6 +40,7 @@ define_conf!(IntConf, PARTIAL_AGG_SKIPPING_MIN_ROWS);
 define_conf!(BooleanConf, PARQUET_ENABLE_PAGE_FILTERING);
 define_conf!(BooleanConf, PARQUET_ENABLE_BLOOM_FILTER);
 define_conf!(StringConf, SPARK_IO_COMPRESSION_CODEC);
+define_conf!(IntConf, SPARK_TASK_CPUS);
 define_conf!(StringConf, SPILL_COMPRESSION_CODEC);
 
 pub trait BooleanConf {
