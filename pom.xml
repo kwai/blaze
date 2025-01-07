@@ -20,6 +20,7 @@
     <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
     <paimonVersion>0.9.0</paimonVersion>
+    <celebornVersion>0.5.3</celebornVersion>
   </properties>
 
   <dependencyManagement>
@@ -306,7 +307,6 @@
         <scalaTestVersion>3.0.8</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.0.3</sparkVersion>
-        <celebornVersion>0.5.2</celebornVersion>
       </properties>
     </profile>
 
@@ -321,7 +321,6 @@
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.1.3</sparkVersion>
-        <celebornVersion>0.5.2</celebornVersion>
       </properties>
     </profile>
 
@@ -336,7 +335,6 @@
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.2.4</sparkVersion>
-        <celebornVersion>0.5.2</celebornVersion>
       </properties>
     </profile>
 
@@ -351,7 +349,6 @@
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.3.4</sparkVersion>
-        <celebornVersion>0.5.2</celebornVersion>
       </properties>
     </profile>
 
@@ -366,7 +363,6 @@
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.4.4</sparkVersion>
-        <celebornVersion>0.5.2</celebornVersion>
       </properties>
     </profile>
 
@@ -381,7 +377,6 @@
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.5.4</sparkVersion>
-        <celebornVersion>0.5.2</celebornVersion>
       </properties>
     </profile>
   </profiles>
