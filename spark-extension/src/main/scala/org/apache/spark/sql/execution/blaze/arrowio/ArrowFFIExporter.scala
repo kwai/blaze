@@ -28,7 +28,6 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.blaze.{BlazeConf, NativeHelper}
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.TaskContext
-import org.apache.spark.sql.catalyst.util.StringUtils
 
 import java.security.PrivilegedExceptionAction
 
