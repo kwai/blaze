@@ -96,13 +96,16 @@ impl MemConsumer for SortShuffleRepartitioner {
 
     async fn spill(&self) -> Result<()> {
         let data = self.data.lock().await.drain();
-        let mut spill = try_new_spill(self.exec_ctx.spill_metrics())?;
+        let spill_metrics = self.exec_ctx.spill_metrics().clone();
+        let spill = tokio::task::spawn_blocking(move || {
+            let mut spill = try_new_spill(&spill_metrics)?;
+            let offsets = data.write(spill.get_buf_writer())?;
+            Ok::<_, DataFusionError>(ShuffleSpill { spill, offsets })
+        })
+        .await
+        .expect("tokio spawn_blocking error")?;
 
-        let offsets = data.write(spill.get_buf_writer())?;
-        self.spills
-            .lock()
-            .await
-            .push(ShuffleSpill { spill, offsets });
+        self.spills.lock().await.push(spill);
         self.update_mem_used(0).await?;
         Ok(())
     }

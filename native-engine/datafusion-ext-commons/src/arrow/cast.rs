@@ -149,7 +149,15 @@ pub fn cast_impl(
                 let casted_arrays = to_fields
                     .iter()
                     .map(|field| {
-                        let col = struct_.column_by_name(field.name().as_str());
+                        let origin = field.name().as_str();
+                        let mut col = struct_.column_by_name(origin);
+                        // correct orc map entries field name from "keys" to "key", "values" to
+                        // "value"
+                        if col.is_none() && (origin.eq("key") || origin.eq("value")) {
+                            let adjust = format!("{}s", origin);
+                            log::info!("adjust map entries field name: {} -> {}", origin, adjust);
+                            col = struct_.column_by_name(adjust.as_str());
+                        }
                         if col.is_some() {
                             cast_impl(col.unwrap(), field.data_type(), match_struct_fields)
                         } else {

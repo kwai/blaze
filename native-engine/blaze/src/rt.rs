@@ -24,9 +24,11 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use blaze_jni_bridge::{
-    is_task_running, jni_bridge::JavaClasses, jni_call, jni_call_static, jni_convert_byte_array,
-    jni_exception_check, jni_exception_occurred, jni_new_global_ref, jni_new_object,
-    jni_new_string,
+    conf::{IntConf, SPARK_TASK_CPUS},
+    is_task_running,
+    jni_bridge::JavaClasses,
+    jni_call, jni_call_static, jni_convert_byte_array, jni_exception_check, jni_exception_occurred,
+    jni_new_global_ref, jni_new_object, jni_new_string,
 };
 use blaze_serde::protobuf::TaskDefinition;
 use datafusion::{
@@ -93,42 +95,13 @@ impl NativeExecutionRuntime {
             &ExecutionPlanMetricsSet::new(),
         );
 
-        // determine number of tokio worker threads
-        // use the real number of available physical cores
-        let default_parallelism = std::thread::available_parallelism()
-            .map(|v| v.get())
-            .unwrap_or(1);
-
-        fn cpu_has_htt() -> bool {
-            #[cfg(any(
-                all(target_arch = "x86", not(target_env = "sgx"), target_feature = "sse"),
-                all(target_arch = "x86_64", not(target_env = "sgx"))
-            ))]
-            {
-                use raw_cpuid::CpuId;
-                let has_htt = CpuId::new()
-                    .get_feature_info()
-                    .map(|info| info.has_htt())
-                    .unwrap_or(false);
-                return has_htt;
-            }
-            false
-        }
-
-        let mut num_worker_threads = if cpu_has_htt() {
-            default_parallelism / 2
-        } else {
-            default_parallelism
-        };
-        num_worker_threads = num_worker_threads.max(1);
-
         // create tokio runtime
         // propagate classloader and task context to spawned children threads
         let spark_task_context = jni_call_static!(JniBridge.getTaskContext() -> JObject)?;
         let spark_task_context_global = jni_new_global_ref!(spark_task_context.as_obj())?;
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name(format!("blaze-native-stage-{stage_id}-part-{partition_id}"))
-            .worker_threads(num_worker_threads)
+            .worker_threads(SPARK_TASK_CPUS.value().unwrap_or(1) as usize)
             .on_thread_start(move || {
                 let classloader = JavaClasses::get().classloader;
                 let _ = jni_call_static!(

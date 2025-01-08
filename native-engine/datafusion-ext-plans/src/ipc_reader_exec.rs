@@ -17,17 +17,20 @@ use std::{
     fmt::{Debug, Formatter},
     fs::File,
     io::{BufReader, Cursor, Read, Seek, SeekFrom},
-    sync::{mpsc::Receiver, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
 use arrow::{
-    array::{ArrayRef, RecordBatch, RecordBatchOptions},
+    array::{Array, ArrayRef, RecordBatch, RecordBatchOptions},
     datatypes::SchemaRef,
 };
 use async_trait::async_trait;
 use blaze_jni_bridge::{
-    is_task_running, jni_call, jni_call_static, jni_get_byte_array_region, jni_get_direct_buffer,
-    jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
+    jni_call, jni_call_static, jni_get_byte_array_region, jni_get_direct_buffer, jni_get_string,
+    jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
 use datafusion::{
     error::{DataFusionError, Result},
@@ -46,12 +49,9 @@ use datafusion_ext_commons::{
 };
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
-use tokio::task::JoinHandle;
+use parking_lot::Mutex;
 
-use crate::common::{
-    execution_context::ExecutionContext, ipc_compression::IpcCompressionReader,
-    timer_helper::TimerHelper,
-};
+use crate::common::{execution_context::ExecutionContext, ipc_compression::IpcCompressionReader};
 
 #[derive(Debug, Clone)]
 pub struct IpcReaderExec {
@@ -141,25 +141,8 @@ impl ExecutionPlan for IpcReaderExec {
         let blocks_local = jni_call!(ScalaFunction0(blocks_provider.as_obj()).apply() -> JObject)?;
         assert!(!blocks_local.as_obj().is_null());
 
-        // spawn a blocking thread for reading ipcs and providing batches
         let blocks = jni_new_global_ref!(blocks_local.as_obj())?;
-        let (rx, handle) = read_ipc_into_channel(blocks, exec_ctx.clone());
-        let output = exec_ctx.output_with_sender("IpcReader", move |sender| async move {
-            loop {
-                match rx.recv() {
-                    Ok(batch) => {
-                        sender.send(batch).await;
-                    }
-                    Err(_disconnected) => {
-                        drop(rx);
-                        handle.await.expect("tokio error")?;
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        });
-        Ok(output)
+        read_ipc(blocks, exec_ctx)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -171,97 +154,110 @@ impl ExecutionPlan for IpcReaderExec {
     }
 }
 
-fn read_ipc_into_channel(
+fn read_ipc(
     blocks: GlobalRef,
     exec_ctx: Arc<ExecutionContext>,
-) -> (Receiver<RecordBatch>, JoinHandle<Result<()>>) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let handle = tokio::task::spawn_blocking(move || {
-        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
-        let _timer = elapsed_compute.timer();
+) -> Result<SendableRecordBatchStream> {
+    let size_counter = exec_ctx.register_counter_metric("size");
+
+    Ok(exec_ctx.clone().output_with_sender("IpcReader", move |sender| async move {
+        sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
         log::info!("start ipc reading");
 
-        let size_counter = exec_ctx.register_counter_metric("size");
+        let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
         let batch_size = batch_size();
-        let output_batch_mem_size = suggested_output_batch_mem_size();
-        let mut staging_cols: Vec<Vec<ArrayRef>> = vec![];
-        let mut staging_num_rows = 0;
-        let mut staging_mem_size = 0;
+        let staging_cols: Arc<Mutex<Vec<Vec<ArrayRef>>>> = Arc::new(Mutex::new(vec![]));
+        let staging_num_rows = AtomicUsize::new(0);
+        let staging_mem_size = AtomicUsize::new(0);
 
-        while is_task_running() {
+        loop {
             // get next block
             let blocks = blocks.clone();
-            if !jni_call!(ScalaIterator(blocks.as_obj()).hasNext() -> bool)? {
-                break;
-            }
-            let next_block = jni_new_global_ref!(
-                jni_call!(ScalaIterator(blocks.as_obj()).next() -> JObject)?.as_obj()
-            )?;
+            let next = tokio::task::spawn_blocking(move || {
+                if !jni_call!(ScalaIterator(blocks.as_obj()).hasNext() -> bool)? {
+                    return Ok::<_, DataFusionError>(None);
+                }
+                let block = jni_new_global_ref!(
+                    jni_call!(ScalaIterator(blocks.as_obj()).next() -> JObject)?.as_obj()
+                )?;
+                Ok(Some(block))
+            })
+            .await
+            .or_else(|err| df_execution_err!("{err}"))??;
 
             // get ipc reader
-            let mut reader = match next_block {
-                b if jni_call!(BlazeBlockObject(b.as_obj()).hasFileSegment() -> bool)? => {
-                    get_file_reader(b.as_obj())?
+            let mut reader = Box::pin(match next {
+                Some(block) if jni_call!(BlazeBlockObject(block.as_obj()).hasFileSegment() -> bool)? => {
+                    get_file_reader(block.as_obj())?
                 }
-                b if jni_call!(BlazeBlockObject(b.as_obj()).hasByteBuffer() -> bool)? => {
-                    get_byte_buffer_reader(b.as_obj())?
+                Some(block) if jni_call!(BlazeBlockObject(block.as_obj()).hasByteBuffer() -> bool)? => {
+                    get_byte_buffer_reader(block.as_obj())?
                 }
-                b => get_channel_reader(b.as_obj())?,
-            };
+                Some(block) => get_channel_reader(block.as_obj())?,
+                None => break,
+            });
 
-            while let Some((num_rows, cols)) = reader.read_batch(&exec_ctx.output_schema())? {
-                let mut cols_mem_size = 0;
-                staging_cols.resize_with(cols.len(), || vec![]);
-                for (col_idx, col) in cols.into_iter().enumerate() {
-                    cols_mem_size += col.get_array_mem_size();
-                    staging_cols[col_idx].push(col);
-                }
-                staging_num_rows += num_rows;
-                staging_mem_size += cols_mem_size;
+            while let Some((num_rows, cols)) = reader
+                .as_mut()
+                .read_batch(&exec_ctx.output_schema())?
+            {
+                let (cur_staging_num_rows, cur_staging_mem_size) = {
+                    let staging_cols_cloned = staging_cols.clone();
+                    let mut staging_cols = staging_cols_cloned.lock();
+                    let mut cols_mem_size = 0;
+                    staging_cols.resize_with(cols.len(), || vec![]);
+                    for (col_idx, col) in cols.into_iter().enumerate() {
+                        cols_mem_size += col.get_array_mem_size();
+                        staging_cols[col_idx].push(col);
+                    }
+                    drop(staging_cols);
+                    staging_num_rows.fetch_add(num_rows, SeqCst);
+                    staging_mem_size.fetch_add(cols_mem_size, SeqCst);
+                    (staging_num_rows.load(SeqCst), staging_mem_size.load(SeqCst))
+                };
 
-                if staging_num_rows >= batch_size || staging_mem_size >= output_batch_mem_size {
-                    let coalesced_cols = std::mem::take(&mut staging_cols)
+                if cur_staging_num_rows >= batch_size
+                    || cur_staging_mem_size >= suggested_output_batch_mem_size()
+                {
+                    let coalesced_cols = std::mem::take(&mut *staging_cols.clone().lock())
                         .into_iter()
                         .map(|cols| coalesce_arrays_unchecked(cols[0].data_type(), &cols))
                         .collect::<Vec<_>>();
                     let batch = RecordBatch::try_new_with_options(
                         exec_ctx.output_schema(),
                         coalesced_cols,
-                        &RecordBatchOptions::new().with_row_count(Some(staging_num_rows)),
+                        &RecordBatchOptions::new().with_row_count(Some(cur_staging_num_rows))
                     )?;
-                    staging_num_rows = 0;
-                    staging_mem_size = 0;
+                    staging_num_rows.store(0, SeqCst);
+                    staging_mem_size.store(0, SeqCst);
                     size_counter.add(batch.get_array_mem_size());
                     exec_ctx.baseline_metrics().record_output(batch.num_rows());
-                    if !elapsed_compute.exclude_timer(|| tx.send(batch)).is_ok() {
-                        break;
-                    }
+                    sender.send(batch).await;
                 }
             }
         }
 
-        if staging_num_rows > 0 {
-            let coalesced_cols = staging_cols
+        let cur_staging_num_rows = staging_num_rows.load(SeqCst);
+        if cur_staging_num_rows > 0 {
+            let coalesced_cols = std::mem::take(&mut *staging_cols.clone().lock())
                 .into_iter()
                 .map(|cols| coalesce_arrays_unchecked(cols[0].data_type(), &cols))
                 .collect::<Vec<_>>();
             let batch = RecordBatch::try_new_with_options(
                 exec_ctx.output_schema(),
                 coalesced_cols,
-                &RecordBatchOptions::new().with_row_count(Some(staging_num_rows)),
+                &RecordBatchOptions::new().with_row_count(Some(cur_staging_num_rows))
             )?;
             size_counter.add(batch.get_array_mem_size());
             exec_ctx.baseline_metrics().record_output(batch.num_rows());
-            let _ = elapsed_compute.exclude_timer(|| tx.send(batch));
+            sender.send(batch).await;
         }
-        Ok::<_, DataFusionError>(())
-    });
-    (rx, handle)
+        Ok(())
+    }))
 }
 
 fn get_channel_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Read + Send>>> {
     let channel_reader = ReadableByteChannelReader::try_new(block)?;
-
     Ok(IpcCompressionReader::new(Box::new(
         BufReader::with_capacity(65536, channel_reader),
     )))
