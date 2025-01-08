@@ -23,9 +23,10 @@ use datafusion::{
     error::{DataFusionError, Result},
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
+    physical_plan,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
         SendableRecordBatchStream, Statistics,
     },
 };
@@ -36,7 +37,7 @@ use crate::{
     memmgr::MemManager,
     shuffle::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
-        rss_sort_repartitioner::RssSortShuffleRepartitioner, ShuffleRepartitioner,
+        rss_sort_repartitioner::RssSortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
     },
 };
 
@@ -80,7 +81,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
         self.props.get_or_init(|| {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
-                self.partitioning.clone(),
+                physical_plan::Partitioning::UnknownPartitioning(1),
                 ExecutionMode::Bounded,
             )
         })
@@ -122,7 +123,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
-            Partitioning::Hash(..) | Partitioning::RoundRobinBatch(..) => {
+            Partitioning::HashPartitioning(..) | Partitioning::RoundRobinPartitioning(..) => {
                 let sort_time = exec_ctx.register_timer_metric("sort_time");
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,

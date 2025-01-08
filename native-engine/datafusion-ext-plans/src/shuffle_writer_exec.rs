@@ -22,9 +22,10 @@ use datafusion::{
     error::Result,
     execution::context::TaskContext,
     physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
+    physical_plan,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
         SendableRecordBatchStream, Statistics,
     },
 };
@@ -36,7 +37,7 @@ use crate::{
     memmgr::MemManager,
     shuffle::{
         single_repartitioner::SingleShuffleRepartitioner,
-        sort_repartitioner::SortShuffleRepartitioner, ShuffleRepartitioner,
+        sort_repartitioner::SortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
     },
     sort_exec::SortExec,
 };
@@ -78,7 +79,7 @@ impl ExecutionPlan for ShuffleWriterExec {
         self.props.get_or_init(|| {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
-                self.partitioning.clone(),
+                physical_plan::Partitioning::UnknownPartitioning(1),
                 ExecutionMode::Bounded,
             )
         })
@@ -121,7 +122,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 self.output_index_file.clone(),
                 output_time,
             )),
-            Partitioning::Hash(..) => {
+            Partitioning::HashPartitioning(..) | Partitioning::RangePartitioning(..) => {
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     exec_ctx.clone(),
                     self.output_data_file.clone(),
@@ -132,7 +133,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
-            Partitioning::RoundRobinBatch(..) => {
+            Partitioning::RoundRobinPartitioning(..) => {
                 let sort_expr: Vec<PhysicalSortExpr> = self
                     .input
                     .schema()

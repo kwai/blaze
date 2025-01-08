@@ -20,13 +20,14 @@ use std::{
 };
 
 use arrow::{
-    array::RecordBatch,
+    array::{ArrayRef, RecordBatch},
     compute::SortOptions,
     datatypes::{Field, FieldRef, SchemaRef},
+    row::{RowConverter, SortField},
 };
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use datafusion::{
-    common::stats::Precision,
+    common::{stats::Precision, Result, ScalarValue},
     datasource::{
         listing::{FileRange, PartitionedFile},
         object_store::ObjectStoreUrl,
@@ -45,7 +46,7 @@ use datafusion::{
             NegativeExpr, NotExpr, PhysicalSortExpr,
         },
         union::UnionExec,
-        ColumnStatistics, ExecutionPlan, Partitioning, PhysicalExpr, Statistics,
+        ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
     },
     prelude::create_udf,
 };
@@ -79,6 +80,7 @@ use datafusion_ext_plans::{
     project_exec::ProjectExec,
     rename_columns_exec::RenameColumnsExec,
     rss_shuffle_writer_exec::RssShuffleWriterExec,
+    shuffle::Partitioning,
     shuffle_writer_exec::ShuffleWriterExec,
     sort_exec::SortExec,
     sort_merge_join_exec::SortMergeJoinExec,
@@ -86,6 +88,7 @@ use datafusion_ext_plans::{
     window_exec::WindowExec,
 };
 use object_store::{path::Path, ObjectMeta};
+use parking_lot::Mutex as SyncMutex;
 
 use crate::{
     convert_box_required, convert_required,
@@ -93,7 +96,7 @@ use crate::{
     from_proto_binary_op, proto_error, protobuf,
     protobuf::{
         physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType,
-        physical_repartition::RepartitionType, GenerateFunction,
+        physical_repartition::RepartitionType, GenerateFunction, PhysicalRepartition, SortExecNode,
     },
     Schema,
 };
@@ -331,45 +334,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::Sort(sort) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(sort.input)?;
-                let exprs = sort
-                    .expr
-                    .iter()
-                    .map(|expr| {
-                        let expr = expr.expr_type.as_ref().ok_or_else(|| {
-                            proto_error(format!(
-                                "physical_plan::from_proto() Unexpected expr {:?}",
-                                self
-                            ))
-                        })?;
-                        if let ExprType::Sort(sort_expr) = expr {
-                            let expr = sort_expr
-                                .expr
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    proto_error(format!(
-                                        "physical_plan::from_proto() Unexpected sort expr {:?}",
-                                        self
-                                    ))
-                                })?
-                                .as_ref();
-                            Ok(PhysicalSortExpr {
-                                expr: bind(
-                                    try_parse_physical_expr(expr, &input.schema())?,
-                                    &input.schema(),
-                                )?,
-                                options: SortOptions {
-                                    descending: !sort_expr.asc,
-                                    nulls_first: sort_expr.nulls_first,
-                                },
-                            })
-                        } else {
-                            Err(PlanSerDeError::General(format!(
-                                "physical_plan::from_proto() {:?}",
-                                self
-                            )))
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let exprs = try_parse_physical_sort_expr(&input, sort).unwrap();
                 // always preserve partitioning
                 Ok(Arc::new(SortExec::new(
                     input,
@@ -1120,9 +1085,56 @@ fn try_parse_physical_expr_box_required(
     }
 }
 
+fn try_parse_physical_sort_expr(
+    input: &Arc<dyn ExecutionPlan>,
+    sort: &Box<SortExecNode>,
+) -> Option<Vec<PhysicalSortExpr>> {
+    let pyhsical_sort_expr = sort
+        .expr
+        .iter()
+        .map(|expr| {
+            let expr = expr.expr_type.as_ref().ok_or_else(|| {
+                proto_error(format!(
+                    "physical_plan::from_proto() Unexpected expr {:?}",
+                    input
+                ))
+            })?;
+            if let ExprType::Sort(sort_expr) = expr {
+                let expr = sort_expr
+                    .expr
+                    .as_ref()
+                    .ok_or_else(|| {
+                        proto_error(format!(
+                            "physical_plan::from_proto() Unexpected sort expr {:?}",
+                            input
+                        ))
+                    })?
+                    .as_ref();
+                Ok(PhysicalSortExpr {
+                    expr: bind(
+                        try_parse_physical_expr(expr, &input.schema())?,
+                        &input.schema(),
+                    )?,
+                    options: SortOptions {
+                        descending: !sort_expr.asc,
+                        nulls_first: sort_expr.nulls_first,
+                    },
+                })
+            } else {
+                Err(PlanSerDeError::General(format!(
+                    "physical_plan::from_proto() {:?}",
+                    input
+                )))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    Some(pyhsical_sort_expr)
+}
+
 pub fn parse_protobuf_partitioning(
     input: Arc<dyn ExecutionPlan>,
-    partitioning: Option<&protobuf::PhysicalRepartition>,
+    partitioning: Option<&Box<PhysicalRepartition>>,
 ) -> Result<Option<Partitioning>, PlanSerDeError> {
     partitioning.map_or(Ok(None), |p| {
         let plan = p.repartition_type.as_ref().ok_or_else(|| {
@@ -1132,9 +1144,7 @@ pub fn parse_protobuf_partitioning(
             ))
         })?;
         match plan {
-            RepartitionType::SingleRepartition(..) => {
-                Ok(Some(Partitioning::UnknownPartitioning(1)))
-            }
+            RepartitionType::SingleRepartition(..) => Ok(Some(Partitioning::SinglePartitioning())),
             RepartitionType::HashRepartition(hash_part) => {
                 // let hash_part = p.hash_repartition;
                 let expr = hash_part
@@ -1145,15 +1155,67 @@ pub fn parse_protobuf_partitioning(
                             .and_then(|e| Ok(bind(e, &input.schema())?))
                     })
                     .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
-                Ok(Some(Partitioning::Hash(
+                Ok(Some(Partitioning::HashPartitioning(
                     expr,
                     hash_part.partition_count.try_into().unwrap(),
                 )))
             }
 
-            RepartitionType::RoundRobinRepartition(round_robin_part) => Ok(Some(
-                Partitioning::RoundRobinBatch(round_robin_part.partition_count.try_into().unwrap()),
-            )),
+            RepartitionType::RoundRobinRepartition(round_robin_part) => {
+                Ok(Some(Partitioning::RoundRobinPartitioning(
+                    round_robin_part.partition_count.try_into().unwrap(),
+                )))
+            }
+
+            RepartitionType::RangeRepartition(range_part) => {
+                let sort = range_part.sort_expr.clone().unwrap();
+                let exprs = try_parse_physical_sort_expr(&input, &sort).unwrap();
+
+                let value_list = &range_part.list_value;
+
+                let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+                    exprs
+                        .iter()
+                        .map(|expr: &PhysicalSortExpr| {
+                            Ok(SortField::new_with_options(
+                                expr.expr.data_type(&input.schema())?,
+                                expr.options,
+                            ))
+                        })
+                        .collect::<Result<Vec<SortField>>>()?,
+                )?));
+
+                let bound_cols: Vec<ArrayRef> = value_list
+                    .iter()
+                    .map(|x| {
+                        let xx = x.clone().value.unwrap();
+                        let values_ref = match xx {
+                            protobuf::scalar_value::Value::ListValue(scalar_list) => {
+                                let protobuf::ScalarListValue {
+                                    values,
+                                    datatype: _opt_scalar_type,
+                                } = scalar_list;
+                                let value_vec: Vec<ScalarValue> = values
+                                    .iter()
+                                    .map(|val| val.try_into())
+                                    .collect::<Result<Vec<_>, _>>()
+                                    .map_err(|_| proto_error("partition::from_proto() error"))?;
+                                ScalarValue::iter_to_array(value_vec)
+                                    .map_err(|_| proto_error("partition::from_proto() error"))
+                            }
+                            _ => Err(proto_error("partition::from_proto() bound_list type error")),
+                        };
+                        values_ref
+                    })
+                    .collect::<Result<Vec<ArrayRef>, _>>()?;
+
+                let bound_rows = sort_row_converter.lock().convert_columns(&bound_cols)?;
+                Ok(Some(Partitioning::RangePartitioning(
+                    exprs,
+                    range_part.partition_count.try_into().unwrap(),
+                    Arc::new(bound_rows),
+                )))
+            }
         }
     })
 }

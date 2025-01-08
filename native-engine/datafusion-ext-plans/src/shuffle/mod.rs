@@ -12,21 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{
-    atomic::{AtomicUsize, Ordering::SeqCst},
-    Arc,
+use std::{
+    fmt,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
-use arrow::{error::Result as ArrowResult, record_batch::RecordBatch};
+use arrow::{
+    array::ArrayRef,
+    error::Result as ArrowResult,
+    record_batch::RecordBatch,
+    row::{Row, RowConverter, Rows, SortField},
+};
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
     common::Result,
     error::DataFusionError,
-    physical_plan::{Partitioning, SendableRecordBatchStream},
+    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+    physical_plan::SendableRecordBatchStream,
 };
 use datafusion_ext_commons::{arrow::array_size::ArraySize, spark_hash::create_murmur3_hashes};
 use futures::StreamExt;
+use parking_lot::Mutex as SyncMutex;
 
 use crate::{common::execution_context::ExecutionContext, memmgr::spill::Spill};
 
@@ -99,9 +109,61 @@ struct ShuffleSpill {
     offsets: Vec<u64>,
 }
 
+#[derive(Debug, Clone)]
+pub enum Partitioning {
+    /// Allocate batches using a round-robin algorithm and the specified number
+    /// of partitions
+    RoundRobinPartitioning(usize),
+    /// Allocate rows based on a hash of one of more expressions and the
+    /// specified number of partitions
+    HashPartitioning(Vec<Arc<dyn PhysicalExpr>>, usize),
+    /// Single partitioning scheme with a known number of partitions
+    SinglePartitioning(),
+    /// Range partitioning
+    RangePartitioning(Vec<PhysicalSortExpr>, usize, Arc<Rows>),
+}
+
+impl Partitioning {
+    /// Returns the number of partitions in this partitioning scheme
+    pub fn partition_count(&self) -> usize {
+        use Partitioning::*;
+        match self {
+            RoundRobinPartitioning(n) | HashPartitioning(_, n) | RangePartitioning(_, n, _) => *n,
+            SinglePartitioning() => 1,
+        }
+    }
+}
+
+impl fmt::Display for Partitioning {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Partitioning::RoundRobinPartitioning(size) => write!(f, "RoundRobinBatch({size})"),
+            Partitioning::HashPartitioning(phy_exprs, size) => {
+                let phy_exprs_str = phy_exprs
+                    .iter()
+                    .map(|e| format!("{e}"))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                write!(f, "Hash([{phy_exprs_str}], {size})")
+            }
+            Partitioning::SinglePartitioning() => {
+                write!(f, "SinglePartitioning()")
+            }
+            Partitioning::RangePartitioning(sort_exprs, size, bounds) => {
+                let phy_exprs_str = sort_exprs
+                    .iter()
+                    .map(|e| format!("{e}"))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                write!(f, "Range([{phy_exprs_str}], {size}, {:?})", bounds)
+            }
+        }
+    }
+}
+
 fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
     match partitioning {
-        Partitioning::Hash(exprs, _) => {
+        Partitioning::HashPartitioning(exprs, _) => {
             let arrays = exprs
                 .iter()
                 .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())?))
@@ -138,4 +200,81 @@ fn evaluate_robin_partition_ids(
         vec_u32.push(((i + start_rows) % partition_num) as u32);
     }
     vec_u32
+}
+
+fn evaluate_range_partition_ids(
+    batch: &RecordBatch,
+    sort_expr: &Vec<PhysicalSortExpr>,
+    bound_rows: &Arc<Rows>,
+) -> Result<Vec<u32>> {
+    let num_rows = batch.num_rows();
+
+    let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
+        sort_expr
+            .iter()
+            .map(|expr: &PhysicalSortExpr| {
+                Ok(SortField::new_with_options(
+                    expr.expr.data_type(&batch.schema())?,
+                    expr.options,
+                ))
+            })
+            .collect::<Result<Vec<SortField>>>()?,
+    )?));
+
+    let key_cols: Vec<ArrayRef> = sort_expr
+        .iter()
+        .map(|expr| {
+            expr.expr
+                .evaluate(&batch)
+                .and_then(|cv| cv.into_array(batch.num_rows()))
+        })
+        .collect::<Result<_>>()?;
+    let key_rows = sort_row_converter.lock().convert_columns(&key_cols)?;
+    let mut vec_u32 = Vec::with_capacity(num_rows);
+    for key_row in key_rows.iter() {
+        let partition = get_partition(key_row, bound_rows, true);
+        vec_u32.push(partition);
+    }
+    Ok(vec_u32)
+}
+
+fn get_partition(key_row: Row, bound_rows: &Arc<Rows>, ascending: bool) -> u32 {
+    let mut partition = 0;
+    let num_rows = bound_rows.num_rows();
+    if num_rows <= 128 {
+        // If we have less than 128 partitions naive search
+        while partition < num_rows && key_row > bound_rows.row(partition) {
+            partition += 1;
+        }
+    } else {
+        // Determine which binary search method to use only once.
+        partition = binary_search(bound_rows, key_row, 0, num_rows as isize);
+        // binarySearch either returns the match location or -[insertion point]-1
+        if partition > num_rows {
+            partition = num_rows
+        }
+    }
+    if !ascending {
+        partition = num_rows - partition
+    }
+    partition as u32
+}
+
+fn binary_search(rows: &Arc<Rows>, target: Row, from_index: isize, to_index: isize) -> usize {
+    let mut low: isize = from_index;
+    let mut high: isize = to_index - 1;
+
+    while low <= high {
+        let mid = (low + high) >> 1;
+        let mid_val = rows.row(mid as usize);
+
+        if mid_val < target {
+            low = mid + 1;
+        } else if mid_val > target {
+            high = mid - 1;
+        } else {
+            return mid as usize; // key found
+        }
+    }
+    return low as usize; // key not found.
 }

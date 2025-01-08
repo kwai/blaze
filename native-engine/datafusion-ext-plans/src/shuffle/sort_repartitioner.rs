@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
     common::{DataFusionError, Result},
-    physical_plan::{metrics::Time, Partitioning},
+    physical_plan::metrics::Time,
 };
 use datafusion_ext_commons::{
     algorithm::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
@@ -38,7 +38,7 @@ use crate::{
         spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
-    shuffle::{buffered_data::BufferedData, ShuffleRepartitioner, ShuffleSpill},
+    shuffle::{buffered_data::BufferedData, Partitioning, ShuffleRepartitioner, ShuffleSpill},
 };
 
 pub struct SortShuffleRepartitioner {
