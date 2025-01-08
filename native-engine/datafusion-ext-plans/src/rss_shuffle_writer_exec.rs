@@ -18,11 +18,18 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
-use datafusion::{arrow::datatypes::SchemaRef, error::{DataFusionError, Result}, execution::context::TaskContext, physical_expr::EquivalenceProperties, physical_plan::{
-    metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
-    SendableRecordBatchStream, Statistics,
-}, physical_plan};
+use datafusion::{
+    arrow::datatypes::SchemaRef,
+    error::{DataFusionError, Result},
+    execution::context::TaskContext,
+    physical_expr::EquivalenceProperties,
+    physical_plan,
+    physical_plan::{
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
+        SendableRecordBatchStream, Statistics,
+    },
+};
 use once_cell::sync::OnceCell;
 
 use crate::{

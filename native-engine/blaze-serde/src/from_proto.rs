@@ -1144,9 +1144,7 @@ pub fn parse_protobuf_partitioning(
             ))
         })?;
         match plan {
-            RepartitionType::SingleRepartition(..) => {
-                Ok(Some(Partitioning::SinglePartitioning()))
-            }
+            RepartitionType::SingleRepartition(..) => Ok(Some(Partitioning::SinglePartitioning())),
             RepartitionType::HashRepartition(hash_part) => {
                 // let hash_part = p.hash_repartition;
                 let expr = hash_part

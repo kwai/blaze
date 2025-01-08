@@ -128,9 +128,7 @@ impl Partitioning {
     pub fn partition_count(&self) -> usize {
         use Partitioning::*;
         match self {
-            RoundRobinPartitioning(n)
-            | HashPartitioning(_, n)
-            | RangePartitioning(_, n, _) => *n,
+            RoundRobinPartitioning(n) | HashPartitioning(_, n) | RangePartitioning(_, n, _) => *n,
             SinglePartitioning() => 1,
         }
     }

@@ -18,11 +18,17 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
-use datafusion::{error::Result, execution::context::TaskContext, physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr}, physical_plan::{
-    metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
-    SendableRecordBatchStream, Statistics,
-}, physical_plan};
+use datafusion::{
+    error::Result,
+    execution::context::TaskContext,
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
+    physical_plan,
+    physical_plan::{
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
+        SendableRecordBatchStream, Statistics,
+    },
+};
 use datafusion_ext_commons::df_execution_err;
 use once_cell::sync::OnceCell;
 
