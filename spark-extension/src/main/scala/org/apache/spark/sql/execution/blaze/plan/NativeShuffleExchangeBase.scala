@@ -220,6 +220,7 @@ abstract class NativeShuffleExchangeBase(
         }
         implicit val ordering = new LazilyGeneratedOrdering(orderingAttributes)
 
+        // TODO: complete Native SampleExec
         val bounds = rangePartitioningBound(
           numPartitions,
           rddForSampling,

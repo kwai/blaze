@@ -38,7 +38,7 @@ use crate::{
         spill::{try_new_spill, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
-    shuffle::{buffered_data::BufferedData, RePartitioning, ShuffleRepartitioner, ShuffleSpill},
+    shuffle::{buffered_data::BufferedData, Partitioning, ShuffleRepartitioner, ShuffleSpill},
 };
 
 pub struct SortShuffleRepartitioner {
@@ -58,7 +58,7 @@ impl SortShuffleRepartitioner {
         exec_ctx: Arc<ExecutionContext>,
         output_data_file: String,
         output_index_file: String,
-        partitioning: RePartitioning,
+        partitioning: Partitioning,
         output_io_time: Time,
     ) -> Self {
         let partition_id = exec_ctx.partition_id();

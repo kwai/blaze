@@ -80,7 +80,7 @@ use datafusion_ext_plans::{
     project_exec::ProjectExec,
     rename_columns_exec::RenameColumnsExec,
     rss_shuffle_writer_exec::RssShuffleWriterExec,
-    shuffle::RePartitioning,
+    shuffle::Partitioning,
     shuffle_writer_exec::ShuffleWriterExec,
     sort_exec::SortExec,
     sort_merge_join_exec::SortMergeJoinExec,
@@ -1135,7 +1135,7 @@ fn try_parse_physical_sort_expr(
 pub fn parse_protobuf_partitioning(
     input: Arc<dyn ExecutionPlan>,
     partitioning: Option<&Box<PhysicalRepartition>>,
-) -> Result<Option<RePartitioning>, PlanSerDeError> {
+) -> Result<Option<Partitioning>, PlanSerDeError> {
     partitioning.map_or(Ok(None), |p| {
         let plan = p.repartition_type.as_ref().ok_or_else(|| {
             proto_error(format!(
@@ -1145,7 +1145,7 @@ pub fn parse_protobuf_partitioning(
         })?;
         match plan {
             RepartitionType::SingleRepartition(..) => {
-                Ok(Some(RePartitioning::UnknownPartitioning(1)))
+                Ok(Some(Partitioning::SinglePartitioning()))
             }
             RepartitionType::HashRepartition(hash_part) => {
                 // let hash_part = p.hash_repartition;
@@ -1157,14 +1157,14 @@ pub fn parse_protobuf_partitioning(
                             .and_then(|e| Ok(bind(e, &input.schema())?))
                     })
                     .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
-                Ok(Some(RePartitioning::HashPartitioning(
+                Ok(Some(Partitioning::HashPartitioning(
                     expr,
                     hash_part.partition_count.try_into().unwrap(),
                 )))
             }
 
             RepartitionType::RoundRobinRepartition(round_robin_part) => {
-                Ok(Some(RePartitioning::RoundRobinPartitioning(
+                Ok(Some(Partitioning::RoundRobinPartitioning(
                     round_robin_part.partition_count.try_into().unwrap(),
                 )))
             }
@@ -1212,7 +1212,7 @@ pub fn parse_protobuf_partitioning(
                     .collect::<Result<Vec<ArrayRef>, _>>()?;
 
                 let bound_rows = sort_row_converter.lock().convert_columns(&bound_cols)?;
-                Ok(Some(RePartitioning::RangePartitioning(
+                Ok(Some(Partitioning::RangePartitioning(
                     exprs,
                     range_part.partition_count.try_into().unwrap(),
                     Arc::new(bound_rows),

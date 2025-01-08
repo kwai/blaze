@@ -38,13 +38,13 @@ use crate::{
     common::{ipc_compression::IpcCompressionWriter, timer_helper::TimerHelper},
     shuffle::{
         evaluate_hashes, evaluate_partition_ids, evaluate_range_partition_ids,
-        evaluate_robin_partition_ids, rss::RssWriter, RePartitioning,
+        evaluate_robin_partition_ids, rss::RssWriter, Partitioning,
     },
 };
 
 pub struct BufferedData {
     partition_id: usize,
-    partitioning: RePartitioning,
+    partitioning: Partitioning,
     staging_batches: Vec<RecordBatch>,
     staging_num_rows: usize,
     staging_mem_used: usize,
@@ -56,7 +56,7 @@ pub struct BufferedData {
 }
 
 impl BufferedData {
-    pub fn new(partitioning: RePartitioning, partition_id: usize, sort_time: Time) -> Self {
+    pub fn new(partitioning: Partitioning, partition_id: usize, sort_time: Time) -> Self {
         Self {
             partition_id,
             partitioning,
@@ -310,7 +310,7 @@ impl KeyForRadixTournamentTree for PartCursor {
 
 fn sort_batches_by_partition_id(
     batches: Vec<RecordBatch>,
-    partitioning: &RePartitioning,
+    partitioning: &Partitioning,
     current_num_rows: usize,
     partition_id: usize,
 ) -> Result<(Vec<u32>, RecordBatch)> {
@@ -325,19 +325,19 @@ fn sort_batches_by_partition_id(
         .flat_map(|(batch_idx, batch)| {
             let mut part_ids: Vec<u32> = Vec::new();
             match partitioning {
-                RePartitioning::HashPartitioning(..) => {
+                Partitioning::HashPartitioning(..) => {
                     // compute partition indices
                     let hashes = evaluate_hashes(partitioning, &batch)
                         .expect(&format!("error evaluating hashes with {partitioning}"));
                     part_ids = evaluate_partition_ids(hashes, partitioning.partition_count());
                 }
-                RePartitioning::RoundRobinPartitioning(..) => {
+                Partitioning::RoundRobinPartitioning(..) => {
                     part_ids =
                         evaluate_robin_partition_ids(partitioning, &batch, round_robin_start_rows);
                     round_robin_start_rows += batch.num_rows();
                     round_robin_start_rows %= partitioning.partition_count();
                 }
-                RePartitioning::RangePartitioning(sort_expr, _, bounds) => {
+                Partitioning::RangePartitioning(sort_expr, _, bounds) => {
                     part_ids = evaluate_range_partition_ids(&batch, sort_expr, bounds).unwrap();
                 }
                 _ => unreachable!("unsupported partitioning: {:?}", partitioning),
@@ -426,7 +426,7 @@ mod test {
             ("c", &vec![5, 6, 7, 8, 9, 0, 1, 2, 3, 4]),
         );
 
-        let round_robin_partitioning = RePartitioning::RoundRobinPartitioning(4);
+        let round_robin_partitioning = Partitioning::RoundRobinPartitioning(4);
         let (_parts, sorted_batch) =
             sort_batches_by_partition_id(vec![record_batch], &round_robin_partitioning, 3, 0)?;
 
@@ -480,7 +480,7 @@ mod test {
         let partition_num = rows.num_rows() + 1;
 
         let range_repartitioning =
-            RePartitioning::RangePartitioning(sort_exprs, partition_num, Arc::from(rows));
+            Partitioning::RangePartitioning(sort_exprs, partition_num, Arc::from(rows));
         let (_parts, sorted_batch) =
             sort_batches_by_partition_id(vec![record_batch], &range_repartitioning, 0, 0)?;
 
@@ -542,7 +542,7 @@ mod test {
         let partition_num = rows.num_rows() + 1;
 
         let range_repartitioning =
-            RePartitioning::RangePartitioning(sort_exprs, partition_num, Arc::from(rows));
+            Partitioning::RangePartitioning(sort_exprs, partition_num, Arc::from(rows));
         let (_parts, sorted_batch) =
             sort_batches_by_partition_id(vec![record_batch], &range_repartitioning, 0, 0)?;
 

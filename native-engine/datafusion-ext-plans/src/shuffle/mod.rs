@@ -110,37 +110,37 @@ struct ShuffleSpill {
 }
 
 #[derive(Debug, Clone)]
-pub enum RePartitioning {
+pub enum Partitioning {
     /// Allocate batches using a round-robin algorithm and the specified number
     /// of partitions
     RoundRobinPartitioning(usize),
     /// Allocate rows based on a hash of one of more expressions and the
     /// specified number of partitions
     HashPartitioning(Vec<Arc<dyn PhysicalExpr>>, usize),
-    /// Unknown partitioning scheme with a known number of partitions
-    UnknownPartitioning(usize),
+    /// Single partitioning scheme with a known number of partitions
+    SinglePartitioning(),
     /// Range partitioning
     RangePartitioning(Vec<PhysicalSortExpr>, usize, Arc<Rows>),
 }
 
-impl RePartitioning {
+impl Partitioning {
     /// Returns the number of partitions in this partitioning scheme
     pub fn partition_count(&self) -> usize {
-        use RePartitioning::*;
+        use Partitioning::*;
         match self {
             RoundRobinPartitioning(n)
             | HashPartitioning(_, n)
-            | UnknownPartitioning(n)
             | RangePartitioning(_, n, _) => *n,
+            SinglePartitioning() => 1,
         }
     }
 }
 
-impl fmt::Display for RePartitioning {
+impl fmt::Display for Partitioning {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            RePartitioning::RoundRobinPartitioning(size) => write!(f, "RoundRobinBatch({size})"),
-            RePartitioning::HashPartitioning(phy_exprs, size) => {
+            Partitioning::RoundRobinPartitioning(size) => write!(f, "RoundRobinBatch({size})"),
+            Partitioning::HashPartitioning(phy_exprs, size) => {
                 let phy_exprs_str = phy_exprs
                     .iter()
                     .map(|e| format!("{e}"))
@@ -148,10 +148,10 @@ impl fmt::Display for RePartitioning {
                     .join(", ");
                 write!(f, "Hash([{phy_exprs_str}], {size})")
             }
-            RePartitioning::UnknownPartitioning(size) => {
-                write!(f, "UnknownPartitioning({size})")
+            Partitioning::SinglePartitioning() => {
+                write!(f, "SinglePartitioning()")
             }
-            RePartitioning::RangePartitioning(sort_exprs, size, bounds) => {
+            Partitioning::RangePartitioning(sort_exprs, size, bounds) => {
                 let phy_exprs_str = sort_exprs
                     .iter()
                     .map(|e| format!("{e}"))
@@ -163,9 +163,9 @@ impl fmt::Display for RePartitioning {
     }
 }
 
-fn evaluate_hashes(partitioning: &RePartitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
+fn evaluate_hashes(partitioning: &Partitioning, batch: &RecordBatch) -> ArrowResult<Vec<i32>> {
     match partitioning {
-        RePartitioning::HashPartitioning(exprs, _) => {
+        Partitioning::HashPartitioning(exprs, _) => {
             let arrays = exprs
                 .iter()
                 .map(|expr| Ok(expr.evaluate(batch)?.into_array(batch.num_rows())?))
@@ -191,7 +191,7 @@ fn evaluate_partition_ids(mut hashes: Vec<i32>, num_partitions: usize) -> Vec<u3
 }
 
 fn evaluate_robin_partition_ids(
-    partitioning: &RePartitioning,
+    partitioning: &Partitioning,
     batch: &RecordBatch,
     start_rows: usize,
 ) -> Vec<u32> {

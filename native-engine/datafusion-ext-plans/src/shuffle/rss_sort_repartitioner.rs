@@ -23,7 +23,7 @@ use jni::objects::GlobalRef;
 
 use crate::{
     memmgr::{MemConsumer, MemConsumerInfo, MemManager},
-    shuffle::{buffered_data::BufferedData, RePartitioning, ShuffleRepartitioner},
+    shuffle::{buffered_data::BufferedData, Partitioning, ShuffleRepartitioner},
 };
 
 pub struct RssSortShuffleRepartitioner {
@@ -37,7 +37,7 @@ impl RssSortShuffleRepartitioner {
     pub fn new(
         partition_id: usize,
         rss_partition_writer: GlobalRef,
-        partitioning: RePartitioning,
+        partitioning: Partitioning,
         sort_time: Time,
     ) -> Self {
         Self {

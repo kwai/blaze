@@ -18,17 +18,11 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
-use datafusion::{
-    arrow::datatypes::SchemaRef,
-    error::{DataFusionError, Result},
-    execution::context::TaskContext,
-    physical_expr::EquivalenceProperties,
-    physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
-        SendableRecordBatchStream, Statistics,
-    },
-};
+use datafusion::{arrow::datatypes::SchemaRef, error::{DataFusionError, Result}, execution::context::TaskContext, physical_expr::EquivalenceProperties, physical_plan::{
+    metrics::{ExecutionPlanMetricsSet, MetricsSet},
+    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
+    SendableRecordBatchStream, Statistics,
+}, physical_plan};
 use once_cell::sync::OnceCell;
 
 use crate::{
@@ -36,7 +30,7 @@ use crate::{
     memmgr::MemManager,
     shuffle::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
-        rss_sort_repartitioner::RssSortShuffleRepartitioner, RePartitioning, ShuffleRepartitioner,
+        rss_sort_repartitioner::RssSortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
     },
 };
 
@@ -46,7 +40,7 @@ use crate::{
 #[derive(Debug)]
 pub struct RssShuffleWriterExec {
     input: Arc<dyn ExecutionPlan>,
-    partitioning: RePartitioning,
+    partitioning: Partitioning,
     pub rss_partition_writer_resource_id: String,
     metrics: ExecutionPlanMetricsSet,
     props: OnceCell<PlanProperties>,
@@ -80,7 +74,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
         self.props.get_or_init(|| {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
-                Partitioning::UnknownPartitioning(1),
+                physical_plan::Partitioning::UnknownPartitioning(1),
                 ExecutionMode::Bounded,
             )
         })
@@ -122,7 +116,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
-            RePartitioning::HashPartitioning(..) | RePartitioning::RoundRobinPartitioning(..) => {
+            Partitioning::HashPartitioning(..) | Partitioning::RoundRobinPartitioning(..) => {
                 let sort_time = exec_ctx.register_timer_metric("sort_time");
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
@@ -152,7 +146,7 @@ impl RssShuffleWriterExec {
     /// Create a new RssShuffleWriterExec
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
-        partitioning: RePartitioning,
+        partitioning: Partitioning,
         rss_partition_writer_resource_id: String,
     ) -> Result<Self> {
         Ok(RssShuffleWriterExec {

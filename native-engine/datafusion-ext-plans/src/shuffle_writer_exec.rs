@@ -18,16 +18,11 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
-use datafusion::{
-    error::Result,
-    execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
-    physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
-        SendableRecordBatchStream, Statistics,
-    },
-};
+use datafusion::{error::Result, execution::context::TaskContext, physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr}, physical_plan::{
+    metrics::{ExecutionPlanMetricsSet, MetricsSet},
+    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
+    SendableRecordBatchStream, Statistics,
+}, physical_plan};
 use datafusion_ext_commons::df_execution_err;
 use once_cell::sync::OnceCell;
 
@@ -36,7 +31,7 @@ use crate::{
     memmgr::MemManager,
     shuffle::{
         single_repartitioner::SingleShuffleRepartitioner,
-        sort_repartitioner::SortShuffleRepartitioner, RePartitioning, ShuffleRepartitioner,
+        sort_repartitioner::SortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
     },
     sort_exec::SortExec,
 };
@@ -47,7 +42,7 @@ use crate::{
 #[derive(Debug)]
 pub struct ShuffleWriterExec {
     input: Arc<dyn ExecutionPlan>,
-    partitioning: RePartitioning,
+    partitioning: Partitioning,
     output_data_file: String,
     output_index_file: String,
     metrics: ExecutionPlanMetricsSet,
@@ -78,7 +73,7 @@ impl ExecutionPlan for ShuffleWriterExec {
         self.props.get_or_init(|| {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
-                Partitioning::UnknownPartitioning(1),
+                physical_plan::Partitioning::UnknownPartitioning(1),
                 ExecutionMode::Bounded,
             )
         })
@@ -121,7 +116,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 self.output_index_file.clone(),
                 output_time,
             )),
-            RePartitioning::HashPartitioning(..) | RePartitioning::RangePartitioning(..) => {
+            Partitioning::HashPartitioning(..) | Partitioning::RangePartitioning(..) => {
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     exec_ctx.clone(),
                     self.output_data_file.clone(),
@@ -132,7 +127,7 @@ impl ExecutionPlan for ShuffleWriterExec {
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
-            RePartitioning::RoundRobinPartitioning(..) => {
+            Partitioning::RoundRobinPartitioning(..) => {
                 let sort_expr: Vec<PhysicalSortExpr> = self
                     .input
                     .schema()
@@ -176,7 +171,7 @@ impl ShuffleWriterExec {
     /// Create a new ShuffleWriterExec
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
-        partitioning: RePartitioning,
+        partitioning: Partitioning,
         output_data_file: String,
         output_index_file: String,
     ) -> Result<Self> {
