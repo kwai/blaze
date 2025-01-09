@@ -20,13 +20,16 @@ import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
+import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.blaze.BlazeConf
+import org.apache.spark.sql.blaze.{BlazeConf, NativeHelper}
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.TaskContext
+
+import java.security.PrivilegedExceptionAction
 
 class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
   private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf()
@@ -53,6 +56,9 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
 
   def exportNextBatch(exportArrowArrayPtr: Long): Boolean = {
     val tc = TaskContext.get()
+    val currentUserInfo = UserGroupInformation.getCurrentUser
+    val nativeCurrentUser = NativeHelper.currentUser
+    val isNativeCurrentUser = currentUserInfo.equals(nativeCurrentUser)
 
     if (tc != null && (tc.isCompleted() || tc.isInterrupted())) return false
     if (!rowIter.hasNext) return false
@@ -64,11 +70,26 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
         val arrowWriter = ArrowWriter.create(root)
         var rowCount = 0
 
-        while (rowIter.hasNext
-          && rowCount < maxBatchNumRows
-          && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
-          arrowWriter.write(rowIter.next())
-          rowCount += 1
+        def processRows(): Unit = {
+          while (rowIter.hasNext
+            && rowCount < maxBatchNumRows
+            && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
+            arrowWriter.write(rowIter.next())
+            rowCount += 1
+          }
+        }
+        // if current user is native user, process rows directly
+        if (isNativeCurrentUser) {
+          processRows()
+        } else {
+          // otherwise, process rows as native user
+          nativeCurrentUser.doAs(
+            new PrivilegedExceptionAction[Unit] {
+              override def run(): Unit = {
+                processRows()
+              }
+            }
+          )
         }
         arrowWriter.finish()
 
