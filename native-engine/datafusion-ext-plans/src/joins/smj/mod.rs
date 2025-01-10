@@ -12,6 +12,43 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::joins::Idx;
+
 pub mod existence_join;
 pub mod full_join;
 pub mod semi_join;
+
+#[derive(Default)]
+struct IdxVec {
+    vec: Vec<Idx>,
+    smallest: Option<Idx>,
+}
+
+impl IdxVec {
+    pub fn len(&self) -> usize {
+        self.vec.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
+
+    pub fn push(&mut self, idx: Idx) {
+        if idx != (0, 0) {
+            if self.smallest.is_none() || idx < self.smallest.unwrap() {
+                self.smallest = Some(idx);
+            }
+        }
+        self.vec.push(idx);
+    }
+
+    pub fn take_vec(&mut self) -> Vec<Idx> {
+        let vec = std::mem::take(&mut self.vec);
+        self.smallest = None;
+        vec
+    }
+
+    pub fn smallest(&self) -> Option<Idx> {
+        self.smallest
+    }
+}

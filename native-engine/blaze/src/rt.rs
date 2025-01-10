@@ -24,7 +24,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use blaze_jni_bridge::{
-    conf::{IntConf, SPARK_TASK_CPUS},
+    conf::{IntConf, SPARK_TASK_CPUS, TOKIO_WORKER_THREADS_PER_CPU},
     is_task_running,
     jni_bridge::JavaClasses,
     jni_call, jni_call_static, jni_convert_byte_array, jni_exception_check, jni_exception_occurred,
@@ -95,13 +95,19 @@ impl NativeExecutionRuntime {
             &ExecutionPlanMetricsSet::new(),
         );
 
+        let num_worker_threads = {
+            let worker_threads_per_cpu = TOKIO_WORKER_THREADS_PER_CPU.value().unwrap_or(0);
+            let spark_task_cpus = SPARK_TASK_CPUS.value().unwrap_or(0);
+            worker_threads_per_cpu * spark_task_cpus
+        };
+
         // create tokio runtime
         // propagate classloader and task context to spawned children threads
         let spark_task_context = jni_call_static!(JniBridge.getTaskContext() -> JObject)?;
         let spark_task_context_global = jni_new_global_ref!(spark_task_context.as_obj())?;
-        let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+        let mut tokio_runtime_builder = tokio::runtime::Builder::new_multi_thread();
+        tokio_runtime_builder
             .thread_name(format!("blaze-native-stage-{stage_id}-part-{partition_id}"))
-            .worker_threads(SPARK_TASK_CPUS.value().unwrap_or(1) as usize)
             .on_thread_start(move || {
                 let classloader = JavaClasses::get().classloader;
                 let _ = jni_call_static!(
@@ -112,8 +118,11 @@ impl NativeExecutionRuntime {
                 );
                 THREAD_STAGE_ID.set(stage_id);
                 THREAD_PARTITION_ID.set(partition_id);
-            })
-            .build()?;
+            });
+        if num_worker_threads > 0 {
+            tokio_runtime_builder.worker_threads(num_worker_threads as usize);
+        }
+        let tokio_runtime = tokio_runtime_builder.build()?;
 
         // spawn batch producer
         let (batch_sender, batch_receiver) = std::sync::mpsc::sync_channel(1);

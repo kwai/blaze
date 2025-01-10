@@ -30,6 +30,11 @@ import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.FullOuter
+import org.apache.spark.sql.catalyst.plans.LeftAnti
+import org.apache.spark.sql.catalyst.plans.LeftOuter
+import org.apache.spark.sql.catalyst.plans.LeftSemi
+import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.BinaryExecNode
@@ -128,12 +133,19 @@ abstract class NativeBroadcastJoinBase(
       case BroadcastRight => (leftRDD, rightRDD)
     }
 
+    val probedShuffleReadFull = probedRDD.isShuffleReadFull && (broadcastSide match {
+      case BroadcastLeft =>
+        Seq(FullOuter, RightOuter).contains(joinType)
+      case BroadcastRight =>
+        Seq(FullOuter, LeftOuter, LeftSemi, LeftAnti).contains(joinType)
+    })
+
     new NativeRDD(
       sparkContext,
       nativeMetrics,
       probedRDD.partitions,
       rddDependencies = new OneToOneDependency(probedRDD) :: Nil,
-      probedRDD.isShuffleReadFull,
+      probedShuffleReadFull,
       (partition, context) => {
         val partition0 = new Partition() {
           override def index: Int = 0

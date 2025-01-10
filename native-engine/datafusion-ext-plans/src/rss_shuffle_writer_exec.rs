@@ -22,7 +22,7 @@ use datafusion::{
     arrow::datatypes::SchemaRef,
     error::{DataFusionError, Result},
     execution::context::TaskContext,
-    physical_expr::EquivalenceProperties,
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
     physical_plan,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
@@ -39,6 +39,7 @@ use crate::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
         rss_sort_repartitioner::RssSortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
     },
+    sort_exec::SortExec,
 };
 
 /// The rss shuffle writer operator maps each input partition to M output
@@ -118,13 +119,38 @@ impl ExecutionPlan for RssShuffleWriterExec {
             JniBridge.getResource(resource_id.as_obj()) -> JObject
         )?;
         let rss_partition_writer = jni_new_global_ref!(rss_partition_writer_local.as_obj())?;
+        let mut input = self.input.clone();
 
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
             p if p.partition_count() == 1 => {
                 Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
             }
-            Partitioning::HashPartitioning(..) | Partitioning::RoundRobinPartitioning(..) => {
+            Partitioning::HashPartitioning(..) | Partitioning::RangePartitioning(..) => {
                 let sort_time = exec_ctx.register_timer_metric("sort_time");
+                let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
+                    partition,
+                    rss_partition_writer,
+                    self.partitioning.clone(),
+                    sort_time,
+                ));
+                MemManager::register_consumer(partitioner.clone(), true);
+                partitioner
+            }
+            Partitioning::RoundRobinPartitioning(..) => {
+                let sort_time = exec_ctx.register_timer_metric("sort_time");
+                let sort_expr: Vec<PhysicalSortExpr> = self
+                    .input
+                    .schema()
+                    .fields()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| PhysicalSortExpr {
+                        expr: Arc::new(Column::new(&field.name(), index)),
+                        options: Default::default(),
+                    })
+                    .collect();
+                input = Arc::new(SortExec::new(self.input.clone(), sort_expr, None));
+
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
@@ -136,7 +162,7 @@ impl ExecutionPlan for RssShuffleWriterExec {
             }
             p => unreachable!("unsupported partitioning: {:?}", p),
         };
-        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        let input = exec_ctx.execute_with_input_stats(&input)?;
         repartitioner.execute(exec_ctx, input)
     }
 

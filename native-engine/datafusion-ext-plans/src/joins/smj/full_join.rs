@@ -25,15 +25,15 @@ use smallvec::{smallvec, SmallVec};
 use crate::{
     common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
-    joins::{Idx, JoinParams, StreamCursors},
+    joins::{smj::IdxVec, Idx, JoinParams, StreamCursors},
     sort_merge_join_exec::Joiner,
 };
 
 pub struct FullJoiner<const L_OUTER: bool, const R_OUTER: bool> {
     join_params: JoinParams,
     output_sender: Arc<WrappedRecordBatchSender>,
-    lindices: Vec<Idx>,
-    rindices: Vec<Idx>,
+    lindices: IdxVec,
+    rindices: IdxVec,
     output_rows: usize,
 }
 
@@ -47,8 +47,8 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
         Self {
             join_params,
             output_sender,
-            lindices: vec![],
-            rindices: vec![],
+            lindices: IdxVec::default(),
+            rindices: IdxVec::default(),
             output_rows: 0,
         }
     }
@@ -61,12 +61,12 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
         if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 6
             && curs.0.mem_size() + curs.1.mem_size() > suggested_output_batch_mem_size()
         {
-            if let Some(first_lidx) = self.lindices.first() {
+            if let Some(first_lidx) = self.lindices.smallest() {
                 if first_lidx.0 < curs.0.cur_idx.0 {
                     return true;
                 }
             }
-            if let Some(first_ridx) = self.rindices.first() {
+            if let Some(first_ridx) = self.rindices.smallest() {
                 if first_ridx.0 < curs.1.cur_idx.0 {
                     return true;
                 }
@@ -76,8 +76,8 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
     }
 
     async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
-        let lindices = std::mem::take(&mut self.lindices);
-        let rindices = std::mem::take(&mut self.rindices);
+        let lindices = self.lindices.take_vec();
+        let rindices = self.rindices.take_vec();
         let num_rows = lindices.len();
         assert_eq!(lindices.len(), rindices.len());
 
@@ -115,9 +115,8 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                     cur_forward!(curs.0);
                     if self.should_flush(curs) {
                         self.as_mut().flush(curs).await?;
+                        curs.0.set_min_reserved_idx(lidx);
                     }
-                    curs.0
-                        .set_min_reserved_idx(*self.lindices.first().unwrap_or(&lidx));
                 }
                 Ordering::Greater => {
                     if R_OUTER {
@@ -129,7 +128,7 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                         self.as_mut().flush(curs).await?;
                     }
                     curs.1
-                        .set_min_reserved_idx(*self.rindices.first().unwrap_or(&ridx));
+                        .set_min_reserved_idx(self.rindices.smallest().unwrap_or(ridx));
                 }
                 Ordering::Equal => {
                     cur_forward!(curs.0);
@@ -158,9 +157,6 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                             cur_forward!(curs.0);
                             last_lidx = lidx;
                             lidx = curs.0.cur_idx;
-                        } else {
-                            curs.1
-                                .set_min_reserved_idx(*self.rindices.first().unwrap_or(&last_ridx));
                         }
 
                         if r_equal {
@@ -174,9 +170,6 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                             cur_forward!(curs.1);
                             last_ridx = ridx;
                             ridx = curs.1.cur_idx;
-                        } else {
-                            curs.0
-                                .set_min_reserved_idx(*self.lindices.first().unwrap_or(&last_lidx));
                         }
 
                         if self.should_flush(curs) {
@@ -194,9 +187,9 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                         self.as_mut().flush(curs).await?;
                     }
                     curs.0
-                        .set_min_reserved_idx(*self.lindices.first().unwrap_or(&curs.0.cur_idx));
+                        .set_min_reserved_idx(self.lindices.smallest().unwrap_or(curs.0.cur_idx));
                     curs.1
-                        .set_min_reserved_idx(*self.rindices.first().unwrap_or(&curs.1.cur_idx));
+                        .set_min_reserved_idx(self.rindices.smallest().unwrap_or(curs.1.cur_idx));
                 }
             }
         }
@@ -211,7 +204,7 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                 self.as_mut().flush(curs).await?;
             }
             curs.0
-                .set_min_reserved_idx(*self.lindices.first().unwrap_or(&lidx));
+                .set_min_reserved_idx(self.lindices.smallest().unwrap_or(lidx));
         }
         while R_OUTER && !curs.1.finished {
             let ridx = curs.1.cur_idx;
@@ -222,7 +215,7 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                 self.as_mut().flush(curs).await?;
             }
             curs.1
-                .set_min_reserved_idx(*self.rindices.first().unwrap_or(&ridx));
+                .set_min_reserved_idx(self.rindices.smallest().unwrap_or(ridx));
         }
         if !self.lindices.is_empty() {
             self.flush(curs).await?;

@@ -62,7 +62,7 @@ case class BlazeCallNativeWrapper(
   private val batchRows: ArrayBuffer[InternalRow] = ArrayBuffer()
   private var batchCurRowIdx = 0
 
-  logInfo(s"Start executing native plan")
+  logWarning(s"Start executing native plan")
   private var nativeRuntimePtr = JniBridge.callNative(NativeHelper.nativeMemory, this)
 
   private lazy val rowIterator = new Iterator[InternalRow] {

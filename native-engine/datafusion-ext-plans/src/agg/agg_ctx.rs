@@ -25,7 +25,7 @@ use arrow::{
 };
 use blaze_jni_bridge::{
     conf,
-    conf::{DoubleConf, IntConf},
+    conf::{BooleanConf, DoubleConf, IntConf},
 };
 use datafusion::{
     common::{cast::as_binary_array, Result},
@@ -60,6 +60,7 @@ pub struct AggContext {
     pub supports_partial_skipping: bool,
     pub partial_skipping_ratio: f64,
     pub partial_skipping_min_rows: usize,
+    pub partial_skipping_skip_spill: bool,
     pub is_expand_agg: bool,
     pub agg_expr_evaluator: CachedExprsEvaluator,
 }
@@ -162,14 +163,18 @@ impl AggContext {
             agg_expr_evaluator_output_schema,
         )?;
 
-        let (partial_skipping_ratio, partial_skipping_min_rows) = if supports_partial_skipping {
-            (
-                conf::PARTIAL_AGG_SKIPPING_RATIO.value().unwrap_or(0.999),
-                conf::PARTIAL_AGG_SKIPPING_MIN_ROWS.value().unwrap_or(20000) as usize,
-            )
-        } else {
-            Default::default()
-        };
+        let (partial_skipping_ratio, partial_skipping_min_rows, partial_skipping_skip_spill) =
+            if supports_partial_skipping {
+                (
+                    conf::PARTIAL_AGG_SKIPPING_RATIO.value().unwrap_or(0.999),
+                    conf::PARTIAL_AGG_SKIPPING_MIN_ROWS.value().unwrap_or(20000) as usize,
+                    conf::PARTIAL_AGG_SKIPPING_SKIP_SPILL
+                        .value()
+                        .unwrap_or(false),
+                )
+            } else {
+                Default::default()
+            };
 
         Ok(Self {
             exec_mode,
@@ -186,6 +191,7 @@ impl AggContext {
             supports_partial_skipping,
             partial_skipping_ratio,
             partial_skipping_min_rows,
+            partial_skipping_skip_spill,
             is_expand_agg,
         })
     }
