@@ -43,7 +43,7 @@ smallvec = "2.0.0-alpha.9"
 tempfile = "3"
 tokio = "1.42.0"
 unchecked-index = "0.2.2"
-uuid = "1.11.0"
+uuid = "1.11.1"
 zstd = "0.13.2"
 
 [dev-dependencies]
