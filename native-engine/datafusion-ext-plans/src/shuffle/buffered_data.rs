@@ -83,9 +83,10 @@ impl BufferedData {
     }
 
     pub fn add_batch(&mut self, batch: RecordBatch) -> Result<()> {
+        // first add to staging, mem used is doubled for later sorting
         self.num_rows += batch.num_rows();
         self.staging_num_rows += batch.num_rows();
-        self.staging_mem_used += batch.get_array_mem_size();
+        self.staging_mem_used += batch.get_array_mem_size() * 2;
         self.staging_batches.push(batch);
 
         let suggested_batch_size =

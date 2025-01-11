@@ -30,7 +30,7 @@ use datafusion_ext_commons::{
         rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
         rdxsort::radix_sort_by_key,
     },
-    batch_size, df_execution_err, downcast_any,
+    batch_size, compute_suggested_batch_size_for_output, df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, write_len},
 };
 use futures::lock::Mutex;
@@ -107,7 +107,14 @@ impl AggTable {
             }
         }
 
-        // check for partial skipping
+        // trigger partial skipping if memory usage is too high
+        if self.mem_used_percent() > 0.8 {
+            if self.agg_ctx.supports_partial_skipping {
+                return df_execution_err!("AGG_TRIGGER_PARTIAL_SKIPPING");
+            }
+        }
+
+        // check for partial skipping by cardinality ratio
         if in_mem.num_records() >= self.agg_ctx.partial_skipping_min_rows {
             if in_mem.check_trigger_partial_skipping() {
                 return df_execution_err!("AGG_TRIGGER_PARTIAL_SKIPPING");
@@ -137,7 +144,7 @@ impl AggTable {
         let _timer = self.output_time.timer();
         self.set_spillable(false);
 
-        let mut in_mem = self.renew_in_mem_table(InMemMode::Hashing).await;
+        let in_mem = self.renew_in_mem_table(InMemMode::Hashing).await;
         let spills = std::mem::take(&mut *self.spills.lock().await);
         let batch_size = batch_size();
 
@@ -157,13 +164,14 @@ impl AggTable {
         if spills.is_empty() {
             let num_records = in_mem.num_records();
             let mem_used = in_mem.mem_used();
-            let mut keys = in_mem.hashing_data.map.take_keys();
+            let output_batch_size = compute_suggested_batch_size_for_output(mem_used, num_records);
             let mut acc_table = in_mem.hashing_data.acc_table;
+            let mut keys = in_mem.hashing_data.map.into_keys();
 
             // output in reversed order, so we can truncate records and free
             // memory as soon as possible
-            for begin in (0..num_records).step_by(batch_size).rev() {
-                let end = std::cmp::min(begin + batch_size, num_records);
+            for begin in (0..num_records).step_by(output_batch_size).rev() {
+                let end = std::cmp::min(begin + output_batch_size, num_records);
                 let batch = self.agg_ctx.convert_records_to_batch(
                     &keys[begin..end],
                     &mut acc_table,
