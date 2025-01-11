@@ -18,16 +18,18 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Weak},
+    time::Duration,
 };
 
 use arrow::{
     array::RecordBatch,
-    compute::{concat_batches, SortOptions},
+    compute::SortOptions,
     datatypes::{DataType, SchemaRef},
 };
+use arrow_schema::Schema;
 use async_trait::async_trait;
 use datafusion::{
-    common::{DataFusionError, JoinSide, Result, Statistics},
+    common::{JoinSide, Result, Statistics},
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
@@ -40,14 +42,17 @@ use datafusion::{
 };
 use datafusion_ext_commons::{batch_size, df_execution_err};
 use futures::{StreamExt, TryStreamExt};
+use futures_util::stream::Peekable;
 use hashbrown::HashMap;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::{
+    broadcast_join_build_hash_map_exec::execute_build_hash_map,
     common::{
         column_pruning::ExecuteWithColumnPruning,
         execution_context::{ExecutionContext, WrappedRecordBatchSender},
+        stream_exec::create_record_batch_stream_exec,
         timer_helper::TimerHelper,
     },
     joins::{
@@ -67,6 +72,8 @@ use crate::{
         join_utils::{JoinType, JoinType::*},
         JoinParams, JoinProjection,
     },
+    sort_exec::create_default_ascending_sort_exec,
+    sort_merge_join_exec::SortMergeJoinExec,
 };
 
 #[derive(Debug)]
@@ -315,7 +322,9 @@ async fn execute_join_with_map(
     build_output_time: Time,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
-    let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+    let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+    let _timer = elapsed_compute.timer();
+
     let mut joiner: Pin<Box<dyn Joiner + Send>> = match broadcast_side {
         JoinSide::Left => match join_params.join_type {
             Inner => Box::pin(RProbedInnerJoiner::new(join_params, map, sender)),
@@ -367,6 +376,96 @@ async fn execute_join_with_map(
     Ok(())
 }
 
+async fn execute_join_with_smj_fallback(
+    probed: SendableRecordBatchStream,
+    built: SendableRecordBatchStream,
+    join_params: JoinParams,
+    broadcast_side: JoinSide,
+    exec_ctx: Arc<ExecutionContext>,
+    sender: Arc<WrappedRecordBatchSender>,
+) -> Result<()> {
+    // remove the table data column from the built stream
+    let built_schema = built.schema();
+    let built_sorted: Arc<dyn ExecutionPlan> = {
+        let removed_schema = {
+            let mut fields = built_schema.fields().to_vec();
+            fields.pop();
+            Arc::new(Schema::new(fields))
+        };
+        let remoted_stream = Box::pin(RecordBatchStreamAdapter::new(
+            removed_schema.clone(),
+            built.map(|batch| {
+                Ok({
+                    let mut batch = batch?;
+                    batch.remove_column(batch.num_columns() - 1);
+                    batch
+                })
+            }),
+        ));
+        create_record_batch_stream_exec(remoted_stream, exec_ctx.partition_id())?
+    };
+
+    // create sorted streams, build side is already sorted
+    let (left_exec, right_exec) = match broadcast_side {
+        JoinSide::Left => (
+            built_sorted,
+            create_default_ascending_sort_exec(
+                create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
+                &join_params.right_keys,
+            ),
+        ),
+        JoinSide::Right => (
+            create_default_ascending_sort_exec(
+                create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
+                &join_params.left_keys,
+            ),
+            built_sorted,
+        ),
+    };
+
+    // run sort merge join
+    let mut smj_join_params = join_params.clone();
+    smj_join_params.sort_options = vec![SortOptions::default(); join_params.left_keys.len()];
+
+    let smj_exec = Arc::new(SortMergeJoinExec::try_new_with_join_params(
+        left_exec.clone(),
+        right_exec.clone(),
+        smj_join_params,
+    )?);
+    let mut join_output = smj_exec.execute(exec_ctx.partition_id(), exec_ctx.task_ctx())?;
+
+    // send all outputs
+    while let Some(batch) = join_output.next().await.transpose()? {
+        sender.send(batch).await;
+    }
+
+    // elapsed_compute = sort time + merge time
+    let smj_time = exec_ctx.register_timer_metric("fallback_sort_merge_join_time");
+    smj_time.add_duration(Duration::from_nanos(
+        left_exec
+            .metrics()
+            .and_then(|m| m.elapsed_compute())
+            .unwrap_or(0) as u64,
+    ));
+    smj_time.add_duration(Duration::from_nanos(
+        right_exec
+            .metrics()
+            .and_then(|m| m.elapsed_compute())
+            .unwrap_or(0) as u64,
+    ));
+    smj_time.add_duration(Duration::from_nanos(
+        smj_exec
+            .metrics()
+            .and_then(|m| m.elapsed_compute())
+            .unwrap_or(0) as u64,
+    ));
+    exec_ctx
+        .baseline_metrics()
+        .elapsed_compute()
+        .add_duration(smj_time.duration());
+    Ok(())
+}
+
 async fn execute_join(
     left: Arc<dyn ExecutionPlan>,
     right: Arc<dyn ExecutionPlan>,
@@ -392,112 +491,99 @@ async fn execute_join(
         JoinSide::Right => join_params.right_keys.clone(),
     };
 
-    // fetch two sides asynchronously to eagerly fetch probed side
-    let (probed, map) = futures::try_join!(
-        async {
-            let probed_input = exec_ctx.stat_input(exec_ctx.execute(&probed_plan)?);
-            let probed_schema = probed_input.schema();
-            let mut probed_peeked = Box::pin(probed_input.peekable());
-            probed_peeked.as_mut().peek().await;
-            Ok(Box::pin(RecordBatchStreamAdapter::new(
-                probed_schema,
-                probed_peeked,
-            )))
-        },
-        async {
-            if is_built {
-                collect_join_hash_map(
-                    exec_ctx.clone(),
-                    cached_build_hash_map_id,
-                    built_plan,
-                    &map_keys,
-                    build_time.clone(),
-                )
-                .await
-            } else {
-                build_join_hash_map(exec_ctx.clone(), built_plan, &map_keys, build_time.clone())
-                    .await
-            }
-        }
-    )?;
-
-    exec_ctx
-        .baseline_metrics()
-        .elapsed_compute()
-        .add_duration(build_time.duration());
-
-    execute_join_with_map(
-        probed,
-        map,
-        join_params,
-        broadcast_side,
-        exec_ctx,
-        probed_side_hash_time,
-        probed_side_search_time,
-        probed_side_compare_time,
-        build_output_time,
-        sender,
+    let probed_input = exec_ctx.stat_input(exec_ctx.execute(&probed_plan)?);
+    let built_input = if is_built {
+        exec_ctx.stat_input(exec_ctx.execute(&built_plan)?)
+    } else {
+        let data_input = exec_ctx.stat_input(exec_ctx.execute(&built_plan)?);
+        let built_schema = join_hash_map_schema(&data_input.schema());
+        execute_build_hash_map(
+            data_input,
+            map_keys.clone(),
+            exec_ctx.with_new_output_schema(built_schema),
+            build_time.clone(),
+        )?
+    };
+    let built_collected = collect_join_hash_map(
+        Box::pin(built_input.peekable()),
+        cached_build_hash_map_id.filter(|_| is_built),
+        &map_keys,
+        build_time,
     )
-    .await
+    .await?;
+
+    match built_collected {
+        CollectJoinHashMapResult::Map(map) => {
+            let join_with_map = execute_join_with_map(
+                probed_input,
+                map,
+                join_params,
+                broadcast_side,
+                exec_ctx,
+                probed_side_hash_time,
+                probed_side_search_time,
+                probed_side_compare_time,
+                build_output_time,
+                sender,
+            );
+            join_with_map.await?;
+        }
+        CollectJoinHashMapResult::SortedStream(stream) => {
+            let built_input = Box::pin(RecordBatchStreamAdapter::new(
+                stream.get_ref().schema(),
+                stream,
+            ));
+            let join_with_smj_fallback = execute_join_with_smj_fallback(
+                probed_input,
+                built_input,
+                join_params,
+                broadcast_side,
+                exec_ctx,
+                sender,
+            );
+            join_with_smj_fallback.await?;
+        }
+    }
+    Ok(())
 }
 
-async fn build_join_hash_map(
-    exec_ctx: Arc<ExecutionContext>,
-    built_plan: Arc<dyn ExecutionPlan>,
-    key_exprs: &[PhysicalExprRef],
-    build_time: Time,
-) -> Result<Arc<JoinHashMap>> {
-    let input = exec_ctx.execute_with_input_stats(&built_plan)?;
-    let data_schema = input.schema();
-    let hash_map_schema = join_hash_map_schema(&data_schema);
-    let data_batches: Vec<RecordBatch> = input.try_collect().await?;
-
-    let join_hash_map = build_time.with_timer(|| {
-        let data_batch = concat_batches(&data_schema, data_batches.iter())?;
-        if data_batch.num_rows() == 0 {
-            return Ok(Arc::new(JoinHashMap::create_empty(
-                hash_map_schema,
-                key_exprs,
-            )?));
-        }
-
-        let join_hash_map = JoinHashMap::create_from_data_batch(data_batch, key_exprs)?;
-        Ok::<_, DataFusionError>(Arc::new(join_hash_map))
-    })?;
-    Ok(join_hash_map)
+enum CollectJoinHashMapResult {
+    Map(Arc<JoinHashMap>),
+    SortedStream(Pin<Box<Peekable<SendableRecordBatchStream>>>),
 }
 
 async fn collect_join_hash_map(
-    exec_ctx: Arc<ExecutionContext>,
+    input: Pin<Box<Peekable<SendableRecordBatchStream>>>,
     cached_build_hash_map_id: Option<String>,
-    built_plan: Arc<dyn ExecutionPlan>,
     key_exprs: &[PhysicalExprRef],
     build_time: Time,
-) -> Result<Arc<JoinHashMap>> {
+) -> Result<CollectJoinHashMapResult> {
     Ok(match cached_build_hash_map_id {
         Some(cached_id) => {
             get_cached_join_hash_map(&cached_id, || async {
-                let input = exec_ctx.execute_with_input_stats(&built_plan)?;
                 collect_join_hash_map_without_caching(input, key_exprs, build_time).await
             })
             .await?
         }
-        None => {
-            let input = exec_ctx.execute_with_input_stats(&built_plan)?;
-            let map = collect_join_hash_map_without_caching(input, key_exprs, build_time).await?;
-            Arc::new(map)
-        }
+        None => collect_join_hash_map_without_caching(input, key_exprs, build_time).await?,
     })
 }
 
 async fn collect_join_hash_map_without_caching(
-    input: SendableRecordBatchStream,
+    mut input: Pin<Box<Peekable<SendableRecordBatchStream>>>,
     key_exprs: &[PhysicalExprRef],
     build_time: Time,
-) -> Result<JoinHashMap> {
-    let hash_map_schema = input.schema();
-    let hash_map_batches: Vec<RecordBatch> = input.try_collect().await?;
+) -> Result<CollectJoinHashMapResult> {
+    let hash_map_schema = input.get_ref().schema();
+    let is_smj_fallback_join = matches!(
+        input.as_mut().peek().await,
+        Some(Ok(batch)) if !JoinHashMap::record_batch_contains_hash_map(batch),
+    );
+    if is_smj_fallback_join {
+        return Ok(CollectJoinHashMapResult::SortedStream(input));
+    }
 
+    let hash_map_batches: Vec<RecordBatch> = input.try_collect().await?;
     build_time.with_timer(|| {
         let join_hash_map = match hash_map_batches.len() {
             0 => JoinHashMap::create_empty(hash_map_schema, key_exprs)?,
@@ -510,7 +596,7 @@ async fn collect_join_hash_map_without_caching(
             }
             n => return df_execution_err!("expect zero or one hash map batch, got {n}"),
         };
-        Ok(join_hash_map)
+        Ok(CollectJoinHashMapResult::Map(Arc::new(join_hash_map)))
     })
 }
 
@@ -534,10 +620,10 @@ pub trait Joiner {
     fn num_output_rows(&self) -> usize;
 }
 
-async fn get_cached_join_hash_map<Fut: Future<Output = Result<JoinHashMap>> + Send>(
+async fn get_cached_join_hash_map<Fut: Future<Output = Result<CollectJoinHashMapResult>> + Send>(
     cached_id: &str,
     init: impl FnOnce() -> Fut,
-) -> Result<Arc<JoinHashMap>> {
+) -> Result<CollectJoinHashMapResult> {
     type Slot = Arc<tokio::sync::Mutex<Weak<JoinHashMap>>>;
     static CACHED_JOIN_HASH_MAP: OnceCell<Arc<Mutex<HashMap<String, Slot>>>> = OnceCell::new();
 
@@ -556,11 +642,17 @@ async fn get_cached_join_hash_map<Fut: Future<Output = Result<JoinHashMap>> + Se
     let mut slot = slot.lock().await;
     if let Some(cached) = slot.upgrade() {
         log::info!("got cached broadcast join hash map: ${cached_id}");
-        Ok(cached)
+        Ok(CollectJoinHashMapResult::Map(cached))
     } else {
         log::info!("collecting broadcast join hash map: ${cached_id}");
-        let new = Arc::new(init().await?);
-        *slot = Arc::downgrade(&new);
-        Ok(new)
+        match init().await? {
+            CollectJoinHashMapResult::Map(map) => {
+                *slot = Arc::downgrade(&map);
+                Ok(CollectJoinHashMapResult::Map(map))
+            }
+            CollectJoinHashMapResult::SortedStream(sorted_stream) => {
+                Ok(CollectJoinHashMapResult::SortedStream(sorted_stream))
+            }
+        }
     }
 }

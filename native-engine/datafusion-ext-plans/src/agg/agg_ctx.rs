@@ -26,7 +26,6 @@ use arrow::{
 use blaze_jni_bridge::{
     conf,
     conf::{DoubleConf, IntConf},
-    is_jni_bridge_inited,
 };
 use datafusion::{
     common::{cast::as_binary_array, Result},
@@ -164,14 +163,10 @@ impl AggContext {
         )?;
 
         let (partial_skipping_ratio, partial_skipping_min_rows) = if supports_partial_skipping {
-            if is_jni_bridge_inited() {
-                (
-                    conf::PARTIAL_AGG_SKIPPING_RATIO.value()?,
-                    conf::PARTIAL_AGG_SKIPPING_MIN_ROWS.value()? as usize,
-                )
-            } else {
-                (0.999, 20000) // only for testing
-            }
+            (
+                conf::PARTIAL_AGG_SKIPPING_RATIO.value().unwrap_or(0.999),
+                conf::PARTIAL_AGG_SKIPPING_MIN_ROWS.value().unwrap_or(20000) as usize,
+            )
         } else {
             Default::default()
         };

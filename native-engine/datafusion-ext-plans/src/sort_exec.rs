@@ -37,7 +37,9 @@ use bytesize::ByteSize;
 use datafusion::{
     common::{DataFusionError, Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
+    physical_expr::{
+        expressions::Column, EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr,
+    },
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
@@ -100,6 +102,23 @@ impl SortExec {
             props: OnceCell::new(),
         }
     }
+}
+
+pub fn create_default_ascending_sort_exec(
+    input: Arc<dyn ExecutionPlan>,
+    key_exprs: &[PhysicalExprRef],
+) -> Arc<dyn ExecutionPlan> {
+    Arc::new(SortExec::new(
+        input,
+        key_exprs
+            .iter()
+            .map(|e| PhysicalSortExpr {
+                expr: e.clone(),
+                options: Default::default(),
+            })
+            .collect(),
+        None,
+    ))
 }
 
 impl DisplayAs for SortExec {

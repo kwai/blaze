@@ -53,7 +53,11 @@ pub struct JoinerParams {
 }
 
 impl JoinerParams {
-    const fn new(probe_side: ProbeSide, probe_side_outer: bool, build_side_outer: bool) -> Self {
+    pub const fn new(
+        probe_side: ProbeSide,
+        probe_side_outer: bool,
+        build_side_outer: bool,
+    ) -> Self {
         Self {
             probe_side,
             probe_side_outer,
@@ -62,15 +66,15 @@ impl JoinerParams {
     }
 }
 
-const LEFT_PROBED_INNER: JoinerParams = JoinerParams::new(L, false, false);
-const LEFT_PROBED_LEFT: JoinerParams = JoinerParams::new(L, true, false);
-const LEFT_PROBED_RIGHT: JoinerParams = JoinerParams::new(L, false, true);
-const LEFT_PROBED_OUTER: JoinerParams = JoinerParams::new(L, true, true);
+pub const LEFT_PROBED_INNER: JoinerParams = JoinerParams::new(L, false, false);
+pub const LEFT_PROBED_LEFT: JoinerParams = JoinerParams::new(L, true, false);
+pub const LEFT_PROBED_RIGHT: JoinerParams = JoinerParams::new(L, false, true);
+pub const LEFT_PROBED_OUTER: JoinerParams = JoinerParams::new(L, true, true);
 
-const RIGHT_PROBED_INNER: JoinerParams = JoinerParams::new(R, false, false);
-const RIGHT_PROBED_LEFT: JoinerParams = JoinerParams::new(R, false, true);
-const RIGHT_PROBED_RIGHT: JoinerParams = JoinerParams::new(R, true, false);
-const RIGHT_PROBED_OUTER: JoinerParams = JoinerParams::new(R, true, true);
+pub const RIGHT_PROBED_INNER: JoinerParams = JoinerParams::new(R, false, false);
+pub const RIGHT_PROBED_LEFT: JoinerParams = JoinerParams::new(R, false, true);
+pub const RIGHT_PROBED_RIGHT: JoinerParams = JoinerParams::new(R, true, false);
+pub const RIGHT_PROBED_OUTER: JoinerParams = JoinerParams::new(R, true, true);
 
 pub type LProbedInnerJoiner = FullJoiner<LEFT_PROBED_INNER>;
 pub type LProbedLeftJoiner = FullJoiner<LEFT_PROBED_LEFT>;

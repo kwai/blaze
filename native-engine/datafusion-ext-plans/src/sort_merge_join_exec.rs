@@ -57,6 +57,7 @@ pub struct SortMergeJoinExec {
     on: JoinOn,
     join_type: JoinType,
     sort_options: Vec<SortOptions>,
+    join_params: OnceCell<JoinParams>,
     schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
     props: OnceCell<PlanProperties>,
@@ -78,6 +79,32 @@ impl SortMergeJoinExec {
             on,
             join_type,
             sort_options,
+            join_params: OnceCell::new(),
+            metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
+        })
+    }
+
+    pub fn try_new_with_join_params(
+        left: Arc<dyn ExecutionPlan>,
+        right: Arc<dyn ExecutionPlan>,
+        join_params: JoinParams,
+    ) -> Result<Self> {
+        let on = join_params
+            .left_keys
+            .iter()
+            .zip(&join_params.right_keys)
+            .map(|(l, r)| (l.clone(), r.clone()))
+            .collect();
+
+        Ok(Self {
+            schema: join_params.output_schema.clone(),
+            left,
+            right,
+            on,
+            join_type: join_params.join_type,
+            sort_options: join_params.sort_options.clone(),
+            join_params: OnceCell::with_value(join_params),
             metrics: ExecutionPlanMetricsSet::new(),
             props: OnceCell::new(),
         })
@@ -132,7 +159,10 @@ impl SortMergeJoinExec {
         context: Arc<TaskContext>,
         projection: Vec<usize>,
     ) -> Result<SendableRecordBatchStream> {
-        let join_params = self.create_join_params(&projection)?;
+        let join_params = self
+            .join_params
+            .get_or_try_init(|| self.create_join_params(&projection))?
+            .clone();
         let exec_ctx = ExecutionContext::new(
             context,
             partition,

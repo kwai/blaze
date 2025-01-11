@@ -38,12 +38,12 @@ use datafusion_ext_commons::{arrow::array_size::ArraySize, spark_hash::create_mu
 use futures::StreamExt;
 use parking_lot::Mutex as SyncMutex;
 
-use crate::{common::execution_context::ExecutionContext, memmgr::spill::Spill};
+use crate::common::execution_context::ExecutionContext;
 
 pub mod single_repartitioner;
 pub mod sort_repartitioner;
 
-mod buffered_data;
+pub mod buffered_data;
 mod rss;
 pub mod rss_single_repartitioner;
 pub mod rss_sort_repartitioner;
@@ -102,11 +102,6 @@ impl dyn ShuffleRepartitioner {
                 Ok::<_, DataFusionError>(())
             }))
     }
-}
-
-struct ShuffleSpill {
-    spill: Box<dyn Spill>,
-    offsets: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
