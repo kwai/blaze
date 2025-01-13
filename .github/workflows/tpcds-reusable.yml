@@ -24,7 +24,7 @@ jobs:
         run: mvn package -DskipTests
 
       - name: Upload
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: validator
           path: target/tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar
@@ -56,7 +56,7 @@ jobs:
       - name: Build ${{ inputs.sparkver }}
         run: mvn package -Ppre -P${{ inputs.sparkver }}
       - name: Upload ${{ inputs.sparkver }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: blaze-engine-${{ inputs.sparkver }}
           path: target/blaze-engine-${{ inputs.sparkver }}-pre-*-SNAPSHOT.jar
