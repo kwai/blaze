@@ -15,18 +15,26 @@ jobs:
     name: Build Validator
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/cache@v4
+        id: cache-tpcds-validator
+        with:
+          key: tpcds-validator
+          path: target/tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar
+
       - uses: s4u/setup-maven-action@main
+        if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
         with:
           maven-version: 3.5.4
           checkout-repository: blaze-init/tpcds-validator
 
       - name: Build
+        if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
         run: mvn package -DskipTests
 
-      - name: Upload
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: validator
+          name: tpcds-validator-${{ inputs.sparkver }}
           path: target/tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar
           overwrite: true
 
@@ -56,6 +64,7 @@ jobs:
 
       - name: Build ${{ inputs.sparkver }}
         run: mvn package -Ppre -P${{ inputs.sparkver }}
+
       - name: Upload ${{ inputs.sparkver }}
         uses: actions/upload-artifact@v4
         with:
@@ -63,26 +72,9 @@ jobs:
           path: target/blaze-engine-${{ inputs.sparkver }}-pre-*-SNAPSHOT.jar
           overwrite: true
 
-  setup-spark:
-    name: Setup Spark
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/cache/save@v4
-        id: cache-spark-bin-save
-        with:
-          path: spark-bin-${{ inputs.sparkver }}
-          key: spark-bin-${{ inputs.sparkver }}
-
-      - name: Setup ${{ inputs.sparkver }}
-        if: steps.cache-spark-bin-save.outputs.cache-hit != 'true'
-        run: |
-          wget -c ${{ inputs.sparkurl }}
-          mkdir -p spark-bin-${{ inputs.sparkver }}
-          cd spark-bin-${{ inputs.sparkver }} && tar -xf ../spark-*.tgz --strip-component=1
-
   run-tpcds-test:
     name: Run TPC-DS test ${{ matrix.query }}
-    needs: [build-validator, build-blaze-jar, setup-spark]
+    needs: [build-validator, build-blaze-jar]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -102,17 +94,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
-        with: {name: validator}
+      - uses: actions/cache@v4
+        id: cache-spark-bin
+        with:
+          path: spark-bin-${{ inputs.sparkver }}
+          key: spark-bin-${{ inputs.sparkver }}
+
+      - name: Setup ${{ inputs.sparkver }}
+        id: setup-spark-bin
+        if: steps.cache-spark-bin.outputs.cache-hit != 'true'
+        run: |
+          wget -c ${{ inputs.sparkurl }}
+          mkdir -p spark-bin-${{ inputs.sparkver }}
+          cd spark-bin-${{ inputs.sparkver }} && tar -xf ../spark-*.tgz --strip-component=1
 
       - uses: actions/download-artifact@v4
         with:
           name: blaze-engine-${{ inputs.sparkver }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: spark-bin-${{ inputs.sparkver }}
-          key: spark-bin-${{ inputs.sparkver }}
+          name: tpcds-validator-${{ inputs.sparkver }}
 
       - name: Checkout TPC-DS Data
         uses: actions/checkout@v4
@@ -121,15 +123,17 @@ jobs:
           path: dev/tpcds_1g
 
       - name: Install Blaze JAR
-        run: cp blaze-engine-*${{ inputs.sparkver }}*.jar spark-bin-${{ inputs.sparkver }}/jars/
+        run: |
+          ls -la
+          cp blaze-engine-*${{ inputs.sparkver }}*.jar spark-bin-${{ inputs.sparkver }}/jars/
 
       - name: Run
         run: |
+          ls -la
           export RUST_LOG=ERROR
           export RUST_BACKTRACE=1
           SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
-            --driver-java-options "--add-opens=java.base/java.nio=ALL-UNNAMED -add-opens=java.base/sun.nio.ch=ALL-UNNAMED" \
             --conf spark.driver.memory=3g \
             --conf spark.driver.memoryOverhead=2536 \
             --conf spark.sql.broadcastTimeout=900s \
