@@ -129,6 +129,7 @@ jobs:
           export RUST_BACKTRACE=1
           SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
+            --driver-java-options "--add-opens=java.base/java.nio=ALL-UNNAMED -add-opens=java.base/sun.nio.ch=ALL-UNNAMED" \
             --conf spark.driver.memory=3g \
             --conf spark.driver.memoryOverhead=2536 \
             --conf spark.sql.broadcastTimeout=900s \
