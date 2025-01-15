@@ -151,7 +151,4 @@ jobs:
           export RUST_BACKTRACE=1
           SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
-            --conf spark.driver.memory=3g \
-            --conf spark.driver.memoryOverhead=3072 \
-            --conf spark.sql.broadcastTimeout=900s \
             --query-filter ${{ matrix.query }}
