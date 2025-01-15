@@ -49,11 +49,18 @@ find_resource() {
 find_resource
 
 echo "Using \`spark-submit\` from path: $SPARK_HOME" 1>&2
-exec "${SPARK_HOME}"/bin/spark-submit                                   \
+exec "${SPARK_HOME}"/bin/spark-submit \
+  --driver-memory 5g \
   --class org.apache.spark.sql.execution.benchmark.TPCDSQueryValidator  \
   --conf spark.sql.extensions=org.apache.spark.sql.blaze.BlazeSparkSessionExtension \
   --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleManager \
-  $(join_by " " ${SPARK_CONF[@]})                                       \
-  ${RESOURCE}                                                           \
+  --conf spark.sql.shuffle.partitions=1000 \
+  --conf spark.sql.adaptive.advisoryPartitionSizeInBytes=16777216 \
+  --conf spark.sql.autoBroadcastJoinThreshold=1048576 \
+  --conf spark.sql.broadcastTimeout=900s \
+  --conf spark.driver.memoryOverhead=3072 \
+  --conf spark.blaze.memoryFraction=0.8 \
+  $(join_by " " ${SPARK_CONF[@]}) \
+  ${RESOURCE} \
   $(join_by " " ${ARGS[@]})
 
