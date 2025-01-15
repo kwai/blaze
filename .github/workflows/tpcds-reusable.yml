@@ -21,11 +21,17 @@ jobs:
           key: tpcds-validator
           path: target/tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar
 
-      - uses: s4u/setup-maven-action@main
+      - uses: actions/checkout@v4
         if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
         with:
-          maven-version: 3.5.4
-          checkout-repository: blaze-init/tpcds-validator
+          repository: blaze-init/tpcds-validator
+
+      - uses: actions/setup-java@v4
+        if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
+        with:
+          distribution: 'adopt-hotspot'
+          java-version: '8'
+          cache: 'maven'
 
       - name: Build
         if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
@@ -42,8 +48,13 @@ jobs:
     name: Build Blaze JAR
     runs-on: ubuntu-latest
     steps:
-      - uses: s4u/setup-maven-action@main
-        with: {maven-version: 3.5.4}
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
+        with:
+          distribution: 'adopt-hotspot'
+          java-version: '8'
+          cache: 'maven'
 
       - uses: arduino/setup-protoc@v2
         with: {version: "21.7"}
@@ -127,6 +138,12 @@ jobs:
           ls -la
           cp blaze-engine-*${{ inputs.sparkver }}*.jar spark-bin-${{ inputs.sparkver }}/jars/
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'adopt-hotspot'
+          java-version: '8'
+          cache: 'maven'
+
       - name: Run
         run: |
           ls -la
@@ -135,6 +152,6 @@ jobs:
           SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
             --conf spark.driver.memory=3g \
-            --conf spark.driver.memoryOverhead=2536 \
+            --conf spark.driver.memoryOverhead=3072 \
             --conf spark.sql.broadcastTimeout=900s \
             --query-filter ${{ matrix.query }}
