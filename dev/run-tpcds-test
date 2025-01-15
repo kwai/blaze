@@ -50,6 +50,7 @@ find_resource
 
 echo "Using \`spark-submit\` from path: $SPARK_HOME" 1>&2
 exec "${SPARK_HOME}"/bin/spark-submit                                   \
+  --driver-java-options "--add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED" \
   --class org.apache.spark.sql.execution.benchmark.TPCDSQueryValidator  \
   --conf spark.sql.extensions=org.apache.spark.sql.blaze.BlazeSparkSessionExtension \
   --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleManager \
