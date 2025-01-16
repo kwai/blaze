@@ -56,11 +56,28 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
 
   def exportNextBatch(exportArrowArrayPtr: Long): Boolean = {
     val tc = TaskContext.get()
+
+    if (tc != null && (tc.isCompleted() || tc.isInterrupted())) return false
+
     val currentUserInfo = UserGroupInformation.getCurrentUser
     val nativeCurrentUser = NativeHelper.currentUser
     val isNativeCurrentUser = currentUserInfo.equals(nativeCurrentUser)
+    // if current user is native user, process rows directly
+    if (isNativeCurrentUser) {
+      callRowIter(exportArrowArrayPtr)
+    } else {
+      // otherwise, process rows as native user
+      nativeCurrentUser.doAs(
+        new PrivilegedExceptionAction[Boolean] {
+          override def run(): Boolean = {
+            callRowIter(exportArrowArrayPtr)
+          }
+        }
+      )
+    }
+  }
 
-    if (tc != null && (tc.isCompleted() || tc.isInterrupted())) return false
+  private def callRowIter(exportArrowArrayPtr: Long): Boolean = {
     if (!rowIter.hasNext) return false
 
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
@@ -70,26 +87,11 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
         val arrowWriter = ArrowWriter.create(root)
         var rowCount = 0
 
-        def processRows(): Unit = {
-          while (rowIter.hasNext
-            && rowCount < maxBatchNumRows
-            && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
-            arrowWriter.write(rowIter.next())
-            rowCount += 1
-          }
-        }
-        // if current user is native user, process rows directly
-        if (isNativeCurrentUser) {
-          processRows()
-        } else {
-          // otherwise, process rows as native user
-          nativeCurrentUser.doAs(
-            new PrivilegedExceptionAction[Unit] {
-              override def run(): Unit = {
-                processRows()
-              }
-            }
-          )
+        while (rowIter.hasNext
+          && rowCount < maxBatchNumRows
+          && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
+          arrowWriter.write(rowIter.next())
+          rowCount += 1
         }
         arrowWriter.finish()
 
