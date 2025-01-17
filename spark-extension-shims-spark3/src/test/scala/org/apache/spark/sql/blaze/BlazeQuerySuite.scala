@@ -81,6 +81,17 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
       })
   }
 
+  test("binary type in range partitioning") {
+    withTable("t1", "t2") {
+      sql("create table t1(c1 binary, c2 int) using parquet")
+      sql(
+        "insert into t1 values (to_binary('test1', 'utf-8'), 1), (to_binary('test2', 'utf-8'), 2)")
+      spark.table("t1").printSchema()
+      val df = sql("select c2 from t1 order by c1")
+      checkAnswer(df, Seq(Row(1), Row(2)))
+    }
+  }
+  
   test("log function with negative input") {
     withTable("t1") {
       sql("create table t1 using parquet as select -1 as c1")

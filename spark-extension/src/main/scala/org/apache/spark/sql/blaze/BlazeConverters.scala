@@ -29,7 +29,7 @@ import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertToNonNativeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.joinSmallerSideTag
-import org.apache.spark.sql.blaze.NativeConverters.StubExpr
+import org.apache.spark.sql.blaze.NativeConverters.{StubExpr, scalarTypeSupported}
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
@@ -271,6 +271,16 @@ object BlazeConverters extends Logging {
         .isInstanceOf[RoundRobinPartitioning] || exec.outputPartitioning
         .isInstanceOf[RangePartitioning],
       s"partitioning not supported: ${exec.outputPartitioning}")
+
+    if (exec.outputPartitioning.isInstanceOf[RangePartitioning]) {
+      val unsupportedOrderType = exec.outputPartitioning
+        .asInstanceOf[RangePartitioning]
+        .ordering
+        .find(e => !scalarTypeSupported(e.dataType))
+      assert(
+        unsupportedOrderType.isEmpty,
+        s"Unsupported order type in range partitioning: ${unsupportedOrderType.get}")
+    }
 
     val convertedChild = outputPartitioning match {
       case p

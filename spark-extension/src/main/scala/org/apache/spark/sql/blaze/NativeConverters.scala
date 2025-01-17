@@ -118,6 +118,21 @@ object NativeConverters extends Logging {
     scalarTypeBuilder.build()
   }
 
+  def scalarTypeSupported(dataType: DataType): Boolean = {
+    dataType match {
+      case NullType | BooleanType | ByteType | ShortType | IntegerType | LongType | FloatType |
+          DoubleType | StringType | DateType | TimestampType =>
+        true
+      case _: DecimalType => true
+      case at: ArrayType => scalarTypeSupported(at.elementType)
+      case m: MapType =>
+        scalarTypeSupported(m.keyType) && scalarTypeSupported(m.valueType)
+      case s: StructType =>
+        s.fields.forall(e => scalarTypeSupported(e.dataType))
+      case _ => false
+    }
+  }
+
   def convertDataType(sparkDataType: DataType): pb.ArrowType = {
     val arrowTypeBuilder = pb.ArrowType.newBuilder()
     sparkDataType match {
