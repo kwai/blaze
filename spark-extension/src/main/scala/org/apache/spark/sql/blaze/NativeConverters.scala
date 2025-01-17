@@ -820,9 +820,12 @@ object NativeConverters extends Logging {
       case e: Acos => buildScalarFunction(pb.ScalarFunction.Acos, e.children, e.dataType)
       case e: Atan => buildScalarFunction(pb.ScalarFunction.Atan, e.children, e.dataType)
       case e: Exp => buildScalarFunction(pb.ScalarFunction.Exp, e.children, e.dataType)
-      case e: Log => buildScalarFunction(pb.ScalarFunction.Ln, e.children, e.dataType)
-      case e: Log2 => buildScalarFunction(pb.ScalarFunction.Log2, e.children, e.dataType)
-      case e: Log10 => buildScalarFunction(pb.ScalarFunction.Log10, e.children, e.dataType)
+      case e: Log =>
+        buildScalarFunction(pb.ScalarFunction.Ln, e.children.map(nullIfNegative), e.dataType)
+      case e: Log2 =>
+        buildScalarFunction(pb.ScalarFunction.Log2, e.children.map(nullIfNegative), e.dataType)
+      case e: Log10 =>
+        buildScalarFunction(pb.ScalarFunction.Log10, e.children.map(nullIfNegative), e.dataType)
       case e: Floor if !e.dataType.isInstanceOf[DecimalType] =>
         buildExprNode {
           _.setTryCast(
@@ -1242,6 +1245,10 @@ object NativeConverters extends Logging {
       case expr: Cast if expr.dataType == BinaryType => expr.child
       case expr => expr
     }
+
+  def nullIfNegative(expr: Expression): Expression = {
+    If(LessThanOrEqual(expr, Literal.default(expr.dataType)), Literal(null, expr.dataType), expr)
+  }
 
   def serializeExpression[E <: Expression](
       expr: E with Serializable,

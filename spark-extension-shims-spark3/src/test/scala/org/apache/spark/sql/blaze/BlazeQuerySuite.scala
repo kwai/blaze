@@ -91,4 +91,14 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
       checkAnswer(df, Seq(Row(1), Row(2)))
     }
   }
+  
+  test("log function with negative input") {
+    withTable("t1") {
+      sql("create table t1 using parquet as select -1 as c1")
+      spark.table("t1").printSchema()
+      val df = sql("select ln(c1) from t1")
+      df.show()
+      checkAnswer(df, Seq(Row(null)))
+    }
+  }
 }
