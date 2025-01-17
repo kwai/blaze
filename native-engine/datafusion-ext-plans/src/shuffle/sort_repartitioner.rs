@@ -14,7 +14,7 @@
 
 use std::{
     fs::OpenOptions,
-    io::{BufReader, Read, Seek, Write},
+    io::{Read, Write},
     sync::{Arc, Weak},
 };
 
@@ -25,20 +25,20 @@ use datafusion::{
     common::{DataFusionError, Result},
     physical_plan::metrics::Time,
 };
-use datafusion_ext_commons::{
-    algorithm::rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-    arrow::array_size::ArraySize,
-    df_execution_err,
-};
+use datafusion_ext_commons::{arrow::array_size::ArraySize, df_execution_err};
 use futures::lock::Mutex;
 
 use crate::{
-    common::{execution_context::ExecutionContext, timer_helper::TimerHelper},
+    common::{
+        execution_context::ExecutionContext,
+        offsetted::{Offsetted, OffsettedMergeIterator},
+        timer_helper::TimerHelper,
+    },
     memmgr::{
-        spill::{try_new_spill, Spill},
+        spill::{try_new_spill, OwnedSpillBufReader, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
     },
-    shuffle::{buffered_data::BufferedData, Partitioning, ShuffleRepartitioner, ShuffleSpill},
+    shuffle::{buffered_data::BufferedData, Partitioning, ShuffleRepartitioner},
 };
 
 pub struct SortShuffleRepartitioner {
@@ -48,7 +48,7 @@ pub struct SortShuffleRepartitioner {
     output_data_file: String,
     output_index_file: String,
     data: Mutex<BufferedData>,
-    spills: Mutex<Vec<ShuffleSpill>>,
+    spills: Mutex<Vec<Offsetted<u64, Box<dyn Spill>>>>,
     num_output_partitions: usize,
     output_io_time: Time,
 }
@@ -100,7 +100,7 @@ impl MemConsumer for SortShuffleRepartitioner {
         let spill = tokio::task::spawn_blocking(move || {
             let mut spill = try_new_spill(&spill_metrics)?;
             let offsets = data.write(spill.get_buf_writer())?;
-            Ok::<_, DataFusionError>(ShuffleSpill { spill, offsets })
+            Ok::<_, DataFusionError>(Offsetted::new(offsets, spill))
         })
         .await
         .expect("tokio spawn_blocking error")?;
@@ -199,40 +199,17 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             return Ok(());
         }
 
-        struct SpillCursor<'a> {
-            cur: usize,
-            reader: BufReader<Box<dyn Read + Send + 'a>>,
-            offsets: Vec<u64>,
-        }
-
-        impl<'a> KeyForRadixTournamentTree for SpillCursor<'a> {
-            fn rdx(&self) -> usize {
-                self.cur
-            }
-        }
-
-        impl<'a> SpillCursor<'a> {
-            fn skip_empty_partitions(&mut self) {
-                let offsets = &self.offsets;
-                while self.cur + 1 < offsets.len() && offsets[self.cur + 1] == offsets[self.cur] {
-                    self.cur += 1;
-                }
-            }
-        }
-
         // write rest data into an in-memory buffer
         if !data.is_empty() {
             let mut spill = Box::new(vec![]);
             let writer = spill.get_buf_writer();
             let offsets = data.write(writer)?;
             self.update_mem_used(spill.len()).await?;
-            spills.push(ShuffleSpill { spill, offsets });
+            spills.push(Offsetted::new(offsets, spill));
         }
 
-        let num_output_partitions = self.num_output_partitions;
-        let mut offsets = vec![0];
-
         // append partition in each spills
+        let num_output_partitions = self.num_output_partitions;
         let output_io_time = self.output_io_time.clone();
         tokio::task::spawn_blocking(move || {
             let mut output_data = output_io_time.wrap_writer(
@@ -250,57 +227,23 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                     .open(&index_file)?,
             );
 
-            if !spills.is_empty() {
-                // select partitions from spills
-                let mut cursors = RadixTournamentTree::new(
-                    spills
-                        .iter_mut()
-                        .map(|spill| SpillCursor {
-                            cur: 0,
-                            reader: spill.spill.get_buf_reader(),
-                            offsets: std::mem::take(&mut spill.offsets),
-                        })
-                        .map(|mut spill| {
-                            spill.skip_empty_partitions();
-                            spill
-                        })
-                        .filter(|spill| spill.cur < spill.offsets.len())
-                        .collect(),
-                    num_output_partitions,
-                );
+            let mut merge_iter = OffsettedMergeIterator::new(
+                num_output_partitions,
+                spills
+                    .into_iter()
+                    .map(|spill| spill.map_data(|s| OwnedSpillBufReader::from(s)))
+                    .collect(),
+            );
 
-                let mut cur_partition_id = 0;
-                loop {
-                    let mut min_spill = cursors.peek_mut();
-                    if min_spill.cur + 1 >= min_spill.offsets.len() {
-                        break;
-                    }
-
-                    while cur_partition_id < min_spill.cur {
-                        offsets.push(output_data.0.stream_position()?);
-                        cur_partition_id += 1;
-                    }
-                    let (spill_offset_start, spill_offset_end) = (
-                        min_spill.offsets[cur_partition_id],
-                        min_spill.offsets[cur_partition_id + 1],
-                    );
-
-                    let spill_range = spill_offset_start as usize..spill_offset_end as usize;
-                    let reader = &mut min_spill.reader;
-                    std::io::copy(&mut reader.take(spill_range.len() as u64), &mut output_data)?;
-
-                    // forward partition id in min_spill
-                    min_spill.cur += 1;
-                    min_spill.skip_empty_partitions();
-                }
+            while let Some((_partition_id, reader, range)) = merge_iter.next() {
+                let mut reader = reader.buf_reader().take(range.end - range.start);
+                std::io::copy(&mut reader, &mut output_data)?;
             }
-
-            // add one extra offset at last to ease partition length computation
-            offsets.resize(num_output_partitions + 1, output_data.0.stream_position()?);
+            let offsets = merge_iter.merged_offsets();
 
             // write index file
             let mut offsets_data = vec![];
-            for offset in offsets {
+            for &offset in offsets {
                 offsets_data.extend_from_slice(&(offset as i64).to_le_bytes()[..]);
             }
             output_index.write_all(&offsets_data)?;

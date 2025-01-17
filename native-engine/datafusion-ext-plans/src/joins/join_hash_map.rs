@@ -15,7 +15,7 @@
 use std::{
     fmt::{Debug, Formatter},
     hash::{BuildHasher, Hasher},
-    io::Cursor,
+    io::{Cursor, Read, Write},
     mem::MaybeUninit,
     simd::{cmp::SimdPartialEq, Simd},
     sync::Arc,
@@ -100,8 +100,20 @@ impl Table {
             num_rows < 1073741824,
             "join hash table: number of rows exceeded 2^30: {num_rows}"
         );
-
         let hashes = join_create_hashes(num_rows, key_columns);
+        Self::craete_from_key_columns_and_hashes(num_rows, key_columns, hashes)
+    }
+
+    fn craete_from_key_columns_and_hashes(
+        num_rows: usize,
+        key_columns: &[ArrayRef],
+        hashes: Vec<u32>,
+    ) -> Result<Self> {
+        assert!(
+            num_rows < 1073741824,
+            "join hash table: number of rows exceeded 2^30: {num_rows}"
+        );
+
         let key_is_valid = |row_idx| key_columns.iter().all(|col| col.is_valid(row_idx));
         let mut mapped_indices = unchecked!(vec![]);
         let mut num_valid_items = 0;
@@ -179,12 +191,10 @@ impl Table {
         })
     }
 
-    pub fn load_from_raw_bytes(raw_bytes: &[u8]) -> Result<Self> {
-        let mut cursor = Cursor::new(raw_bytes);
-
+    pub fn read_from(mut r: impl Read) -> Result<Self> {
         // read map
-        let num_valid_items = read_len(&mut cursor)?;
-        let map_mod_bits = read_len(&mut cursor)? as u32;
+        let num_valid_items = read_len(&mut r)?;
+        let map_mod_bits = read_len(&mut r)? as u32;
         let mut map = vec![
             unsafe {
                 // safety: no need to init to zeros
@@ -193,13 +203,13 @@ impl Table {
             };
             1usize << map_mod_bits
         ];
-        read_raw_slice(&mut map, &mut cursor)?;
+        read_raw_slice(&mut map, &mut r)?;
 
         // read mapped indices
-        let mapped_indices_len = read_len(&mut cursor)?;
+        let mapped_indices_len = read_len(&mut r)?;
         let mut mapped_indices = Vec::with_capacity(mapped_indices_len);
         for _ in 0..mapped_indices_len {
-            mapped_indices.push(read_len(&mut cursor)? as u32);
+            mapped_indices.push(read_len(&mut r)? as u32);
         }
 
         Ok(Self {
@@ -210,38 +220,18 @@ impl Table {
         })
     }
 
-    pub fn try_into_raw_bytes(self) -> Result<Vec<u8>> {
-        let mut raw_bytes = Vec::with_capacity(
-            (8 + self.mapped_indices.len() + size_of::<u32>())
-                + (24 + self.map.len() * size_of::<MapValueGroup>()),
-        );
-
+    pub fn write_to(self, mut w: impl Write) -> Result<()> {
         // write map
-        write_len(self.num_valid_items, &mut raw_bytes)?;
-        write_len(self.map_mod_bits as usize, &mut raw_bytes)?;
-        write_raw_slice(&self.map, &mut raw_bytes)?;
+        write_len(self.num_valid_items, &mut w)?;
+        write_len(self.map_mod_bits as usize, &mut w)?;
+        write_raw_slice(&self.map, &mut w)?;
 
         // write mapped indices
-        write_len(self.mapped_indices.len(), &mut raw_bytes)?;
+        write_len(self.mapped_indices.len(), &mut w)?;
         for &v in self.mapped_indices.as_slice() {
-            write_len(v as usize, &mut raw_bytes)?;
+            write_len(v as usize, &mut w)?;
         }
-
-        raw_bytes.shrink_to_fit();
-        Ok(raw_bytes)
-    }
-
-    pub fn lookup(&self, hash: u32) -> MapValue {
-        let mut i = (hash % (1 << self.map_mod_bits)) as usize;
-        loop {
-            let hash_matched = self.map[i].hashes.simd_eq(Simd::splat(hash));
-            let empty = self.map[i].hashes.simd_eq(Simd::splat(0));
-
-            if let Some(pos) = (hash_matched | empty).first_set() {
-                return self.map[i].values[pos];
-            }
-            i += 1;
-        }
+        Ok(())
     }
 
     pub fn lookup_many(&self, hashes: Vec<u32>) -> Vec<MapValue> {
@@ -329,9 +319,28 @@ impl JoinHashMap {
         })
     }
 
+    pub fn create_from_data_batch_and_hashes(
+        data_batch: RecordBatch,
+        key_columns: Vec<ArrayRef>,
+        hashes: Vec<u32>,
+    ) -> Result<Self> {
+        let table =
+            Table::craete_from_key_columns_and_hashes(data_batch.num_rows(), &key_columns, hashes)?;
+
+        Ok(Self {
+            data_batch,
+            key_columns,
+            table,
+        })
+    }
     pub fn create_empty(hash_map_schema: SchemaRef, key_exprs: &[PhysicalExprRef]) -> Result<Self> {
         let data_batch = RecordBatch::new_empty(hash_map_schema);
         Self::create_from_data_batch(data_batch, key_exprs)
+    }
+
+    pub fn record_batch_contains_hash_map(batch: &RecordBatch) -> bool {
+        let table_data_column = batch.column(batch.num_columns() - 1);
+        table_data_column.is_valid(0)
     }
 
     pub fn load_from_hash_map_batch(
@@ -339,12 +348,11 @@ impl JoinHashMap {
         key_exprs: &[PhysicalExprRef],
     ) -> Result<Self> {
         let mut data_batch = hash_map_batch.clone();
-        let table = Table::load_from_raw_bytes(
-            data_batch
-                .remove_column(data_batch.num_columns() - 1)
-                .as_binary::<i32>()
-                .value(0),
-        )?;
+
+        let table_data_column = data_batch.remove_column(data_batch.num_columns() - 1);
+        let mut table_data = Cursor::new(table_data_column.as_binary::<i32>().value(0));
+        let table = Table::read_from(&mut table_data)?;
+
         let key_columns: Vec<ArrayRef> = key_exprs
             .iter()
             .map(|expr| {
@@ -365,12 +373,17 @@ impl JoinHashMap {
         if self.data_batch.num_rows() == 0 {
             return Ok(RecordBatch::new_empty(schema));
         }
+
         let mut table_col_builder = BinaryBuilder::new();
-        table_col_builder.append_value(&self.table.try_into_raw_bytes()?);
+        let mut table_data = vec![];
+        self.table.write_to(&mut table_data)?;
+        table_col_builder.append_value(&table_data);
+
         for _ in 1..self.data_batch.num_rows() {
             table_col_builder.append_null();
         }
         let table_col: ArrayRef = Arc::new(table_col_builder.finish());
+
         Ok(RecordBatch::try_new(
             schema,
             vec![self.data_batch.columns().to_vec(), vec![table_col]].concat(),
@@ -395,10 +408,6 @@ impl JoinHashMap {
 
     pub fn is_empty(&self) -> bool {
         self.data_batch.num_rows() == 0
-    }
-
-    pub fn lookup(&self, hash: u32) -> MapValue {
-        self.table.lookup(hash)
     }
 
     pub fn lookup_many(&self, hashes: Vec<u32>) -> Vec<MapValue> {
@@ -454,7 +463,7 @@ pub fn join_create_hashes(num_rows: usize, key_columns: &[ArrayRef]) -> Vec<u32>
 }
 
 #[inline]
-fn join_table_field() -> FieldRef {
+pub fn join_table_field() -> FieldRef {
     static BHJ_KEY_FIELD: OnceCell<FieldRef> = OnceCell::new();
     BHJ_KEY_FIELD
         .get_or_init(|| Arc::new(Field::new("~TABLE", DataType::Binary, true)))

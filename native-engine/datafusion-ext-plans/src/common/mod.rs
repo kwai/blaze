@@ -16,6 +16,8 @@ pub mod cached_exprs_evaluator;
 pub mod column_pruning;
 pub mod execution_context;
 pub mod ipc_compression;
+pub mod offsetted;
+pub mod stream_exec;
 pub mod timer_helper;
 
 pub trait SliceAsRawBytes {

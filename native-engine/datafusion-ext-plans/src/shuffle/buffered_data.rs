@@ -20,22 +20,24 @@ use bytesize::ByteSize;
 use count_write::CountWrite;
 use datafusion::{common::Result, physical_plan::metrics::Time};
 use datafusion_ext_commons::{
-    algorithm::{
-        rdx_tournament_tree::{KeyForRadixTournamentTree, RadixTournamentTree},
-        rdxsort::radix_sort_by_key,
-    },
+    algorithm::rdx_sort::radix_sort_by_key,
     arrow::{
         array_size::ArraySize,
         selection::{create_batch_interleaver, BatchInterleaver},
     },
     compute_suggested_batch_size_for_output, df_execution_err,
 };
+use itertools::Itertools;
 use jni::objects::GlobalRef;
 #[cfg(test)]
 use parking_lot::Mutex;
 
 use crate::{
-    common::{ipc_compression::IpcCompressionWriter, timer_helper::TimerHelper},
+    common::{
+        ipc_compression::IpcCompressionWriter,
+        offsetted::{Offsetted, OffsettedMergeIterator},
+        timer_helper::TimerHelper,
+    },
     shuffle::{
         evaluate_hashes, evaluate_partition_ids, evaluate_range_partition_ids,
         evaluate_robin_partition_ids, rss::RssWriter, Partitioning,
@@ -132,32 +134,22 @@ impl BufferedData {
         let num_partitions = self.partitioning.partition_count();
         let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w));
         let mut offsets = vec![];
-        let mut offset = 0;
         let mut iter = self.into_sorted_batches()?;
 
-        while !iter.finished() {
+        while let Some((partition_id, batch_iter)) = iter.next_partition_chunk() {
             if !is_task_running() {
                 df_execution_err!("task completed/killed")?;
             }
-            let cur_part_id = iter.cur_part_id();
-            while offsets.len() <= cur_part_id as usize {
-                offsets.push(offset); // fill offsets of empty partitions
-            }
 
-            // write all batches with this part id
-            while iter.cur_part_id() == cur_part_id {
-                let batch = iter.next_batch()?;
+            offsets.resize(partition_id + 1, writer.inner().count());
+            for batch in batch_iter {
                 writer.write_batch(batch.num_rows(), batch.columns())?;
             }
             writer.finish_current_buf()?;
-            offset = writer.inner().count();
-            offsets.push(offset);
         }
-        while offsets.len() <= num_partitions {
-            offsets.push(offset); // fill offsets of empty partitions
-        }
+        offsets.resize(num_partitions + 1, writer.inner().count());
 
-        let compressed_size = ByteSize(offsets.last().cloned().unwrap_or_default() as u64);
+        let compressed_size = ByteSize(offsets.last().cloned().unwrap_or_default());
         log::info!("all buffered data drained, compressed_size={compressed_size}");
         Ok(offsets)
     }
@@ -177,19 +169,14 @@ impl BufferedData {
         let mut iter = self.into_sorted_batches()?;
         let mut writer = IpcCompressionWriter::new(RssWriter::new(rss_partition_writer.clone(), 0));
 
-        while !iter.finished() {
+        while let Some((partition_id, batch_iter)) = iter.next_partition_chunk() {
             if !is_task_running() {
                 df_execution_err!("task completed/killed")?;
             }
-            let cur_part_id = iter.cur_part_id();
-            writer.set_output(RssWriter::new(
-                rss_partition_writer.clone(),
-                cur_part_id as usize,
-            ));
 
             // write all batches with this part id
-            while iter.cur_part_id() == cur_part_id {
-                let batch = iter.next_batch()?;
+            writer.set_output(RssWriter::new(rss_partition_writer.clone(), partition_id));
+            for batch in batch_iter {
                 writer.write_batch(batch.num_rows(), batch.columns())?;
             }
             writer.finish_current_buf()?;
@@ -199,31 +186,16 @@ impl BufferedData {
         Ok(())
     }
 
-    fn into_sorted_batches(self) -> Result<PartitionedBatchesIterator> {
-        let sub_batch_size =
-            compute_suggested_batch_size_for_output(self.mem_used(), self.num_rows);
-        Ok(PartitionedBatchesIterator {
-            batch_interleaver: create_batch_interleaver(&self.sorted_batches, true)?,
-            cursors: RadixTournamentTree::new(
-                self.sorted_offsets
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, offsets)| {
-                        let mut cur = PartCursor {
-                            idx,
-                            offsets,
-                            parts_idx: 0,
-                        };
-                        cur.skip_empty_parts();
-                        cur
-                    })
-                    .collect(),
-                self.partitioning.partition_count(),
-            ),
-            num_output_rows: 0,
-            num_rows: self.num_rows,
-            batch_size: sub_batch_size,
-        })
+    fn into_sorted_batches(self) -> Result<PartitionedBatchesIterator<'static>> {
+        let num_rows = self.num_rows;
+        let sub_batch_size = compute_suggested_batch_size_for_output(self.mem_used(), num_rows);
+        let num_partitions = self.partitioning.partition_count();
+        PartitionedBatchesIterator::try_new(
+            self.sorted_batches,
+            self.sorted_offsets,
+            sub_batch_size,
+            num_partitions,
+        )
     }
 
     pub fn mem_used(&self) -> usize {
@@ -235,76 +207,68 @@ impl BufferedData {
     }
 }
 
-struct PartitionedBatchesIterator {
+struct PartitionedBatchesIterator<'a> {
     batch_interleaver: BatchInterleaver,
-    cursors: RadixTournamentTree<PartCursor>,
-    num_output_rows: usize,
-    num_rows: usize,
+    merge_iter: OffsettedMergeIterator<'a, u32, usize>,
     batch_size: usize,
+    last_chunk_partition_id: Option<usize>,
 }
 
-impl PartitionedBatchesIterator {
-    pub fn cur_part_id(&self) -> u32 {
-        self.cursors.peek().rdx() as u32
+impl<'a> PartitionedBatchesIterator<'a> {
+    pub fn try_new(
+        batches: Vec<RecordBatch>,
+        batch_offsets: Vec<Vec<u32>>,
+        sub_batch_size: usize,
+        num_partitions: usize,
+    ) -> Result<Self> {
+        Ok(Self {
+            batch_interleaver: create_batch_interleaver(&batches, true)?,
+            merge_iter: OffsettedMergeIterator::new(
+                num_partitions,
+                batch_offsets
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, offsets)| Offsetted::new(offsets, idx))
+                    .collect(),
+            ),
+            batch_size: sub_batch_size,
+            last_chunk_partition_id: None,
+        })
     }
 
-    pub fn finished(&self) -> bool {
-        self.num_output_rows >= self.num_rows
-    }
+    /// all iterators returned should have been fully consumed
+    pub fn next_partition_chunk(
+        &mut self,
+    ) -> Option<(usize, impl Iterator<Item = RecordBatch> + 'a)> {
+        // safety: bypass lifetime checker
+        let batches_iter =
+            unsafe { std::mem::transmute::<_, &mut PartitionedBatchesIterator<'a>>(self) };
 
-    pub fn next_batch(&mut self) -> Result<RecordBatch> {
-        let cur_batch_size = self.batch_size.min(self.num_rows - self.num_output_rows);
-        let cur_part_id = self.cur_part_id();
-        let mut indices = Vec::with_capacity(cur_batch_size);
+        let (chunk_partition_id, chunk) = batches_iter.merge_iter.next_partition_chunk()?;
 
-        // add rows with same parition id under this cursor
-        while indices.len() < cur_batch_size {
-            let mut min_cursor = self.cursors.peek_mut();
-            if min_cursor.rdx() as u32 != cur_part_id {
-                break;
-            }
-            let batch_idx = min_cursor.idx;
-            let min_offsets = &min_cursor.offsets;
-            let min_parts_idx = min_cursor.parts_idx;
-            let cur_offset_range = min_offsets[min_parts_idx]..min_offsets[min_parts_idx + 1];
-            indices.extend(cur_offset_range.map(|offset| (batch_idx, offset as usize)));
-
-            // forward to next non-empty partition
-            min_cursor.parts_idx += 1;
-            min_cursor.skip_empty_parts();
+        // last chunk must be fully consumed
+        if batches_iter.last_chunk_partition_id == Some(chunk_partition_id) {
+            panic!("last chunk not fully consumed");
         }
+        batches_iter.last_chunk_partition_id = Some(chunk_partition_id);
 
-        let batch_interleaver = &mut self.batch_interleaver;
-        let output_batch = batch_interleaver(&indices)?;
-        self.num_output_rows += output_batch.num_rows();
-        Ok(output_batch)
-    }
-}
-
-struct PartCursor {
-    idx: usize,
-    offsets: Vec<u32>,
-    parts_idx: usize,
-}
-
-impl PartCursor {
-    fn skip_empty_parts(&mut self) {
-        if self.parts_idx < self.num_partitions() {
-            if self.offsets[self.parts_idx + 1] == self.offsets[self.parts_idx] {
-                self.parts_idx += 1;
-                self.skip_empty_parts();
+        let batch_iter = chunk.batching(|chunk| {
+            let mut indices = vec![];
+            for (batch_idx, range) in chunk {
+                indices.extend(range.map(|offset| (*batch_idx, offset as usize)));
+                if indices.len() >= batches_iter.batch_size {
+                    break;
+                }
             }
-        }
-    }
 
-    fn num_partitions(&self) -> usize {
-        self.offsets.len() - 1
-    }
-}
-
-impl KeyForRadixTournamentTree for PartCursor {
-    fn rdx(&self) -> usize {
-        self.parts_idx
+            if indices.is_empty() {
+                return None;
+            }
+            let batch_interleaver = &mut batches_iter.batch_interleaver;
+            let output_batch = batch_interleaver(&indices).expect("error interleaving batches");
+            return Some(output_batch);
+        });
+        Some((chunk_partition_id, batch_iter))
     }
 }
 
@@ -323,22 +287,25 @@ fn sort_batches_by_partition_id(
         .iter()
         .enumerate()
         .flat_map(|(batch_idx, batch)| {
-            let mut part_ids: Vec<u32> = Vec::new();
-            match partitioning {
+            let part_ids = match partitioning {
                 Partitioning::HashPartitioning(..) => {
                     // compute partition indices
                     let hashes = evaluate_hashes(partitioning, &batch)
                         .expect(&format!("error evaluating hashes with {partitioning}"));
-                    part_ids = evaluate_partition_ids(hashes, partitioning.partition_count());
+                    evaluate_partition_ids(hashes, partitioning.partition_count())
                 }
                 Partitioning::RoundRobinPartitioning(..) => {
-                    part_ids =
-                        evaluate_robin_partition_ids(partitioning, &batch, round_robin_start_rows);
+                    let part_ids = evaluate_robin_partition_ids(
+                        partitioning,
+                        &batch,
+                        round_robin_start_rows
+                    );
                     round_robin_start_rows += batch.num_rows();
                     round_robin_start_rows %= partitioning.partition_count();
+                    part_ids
                 }
                 Partitioning::RangePartitioning(sort_expr, _, bounds) => {
-                    part_ids = evaluate_range_partition_ids(&batch, sort_expr, bounds).unwrap();
+                    evaluate_range_partition_ids(&batch, sort_expr, bounds).unwrap()
                 }
                 _ => unreachable!("unsupported partitioning: {:?}", partitioning),
             };
