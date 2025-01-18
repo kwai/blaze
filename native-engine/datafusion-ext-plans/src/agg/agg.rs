@@ -176,6 +176,7 @@ pub fn create_agg(
                 DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
                     DataType::Int64
                 }
+                DataType::Float32 | DataType::Float64 => DataType::Float64,
                 other => sum_return_type(&other)?,
             };
             Arc::new(sum::AggSum::try_new(
