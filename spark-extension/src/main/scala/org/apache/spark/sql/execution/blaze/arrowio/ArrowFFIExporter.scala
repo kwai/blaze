@@ -67,13 +67,11 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
       callRowIter(exportArrowArrayPtr)
     } else {
       // otherwise, process rows as native user
-      nativeCurrentUser.doAs(
-        new PrivilegedExceptionAction[Boolean] {
-          override def run(): Boolean = {
-            callRowIter(exportArrowArrayPtr)
-          }
+      nativeCurrentUser.doAs(new PrivilegedExceptionAction[Boolean] {
+        override def run(): Boolean = {
+          callRowIter(exportArrowArrayPtr)
         }
-      )
+      })
     }
   }
 

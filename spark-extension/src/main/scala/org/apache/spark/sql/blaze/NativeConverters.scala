@@ -827,13 +827,17 @@ object NativeConverters extends Logging {
       case e: Log10 =>
         buildScalarFunction(pb.ScalarFunction.Log10, e.children.map(nullIfNegative), e.dataType)
       case e: Floor if !e.dataType.isInstanceOf[DecimalType] =>
-        buildExprNode {
-          _.setTryCast(
-            pb.PhysicalTryCastNode
-              .newBuilder()
-              .setExpr(buildScalarFunction(pb.ScalarFunction.Floor, e.children, e.dataType))
-              .setArrowType(convertDataType(e.dataType))
-              .build())
+        if (e.child.dataType.isInstanceOf[LongType]) {
+          convertExprWithFallback(e.child, isPruningExpr, fallback)
+        } else {
+          buildExprNode {
+            _.setTryCast(
+              pb.PhysicalTryCastNode
+                .newBuilder()
+                .setExpr(buildScalarFunction(pb.ScalarFunction.Floor, e.children, e.dataType))
+                .setArrowType(convertDataType(e.dataType))
+                .build())
+          }
         }
       case e: Ceil if !e.dataType.isInstanceOf[DecimalType] =>
         buildExprNode {
