@@ -76,7 +76,7 @@ cd blaze
 
 Specify shims package of which spark version that you would like to run on.
 
-Currently we have supported these shims:
+Currently, we have supported these shims:
 
 * spark-3.0 - for spark3.0.x
 * spark-3.1 - for spark3.1.x
