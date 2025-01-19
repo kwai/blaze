@@ -50,7 +50,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
         with:
           distribution: 'adopt-hotspot'
           java-version: '8'
