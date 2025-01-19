@@ -295,11 +295,8 @@ fn sort_batches_by_partition_id(
                     evaluate_partition_ids(hashes, partitioning.partition_count())
                 }
                 Partitioning::RoundRobinPartitioning(..) => {
-                    let part_ids = evaluate_robin_partition_ids(
-                        partitioning,
-                        &batch,
-                        round_robin_start_rows
-                    );
+                    let part_ids =
+                        evaluate_robin_partition_ids(partitioning, &batch, round_robin_start_rows);
                     round_robin_start_rows += batch.num_rows();
                     round_robin_start_rows %= partitioning.partition_count();
                     part_ids
