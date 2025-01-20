@@ -51,7 +51,7 @@ impl SchemaAdapter for BlazeSchemaAdapter {
 
         // use case insensitive matching
         file_schema
-            .fields
+            .fields()
             .iter()
             .position(|f| f.name().eq_ignore_ascii_case(field.name()))
     }
@@ -61,8 +61,11 @@ impl SchemaAdapter for BlazeSchemaAdapter {
         let mut field_mappings = vec![None; self.table_schema.fields().len()];
 
         for (file_idx, file_field) in file_schema.fields.iter().enumerate() {
-            if let Some((table_idx, _table_field)) =
-                self.table_schema.fields().find(file_field.name())
+            if let Some(table_idx) = self
+                .table_schema
+                .fields()
+                .iter()
+                .position(|f| f.name().eq_ignore_ascii_case(file_field.name()))
             {
                 field_mappings[table_idx] = Some(projection.len());
                 projection.push(file_idx);

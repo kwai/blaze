@@ -320,7 +320,7 @@ fn execute_agg_sorted(
                     sender.send((batch)).await;
                 }};
             }
-            while let Some(batch) = elapsed_compute
+            while let Some(mut batch) = elapsed_compute
                 .exclude_timer_async(coalesced.next())
                 .await
                 .transpose()?
@@ -332,6 +332,18 @@ fn execute_agg_sorted(
                 let mut acc_indices = vec![];
                 for grouping_row in &grouping_rows {
                     if Some(grouping_row.as_ref()) != staging_keys.last().map(|key| key.as_ref()) {
+                        if staging_keys.len() >= batch_size {
+                            let flushing_len = acc_indices.len();
+                            let flushing_batch = batch.slice(0, flushing_len);
+                            batch = batch.slice(flushing_len, batch.num_rows() - flushing_len);
+                            agg_ctx.update_batch_to_acc_table(
+                                &flushing_batch,
+                                &mut staging_acc_table,
+                                IdxSelection::Indices(&acc_indices),
+                            )?;
+                            acc_indices.clear();
+                            flush_staging!();
+                        }
                         staging_keys.push(OwnedKey::from(grouping_row.as_ref()));
                         staging_acc_table.resize(staging_keys.len());
                     }
@@ -342,10 +354,6 @@ fn execute_agg_sorted(
                     &mut staging_acc_table,
                     IdxSelection::Indices(&acc_indices),
                 )?;
-
-                if staging_keys.len() >= batch_size {
-                    flush_staging!();
-                }
             }
 
             if !staging_keys.is_empty() {

@@ -15,6 +15,10 @@
  */
 package org.apache.spark.sql.blaze
 
+import java.io.IOException
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -24,19 +28,28 @@ import org.apache.spark.SparkContext
 import org.apache.spark.TaskContext
 import org.blaze.protobuf.PhysicalPlanNode
 
+
 class NativeRDD(
     @transient private val rddSparkContext: SparkContext,
     val metrics: MetricNode,
     private val rddPartitions: Array[Partition],
     private val rddDependencies: Seq[Dependency[_]],
     private val rddShuffleReadFull: Boolean,
-    val nativePlan: (Partition, TaskContext) => PhysicalPlanNode,
+    @transient private val nativePlan: (Partition, TaskContext) => PhysicalPlanNode,
     val friendlyName: String = null)
     extends RDD[InternalRow](rddSparkContext, rddDependencies)
-    with Logging {
+    with Logging
+    with Serializable {
+
+  // use serializable wrapper to avoid serializing nativePlan
+  val nativePlanWrapper = new NativePlanWrapper(nativePlan)
 
   if (friendlyName != null) {
     setName(friendlyName)
+  }
+
+  def nativePlan(p: Partition, tc: TaskContext): PhysicalPlanNode = {
+    nativePlanWrapper.plan(p, tc)
   }
 
   def isShuffleReadFull: Boolean = Shims.get.getRDDShuffleReadFull(this)
@@ -46,7 +59,43 @@ class NativeRDD(
   override protected def getDependencies: Seq[Dependency[_]] = rddDependencies
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
-    val computingNativePlan = nativePlan(split, context)
+    val computingNativePlan = nativePlanWrapper.plan(split, context)
     NativeHelper.executeNativePlan(computingNativePlan, metrics, split, Some(context))
+  }
+}
+
+class NativePlanWrapper(var p: (Partition, TaskContext) => PhysicalPlanNode)
+    extends Serializable {
+  def plan(split: Partition, context: TaskContext): PhysicalPlanNode = {
+    p(split, context)
+  }
+
+  @throws[IOException]
+  private def writeObject(out: ObjectOutputStream): Unit = {
+    out.writeObject(p)
+  }
+
+  @throws[IOException]
+  @throws[ClassNotFoundException]
+  private def readObject(in: ObjectInputStream): Unit = {
+    val _init: Unit = NativePlanWrapper.changeProtobufDefaultRecursionLimit
+    p = in.readObject.asInstanceOf[(Partition, TaskContext) => PhysicalPlanNode]
+  }
+}
+
+object NativePlanWrapper extends Logging {
+
+  // change protobuf's default recursion limit to Int.MAX_VALUE to walk-around
+  // `Protocol message had too many levels of nesting` error.
+  private lazy val changeProtobufDefaultRecursionLimit: Unit = {
+    try {
+      val recursionLimitField =
+        classOf[com.google.protobuf.CodedInputStream].getDeclaredField("defaultRecursionLimit")
+      recursionLimitField.setAccessible(true)
+      recursionLimitField.setInt(null, Int.MaxValue)
+    } catch {
+      case e: Throwable =>
+        logWarning("error changing protobuf's default recursion limit to Int.MaxValue", e)
+    }
   }
 }

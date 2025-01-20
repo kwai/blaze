@@ -102,14 +102,17 @@ fn execute_limit(
     Ok(exec_ctx
         .clone()
         .output_with_sender("Limit", move |sender| async move {
-            let mut cur = 0;
-            while let Some(batch) = input.next().await.transpose()? {
-                cur += batch.num_rows() as u64;
-                if cur >= limit {
-                    sender.send(batch.slice(0, limit as usize)).await;
-                    break;
+            let mut remaining = limit;
+            while remaining > 0
+                && let Some(mut batch) = input.next().await.transpose()?
+            {
+                if remaining < batch.num_rows() as u64 {
+                    batch = batch.slice(0, remaining as usize);
+                    remaining = 0;
+                } else {
+                    remaining -= batch.num_rows() as u64;
                 }
-                cur += batch.num_rows() as u64;
+                exec_ctx.baseline_metrics().record_output(batch.num_rows());
                 sender.send(batch).await;
             }
             Ok(())

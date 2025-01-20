@@ -87,11 +87,25 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
         val arrowWriter = ArrowWriter.create(root)
         var rowCount = 0
 
-        while (rowIter.hasNext
-          && rowCount < maxBatchNumRows
-          && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
-          arrowWriter.write(rowIter.next())
           rowCount += 1
+        def processRows(): Unit = {
+          while (rowIter.hasNext
+            && rowCount < maxBatchNumRows
+            && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
+            arrowWriter.write(rowIter.next())
+            rowCount += 1
+          }
+        }
+        // if current user is native user, process rows directly
+        if (isNativeCurrentUser) {
+          processRows()
+        } else {
+          // otherwise, process rows as native user
+          nativeCurrentUser.doAs(new PrivilegedExceptionAction[Unit] {
+            override def run(): Unit = {
+              processRows()
+            }
+          })
         }
         arrowWriter.finish()
 

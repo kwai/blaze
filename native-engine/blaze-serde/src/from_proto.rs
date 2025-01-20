@@ -33,7 +33,6 @@ use datafusion::{
         object_store::ObjectStoreUrl,
         physical_plan::FileScanConfig,
     },
-    error::DataFusionError,
     logical_expr::{ColumnarValue, Operator, ScalarUDF, Volatility},
     physical_expr::{
         expressions::{in_list, LikeExpr, SCAndExpr, SCOrExpr},
@@ -101,31 +100,6 @@ use crate::{
     Schema,
 };
 
-fn bind(
-    expr_in: Arc<dyn PhysicalExpr>,
-    input_schema: &Arc<Schema>,
-) -> Result<Arc<dyn PhysicalExpr>, DataFusionError> {
-    let expr = expr_in.as_any();
-
-    if let Some(expr) = expr.downcast_ref::<Column>() {
-        if expr.name() == "__bound_reference__" {
-            Ok(Arc::new(expr.clone()))
-        } else {
-            Ok(Arc::new(Column::new_with_schema(
-                expr.name(),
-                input_schema,
-            )?))
-        }
-    } else {
-        let new_children = expr_in
-            .children()
-            .iter()
-            .map(|&child_expr| bind(child_expr.clone(), input_schema))
-            .collect::<Result<Vec<_>, DataFusionError>>()?;
-        Ok(expr_in.with_new_children(new_children)?)
-    }
-}
-
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
     type Error = PlanSerDeError;
 
@@ -145,10 +119,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .zip(projection.expr_name.iter())
                     .map(|(expr, name)| {
                         Ok((
-                            bind(
-                                try_parse_physical_expr(expr, &input.schema())?,
-                                &input.schema(),
-                            )?,
+                            try_parse_physical_expr(expr, &input.schema())?,
                             name.to_string(),
                         ))
                     })
@@ -160,12 +131,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let predicates = filter
                     .expr
                     .iter()
-                    .map(|expr| {
-                        Ok(bind(
-                            try_parse_physical_expr(expr, &input.schema())?,
-                            &input.schema(),
-                        )?)
-                    })
+                    .map(|expr| try_parse_physical_expr(expr, &input.schema()))
                     .collect::<Result<_, Self::Error>>()?;
                 Ok(Arc::new(FilterExec::try_new(predicates, input)?))
             }
@@ -213,11 +179,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .map(|col| {
                         let left_key =
                             try_parse_physical_expr(&col.left.as_ref().unwrap(), &left.schema())?;
-                        let left_key_binded = bind(left_key, &left.schema())?;
                         let right_key =
                             try_parse_physical_expr(&col.right.as_ref().unwrap(), &right.schema())?;
-                        let right_key_binded = bind(right_key, &right.schema())?;
-                        Ok((left_key_binded, right_key_binded))
+                        Ok((left_key, right_key))
                     })
                     .collect::<Result<_, Self::Error>>()?;
 
@@ -252,11 +216,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .map(|col| {
                         let left_key =
                             try_parse_physical_expr(&col.left.as_ref().unwrap(), &left.schema())?;
-                        let left_key_binded = bind(left_key, &left.schema())?;
                         let right_key =
                             try_parse_physical_expr(&col.right.as_ref().unwrap(), &right.schema())?;
-                        let right_key_binded = bind(right_key, &right.schema())?;
-                        Ok((left_key_binded, right_key_binded))
+                        Ok((left_key, right_key))
                     })
                     .collect::<Result<_, Self::Error>>()?;
 
@@ -347,12 +309,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let keys = bhm
                     .keys
                     .iter()
-                    .map(|expr| {
-                        Ok(bind(
-                            try_parse_physical_expr(expr, &input.schema())?,
-                            &input.schema(),
-                        )?)
-                    })
+                    .map(|expr| try_parse_physical_expr(expr, &input.schema()))
                     .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, Self::Error>>()?;
                 Ok(Arc::new(BroadcastJoinBuildHashMapExec::new(input, keys)))
             }
@@ -366,11 +323,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .map(|col| {
                         let left_key =
                             try_parse_physical_expr(&col.left.as_ref().unwrap(), &left.schema())?;
-                        let left_key_binded = bind(left_key, &left.schema())?;
                         let right_key =
                             try_parse_physical_expr(&col.right.as_ref().unwrap(), &right.schema())?;
-                        let right_key_binded = bind(right_key, &right.schema())?;
-                        Ok((left_key_binded, right_key_binded))
+                        Ok((left_key, right_key))
                     })
                     .collect::<Result<_, Self::Error>>()?;
 
@@ -448,10 +403,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .zip(agg.grouping_expr_name.iter())
                     .map(|(expr, name)| {
                         try_parse_physical_expr(expr, &input_schema).and_then(|expr| {
-                            Ok(bind(expr, &input_schema).map(|expr| GroupingExpr {
+                            Ok(GroupingExpr {
                                 expr,
                                 field_name: name.to_owned(),
-                            })?)
+                            })
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -480,10 +435,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         let agg_children_exprs = agg_node
                             .children
                             .iter()
-                            .map(|expr| {
-                                try_parse_physical_expr(expr, &input_schema)
-                                    .and_then(|expr| Ok(bind(expr, &input_schema)?))
-                            })
+                            .map(|expr| try_parse_physical_expr(expr, &input_schema))
                             .collect::<Result<Vec<_>, _>>()?;
 
                         Ok(AggExpr {
@@ -532,12 +484,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         projection
                             .expr
                             .iter()
-                            .map(|expr| {
-                                Ok(bind(
-                                    try_parse_physical_expr(expr, &input.schema())?,
-                                    &input.schema(),
-                                )?)
-                            })
+                            .map(|expr| try_parse_physical_expr(expr, &input.schema()))
                             .collect::<Result<Vec<_>, Self::Error>>()
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -565,12 +512,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         let children = w
                             .children
                             .iter()
-                            .map(|expr| {
-                                Ok(bind(
-                                    try_parse_physical_expr(expr, &input.schema())?,
-                                    &input.schema(),
-                                )?)
-                            })
+                            .map(|expr| try_parse_physical_expr(expr, &input.schema()))
                             .collect::<Result<Vec<_>, Self::Error>>()?;
 
                         let window_func = match w.func_type() {
@@ -623,12 +565,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let partition_specs = window
                     .partition_spec
                     .iter()
-                    .map(|expr| {
-                        Ok(bind(
-                            try_parse_physical_expr(expr, &input.schema())?,
-                            &input.schema(),
-                        )?)
-                    })
+                    .map(|expr| try_parse_physical_expr(expr, &input.schema()))
                     .collect::<Result<Vec<_>, Self::Error>>()?;
 
                 let order_specs = window
@@ -637,8 +574,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .map(|expr| {
                         let expr = expr.expr_type.as_ref().ok_or_else(|| {
                             proto_error(format!(
-                                "physical_plan::from_proto() Unexpected expr {:?}",
-                                self
+                                "physical_plan::from_proto() Unexpected expr {self:?}",
                             ))
                         })?;
                         if let protobuf::physical_expr_node::ExprType::Sort(sort_expr) = expr {
@@ -653,10 +589,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 })?
                                 .as_ref();
                             Ok(PhysicalSortExpr {
-                                expr: bind(
-                                    try_parse_physical_expr(expr, &input.schema())?,
-                                    &input.schema(),
-                                )?,
+                                expr: try_parse_physical_expr(expr, &input.schema())?,
                                 options: SortOptions {
                                     descending: !sort_expr.asc,
                                     nulls_first: sort_expr.nulls_first,
@@ -688,12 +621,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
 
                 let children = pb_generator_children
                     .iter()
-                    .map(|expr| {
-                        Ok::<_, PlanSerDeError>(bind(
-                            try_parse_physical_expr(expr, &input_schema)?,
-                            &input_schema,
-                        )?)
-                    })
+                    .map(|expr| try_parse_physical_expr(expr, &input_schema))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let generator = match pb_generate_func {
@@ -856,10 +784,7 @@ fn try_parse_physical_expr(
 
     let pexpr: Arc<dyn PhysicalExpr> =
         match expr_type {
-            ExprType::Column(c) => {
-                let pcol: Column = c.into();
-                Arc::new(pcol)
-            }
+            ExprType::Column(c) => Arc::new(Column::new(&c.name, input_schema.index_of(&c.name)?)),
             ExprType::Literal(scalar) => Arc::new(Literal::new(convert_required!(scalar.value)?)),
             ExprType::BoundReference(bound_reference) => {
                 let pcol: Column = bound_reference.into();
@@ -894,11 +819,10 @@ fn try_parse_physical_expr(
                 try_parse_physical_expr_box_required(&e.expr, input_schema)?,
             )),
             ExprType::InList(e) => {
-                let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)
-                    .and_then(|expr| Ok(bind(expr, input_schema)?))?; // materialize expr.data_type
+                let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
                 let dt = expr.data_type(input_schema)?;
                 in_list(
-                    bind(expr, input_schema)?,
+                    expr,
                     e.list
                         .iter()
                         .map(|x| {
@@ -1111,10 +1035,7 @@ fn try_parse_physical_sort_expr(
                     })?
                     .as_ref();
                 Ok(PhysicalSortExpr {
-                    expr: bind(
-                        try_parse_physical_expr(expr, &input.schema())?,
-                        &input.schema(),
-                    )?,
+                    expr: try_parse_physical_expr(expr, &input.schema())?,
                     options: SortOptions {
                         descending: !sort_expr.asc,
                         nulls_first: sort_expr.nulls_first,
@@ -1150,10 +1071,7 @@ pub fn parse_protobuf_partitioning(
                 let expr = hash_part
                     .hash_expr
                     .iter()
-                    .map(|e| {
-                        try_parse_physical_expr(e, &input.schema())
-                            .and_then(|e| Ok(bind(e, &input.schema())?))
-                    })
+                    .map(|e| try_parse_physical_expr(e, &input.schema()))
                     .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
                 Ok(Some(Partitioning::HashPartitioning(
                     expr,
