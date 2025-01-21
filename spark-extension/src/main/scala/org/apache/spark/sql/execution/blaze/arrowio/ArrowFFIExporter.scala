@@ -85,7 +85,7 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
         val arrowWriter = ArrowWriter.create(root)
         var rowCount = 0
 
-          rowCount += 1
+        rowCount += 1
         def processRows(): Unit = {
           while (rowIter.hasNext
             && rowCount < maxBatchNumRows
@@ -94,6 +94,9 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
             rowCount += 1
           }
         }
+        val currentUserInfo = UserGroupInformation.getCurrentUser
+        val nativeCurrentUser = NativeHelper.currentUser
+        val isNativeCurrentUser = currentUserInfo.equals(nativeCurrentUser)
         // if current user is native user, process rows directly
         if (isNativeCurrentUser) {
           processRows()
