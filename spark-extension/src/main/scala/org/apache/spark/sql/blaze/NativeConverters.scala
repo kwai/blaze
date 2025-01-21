@@ -123,7 +123,7 @@ object NativeConverters extends Logging {
       case NullType | BooleanType | ByteType | ShortType | IntegerType | LongType | FloatType |
           DoubleType | StringType | DateType | TimestampType =>
         true
-      case t: DecimalType  if DecimalType.is64BitDecimalType(t) => true
+      case t: DecimalType if DecimalType.is64BitDecimalType(t) => true
       case _: DecimalType =>
         // blaze only supports 64-bit decimal
         false
