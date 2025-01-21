@@ -587,7 +587,7 @@ impl AccColumn for AccGenericColumn {
                     let len = read_len(&mut r)?;
                     if len > 0 {
                         let len = len - 1;
-                        let bytes = AccBytes::from({
+                        let bytes = AccBytes::from_vec({
                             let vec: Vec<u8> = read_bytes_slice(&mut r, len)?.into();
                             vec
                         });
