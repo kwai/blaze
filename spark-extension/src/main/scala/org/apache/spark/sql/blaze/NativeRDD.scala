@@ -28,7 +28,6 @@ import org.apache.spark.SparkContext
 import org.apache.spark.TaskContext
 import org.blaze.protobuf.PhysicalPlanNode
 
-
 class NativeRDD(
     @transient private val rddSparkContext: SparkContext,
     val metrics: MetricNode,
