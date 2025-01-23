@@ -19,6 +19,7 @@ use jni::objects::{JObject, JThrowable};
 
 mod alloc;
 mod exec;
+mod http;
 mod logging;
 mod metrics;
 mod rt;

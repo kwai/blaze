@@ -9,9 +9,13 @@ use std::{
     },
 };
 
+#[cfg(feature = "jemalloc")]
 #[cfg(not(windows))]
 #[cfg_attr(not(windows), global_allocator)]
-static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(not(feature = "jemalloc"))]
+static GLOBAL: std::alloc::System = std::alloc::System;
 
 // only used for debugging
 //
