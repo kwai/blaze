@@ -54,9 +54,8 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         static SESSION: OnceCell<SessionContext> = OnceCell::new();
         static INIT: OnceCell<()> = OnceCell::new();
 
-        eprintln!("gotten http service.");
         let _ = HTTP_SERVICE.get_or_try_init(|| {
-            eprintln!("init http service.");
+            eprintln!("initializing http service...");
             Ok::<HttpService, DataFusionError>(HttpService::init())
         });
 

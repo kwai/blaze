@@ -2,8 +2,7 @@ mod pprof;
 
 use std::sync::Mutex;
 
-use log::{info, warn};
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::OnceCell;
 use poem::{listener::TcpListener, Route, RouteMethod, Server};
 
 use crate::http::pprof::PProfHandler;
