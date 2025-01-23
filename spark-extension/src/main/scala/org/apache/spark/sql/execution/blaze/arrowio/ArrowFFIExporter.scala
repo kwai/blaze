@@ -20,7 +20,6 @@ import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
-import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
@@ -28,23 +27,30 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.blaze.{BlazeConf, NativeHelper}
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.TaskContext
-
 import java.security.PrivilegedExceptionAction
+import java.util.concurrent.BlockingQueue
+import java.util.concurrent.SynchronousQueue
 
-class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
+class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType)
+  extends AutoCloseable {
+
   private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf()
   private val maxBatchMemorySize = 1 << 24 // 16MB
 
   private val arrowSchema = ArrowUtils.toArrowSchema(schema)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
+  private val nativeCurrentUser = NativeHelper.currentUser
 
-  def hasNext: Boolean = {
-    val tc = TaskContext.get()
-    if (tc != null && (tc.isCompleted() || tc.isInterrupted())) {
-      return false
-    }
-    rowIter.hasNext
-  }
+  private trait QueueElement
+  private case class Root(root: VectorSchemaRoot) extends QueueElement
+  private case object RootConsumed extends QueueElement
+  private case object Finished extends QueueElement
+
+  private val tc = TaskContext.get()
+  private val outputQueue: BlockingQueue[QueueElement] = new SynchronousQueue[QueueElement]()
+  private var currentRoot: VectorSchemaRoot = _
+  private var finished = false
+  private val outputThread = startOutputThread()
 
   def exportSchema(exportArrowSchemaPtr: Long): Unit = {
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { schemaAllocator =>
@@ -55,69 +61,96 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
   }
 
   def exportNextBatch(exportArrowArrayPtr: Long): Boolean = {
-    val tc = TaskContext.get()
+    if (!hasNext) {
+      return false
+    }
 
-    if (tc != null && (tc.isCompleted() || tc.isInterrupted())) return false
+    // export using root allocator
+    val allocator = ArrowUtils.rootAllocator
+    Using.resource(ArrowArray.wrap(exportArrowArrayPtr)) { exportArray =>
+      Data.exportVectorSchemaRoot(allocator, currentRoot, emptyDictionaryProvider, exportArray)
+    }
 
-    val currentUserInfo = UserGroupInformation.getCurrentUser
-    val nativeCurrentUser = NativeHelper.currentUser
-    val isNativeCurrentUser = currentUserInfo.equals(nativeCurrentUser)
-    // if current user is native user, process rows directly
-    if (isNativeCurrentUser) {
-      callRowIter(exportArrowArrayPtr)
-    } else {
-      // otherwise, process rows as native user
-      nativeCurrentUser.doAs(new PrivilegedExceptionAction[Boolean] {
-        override def run(): Boolean = {
-          callRowIter(exportArrowArrayPtr)
-        }
-      })
+    // consume RootConsumed state so that we can go to the next batch
+    outputQueue.take() match {
+      case RootConsumed =>
+      case other =>
+        throw new IllegalStateException(s"Unexpected queue element: $other, expect RootConsumed")
+    }
+    true
+  }
+
+  private def hasNext: Boolean = {
+    if (tc != null && (tc.isCompleted() || tc.isInterrupted())) {
+      finished = true
+      return false
+    }
+
+    outputQueue.take() match {
+      case Root(root) =>
+        currentRoot = root
+        true
+      case Finished =>
+        currentRoot = null
+        finished = true
+        false
+      case other =>
+        throw new IllegalStateException(s"Unexpected queue element: $other, expect Root/Finished")
     }
   }
 
-  private def callRowIter(exportArrowArrayPtr: Long): Boolean = {
-    if (!rowIter.hasNext) return false
-
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        VectorSchemaRoot.create(arrowSchema, batchAllocator),
-        ArrowArray.wrap(exportArrowArrayPtr)) { case (root, exportArray) =>
-        val arrowWriter = ArrowWriter.create(root)
-        var rowCount = 0
-
-        rowCount += 1
-        def processRows(): Unit = {
-          while (rowIter.hasNext
-            && rowCount < maxBatchNumRows
-            && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
-            arrowWriter.write(rowIter.next())
-            rowCount += 1
-          }
+  private def startOutputThread(): Thread = {
+    val thread = new Thread(new Runnable {
+      override def run(): Unit = {
+        if (tc != null) {
+          TaskContext.setTaskContext(tc)
         }
-        val currentUserInfo = UserGroupInformation.getCurrentUser
-        val nativeCurrentUser = NativeHelper.currentUser
-        val isNativeCurrentUser = currentUserInfo.equals(nativeCurrentUser)
-        // if current user is native user, process rows directly
-        if (isNativeCurrentUser) {
-          processRows()
-        } else {
-          // otherwise, process rows as native user
-          nativeCurrentUser.doAs(new PrivilegedExceptionAction[Unit] {
-            override def run(): Unit = {
-              processRows()
+
+        nativeCurrentUser.doAs(new PrivilegedExceptionAction[Unit] {
+          override def run(): Unit = {
+            while (!finished && (tc == null || (!tc.isCompleted() && !tc.isInterrupted()))) {
+              if (!rowIter.hasNext) {
+                finished = true
+                outputQueue.put(Finished)
+                return
+              }
+
+              Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
+                Using.resource(VectorSchemaRoot.create(arrowSchema, batchAllocator)) { root =>
+                  val arrowWriter = ArrowWriter.create(root)
+                  var rowCount = 0
+
+                  while (rowIter.hasNext
+                    && rowCount < maxBatchNumRows
+                    && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
+                    arrowWriter.write(rowIter.next())
+                    rowCount += 1
+                  }
+                  arrowWriter.finish()
+
+                  // export root
+                  outputQueue.put(Root(root))
+                  outputQueue.put(RootConsumed)
+                }
+              }
             }
-          })
-        }
-        arrowWriter.finish()
-
-        // export using root allocator
-        Data.exportVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          root,
-          emptyDictionaryProvider,
-          exportArray)
+          }
+        })
       }
+    })
+
+    if (tc != null) {
+      tc.addTaskCompletionListener[Unit]((_: TaskContext) => close())
+      tc.addTaskFailureListener((_, _) => close())
     }
-    true
+    thread.setDaemon(true)
+    thread.start()
+    thread
+  }
+
+  override def close(): Unit = {
+    finished = true
+    outputThread.interrupt()
+    outputQueue.offer(Finished) // to abort any pending call to exportNextBatch()
   }
 }
