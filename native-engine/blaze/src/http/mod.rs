@@ -30,7 +30,11 @@ unsafe impl Sync for DefaultHTTPServer {}
 impl DefaultHTTPServer {
     pub fn new() -> Self {
         Self {
-            runtime: tokio::runtime::Builder::new_multi_thread().build().unwrap(),
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_io()
+                .build()
+                .unwrap(),
             handlers: Mutex::new(vec![]),
         }
     }
