@@ -377,6 +377,7 @@ fn parse_writer_props(prop_kvs: &[(String, String)]) -> WriterProperties {
                     "LZO" => Compression::LZO,
                     "BROTLI" => Compression::BROTLI(BrotliLevel::default()),
                     "LZ4" => Compression::LZ4,
+                    "LZ4RAW" | "LZ4_RAW" => Compression::LZ4_RAW,
                     "ZSTD" => {
                         let level_default = ZstdLevel::default().compression_level();
                         let level = prop_kvs
