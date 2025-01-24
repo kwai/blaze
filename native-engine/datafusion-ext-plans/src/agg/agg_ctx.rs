@@ -249,6 +249,7 @@ impl AggContext {
                 acc_idx,
                 &input_arrays,
                 IdxSelection::Range(0, batch.num_rows()),
+                batch.schema(),
             )?;
         }
 
@@ -327,11 +328,18 @@ impl AggContext {
         acc_idx: IdxSelection,
         input_arrays: &[Vec<ArrayRef>],
         input_idx: IdxSelection,
+        batch_schema: SchemaRef,
     ) -> Result<()> {
         if self.need_partial_update {
             for (agg_idx, agg) in &self.need_partial_update_aggs {
                 let acc_col = &mut acc_table.cols_mut()[*agg_idx];
-                agg.partial_update(acc_col, acc_idx, &input_arrays[*agg_idx], input_idx)?;
+                agg.partial_update(
+                    acc_col,
+                    acc_idx,
+                    &input_arrays[*agg_idx],
+                    input_idx,
+                    batch_schema.clone(),
+                )?;
             }
         }
         Ok(())

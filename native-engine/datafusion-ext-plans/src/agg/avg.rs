@@ -110,12 +110,23 @@ impl Agg for AggAvg {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
+        batch_schema: SchemaRef,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccAvgColumn).unwrap();
-        self.agg_sum
-            .partial_update(&mut accs.sum, acc_idx, partial_args, partial_arg_idx)?;
-        self.agg_count
-            .partial_update(&mut accs.count, acc_idx, partial_args, partial_arg_idx)?;
+        self.agg_sum.partial_update(
+            &mut accs.sum,
+            acc_idx,
+            partial_args,
+            partial_arg_idx,
+            batch_schema.clone(),
+        )?;
+        self.agg_count.partial_update(
+            &mut accs.count,
+            acc_idx,
+            partial_args,
+            partial_arg_idx,
+            batch_schema.clone(),
+        )?;
         Ok(())
     }
 

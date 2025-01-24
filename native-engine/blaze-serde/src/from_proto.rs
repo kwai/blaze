@@ -59,7 +59,10 @@ use datafusion_ext_exprs::{
     string_ends_with::StringEndsWithExpr, string_starts_with::StringStartsWithExpr,
 };
 use datafusion_ext_plans::{
-    agg::{agg::create_agg, AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr},
+    agg::{
+        agg::{create_agg, create_declarative_agg},
+        AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
+    },
     agg_exec::AggExec,
     broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
     broadcast_join_exec::BroadcastJoinExec,
@@ -437,13 +440,28 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             .iter()
                             .map(|expr| try_parse_physical_expr(expr, &input_schema))
                             .collect::<Result<Vec<_>, _>>()?;
-
-                        Ok(AggExpr {
-                            agg: create_agg(
+                        let agg = match AggFunction::from(agg_function) {
+                            AggFunction::Declarative => {
+                                let udaf = agg_node.udaf.as_ref().unwrap();
+                                let serialized = udaf.serialized.clone();
+                                let agg_buffer_schema =
+                                    Arc::new(convert_required!(udaf.agg_buffer_schema)?);
+                                create_declarative_agg(
+                                    serialized,
+                                    agg_buffer_schema,
+                                    convert_required!(udaf.return_type)?,
+                                    agg_children_exprs,
+                                )?
+                            }
+                            _ => create_agg(
                                 AggFunction::from(agg_function),
                                 &agg_children_exprs,
                                 &input_schema,
                             )?,
+                        };
+
+                        Ok(AggExpr {
+                            agg,
                             mode,
                             field_name: name.to_owned(),
                         })
@@ -555,6 +573,9 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 }
                                 protobuf::AggFunction::BrickhouseCombineUnique => {
                                     WindowFunction::Agg(AggFunction::BrickhouseCombineUnique)
+                                }
+                                protobuf::AggFunction::Declarative => {
+                                    WindowFunction::Agg(AggFunction::Declarative)
                                 }
                             },
                         };

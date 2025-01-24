@@ -22,6 +22,7 @@ use arrow::{
     array::{Array, ArrayRef, AsArray},
     datatypes::DataType,
 };
+use arrow_schema::SchemaRef;
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 
 use crate::{
@@ -86,6 +87,7 @@ impl Agg for AggCollect {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
+        batch_schema: SchemaRef,
     ) -> Result<()> {
         let list = partial_args[0].as_list::<i32>();
 
@@ -99,6 +101,7 @@ impl Agg for AggCollect {
                         IdxSelection::Single(acc_idx),
                         &[values],
                         IdxSelection::Range(0, values_len),
+                        batch_schema.clone(),
                     )?;
                  }
             }

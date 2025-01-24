@@ -86,6 +86,7 @@ impl Agg for AggFirstIgnoresNull {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
+        batch_schema: SchemaRef,
     ) -> Result<()> {
         let partial_arg = &partial_args[0];
         let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();

@@ -15,7 +15,7 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, AsArray, RecordBatch},
+    array::{Array, ArrayRef, AsArray, Int64Array, Int64Builder, RecordBatch},
     datatypes::{DataType, Int64Type, Schema, SchemaRef},
 };
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
@@ -24,7 +24,7 @@ use datafusion_ext_exprs::cast::TryCastExpr;
 
 use crate::agg::{
     acc::AccColumnRef, avg, bloom_filter, brickhouse, collect, first, first_ignores_null, maxmin,
-    sum, AggFunction,
+    spark_hdaf_wrapper::SparkUDAFWrapper, sum, AggFunction,
 };
 
 pub trait Agg: Send + Sync + Debug {
@@ -46,6 +46,7 @@ pub trait Agg: Send + Sync + Debug {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
+        batch_schema: SchemaRef,
     ) -> Result<()>;
 
     fn partial_merge(
@@ -75,6 +76,38 @@ impl IdxSelection<'_> {
             IdxSelection::IndicesU32(indices) => indices.len(),
             IdxSelection::Range(begin, end) => end - begin,
         }
+    }
+
+    pub fn to_int64_array(&self) -> Int64Array {
+        let mut builder = Int64Builder::with_capacity(self.len());
+
+        match self {
+            IdxSelection::Single(idx) => {
+                builder.append_value(*idx as i64);
+            }
+
+            IdxSelection::Indices(indices) => {
+                for &idx in *indices {
+                    builder.append_value(idx as i64);
+                }
+            }
+            IdxSelection::IndicesU32(indices_u32) => {
+                for &idx in *indices_u32 {
+                    builder.append_value(idx as i64);
+                }
+            }
+            IdxSelection::Range(start, end) => {
+                for idx in *start..=*end {
+                    builder.append_value(idx as i64);
+                }
+            }
+        }
+        let primitive_array = builder.finish();
+        primitive_array
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .cloned()
+            .unwrap()
     }
 }
 
@@ -271,5 +304,22 @@ pub fn create_agg(
                 arg_list_inner_type,
             )?)
         }
+        AggFunction::Declarative => {
+            unreachable!("UDAF should be handled in create_declarative_agg")
+        }
     })
+}
+
+pub fn create_declarative_agg(
+    serialized: Vec<u8>,
+    buffer_schema: SchemaRef,
+    return_type: DataType,
+    children: Vec<Arc<dyn PhysicalExpr>>,
+) -> Result<Arc<dyn Agg>> {
+    Ok(Arc::new(SparkUDAFWrapper::try_new(
+        serialized,
+        buffer_schema,
+        return_type,
+        children,
+    )?))
 }

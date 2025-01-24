@@ -114,6 +114,7 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
+        batch_schema: SchemaRef,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut C).unwrap();
         idx_for_zipped! {

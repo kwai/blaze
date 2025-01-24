@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
+import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.aggregate.First
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
@@ -1164,6 +1165,46 @@ object NativeConverters extends Logging {
               defaultValue = true) =>
         aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COMBINE_UNIQUE)
         aggBuilder.addChildren(convertExpr(udaf.children.head))
+      // other DeclarativeAggregate
+      case declarative
+          if classOf[DeclarativeAggregate].isAssignableFrom(e.aggregateFunction.getClass) =>
+        def fallbackToError: Expression => pb.PhysicalExprNode = { e =>
+          throw new NotImplementedError(s"unsupported declarative expression: (${e.getClass}) $e")
+        }
+        aggBuilder.setAggFunction(pb.AggFunction.DECLARATIVE)
+        val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
+        val bound = declarative.mapChildren(_.transformDown {
+          case p: Literal => p
+          case p =>
+            try {
+              val convertedChild =
+                convertExprWithFallback(p, isPruningExpr = false, fallbackToError)
+              val nextBindIndex = convertedChildren.size
+              convertedChildren.getOrElseUpdate(
+                convertedChild,
+                BoundReference(nextBindIndex, p.dataType, p.nullable))
+            } catch {
+              case _: Exception | _: NotImplementedError => p
+            }
+        })
+        val paramsSchema = StructType(
+          convertedChildren.values
+            .map(ref => StructField("", ref.dataType, ref.nullable))
+            .toSeq)
+
+        val serialized =
+          serializeExpression(
+            bound.asInstanceOf[DeclarativeAggregate with Serializable],
+            paramsSchema)
+
+        aggBuilder.setUdaf(
+          pb.AggUdaf
+            .newBuilder()
+            .setSerialized(ByteString.copyFrom(serialized))
+            .setAggBufferSchema(NativeConverters.convertSchema(declarative.aggBufferSchema))
+            .setReturnType(convertDataType(bound.dataType))
+            .setReturnNullable(bound.nullable))
+        aggBuilder.addAllChildren(convertedChildren.keys.asJava)
 
       case _ =>
         Shims.get.convertMoreAggregateExpr(e) match {

@@ -410,10 +410,12 @@ pub struct JavaClasses<'a> {
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
     pub cSparkUDFWrapperContext: SparkUDFWrapperContext<'a>,
+    pub cSparkUDAFWrapperContext: SparkUDAFWrapperContext<'a>,
     pub cSparkUDTFWrapperContext: SparkUDTFWrapperContext<'a>,
     pub cBlazeConf: BlazeConf<'a>,
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
+    pub cBlazeUnsafeRowsWrapperUtils: BlazeUnsafeRowsWrapperUtils<'a>,
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
     pub cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils<'a>,
     pub cBlazeBlockObject: BlazeBlockObject<'a>,
@@ -471,8 +473,10 @@ impl JavaClasses<'static> {
                 cSparkSQLMetric: SparkSQLMetric::new(env)?,
                 cSparkMetricNode: SparkMetricNode::new(env)?,
                 cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env)?,
+                cSparkUDAFWrapperContext: SparkUDAFWrapperContext::new(env)?,
                 cSparkUDTFWrapperContext: SparkUDTFWrapperContext::new(env)?,
                 cBlazeConf: BlazeConf::new(env)?,
+                cBlazeUnsafeRowsWrapperUtils: BlazeUnsafeRowsWrapperUtils::new(env)?,
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env)?,
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env)?,
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env)?,
@@ -1170,6 +1174,45 @@ impl<'a> SparkUDFWrapperContext<'a> {
 }
 
 #[allow(non_snake_case)]
+pub struct SparkUDAFWrapperContext<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID,
+    pub method_update: JMethodID,
+    pub method_update_ret: ReturnType,
+    pub method_merge: JMethodID,
+    pub method_merge_ret: ReturnType,
+    pub method_eval: JMethodID,
+    pub method_eval_ret: ReturnType,
+}
+impl<'a> SparkUDAFWrapperContext<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDAFWrapperContext";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkUDAFWrapperContext<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkUDAFWrapperContext {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
+            method_update: env.get_method_id(
+                class,
+                "update",
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ;)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
+            method_update_ret: ReturnType::Object,
+            method_merge: env.get_method_id(
+                class,
+                "merge",
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;[Lorg/apache/spark/sql/catalyst/InternalRow;J;)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
+            method_merge_ret: ReturnType::Object,
+            method_eval: env.get_method_id(
+                class,
+                "eval",
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ;)V")?,
+            method_eval_ret: ReturnType::Primitive(Primitive::Void),
+
+        })
+    }
+}
+
+#[allow(non_snake_case)]
 pub struct SparkUDTFWrapperContext<'a> {
     pub class: JClass<'a>,
     pub ctor: JMethodID,
@@ -1190,6 +1233,53 @@ impl<'a> SparkUDTFWrapperContext<'a> {
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
             method_terminate: env.get_method_id(class, "terminate", "(IJ)V")?,
             method_terminate_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeUnsafeRowsWrapperUtils<'a> {
+    pub class: JClass<'a>,
+    pub method_serialize: JStaticMethodID,
+    pub method_serialize_ret: ReturnType,
+    pub method_deserialize: JStaticMethodID,
+    pub method_deserialize_ret: ReturnType,
+    pub method_num: JStaticMethodID,
+    pub method_num_ret: ReturnType,
+    pub method_create: JStaticMethodID,
+    pub method_create_ret: ReturnType,
+}
+impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/UnsafeRowsWrapperUtils;";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeUnsafeRowsWrapperUtils<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeUnsafeRowsWrapperUtils {
+            class,
+            method_serialize: env.get_static_method_id(
+                class,
+                "serialize",
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;IJJ)V",
+            )?,
+            method_serialize_ret: ReturnType::Primitive(Primitive::Void),
+            method_deserialize: env.get_static_method_id(
+                class,
+                "deserialize",
+                "(IJJ;)[Lorg/apache/spark/sql/catalyst/InternalRow;",
+            )?,
+            method_deserialize_ret: ReturnType::Object,
+            method_num: env.get_static_method_id(
+                class,
+                "getRowNum",
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;)I;",
+            )?,
+            method_num_ret: ReturnType::Primitive(Primitive::Int),
+            method_create: env.get_static_method_id(
+                class,
+                "getEmptyObject",
+                "(I;)[Lorg/apache/spark/sql/catalyst/InternalRow;",
+            )?,
+            method_create_ret: ReturnType::Object,
         })
     }
 }
