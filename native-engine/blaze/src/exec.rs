@@ -49,6 +49,15 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         static SESSION: OnceCell<SessionContext> = OnceCell::new();
         static INIT: OnceCell<()> = OnceCell::new();
 
+        #[cfg(feature = "http-service")]
+        {
+            use crate::http::{HttpService, HTTP_SERVICE};
+            let _ = HTTP_SERVICE.get_or_try_init(|| {
+                eprintln!("initializing http service...");
+                Ok::<HttpService, DataFusionError>(HttpService::init())
+            });
+        }
+
         INIT.get_or_try_init(|| {
             // logging is not initialized at this moment
             eprintln!("------ initializing blaze native environment ------");
