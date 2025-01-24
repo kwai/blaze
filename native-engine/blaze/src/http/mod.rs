@@ -1,11 +1,10 @@
+#[cfg(feature = "jemalloc-pprof")]
 mod pprof;
 
 use std::sync::Mutex;
 
 use once_cell::sync::OnceCell;
 use poem::{listener::TcpListener, Route, RouteMethod, Server};
-
-use crate::http::pprof::PProfHandler;
 
 pub static HTTP_SERVICE: OnceCell<HttpService> = OnceCell::new();
 
@@ -77,7 +76,11 @@ pub struct HttpService;
 impl HttpService {
     pub fn init() -> Self {
         let server = DefaultHTTPServer::new();
-        server.register_handler(PProfHandler::default());
+        #[cfg(feature = "jemalloc-pprof")]
+        {
+            use crate::http::pprof::PProfHandler;
+            server.register_handler(PProfHandler::default());
+        }
         server.start();
         Self
     }

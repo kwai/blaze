@@ -10,7 +10,11 @@ crate-type = ["cdylib"]
 [features]
 default = ["tokio/rt-multi-thread", "jemalloc"]
 
-jemalloc = ["dep:tikv-jemalloc-ctl", "dep:tikv-jemalloc-sys", "dep:tikv-jemallocator", "dep:jemalloc_pprof", "dep:pprof"]
+jemalloc = ["dep:tikv-jemalloc-ctl", "dep:tikv-jemalloc-sys", "dep:tikv-jemallocator"]
+
+jemalloc-pprof = ["dep:jemalloc_pprof", "dep:pprof", "http-service"]
+
+http-service = []
 
 [dependencies]
 arrow = { workspace = true }

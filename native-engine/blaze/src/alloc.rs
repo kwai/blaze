@@ -14,9 +14,6 @@ use std::{
 #[cfg_attr(not(windows), global_allocator)]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(not(feature = "jemalloc"))]
-static GLOBAL: std::alloc::System = std::alloc::System;
-
 // only used for debugging
 //
 // #[global_allocator]

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{error::Error, sync::Arc};
+use std::sync::Arc;
 
 use blaze_jni_bridge::{
     conf::{DoubleConf, IntConf},
@@ -33,14 +33,9 @@ use jni::{
     objects::{JClass, JObject},
     JNIEnv,
 };
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::OnceCell;
 
-use crate::{
-    handle_unwinded_scope,
-    http::{HttpService, HTTP_SERVICE},
-    logging::init_logging,
-    rt::NativeExecutionRuntime,
-};
+use crate::{handle_unwinded_scope, logging::init_logging, rt::NativeExecutionRuntime};
 
 #[allow(non_snake_case)]
 #[no_mangle]
@@ -54,10 +49,14 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         static SESSION: OnceCell<SessionContext> = OnceCell::new();
         static INIT: OnceCell<()> = OnceCell::new();
 
-        let _ = HTTP_SERVICE.get_or_try_init(|| {
-            eprintln!("initializing http service...");
-            Ok::<HttpService, DataFusionError>(HttpService::init())
-        });
+        #[cfg(feature = "http-service")]
+        {
+            use crate::http::{HttpService, HTTP_SERVICE};
+            let _ = HTTP_SERVICE.get_or_try_init(|| {
+                eprintln!("initializing http service...");
+                Ok::<HttpService, DataFusionError>(HttpService::init())
+            });
+        }
 
         INIT.get_or_try_init(|| {
             // logging is not initialized at this moment
