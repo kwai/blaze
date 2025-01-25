@@ -30,7 +30,7 @@ use datafusion_ext_commons::{
         rdx_queue::{KeyForRadixQueue, RadixQueue},
         rdx_sort::radix_sort_by_key,
     },
-    batch_size, compute_suggested_batch_size_for_output, df_execution_err, downcast_any,
+    batch_size, compute_suggested_batch_size_for_output, df_execution_err,
     io::{read_bytes_slice, read_len, write_len},
 };
 use futures::lock::Mutex;
@@ -60,7 +60,6 @@ const SPILL_OFFHEAP_MEM_COST: usize = 200000;
 const NUM_SPILL_BUCKETS: usize = 64000;
 
 pub struct AggTable {
-    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     in_mem: Mutex<InMemTable>,
     spills: Mutex<Vec<Box<dyn Spill>>>,
@@ -71,14 +70,12 @@ pub struct AggTable {
 
 impl AggTable {
     pub fn new(agg_ctx: Arc<AggContext>, exec_ctx: Arc<ExecutionContext>) -> Self {
-        let name = format!("AggTable[partition={}]", exec_ctx.partition_id());
         let hashing_time = exec_ctx.register_timer_metric("hashing_time");
         let merging_time = exec_ctx.register_timer_metric("merging_time");
         let output_time = exec_ctx.register_timer_metric("output_time");
         Self {
             mem_consumer_info: None,
             in_mem: Mutex::new(InMemTable::new(
-                name.clone(),
                 0,
                 agg_ctx.clone(),
                 exec_ctx.clone(),
@@ -87,7 +84,6 @@ impl AggTable {
                 merging_time.clone(),
             )),
             spills: Mutex::default(),
-            name,
             agg_ctx,
             exec_ctx,
             output_time,
@@ -201,22 +197,24 @@ impl AggTable {
             return Ok(());
         }
 
-        // convert all tables into cursors
+        // write rest data into an in-memory buffer if in-mem data is small
+        // otherwise write into spill
         let mut spills = spills;
-        let mut cursors = vec![];
         if in_mem.num_records() > 0 {
-            let spill = tokio::task::spawn_blocking(|| {
-                let mut spill: Box<dyn Spill> = Box::new(vec![]);
+            let spill_metrics = self.exec_ctx.spill_metrics().clone();
+            let spill = tokio::task::spawn_blocking(move || {
+                let mut spill: Box<dyn Spill> = try_new_spill(&spill_metrics)?;
                 in_mem.try_into_spill(&mut spill)?; // spill staging records
                 Ok::<_, DataFusionError>(spill)
             })
             .await
-            .expect("tokio error")?;
-            let spill_size = downcast_any!(spill, Vec<u8>)?.len();
-            self.update_mem_used(spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
+            .expect("tokio spawn_blocking error")?;
+            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
                 .await?;
             spills.push(spill);
         }
+
+        let mut cursors = vec![];
         for spill in &mut spills {
             cursors.push(RecordsSpillCursor::try_from_spill(spill, &self.agg_ctx)?);
         }
@@ -277,7 +275,7 @@ impl AggTable {
 #[async_trait]
 impl MemConsumer for AggTable {
     fn name(&self) -> &str {
-        &self.name
+        "AggTable"
     }
 
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
@@ -336,7 +334,6 @@ pub enum InMemMode {
 
 /// Unordered in-mem hash table which can be updated
 pub struct InMemTable {
-    name: String,
     id: usize,
     agg_ctx: Arc<AggContext>,
     exec_ctx: Arc<ExecutionContext>,
@@ -347,7 +344,6 @@ pub struct InMemTable {
 
 impl InMemTable {
     fn new(
-        name: String,
         id: usize,
         agg_ctx: Arc<AggContext>,
         exec_ctx: Arc<ExecutionContext>,
@@ -356,7 +352,6 @@ impl InMemTable {
         merging_time: Time,
     ) -> Self {
         Self {
-            name,
             id,
             hashing_data: HashingData::new(agg_ctx.clone(), hashing_time),
             merging_data: MergingData::new(agg_ctx.clone(), merging_time),
@@ -367,7 +362,6 @@ impl InMemTable {
     }
 
     fn renew(&mut self, mode: InMemMode) -> Self {
-        let name = self.name.clone();
         let agg_ctx = self.agg_ctx.clone();
         let task_ctx = self.exec_ctx.clone();
         let id = self.id + 1;
@@ -375,15 +369,7 @@ impl InMemTable {
         let merging_time = self.merging_data.merging_time.clone();
         std::mem::replace(
             self,
-            Self::new(
-                name,
-                id,
-                agg_ctx,
-                task_ctx,
-                mode,
-                hashing_time,
-                merging_time,
-            ),
+            Self::new(id, agg_ctx, task_ctx, mode, hashing_time, merging_time),
         )
     }
 
@@ -407,8 +393,7 @@ impl InMemTable {
             let cardinality_ratio = self.hashing_data.cardinality_ratio();
             if cardinality_ratio > self.agg_ctx.partial_skipping_ratio {
                 log::warn!(
-                    "{} cardinality ratio = {cardinality_ratio}, will trigger partial skipping",
-                    self.name,
+                    "AggTable cardinality ratio = {cardinality_ratio}, will trigger partial skipping",
                 );
                 return true;
             }

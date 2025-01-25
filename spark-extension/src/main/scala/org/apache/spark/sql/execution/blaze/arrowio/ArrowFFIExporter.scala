@@ -15,6 +15,8 @@
  */
 package org.apache.spark.sql.execution.blaze.arrowio
 
+import java.lang.Thread.UncaughtExceptionHandler
+
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.Data
@@ -22,18 +24,17 @@ import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.blaze.{BlazeConf, NativeHelper}
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.TaskContext
 import java.security.PrivilegedExceptionAction
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.BlockingQueue
-import java.util.concurrent.SynchronousQueue
 
-class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType)
-  extends AutoCloseable {
-
+class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
   private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf()
   private val maxBatchMemorySize = 1 << 24 // 16MB
 
@@ -41,22 +42,19 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
   private val nativeCurrentUser = NativeHelper.currentUser
 
-  private trait QueueElement
-  private case class Root(root: VectorSchemaRoot) extends QueueElement
-  private case object RootConsumed extends QueueElement
-  private case object Finished extends QueueElement
+  private trait QueueState
+  private case object NextBatch extends QueueState
+  private case object Finished extends QueueState
 
   private val tc = TaskContext.get()
-  private val outputQueue: BlockingQueue[QueueElement] = new SynchronousQueue[QueueElement]()
+  private val outputQueue: BlockingQueue[QueueState] = new ArrayBlockingQueue[QueueState](16)
+  private val processingQueue: BlockingQueue[Unit] = new ArrayBlockingQueue[Unit](16)
   private var currentRoot: VectorSchemaRoot = _
-  private var finished = false
-  private val outputThread = startOutputThread()
+  startOutputThread()
 
   def exportSchema(exportArrowSchemaPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { schemaAllocator =>
-      Using.resource(ArrowSchema.wrap(exportArrowSchemaPtr)) { exportSchema =>
-        Data.exportSchema(schemaAllocator, arrowSchema, emptyDictionaryProvider, exportSchema)
-      }
+    Using.resource(ArrowSchema.wrap(exportArrowSchemaPtr)) { exportSchema =>
+      Data.exportSchema(ROOT_ALLOCATOR, arrowSchema, emptyDictionaryProvider, exportSchema)
     }
   }
 
@@ -66,37 +64,24 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType)
     }
 
     // export using root allocator
-    val allocator = ArrowUtils.rootAllocator
     Using.resource(ArrowArray.wrap(exportArrowArrayPtr)) { exportArray =>
-      Data.exportVectorSchemaRoot(allocator, currentRoot, emptyDictionaryProvider, exportArray)
+      Data.exportVectorSchemaRoot(
+        ROOT_ALLOCATOR,
+        currentRoot,
+        emptyDictionaryProvider,
+        exportArray)
     }
 
-    // consume RootConsumed state so that we can go to the next batch
-    outputQueue.take() match {
-      case RootConsumed =>
-      case other =>
-        throw new IllegalStateException(s"Unexpected queue element: $other, expect RootConsumed")
-    }
+    // to continue processing next batch
+    processingQueue.put(())
     true
   }
 
   private def hasNext: Boolean = {
     if (tc != null && (tc.isCompleted() || tc.isInterrupted())) {
-      finished = true
       return false
     }
-
-    outputQueue.take() match {
-      case Root(root) =>
-        currentRoot = root
-        true
-      case Finished =>
-        currentRoot = null
-        finished = true
-        false
-      case other =>
-        throw new IllegalStateException(s"Unexpected queue element: $other, expect Root/Finished")
-    }
+    outputQueue.take() == NextBatch
   }
 
   private def startOutputThread(): Thread = {
@@ -108,49 +93,55 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType)
 
         nativeCurrentUser.doAs(new PrivilegedExceptionAction[Unit] {
           override def run(): Unit = {
-            while (!finished && (tc == null || (!tc.isCompleted() && !tc.isInterrupted()))) {
+            while (tc == null || (!tc.isCompleted() && !tc.isInterrupted())) {
               if (!rowIter.hasNext) {
-                finished = true
                 outputQueue.put(Finished)
                 return
               }
 
-              Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-                Using.resource(VectorSchemaRoot.create(arrowSchema, batchAllocator)) { root =>
-                  val arrowWriter = ArrowWriter.create(root)
-                  var rowCount = 0
-
-                  while (rowIter.hasNext
-                    && rowCount < maxBatchNumRows
-                    && batchAllocator.getAllocatedMemory < maxBatchMemorySize) {
-                    arrowWriter.write(rowIter.next())
-                    rowCount += 1
-                  }
-                  arrowWriter.finish()
-
-                  // export root
-                  outputQueue.put(Root(root))
-                  outputQueue.put(RootConsumed)
+              Using.resource(VectorSchemaRoot.create(arrowSchema, ROOT_ALLOCATOR)) { root =>
+                val arrowWriter = ArrowWriter.create(root)
+                var rowCount = 0
+                while (rowIter.hasNext
+                  && rowCount < maxBatchNumRows
+                  && (rowCount == 0 || ROOT_ALLOCATOR.getAllocatedMemory < maxBatchMemorySize)) {
+                  arrowWriter.write(rowIter.next())
+                  rowCount += 1
                 }
+                arrowWriter.finish()
+
+                // export root
+                currentRoot = root
+                outputQueue.put(NextBatch)
+
+                // wait for processing next batch
+                processingQueue.take()
               }
             }
+            outputQueue.put(Finished)
           }
         })
       }
     })
 
+    def close(): Unit = {
+      thread.interrupt()
+      outputQueue.put(Finished) // to abort any pending call to exportNextBatch()
+    }
+
     if (tc != null) {
       tc.addTaskCompletionListener[Unit]((_: TaskContext) => close())
       tc.addTaskFailureListener((_, _) => close())
     }
+
     thread.setDaemon(true)
+    thread.setUncaughtExceptionHandler(new UncaughtExceptionHandler {
+      override def uncaughtException(t: Thread, e: Throwable): Unit = {
+        close()
+        throw e
+      }
+    })
     thread.start()
     thread
-  }
-
-  override def close(): Unit = {
-    finished = true
-    outputThread.interrupt()
-    outputQueue.offer(Finished) // to abort any pending call to exportNextBatch()
   }
 }

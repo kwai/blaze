@@ -16,6 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import java.nio.ByteBuffer
+
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
@@ -30,6 +31,7 @@ import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
@@ -61,36 +63,26 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
   }
 
   def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        VectorSchemaRoot.create(outputSchema, batchAllocator),
-        VectorSchemaRoot.create(paramsSchema, batchAllocator),
-        ArrowArray.wrap(importFFIArrayPtr),
-        ArrowArray.wrap(exportFFIArrayPtr)) {
-        (outputRoot, paramsRoot, importArray, exportArray) =>
-          // import into params root
-          Data.importIntoVectorSchemaRoot(
-            batchAllocator,
-            importArray,
-            paramsRoot,
-            dictionaryProvider)
-          val batch = ColumnarHelper.rootAsBatch(paramsRoot)
+    Using.resources(
+      VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
+      VectorSchemaRoot.create(paramsSchema, ROOT_ALLOCATOR),
+      ArrowArray.wrap(importFFIArrayPtr),
+      ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
+      // import into params root
+      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, importArray, paramsRoot, dictionaryProvider)
 
-          // evaluate expression and write to output root
-          val outputWriter = ArrowWriter.create(outputRoot)
-          for (paramsRow <- ColumnarHelper.batchAsRowIter(batch)) {
-            val outputRow = InternalRow(expr.eval(paramsToUnsafe(paramsRow)))
-            outputWriter.write(outputRow)
-          }
-          outputWriter.finish()
-
-          // export to output using root allocator
-          Data.exportVectorSchemaRoot(
-            ArrowUtils.rootAllocator,
-            outputRoot,
-            dictionaryProvider,
-            exportArray)
+      // evaluate expression and write to output root
+      Using.resource(ColumnarHelper.rootAsBatch(paramsRoot)) { batch =>
+        val outputWriter = ArrowWriter.create(outputRoot)
+        for (paramsRow <- ColumnarHelper.batchAsRowIter(batch)) {
+          val outputRow = InternalRow(expr.eval(paramsToUnsafe(paramsRow)))
+          outputWriter.write(outputRow)
+        }
+        outputWriter.finish()
       }
+
+      // export to output using root allocator
+      Data.exportVectorSchemaRoot(ROOT_ALLOCATOR, outputRoot, dictionaryProvider, exportArray)
     }
   }
 }

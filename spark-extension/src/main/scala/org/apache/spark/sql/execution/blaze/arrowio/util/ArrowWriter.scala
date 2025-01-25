@@ -21,18 +21,20 @@ import org.apache.arrow.vector._
 import org.apache.arrow.vector.complex._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.SpecializedGetters
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.types._
 
 object ArrowWriter {
 
   def create(schema: StructType): ArrowWriter = {
     val arrowSchema = ArrowUtils.toArrowSchema(schema)
-    val root = VectorSchemaRoot.create(arrowSchema, ArrowUtils.rootAllocator)
+    val root = VectorSchemaRoot.create(arrowSchema, ROOT_ALLOCATOR)
     create(root)
   }
 
   def create(root: VectorSchemaRoot): ArrowWriter = {
     val children = root.getFieldVectors().asScala.map { vector =>
+      vector.setInitialCapacity(0) // don't allocate initial memory for the vector
       vector.allocateNew()
       createFieldWriter(vector)
     }
@@ -211,7 +213,6 @@ private[sql] class FloatWriter(val valueVector: Float4Vector) extends ArrowField
 }
 
 private[sql] class DoubleWriter(val valueVector: Float8Vector) extends ArrowFieldWriter {
-
   override def setNull(): Unit = {
     valueVector.setNull(count)
   }
@@ -223,7 +224,6 @@ private[sql] class DoubleWriter(val valueVector: Float8Vector) extends ArrowFiel
 
 private[sql] class DecimalWriter(val valueVector: DecimalVector, precision: Int, scale: Int)
     extends ArrowFieldWriter {
-
   override def setNull(): Unit = {
     valueVector.setNull(count)
   }
@@ -239,7 +239,6 @@ private[sql] class DecimalWriter(val valueVector: DecimalVector, precision: Int,
 }
 
 private[sql] class StringWriter(val valueVector: VarCharVector) extends ArrowFieldWriter {
-
   override def setNull(): Unit = {
     valueVector.setNull(count)
   }
@@ -253,7 +252,6 @@ private[sql] class StringWriter(val valueVector: VarCharVector) extends ArrowFie
 }
 
 private[sql] class BinaryWriter(val valueVector: VarBinaryVector) extends ArrowFieldWriter {
-
   override def setNull(): Unit = {
     valueVector.setNull(count)
   }

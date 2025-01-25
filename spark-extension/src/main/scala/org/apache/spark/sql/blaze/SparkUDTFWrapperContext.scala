@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StructField
@@ -64,59 +65,42 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
   }
 
   def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        VectorSchemaRoot.create(outputSchema, batchAllocator),
-        VectorSchemaRoot.create(paramsSchema, batchAllocator),
-        ArrowArray.wrap(importFFIArrayPtr),
-        ArrowArray.wrap(exportFFIArrayPtr)) {
-        (outputRoot, paramsRoot, importArray, exportArray) =>
-          // import into params root
-          Data.importIntoVectorSchemaRoot(
-            batchAllocator,
-            importArray,
-            paramsRoot,
-            dictionaryProvider)
-          val batch = ColumnarHelper.rootAsBatch(paramsRoot)
+    Using.resources(
+      VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
+      VectorSchemaRoot.create(paramsSchema, ROOT_ALLOCATOR),
+      ArrowArray.wrap(importFFIArrayPtr),
+      ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
+      // import into params root
+      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, importArray, paramsRoot, dictionaryProvider)
+      val batch = ColumnarHelper.rootAsBatch(paramsRoot)
 
-          // evaluate expression and write to output root
-          val outputWriter = ArrowWriter.create(outputRoot)
-          for ((paramsRow, rowId) <- ColumnarHelper.batchAsRowIter(batch).zipWithIndex) {
-            for (outputRow <- expr.eval(paramsToUnsafe(paramsRow))) {
-              outputWriter.write(InternalRow(rowId, outputRow))
-            }
-          }
-          outputWriter.finish()
-
-          // export to output using root allocator
-          Data.exportVectorSchemaRoot(
-            ArrowUtils.rootAllocator,
-            outputRoot,
-            dictionaryProvider,
-            exportArray)
+      // evaluate expression and write to output root
+      val outputWriter = ArrowWriter.create(outputRoot)
+      for ((paramsRow, rowId) <- ColumnarHelper.batchAsRowIter(batch).zipWithIndex) {
+        for (outputRow <- expr.eval(paramsToUnsafe(paramsRow))) {
+          outputWriter.write(InternalRow(rowId, outputRow))
+        }
       }
+      outputWriter.finish()
+
+      // export to output using root allocator
+      Data.exportVectorSchemaRoot(ROOT_ALLOCATOR, outputRoot, dictionaryProvider, exportArray)
     }
   }
 
   def terminate(rowId: Int, exportFFIArrayPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        VectorSchemaRoot.create(outputSchema, batchAllocator),
-        ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, exportArray) =>
-        // evaluate expression and write to output root
-        val outputWriter = ArrowWriter.create(outputRoot)
-        for (outputRow <- expr.terminate()) {
-          outputWriter.write(InternalRow(rowId, outputRow))
-        }
-        outputWriter.finish()
-
-        // export to output using root allocator
-        Data.exportVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          outputRoot,
-          dictionaryProvider,
-          exportArray)
+    Using.resources(
+      VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
+      ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, exportArray) =>
+      // evaluate expression and write to output root
+      val outputWriter = ArrowWriter.create(outputRoot)
+      for (outputRow <- expr.terminate()) {
+        outputWriter.write(InternalRow(rowId, outputRow))
       }
+      outputWriter.finish()
+
+      // export to output using root allocator
+      Data.exportVectorSchemaRoot(ROOT_ALLOCATOR, outputRoot, dictionaryProvider, exportArray)
     }
   }
 }

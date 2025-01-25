@@ -149,14 +149,14 @@ fn read_ffi(
     Ok(exec_ctx
         .clone()
         .output_with_sender("FFIReader", move |sender| async move {
-            struct AutoCloseableExporer(GlobalRef);
-            impl Drop for AutoCloseableExporer {
+            struct AutoCloseableExporter(GlobalRef);
+            impl Drop for AutoCloseableExporter {
                 fn drop(&mut self) {
                     let _ = jni_call!(JavaAutoCloseable(self.0.as_obj()).close() -> ());
                 }
             }
+            let exporter = AutoCloseableExporter(exporter);
 
-            let exporter = AutoCloseableExporer(exporter);
             loop {
                 let batch = {
                     // load batch from ffi

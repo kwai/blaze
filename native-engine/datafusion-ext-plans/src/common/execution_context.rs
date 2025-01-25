@@ -36,7 +36,7 @@ use datafusion_ext_commons::{
     arrow::{array_size::ArraySize, coalesce::coalesce_batches_unchecked},
     batch_size, df_execution_err, suggested_output_batch_mem_size,
 };
-use futures::{Stream, StreamExt};
+use futures::{executor::block_on_stream, Stream, StreamExt};
 use futures_util::FutureExt;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
@@ -120,6 +120,33 @@ impl ExecutionContext {
     pub fn register_counter_metric(&self, name: &str) -> Count {
         MetricBuilder::new(self.execution_plan_metrics())
             .counter(name.to_owned(), self.partition_id)
+    }
+
+    pub fn spawn_worker_thread_on_stream(
+        self: &Arc<Self>,
+        input: SendableRecordBatchStream,
+    ) -> SendableRecordBatchStream {
+        let (batch_sender, mut batch_receiver) = tokio::sync::mpsc::channel(1);
+
+        tokio::task::spawn_blocking(move || {
+            let mut blocking_stream = block_on_stream(input);
+            while is_task_running()
+                && let Some(batch_result) = blocking_stream.next()
+            {
+                if batch_sender.blocking_send(batch_result).is_err() {
+                    break;
+                }
+            }
+        });
+
+        self.output_with_sender("WorkerThreadOnStream", move |sender| async move {
+            while is_task_running()
+                && let Some(batch_result) = batch_receiver.recv().await
+            {
+                sender.send(batch_result?).await;
+            }
+            Ok(())
+        })
     }
 
     pub fn coalesce_with_default_batch_size(
@@ -393,6 +420,9 @@ impl WrappedRecordBatchSender {
     }
 
     pub async fn send(&self, batch: RecordBatch) {
+        if batch.num_rows() == 0 {
+            return;
+        }
         let exclude_time = self.exclude_time.get().cloned();
         let send_time = exclude_time.as_ref().map(|_| Instant::now());
         self.sender

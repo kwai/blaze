@@ -36,6 +36,7 @@ import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
@@ -102,12 +103,10 @@ case class BlazeCallNativeWrapper(
     metrics
 
   protected def importSchema(ffiSchemaPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { schemaAllocator =>
-      Using.resource(ArrowSchema.wrap(ffiSchemaPtr)) { ffiSchema =>
-        arrowSchema = Data.importSchema(schemaAllocator, ffiSchema, dictionaryProvider)
-        schema = ArrowUtils.fromArrowSchema(arrowSchema)
-        toUnsafe = UnsafeProjection.create(schema)
-      }
+    Using.resource(ArrowSchema.wrap(ffiSchemaPtr)) { ffiSchema =>
+      arrowSchema = Data.importSchema(ROOT_ALLOCATOR, ffiSchema, dictionaryProvider)
+      schema = ArrowUtils.fromArrowSchema(arrowSchema)
+      toUnsafe = UnsafeProjection.create(schema)
     }
   }
 
@@ -116,19 +115,17 @@ case class BlazeCallNativeWrapper(
       throw new RuntimeException("Native runtime is finalized")
     }
 
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        ArrowArray.wrap(ffiArrayPtr),
-        VectorSchemaRoot.create(arrowSchema, batchAllocator)) { case (ffiArray, root) =>
-        Data.importIntoVectorSchemaRoot(batchAllocator, ffiArray, root, dictionaryProvider)
-        val batch = ColumnarHelper.rootAsBatch(root)
+    Using.resources(
+      ArrowArray.wrap(ffiArrayPtr),
+      VectorSchemaRoot.create(arrowSchema, ROOT_ALLOCATOR)) { case (ffiArray, root) =>
+      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, ffiArray, root, dictionaryProvider)
+      val batch = ColumnarHelper.rootAsBatch(root)
 
-        batchRows.append(
-          ColumnarHelper
-            .batchAsRowIter(batch)
-            .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
-            .toSeq: _*)
-      }
+      batchRows.append(
+        ColumnarHelper
+          .batchAsRowIter(batch)
+          .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
+          .toSeq: _*)
     }
   }
 

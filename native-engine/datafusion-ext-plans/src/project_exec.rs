@@ -218,6 +218,8 @@ fn execute_project_with_filtering(
                 .transpose()?
             {
                 let output_batch = cached_expr_evaluator.filter_project(&batch)?;
+                drop(batch);
+
                 exec_ctx
                     .baseline_metrics()
                     .record_output(output_batch.num_rows());

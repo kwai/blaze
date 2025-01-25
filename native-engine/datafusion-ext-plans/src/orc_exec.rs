@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, fmt, fmt::Formatter, sync::Arc};
+use std::{any::Any, fmt, fmt::Formatter, pin::Pin, sync::Arc};
 
 use arrow::{datatypes::SchemaRef, error::ArrowError};
 use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
@@ -165,24 +165,16 @@ impl ExecutionPlan for OrcExec {
             fs_provider,
         };
 
-        let mut file_stream = Box::pin(FileStream::new(
+        let file_stream = Box::pin(FileStream::new(
             &self.base_config,
             partition,
             opener,
             exec_ctx.execution_plan_metrics(),
         )?);
-        let timed_stream =
-            exec_ctx
-                .clone()
-                .output_with_sender("OrcScan", move |sender| async move {
-                    sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
-                    let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
-                    while let Some(batch) = file_stream.next().await.transpose()? {
-                        sender.send(batch).await;
-                    }
-                    Ok(())
-                });
-        Ok(timed_stream)
+
+        let timed_stream = execute_orc_scan(file_stream, exec_ctx.clone())?;
+        let nonblock_stream = exec_ctx.spawn_worker_thread_on_stream(timed_stream);
+        Ok(exec_ctx.coalesce_with_default_batch_size(nonblock_stream))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -192,6 +184,22 @@ impl ExecutionPlan for OrcExec {
     fn statistics(&self) -> Result<Statistics> {
         Ok(self.projected_statistics.clone())
     }
+}
+
+fn execute_orc_scan(
+    mut stream: Pin<Box<FileStream<OrcOpener>>>,
+    exec_ctx: Arc<ExecutionContext>,
+) -> Result<SendableRecordBatchStream> {
+    Ok(exec_ctx
+        .clone()
+        .output_with_sender("OrcScan", move |sender| async move {
+            sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
+            let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
+            while let Some(batch) = stream.next().await.transpose()? {
+                sender.send(batch).await;
+            }
+            Ok(())
+        }))
 }
 
 struct OrcOpener {
