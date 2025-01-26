@@ -89,7 +89,11 @@ class BlazeUniffleShuffleReader[K, C](
 
   override protected def readBlocks(): Iterator[(BlockId, InputStream)] = {
     val inputStream =
-      new UniffleInputStream(new MultiPartitionIterator[K, C](), shuffleId, startPartition, endPartition)
+      new UniffleInputStream(
+        new MultiPartitionIterator[K, C](),
+        shuffleId,
+        startPartition,
+        endPartition)
     Iterator.single((null, inputStream))
   }
 
