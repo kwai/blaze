@@ -98,7 +98,7 @@ class BlazeUniffleShuffleManager(conf: SparkConf, isDriver: Boolean)
       context: TaskContext,
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
     val rssHandle = handle.asInstanceOf[RssShuffleHandleWrapper[K, _, C]].rssShuffleHandleInfo
-    uniffleShuffleManager.getReaderForRange(
+    uniffleShuffleManager.getReader(
       rssHandle,
       startMapIndex,
       endMapIndex,
