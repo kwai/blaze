@@ -109,6 +109,7 @@
               <arguments>
                 <argument>./build-native.sh</argument>
                 <argument>${releaseMode}</argument>
+                <argument>${buildWithFeatures}</argument>
               </arguments>
               <workingDirectory>../</workingDirectory>
               <useMavenLogger>true</useMavenLogger>

@@ -5,6 +5,11 @@ set -e
 cd "$(dirname "$0")"
 profile="$1"
 
+features_arg=""
+if [ -n "$2" ]; then
+    features_arg="--features $2"
+fi
+
 libname=libblaze
 if [ "$(uname)" == "Darwin" ]; then
     libsuffix=dylib
@@ -29,6 +34,8 @@ checksum() {
         exit 1
     fi
 
+    echo "$features_arg" | $hash_cmd | awk '{print $1}'
+
     find Cargo.toml Cargo.lock native-engine target/$profile/$libname."$libsuffix" | \
         xargs $hash_cmd 2>&1 | \
         sort -k1 | \
@@ -39,8 +46,8 @@ checksum_cache_file="./.build-checksum_$profile-"$libsuffix".cache"
 old_checksum="$(cat "$checksum_cache_file" 2>&1 || true)"
 new_checksum="$(checksum)"
 
-echo "old build-checksum: $old_checksum"
-echo "new build-checksum: $new_checksum"
+echo -e "old build-checksum: \n$old_checksum\n========"
+echo -e "new build-checksum: \n$new_checksum\n========"
 
 if [ "$new_checksum" != "$old_checksum" ]; then
     export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=native"}
@@ -51,7 +58,7 @@ if [ "$new_checksum" != "$old_checksum" ]; then
     cargo fmt --all -q --
 
     echo "Building native with [$profile] profile..."
-    cargo build --profile="$profile" --verbose --locked --frozen
+    cargo build --profile="$profile" $features_arg --verbose --locked --frozen
 else
     echo "native-engine source code and built libraries not modified, no need to rebuild"
 fi

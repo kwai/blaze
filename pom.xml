@@ -285,6 +285,16 @@
       <properties>
         <releaseMode>release</releaseMode>
         <buildNativeWithRelease>true</buildNativeWithRelease>
+        <buildWithFeatures />
+      </properties>
+    </profile>
+
+    <profile>
+      <id>release-with-jemalloc-pprof</id>
+      <properties>
+        <releaseMode>release</releaseMode>
+        <buildNativeWithRelease>true</buildNativeWithRelease>
+        <buildWithFeatures>jemalloc-pprof</buildWithFeatures>
       </properties>
     </profile>
 
@@ -293,6 +303,7 @@
       <properties>
         <releaseMode>pre</releaseMode>
         <buildNativeWithRelease>false</buildNativeWithRelease>
+        <buildWithFeatures />
       </properties>
     </profile>
 
