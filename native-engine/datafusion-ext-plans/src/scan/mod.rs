@@ -171,7 +171,7 @@ fn schema_adapter_cast_column(col: &ArrayRef, data_type: &DataType) -> Result<Ar
             DataType::Int16 => handle_decimal!(Int16, Decimal128, i128, *prec, *scale),
             DataType::Int32 => handle_decimal!(Int32, Decimal128, i128, *prec, *scale),
             DataType::Int64 => handle_decimal!(Int64, Decimal128, i128, *prec, *scale),
-            DataType::Decimal128(p, s) => {
+            DataType::Decimal128(..) => {
                 datafusion_ext_commons::arrow::cast::cast_scan_input_array(col.as_ref(), data_type)
             }
             _ => df_execution_err!(
