@@ -90,7 +90,13 @@ impl ExecutionPlan for LimitExec {
     }
 
     fn statistics(&self) -> Result<Statistics> {
-        todo!()
+        Statistics::with_fetch(
+            self.input.statistics()?,
+            self.schema(),
+            Some(self.limit as usize),
+            0,
+            1,
+        )
     }
 }
 
@@ -130,7 +136,7 @@ mod test {
     };
     use datafusion::{
         assert_batches_eq,
-        common::Result,
+        common::{stats::Precision, Result},
         physical_plan::{common, memory::MemoryExec, ExecutionPlan},
         prelude::SessionContext,
     };
@@ -182,6 +188,7 @@ mod test {
         let task_ctx = session_ctx.task_ctx();
         let output = limit_exec.execute(0, task_ctx).unwrap();
         let batches = common::collect(output).await?;
+        let row_count = limit_exec.statistics()?.num_rows;
 
         let expected = vec![
             "+---+---+---+",
@@ -192,6 +199,7 @@ mod test {
             "+---+---+---+",
         ];
         assert_batches_eq!(expected, &batches);
+        assert_eq!(row_count, Precision::Exact(2));
         Ok(())
     }
 }
