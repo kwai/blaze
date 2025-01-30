@@ -185,7 +185,7 @@ impl ExecutionPlan for SortExec {
     }
 
     fn statistics(&self) -> Result<Statistics> {
-        todo!()
+        Statistics::with_fetch(self.input.statistics()?, self.schema(), self.fetch, 0, 1)
     }
 }
 
@@ -1393,9 +1393,9 @@ mod fuzztest {
         record_batch::RecordBatch,
     };
     use datafusion::{
-        common::Result,
+        common::{stats::Precision, Result},
         physical_expr::{expressions::Column, PhysicalSortExpr},
-        physical_plan::memory::MemoryExec,
+        physical_plan::{memory::MemoryExec, ExecutionPlan},
         prelude::{SessionConfig, SessionContext},
     };
 
@@ -1462,6 +1462,7 @@ mod fuzztest {
         let sort = Arc::new(SortExec::new(input, sort_exprs.clone(), None));
         let output = datafusion::physical_plan::collect(sort, task_ctx.clone()).await?;
         let a = concat_batches(&schema, &output)?;
+        let a_row_count = sort.statistics()?.num_rows;
 
         let input = Arc::new(MemoryExec::try_new(
             &[batches.clone()],
@@ -1474,8 +1475,11 @@ mod fuzztest {
         ));
         let output = datafusion::physical_plan::collect(sort, task_ctx.clone()).await?;
         let b = concat_batches(&schema, &output)?;
+        let b_row_count = sort.statistics()?.num_rows;
 
         assert_eq!(a.num_rows(), b.num_rows());
+        assert_eq!(a_row_count, b_row_count);
+        assert_eq!(a_row_count, Precision::Exact(n));
         assert!(a == b);
         Ok(())
     }
