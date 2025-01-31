@@ -30,4 +30,4 @@ tokio = "1.43.0"
 unchecked-index = "0.2.2"
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = "0.9.0"

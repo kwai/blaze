@@ -47,4 +47,4 @@ uuid = "1.12.1"
 zstd = "0.13.2"
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = "0.9.0"
