@@ -149,13 +149,21 @@ fn read_ffi(
     Ok(exec_ctx
         .clone()
         .output_with_sender("FFIReader", move |sender| async move {
+            struct AutoCloseableExporer(GlobalRef);
+            impl Drop for AutoCloseableExporer {
+                fn drop(&mut self) {
+                    let _ = jni_call!(JavaAutoCloseable(self.0.as_obj()).close() -> ());
+                }
+            }
+
+            let exporter = AutoCloseableExporer(exporter);
             loop {
                 let batch = {
                     // load batch from ffi
                     let mut ffi_arrow_array = FFI_ArrowArray::empty();
                     let ffi_arrow_array_ptr = &mut ffi_arrow_array as *mut FFI_ArrowArray as i64;
                     let has_next = jni_call!(
-                        BlazeArrowFFIExporter(exporter.as_obj())
+                        BlazeArrowFFIExporter(exporter.0.as_obj())
                             .exportNextBatch(ffi_arrow_array_ptr) -> bool
                     )?;
 
