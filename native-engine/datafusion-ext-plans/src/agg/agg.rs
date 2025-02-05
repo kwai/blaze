@@ -15,7 +15,7 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{Array, ArrayRef, AsArray, Int64Array, Int64Builder, RecordBatch},
+    array::{Array, ArrayRef, AsArray, Int32Array, Int32Builder, RecordBatch},
     datatypes::{DataType, Int64Type, Schema, SchemaRef},
 };
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
@@ -78,34 +78,34 @@ impl IdxSelection<'_> {
         }
     }
 
-    pub fn to_int64_array(&self) -> Int64Array {
-        let mut builder = Int64Builder::with_capacity(self.len());
+    pub fn to_int32_array(&self) -> Int32Array {
+        let mut builder = Int32Builder::with_capacity(self.len());
 
         match self {
             IdxSelection::Single(idx) => {
-                builder.append_value(*idx as i64);
+                builder.append_value(*idx as i32);
             }
 
             IdxSelection::Indices(indices) => {
                 for &idx in *indices {
-                    builder.append_value(idx as i64);
+                    builder.append_value(idx as i32);
                 }
             }
             IdxSelection::IndicesU32(indices_u32) => {
                 for &idx in *indices_u32 {
-                    builder.append_value(idx as i64);
+                    builder.append_value(idx as i32);
                 }
             }
             IdxSelection::Range(start, end) => {
                 for idx in *start..=*end {
-                    builder.append_value(idx as i64);
+                    builder.append_value(idx as i32);
                 }
             }
         }
         let primitive_array = builder.finish();
         primitive_array
             .as_any()
-            .downcast_ref::<Int64Array>()
+            .downcast_ref::<Int32Array>()
             .cloned()
             .unwrap()
     }

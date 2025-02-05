@@ -16,7 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import org.apache.arrow.c.{ArrowArray, Data}
-import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.arrow.vector.{IntVector, VectorSchemaRoot}
 import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
@@ -28,7 +28,6 @@ import org.apache.spark.sql.execution.UnsafeRowSerializer
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
 import org.apache.spark.sql.types.{BinaryType, DataType, IntegerType, LongType, StructField, StructType}
 import org.apache.arrow.flatbuf
-import com.google.flatbuffers.{IntVector, LongVector}
 import org.apache.spark.sql.Row
 
 import scala.collection.JavaConverters._
@@ -91,12 +90,11 @@ object UnsafeRowsWrapper extends Logging {
             importArray,
             paramsRoot,
             dictionaryProvider)
-          val idxArray = paramsRoot.getFieldVectors.asScala.head.asInstanceOf[LongVector];
-
+          val idxArray = paramsRoot.getFieldVectors.asScala.head.asInstanceOf[IntVector]
           val serializer = new UnsafeRowSerializer(numFields).newInstance()
           val outputWriter = ArrowWriter.create(outputRoot)
-          for (idx <- 0 until idxArray.length()) {
-            val internalRow = unsafeRows(idx)
+          for (idx <- 0 until paramsRoot.getRowCount) {
+            val internalRow = unsafeRows(idxArray.get(idx))
             Utils.tryWithResource(new ByteArrayOutputStream()) { baos =>
               val serializerStream = serializer.serializeStream(baos)
               serializerStream.writeValue(internalRow)
@@ -138,14 +136,10 @@ object UnsafeRowsWrapper extends Logging {
           val binaryVector = fieldVectors.head.asInstanceOf[flatbuf.Binary.Vector];
           val intVector = fieldVectors(1).asInstanceOf[IntVector]
 
-          assert(
-            binaryVector.length() == intVector.length(),
-            s"Error: UnsafeRowsWrapper deserialize error Vectors have different lengths.")
-
           val deserializer = new UnsafeRowSerializer(numFields).newInstance()
-          val internalRowsArray = new Array[InternalRow](binaryVector.length())
+          val internalRowsArray = new Array[InternalRow](paramsRoot.getRowCount)
           val outputWriter = ArrowWriter.create(outputRoot)
-          for (i <- 0 until binaryVector.length()) {
+          for (i <- 0 until paramsRoot.getRowCount) {
             val binaryRow = binaryVector.get(i)
             val offset = intVector.get(i)
             val bytes = binaryRow.getByteBuffer.array()
@@ -182,7 +176,9 @@ object UnsafeRowsWrapper extends Logging {
   }
 
   def getNullObject(rowNum: Int): Array[InternalRow] = {
-    Array.fill(rowNum)(InternalRow.empty)
+    Array.fill(rowNum) {
+      new UnsafeRow(0)
+    }
   }
 
 }

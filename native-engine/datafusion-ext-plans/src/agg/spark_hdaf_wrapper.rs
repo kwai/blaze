@@ -21,7 +21,7 @@ use std::{
 use arrow::{
     array::{
         as_struct_array, make_array, Array, ArrayAccessor, ArrayRef, AsArray, BinaryArray, Datum,
-        Int32Array, StructArray,
+        Int32Array, Int32Builder, StructArray,
     },
     buffer::NullBuffer,
     datatypes::{DataType, Field, Schema, SchemaRef},
@@ -45,6 +45,7 @@ use crate::{
         acc::{AccColumn, AccColumnRef},
         agg::{Agg, IdxSelection},
     },
+    idx_for_zipped,
     memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
 };
 
@@ -177,6 +178,29 @@ impl Agg for SparkUDAFWrapper {
             &RecordBatchOptions::new().with_row_count(Some(params[0].len())),
         )?;
 
+        let max_len = std::cmp::max(acc_idx.len(), partial_arg_idx.len());
+        let mut acc_idx_builder = Int32Builder::with_capacity(max_len);
+        let mut partial_arg_idx_builder = Int32Builder::with_capacity(max_len);
+        idx_for_zipped! {
+            ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                acc_idx_builder.append_value(acc_idx as i32);
+                partial_arg_idx_builder.append_value(partial_arg_idx as i32);
+            }
+        }
+        let acc_idx = acc_idx_builder
+            .finish()
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .cloned()
+            .unwrap();
+
+        let partial_arg_idx = partial_arg_idx_builder
+            .finish()
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .cloned()
+            .unwrap();
+
         accs.obj = partial_update_udaf(
             self.jcontext()?,
             params_batch,
@@ -198,6 +222,29 @@ impl Agg for SparkUDAFWrapper {
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
         let merging_accs = downcast_any!(merging_accs, mut AccUnsafeRowsColumn).unwrap();
+
+        let max_len = std::cmp::max(acc_idx.len(), merging_acc_idx.len());
+        let mut acc_idx_builder = Int32Builder::with_capacity(max_len);
+        let mut merging_acc_idx_builder = Int32Builder::with_capacity(max_len);
+        idx_for_zipped! {
+            ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                acc_idx_builder.append_value(acc_idx as i32);
+                merging_acc_idx_builder.append_value(merging_acc_idx as i32);
+            }
+        }
+        let acc_idx = acc_idx_builder
+            .finish()
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .cloned()
+            .unwrap();
+
+        let merging_acc_idx = merging_acc_idx_builder
+            .finish()
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .cloned()
+            .unwrap();
 
         accs.obj = partial_merge_udaf(
             self.jcontext()?,
@@ -255,9 +302,9 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
-        let field = Arc::new(Field::new("", DataType::Int64, false));
-        let idx64 = idx.to_int64_array().into_data();
-        let struct_array = StructArray::from(vec![(field, make_array(idx64))]);
+        let field = Arc::new(Field::new("", DataType::Int32, false));
+        let idx32 = idx.to_int32_array().into_data();
+        let struct_array = StructArray::from(vec![(field, make_array(idx32))]);
         let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
         let mut import_ffi_array = FFI_ArrowArray::empty();
         jni_call_static!(
@@ -276,7 +323,7 @@ impl AccColumn for AccUnsafeRowsColumn {
         let result_struct = import_struct_array.as_struct();
 
         let binary_array = result_struct
-            .column(1)
+            .column(0)
             .as_any()
             .downcast_ref::<BinaryArray>()
             .ok_or_else(|| DataFusionError::Execution("Expected a BinaryArray".to_string()))?;
@@ -295,7 +342,7 @@ impl AccColumn for AccUnsafeRowsColumn {
     fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
         let fields = Fields::from(vec![
             Field::new("", DataType::Binary, false),
-            Field::new("", DataType::Int64, false),
+            Field::new("", DataType::Int32, false),
         ]);
         let binary_values = array.iter().map(|&data| data).collect();
         let offsets_i32 = offsets
@@ -354,16 +401,23 @@ fn partial_update_udaf(
     jcontext: GlobalRef,
     params_batch: RecordBatch,
     accs: GlobalRef,
-    acc_idx: IdxSelection<'_>,
-    partial_arg_idx: IdxSelection<'_>,
+    acc_idx: Int32Array,
+    partial_arg_idx: Int32Array,
 ) -> Result<GlobalRef> {
-    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int64, false));
-    let partial_arg_idx_field = Arc::new(Field::new("partial_arg_idx", DataType::Int64, false));
-    let acc_idx = acc_idx.to_int64_array().into_data();
-    let partial_arg_idx = partial_arg_idx.to_int64_array().into_data();
+    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int32, false));
+    let partial_arg_idx_field = Arc::new(Field::new("partial_arg_idx", DataType::Int32, false));
+
+    log::info!(
+        "acc_idx length {}  partial_arg_idx len {}",
+        acc_idx.len(),
+        partial_arg_idx.len()
+    );
     let struct_array = StructArray::from(vec![
-        (acc_idx_field.clone(), make_array(acc_idx)),
-        (partial_arg_idx_field.clone(), make_array(partial_arg_idx)),
+        (acc_idx_field.clone(), make_array(acc_idx.into_data())),
+        (
+            partial_arg_idx_field.clone(),
+            make_array(partial_arg_idx.into_data()),
+        ),
     ]);
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
 
@@ -383,16 +437,18 @@ fn partial_merge_udaf(
     jcontext: GlobalRef,
     accs: GlobalRef,
     merging_accs: GlobalRef,
-    acc_idx: IdxSelection<'_>,
-    merging_acc_idx: IdxSelection<'_>,
+    acc_idx: Int32Array,
+    merging_acc_idx: Int32Array,
 ) -> Result<GlobalRef> {
-    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int64, false));
-    let merging_acc_idx_field = Arc::new(Field::new("merging_acc_idx", DataType::Int64, false));
-    let acc_idx = acc_idx.to_int64_array().into_data();
-    let merging_acc_idx = merging_acc_idx.to_int64_array().into_data();
+    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int32, false));
+    let merging_acc_idx_field = Arc::new(Field::new("merging_acc_idx", DataType::Int32, false));
+
     let struct_array = StructArray::from(vec![
-        (acc_idx_field.clone(), make_array(acc_idx)),
-        (merging_acc_idx_field.clone(), make_array(merging_acc_idx)),
+        (acc_idx_field.clone(), make_array(acc_idx.into_data())),
+        (
+            merging_acc_idx_field.clone(),
+            make_array(merging_acc_idx.into_data()),
+        ),
     ]);
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
 
@@ -411,8 +467,8 @@ fn final_merge_udaf(
     acc_idx: IdxSelection<'_>,
     result_schema: SchemaRef,
 ) -> Result<ArrayRef> {
-    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int64, false));
-    let acc_idx = acc_idx.to_int64_array().into_data();
+    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int32, false));
+    let acc_idx = acc_idx.to_int32_array().into_data();
     let struct_array = StructArray::from(vec![(acc_idx_field.clone(), make_array(acc_idx))]);
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
     let mut import_ffi_array = FFI_ArrowArray::empty();

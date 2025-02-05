@@ -1195,17 +1195,17 @@ impl<'a> SparkUDAFWrapperContext<'a> {
             method_update: env.get_method_id(
                 class,
                 "update",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ;)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
             method_update_ret: ReturnType::Object,
             method_merge: env.get_method_id(
                 class,
                 "merge",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;[Lorg/apache/spark/sql/catalyst/InternalRow;J;)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;[Lorg/apache/spark/sql/catalyst/InternalRow;J)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
             method_merge_ret: ReturnType::Object,
             method_eval: env.get_method_id(
                 class,
                 "eval",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ;)V")?,
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ)V")?,
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
 
         })
@@ -1250,7 +1250,7 @@ pub struct BlazeUnsafeRowsWrapperUtils<'a> {
     pub method_create_ret: ReturnType,
 }
 impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/UnsafeRowsWrapperUtils;";
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/UnsafeRowsWrapperUtils";
 
     pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeUnsafeRowsWrapperUtils<'a>> {
         let class = get_global_jclass(env, Self::SIG_TYPE)?;
@@ -1265,19 +1265,19 @@ impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
             method_deserialize: env.get_static_method_id(
                 class,
                 "deserialize",
-                "(IJJ;)[Lorg/apache/spark/sql/catalyst/InternalRow;",
+                "(IJJ)[Lorg/apache/spark/sql/catalyst/InternalRow;",
             )?,
             method_deserialize_ret: ReturnType::Object,
             method_num: env.get_static_method_id(
                 class,
                 "getRowNum",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;)I;",
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;)I",
             )?,
             method_num_ret: ReturnType::Primitive(Primitive::Int),
             method_create: env.get_static_method_id(
                 class,
                 "getEmptyObject",
-                "(I;)[Lorg/apache/spark/sql/catalyst/InternalRow;",
+                "(I)[Lorg/apache/spark/sql/catalyst/InternalRow;",
             )?,
             method_create_ret: ReturnType::Object,
         })

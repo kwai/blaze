@@ -17,16 +17,15 @@ package org.apache.spark.sql.blaze;
 
 import org.apache.spark.sql.catalyst.InternalRow;
 
-// for jni_bridge usage
 
 public class UnsafeRowsWrapperUtils {
 
     public static void serialize(
-            InternalRow[] unsafeRows, int numFields, Long importFFIArrayPtr, Long exportFFIArrayPtr) {
+            InternalRow[] unsafeRows, int numFields, long importFFIArrayPtr, long exportFFIArrayPtr) {
         UnsafeRowsWrapper$.MODULE$.serialize(unsafeRows, numFields, importFFIArrayPtr, exportFFIArrayPtr);
     }
 
-    public static InternalRow[] deserialize(int numFields, Long importFFIArrayPtr, Long exportFFIArrayPtr) {
+    public static InternalRow[] deserialize(int numFields, long importFFIArrayPtr, long exportFFIArrayPtr) {
         return UnsafeRowsWrapper$.MODULE$.deserialize(numFields, importFFIArrayPtr, exportFFIArrayPtr);
     }
 

@@ -17,7 +17,7 @@ package org.apache.spark.sql.blaze
 
 import scala.collection.JavaConverters._
 import org.apache.arrow.c.{ArrowArray, Data}
-import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.arrow.vector.{IntVector, VectorSchemaRoot}
 import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.TaskContext
@@ -25,11 +25,10 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
-import org.apache.spark.sql.catalyst.expressions.{Nondeterministic, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
-import com.google.flatbuffers.LongVector
 import org.apache.spark.sql.catalyst.expressions.{Attribute, JoinedRow, MutableProjection}
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 
@@ -82,20 +81,6 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     ArrowUtils.toArrowSchema(schema)
   }
 
-  {
-    val toUnsafe = UnsafeProjection.create(javaParamsSchema)
-    toUnsafe.initialize(Option(TaskContext.get()).map(_.partitionId()).getOrElse(0))
-    toUnsafe
-  }
-
-  def update(values: InternalRow*): InternalRow = {
-    val joiner = new JoinedRow
-    val buffer = values.foldLeft(initialize()) { (buffer, input) =>
-      updater(joiner(buffer, input))
-    }
-    buffer.copy()
-  }
-
   def update(
       rows: Array[InternalRow],
       importIdxFFIArrayPtr: Long,
@@ -113,21 +98,17 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
 
         Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
         val fieldVectors = idxRoot.getFieldVectors.asScala
-        val rowIdxVector = fieldVectors.head.asInstanceOf[LongVector]
-        val inputIdxVector = fieldVectors(1).asInstanceOf[LongVector]
+        val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
+        val inputIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
-        assert(
-          rowIdxVector.length() == inputIdxVector.length(),
-          s"Error: SparkUDAFWrapperContext update error Vectors have different lengths.")
-
-        for (i <- 0 until rowIdxVector.length()) {
-          val row = rows(rowIdxVector.get(i).toInt)
-          val input = inputRows(inputIdxVector.get(i).toInt)
+        for (i <- 0 until idxRoot.getRowCount) {
+          val row = rows(rowIdxVector.get(i))
+          val input = inputRows(inputIdxVector.get(i))
           val joiner = new JoinedRow
           if (row.numFields == 0) {
-            rows(rowIdxVector.get(i).toInt) = updater(joiner(initialize(), input))
+            rows(rowIdxVector.get(i)) = updater(joiner(initialize(), input))
           } else {
-            rows(rowIdxVector.get(i).toInt) = updater(joiner(row, input))
+            rows(rowIdxVector.get(i)) = updater(joiner(row, input))
           }
         }
 
@@ -146,21 +127,17 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         ArrowArray.wrap(importIdxFFIArrayPtr)) { (idxRoot, idxArray) =>
         Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
         val fieldVectors = idxRoot.getFieldVectors.asScala
-        val rowIdxVector = fieldVectors.head.asInstanceOf[LongVector]
-        val mergeIdxVector = fieldVectors(1).asInstanceOf[LongVector]
+        val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
+        val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
-        assert(
-          rowIdxVector.length() == mergeIdxVector.length(),
-          s"Error: SparkUDAFWrapperContext update error Vectors have different lengths.")
-
-        for (i <- 0 until rowIdxVector.length()) {
-          val row = rows(rowIdxVector.get(i).toInt)
-          val mergeRow = mergeRows(mergeIdxVector.get(i).toInt)
+        for (i <- 0 until idxRoot.getRowCount) {
+          val row = rows(rowIdxVector.get(i))
+          val mergeRow = mergeRows(mergeIdxVector.get(i))
           val joiner = new JoinedRow
           if (row.numFields == 0) {
-            rows(rowIdxVector.get(i).toInt) = merger(joiner(initialize(), mergeRow))
+            rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow))
           } else {
-            rows(rowIdxVector.get(i).toInt) = merger(joiner(row, mergeRow))
+            rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow))
           }
         }
 
@@ -181,12 +158,12 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         ArrowArray.wrap(exportFFIArrayPtr)) { (idxRoot, outputRoot, idxArray, exportArray) =>
         Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
         val fieldVectors = idxRoot.getFieldVectors.asScala
-        val rowIdxVector = fieldVectors.head.asInstanceOf[LongVector]
+        val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
 
         // evaluate expression and write to output root
         val outputWriter = ArrowWriter.create(outputRoot)
-        for (i <- 0 until rowIdxVector.length()) {
-          val row = rows(rowIdxVector.get(i).toInt)
+        for (i <- 0 until idxRoot.getRowCount) {
+          val row = rows(rowIdxVector.get(i))
           outputWriter.write(evaluator(row))
         }
         outputWriter.finish()
