@@ -89,7 +89,7 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
-    partitionWriters.foreach(_.stop())
+    partitionWriters.foreach(_.stop(success))
     super.stop(success)
   }
 }

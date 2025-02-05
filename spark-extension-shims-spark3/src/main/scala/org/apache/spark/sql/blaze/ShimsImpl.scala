@@ -112,6 +112,7 @@ import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 import org.blaze.{protobuf => pb}
 import com.thoughtworks.enableIf
+import org.apache.spark.sql.execution.blaze.shuffle.uniffle.BlazeUniffleShuffleManager
 
 class ShimsImpl extends Shims with Logging {
 
@@ -429,7 +430,9 @@ class ShimsImpl extends Shims with Logging {
       input: pb.PhysicalPlanNode,
       nativeOutputPartitioning: pb.PhysicalRepartition.Builder): pb.PhysicalPlanNode = {
 
-    if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeCelebornShuffleManager]) {
+    if (SparkEnv.get.shuffleManager
+        .isInstanceOf[BlazeCelebornShuffleManager] || SparkEnv.get.shuffleManager
+        .isInstanceOf[BlazeUniffleShuffleManager]) {
       return pb.PhysicalPlanNode
         .newBuilder()
         .setRssShuffleWriter(

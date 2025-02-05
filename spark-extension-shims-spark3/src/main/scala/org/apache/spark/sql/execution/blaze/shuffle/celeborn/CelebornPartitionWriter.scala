@@ -66,7 +66,7 @@ class CelebornPartitionWriter(
   override def getPartitionLengthMap: Array[Long] =
     mapStatusLengths
 
-  override def stop(): Unit = {
+  override def stop(isSuccess: Boolean): Unit = {
     shuffleClient.cleanup(shuffleId, mapId, encodedAttemptId)
   }
 }

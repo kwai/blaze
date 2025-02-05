@@ -13,14 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.execution.blaze.shuffle
+package org.apache.spark.shuffle.uniffle
 
-import java.nio.ByteBuffer
+import org.apache.spark.shuffle.{BaseShuffleHandle, RssShuffleHandle}
 
-trait RssPartitionWriterBase {
-  def write(partitionId: Int, buffer: ByteBuffer): Unit
-  def flush(): Unit
-  def close(): Unit
-  def getPartitionLengthMap: Array[Long]
-  def stop(isSuccess: Boolean): Unit
-}
+class RssShuffleHandleWrapper[K, V, C](val rssShuffleHandleInfo: RssShuffleHandle[K, V, C])
+    extends BaseShuffleHandle[K, V, C](
+      rssShuffleHandleInfo.getShuffleId,
+      rssShuffleHandleInfo.getDependency) {}

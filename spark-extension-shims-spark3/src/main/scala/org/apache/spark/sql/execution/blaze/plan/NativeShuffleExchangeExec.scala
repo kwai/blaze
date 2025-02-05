@@ -37,6 +37,7 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
 import com.thoughtworks.enableIf
+import org.apache.spark.sql.execution.blaze.shuffle.uniffle.{BlazeUniffleShuffleManager, BlazeUniffleShuffleWriter}
 
 case class NativeShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
@@ -147,6 +148,18 @@ case class NativeShuffleExchangeExec(
               context,
               partition,
               numPartitions)
+        }
+        if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeUniffleShuffleManager]) {
+          writer
+            .asInstanceOf[BlazeUniffleShuffleWriter[_, _, _]]
+            .nativeRssShuffleWrite(
+              rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+              dep,
+              mapId.toInt,
+              context,
+              partition,
+              numPartitions)
+          return writer.stop(true).get
         }
 
         writer
