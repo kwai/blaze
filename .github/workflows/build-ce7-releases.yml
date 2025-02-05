@@ -8,7 +8,7 @@ on:
 jobs:
   build-snapshot:
     name: Build Snapshot
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
