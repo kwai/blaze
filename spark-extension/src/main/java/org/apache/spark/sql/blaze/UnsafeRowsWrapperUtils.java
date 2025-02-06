@@ -17,7 +17,6 @@ package org.apache.spark.sql.blaze;
 
 import org.apache.spark.sql.catalyst.InternalRow;
 
-
 public class UnsafeRowsWrapperUtils {
 
     public static void serialize(

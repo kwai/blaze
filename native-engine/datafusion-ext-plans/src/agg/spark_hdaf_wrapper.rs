@@ -23,12 +23,10 @@ use arrow::{
         as_struct_array, make_array, Array, ArrayAccessor, ArrayRef, AsArray, BinaryArray, Datum,
         Int32Array, Int32Builder, StructArray,
     },
-    buffer::NullBuffer,
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
-use arrow_schema::Fields;
 use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
@@ -156,6 +154,7 @@ impl Agg for SparkUDAFWrapper {
         partial_arg_idx: IdxSelection<'_>,
         batch_schema: SchemaRef,
     ) -> Result<()> {
+        log::info!("start partial update");
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
 
         let params = partial_args.to_vec();
@@ -220,6 +219,7 @@ impl Agg for SparkUDAFWrapper {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
+        log::info!("start partial merge");
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
         let merging_accs = downcast_any!(merging_accs, mut AccUnsafeRowsColumn).unwrap();
 
@@ -259,6 +259,7 @@ impl Agg for SparkUDAFWrapper {
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        log::info!("start final merge");
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
         final_merge_udaf(
             self.jcontext()?,
@@ -332,6 +333,7 @@ impl AccColumn for AccUnsafeRowsColumn {
             if binary_array.is_valid(i) {
                 let bytes = binary_array.value(i).to_vec();
                 array[i] = bytes;
+                log::info!("freeze arrary {} : {:?}", i, array[i]);
             } else {
                 log::warn!("AccUnsafeRowsColumn::freeze_to_rows : binary_array null error")
             }
@@ -340,20 +342,33 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        let fields = Fields::from(vec![
-            Field::new("", DataType::Binary, false),
-            Field::new("", DataType::Int32, false),
-        ]);
+
+        log::info!("unfreeze array {:?}", array.clone());
+        log::info!("unfreeze offsets {:?}", offsets);
         let binary_values = array.iter().map(|&data| data).collect();
         let offsets_i32 = offsets
             .iter()
             .map(|data| *data as i32)
             .collect::<Vec<i32>>();
-        let offsets_array = Int32Array::from(offsets_i32);
-        let binary_array = BinaryArray::from_vec(binary_values);
-        let nulls = Some(NullBuffer::from_iter([false, false]));
-        let values = vec![Arc::new(binary_array) as _, Arc::new(offsets_array) as _];
-        let struct_array = StructArray::new(fields, values, nulls);
+        let offsets_array = Int32Array::from(offsets_i32)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .cloned()
+            .unwrap();
+        let binary_array = BinaryArray::from_vec(binary_values)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .cloned()
+            .unwrap();
+
+        let binary_field = Arc::new(Field::new("", DataType::Binary, false));
+        let offsets_field = Arc::new(Field::new("", DataType::Int32, false));
+
+        let struct_array = StructArray::from(vec![
+            (binary_field.clone(), make_array(binary_array.into_data())),
+            (offsets_field.clone(), make_array(offsets_array.into_data())),
+        ]);
+
         let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
         let mut import_ffi_array = FFI_ArrowArray::empty();
         let rows = jni_call_static!(
@@ -374,7 +389,7 @@ impl AccColumn for AccUnsafeRowsColumn {
         let result_struct = import_struct_array.as_struct();
 
         let int32array = result_struct
-            .column(1)
+            .column(0)
             .as_any()
             .downcast_ref::<Int32Array>()
             .ok_or_else(|| DataFusionError::Execution("Expected a Int32Array".to_string()))?;
@@ -407,11 +422,6 @@ fn partial_update_udaf(
     let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int32, false));
     let partial_arg_idx_field = Arc::new(Field::new("partial_arg_idx", DataType::Int32, false));
 
-    log::info!(
-        "acc_idx length {}  partial_arg_idx len {}",
-        acc_idx.len(),
-        partial_arg_idx.len()
-    );
     let struct_array = StructArray::from(vec![
         (acc_idx_field.clone(), make_array(acc_idx.into_data())),
         (

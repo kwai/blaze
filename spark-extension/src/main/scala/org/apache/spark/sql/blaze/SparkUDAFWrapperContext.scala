@@ -25,12 +25,10 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
-import org.apache.spark.sql.catalyst.expressions.Nondeterministic
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, JoinedRow, Nondeterministic, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
-import org.apache.spark.sql.types.{LongType, StructField, StructType}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, JoinedRow, MutableProjection}
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 import java.nio.ByteBuffer
 
@@ -53,17 +51,17 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     case _ =>
   }
 
-  private lazy val initializer = MutableProjection.create(expr.initialValues)
+  private lazy val initializer = UnsafeProjection.create(expr.initialValues)
 
   private lazy val updater =
-    MutableProjection.create(expr.updateExpressions, expr.aggBufferAttributes ++ inputAttributes)
+    UnsafeProjection.create(expr.updateExpressions, expr.aggBufferAttributes ++ inputAttributes)
 
-  private lazy val merger = MutableProjection.create(
+  private lazy val merger = UnsafeProjection.create(
     expr.mergeExpressions,
     expr.aggBufferAttributes ++ expr.inputAggBufferAttributes)
 
   private lazy val evaluator =
-    MutableProjection.create(expr.evaluateExpression :: Nil, expr.aggBufferAttributes)
+    UnsafeProjection.create(expr.evaluateExpression :: Nil, expr.aggBufferAttributes)
 
   private def initialize(): InternalRow = initializer.apply(InternalRow.empty).copy()
 
@@ -77,7 +75,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   }
 
   private val indexSchema = {
-    val schema = StructType(Seq(StructField("", LongType), StructField("", LongType)))
+    val schema = StructType(Seq(StructField("", IntegerType), StructField("", IntegerType)))
     ArrowUtils.toArrowSchema(schema)
   }
 
@@ -85,12 +83,13 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
       rows: Array[InternalRow],
       importIdxFFIArrayPtr: Long,
       importBatchFFIArrayPtr: Long): Array[InternalRow] = {
+    logInfo("start partial update in scalar!")
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         VectorSchemaRoot.create(inputSchema, batchAllocator),
         VectorSchemaRoot.create(indexSchema, batchAllocator),
-        ArrowArray.wrap(importIdxFFIArrayPtr),
-        ArrowArray.wrap(importBatchFFIArrayPtr)) { (inputRoot, idxRoot, inputArray, idxArray) =>
+        ArrowArray.wrap(importBatchFFIArrayPtr),
+        ArrowArray.wrap(importIdxFFIArrayPtr)) { (inputRoot, idxRoot, inputArray, idxArray) =>
         // import into params root
         Data.importIntoVectorSchemaRoot(batchAllocator, inputArray, inputRoot, dictionaryProvider)
         val batch = ColumnarHelper.rootAsBatch(inputRoot)
@@ -111,7 +110,8 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
             rows(rowIdxVector.get(i)) = updater(joiner(row, input))
           }
         }
-
+        logInfo(s"update rows num: ${rows.length}, rows.fieldnum:${rows(0).numFields}")
+        logInfo(s"row 0: ${rows(0).toString}")
         rows
       }
     }
@@ -121,6 +121,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
       rows: Array[InternalRow],
       mergeRows: Array[InternalRow],
       importIdxFFIArrayPtr: Long): Array[InternalRow] = {
+    logInfo("start merge in scalar!!")
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         VectorSchemaRoot.create(indexSchema, batchAllocator),
@@ -140,7 +141,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
             rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow))
           }
         }
-
+        logInfo("finish merge in scalar!!")
         rows
       }
     }
