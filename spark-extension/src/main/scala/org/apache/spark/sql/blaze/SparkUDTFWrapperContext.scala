@@ -29,10 +29,10 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Generator
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
-import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
+import org.apache.spark.sql.execution.blaze.columnar.ColumnarHelper
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
@@ -72,11 +72,10 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
       ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
       // import into params root
       Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, importArray, paramsRoot, dictionaryProvider)
-      val batch = ColumnarHelper.rootAsBatch(paramsRoot)
 
       // evaluate expression and write to output root
       val outputWriter = ArrowWriter.create(outputRoot)
-      for ((paramsRow, rowId) <- ColumnarHelper.batchAsRowIter(batch).zipWithIndex) {
+      for ((paramsRow, rowId) <- ColumnarHelper.rootRowsIter(paramsRoot).zipWithIndex) {
         for (outputRow <- expr.eval(paramsToUnsafe(paramsRow))) {
           outputWriter.write(InternalRow(rowId, outputRow))
         }
