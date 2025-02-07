@@ -27,6 +27,7 @@ use arrow::{
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
+use arrow::array::Float64Array;
 use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
@@ -431,7 +432,12 @@ fn partial_update_udaf(
     ]);
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
 
-    let struct_array = StructArray::from(params_batch);
+    let struct_array = StructArray::from(params_batch.clone());
+    log::info!("input struct_array {:?}", struct_array.fields());
+    log::info!("batch{:?}", params_batch.column(0).into_data());
+    let column0= params_batch.column(0).as_any().downcast_ref::<Float64Array>().unwrap().values().to_vec();
+    log::info!("column0 {:?}", column0);
+
     let mut export_ffi_batch_array = FFI_ArrowArray::new(&struct_array.to_data());
 
     let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).update(

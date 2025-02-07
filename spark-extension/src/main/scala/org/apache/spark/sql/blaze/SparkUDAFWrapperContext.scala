@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, JoinedRow, Nondeterministic, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.types.{DataType, IntegerType, StructField, StructType}
 
 import java.nio.ByteBuffer
 
@@ -69,15 +69,20 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
 
   private val inputSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
 
-  {
-    val schema = StructType(Seq(StructField("", expr.dataType, expr.nullable)))
-    ArrowUtils.toArrowSchema(schema)
-  }
 
   private val indexSchema = {
     val schema = StructType(Seq(StructField("", IntegerType), StructField("", IntegerType)))
     ArrowUtils.toArrowSchema(schema)
   }
+
+  private val evalIndexSchema = {
+    val schema = StructType(Seq(StructField("", IntegerType)))
+    ArrowUtils.toArrowSchema(schema)
+  }
+
+  val dataTypes: Seq[DataType] = expr.aggBufferAttributes.map(_.dataType)
+
+  val inputTypes: Seq[DataType] = javaParamsSchema.map(_.dataType)
 
   def update(
       rows: Array[InternalRow],
@@ -102,12 +107,21 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
 
         for (i <- 0 until idxRoot.getRowCount) {
           val row = rows(rowIdxVector.get(i))
+          logInfo(s"javaParamsSchema $javaParamsSchema")
+          logInfo(s"inputIdxVector: ${inputIdxVector}")
+          logInfo(s"inputRows.length ${inputRows.length}")
           val input = inputRows(inputIdxVector.get(i))
-          val joiner = new JoinedRow
-          if (row.numFields == 0) {
-            rows(rowIdxVector.get(i)) = updater(joiner(initialize(), input))
-          } else {
-            rows(rowIdxVector.get(i)) = updater(joiner(row, input))
+          logInfo(s"is unsafe row: ${input.isInstanceOf[UnsafeRow]}")
+          logInfo(s"input numField ${input.numFields}  $inputSchema")
+          if (input.numFields > 0) {
+            logInfo(s"input row: ${input.toSeq(inputTypes)}")
+            val joiner = new JoinedRow
+            if (row.numFields == 0) {
+              rows(rowIdxVector.get(i)) = updater(joiner(initialize(), input))
+            } else {
+              rows(rowIdxVector.get(i)) = updater(joiner(row, input))
+            }
+            logInfo(s"temp row 0: ${rows(0).toSeq(dataTypes)}")
           }
         }
         logInfo(s"update rows num: ${rows.length}, rows.fieldnum:${rows(0).numFields}")
@@ -134,11 +148,13 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         for (i <- 0 until idxRoot.getRowCount) {
           val row = rows(rowIdxVector.get(i))
           val mergeRow = mergeRows(mergeIdxVector.get(i))
-          val joiner = new JoinedRow
-          if (row.numFields == 0) {
-            rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow))
-          } else {
-            rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow))
+          if (mergeRow.numFields > 0) {
+            val joiner = new JoinedRow
+            if (row.numFields == 0) {
+              rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow))
+            } else {
+              rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow))
+            }
           }
         }
         logInfo("finish merge in scalar!!")
@@ -153,7 +169,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
       exportFFIArrayPtr: Long): Unit = {
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
-        VectorSchemaRoot.create(indexSchema, batchAllocator),
+        VectorSchemaRoot.create(evalIndexSchema, batchAllocator),
         VectorSchemaRoot.create(inputSchema, batchAllocator),
         ArrowArray.wrap(importIdxFFIArrayPtr),
         ArrowArray.wrap(exportFFIArrayPtr)) { (idxRoot, outputRoot, idxArray, exportArray) =>

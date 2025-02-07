@@ -96,14 +96,18 @@ object UnsafeRowsWrapper extends Logging {
           logInfo(s"freeze idxArray $idxArray")
           for (idx <- 0 until paramsRoot.getRowCount) {
             val internalRow = unsafeRows(idxArray.get(idx))
-            logInfo(s"freeze unsafe row : ${internalRow.toString}")
-            Utils.tryWithResource(new ByteArrayOutputStream()) { baos =>
-              val serializerStream = serializer.serializeStream(baos)
-              serializerStream.writeValue(internalRow)
-              serializerStream.close()
-              val bytes = baos.toByteArray
-              logInfo(s"write bytes : ${java.util.Arrays.toString(bytes)}")
-              outputWriter.write(toUnsafeRow(Row(bytes), Array(BinaryType)))
+            if (internalRow.numFields == 0) {
+              outputWriter.write(toUnsafeRow(Row(Array.empty[Byte]), Array(BinaryType)))
+            } else {
+              logInfo(s"freeze unsafe row : ${internalRow.toString}")
+              Utils.tryWithResource(new ByteArrayOutputStream()) { baos =>
+                val serializerStream = serializer.serializeStream(baos)
+                serializerStream.writeValue(internalRow)
+                serializerStream.close()
+                val bytes = baos.toByteArray
+                logInfo(s"write bytes : ${java.util.Arrays.toString(bytes)}")
+                outputWriter.write(toUnsafeRow(Row(bytes), Array(BinaryType)))
+              }
             }
           }
 
@@ -157,7 +161,7 @@ object UnsafeRowsWrapper extends Logging {
                 field.setAccessible(true)
                 val position = field.getInt(bais)
                 outputWriter.write(toUnsafeRow(Row(position), Array(IntegerType)))
-                logInfo(s"unsafe row numfield ${unsafeRow.numFields()}")
+                logInfo(s"unfreeze row ${unsafeRow.toString}")
                 unsafeRow
               }
               internalRowsArray(i) = internalRow
