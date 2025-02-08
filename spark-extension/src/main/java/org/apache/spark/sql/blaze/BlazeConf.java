@@ -77,7 +77,10 @@ public enum BlazeConf {
     SMJ_FALLBACK_ROWS_THRESHOLD("spark.blaze.smjfallback.rows.threshold", 10000000),
 
     // smj fallback threshold
-    SMJ_FALLBACK_MEM_SIZE_THRESHOLD("spark.blaze.smjfallback.mem.threshold", 134217728);
+    SMJ_FALLBACK_MEM_SIZE_THRESHOLD("spark.blaze.smjfallback.mem.threshold", 134217728),
+
+    // max memory fraction of on-heap spills
+    ON_HEAP_SPILL_MEM_FRACTION("spark.blaze.onHeapSpill.memoryFraction", 0.9);
 
     public final String key;
     private final Object defaultValue;

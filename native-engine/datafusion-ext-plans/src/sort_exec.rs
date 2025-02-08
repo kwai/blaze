@@ -53,7 +53,6 @@ use datafusion_ext_commons::{
         selection::{create_batch_interleaver, take_batch, BatchInterleaver},
     },
     compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
-    downcast_any,
     io::{read_len, read_one_batch, write_len, write_one_batch},
 };
 use futures::{lock::Mutex, StreamExt};
@@ -196,7 +195,6 @@ struct LevelSpill {
 
 struct ExternalSorter {
     exec_ctx: Arc<ExecutionContext>,
-    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     prune_sort_keys_from_batch: Arc<PruneSortKeysFromBatch>,
     limit: usize,
@@ -209,7 +207,7 @@ struct ExternalSorter {
 #[async_trait]
 impl MemConsumer for ExternalSorter {
     fn name(&self) -> &str {
-        &self.name
+        "ExternalSorter"
     }
 
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
@@ -501,7 +499,6 @@ impl ExecuteWithColumnPruning for SortExec {
         )?);
         let sorter = Arc::new(ExternalSorter {
             exec_ctx: exec_ctx.clone(),
-            name: format!("ExternalSorter[partition={}]", partition),
             mem_consumer_info: None,
             prune_sort_keys_from_batch,
             limit: self.fetch.unwrap_or(usize::MAX),
@@ -609,39 +606,18 @@ impl ExternalSorter {
             self.num_total_rows(),
         );
         let mut spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
-
-        if self.mem_used_percent() < 0.25 {
-            // if in-mem data is small, try to spill it into native raw bytes
-            let limit = self.limit;
-            let mut spill = tokio::task::spawn_blocking(move || {
-                let mut spill: Box<dyn Spill> = Box::new(vec![]);
-                data.try_into_spill(&mut spill, sub_batch_size, limit)?;
-                Ok::<_, DataFusionError>(spill)
-            })
-            .await
-            .expect("tokio error")?;
-
-            let in_mem_spill = downcast_any!(spill, mut Vec<u8>)?;
-            in_mem_spill.shrink_to_fit();
-
-            let in_mem_spill_size = in_mem_spill.len();
-            spills.push(spill);
-            self.update_mem_used(in_mem_spill_size + spills.len() * SPILL_OFFHEAP_MEM_COST)
-                .await?;
-        } else {
-            let limit = self.limit;
-            let spill_metrics = self.exec_ctx.spill_metrics().clone();
-            let spill = tokio::task::spawn_blocking(move || {
-                let mut spill = try_new_spill(&spill_metrics)?;
-                data.try_into_spill(&mut spill, sub_batch_size, limit)?;
-                Ok::<_, DataFusionError>(spill)
-            })
-            .await
-            .expect("tokio error")?;
-            spills.push(spill);
-            self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
-                .await?;
-        }
+        let limit = self.limit;
+        let spill_metrics = self.exec_ctx.spill_metrics().clone();
+        let spill = tokio::task::spawn_blocking(move || {
+            let mut spill = try_new_spill(&spill_metrics)?;
+            data.try_into_spill(&mut spill, sub_batch_size, limit)?;
+            Ok::<_, DataFusionError>(spill)
+        })
+        .await
+        .expect("tokio error")?;
+        spills.push(spill);
+        self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
+            .await?;
 
         let mut merger = ExternalMerger::<SimpleKeyCollector>::try_new(
             &mut spills,

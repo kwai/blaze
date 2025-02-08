@@ -43,7 +43,6 @@ use crate::{
 
 pub struct SortShuffleRepartitioner {
     exec_ctx: Arc<ExecutionContext>,
-    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     output_data_file: String,
     output_index_file: String,
@@ -66,7 +65,6 @@ impl SortShuffleRepartitioner {
         let num_output_partitions = partitioning.partition_count();
         Self {
             exec_ctx,
-            name: format!("SortShufflePartitioner[partition={partition_id}]"),
             mem_consumer_info: None,
             output_data_file,
             output_index_file,
@@ -81,7 +79,7 @@ impl SortShuffleRepartitioner {
 #[async_trait]
 impl MemConsumer for SortShuffleRepartitioner {
     fn name(&self) -> &str {
-        &self.name
+        "SortShuffleRepartitioner"
     }
 
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {
@@ -199,13 +197,26 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
             return Ok(());
         }
 
-        // write rest data into an in-memory buffer
+        // write rest data into a spill
         if !data.is_empty() {
-            let mut spill = Box::new(vec![]);
-            let writer = spill.get_buf_writer();
-            let offsets = data.write(writer)?;
-            self.update_mem_used(spill.len()).await?;
-            spills.push(Offsetted::new(offsets, spill));
+            if self.mem_used_percent() < 0.5 {
+                let mut spill = Box::new(vec![]);
+                let writer = spill.get_buf_writer();
+                let offsets = data.write(writer)?;
+                self.update_mem_used(spill.len()).await?;
+                spills.push(Offsetted::new(offsets, spill));
+            } else {
+                let spill_metrics = self.exec_ctx.spill_metrics().clone();
+                let spill = tokio::task::spawn_blocking(move || {
+                    let mut spill = try_new_spill(&spill_metrics)?;
+                    let offsets = data.write(spill.get_buf_writer())?;
+                    Ok::<_, DataFusionError>(Offsetted::new(offsets, spill))
+                })
+                .await
+                .expect("tokio spawn_blocking error")?;
+                self.update_mem_used(0).await?;
+                spills.push(spill);
+            }
         }
 
         // append partition in each spills

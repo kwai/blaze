@@ -226,8 +226,9 @@ impl ExecutionPlan for ParquetExec {
             file_stream = file_stream.with_on_error(OnError::Skip);
         }
 
-        let timed_stream = execute_parquet_scan(Box::pin(file_stream), exec_ctx)?;
-        Ok(timed_stream)
+        let timed_stream = execute_parquet_scan(Box::pin(file_stream), exec_ctx.clone())?;
+        let nonblock_stream = exec_ctx.spawn_worker_thread_on_stream(timed_stream);
+        Ok(exec_ctx.coalesce_with_default_batch_size(nonblock_stream))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

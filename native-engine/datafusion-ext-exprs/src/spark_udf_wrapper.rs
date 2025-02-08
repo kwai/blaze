@@ -20,7 +20,7 @@ use std::{
 };
 
 use arrow::{
-    array::{as_struct_array, make_array, Array, ArrayRef, StructArray},
+    array::{as_struct_array, make_array, new_empty_array, Array, ArrayRef, StructArray},
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::{RecordBatch, RecordBatchOptions},
@@ -123,6 +123,10 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         }
 
         let batch_schema = batch.schema();
+        let num_rows = batch.num_rows();
+        if num_rows == 0 {
+            return Ok(ColumnarValue::Array(new_empty_array(&self.return_type)));
+        }
 
         // init params schema
         let params_schema = self
@@ -140,7 +144,6 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             })?;
 
         // evaluate params
-        let num_rows = batch.num_rows();
         let params: Vec<ArrayRef> = self
             .params
             .iter()

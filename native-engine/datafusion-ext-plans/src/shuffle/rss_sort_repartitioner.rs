@@ -27,7 +27,6 @@ use crate::{
 };
 
 pub struct RssSortShuffleRepartitioner {
-    name: String,
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     data: Mutex<BufferedData>,
     rss: GlobalRef,
@@ -41,7 +40,6 @@ impl RssSortShuffleRepartitioner {
         sort_time: Time,
     ) -> Self {
         Self {
-            name: format!("RssSortShufflePartitioner[partition={}]", partition_id),
             mem_consumer_info: None,
             data: Mutex::new(BufferedData::new(partitioning, partition_id, sort_time)),
             rss: rss_partition_writer,
@@ -52,7 +50,7 @@ impl RssSortShuffleRepartitioner {
 #[async_trait]
 impl MemConsumer for RssSortShuffleRepartitioner {
     fn name(&self) -> &str {
-        &self.name
+        "RssSortShuffleRepartitioner"
     }
 
     fn set_consumer_info(&mut self, consumer_info: Weak<MemConsumerInfo>) {

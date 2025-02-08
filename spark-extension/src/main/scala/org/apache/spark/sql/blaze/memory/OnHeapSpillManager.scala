@@ -26,6 +26,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryConsumer
 import org.apache.spark.memory.MemoryMode
 import org.apache.spark.memory.blaze.OnHeapSpillManagerHelper
+import org.apache.spark.sql.blaze.BlazeConf
 import org.apache.spark.storage.BlockManager
 import org.apache.spark.util.Utils
 
@@ -80,7 +81,8 @@ class OnHeapSpillManager(taskContext: TaskContext)
         s" ratio=$jvmMemoryUsedRatio")
 
     // we should have at least 10% free memory
-    memoryUsedRatio < 0.9 && jvmMemoryUsedRatio < 0.9
+    val maxRatio = BlazeConf.ON_HEAP_SPILL_MEM_FRACTION.doubleConf()
+    memoryUsedRatio < maxRatio && jvmMemoryUsedRatio < maxRatio
   }
 
   /**
