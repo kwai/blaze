@@ -70,7 +70,7 @@ case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
       val reusedOutputRow = new GenericInternalRow(Array[Any](null))
       val outputWriter = ArrowWriter.create(outputRoot)
       for (paramsRow <- ColumnarHelper.rootRowsIter(paramsRoot)) {
-        reusedOutputRow.values(0) = expr.eval(paramsRow)
+        reusedOutputRow.update(0, expr.eval(paramsRow))
         outputWriter.write(reusedOutputRow)
       }
       outputWriter.finish()
