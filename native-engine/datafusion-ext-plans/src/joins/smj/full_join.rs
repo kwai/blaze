@@ -116,7 +116,8 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                     if self.should_flush(curs) {
                         self.as_mut().flush(curs).await?;
                     }
-                    curs.0.set_min_reserved_idx(self.lindices.smallest.unwrap_or(lidx));
+                    curs.0
+                        .set_min_reserved_idx(self.lindices.smallest.unwrap_or(lidx));
                 }
                 Ordering::Greater => {
                     if R_OUTER {

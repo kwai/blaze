@@ -597,7 +597,7 @@ impl ExternalSorter {
         if spills.is_empty() {
             if data.num_rows > 0 {
                 for (key_store, pruned_batch) in
-                data.into_sorted_batches::<SimpleKeyCollector>(sub_batch_size, self.limit)?
+                    data.into_sorted_batches::<SimpleKeyCollector>(sub_batch_size, self.limit)?
                 {
                     let batch = self
                         .prune_sort_keys_from_batch

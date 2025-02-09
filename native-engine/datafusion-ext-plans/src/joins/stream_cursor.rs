@@ -26,10 +26,12 @@ use datafusion::{
     physical_expr::PhysicalExprRef,
     physical_plan::metrics::Time,
 };
-use datafusion_ext_commons::arrow::{array_size::ArraySize, selection::take_batch};
+use datafusion_ext_commons::{
+    arrow::{array_size::ArraySize, selection::take_batch},
+    unlikely,
+};
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
-use datafusion_ext_commons::unlikely;
 
 use crate::{
     common::timer_helper::TimerHelper,
