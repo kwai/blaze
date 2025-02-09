@@ -52,8 +52,8 @@ impl ExistenceJoiner {
             return true;
         }
 
-        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 6
-            && curs.0.mem_size() + curs.1.mem_size() > suggested_batch_mem_size()
+        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 5
+            || curs.0.mem_size() + curs.1.mem_size() > suggested_batch_mem_size()
         {
             if let Some(first_idx) = self.indices.first() {
                 if first_idx.0 < curs.0.cur_idx.0 {

@@ -80,8 +80,8 @@ impl<const P: JoinerParams> SemiJoiner<P> {
             return true;
         }
 
-        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 6
-            && curs.0.mem_size() + curs.1.mem_size() > suggested_batch_mem_size()
+        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 5
+            || curs.0.mem_size() + curs.1.mem_size() > suggested_batch_mem_size()
         {
             if let Some(first_idx) = self.indices.first() {
                 let cur_idx = match P.join_side {

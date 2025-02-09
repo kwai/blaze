@@ -52,7 +52,7 @@ use datafusion_ext_commons::{
         array_size::ArraySize,
         selection::{create_batch_interleaver, take_batch, BatchInterleaver},
     },
-    compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
+    compute_suggested_batch_size_for_kway_merge,
     io::{read_len, read_one_batch, write_len, write_one_batch},
 };
 use futures::{lock::Mutex, StreamExt};
@@ -526,6 +526,19 @@ impl ExecuteWithColumnPruning for SortExec {
                 {
                     sorter.insert_batch(batch).await?;
                 }
+
+                // if external merging is required, we need to spill in-mem data
+                // to free memory as soon as possible
+                let has_spill = !sorter.spills.lock().await.is_empty();
+                let in_mem_used = sorter.data.lock().await.mem_used();
+                if has_spill && in_mem_used > 0 {
+                    log::info!(
+                        "{} spills rest in-mem data to disk, size={}",
+                        sorter.name(),
+                        ByteSize(in_mem_used as u64),
+                    );
+                    sorter.spill().await?;
+                }
                 sorter.output(sender).await?;
                 Ok(())
             });
@@ -574,50 +587,30 @@ impl ExternalSorter {
             ByteSize(data.mem_used() as u64)
         );
 
-        // no spills -- output in-mem batches
-        if spills.is_empty() {
-            if data.num_rows == 0 {
-                // no data
-                return Ok(());
-            }
-            let sub_batch_size = compute_suggested_batch_size_for_output(
-                self.mem_total_size(),
-                self.num_total_rows(),
-            );
-
-            for (key_store, pruned_batch) in
-                data.into_sorted_batches::<SimpleKeyCollector>(sub_batch_size, self.limit)?
-            {
-                let batch = self
-                    .prune_sort_keys_from_batch
-                    .restore(pruned_batch, key_store)?;
-                self.exec_ctx
-                    .baseline_metrics()
-                    .record_output(batch.num_rows());
-                sender.send(batch).await;
-            }
-            self.update_mem_used(0).await?;
-            return Ok(());
-        }
-
-        // move in-mem batches into spill, so we can free memory as soon as possible
         let sub_batch_size = compute_suggested_batch_size_for_kway_merge(
             self.mem_total_size(),
             self.num_total_rows(),
         );
         let mut spills: Vec<Box<dyn Spill>> = spills.into_iter().map(|spill| spill.spill).collect();
-        let limit = self.limit;
-        let spill_metrics = self.exec_ctx.spill_metrics().clone();
-        let spill = tokio::task::spawn_blocking(move || {
-            let mut spill = try_new_spill(&spill_metrics)?;
-            data.try_into_spill(&mut spill, sub_batch_size, limit)?;
-            Ok::<_, DataFusionError>(spill)
-        })
-        .await
-        .expect("tokio error")?;
-        spills.push(spill);
-        self.update_mem_used(spills.len() * SPILL_OFFHEAP_MEM_COST)
-            .await?;
+
+        // no spills -- output in-mem batches
+        if spills.is_empty() {
+            if data.num_rows > 0 {
+                for (key_store, pruned_batch) in
+                data.into_sorted_batches::<SimpleKeyCollector>(sub_batch_size, self.limit)?
+                {
+                    let batch = self
+                        .prune_sort_keys_from_batch
+                        .restore(pruned_batch, key_store)?;
+                    self.exec_ctx
+                        .baseline_metrics()
+                        .record_output(batch.num_rows());
+                    sender.send(batch).await;
+                }
+                self.update_mem_used(0).await?;
+            }
+            return Ok(());
+        }
 
         let mut merger = ExternalMerger::<SimpleKeyCollector>::try_new(
             &mut spills,
@@ -835,11 +828,7 @@ impl<KC: KeyCollector> ExternalMerger<'_, KC> {
         // collect merged records to staging
         if self.num_total_output_rows < self.limit {
             let mut min_cursor = self.cursors.peek_mut();
-
-            while self.staging_num_rows < self.sub_batch_size {
-                if min_cursor.finished {
-                    break;
-                }
+            while !min_cursor.finished && self.staging_num_rows < self.sub_batch_size {
                 if !pruned_schema.fields().is_empty() {
                     self.staging_cursor_ids.push(min_cursor.id);
                 }
