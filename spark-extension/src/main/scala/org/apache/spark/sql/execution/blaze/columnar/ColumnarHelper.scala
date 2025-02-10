@@ -13,30 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.execution.blaze.arrowio
+package org.apache.spark.sql.execution.blaze.columnar
 
 import scala.collection.JavaConverters._
 
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowColumnVector
-import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.sql.vectorized.ColumnVector
-import org.apache.spark.util.CompletionIterator
 
 object ColumnarHelper {
-  def rootAsBatch(root: VectorSchemaRoot): ColumnarBatch = {
-    val columns = root.getFieldVectors.asScala.map { vector =>
-      new ArrowColumnVector(vector).asInstanceOf[ColumnVector]
-    }.toArray
-    val batch = new ColumnarBatch(columns)
-    batch.setNumRows(root.getRowCount)
-    batch
-  }
+  def rootRowsIter(root: VectorSchemaRoot): Iterator[InternalRow] = {
+    val vectors = root.getFieldVectors.asScala.toArray
+    val numRows = root.getRowCount
+    val row = new BlazeColumnarBatchRow(
+      vectors.map(new BlazeArrowColumnVector(_).asInstanceOf[BlazeColumnVector]))
 
-  def batchAsRowIter(batch: ColumnarBatch): Iterator[InternalRow] = {
-    CompletionIterator[InternalRow, Iterator[InternalRow]](
-      batch.rowIterator().asScala,
-      batch.close())
+    Range(0, numRows).iterator.map { rowId =>
+      row.rowId = rowId
+      row.asInstanceOf[InternalRow]
+    }
   }
 }

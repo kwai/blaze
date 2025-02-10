@@ -34,7 +34,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     arrow::{array_size::ArraySize, coalesce::coalesce_batches_unchecked},
-    batch_size, df_execution_err, suggested_output_batch_mem_size,
+    batch_size, df_execution_err, suggested_batch_mem_size,
 };
 use futures::{executor::block_on_stream, Stream, StreamExt};
 use futures_util::FutureExt;
@@ -189,7 +189,7 @@ impl ExecutionContext {
             }
 
             fn should_flush(&self) -> bool {
-                let size_limit = suggested_output_batch_mem_size();
+                let size_limit = suggested_batch_mem_size();
                 let (batch_size_limit, mem_size_limit) = if self.staging_batches.len() > 1 {
                     (self.batch_size, size_limit)
                 } else {

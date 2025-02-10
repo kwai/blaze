@@ -486,6 +486,13 @@ impl InternalSet {
         }
     }
 
+    fn capacity(&self) -> usize {
+        match self {
+            InternalSet::Small(s) => s.capacity(),
+            InternalSet::Huge(s) => s.capacity(),
+        }
+    }
+
     fn into_iter(self) -> impl Iterator<Item = (u32, u32)> {
         let iter: Box<dyn Iterator<Item = (u32, u32)>> = match self {
             InternalSet::Small(s) => Box::new(s.into_iter()),
@@ -511,7 +518,7 @@ impl InternalSet {
 impl AccSet {
     pub fn mem_size(&self) -> usize {
         // mem size of internal set is estimated for faster computation
-        self.list.mem_size() + self.set.len() * size_of::<(u32, u32)>()
+        self.list.mem_size() + self.set.capacity() * size_of::<u128>()
     }
 
     pub fn append(&mut self, value: &ScalarValue, nullable: bool) {

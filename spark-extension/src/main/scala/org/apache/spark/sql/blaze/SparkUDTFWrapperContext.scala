@@ -27,12 +27,13 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Generator
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
-import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
+import org.apache.spark.sql.execution.blaze.columnar.ColumnarHelper
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
@@ -58,11 +59,6 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
       StructField("element", expr.elementSchema, nullable = false)))
   private val outputSchema = ArrowUtils.toArrowSchema(javaOutputSchema)
   private val paramsSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
-  private val paramsToUnsafe = {
-    val toUnsafe = UnsafeProjection.create(javaParamsSchema)
-    toUnsafe.initialize(Option(TaskContext.get()).map(_.partitionId()).getOrElse(0))
-    toUnsafe
-  }
 
   def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
     Using.resources(
@@ -72,13 +68,15 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
       ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
       // import into params root
       Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, importArray, paramsRoot, dictionaryProvider)
-      val batch = ColumnarHelper.rootAsBatch(paramsRoot)
 
       // evaluate expression and write to output root
+      val reusedOutputRow = new GenericInternalRow(Array[Any](null, null))
       val outputWriter = ArrowWriter.create(outputRoot)
-      for ((paramsRow, rowId) <- ColumnarHelper.batchAsRowIter(batch).zipWithIndex) {
-        for (outputRow <- expr.eval(paramsToUnsafe(paramsRow))) {
-          outputWriter.write(InternalRow(rowId, outputRow))
+      for ((paramsRow, rowId) <- ColumnarHelper.rootRowsIter(paramsRoot).zipWithIndex) {
+        for (outputRow <- expr.eval(paramsRow)) {
+          reusedOutputRow.setInt(0, rowId)
+          reusedOutputRow.update(1, outputRow)
+          outputWriter.write(reusedOutputRow)
         }
       }
       outputWriter.finish()
@@ -93,9 +91,12 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
       VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
       ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, exportArray) =>
       // evaluate expression and write to output root
+      val reusedOutputRow = new GenericInternalRow(Array[Any](null, null))
       val outputWriter = ArrowWriter.create(outputRoot)
       for (outputRow <- expr.terminate()) {
-        outputWriter.write(InternalRow(rowId, outputRow))
+        reusedOutputRow.setInt(0, rowId)
+        reusedOutputRow.update(1, outputRow)
+        outputWriter.write(reusedOutputRow)
       }
       outputWriter.finish()
 

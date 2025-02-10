@@ -80,7 +80,15 @@ public enum BlazeConf {
     SMJ_FALLBACK_MEM_SIZE_THRESHOLD("spark.blaze.smjfallback.mem.threshold", 134217728),
 
     // max memory fraction of on-heap spills
-    ON_HEAP_SPILL_MEM_FRACTION("spark.blaze.onHeapSpill.memoryFraction", 0.9);
+    ON_HEAP_SPILL_MEM_FRACTION("spark.blaze.onHeapSpill.memoryFraction", 0.9),
+
+    // suggested memory size for record batch
+    SUGGESTED_BATCH_MEM_SIZE("spark.blaze.suggested.batch.memSize", 25165824),
+
+    // suggested memory size for k-way merging
+    // use smaller batch memory size for kway merging since there will be multiple
+    // batches in memory at the same time
+    SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE("spark.blaze.suggested.batch.memSize.multiwayMerging", 1048576);
 
     public final String key;
     private final Object defaultValue;

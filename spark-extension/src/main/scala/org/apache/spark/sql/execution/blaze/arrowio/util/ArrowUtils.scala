@@ -18,6 +18,7 @@ package org.apache.spark.sql.execution.blaze.arrowio.util
 import scala.collection.JavaConverters.asScalaBufferConverter
 import scala.collection.JavaConverters.seqAsJavaListConverter
 
+import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.complex.MapVector
 import org.apache.arrow.vector.types.DateUnit
@@ -33,6 +34,10 @@ import org.apache.spark.util.ShutdownHookManager
 object ArrowUtils {
   val ROOT_ALLOCATOR = new RootAllocator(Long.MaxValue)
   ShutdownHookManager.addShutdownHook(() => ROOT_ALLOCATOR.close())
+
+  def CHILD_ALLOCATOR(name: String): BufferAllocator = {
+    ROOT_ALLOCATOR.newChildAllocator(name, 0, Long.MaxValue)
+  }
 
   /** Maps data type from Spark to Arrow. NOTE: timeZoneId is always NULL in TimestampTypes */
   def toArrowType(dt: DataType): ArrowType =

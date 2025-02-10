@@ -37,7 +37,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
-import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
+import org.apache.spark.sql.execution.blaze.columnar.ColumnarHelper
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.ShutdownHookManager
@@ -69,6 +69,7 @@ case class BlazeCallNativeWrapper(
   private lazy val rowIterator = new Iterator[InternalRow] {
     override def hasNext: Boolean = {
       checkError()
+
       if (batchCurRowIdx < batchRows.length) {
         return true
       }
@@ -78,14 +79,18 @@ case class BlazeCallNativeWrapper(
       batchCurRowIdx = 0
 
       // load next batch
-      if (nativeRuntimePtr != 0 && JniBridge.nextBatch(nativeRuntimePtr)) {
-        return hasNext
+      try {
+        if (nativeRuntimePtr != 0 && JniBridge.nextBatch(nativeRuntimePtr)) {
+          return hasNext
+        }
+      } finally {
+        // if error has been set, throw set error instead of this caught exception
+        checkError()
       }
       false
     }
 
     override def next(): InternalRow = {
-      checkError()
       val batchRow = batchRows(batchCurRowIdx)
       batchCurRowIdx += 1
       batchRow
@@ -119,11 +124,10 @@ case class BlazeCallNativeWrapper(
       ArrowArray.wrap(ffiArrayPtr),
       VectorSchemaRoot.create(arrowSchema, ROOT_ALLOCATOR)) { case (ffiArray, root) =>
       Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, ffiArray, root, dictionaryProvider)
-      val batch = ColumnarHelper.rootAsBatch(root)
 
       batchRows.append(
         ColumnarHelper
-          .batchAsRowIter(batch)
+          .rootRowsIter(root)
           .map(row => toUnsafe(row).copy().asInstanceOf[InternalRow])
           .toSeq: _*)
     }

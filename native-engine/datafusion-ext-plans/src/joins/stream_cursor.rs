@@ -26,7 +26,10 @@ use datafusion::{
     physical_expr::PhysicalExprRef,
     physical_plan::metrics::Time,
 };
-use datafusion_ext_commons::arrow::{array_size::ArraySize, selection::take_batch};
+use datafusion_ext_commons::{
+    arrow::{array_size::ArraySize, selection::take_batch},
+    unlikely,
+};
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 
@@ -145,40 +148,40 @@ impl StreamCursor {
                         .unwrap_or(None);
                     let keys = Arc::new(self.key_converter.lock().convert_columns(&key_columns)?);
 
-                    self.mem_size += batch.get_array_mem_size();
+                    let projected_batch = RecordBatch::try_new_with_options(
+                        self.projected_batches[0].schema(),
+                        self.projection
+                            .iter()
+                            .map(|&i| batch.column(i).clone())
+                            .collect(),
+                        &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+                    )?;
+
+                    self.mem_size += projected_batch.get_array_mem_size();
                     self.mem_size += key_has_nulls
                         .as_ref()
                         .map(|nb| nb.buffer().len())
                         .unwrap_or_default();
                     self.mem_size += keys.size();
 
-                    self.projected_batches
-                        .push(RecordBatch::try_new_with_options(
-                            self.projected_batches[0].schema(),
-                            self.projection
-                                .iter()
-                                .map(|&i| batch.column(i).clone())
-                                .collect(),
-                            &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-                        )?);
+                    self.projected_batches.push(projected_batch);
                     self.key_has_nulls.push(key_has_nulls);
                     self.keys.push(keys);
 
                     // fill out-dated batches with null batches
-                    if self.num_null_batches < self.min_reserved_idx.0 {
-                        for i in self.num_null_batches..self.min_reserved_idx.0 {
-                            self.mem_size -= self.projected_batches[i].get_array_mem_size();
-                            self.mem_size -= self.key_has_nulls[i]
-                                .as_ref()
-                                .map(|nb| nb.buffer().len())
-                                .unwrap_or_default();
-                            self.mem_size -= self.keys[i].size();
+                    while unlikely!(self.num_null_batches < self.min_reserved_idx.0) {
+                        let i = self.num_null_batches;
+                        self.mem_size -= self.projected_batches[i].get_array_mem_size();
+                        self.mem_size -= self.key_has_nulls[i]
+                            .as_ref()
+                            .map(|nb| nb.buffer().len())
+                            .unwrap_or_default();
+                        self.mem_size -= self.keys[i].size();
 
-                            self.projected_batches[i] = self.projected_batches[0].clone();
-                            self.keys[i] = self.keys[0].clone();
-                            self.key_has_nulls[i] = self.key_has_nulls[0].clone();
-                            self.num_null_batches += 1;
-                        }
+                        self.projected_batches[i] = self.projected_batches[0].clone();
+                        self.keys[i] = self.keys[0].clone();
+                        self.key_has_nulls[i] = self.key_has_nulls[0].clone();
+                        self.num_null_batches += 1;
                     }
                     return Ok(());
                 }

@@ -33,8 +33,10 @@ object ArrowWriter {
   }
 
   def create(root: VectorSchemaRoot): ArrowWriter = {
-    val children = root.getFieldVectors().asScala.map { vector =>
-      vector.setInitialCapacity(0) // don't allocate initial memory for the vector
+    // default initial capacity is too large, which leads to possible OOM
+    // use smaller initial capacity
+    val children = root.getFieldVectors.asScala.map { vector =>
+      vector.setInitialCapacity(16)
       vector.allocateNew()
       createFieldWriter(vector)
     }
@@ -80,17 +82,18 @@ object ArrowWriter {
 }
 
 class ArrowWriter(val root: VectorSchemaRoot, fields: Array[ArrowFieldWriter]) {
+  private var count: Int = 0
 
   def schema: StructType =
     StructType(fields.map { f =>
       StructField(f.name, f.dataType, f.nullable)
     })
 
-  private var count: Int = 0
+  def currentCount: Int = count
 
   def write(row: InternalRow): Unit = {
     var i = 0
-    while (i < fields.size) {
+    while (i < fields.length) {
       fields(i).write(row, i)
       i += 1
     }
@@ -100,12 +103,6 @@ class ArrowWriter(val root: VectorSchemaRoot, fields: Array[ArrowFieldWriter]) {
   def finish(): Unit = {
     root.setRowCount(count)
     fields.foreach(_.finish())
-  }
-
-  def reset(): Unit = {
-    root.setRowCount(0)
-    count = 0
-    fields.foreach(_.reset())
   }
 }
 

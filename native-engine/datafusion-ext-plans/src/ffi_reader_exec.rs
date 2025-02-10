@@ -120,14 +120,14 @@ impl ExecutionPlan for FFIReaderExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let resource_id = jni_new_string!(&self.export_iter_provider_resource_id)?;
         let exporter = jni_new_global_ref!(
             jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?.as_obj()
         )?;
 
-        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-        let output = read_ffi(self.schema(), exporter, exec_ctx)?;
-        Ok(output)
+        let ffi_stream = read_ffi(self.schema(), exporter, exec_ctx.clone())?;
+        Ok(exec_ctx.spawn_worker_thread_on_stream(ffi_stream))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

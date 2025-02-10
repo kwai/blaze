@@ -18,7 +18,7 @@ use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
 use datafusion_ext_commons::{
-    arrow::selection::create_batch_interleaver, suggested_output_batch_mem_size,
+    arrow::selection::create_batch_interleaver, suggested_batch_mem_size,
 };
 use smallvec::{smallvec, SmallVec};
 
@@ -58,8 +58,8 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
             return true;
         }
 
-        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 6
-            && curs.0.mem_size() + curs.1.mem_size() > suggested_output_batch_mem_size()
+        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 5
+            || curs.0.mem_size() + curs.1.mem_size() > suggested_batch_mem_size()
         {
             if let Some(first_lidx) = self.lindices.smallest() {
                 if first_lidx.0 < curs.0.cur_idx.0 {
@@ -115,8 +115,9 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                     cur_forward!(curs.0);
                     if self.should_flush(curs) {
                         self.as_mut().flush(curs).await?;
-                        curs.0.set_min_reserved_idx(lidx);
                     }
+                    curs.0
+                        .set_min_reserved_idx(self.lindices.smallest.unwrap_or(lidx));
                 }
                 Ordering::Greater => {
                     if R_OUTER {
