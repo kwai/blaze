@@ -82,7 +82,7 @@ class OnHeapSpillManager(taskContext: TaskContext)
 
     // we should have at least 10% free memory
     val maxRatio = BlazeConf.ON_HEAP_SPILL_MEM_FRACTION.doubleConf()
-    memoryUsedRatio < maxRatio && jvmMemoryUsedRatio < maxRatio
+    memoryUsedRatio < maxRatio || jvmMemoryUsedRatio < maxRatio
   }
 
   /**
