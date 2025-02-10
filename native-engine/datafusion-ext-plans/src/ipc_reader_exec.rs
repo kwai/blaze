@@ -45,7 +45,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     arrow::{array_size::ArraySize, coalesce::coalesce_arrays_unchecked},
-    batch_size, df_execution_err, suggested_output_batch_mem_size,
+    batch_size, df_execution_err, suggested_batch_mem_size,
 };
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
@@ -208,7 +208,7 @@ fn read_ipc(
                     };
 
                     if cur_staging_num_rows >= batch_size
-                        || cur_staging_mem_size >= suggested_output_batch_mem_size()
+                        || cur_staging_mem_size >= suggested_batch_mem_size()
                     {
                         let coalesced_cols = std::mem::take(&mut *staging_cols.clone().lock())
                             .into_iter()

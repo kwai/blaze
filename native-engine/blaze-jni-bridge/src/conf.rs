@@ -47,6 +47,8 @@ define_conf!(StringConf, SPILL_COMPRESSION_CODEC);
 define_conf!(BooleanConf, SMJ_FALLBACK_ENABLE);
 define_conf!(IntConf, SMJ_FALLBACK_ROWS_THRESHOLD);
 define_conf!(IntConf, SMJ_FALLBACK_MEM_SIZE_THRESHOLD);
+define_conf!(IntConf, SUGGESTED_BATCH_MEM_SIZE);
+define_conf!(IntConf, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE);
 
 pub trait BooleanConf {
     fn key(&self) -> &'static str;

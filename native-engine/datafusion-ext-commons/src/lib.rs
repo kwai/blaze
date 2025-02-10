@@ -18,7 +18,9 @@
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
 
-use blaze_jni_bridge::conf::{IntConf, BATCH_SIZE};
+use blaze_jni_bridge::conf::{
+    IntConf, BATCH_SIZE, SUGGESTED_BATCH_MEM_SIZE, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE,
+};
 use once_cell::sync::OnceCell;
 use unchecked_index::UncheckedIndex;
 
@@ -72,30 +74,22 @@ pub fn batch_size() -> usize {
     *CACHED_BATCH_SIZE.get_or_init(|| BATCH_SIZE.value().unwrap_or(10000) as usize)
 }
 
-// bigger for better radix sort performance
-pub const fn staging_mem_size_for_partial_sort() -> usize {
-    1048576
+pub fn suggested_batch_mem_size() -> usize {
+    static V: OnceCell<usize> = OnceCell::new();
+    *V.get_or_init(|| SUGGESTED_BATCH_MEM_SIZE.value().unwrap_or(25165824) as usize)
 }
 
-// bigger for better radix sort performance
-// aggregate merging is row-based, so use bigger memory size
-pub const fn staging_mem_size_for_agg_merge() -> usize {
-    16777216
-}
-
-// use bigger batch memory size writing shuffling data
-pub const fn suggested_output_batch_mem_size() -> usize {
-    25165824
-}
-
-// use smaller batch memory size for kway merging since there will be multiple
-// batches in memory at the same time
-pub const fn suggested_kway_merge_batch_mem_size() -> usize {
-    1048576
+pub fn suggested_kway_merge_batch_mem_size() -> usize {
+    static V: OnceCell<usize> = OnceCell::new();
+    *V.get_or_init(|| {
+        SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE
+            .value()
+            .unwrap_or(1048576) as usize
+    })
 }
 
 pub fn compute_suggested_batch_size_for_output(mem_size: usize, num_rows: usize) -> usize {
-    let suggested_batch_mem_size = suggested_output_batch_mem_size();
+    let suggested_batch_mem_size = suggested_batch_mem_size();
     compute_batch_size_with_target_mem_size(mem_size, num_rows, suggested_batch_mem_size)
 }
 
