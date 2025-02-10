@@ -34,9 +34,11 @@ import java.security.PrivilegedExceptionAction
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.BlockingQueue
 
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.CHILD_ALLOCATOR
+
 class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
   private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf()
-  private val maxBatchMemorySize = 1 << 24 // 16MB
+  private val maxBatchMemorySize = BlazeConf.SUGGESTED_BATCH_MEM_SIZE.intConf()
 
   private val arrowSchema = ArrowUtils.toArrowSchema(schema)
   private val emptyDictionaryProvider = new MapDictionaryProvider()
@@ -99,23 +101,23 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
                 return
               }
 
-              Using.resource(VectorSchemaRoot.create(arrowSchema, ROOT_ALLOCATOR)) { root =>
-                val arrowWriter = ArrowWriter.create(root)
-                var rowCount = 0
-                while (rowIter.hasNext
-                  && rowCount < maxBatchNumRows
-                  && (rowCount == 0 || ROOT_ALLOCATOR.getAllocatedMemory < maxBatchMemorySize)) {
-                  arrowWriter.write(rowIter.next())
-                  rowCount += 1
+              Using.resource(CHILD_ALLOCATOR("ArrowFFIExporter")) { allocator =>
+                Using.resource(VectorSchemaRoot.create(arrowSchema, allocator)) { root =>
+                  val arrowWriter = ArrowWriter.create(root)
+                  while (rowIter.hasNext
+                    && allocator.getAllocatedMemory < maxBatchMemorySize
+                    && arrowWriter.currentCount < maxBatchNumRows) {
+                    arrowWriter.write(rowIter.next())
+                  }
+                  arrowWriter.finish()
+
+                  // export root
+                  currentRoot = root
+                  outputQueue.put(NextBatch)
+
+                  // wait for processing next batch
+                  processingQueue.take()
                 }
-                arrowWriter.finish()
-
-                // export root
-                currentRoot = root
-                outputQueue.put(NextBatch)
-
-                // wait for processing next batch
-                processingQueue.take()
               }
             }
             outputQueue.put(Finished)
