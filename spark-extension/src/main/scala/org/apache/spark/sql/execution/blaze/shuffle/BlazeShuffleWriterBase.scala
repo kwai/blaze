@@ -46,6 +46,7 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
   System.setProperty("io.netty.noPreferDirect", "true")
 
   protected var partitionLengths: Array[Long] = Array[Long]()
+  private var mapStatus: Option[MapStatus] = None
 
   override def write(records: Iterator[Product2[K, V]]): Unit = {}
 
@@ -54,7 +55,7 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
       dep: ShuffleDependency[_, _, _],
       mapId: Int,
       context: TaskContext,
-      partition: Partition): MapStatus = {
+      partition: Partition): Unit = {
 
     val shuffleBlockResolver =
       SparkEnv.get.shuffleManager.shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver]
@@ -99,15 +100,18 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
     val dataSize = Files.size(tempDataFilePath)
     metrics.incBytesWritten(dataSize)
 
-    Shims.get.commit(
-      dep,
-      shuffleBlockResolver,
-      tempDataFilePath.toFile,
-      mapId,
-      partitionLengths,
-      dataSize,
-      context)
+    mapStatus = Some(
+      Shims.get.commit(
+        dep,
+        shuffleBlockResolver,
+        tempDataFilePath.toFile,
+        mapId,
+        partitionLengths,
+        dataSize,
+        context))
   }
 
-  override def stop(success: Boolean): Option[MapStatus] = None
+  override def stop(success: Boolean): Option[MapStatus] = {
+    mapStatus.filter(_ => success)
+  }
 }

@@ -37,6 +37,7 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
     extends BlazeShuffleWriterBase[K, V](metrics) {
 
   private val partitionWriters = mutable.ArrayBuffer[RssPartitionWriterBase]()
+  private var mapStatus: Option[MapStatus] = None
 
   def getRssPartitionWriter(
       handle: ShuffleHandle,
@@ -50,7 +51,7 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
       mapId: Int,
       context: TaskContext,
       partition: Partition,
-      numPartitions: Int): MapStatus = {
+      numPartitions: Int): Unit = {
 
     val rssShuffleWriterObject =
       getRssPartitionWriter(dep.shuffleHandle, mapId, metrics, numPartitions)
@@ -81,15 +82,16 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
       rssShuffleWriterObject.close()
     }
 
-    val mapStatus = Shims.get.getMapStatus(
-      SparkEnv.get.blockManager.shuffleServerId,
-      rssShuffleWriterObject.getPartitionLengthMap,
-      mapId)
-    mapStatus
+    mapStatus = Some(
+      Shims.get.getMapStatus(
+        SparkEnv.get.blockManager.shuffleServerId,
+        rssShuffleWriterObject.getPartitionLengthMap,
+        mapId))
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
     partitionWriters.foreach(_.stop(success))
     super.stop(success)
+    mapStatus.filter(_ => success)
   }
 }
