@@ -27,7 +27,6 @@ use arrow::{
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
-use arrow::array::Float64Array;
 use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
@@ -157,6 +156,7 @@ impl Agg for SparkUDAFWrapper {
     ) -> Result<()> {
         log::info!("start partial update");
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
+        log::info!("update before accs.num {}", accs.num_records());
 
         let params = partial_args.to_vec();
         let params_schema = self
@@ -209,7 +209,7 @@ impl Agg for SparkUDAFWrapper {
             partial_arg_idx,
         )
         .unwrap();
-
+        log::info!("update after accs.num {}", accs.num_records());
         Ok(())
     }
 
@@ -282,12 +282,13 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn resize(&mut self, len: usize) {
-        unimplemented!()
+        let rows = jni_call_static!(
+            BlazeUnsafeRowsWrapperUtils.create(len as i32)-> JObject)
+        .unwrap();
+        self.obj = jni_new_global_ref!(rows.as_obj()).unwrap();
     }
 
-    fn shrink_to_fit(&mut self) {
-        unimplemented!()
-    }
+    fn shrink_to_fit(&mut self) {}
 
     fn num_records(&self) -> usize {
         match jni_call_static!(
@@ -333,8 +334,7 @@ impl AccColumn for AccUnsafeRowsColumn {
         for i in 0..binary_array.len() {
             if binary_array.is_valid(i) {
                 let bytes = binary_array.value(i).to_vec();
-                array[i] = bytes;
-                log::info!("freeze arrary {} : {:?}", i, array[i]);
+                array[i].extend_from_slice(&bytes);
             } else {
                 log::warn!("AccUnsafeRowsColumn::freeze_to_rows : binary_array null error")
             }
@@ -343,8 +343,7 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-
-        log::info!("unfreeze array {:?}", array.clone());
+        log::info!("unfreeze array {:?}", array);
         log::info!("unfreeze offsets {:?}", offsets);
         let binary_values = array.iter().map(|&data| data).collect();
         let offsets_i32 = offsets
@@ -433,10 +432,6 @@ fn partial_update_udaf(
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
 
     let struct_array = StructArray::from(params_batch.clone());
-    log::info!("input struct_array {:?}", struct_array.fields());
-    log::info!("batch{:?}", params_batch.column(0).into_data());
-    let column0= params_batch.column(0).as_any().downcast_ref::<Float64Array>().unwrap().values().to_vec();
-    log::info!("column0 {:?}", column0);
 
     let mut export_ffi_batch_array = FFI_ArrowArray::new(&struct_array.to_data());
 

@@ -31,7 +31,6 @@ import org.apache.spark.sql.Row
 
 import scala.collection.JavaConverters._
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
-import java.lang.reflect.Field
 
 object UnsafeRowsWrapper extends Logging {
 
@@ -92,20 +91,20 @@ object UnsafeRowsWrapper extends Logging {
           val idxArray = paramsRoot.getFieldVectors.asScala.head.asInstanceOf[IntVector]
           val serializer = new UnsafeRowSerializer(numFields).newInstance()
           val outputWriter = ArrowWriter.create(outputRoot)
-          logInfo(s"freeze unsaferows num: ${unsafeRows.length}")
-          logInfo(s"freeze idxArray $idxArray")
+//          logInfo(s"freeze unsaferows num: ${unsafeRows.length}")
+//          logInfo(s"freeze idxArray $idxArray")
           for (idx <- 0 until paramsRoot.getRowCount) {
             val internalRow = unsafeRows(idxArray.get(idx))
             if (internalRow.numFields == 0) {
               outputWriter.write(toUnsafeRow(Row(Array.empty[Byte]), Array(BinaryType)))
             } else {
-              logInfo(s"freeze unsafe row : ${internalRow.toString}")
+//              logInfo(s"freeze unsafe row : ${internalRow.toString}")
               Utils.tryWithResource(new ByteArrayOutputStream()) { baos =>
                 val serializerStream = serializer.serializeStream(baos)
                 serializerStream.writeValue(internalRow)
                 serializerStream.close()
                 val bytes = baos.toByteArray
-                logInfo(s"write bytes : ${java.util.Arrays.toString(bytes)}")
+//                logInfo(s"write bytes : ${java.util.Arrays.toString(bytes)}")
                 outputWriter.write(toUnsafeRow(Row(bytes), Array(BinaryType)))
               }
             }
@@ -150,18 +149,16 @@ object UnsafeRowsWrapper extends Logging {
           for (i <- 0 until paramsRoot.getRowCount) {
             val bytes = binaryVector.get(i)
             val offset = intVector.get(i)
-            logInfo(s"Reading bytes from offset: $offset, bytes length: ${bytes.length}")
+//            logInfo(s"Reading bytes from offset: $offset, bytes length: ${bytes.length}")
             if (bytes.length - offset > 0) {
               val internalRow: InternalRow = Utils.tryWithResource(
                 new ByteArrayInputStream(bytes, offset, bytes.length - offset)) { bais =>
-                val unsafeRow =
-                  deserializer.deserializeStream(bais).readValue().asInstanceOf[UnsafeRow]
-                // get offset use reflect
-                val field: Field = classOf[ByteArrayInputStream].getDeclaredField("pos")
-                field.setAccessible(true)
-                val position = field.getInt(bais)
-                outputWriter.write(toUnsafeRow(Row(position), Array(IntegerType)))
-                logInfo(s"unfreeze row ${unsafeRow.toString}")
+                val deserializeStream = deserializer.deserializeStream(bais)
+                val unsafeRow = deserializeStream.readValue().asInstanceOf[UnsafeRow]
+                deserializeStream.close()
+                val size = unsafeRow.getSizeInBytes + 4
+                outputWriter.write(toUnsafeRow(Row(offset + size), Array(IntegerType)))
+//                logInfo(s"unfreeze row ${unsafeRow.toString}")
                 unsafeRow
               }
               internalRowsArray(i) = internalRow
@@ -190,7 +187,7 @@ object UnsafeRowsWrapper extends Logging {
     unsafeRows.length
   }
 
-  def getNullObject(rowNum: Int): Array[InternalRow] = {
+  def getEmptyObject(rowNum: Int): Array[InternalRow] = {
     Array.fill(rowNum) {
       new UnsafeRow(0)
     }

@@ -1173,20 +1173,15 @@ object NativeConverters extends Logging {
         }
         aggBuilder.setAggFunction(pb.AggFunction.DECLARATIVE)
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
-        val bound = declarative.mapChildren(_.transformDown {
-          case p: Literal => p
-          case p =>
-            try {
-              val convertedChild =
-                convertExprWithFallback(p, isPruningExpr = false, fallbackToError)
-              val nextBindIndex = convertedChildren.size
-              convertedChildren.getOrElseUpdate(
-                convertedChild,
-                BoundReference(nextBindIndex, p.dataType, p.nullable))
-            } catch {
-              case _: Exception | _: NotImplementedError => p
-            }
-        })
+
+        val bound = declarative.mapChildren { p =>
+          val convertedChild = convertExpr(p)
+          val nextBindIndex = convertedChildren.size + declarative.inputAggBufferAttributes.length
+          convertedChildren.getOrElseUpdate(
+            convertedChild,
+            BoundReference(nextBindIndex, p.dataType, p.nullable))
+        }
+
         val paramsSchema = StructType(
           convertedChildren.values
             .map(ref => StructField("", ref.dataType, ref.nullable))

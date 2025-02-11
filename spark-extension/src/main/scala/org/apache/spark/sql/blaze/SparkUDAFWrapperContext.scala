@@ -68,6 +68,11 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
 
   private val inputSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
+  private val paramsToUnsafe = {
+    val toUnsafe = UnsafeProjection.create(javaParamsSchema)
+    toUnsafe.initialize(Option(TaskContext.get()).map(_.partitionId()).getOrElse(0))
+    toUnsafe
+  }
 
 
   private val indexSchema = {
@@ -81,6 +86,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   }
 
   val dataTypes: Seq[DataType] = expr.aggBufferAttributes.map(_.dataType)
+  val dataName: Seq[String] = expr.aggBufferAttributes.map(_.name)
 
   val inputTypes: Seq[DataType] = javaParamsSchema.map(_.dataType)
 
@@ -97,35 +103,45 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         ArrowArray.wrap(importIdxFFIArrayPtr)) { (inputRoot, idxRoot, inputArray, idxArray) =>
         // import into params root
         Data.importIntoVectorSchemaRoot(batchAllocator, inputArray, inputRoot, dictionaryProvider)
-        val batch = ColumnarHelper.rootAsBatch(inputRoot)
-        val inputRows = ColumnarHelper.batchAsRowIter(batch).toArray
+        val inputRows = ColumnarHelper.rootAsBatch(inputRoot)
 
         Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
         val fieldVectors = idxRoot.getFieldVectors.asScala
         val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
         val inputIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
+        logInfo(s"inputRows.num: ${inputRows.numRows()}")
+        logInfo(s"rows.num: ${rows.length}")
+        logInfo(s"Idx length ${idxRoot.getRowCount}")
+        logInfo(s"inputIdxVector $inputIdxVector")
+        logInfo(s"rowIdxVector $rowIdxVector")
         for (i <- 0 until idxRoot.getRowCount) {
-          val row = rows(rowIdxVector.get(i))
-          logInfo(s"javaParamsSchema $javaParamsSchema")
-          logInfo(s"inputIdxVector: ${inputIdxVector}")
-          logInfo(s"inputRows.length ${inputRows.length}")
-          val input = inputRows(inputIdxVector.get(i))
-          logInfo(s"is unsafe row: ${input.isInstanceOf[UnsafeRow]}")
-          logInfo(s"input numField ${input.numFields}  $inputSchema")
-          if (input.numFields > 0) {
-            logInfo(s"input row: ${input.toSeq(inputTypes)}")
-            val joiner = new JoinedRow
-            if (row.numFields == 0) {
-              rows(rowIdxVector.get(i)) = updater(joiner(initialize(), input))
-            } else {
-              rows(rowIdxVector.get(i)) = updater(joiner(row, input))
+          if ( inputIdxVector.get(i) < inputRows.numRows() ) {
+            if (rowIdxVector.get(i) < rows.length) {
+              val row = rows(rowIdxVector.get(i))
+              val input = inputRows.getRow(inputIdxVector.get(i))
+              val joiner = new JoinedRow
+              if (row.numFields == 0) {
+                rows(rowIdxVector.get(i)) = updater(joiner(initialize(), paramsToUnsafe(input))).copy()
+              } else {
+                //              logInfo(s"row: ${row.toSeq(dataTypes)}")
+                //              logInfo(s"input: ${input.toSeq(inputTypes)}")
+                //              logInfo(s"is row unsafe ${row.isInstanceOf[UnsafeRow]}")
+                rows(rowIdxVector.get(i)) = updater(joiner(row, paramsToUnsafe(input))).copy()
+              }
+              //            logInfo(s"temp row 0: ${rows(0).toSeq(dataTypes)}")
             }
-            logInfo(s"temp row 0: ${rows(0).toSeq(dataTypes)}")
+            else {
+              logInfo(s"wow  $i rowIdx:${rowIdxVector.get(i)}")
+            }
+            }
+
+          else {
+            logInfo(s"wow update i $i inputIdxVector:${inputIdxVector.get(i)}")
           }
         }
         logInfo(s"update rows num: ${rows.length}, rows.fieldnum:${rows(0).numFields}")
-        logInfo(s"row 0: ${rows(0).toString}")
+//        logInfo(s"row 0: ${rows(0).toString}")
         rows
       }
     }
@@ -145,16 +161,32 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
         val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
+        logInfo(s"rows.num: ${rows.length}, mergeRows.num ${mergeRows.length} , idx.len: ${idxRoot.getRowCount}")
+        logInfo(s"mergeIdxVector $mergeIdxVector")
+        logInfo(s"rowIdxVector $rowIdxVector")
         for (i <- 0 until idxRoot.getRowCount) {
-          val row = rows(rowIdxVector.get(i))
-          val mergeRow = mergeRows(mergeIdxVector.get(i))
-          if (mergeRow.numFields > 0) {
-            val joiner = new JoinedRow
-            if (row.numFields == 0) {
-              rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow))
-            } else {
-              rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow))
+          if (mergeIdxVector.get(i) < mergeRows.length) {
+            if (rowIdxVector.get(i) < rows.length) {
+              logInfo(s"i: $i, mergeIdxVector.get(i) ${mergeIdxVector.get(i)}, rowIdxVector.get(i) ${rowIdxVector.get(i)}")
+              val row = rows(rowIdxVector.get(i))
+              val mergeRow = mergeRows(mergeIdxVector.get(i))
+              val joiner = new JoinedRow
+              if (row.numFields == 0) {
+                rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow)).copy()
+                logInfo {
+                  s"init merge row ${rows(rowIdxVector.get(i)).toSeq(dataTypes)}"
+                }
+              } else {
+                rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow)).copy()
+                logInfo {
+                  s"merge row ${rows(rowIdxVector.get(i)).toSeq(dataTypes)}"
+                }
+              }
             }
+            else {
+              logInfo(s"wow merge i $i rowIdxVector:${rowIdxVector.get(i)}")
+            }
+
           }
         }
         logInfo("finish merge in scalar!!")
@@ -180,7 +212,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         // evaluate expression and write to output root
         val outputWriter = ArrowWriter.create(outputRoot)
         for (i <- 0 until idxRoot.getRowCount) {
-          val row = rows(rowIdxVector.get(i))
+          val row = rows(rowIdxVector.get(i)).copy()
           outputWriter.write(evaluator(row))
         }
         outputWriter.finish()

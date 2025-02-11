@@ -97,7 +97,7 @@ impl IdxSelection<'_> {
                 }
             }
             IdxSelection::Range(start, end) => {
-                for idx in *start..=*end {
+                for idx in *start..*end {
                     builder.append_value(idx as i32);
                 }
             }

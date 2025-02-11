@@ -33,6 +33,6 @@ public class UnsafeRowsWrapperUtils {
     }
 
     public static InternalRow[] getEmptyObject(int rowNum) {
-        return UnsafeRowsWrapper$.MODULE$.getNullObject(rowNum);
+        return UnsafeRowsWrapper$.MODULE$.getEmptyObject(rowNum);
     }
 }
