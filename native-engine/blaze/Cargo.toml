@@ -20,7 +20,7 @@ http-service = []
 arrow = { workspace = true }
 blaze-jni-bridge = { workspace = true }
 blaze-serde = { workspace = true }
-bytesize = "1.3.0"
+bytesize = "1.3.2"
 datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
 datafusion-ext-plans = { workspace = true }
