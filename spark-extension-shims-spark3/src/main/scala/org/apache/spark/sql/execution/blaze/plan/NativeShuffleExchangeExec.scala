@@ -138,38 +138,38 @@ case class NativeShuffleExchangeExec(
           context,
           createMetricsReporter(context))
 
-        if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeCelebornShuffleManager]) {
-          return writer
-            .asInstanceOf[BlazeCelebornShuffleWriter[_, _]]
-            .nativeRssShuffleWrite(
-              rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
-              dep,
-              mapId.toInt,
-              context,
-              partition,
-              numPartitions)
+        SparkEnv.get.shuffleManager match {
+          case _: BlazeCelebornShuffleManager =>
+            writer
+              .asInstanceOf[BlazeCelebornShuffleWriter[_, _]]
+              .nativeRssShuffleWrite(
+                rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+                dep,
+                mapId.toInt,
+                context,
+                partition,
+                numPartitions)
+          case _: BlazeUniffleShuffleManager =>
+            writer
+              .asInstanceOf[BlazeUniffleShuffleWriter[_, _, _]]
+              .nativeRssShuffleWrite(
+                rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+                dep,
+                mapId.toInt,
+                context,
+                partition,
+                numPartitions)
+          case _ =>
+            writer
+              .asInstanceOf[BlazeShuffleWriter[_, _]]
+              .nativeShuffleWrite(
+                rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+                dep,
+                mapId.toInt,
+                context,
+                partition)
         }
-        if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeUniffleShuffleManager]) {
-          writer
-            .asInstanceOf[BlazeUniffleShuffleWriter[_, _, _]]
-            .nativeRssShuffleWrite(
-              rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
-              dep,
-              mapId.toInt,
-              context,
-              partition,
-              numPartitions)
-          return writer.stop(true).get
-        }
-
-        writer
-          .asInstanceOf[BlazeShuffleWriter[_, _]]
-          .nativeShuffleWrite(
-            rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
-            dep,
-            mapId.toInt,
-            context,
-            partition)
+        writer.stop(true).get
       }
     }
   }

@@ -17,14 +17,12 @@ package org.apache.spark.sql.execution.blaze.columnar
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
-import org.apache.spark.sql.catalyst.expressions.SpecializedGetters
 import org.apache.spark.sql.catalyst.expressions.SpecializedGettersReader
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.types.BooleanType
 import org.apache.spark.sql.types.ByteType
 import org.apache.spark.sql.types.DataType
-import org.apache.spark.sql.types.DateType
 import org.apache.spark.sql.types.Decimal
 import org.apache.spark.sql.types.DecimalType
 import org.apache.spark.sql.types.DoubleType
@@ -35,7 +33,6 @@ import org.apache.spark.sql.types.MapType
 import org.apache.spark.sql.types.ShortType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.unsafe.types.UTF8String
 
