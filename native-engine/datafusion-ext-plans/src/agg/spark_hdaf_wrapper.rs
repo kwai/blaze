@@ -154,9 +154,7 @@ impl Agg for SparkUDAFWrapper {
         partial_arg_idx: IdxSelection<'_>,
         batch_schema: SchemaRef,
     ) -> Result<()> {
-        log::info!("start partial update");
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
-        log::info!("update before accs.num {}", accs.num_records());
 
         let params = partial_args.to_vec();
         let params_schema = self
@@ -209,7 +207,6 @@ impl Agg for SparkUDAFWrapper {
             partial_arg_idx,
         )
         .unwrap();
-        log::info!("update after accs.num {}", accs.num_records());
         Ok(())
     }
 
@@ -220,7 +217,6 @@ impl Agg for SparkUDAFWrapper {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        log::info!("start partial merge");
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
         let merging_accs = downcast_any!(merging_accs, mut AccUnsafeRowsColumn).unwrap();
 
@@ -260,7 +256,6 @@ impl Agg for SparkUDAFWrapper {
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        log::info!("start final merge");
         let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
         final_merge_udaf(
             self.jcontext()?,
@@ -343,8 +338,6 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        log::info!("unfreeze array {:?}", array);
-        log::info!("unfreeze offsets {:?}", offsets);
         let binary_values = array.iter().map(|&data| data).collect();
         let offsets_i32 = offsets
             .iter()

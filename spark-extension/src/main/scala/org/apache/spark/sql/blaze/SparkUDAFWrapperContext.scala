@@ -25,7 +25,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, JoinedRow, Nondeterministic, UnsafeProjection, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, JoinedRow, MutableProjection, Nondeterministic, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
 import org.apache.spark.sql.types.{DataType, IntegerType, StructField, StructType}
@@ -85,16 +85,10 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     ArrowUtils.toArrowSchema(schema)
   }
 
-  val dataTypes: Seq[DataType] = expr.aggBufferAttributes.map(_.dataType)
-  val dataName: Seq[String] = expr.aggBufferAttributes.map(_.name)
-
-  val inputTypes: Seq[DataType] = javaParamsSchema.map(_.dataType)
-
   def update(
       rows: Array[InternalRow],
       importIdxFFIArrayPtr: Long,
       importBatchFFIArrayPtr: Long): Array[InternalRow] = {
-    logInfo("start partial update in scalar!")
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         VectorSchemaRoot.create(inputSchema, batchAllocator),
@@ -110,38 +104,18 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
         val inputIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
-        logInfo(s"inputRows.num: ${inputRows.numRows()}")
-        logInfo(s"rows.num: ${rows.length}")
-        logInfo(s"Idx length ${idxRoot.getRowCount}")
-        logInfo(s"inputIdxVector $inputIdxVector")
-        logInfo(s"rowIdxVector $rowIdxVector")
         for (i <- 0 until idxRoot.getRowCount) {
           if ( inputIdxVector.get(i) < inputRows.numRows() ) {
-            if (rowIdxVector.get(i) < rows.length) {
               val row = rows(rowIdxVector.get(i))
               val input = inputRows.getRow(inputIdxVector.get(i))
               val joiner = new JoinedRow
               if (row.numFields == 0) {
-                rows(rowIdxVector.get(i)) = updater(joiner(initialize(), paramsToUnsafe(input))).copy()
+                rows(rowIdxVector.get(i)) = updater(joiner(initialize(), paramsToUnsafe(input).copy())).copy()
               } else {
-                //              logInfo(s"row: ${row.toSeq(dataTypes)}")
-                //              logInfo(s"input: ${input.toSeq(inputTypes)}")
-                //              logInfo(s"is row unsafe ${row.isInstanceOf[UnsafeRow]}")
-                rows(rowIdxVector.get(i)) = updater(joiner(row, paramsToUnsafe(input))).copy()
+                rows(rowIdxVector.get(i)) = updater(joiner(row, paramsToUnsafe(input).copy())).copy()
               }
-              //            logInfo(s"temp row 0: ${rows(0).toSeq(dataTypes)}")
             }
-            else {
-              logInfo(s"wow  $i rowIdx:${rowIdxVector.get(i)}")
-            }
-            }
-
-          else {
-            logInfo(s"wow update i $i inputIdxVector:${inputIdxVector.get(i)}")
-          }
         }
-        logInfo(s"update rows num: ${rows.length}, rows.fieldnum:${rows(0).numFields}")
-//        logInfo(s"row 0: ${rows(0).toString}")
         rows
       }
     }
@@ -151,7 +125,6 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
       rows: Array[InternalRow],
       mergeRows: Array[InternalRow],
       importIdxFFIArrayPtr: Long): Array[InternalRow] = {
-    logInfo("start merge in scalar!!")
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         VectorSchemaRoot.create(indexSchema, batchAllocator),
@@ -161,35 +134,18 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
         val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
-        logInfo(s"rows.num: ${rows.length}, mergeRows.num ${mergeRows.length} , idx.len: ${idxRoot.getRowCount}")
-        logInfo(s"mergeIdxVector $mergeIdxVector")
-        logInfo(s"rowIdxVector $rowIdxVector")
         for (i <- 0 until idxRoot.getRowCount) {
           if (mergeIdxVector.get(i) < mergeRows.length) {
-            if (rowIdxVector.get(i) < rows.length) {
-              logInfo(s"i: $i, mergeIdxVector.get(i) ${mergeIdxVector.get(i)}, rowIdxVector.get(i) ${rowIdxVector.get(i)}")
-              val row = rows(rowIdxVector.get(i))
-              val mergeRow = mergeRows(mergeIdxVector.get(i))
-              val joiner = new JoinedRow
-              if (row.numFields == 0) {
-                rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow)).copy()
-                logInfo {
-                  s"init merge row ${rows(rowIdxVector.get(i)).toSeq(dataTypes)}"
-                }
-              } else {
-                rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow)).copy()
-                logInfo {
-                  s"merge row ${rows(rowIdxVector.get(i)).toSeq(dataTypes)}"
-                }
-              }
+            val row = rows(rowIdxVector.get(i))
+            val mergeRow = mergeRows(mergeIdxVector.get(i))
+            val joiner = new JoinedRow
+            if (row.numFields == 0) {
+              rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow)).copy()
+            } else {
+              rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow)).copy()
             }
-            else {
-              logInfo(s"wow merge i $i rowIdxVector:${rowIdxVector.get(i)}")
-            }
-
           }
         }
-        logInfo("finish merge in scalar!!")
         rows
       }
     }
