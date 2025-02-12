@@ -29,7 +29,7 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
@@ -163,6 +163,8 @@ impl ExecutionPlan for OrcExec {
             batch_size: batch_size(),
             table_schema: self.base_config.file_schema.clone(),
             fs_provider,
+            partition_index: partition,
+            metrics: self.metrics.clone(),
         };
 
         let file_stream = Box::pin(FileStream::new(
@@ -207,14 +209,27 @@ struct OrcOpener {
     batch_size: usize,
     table_schema: SchemaRef,
     fs_provider: Arc<FsProvider>,
+    partition_index: usize,
+    metrics: ExecutionPlanMetricsSet,
 }
 
 impl FileOpener for OrcOpener {
     fn open(&self, file_meta: FileMeta) -> Result<FileOpenFuture> {
-        let reader = OrcFileReaderRef(Arc::new(InternalFileReader::try_new(
-            self.fs_provider.clone(),
-            file_meta.object_meta.clone(),
-        )?));
+        let reader = OrcFileReaderRef {
+            inner: Arc::new(InternalFileReader::try_new(
+                self.fs_provider.clone(),
+                file_meta.object_meta.clone(),
+            )?),
+            metrics: OrcFileMetrics::new(
+                self.partition_index,
+                file_meta
+                    .object_meta
+                    .location
+                    .filename()
+                    .unwrap_or("__default_filename__"),
+                &self.metrics.clone(),
+            ),
+        };
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
@@ -251,11 +266,14 @@ impl FileOpener for OrcOpener {
 }
 
 #[derive(Clone)]
-struct OrcFileReaderRef(Arc<InternalFileReader>);
+struct OrcFileReaderRef {
+    inner: Arc<InternalFileReader>,
+    metrics: OrcFileMetrics,
+}
 
 impl AsyncChunkReader for OrcFileReaderRef {
     fn len(&mut self) -> BoxFuture<'_, std::io::Result<u64>> {
-        async move { Ok(self.0.get_meta().size as u64) }.boxed()
+        async move { Ok(self.inner.get_meta().size as u64) }.boxed()
     }
 
     fn get_bytes(
@@ -266,7 +284,8 @@ impl AsyncChunkReader for OrcFileReaderRef {
         let offset_from_start = offset_from_start as usize;
         let length = length as usize;
         let range = offset_from_start..(offset_from_start + length);
-        async move { self.0.read_fully(range).map_err(|e| e.into()) }.boxed()
+        self.metrics.bytes_scanned.add(length);
+        async move { self.inner.read_fully(range).map_err(|e| e.into()) }.boxed()
     }
 }
 
@@ -302,5 +321,19 @@ impl SchemaAdapter {
             )),
             projection,
         ))
+    }
+}
+
+#[derive(Clone)]
+struct OrcFileMetrics {
+    bytes_scanned: Count,
+}
+
+impl OrcFileMetrics {
+    pub fn new(partition: usize, filename: &str, metrics: &ExecutionPlanMetricsSet) -> Self {
+        let bytes_scanned = MetricBuilder::new(metrics)
+            .with_new_label("filename", filename.to_string())
+            .counter("bytes_scanned", partition);
+        Self { bytes_scanned }
     }
 }
