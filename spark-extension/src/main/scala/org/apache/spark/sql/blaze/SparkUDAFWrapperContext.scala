@@ -31,6 +31,7 @@ import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWrite
 import org.apache.spark.sql.types.{DataType, IntegerType, StructField, StructType}
 
 import java.nio.ByteBuffer
+import scala.collection.mutable.ArrayBuffer
 
 case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   private val (expr, javaParamsSchema) =
@@ -63,8 +64,6 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   private lazy val evaluator =
     UnsafeProjection.create(expr.evaluateExpression :: Nil, expr.aggBufferAttributes)
 
-  private def initialize(): InternalRow = initializer.apply(InternalRow.empty).copy()
-
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
 
   private val inputSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
@@ -83,6 +82,26 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   private val evalIndexSchema = {
     val schema = StructType(Seq(StructField("", IntegerType)))
     ArrowUtils.toArrowSchema(schema)
+  }
+
+  val dataTypes: Seq[DataType] = expr.aggBufferAttributes.map(_.dataType)
+//  private def initialize(): InternalRow = initializer.apply(InternalRow.empty).copy()
+  def initialize(numRow: Int): Array[InternalRow] = {
+    val initialRow = initializer.apply(InternalRow.empty)
+    Array.fill(numRow) {
+      initialRow.copy()
+    }
+  }
+
+  def resize(rows: Array[InternalRow], len: Int):  Array[InternalRow] = {
+    val buffer = ArrayBuffer[InternalRow](rows: _*)
+    if (buffer.length < len) {
+      val initialRow = initializer.apply(InternalRow.empty)
+      buffer ++= Array.fill(len - buffer.length){initialRow.copy()}
+    } else {
+      buffer.trimEnd(buffer.length - len)
+    }
+    buffer.toArray
   }
 
   def update(
@@ -109,11 +128,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
               val row = rows(rowIdxVector.get(i))
               val input = inputRows.getRow(inputIdxVector.get(i))
               val joiner = new JoinedRow
-              if (row.numFields == 0) {
-                rows(rowIdxVector.get(i)) = updater(joiner(initialize(), paramsToUnsafe(input).copy())).copy()
-              } else {
-                rows(rowIdxVector.get(i)) = updater(joiner(row, paramsToUnsafe(input).copy())).copy()
-              }
+              rows(rowIdxVector.get(i)) = updater(joiner(row, paramsToUnsafe(input).copy())).copy()
             }
         }
         rows
@@ -134,16 +149,14 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
         val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
+
         for (i <- 0 until idxRoot.getRowCount) {
-          if (mergeIdxVector.get(i) < mergeRows.length) {
+          val idx = mergeIdxVector.get(i)
+          if (idx < mergeRows.length) {
             val row = rows(rowIdxVector.get(i))
             val mergeRow = mergeRows(mergeIdxVector.get(i))
             val joiner = new JoinedRow
-            if (row.numFields == 0) {
-              rows(rowIdxVector.get(i)) = merger(joiner(initialize(), mergeRow)).copy()
-            } else {
-              rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow)).copy()
-            }
+            rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow)).copy()
           }
         }
         rows
@@ -168,7 +181,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         // evaluate expression and write to output root
         val outputWriter = ArrowWriter.create(outputRoot)
         for (i <- 0 until idxRoot.getRowCount) {
-          val row = rows(rowIdxVector.get(i)).copy()
+          val row = rows(rowIdxVector.get(i))
           outputWriter.write(evaluator(row))
         }
         outputWriter.finish()

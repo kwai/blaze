@@ -171,10 +171,4 @@ object UnsafeRowsWrapper extends Logging {
     unsafeRows.length
   }
 
-  def getEmptyObject(rowNum: Int): Array[InternalRow] = {
-    Array.fill(rowNum) {
-      new UnsafeRow(0)
-    }
-  }
-
 }

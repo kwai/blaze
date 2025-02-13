@@ -117,13 +117,16 @@ impl Agg for SparkUDAFWrapper {
     }
 
     fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
-        // num_rows
-        let rows = jni_call_static!(
-            BlazeUnsafeRowsWrapperUtils.create(num_rows as i32)-> JObject)
-        .unwrap();
+        let jcontext = self.jcontext().unwrap();
+        let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).initialize(
+            num_rows as i32,
+        )-> JObject).unwrap();
+
+        let jcontext = self.jcontext().unwrap();
         let obj = jni_new_global_ref!(rows.as_obj()).unwrap();
         Box::new(AccUnsafeRowsColumn {
             obj,
+            jcontext,
             num_fields: self.buffer_schema.fields.len(),
         })
     }
@@ -268,6 +271,7 @@ impl Agg for SparkUDAFWrapper {
 
 struct AccUnsafeRowsColumn {
     obj: GlobalRef,
+    jcontext: GlobalRef,
     num_fields: usize,
 }
 
@@ -277,9 +281,10 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn resize(&mut self, len: usize) {
-        let rows = jni_call_static!(
-            BlazeUnsafeRowsWrapperUtils.create(len as i32)-> JObject)
-        .unwrap();
+        let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj()).resize(
+            self.obj.as_obj(),
+            len as i32,
+        )-> JObject).unwrap();
         self.obj = jni_new_global_ref!(rows.as_obj()).unwrap();
     }
 

@@ -1177,6 +1177,10 @@ impl<'a> SparkUDFWrapperContext<'a> {
 pub struct SparkUDAFWrapperContext<'a> {
     pub class: JClass<'a>,
     pub ctor: JMethodID,
+    pub method_initialize: JMethodID,
+    pub method_initialize_ret: ReturnType,
+    pub method_resize: JMethodID,
+    pub method_resize_ret: ReturnType,
     pub method_update: JMethodID,
     pub method_update_ret: ReturnType,
     pub method_merge: JMethodID,
@@ -1192,6 +1196,16 @@ impl<'a> SparkUDAFWrapperContext<'a> {
         Ok(SparkUDAFWrapperContext {
             class,
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
+            method_initialize: env.get_method_id(
+                class,
+                "initialize",
+                "(I)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
+            method_initialize_ret: ReturnType::Object,
+            method_resize: env.get_method_id(
+                class,
+                "resize",
+                "([Lorg/apache/spark/sql/catalyst/InternalRow;I)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
+            method_resize_ret: ReturnType::Object,
             method_update: env.get_method_id(
                 class,
                 "update",
@@ -1246,8 +1260,6 @@ pub struct BlazeUnsafeRowsWrapperUtils<'a> {
     pub method_deserialize_ret: ReturnType,
     pub method_num: JStaticMethodID,
     pub method_num_ret: ReturnType,
-    pub method_create: JStaticMethodID,
-    pub method_create_ret: ReturnType,
 }
 impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/UnsafeRowsWrapperUtils";
@@ -1274,12 +1286,6 @@ impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
                 "([Lorg/apache/spark/sql/catalyst/InternalRow;)I",
             )?,
             method_num_ret: ReturnType::Primitive(Primitive::Int),
-            method_create: env.get_static_method_id(
-                class,
-                "getEmptyObject",
-                "(I)[Lorg/apache/spark/sql/catalyst/InternalRow;",
-            )?,
-            method_create_ret: ReturnType::Object,
         })
     }
 }
